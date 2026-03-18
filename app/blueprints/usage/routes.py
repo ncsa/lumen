@@ -46,39 +46,44 @@ def _get_usage_data(eid: int) -> dict:
         .all()
     )
 
-    # Build status summary from limits and stats
-    limits = ModelLimit.query.filter_by(entity_id=eid).all()
-    is_unlimited = any(l.token_limit == -2 for l in limits)
-    active_limits = [l for l in limits if l.token_limit > 0]
-
-    tokens_left = sum(l.tokens_left for l in active_limits)
-    token_budget = sum(l.token_limit for l in active_limits)
-    tokens_per_hour = sum(l.tokens_per_hour for l in limits if l.tokens_per_hour > 0)
-
-    refillable = [l for l in limits if l.tokens_per_hour > 0 and l.last_refill_at]
-    if refillable:
-        next_refill = min(l.last_refill_at + timedelta(hours=1) for l in refillable)
-    else:
-        next_refill = None
+    # Per-model limits (exclude no-access entries)
+    raw_limits = (
+        db.session.query(
+            ModelConfig.model_name,
+            ModelLimit.token_limit,
+            ModelLimit.tokens_left,
+            ModelLimit.tokens_per_hour,
+            ModelLimit.last_refill_at,
+        )
+        .join(ModelConfig, ModelLimit.model_config_id == ModelConfig.id)
+        .filter(ModelLimit.entity_id == eid, ModelLimit.token_limit != -1)
+        .order_by(ModelConfig.model_name)
+        .all()
+    )
+    model_limits = [
+        {
+            "model_name": row[0],
+            "token_limit": row[1],
+            "tokens_left": row[2],
+            "tokens_per_hour": row[3],
+            "next_refill": (row[4] + timedelta(hours=1)) if (row[3] > 0 and row[4]) else None,
+        }
+        for row in raw_limits
+    ]
 
     total_tokens_used = sum(int(row[2] or 0) + int(row[3] or 0) for row in model_usage)
     total_cost = sum(float(row[4] or 0) for row in model_usage)
 
     status = {
-        "tokens_left": tokens_left,
-        "token_budget": token_budget,
-        "tokens_per_hour": tokens_per_hour,
-        "next_refill": next_refill,
         "total_tokens_used": total_tokens_used,
         "total_cost": total_cost,
-        "is_unlimited": is_unlimited,
-        "has_limits": bool(active_limits) or is_unlimited,
     }
 
     return {
         "chat_agg": chat_agg,
         "api_keys": api_keys,
         "model_usage": model_usage,
+        "model_limits": model_limits,
         "status": status,
     }
 
