@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Services — iLLM{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4>Services</h4>
+  {% if session.get("is_admin") %}
+  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createServiceModal">
+    + New Service
+  </button>
+  {% endif %}
+</div>
+
+{% if services %}
+<div class="row g-3">
+  {% for svc in services %}
+  <div class="col-md-6 col-lg-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h5 class="card-title">{{ svc.name }}</h5>
+        <p class="text-muted small mb-3">
+          Created: {{ svc.created_at.strftime("%Y-%m-%d") if svc.created_at else "N/A" }}
+        </p>
+        <div class="d-flex gap-2 flex-wrap">
+          <a href="{{ url_for('usage.service_usage_page', sid=svc.id) }}"
+             class="btn btn-sm btn-outline-primary">View Usage</a>
+          <button class="btn btn-sm btn-outline-secondary"
+                  onclick="openMembers({{ svc.id }}, '{{ svc.name | e }}')">Members</button>
+          <button class="btn btn-sm btn-outline-danger"
+                  onclick="deleteService({{ svc.id }})">Delete</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-muted">No services yet. Create one to get started.</p>
+{% endif %}
+
+<!-- Create Service Modal -->
+<div class="modal fade" id="createServiceModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">New Service</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="text" id="service-name-input" class="form-control" placeholder="Service name">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="create-service-btn">Create</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Members Modal -->
+<div class="modal fade" id="membersModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="members-modal-title">Members</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small">Add a user to this service by their email address.</p>
+        <div id="add-member-result" class="mb-2"></div>
+        <div class="input-group">
+          <input type="email" id="add-member-email" class="form-control"
+                 placeholder="user@example.com">
+          <button class="btn btn-outline-primary" id="add-member-btn">Add</button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentServiceId = null;
+
+document.getElementById("create-service-btn").addEventListener("click", async function () {
+  const name = document.getElementById("service-name-input").value.trim();
+  if (!name) return;
+  const resp = await fetch("/services", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (resp.ok) {
+    location.reload();
+  } else {
+    const data = await resp.json();
+    alert("Error: " + (data.error || "Unknown error"));
+  }
+});
+
+async function deleteService(id) {
+  if (!confirm("Delete this service? This action marks it inactive.")) return;
+  const resp = await fetch("/services/" + id, { method: "DELETE" });
+  if (resp.ok) location.reload();
+  else alert("Failed to delete service.");
+}
+
+function openMembers(id, name) {
+  currentServiceId = id;
+  document.getElementById("members-modal-title").textContent = name + " — Members";
+  document.getElementById("add-member-result").innerHTML = "";
+  document.getElementById("add-member-email").value = "";
+  new bootstrap.Modal(document.getElementById("membersModal")).show();
+}
+
+document.getElementById("add-member-btn").addEventListener("click", async function () {
+  const email = document.getElementById("add-member-email").value.trim();
+  if (!email || !currentServiceId) return;
+  const resp = await fetch("/services/" + currentServiceId + "/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  const data = await resp.json();
+  const el = document.getElementById("add-member-result");
+  if (resp.ok) {
+    el.innerHTML = `<div class="alert alert-success py-1">Added ${data.name}</div>`;
+    document.getElementById("add-member-email").value = "";
+  } else {
+    el.innerHTML = `<div class="alert alert-danger py-1">${data.error || "Error"}</div>`;
+  }
+});
+</script>
+{% endblock %}

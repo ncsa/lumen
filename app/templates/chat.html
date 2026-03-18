@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}Chat — iLLM{% endblock %}
+
+{% block content %}
+<div class="chat-container">
+  <div class="chat-header d-flex align-items-center gap-2 mb-2">
+    <label for="model-picker" class="form-label mb-0 fw-semibold">Model:</label>
+    <select id="model-picker" class="form-select form-select-sm" style="max-width:320px">
+      {% for model in active_models %}
+      <option value="{{ model.model_name }}">{{ model.model_name }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn btn-sm btn-outline-secondary ms-auto" id="clear-chat-btn">Clear Chat</button>
+  </div>
+
+  <div id="chat-messages" class="chat-messages"></div>
+
+  <div class="chat-input-bar">
+    <form id="chat-form" class="d-flex gap-2">
+      <textarea id="chat-input" class="form-control" rows="2"
+                placeholder="Type your message… (Enter to send, Shift+Enter for newline)"
+                required></textarea>
+      <button type="submit" id="send-btn" class="btn btn-primary align-self-end">Send</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const STORAGE_KEY = "illm_chat";
+  const STORAGE_MODEL_KEY = "illm_model";
+  let chatHistory = [];
+
+  // Restore saved model selection
+  const picker = document.getElementById("model-picker");
+  const savedModel = localStorage.getItem(STORAGE_MODEL_KEY);
+  if (savedModel) {
+    for (const opt of picker.options) {
+      if (opt.value === savedModel) { picker.value = savedModel; break; }
+    }
+  }
+  picker.addEventListener("change", () => localStorage.setItem(STORAGE_MODEL_KEY, picker.value));
+
+  // Load history from localStorage
+  try { chatHistory = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); }
+  catch (e) { chatHistory = []; }
+  renderHistory();
+
+  function renderHistory() {
+    const container = document.getElementById("chat-messages");
+    container.innerHTML = "";
+    chatHistory.forEach(msg => appendBubble(msg.role, msg.content, false));
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function appendBubble(role, content, scroll = true) {
+    const container = document.getElementById("chat-messages");
+    const div = document.createElement("div");
+    div.className = "chat-bubble " + (role === "user" ? "chat-bubble-user" : "chat-bubble-assistant");
+    div.textContent = content;
+    container.appendChild(div);
+    if (scroll) container.scrollTop = container.scrollHeight;
+  }
+
+  function saveHistory() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(chatHistory));
+  }
+
+  document.getElementById("clear-chat-btn").addEventListener("click", () => {
+    chatHistory = [];
+    saveHistory();
+    renderHistory();
+  });
+
+  document.getElementById("chat-form").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    const input = document.getElementById("chat-input");
+    const content = input.value.trim();
+    if (!content) return;
+
+    const model = picker.value;
+    if (!model) { alert("Please select a model."); return; }
+
+    input.value = "";
+    chatHistory.push({ role: "user", content });
+    appendBubble("user", content);
+    saveHistory();
+
+    const sendBtn = document.getElementById("send-btn");
+    sendBtn.disabled = true;
+
+    try {
+      const resp = await fetch("/chat/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: chatHistory, model }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        appendBubble("assistant", "Error: " + (data.error || resp.statusText));
+      } else {
+        chatHistory.push({ role: "assistant", content: data.reply });
+        appendBubble("assistant", data.reply);
+        saveHistory();
+      }
+    } catch (err) {
+      appendBubble("assistant", "Network error: " + err.message);
+    } finally {
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  });
+
+  document.getElementById("chat-input").addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      document.getElementById("chat-form").dispatchEvent(
+        new Event("submit", { cancelable: true, bubbles: true })
+      );
+    }
+  });
+})();
+</script>
+{% endblock %}

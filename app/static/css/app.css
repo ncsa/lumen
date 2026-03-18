@@ -1,0 +1,87 @@
+/* ── Chat layout ─────────────────────────────────────────────── */
+.chat-container {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 90px);
+}
+
+.chat-header {
+  flex-shrink: 0;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+}
+
+.chat-input-bar {
+  flex-shrink: 0;
+  padding-bottom: 0.5rem;
+}
+
+/* ── Chat bubbles ────────────────────────────────────────────── */
+.chat-bubble {
+  max-width: 75%;
+  padding: 0.6rem 1rem;
+  margin-bottom: 0.6rem;
+  border-radius: 1.1rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  font-size: 0.95rem;
+}
+
+.chat-bubble-user {
+  background-color: #0d6efd;
+  color: #fff;
+  margin-left: auto;
+  border-bottom-right-radius: 0.3rem;
+}
+
+.chat-bubble-assistant {
+  background-color: #e9ecef;
+  color: #212529;
+  margin-right: auto;
+  border-bottom-left-radius: 0.3rem;
+}
+
+/* ── Avatar ──────────────────────────────────────────────────── */
+.avatar-wrapper {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+.avatar-img {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.avatar-initials {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background-color: #0d6efd;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  user-select: none;
+}
+
+/* ── Misc ────────────────────────────────────────────────────── */
+.font-monospace {
+  font-family: var(--bs-font-monospace);
+}

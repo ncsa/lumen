@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}iLLM{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+  <div class="container-fluid">
+    <a class="navbar-brand fw-bold" href="{{ url_for('chat.chat_page') }}">iLLM</a>
+    <div class="navbar-nav me-auto">
+      <a class="nav-link {% if request.endpoint == 'chat.chat_page' %}active{% endif %}"
+         href="{{ url_for('chat.chat_page') }}">Chat</a>
+      <a class="nav-link {% if request.endpoint == 'models_page.index' %}active{% endif %}"
+         href="{{ url_for('models_page.index') }}">Models</a>
+
+      {% if nav_services %}
+      <div class="nav-item dropdown">
+        <a class="nav-link dropdown-toggle {% if request.blueprint == 'services' %}active{% endif %}"
+           href="#" role="button" data-bs-toggle="dropdown">Services</a>
+        <ul class="dropdown-menu dropdown-menu-dark">
+          {% for svc in nav_services %}
+          <li>
+            <a class="dropdown-item" href="{{ url_for('usage.service_usage_page', sid=svc.id) }}">
+              {{ svc.name }}
+            </a>
+          </li>
+          {% endfor %}
+          <li><hr class="dropdown-divider"></li>
+          <li>
+            <a class="dropdown-item" href="{{ url_for('services.index') }}">Manage Services</a>
+          </li>
+        </ul>
+      </div>
+      {% else %}
+      <a class="nav-link {% if request.blueprint == 'services' %}active{% endif %}"
+         href="{{ url_for('services.index') }}">Services</a>
+      {% endif %}
+
+      <a class="nav-link {% if request.endpoint == 'usage.index' %}active{% endif %}"
+         href="{{ url_for('usage.index') }}">Usage</a>
+    </div>
+
+    <div class="d-flex align-items-center gap-2">
+      <div class="avatar-wrapper" title="{{ session.get('entity_name', '') }}">
+        {% if session.get('gravatar_hash') %}
+        <img class="avatar-img"
+             src="https://www.gravatar.com/avatar/{{ session.gravatar_hash }}?d=404&s=36"
+             alt="{{ session.get('entity_name', '') }}"
+             onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+        {% endif %}
+        <div class="avatar-initials"
+             {% if session.get('gravatar_hash') %}style="display:none"{% endif %}>
+          {{ session.get('initials', '??') }}
+        </div>
+      </div>
+      <span class="text-light small">{{ session.get('entity_name', '') }}</span>
+      <a class="btn btn-sm btn-outline-light ms-1" href="{{ url_for('auth.logout') }}">Log Out</a>
+    </div>
+  </div>
+</nav>
+
+<div class="container-fluid mt-3 px-4">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for category, message in messages %}
+    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+      {{ message }}
+      <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endfor %}
+  {% endif %}
+  {% endwith %}
+
+  {% block content %}{% endblock %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Models — iLLM{% endblock %}
+
+{% block content %}
+<h4 class="mb-3">Model Health Dashboard</h4>
+
+<table class="table table-bordered table-hover align-middle">
+  <thead class="table-dark">
+    <tr>
+      <th>Model</th>
+      <th>Input Cost / 1M tokens</th>
+      <th>Output Cost / 1M tokens</th>
+      <th>Total Endpoints</th>
+      <th>Healthy</th>
+      <th>Last Checked</th>
+      <th>Endpoint Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for config in configs %}
+    {% set endpoints = config.endpoints.all() %}
+    {% set healthy_eps = endpoints | selectattr("healthy") | list %}
+    <tr>
+      <td>
+        <strong>{{ config.model_name }}</strong>
+        {% if not config.active %}
+        <span class="badge bg-secondary ms-1">disabled</span>
+        {% endif %}
+      </td>
+      <td>${{ "%.4f"|format(config.input_cost_per_million | float) }}</td>
+      <td>${{ "%.4f"|format(config.output_cost_per_million | float) }}</td>
+      <td>{{ endpoints | length }}</td>
+      <td>
+        <span class="fw-bold {% if healthy_eps %}text-success{% else %}text-danger{% endif %}">
+          {{ healthy_eps | length }}
+        </span>
+        / {{ endpoints | length }}
+      </td>
+      <td>
+        {% set checked_at = endpoints | map(attribute="last_checked_at") | select("ne", None) | list %}
+        {% if checked_at %}
+          {{ (checked_at | max).strftime("%Y-%m-%d %H:%M UTC") }}
+        {% else %}
+          <span class="text-muted">Never</span>
+        {% endif %}
+      </td>
+      <td>
+        {% for ep in endpoints %}
+        <span class="badge {% if ep.healthy %}bg-success{% else %}bg-danger{% endif %} me-1">
+          {% if ep.healthy %}Healthy{% else %}Unhealthy{% endif %}
+        </span>
+        {% else %}
+        <span class="text-muted">No endpoints</span>
+        {% endfor %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="text-center text-muted">No models configured.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

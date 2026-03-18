@@ -1,0 +1,73 @@
+users:
+  tokens:
+    maximum: 0    # default max token budget per user (0 = no access until admin grants)
+    refresh: 0    # tokens replenished per hour (0 = no auto-refresh)
+  admins:
+    - admin@example.com
+
+models:
+  # The top-level "name" is iLLM's internal model identifier — what callers use in API requests.
+  # Each endpoint can optionally set "model" to override what name is sent to that endpoint,
+  # allowing endpoints with different model identifiers to back the same iLLM model.
+
+  - name: gpt-4o
+    active: true
+    input_cost_per_million: 5.0     # USD per 1M input tokens
+    output_cost_per_million: 15.0   # USD per 1M output tokens
+    endpoints:
+      - url: https://api.openai.com/v1
+        api_key: sk-abc123
+        # model: gpt-4o             # optional; defaults to the parent "name" if omitted
+      - url: https://api.openai.com/v1
+        api_key: sk-def456          # second key; round-robin between these two
+
+  - name: gpt-4o-mini
+    active: true
+    input_cost_per_million: 0.15
+    output_cost_per_million: 0.6
+    endpoints:
+      - url: https://api.openai.com/v1
+        api_key: sk-abc123
+
+  - name: claude-3-opus
+    active: true
+    input_cost_per_million: 15.0
+    output_cost_per_million: 75.0
+    endpoints:
+      - url: https://api.anthropic.com/v1
+        api_key: sk-ant-xyz
+        model: claude-3-opus-20240229   # actual model id at the Anthropic endpoint
+
+  # Ollama — local models via OpenAI-compatible API (http://localhost:11434/v1)
+  # Ollama doesn't enforce API keys; use any non-empty string.
+  - name: llama3
+    active: true
+    input_cost_per_million: 0.0
+    output_cost_per_million: 0.0
+    endpoints:
+      - url: http://localhost:11434/v1
+        api_key: ollama
+        model: llama3.2             # actual tag pulled in Ollama
+
+  - name: mistral
+    active: true
+    input_cost_per_million: 0.0
+    output_cost_per_million: 0.0
+    endpoints:
+      - url: http://localhost:11434/v1
+        api_key: ollama
+        model: mistral
+
+  # Example: same iLLM model name backed by both a cloud endpoint and a local Ollama fallback.
+  # Round-robin will distribute load; the health checker will skip unhealthy ones.
+  - name: phi3
+    active: true
+    input_cost_per_million: 0.0
+    output_cost_per_million: 0.0
+    endpoints:
+      - url: http://localhost:11434/v1
+        api_key: ollama
+        model: phi3
+      - url: http://gpu-server.internal/v1
+        api_key: internal-key
+        model: phi-3-mini-128k-instruct   # different name at the internal endpoint
