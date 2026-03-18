@@ -1,4 +1,5 @@
 import threading
+import time
 from datetime import datetime
 
 import openai
@@ -119,10 +120,13 @@ def send_message(
 
     client = openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url)
     remote_model = endpoint.model_name or model
+    t0 = time.time()
     response = client.chat.completions.create(model=remote_model, messages=messages)
+    duration = time.time() - t0
 
     usage = response.usage
     cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens, config)
+    output_speed = usage.completion_tokens / duration if duration > 0 else 0.0
 
     if entity_id is not None:
         deduct_tokens(entity_id, config.id, usage.prompt_tokens + usage.completion_tokens)
@@ -143,4 +147,7 @@ def send_message(
         "input_tokens": usage.prompt_tokens,
         "output_tokens": usage.completion_tokens,
         "cost": cost,
+        "duration": duration,
+        "time_to_first_token": duration,
+        "output_speed": output_speed,
     }

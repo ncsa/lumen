@@ -1,3 +1,6 @@
+chat:
+  remove: hide   # "hide" = soft-delete conversations (recoverable) | "delete" = hard delete
+
 users:
   tokens:
     maximum: 0    # default max token budget per user (0 = no access until admin grants)

@@ -33,6 +33,9 @@ def create_app():
 
     app.config["YAML_DATA"] = yaml_data
 
+    chat_cfg = yaml_data.get("chat", {})
+    app.config["CHAT_CONVERSATION_REMOVE_MODE"] = chat_cfg.get("remove", "hide")
+
     # Initialize extensions
     from .extensions import db, migrate, oauth
     db.init_app(app)
@@ -91,6 +94,15 @@ def create_app():
             .all()
         )
         return {"nav_services": services}
+
+    # Sync models from yaml into DB on every startup
+    from app.commands import sync_models_from_yaml
+    with app.app_context():
+        try:
+            sync_models_from_yaml(yaml_data)
+        except Exception as e:
+            print(f"WARNING: Could not sync models from yaml (run 'flask db upgrade' first): {e}",
+                  file=sys.stderr)
 
     # Start background health checker
     from app.services.health import start_health_checker

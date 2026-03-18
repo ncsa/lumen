@@ -3,15 +3,10 @@ from flask.cli import with_appcontext
 from .extensions import db
 
 
-@click.command("init-db")
-@with_appcontext
-def init_db_cmd():
-    """Sync ModelConfig and ModelEndpoint from models.yaml."""
-    from flask import current_app
+def sync_models_from_yaml(yaml_data):
+    """Upsert ModelConfig and ModelEndpoint rows from yaml_data. Must run inside an app context."""
     from app.models.model_config import ModelConfig
     from app.models.model_endpoint import ModelEndpoint
-
-    yaml_data = current_app.config["YAML_DATA"]
 
     for model_def in yaml_data.get("models", []):
         config = ModelConfig.query.filter_by(model_name=model_def["name"]).first()
@@ -43,4 +38,12 @@ def init_db_cmd():
                 existing_urls.add(ep_def["url"])
 
     db.session.commit()
-    click.echo("Database initialized with models from models.yaml.")
+
+
+@click.command("init-db")
+@with_appcontext
+def init_db_cmd():
+    """Sync ModelConfig and ModelEndpoint from models.yaml."""
+    from flask import current_app
+    sync_models_from_yaml(current_app.config["YAML_DATA"])
+    click.echo("Database synced with models from models.yaml.")
