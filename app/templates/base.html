@@ -9,9 +9,11 @@
 </head>
 <body>
 
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+<nav class="navbar navbar-expand-lg navbar-illm">
   <div class="container-fluid">
-    <a class="navbar-brand fw-bold" href="{{ url_for('chat.chat_page') }}">iLLM</a>
+    <a class="navbar-brand fw-bold d-flex align-items-center" href="{{ url_for('chat.chat_page') }}">
+      <img src="{{ url_for('static', filename='img/block-i.png') }}" alt="I" height="28" style="margin-right:6px">LLM
+    </a>
     <div class="navbar-nav me-auto">
       <a class="nav-link {% if request.endpoint == 'chat.chat_page' %}active{% endif %}"
          href="{{ url_for('chat.chat_page') }}">Chat</a>
@@ -20,7 +22,7 @@
       <div class="nav-item dropdown">
         <a class="nav-link dropdown-toggle {% if request.blueprint == 'services' %}active{% endif %}"
            href="#" role="button" data-bs-toggle="dropdown">Services</a>
-        <ul class="dropdown-menu dropdown-menu-dark">
+        <ul class="dropdown-menu">
           {% for svc in nav_services %}
           <li>
             <a class="dropdown-item" href="{{ url_for('usage.service_usage_page', sid=svc.id) }}">
@@ -58,8 +60,8 @@
           {{ session.get('initials', '??') }}
         </div>
       </div>
-      <span class="text-light small">{{ session.get('entity_name', '') }}</span>
-      <a class="btn btn-sm btn-outline-light ms-1" href="{{ url_for('auth.logout') }}">Log Out</a>
+      <span class="small" style="color:#13294b">{{ session.get('entity_name', '') }}</span>
+      <a class="btn btn-sm btn-logout ms-1" href="{{ url_for('auth.logout') }}">Log Out</a>
     </div>
   </div>
 </nav>

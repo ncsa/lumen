@@ -78,7 +78,7 @@
 }
 
 .chat-bubble-user {
-  background-color: #0d6efd;
+  background-color: #13294b;
   color: #fff;
   border-bottom-right-radius: 0.25rem;
 }
@@ -137,7 +137,7 @@
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background-color: #0d6efd;
+  background-color: #13294b;
   color: #fff;
   font-size: 0.72rem;
   font-weight: 700;
@@ -147,6 +147,76 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   user-select: none;
+}
+
+/* ── Progress bars ───────────────────────────────────────────── */
+.progress-bar {
+  background-color: #13294b;
+}
+
+/* ── Override Bootstrap primary color with il-blue ───────────── */
+.btn-primary {
+  background-color: #13294b;
+  border-color: #13294b;
+}
+
+.btn-primary:hover,
+.btn-primary:focus,
+.btn-primary:active,
+.btn-primary.active {
+  background-color: #0e1f38;
+  border-color: #0e1f38;
+}
+
+.btn-primary:focus,
+.btn-primary:active {
+  box-shadow: 0 0 0 0.25rem rgba(19, 41, 75, 0.4);
+}
+
+/* ── Navbar ──────────────────────────────────────────────────── */
+.navbar-illm {
+  background-color: #e2e3e3;
+}
+
+.navbar-illm .navbar-brand,
+.navbar-illm .nav-link,
+.navbar-illm .nav-link.active {
+  color: #13294b;
+}
+
+.navbar-illm .nav-link:hover,
+.navbar-illm .nav-link:focus {
+  color: #0e1f38;
+}
+
+.navbar-illm .navbar-toggler {
+  border-color: #13294b;
+}
+
+.btn-logout {
+  color: #13294b;
+  border-color: #13294b;
+  background: transparent;
+}
+
+.btn-logout:hover,
+.btn-logout:focus {
+  background-color: #13294b;
+  color: #fff;
+}
+
+/* ── Login button ────────────────────────────────────────────── */
+.btn-login {
+  background-color: #13294b;
+  border-color: #13294b;
+  color: #fff;
+}
+
+.btn-login:hover,
+.btn-login:focus {
+  background-color: #0e1f38;
+  border-color: #0e1f38;
+  color: #fff;
 }
 
 /* ── Misc ────────────────────────────────────────────────────── */
