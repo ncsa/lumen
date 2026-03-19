@@ -15,8 +15,6 @@
     <div class="navbar-nav me-auto">
       <a class="nav-link {% if request.endpoint == 'chat.chat_page' %}active{% endif %}"
          href="{{ url_for('chat.chat_page') }}">Chat</a>
-      <a class="nav-link {% if request.endpoint == 'models_page.index' %}active{% endif %}"
-         href="{{ url_for('models_page.index') }}">Models</a>
 
       {% if nav_services %}
       <div class="nav-item dropdown">
@@ -43,6 +41,8 @@
 
       <a class="nav-link {% if request.endpoint == 'usage.index' %}active{% endif %}"
          href="{{ url_for('usage.index') }}">Usage</a>
+      <a class="nav-link {% if request.endpoint == 'models_page.index' %}active{% endif %}"
+         href="{{ url_for('models_page.index') }}">Models</a>
     </div>
 
     <div class="d-flex align-items-center gap-2">

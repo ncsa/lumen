@@ -13,7 +13,7 @@
       <th>Total Endpoints</th>
       <th>Healthy</th>
       <th>Last Checked</th>
-      <th>Endpoint Status</th>
+      <th>Status</th>
     </tr>
   </thead>
   <tbody>
@@ -45,17 +45,19 @@
         {% endif %}
       </td>
       <td>
-        {% for ep in endpoints %}
-        <span class="badge {% if ep.healthy %}bg-success{% else %}bg-danger{% endif %} me-1">
-          {% if ep.healthy %}Healthy{% else %}Unhealthy{% endif %}
-        </span>
+        {% if endpoints | length == 0 %}
+          <span class="badge bg-secondary">no endpoints</span>
+        {% elif healthy_eps | length == endpoints | length %}
+          <span class="badge bg-success">ok</span>
+        {% elif healthy_eps | length > 0 %}
+          <span class="badge bg-warning text-dark">degraded</span>
         {% else %}
-        <span class="text-muted">No endpoints</span>
-        {% endfor %}
+          <span class="badge bg-danger">down</span>
+        {% endif %}
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="7" class="text-center text-muted">No models configured.</td></tr>
+    <tr><td colspan="6" class="text-center text-muted">No models configured.</td></tr>
     {% endfor %}
   </tbody>
 </table>

@@ -24,7 +24,12 @@ def sync_models_from_yaml(yaml_data):
             config.output_cost_per_million = model_def["output_cost_per_million"]
             config.active = model_def.get("active", True)
 
-        existing_urls = {ep.url for ep in config.endpoints}
+        yaml_urls = {ep_def["url"] for ep_def in model_def.get("endpoints", [])}
+        for ep in list(config.endpoints):
+            if ep.url not in yaml_urls:
+                db.session.delete(ep)
+
+        existing_urls = {ep.url for ep in config.endpoints if ep.url in yaml_urls}
         for ep_def in model_def.get("endpoints", []):
             if ep_def["url"] not in existing_urls:
                 ep = ModelEndpoint(
@@ -35,7 +40,6 @@ def sync_models_from_yaml(yaml_data):
                     healthy=False,
                 )
                 db.session.add(ep)
-                existing_urls.add(ep_def["url"])
 
     db.session.commit()
 
