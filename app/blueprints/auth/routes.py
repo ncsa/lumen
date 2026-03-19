@@ -31,6 +31,7 @@ def seed_model_limits(entity: Entity):
     tokens_cfg = yaml_data.get("users", {}).get("tokens", {})
     maximum = tokens_cfg.get("maximum", 0)
     refresh = tokens_cfg.get("refresh", 0)
+    starting = tokens_cfg.get("starting", maximum)
 
     for model_config in ModelConfig.query.filter_by(active=True).all():
         existing = ModelLimit.query.filter_by(
@@ -40,9 +41,10 @@ def seed_model_limits(entity: Entity):
             limit = ModelLimit(
                 entity_id=entity.id,
                 model_config_id=model_config.id,
-                token_limit=maximum,
-                tokens_per_hour=refresh,
-                tokens_left=maximum,
+                max_tokens=maximum,
+                refresh_tokens=refresh,
+                starting_tokens=starting,
+                tokens_left=starting,
             )
             db.session.add(limit)
 

@@ -45,6 +45,10 @@
          href="{{ url_for('usage.index') }}">Usage</a>
       <a class="nav-link {% if request.endpoint == 'models_page.index' %}active{% endif %}"
          href="{{ url_for('models_page.index') }}">Models</a>
+      {% if session.get('is_admin') %}
+      <a class="nav-link {% if request.blueprint == 'admin' %}active{% endif %}"
+         href="{{ url_for('admin.groups') }}">Admin</a>
+      {% endif %}
     </div>
 
     <div class="d-flex align-items-center gap-2">

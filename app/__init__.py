@@ -60,6 +60,7 @@ def create_app():
     from app.blueprints.services.routes import services_bp
     from app.blueprints.usage.routes import usage_bp
     from app.blueprints.api.routes import api_bp
+    from app.blueprints.admin.routes import admin_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(chat_bp)
@@ -67,6 +68,7 @@ def create_app():
     app.register_blueprint(services_bp)
     app.register_blueprint(usage_bp)
     app.register_blueprint(api_bp)
+    app.register_blueprint(admin_bp)
 
     # Register CLI commands
     from app.commands import init_db_cmd

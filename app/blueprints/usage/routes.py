@@ -12,6 +12,7 @@ from app.models.entity_manager import EntityManager
 from app.models.model_config import ModelConfig
 from app.models.model_limit import ModelLimit
 from app.models.model_stat import ModelStat
+from app.services.llm import get_effective_limit
 
 usage_bp = Blueprint("usage", __name__)
 
@@ -46,30 +47,29 @@ def _get_usage_data(eid: int) -> dict:
         .all()
     )
 
-    # Per-model limits (exclude no-access entries)
-    raw_limits = (
-        db.session.query(
-            ModelConfig.model_name,
-            ModelLimit.token_limit,
-            ModelLimit.tokens_left,
-            ModelLimit.tokens_per_hour,
-            ModelLimit.last_refill_at,
-        )
-        .join(ModelConfig, ModelLimit.model_config_id == ModelConfig.id)
-        .filter(ModelLimit.entity_id == eid, ModelLimit.token_limit != -1)
-        .order_by(ModelConfig.model_name)
-        .all()
-    )
-    model_limits = [
-        {
-            "model_name": row[0],
-            "token_limit": row[1],
-            "tokens_left": row[2],
-            "tokens_per_hour": row[3],
-            "next_refill": (row[4] + timedelta(hours=1)) if (row[3] > 0 and row[4]) else None,
-        }
-        for row in raw_limits
-    ]
+    # Per-model limits: show all models the entity has access to via effective limits
+    all_models = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
+    state_rows = {
+        r.model_config_id: r
+        for r in ModelLimit.query.filter_by(entity_id=eid).all()
+        if r.model_config_id is not None
+    }
+    model_limits = []
+    for mc in all_models:
+        eff = get_effective_limit(eid, mc.id)
+        if eff is None:
+            continue
+        max_tokens, refresh_tokens, _starting = eff
+        state = state_rows.get(mc.id)
+        tokens_left = state.tokens_left if state else 0
+        last_refill_at = state.last_refill_at if state else None
+        model_limits.append({
+            "model_name": mc.model_name,
+            "token_limit": max_tokens,
+            "tokens_left": tokens_left,
+            "tokens_per_hour": refresh_tokens,
+            "next_refill": (last_refill_at + timedelta(hours=1)) if (refresh_tokens > 0 and last_refill_at) else None,
+        })
 
     total_tokens_used = sum(int(row[2] or 0) + int(row[3] or 0) for row in model_usage)
     total_cost = sum(float(row[4] or 0) for row in model_usage)

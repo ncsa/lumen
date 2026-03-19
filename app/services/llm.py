@@ -9,6 +9,8 @@ from app.models.model_config import ModelConfig
 from app.models.model_endpoint import ModelEndpoint
 from app.models.model_limit import ModelLimit
 from app.models.model_stat import ModelStat
+from app.models.group_member import GroupMember
+from app.models.group_model_limit import GroupModelLimit
 from app.services.cost import calculate_cost
 
 _rr_counters: dict = {}
@@ -30,28 +32,126 @@ def get_next_endpoint(model_config_id: int):
     return endpoints[idx]
 
 
+def get_effective_limit(entity_id: int, model_config_id: int):
+    """
+    Compute effective (max_tokens, refresh_tokens, starting_tokens) for entity+model.
+
+    Returns (max_tokens, refresh_tokens, starting_tokens) or None if blocked.
+    max_tokens == -2 means unlimited.
+
+    Resolution algorithm:
+    1. Collect per-model entries (model_config_id = M) from user + all groups.
+    2. Split into explicit (max_tokens != -1) vs defer (max_tokens == -1 or absent).
+    3. If any explicit entries: positive wins over 0; all-0 => BLOCKED.
+       Defaults (NULL rows) are NOT consulted when any explicit entry exists.
+    4. If all defer => fall back to default rows (model_config_id = NULL).
+    5. Apply same logic to defaults. No config => BLOCKED.
+    """
+    # Collect group IDs for this entity
+    memberships = GroupMember.query.filter_by(entity_id=entity_id).all()
+    group_ids = [m.group_id for m in memberships]
+
+    def resolve(rows):
+        """Given list of (max_tokens, refresh_tokens, starting_tokens), apply resolution."""
+        if not rows:
+            return None
+        explicit = [(mt, rt, st) for mt, rt, st in rows if mt != -1]
+        if explicit:
+            positives = [(mt, rt, st) for mt, rt, st in explicit if mt > 0 or mt == -2]
+            if positives:
+                # -2 (unlimited) wins everything; otherwise take max by max_tokens
+                if any(mt == -2 for mt, rt, st in positives):
+                    return (-2, 0, 0)
+                best = max(positives, key=lambda x: x[0])
+                return best
+            # All explicit are 0 => BLOCKED
+            return None
+        # All defer (-1) => caller handles fallback to defaults
+        return "defer"
+
+    # Per-model rows from user
+    user_row = ModelLimit.query.filter_by(
+        entity_id=entity_id, model_config_id=model_config_id
+    ).first()
+    per_model_rows = []
+    if user_row is not None:
+        per_model_rows.append((user_row.max_tokens, user_row.refresh_tokens, user_row.starting_tokens))
+
+    # Per-model rows from groups
+    if group_ids:
+        group_rows = GroupModelLimit.query.filter(
+            GroupModelLimit.group_id.in_(group_ids),
+            GroupModelLimit.model_config_id == model_config_id,
+        ).all()
+        for r in group_rows:
+            per_model_rows.append((r.max_tokens, r.refresh_tokens, r.starting_tokens))
+
+    result = resolve(per_model_rows)
+    if result is None:
+        return None  # BLOCKED
+    if result != "defer":
+        return result
+
+    # All per-model entries defer (or none exist) => check default rows (model_config_id IS NULL)
+    user_default = ModelLimit.query.filter_by(
+        entity_id=entity_id, model_config_id=None
+    ).first()
+    default_rows = []
+    if user_default is not None:
+        default_rows.append((user_default.max_tokens, user_default.refresh_tokens, user_default.starting_tokens))
+
+    if group_ids:
+        group_defaults = GroupModelLimit.query.filter(
+            GroupModelLimit.group_id.in_(group_ids),
+            GroupModelLimit.model_config_id == None,  # noqa: E711
+        ).all()
+        for r in group_defaults:
+            default_rows.append((r.max_tokens, r.refresh_tokens, r.starting_tokens))
+
+    result = resolve(default_rows)
+    if result is None or result == "defer":
+        return None  # BLOCKED (no config or all defer with no defaults)
+    return result
+
+
 def check_and_deduct_tokens(entity_id: int, model_config_id: int):
     """Check token budget. Returns (ok, http_code, error_message)."""
+    effective = get_effective_limit(entity_id, model_config_id)
+
+    if effective is None:
+        return False, 403, "No access to this model"
+
+    max_tokens, refresh_tokens, _starting = effective
+
+    if max_tokens == -2:
+        return True, None, None
+
+    # Load user's per-model limit row for tokens_left state
     limit = ModelLimit.query.filter_by(
         entity_id=entity_id, model_config_id=model_config_id
     ).first()
 
     if limit is None:
-        return False, 403, "No token budget configured for this model"
+        # Auto-create a state row so group/default limits can track balance
+        _max, _refresh, starting = effective
+        limit = ModelLimit(
+            entity_id=entity_id,
+            model_config_id=model_config_id,
+            max_tokens=-1,
+            refresh_tokens=0,
+            starting_tokens=starting,
+            tokens_left=starting,
+        )
+        db.session.add(limit)
+        db.session.flush()
 
-    if limit.token_limit == -1:
-        return False, 403, "No access to this model"
-
-    if limit.token_limit == -2:
-        return True, None, None
-
-    # Lazy hourly refill
+    # Lazy hourly refill using effective refresh_tokens and max_tokens
     now = datetime.utcnow()
-    if limit.tokens_per_hour > 0 and limit.last_refill_at:
+    if refresh_tokens > 0 and limit.last_refill_at:
         hours_elapsed = (now - limit.last_refill_at).total_seconds() / 3600
         if hours_elapsed >= 1:
-            refill = int(hours_elapsed) * limit.tokens_per_hour
-            limit.tokens_left = min(limit.token_limit, limit.tokens_left + refill)
+            refill = int(hours_elapsed) * refresh_tokens
+            limit.tokens_left = min(max_tokens, limit.tokens_left + refill)
             limit.last_refill_at = now
             db.session.flush()
 
@@ -62,11 +162,18 @@ def check_and_deduct_tokens(entity_id: int, model_config_id: int):
 
 
 def deduct_tokens(entity_id: int, model_config_id: int, tokens_used: int):
-    """Deduct actual tokens used from the budget (no-op for unlimited)."""
+    """Deduct actual tokens used from the budget (no-op for unlimited or blocked)."""
+    effective = get_effective_limit(entity_id, model_config_id)
+    if effective is None:
+        return
+    max_tokens, _refresh, _starting = effective
+    if max_tokens == -2:
+        return
+
     limit = ModelLimit.query.filter_by(
         entity_id=entity_id, model_config_id=model_config_id
     ).first()
-    if limit and limit.token_limit not in (-1, -2):
+    if limit:
         limit.tokens_left = max(0, limit.tokens_left - tokens_used)
         db.session.flush()
 

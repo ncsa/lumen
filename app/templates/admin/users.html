@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Admin – Users{% endblock %}
+{% block content %}
+<ul class="nav nav-tabs mb-3">
+  <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.groups') }}">Groups</a></li>
+  <li class="nav-item"><a class="nav-link active" href="{{ url_for('admin.users') }}">Users</a></li>
+</ul>
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Users</h4>
+</div>
+
+<table class="table table-bordered align-middle">
+  <thead class="table-light">
+    <tr>
+      <th>Name</th>
+      <th>Email</th>
+      <th>Active</th>
+      <th>Groups</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for user in users %}
+    <tr>
+      <td>{{ user.name }}</td>
+      <td>{{ user.email }}</td>
+      <td>{% if user.active %}✓{% else %}<span class="text-danger">✗</span>{% endif %}</td>
+      <td>
+        {% for group in user_groups[user.id] %}
+        <span class="badge bg-secondary">{{ group.name }}</span>
+        {% else %}
+        <span class="text-muted">—</span>
+        {% endfor %}
+      </td>
+      <td>
+        <a href="{{ url_for('admin.user_limits', eid=user.id) }}" class="btn btn-sm btn-outline-primary">Limits</a>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="text-muted text-center">No users.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

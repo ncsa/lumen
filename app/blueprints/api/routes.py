@@ -14,7 +14,7 @@ from app.models.api_key import APIKey
 from app.models.entity import Entity
 from app.models.model_config import ModelConfig
 from app.services.cost import calculate_cost
-from app.services.llm import check_and_deduct_tokens, deduct_tokens, get_next_endpoint, update_stats
+from app.services.llm import check_and_deduct_tokens, deduct_tokens, get_effective_limit, get_next_endpoint, update_stats
 
 api_bp = Blueprint("api", __name__, url_prefix="/v1")
 
@@ -66,6 +66,7 @@ def api_key_required(f):
 @api_bp.route("/models", methods=["GET"])
 @api_key_required
 def list_models():
+    entity_id = g.entity.id
     configs = ModelConfig.query.filter_by(active=True).all()
     data = [
         {
@@ -75,6 +76,7 @@ def list_models():
             "owned_by": "illm",
         }
         for c in configs
+        if get_effective_limit(entity_id, c.id) is not None
     ]
     return jsonify({"object": "list", "data": data})
 

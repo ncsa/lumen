@@ -7,6 +7,9 @@ from .model_limit import ModelLimit
 from .model_stat import ModelStat
 from .conversation import Conversation
 from .message import Message
+from .group import Group
+from .group_member import GroupMember
+from .group_model_limit import GroupModelLimit
 
 __all__ = [
     "Entity",
@@ -18,4 +21,7 @@ __all__ = [
     "ModelStat",
     "Conversation",
     "Message",
+    "Group",
+    "GroupMember",
+    "GroupModelLimit",
 ]
