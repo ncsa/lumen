@@ -3,10 +3,12 @@ import sys
 
 import yaml
 from flask import Flask, session
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 
 def create_app():
     app = Flask(__name__)
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
     from config import Config
     app.config.from_object(Config)
