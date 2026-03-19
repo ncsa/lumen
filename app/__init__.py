@@ -108,4 +108,8 @@ def create_app():
     from app.services.health import start_health_checker
     start_health_checker(app)
 
+    # Start background token refiller
+    from app.services.token_refill import start_token_refiller
+    start_token_refiller(app)
+
     return app
