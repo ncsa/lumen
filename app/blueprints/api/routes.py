@@ -1,9 +1,13 @@
 import json
+import logging
 from datetime import datetime
 from functools import wraps
 
 import openai
 from flask import Blueprint, request, jsonify, g, Response, stream_with_context
+from sqlalchemy import update as sa_update
+
+logger = logging.getLogger(__name__)
 
 from app.extensions import db
 from app.models.api_key import APIKey
@@ -13,6 +17,20 @@ from app.services.cost import calculate_cost
 from app.services.llm import check_and_deduct_tokens, deduct_tokens, get_next_endpoint, update_stats
 
 api_bp = Blueprint("api", __name__, url_prefix="/v1")
+
+
+def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int, cost: float):
+    db.session.execute(
+        sa_update(APIKey)
+        .where(APIKey.id == api_key_id)
+        .values(
+            requests=APIKey.requests + 1,
+            input_tokens=APIKey.input_tokens + input_tokens,
+            output_tokens=APIKey.output_tokens + output_tokens,
+            cost=APIKey.cost + cost,
+            last_used_at=datetime.utcnow(),
+        )
+    )
 
 
 def _err(msg: str, err_type: str = "invalid_request_error", status: int = 400):
@@ -97,15 +115,38 @@ def _do_chat(model_name: str, messages: list, stream: bool):
     remote_model = endpoint.model_name or model_name
 
     if stream:
+        api_key = g.api_key
+
         def generate():
             try:
                 resp_stream = client.chat.completions.create(
-                    model=remote_model, messages=messages, stream=True
+                    model=remote_model, messages=messages, stream=True,
+                    stream_options={"include_usage": True},
                 )
+                usage = None
                 for chunk in resp_stream:
+                    if chunk.usage is not None:
+                        usage = chunk.usage
                     yield f"data: {json.dumps(chunk.model_dump())}\n\n"
                 yield "data: [DONE]\n\n"
+
+                if usage is not None:
+                    cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens, model_config)
+                    deduct_tokens(entity_id, model_config.id, usage.prompt_tokens + usage.completion_tokens)
+                    update_stats(entity_id, model_config.id, "api", usage.prompt_tokens, usage.completion_tokens, cost)
+                    _record_api_key_usage(api_key.id, usage.prompt_tokens, usage.completion_tokens, cost)
+                    db.session.commit()
+                else:
+                    logger.warning(
+                        "Upstream did not return usage data for streaming request "
+                        "(model=%s, entity_id=%s) — tokens and cost not recorded.",
+                        model_name, entity_id,
+                    )
             except Exception as e:
+                logger.error(
+                    "Error during streaming request (model=%s, entity_id=%s): %s",
+                    model_name, entity_id, e,
+                )
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
         return Response(stream_with_context(generate()), content_type="text/event-stream")
@@ -121,11 +162,7 @@ def _do_chat(model_name: str, messages: list, stream: bool):
     deduct_tokens(entity_id, model_config.id, usage.prompt_tokens + usage.completion_tokens)
     update_stats(entity_id, model_config.id, "api", usage.prompt_tokens, usage.completion_tokens, cost)
 
-    api_key = g.api_key
-    api_key.input_tokens += usage.prompt_tokens
-    api_key.output_tokens += usage.completion_tokens
-    api_key.cost = float(api_key.cost) + cost
-    api_key.last_used_at = datetime.utcnow()
+    _record_api_key_usage(g.api_key.id, usage.prompt_tokens, usage.completion_tokens, cost)
     db.session.commit()
 
     return jsonify(response.model_dump())
@@ -189,11 +226,7 @@ def completions():
     deduct_tokens(entity_id, model_config.id, usage.prompt_tokens + usage.completion_tokens)
     update_stats(entity_id, model_config.id, "api", usage.prompt_tokens, usage.completion_tokens, cost)
 
-    api_key = g.api_key
-    api_key.input_tokens += usage.prompt_tokens
-    api_key.output_tokens += usage.completion_tokens
-    api_key.cost = float(api_key.cost) + cost
-    api_key.last_used_at = datetime.utcnow()
+    _record_api_key_usage(g.api_key.id, usage.prompt_tokens, usage.completion_tokens, cost)
     db.session.commit()
 
     return jsonify(
