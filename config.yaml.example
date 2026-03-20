@@ -13,6 +13,11 @@ oauth2:
   server_metadata_url:
   redirect_uri: http://localhost:5000/callback
   scopes: openid email profile org.cilogon.userinfo  # org.cilogon.userinfo enables affiliation, member_of, idp, ou for group rules
+  # Optional CILogon parameters passed to the authorization endpoint.
+  # See https://www.cilogon.org/oidc for the full list.
+  # Uncomment to restrict login to the University of Illinois IdP only:
+  # params:
+  #   idphint: urn:mace:incommon:uiuc.edu
 
 chat:
   remove: hide   # "hide" = soft-delete conversations (recoverable) | "delete" = hard delete

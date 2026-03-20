@@ -134,7 +134,8 @@ def landing():
 @auth_bp.route("/login")
 def login():
     redirect_uri = url_for("auth.callback", _external=True)
-    return oauth.provider.authorize_redirect(redirect_uri=redirect_uri)
+    params = current_app.config.get("OAUTH2_PARAMS", {})
+    return oauth.provider.authorize_redirect(redirect_uri=redirect_uri, **params)
 
 
 @auth_bp.route("/callback")

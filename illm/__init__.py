@@ -52,6 +52,8 @@ def create_app():
     for key in ("client_id", "client_secret", "server_metadata_url", "redirect_uri", "scopes"):
         if key in oauth2_cfg:
             app.config[f"OAUTH2_{key.upper()}"] = oauth2_cfg[key]
+    if "params" in oauth2_cfg:
+        app.config["OAUTH2_PARAMS"] = oauth2_cfg.get("params") or {}
 
     chat_cfg = yaml_data.get("chat", {})
     app.config["CHAT_CONVERSATION_REMOVE_MODE"] = chat_cfg.get("remove", "hide")

@@ -62,6 +62,9 @@ def _watcher(app, config_path):
                 werkzeug_level = logging.WARNING if not logs_cfg.get("access", True) else logging.INFO
                 logging.getLogger("werkzeug").setLevel(werkzeug_level)
 
+                oauth2_cfg = new_data.get("oauth2", {})
+                app.config["OAUTH2_PARAMS"] = oauth2_cfg.get("params") or {}
+
                 chat_cfg = new_data.get("chat", {})
                 app.config["CHAT_CONVERSATION_REMOVE_MODE"] = chat_cfg.get("remove", "hide")
                 from illm.commands import sync_models_from_yaml, sync_groups_from_yaml
