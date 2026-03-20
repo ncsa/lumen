@@ -58,9 +58,9 @@ def _get_usage_data(eid: int) -> dict:
         eff = get_effective_limit(eid, mc.id)
         if eff is None:
             continue
-        max_tokens, refresh_tokens, _starting = eff
+        max_tokens, refresh_tokens, starting = eff
         bal = balance_rows.get(mc.id)
-        tokens_left = bal.tokens_left if bal else 0
+        tokens_left = bal.tokens_left if bal else starting
         last_refill_at = bal.last_refill_at if bal else None
         model_limits.append({
             "model_name": mc.model_name,

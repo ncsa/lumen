@@ -185,11 +185,13 @@ def user_limits(eid):
 
     # Compute effective limits per model and current balance
     effective = {}
-    balance_rows = EntityModelBalance.query.filter_by(entity_id=eid).all()
-    tokens_left = {b.model_config_id: b.tokens_left for b in balance_rows}
+    balance_rows = {b.model_config_id: b.tokens_left for b in EntityModelBalance.query.filter_by(entity_id=eid).all()}
+    tokens_left = {}
     for model in models:
         eff = get_effective_limit(eid, model.id)
         effective[model.id] = eff
+        if eff is not None and eff[0] != -2:
+            tokens_left[model.id] = balance_rows.get(model.id, eff[2])
 
     # Build (membership, group, group_limits) tuples
     memberships = GroupMember.query.filter_by(entity_id=eid).all()
