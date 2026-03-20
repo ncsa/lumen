@@ -22,21 +22,6 @@
     <ilw-header-menu slot="navigation">
       <ul>
         <li><a href="{{ url_for('chat.chat_page') }}">Chat</a></li>
-        {% if nav_services %}
-        <li>
-          <ilw-header-menu-section>
-            <span slot="label">Services</span>
-            <ul>
-              {% for svc in nav_services %}
-              <li><a href="{{ url_for('usage.service_usage_page', sid=svc.id) }}">{{ svc.name }}</a></li>
-              {% endfor %}
-              <li><a href="{{ url_for('services.index') }}">Manage Services</a></li>
-            </ul>
-          </ilw-header-menu-section>
-        </li>
-        {% else %}
-        <li><a href="{{ url_for('services.index') }}">Services</a></li>
-        {% endif %}
         <li><a href="{{ url_for('usage.index') }}">Usage</a></li>
         <li><a href="{{ url_for('models_page.index') }}">Models</a></li>
         {% if session.get('is_admin') %}
