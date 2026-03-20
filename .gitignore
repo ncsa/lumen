@@ -21,6 +21,7 @@ pip-delete-this-directory.txt
 
 # App secrets — copy from example and edit locally
 models.yaml
+config.yaml
 
 # Database
 *.db
