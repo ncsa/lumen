@@ -5,9 +5,10 @@ from datetime import datetime
 import openai
 
 from app.extensions import db
+from app.models.entity_model_balance import EntityModelBalance
+from app.models.entity_model_limit import EntityModelLimit
 from app.models.model_config import ModelConfig
 from app.models.model_endpoint import ModelEndpoint
-from app.models.model_limit import ModelLimit
 from app.models.model_stat import ModelStat
 from app.models.group_member import GroupMember
 from app.models.group_model_limit import GroupModelLimit
@@ -70,7 +71,7 @@ def get_effective_limit(entity_id: int, model_config_id: int):
         return "defer"
 
     # Per-model rows from user
-    user_row = ModelLimit.query.filter_by(
+    user_row = EntityModelLimit.query.filter_by(
         entity_id=entity_id, model_config_id=model_config_id
     ).first()
     per_model_rows = []
@@ -93,7 +94,7 @@ def get_effective_limit(entity_id: int, model_config_id: int):
         return result
 
     # All per-model entries defer (or none exist) => check default rows (model_config_id IS NULL)
-    user_default = ModelLimit.query.filter_by(
+    user_default = EntityModelLimit.query.filter_by(
         entity_id=entity_id, model_config_id=None
     ).first()
     default_rows = []
@@ -114,55 +115,45 @@ def get_effective_limit(entity_id: int, model_config_id: int):
     return result
 
 
-def check_and_deduct_tokens(entity_id: int, model_config_id: int):
-    """Check token budget. Returns (ok, http_code, error_message)."""
-    effective = get_effective_limit(entity_id, model_config_id)
-
-    if effective is None:
-        return False, 403, "No access to this model"
-
-    max_tokens, refresh_tokens, _starting = effective
-
-    if max_tokens == -2:
-        return True, None, None
-
-    # Load user's per-model limit row for tokens_left state
-    limit = ModelLimit.query.filter_by(
-        entity_id=entity_id, model_config_id=model_config_id
-    ).first()
-
-    if limit is None:
-        # Auto-create a state row so group/default limits can track balance
-        _max, _refresh, starting = effective
-        limit = ModelLimit(
-            entity_id=entity_id,
-            model_config_id=model_config_id,
-            max_tokens=-1,
-            refresh_tokens=0,
-            starting_tokens=starting,
-            tokens_left=starting,
-        )
-        db.session.add(limit)
-        db.session.flush()
-
-    # Lazy hourly refill using effective refresh_tokens and max_tokens
+def _apply_refill(balance, max_tokens: int, refresh_tokens: int):
+    """Apply lazy hourly refill to an EntityModelBalance row in-place."""
     now = datetime.utcnow()
-    if refresh_tokens > 0 and limit.last_refill_at:
-        hours_elapsed = (now - limit.last_refill_at).total_seconds() / 3600
+    if refresh_tokens > 0 and balance.last_refill_at:
+        hours_elapsed = (now - balance.last_refill_at).total_seconds() / 3600
         if hours_elapsed >= 1:
             refill = int(hours_elapsed) * refresh_tokens
-            limit.tokens_left = min(max_tokens, limit.tokens_left + refill)
-            limit.last_refill_at = now
+            balance.tokens_left = min(max_tokens, balance.tokens_left + refill)
+            balance.last_refill_at = now
             db.session.flush()
 
-    if limit.tokens_left <= 0:
-        return False, 429, "Token budget exhausted"
 
-    return True, None, None
+def get_token_balance(entity_id: int, model_config_id: int):
+    """Return tokens_left for entity+model, or None if unlimited or blocked."""
+    effective = get_effective_limit(entity_id, model_config_id)
+    if effective is None:
+        return None
+    max_tokens, refresh_tokens, starting = effective
+    if max_tokens == -2:
+        return None
+
+    balance = EntityModelBalance.query.filter_by(
+        entity_id=entity_id, model_config_id=model_config_id
+    ).first()
+    if balance is None:
+        balance = EntityModelBalance(
+            entity_id=entity_id,
+            model_config_id=model_config_id,
+            tokens_left=starting,
+        )
+        db.session.add(balance)
+        db.session.flush()
+
+    _apply_refill(balance, max_tokens, refresh_tokens)
+    return balance.tokens_left
 
 
-def deduct_tokens(entity_id: int, model_config_id: int, tokens_used: int):
-    """Deduct actual tokens used from the budget (no-op for unlimited or blocked)."""
+def subtract_tokens(entity_id: int, model_config_id: int, tokens_used: int):
+    """Deduct tokens_used from the balance row (no-op for unlimited or blocked)."""
     effective = get_effective_limit(entity_id, model_config_id)
     if effective is None:
         return
@@ -170,12 +161,30 @@ def deduct_tokens(entity_id: int, model_config_id: int, tokens_used: int):
     if max_tokens == -2:
         return
 
-    limit = ModelLimit.query.filter_by(
+    balance = EntityModelBalance.query.filter_by(
         entity_id=entity_id, model_config_id=model_config_id
     ).first()
-    if limit:
-        limit.tokens_left = max(0, limit.tokens_left - tokens_used)
+    if balance:
+        balance.tokens_left = balance.tokens_left - tokens_used
         db.session.flush()
+
+
+def check_and_deduct_tokens(entity_id: int, model_config_id: int):
+    """Check token budget. Returns (ok, http_code, error_message)."""
+    effective = get_effective_limit(entity_id, model_config_id)
+    if effective is None:
+        return False, 403, "No access to this model"
+    if effective[0] == -2:
+        return True, None, None
+    tokens_left = get_token_balance(entity_id, model_config_id)
+    if tokens_left is not None and tokens_left <= 0:
+        return False, 429, "Token budget exhausted"
+    return True, None, None
+
+
+def deduct_tokens(entity_id: int, model_config_id: int, tokens_used: int):
+    """Deduct actual tokens used from the budget (no-op for unlimited or blocked)."""
+    subtract_tokens(entity_id, model_config_id, tokens_used)
 
 
 def update_stats(

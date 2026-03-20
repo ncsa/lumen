@@ -3,7 +3,8 @@ from .entity_manager import EntityManager
 from .api_key import APIKey
 from .model_config import ModelConfig
 from .model_endpoint import ModelEndpoint
-from .model_limit import ModelLimit
+from .entity_model_limit import EntityModelLimit
+from .entity_model_balance import EntityModelBalance
 from .model_stat import ModelStat
 from .conversation import Conversation
 from .message import Message
@@ -17,7 +18,8 @@ __all__ = [
     "APIKey",
     "ModelConfig",
     "ModelEndpoint",
-    "ModelLimit",
+    "EntityModelLimit",
+    "EntityModelBalance",
     "ModelStat",
     "Conversation",
     "Message",

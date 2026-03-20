@@ -13,5 +13,5 @@ class ModelConfig(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     endpoints = db.relationship("ModelEndpoint", backref="model_config", lazy="dynamic")
-    limits = db.relationship("ModelLimit", backref="model_config", lazy="dynamic")
+    limits = db.relationship("EntityModelLimit", backref="model_config", lazy="dynamic")
     stats = db.relationship("ModelStat", backref="model_config", lazy="dynamic")

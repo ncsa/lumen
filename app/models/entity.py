@@ -15,5 +15,5 @@ class Entity(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     api_keys = db.relationship("APIKey", backref="entity", lazy="dynamic")
-    model_limits = db.relationship("ModelLimit", backref="entity", lazy="dynamic")
+    entity_model_limits = db.relationship("EntityModelLimit", backref="entity", lazy="dynamic")
     model_stats = db.relationship("ModelStat", backref="entity", lazy="dynamic")

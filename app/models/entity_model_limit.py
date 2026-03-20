@@ -1,9 +1,8 @@
-from datetime import datetime
 from ..extensions import db
 
 
-class ModelLimit(db.Model):
-    __tablename__ = "model_limits"
+class EntityModelLimit(db.Model):
+    __tablename__ = "entity_model_limits"
 
     id = db.Column(db.Integer, primary_key=True)
     entity_id = db.Column(db.Integer, db.ForeignKey("entities.id"), nullable=False)
@@ -13,5 +12,3 @@ class ModelLimit(db.Model):
     max_tokens = db.Column(db.BigInteger, default=0, nullable=False)
     refresh_tokens = db.Column(db.Integer, default=0, nullable=False)
     starting_tokens = db.Column(db.BigInteger, default=0, nullable=False)
-    tokens_left = db.Column(db.BigInteger, default=0, nullable=False)
-    last_refill_at = db.Column(db.DateTime, default=datetime.utcnow)

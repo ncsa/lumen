@@ -4,8 +4,9 @@ from flask import Blueprint, redirect, url_for, session, render_template, curren
 
 from app.extensions import db, oauth
 from app.models.entity import Entity
+from app.models.entity_model_balance import EntityModelBalance
 from app.models.model_config import ModelConfig
-from app.models.model_limit import ModelLimit
+from app.models.entity_model_limit import EntityModelLimit
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -24,7 +25,7 @@ def make_initials(name: str) -> str:
 
 
 def seed_model_limits(entity: Entity):
-    """Create ModelLimit rows for all active models using models.yaml defaults."""
+    """Create EntityModelLimit rows for all active models using models.yaml defaults."""
     from flask import current_app
 
     yaml_data = current_app.config.get("YAML_DATA", {})
@@ -34,19 +35,23 @@ def seed_model_limits(entity: Entity):
     starting = tokens_cfg.get("starting", maximum)
 
     for model_config in ModelConfig.query.filter_by(active=True).all():
-        existing = ModelLimit.query.filter_by(
+        existing = EntityModelLimit.query.filter_by(
             entity_id=entity.id, model_config_id=model_config.id
         ).first()
         if not existing:
-            limit = ModelLimit(
+            db.session.add(EntityModelLimit(
                 entity_id=entity.id,
                 model_config_id=model_config.id,
                 max_tokens=maximum,
                 refresh_tokens=refresh,
                 starting_tokens=starting,
+            ))
+        if not EntityModelBalance.query.filter_by(entity_id=entity.id, model_config_id=model_config.id).first():
+            db.session.add(EntityModelBalance(
+                entity_id=entity.id,
+                model_config_id=model_config.id,
                 tokens_left=starting,
-            )
-            db.session.add(limit)
+            ))
 
 
 @auth_bp.route("/")

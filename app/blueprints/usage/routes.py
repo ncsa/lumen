@@ -10,7 +10,7 @@ from app.models.api_key import APIKey
 from app.models.entity import Entity
 from app.models.entity_manager import EntityManager
 from app.models.model_config import ModelConfig
-from app.models.model_limit import ModelLimit
+from app.models.entity_model_balance import EntityModelBalance
 from app.models.model_stat import ModelStat
 from app.services.llm import get_effective_limit
 
@@ -49,10 +49,9 @@ def _get_usage_data(eid: int) -> dict:
 
     # Per-model limits: show all models the entity has access to via effective limits
     all_models = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
-    state_rows = {
+    balance_rows = {
         r.model_config_id: r
-        for r in ModelLimit.query.filter_by(entity_id=eid).all()
-        if r.model_config_id is not None
+        for r in EntityModelBalance.query.filter_by(entity_id=eid).all()
     }
     model_limits = []
     for mc in all_models:
@@ -60,9 +59,9 @@ def _get_usage_data(eid: int) -> dict:
         if eff is None:
             continue
         max_tokens, refresh_tokens, _starting = eff
-        state = state_rows.get(mc.id)
-        tokens_left = state.tokens_left if state else 0
-        last_refill_at = state.last_refill_at if state else None
+        bal = balance_rows.get(mc.id)
+        tokens_left = bal.tokens_left if bal else 0
+        last_refill_at = bal.last_refill_at if bal else None
         model_limits.append({
             "model_name": mc.model_name,
             "token_limit": max_tokens,

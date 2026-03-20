@@ -5,9 +5,10 @@ from app.extensions import db
 from app.models.entity import Entity
 from app.models.group import Group
 from app.models.group_member import GroupMember
+from app.models.entity_model_balance import EntityModelBalance
 from app.models.group_model_limit import GroupModelLimit
 from app.models.model_config import ModelConfig
-from app.models.model_limit import ModelLimit
+from app.models.entity_model_limit import EntityModelLimit
 from app.services.llm import get_effective_limit
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
@@ -166,12 +167,13 @@ def users():
 @admin_required
 def user_limits(eid):
     entity = Entity.query.get_or_404(eid)
-    limits = ModelLimit.query.filter_by(entity_id=eid).all()
+    limits = EntityModelLimit.query.filter_by(entity_id=eid).all()
     models = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
 
     # Compute effective limits per model and current balance
     effective = {}
-    tokens_left = {l.model_config_id: l.tokens_left for l in limits if l.model_config_id is not None}
+    balance_rows = EntityModelBalance.query.filter_by(entity_id=eid).all()
+    tokens_left = {b.model_config_id: b.tokens_left for b in balance_rows}
     for model in models:
         eff = get_effective_limit(eid, model.id)
         effective[model.id] = eff
@@ -208,7 +210,7 @@ def upsert_user_limit(eid):
     refresh_tokens = int(request.form.get("refresh_tokens", 0))
     starting_tokens = int(request.form.get("starting_tokens", 0))
 
-    existing = ModelLimit.query.filter_by(
+    existing = EntityModelLimit.query.filter_by(
         entity_id=eid, model_config_id=model_config_id
     ).first()
     if existing:
@@ -216,14 +218,20 @@ def upsert_user_limit(eid):
         existing.refresh_tokens = refresh_tokens
         existing.starting_tokens = starting_tokens
     else:
-        db.session.add(ModelLimit(
+        db.session.add(EntityModelLimit(
             entity_id=eid,
             model_config_id=model_config_id,
             max_tokens=max_tokens,
             refresh_tokens=refresh_tokens,
             starting_tokens=starting_tokens,
-            tokens_left=starting_tokens,
         ))
+        if model_config_id is not None:
+            if not EntityModelBalance.query.filter_by(entity_id=eid, model_config_id=model_config_id).first():
+                db.session.add(EntityModelBalance(
+                    entity_id=eid,
+                    model_config_id=model_config_id,
+                    tokens_left=starting_tokens,
+                ))
     db.session.commit()
     return redirect(url_for("admin.user_limits", eid=eid))
 
@@ -231,11 +239,9 @@ def upsert_user_limit(eid):
 @admin_bp.route("/users/<int:eid>/limits/<int:lid>/delete", methods=["POST"])
 @admin_required
 def delete_user_limit(eid, lid):
-    limit = ModelLimit.query.get_or_404(lid)
+    limit = EntityModelLimit.query.get_or_404(lid)
     if limit.entity_id != eid:
         abort(404)
-    # Set to defer (-1) rather than deleting, so tokens_left state is preserved
-    limit.max_tokens = -1
-    limit.refresh_tokens = 0
+    db.session.delete(limit)
     db.session.commit()
     return redirect(url_for("admin.user_limits", eid=eid))
