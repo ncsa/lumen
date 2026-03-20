@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 
@@ -52,6 +53,10 @@ def create_app():
 
     chat_cfg = yaml_data.get("chat", {})
     app.config["CHAT_CONVERSATION_REMOVE_MODE"] = chat_cfg.get("remove", "hide")
+
+    logs_cfg = app_cfg.get("logs", {})
+    if not logs_cfg.get("access", True):
+        logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
     # Initialize extensions
     from .extensions import db, migrate, oauth
