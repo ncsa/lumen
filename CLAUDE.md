@@ -68,4 +68,4 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 Dependencies are managed with uv, code is run with uv
 Styles and collors match university of illinois, see https://builder3.toolkit.illinois.edu/getting_started/index.html
-W
+When adding variables to config.yaml, make sure they are hot loaded if possible or print a warning

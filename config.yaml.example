@@ -1,5 +1,6 @@
 app:
-  name: iLLM
+  name: Lumen
+  tagline: Illuminating AI access
   secret_key: change-me-to-something-random
   database_url: sqlite:///illm_dev.db
   debug: true   # set to false in production
@@ -47,9 +48,9 @@ groups:
   #     refresh: 0
 
 models:
-  # The top-level "name" is iLLM's internal model identifier — what callers use in API requests.
+  # The top-level "name" is Lumen's internal model identifier — what callers use in API requests.
   # Each endpoint can optionally set "model" to override what name is sent to that endpoint,
-  # allowing endpoints with different model identifiers to back the same iLLM model.
+  # allowing endpoints with different model identifiers to back the same Lumen model.
 
   - name: gpt-4o
     active: true

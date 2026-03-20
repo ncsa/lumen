@@ -55,7 +55,8 @@ def _watcher(app, config_path):
                 app.config["YAML_DATA"] = new_data
 
                 app_cfg = new_data.get("app", {})
-                app.config["APP_NAME"] = app_cfg.get("name", "iLLM")
+                app.config["APP_NAME"] = app_cfg.get("name", "Lumen")
+                app.config["APP_TAGLINE"] = app_cfg.get("tagline", "")
 
                 logs_cfg = app_cfg.get("logs", {})
                 werkzeug_level = logging.WARNING if not logs_cfg.get("access", True) else logging.INFO

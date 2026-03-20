@@ -20,7 +20,7 @@
     <div class="card shadow-sm p-5 text-center" style="max-width:420px;width:100%">
       <img src="{{ url_for('static', filename='img/block-i.png') }}" alt="I" style="height:80px;width:78px" class="mb-2 d-block mx-auto">
       <h1 class="mb-2 fw-bold">{{ app_name }}</h1>
-      <p class="text-muted mb-4">Your AI gateway</p>
+      {% if app_tagline %}<p class="text-muted mb-4">{{ app_tagline }}</p>{% endif %}
       <a href="{{ url_for('auth.login') }}" class="btn btn-login btn-lg">Login with OAuth2</a>
     </div>
   </main>

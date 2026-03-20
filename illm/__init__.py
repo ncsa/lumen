@@ -45,7 +45,8 @@ def create_app():
         app.config["SQLALCHEMY_DATABASE_URI"] = db_url
     if "debug" in app_cfg:
         app.config["DEBUG"] = app_cfg["debug"]
-    app.config["APP_NAME"] = app_cfg.get("name", "iLLM")
+    app.config["APP_NAME"] = app_cfg.get("name", "Lumen")
+    app.config["APP_TAGLINE"] = app_cfg.get("tagline", "")
 
     oauth2_cfg = yaml_data.get("oauth2", {})
     for key in ("client_id", "client_secret", "server_metadata_url", "redirect_uri", "scopes"):
@@ -100,7 +101,7 @@ def create_app():
     # Context processor: inject app_name and nav_services into all templates
     @app.context_processor
     def inject_nav():
-        result = {"app_name": app.config["APP_NAME"]}
+        result = {"app_name": app.config["APP_NAME"], "app_tagline": app.config["APP_TAGLINE"]}
         if not session.get("entity_id"):
             result["nav_services"] = []
             return result
