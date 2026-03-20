@@ -53,6 +53,8 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
 <script>
 (function () {
   // ── Chat layout height ───────────────────────────────────────
@@ -184,7 +186,11 @@
 
     const bubble = document.createElement("div");
     bubble.className = "chat-bubble " + (isUser ? "chat-bubble-user" : "chat-bubble-assistant");
-    bubble.appendChild(document.createTextNode(content));
+    if (isUser) {
+      bubble.appendChild(document.createTextNode(content));
+    } else {
+      bubble.innerHTML = DOMPurify.sanitize(marked.parse(content));
+    }
 
     const ts = document.createElement("small");
     ts.className = "msg-meta d-flex align-items-center gap-1";
