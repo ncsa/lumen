@@ -63,3 +63,9 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+---
+
+Dependencies are managed with uv, code is run with uv
+Styles and collors match university of illinois, see https://builder3.toolkit.illinois.edu/getting_started/index.html
+W

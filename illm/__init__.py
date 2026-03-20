@@ -45,6 +45,7 @@ def create_app():
         app.config["SQLALCHEMY_DATABASE_URI"] = db_url
     if "debug" in app_cfg:
         app.config["DEBUG"] = app_cfg["debug"]
+    app.config["APP_NAME"] = app_cfg.get("name", "iLLM")
 
     oauth2_cfg = yaml_data.get("oauth2", {})
     for key in ("client_id", "client_secret", "server_metadata_url", "redirect_uri", "scopes"):
@@ -96,18 +97,21 @@ def create_app():
     from illm.commands import init_db_cmd
     app.cli.add_command(init_db_cmd)
 
-    # Context processor: inject nav_services into all templates
+    # Context processor: inject app_name and nav_services into all templates
     @app.context_processor
     def inject_nav():
+        result = {"app_name": app.config["APP_NAME"]}
         if not session.get("entity_id"):
-            return {"nav_services": []}
+            result["nav_services"] = []
+            return result
         from illm.models.entity_manager import EntityManager
         from illm.models.entity import Entity
 
         assocs = EntityManager.query.filter_by(user_entity_id=session["entity_id"]).all()
         service_ids = [a.service_entity_id for a in assocs]
         if not service_ids:
-            return {"nav_services": []}
+            result["nav_services"] = []
+            return result
         services = (
             Entity.query.filter(
                 Entity.id.in_(service_ids),
@@ -117,7 +121,8 @@ def create_app():
             .order_by(Entity.name)
             .all()
         )
-        return {"nav_services": services}
+        result["nav_services"] = services
+        return result
 
     # Sync models and groups from yaml into DB on every startup
     from illm.commands import sync_models_from_yaml, sync_groups_from_yaml
