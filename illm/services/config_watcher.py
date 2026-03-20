@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 _RESTART_REQUIRED = [
     ("app", "secret_key"),
     ("app", "database_url"),
+    ("app", "debug"),
 ]
 
 
@@ -52,6 +53,14 @@ def _watcher(app, config_path):
                 old_data = app.config.get("YAML_DATA", {})
                 _check_restart_required(old_data, new_data)
                 app.config["YAML_DATA"] = new_data
+
+                app_cfg = new_data.get("app", {})
+                app.config["APP_NAME"] = app_cfg.get("name", "iLLM")
+
+                logs_cfg = app_cfg.get("logs", {})
+                werkzeug_level = logging.WARNING if not logs_cfg.get("access", True) else logging.INFO
+                logging.getLogger("werkzeug").setLevel(werkzeug_level)
+
                 chat_cfg = new_data.get("chat", {})
                 app.config["CHAT_CONVERSATION_REMOVE_MODE"] = chat_cfg.get("remove", "hide")
                 from illm.commands import sync_models_from_yaml, sync_groups_from_yaml
