@@ -112,9 +112,9 @@
       <!-- Web Chat row -->
       <tr>
         <td>Web Chat</td>
-        <td class="text-end">{{ chat_agg[0] or 0 }}</td>
-        <td class="text-end">{{ chat_agg[1] or 0 }}</td>
-        <td class="text-end">{{ chat_agg[2] or 0 }}</td>
+        <td class="text-end">{{ "{:,}".format(chat_agg[0] or 0) }}</td>
+        <td class="text-end">{{ "{:,}".format(chat_agg[1] or 0) }}</td>
+        <td class="text-end">{{ "{:,}".format(chat_agg[2] or 0) }}</td>
         <td class="text-end">${{ "%.6f"|format((chat_agg[3] or 0)|float) }}</td>
         <td>
           {{ chat_agg[4].strftime("%Y-%m-%d %H:%M UTC") if chat_agg[4] else "—" }}
@@ -131,9 +131,9 @@
           <span class="badge bg-secondary ms-1 text-decoration-none">deleted</span>
           {% endif %}
         </td>
-        <td class="text-end">{{ key.requests }}</td>
-        <td class="text-end">{{ key.input_tokens }}</td>
-        <td class="text-end">{{ key.output_tokens }}</td>
+        <td class="text-end">{{ "{:,}".format(key.requests) }}</td>
+        <td class="text-end">{{ "{:,}".format(key.input_tokens) }}</td>
+        <td class="text-end">{{ "{:,}".format(key.output_tokens) }}</td>
         <td class="text-end">${{ "%.6f"|format(key.cost|float) }}</td>
         <td>{{ key.last_used_at.strftime("%Y-%m-%d %H:%M UTC") if key.last_used_at else "—" }}</td>
         {% if not scope_entity %}
@@ -170,9 +170,9 @@
       {% for row in model_usage %}
       <tr>
         <td>{{ row[0] }}</td>
-        <td class="text-end">{{ row[1] or 0 }}</td>
-        <td class="text-end">{{ row[2] or 0 }}</td>
-        <td class="text-end">{{ row[3] or 0 }}</td>
+        <td class="text-end">{{ "{:,}".format(row[1] or 0) }}</td>
+        <td class="text-end">{{ "{:,}".format(row[2] or 0) }}</td>
+        <td class="text-end">{{ "{:,}".format(row[3] or 0) }}</td>
         <td class="text-end">${{ "%.6f"|format((row[4] or 0)|float) }}</td>
         <td>{{ row[5].strftime("%Y-%m-%d %H:%M UTC") if row[5] else "—" }}</td>
       </tr>

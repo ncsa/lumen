@@ -10,7 +10,7 @@ oauth2:
   # Example (CILogon): https://cilogon.org/.well-known/openid-configuration
   server_metadata_url:
   redirect_uri: http://localhost:5000/callback
-  scopes: openid email profile
+  scopes: openid email profile org.cilogon.userinfo  # org.cilogon.userinfo enables affiliation, member_of, idp, ou for group rules
 
 chat:
   remove: hide   # "hide" = soft-delete conversations (recoverable) | "delete" = hard delete
@@ -21,6 +21,29 @@ users:
     refresh: 0    # tokens replenished per hour (0 = no auto-refresh)
   admins:
     - admin@example.com
+
+groups:
+  # Groups are created/managed via the admin UI. Rules here auto-assign users at login
+  # based on CILogon userinfo fields (requires org.cilogon.userinfo scope).
+  # Supported matchers: contains (substring) or equals (exact match).
+
+  # aifarms:
+  #   rules:
+  #     - field: member_of
+  #       contains: icc-grp-aifarms   # substring match against the member_of field
+  #   default:
+  #     max: 0
+  #     refresh: 0
+
+  # uiuc-staff:
+  #   rules:
+  #     - field: affiliation
+  #       contains: staff@illinois.edu
+  #     - field: idp
+  #       equals: urn:mace:incommon:uiuc.edu   # exact match
+  #   default:
+  #     max: 0
+  #     refresh: 0
 
 models:
   # The top-level "name" is iLLM's internal model identifier — what callers use in API requests.

@@ -68,10 +68,10 @@
         {% if limit.max_tokens == -2 %}<span class="text-success">Unlimited</span>
         {% elif limit.max_tokens == -1 %}<span class="text-muted">Defer</span>
         {% elif limit.max_tokens == 0 %}<span class="text-danger">Blocked</span>
-        {% else %}{{ limit.max_tokens }}{% endif %}
+        {% else %}{{ "{:,}".format(limit.max_tokens) }}{% endif %}
       </td>
-      <td>{{ limit.refresh_tokens }}</td>
-      <td>{{ limit.starting_tokens }}</td>
+      <td>{{ "{:,}".format(limit.refresh_tokens) }}</td>
+      <td>{{ "{:,}".format(limit.starting_tokens) }}</td>
       <td>
         {% if not group.config_managed %}
         <form method="post" action="{{ url_for('admin.delete_group_limit', gid=group.id, lid=limit.id) }}" class="d-inline">

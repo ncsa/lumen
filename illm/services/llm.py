@@ -10,6 +10,7 @@ from illm.models.entity_model_limit import EntityModelLimit
 from illm.models.model_config import ModelConfig
 from illm.models.model_endpoint import ModelEndpoint
 from illm.models.model_stat import ModelStat
+from illm.models.group import Group
 from illm.models.group_member import GroupMember
 from illm.models.group_model_limit import GroupModelLimit
 from illm.services.cost import calculate_cost
@@ -48,14 +49,20 @@ def get_effective_limit(entity_id: int, model_config_id: int):
     4. If all defer => fall back to default rows (model_config_id = NULL).
     5. Apply same logic to defaults. No config => BLOCKED.
     """
-    # Collect group IDs for this entity
-    memberships = GroupMember.query.filter_by(entity_id=entity_id).all()
-    group_ids = [m.group_id for m in memberships]
+    # Collect active group IDs for this entity
+    group_ids = [
+        m.group_id for m in (
+            GroupMember.query
+            .join(Group, Group.id == GroupMember.group_id)
+            .filter(GroupMember.entity_id == entity_id, Group.active == True)  # noqa: E712
+            .all()
+        )
+    ]
 
     def resolve(rows):
         """Given list of (max_tokens, refresh_tokens, starting_tokens), apply resolution."""
         if not rows:
-            return None
+            return "defer"
         explicit = [(mt, rt, st) for mt, rt, st in rows if mt != -1]
         if explicit:
             positives = [(mt, rt, st) for mt, rt, st in explicit if mt > 0 or mt == -2]

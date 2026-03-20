@@ -35,6 +35,40 @@ Or use the convenience script:
 ./dev.sh
 ```
 
+## CILogon Setup
+
+1. Register your application at https://cilogon.org/oauth2/register
+2. Set the redirect URI to `https://your-domain/callback` (or `http://localhost:5000/callback` for development)
+3. Request the following scopes: `openid email profile org.cilogon.userinfo`
+
+The `org.cilogon.userinfo` scope is required to receive campus-specific attributes such as:
+- `affiliation` — semicolon-separated list (e.g. `staff@illinois.edu;member@illinois.edu`)
+- `member_of` — semicolon-separated URNs for campus cluster group memberships
+- `idp` — the user's identity provider URN
+- `ou` — organizational unit
+
+Without `org.cilogon.userinfo`, any group `rules:` that reference these fields will not match because the fields will be absent from the userinfo response.
+
+### Group auto-assignment rules
+
+Add `rules:` inside a group definition in `config.yaml` to auto-assign users at login:
+
+```yaml
+groups:
+  aifarms:
+    rules:
+      - field: member_of
+        contains: icc-grp-aifarms   # substring match
+  uiuc-staff:
+    rules:
+      - field: affiliation
+        contains: staff@illinois.edu
+      - field: idp
+        equals: urn:mace:incommon:uiuc.edu   # exact match
+```
+
+Each rule tests one CILogon userinfo field. The first matching rule assigns the group; remaining rules are skipped. Groups assigned via rules are marked `config_managed` and removed if the rule no longer matches on next login.
+
 ### 3. Run (production)
 
 Production uses uvicorn via `entrypoint.sh` (e.g. in Docker):

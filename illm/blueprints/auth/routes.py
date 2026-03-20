@@ -24,7 +24,7 @@ def make_initials(name: str) -> str:
     return "??"
 
 
-def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict):
+def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=None):
     """Sync group memberships and per-user model limits from yaml_data. Does not commit."""
     from illm.models.group import Group
     from illm.models.group_member import GroupMember
@@ -39,6 +39,27 @@ def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict):
     for name in users_cfg.get(email, {}).get("groups", []):
         if name not in desired_names:
             desired_names.append(name)
+
+    # Auto-assign groups via CILogon attribute rules
+    if userinfo:
+        groups_cfg = yaml_data.get("groups", {})
+        for group_name, group_def in groups_cfg.items():
+            if group_name in desired_names:
+                continue
+            for rule in (group_def or {}).get("rules", []):
+                field = rule.get("field")
+                if not field:
+                    continue
+                field_value = userinfo.get(field) or ""
+                if "contains" in rule:
+                    matched = rule["contains"] in field_value
+                elif "equals" in rule:
+                    matched = field_value == rule["equals"]
+                else:
+                    matched = False
+                if matched:
+                    desired_names.append(group_name)
+                    break
 
     # Resolve group names to IDs (skip unknown)
     desired_ids = set()
@@ -147,7 +168,7 @@ def callback():
         entity.name = name
         entity.initials = make_initials(name)
 
-    sync_user_from_yaml(entity, email, yaml_data)
+    sync_user_from_yaml(entity, email, yaml_data, userinfo=userinfo)
     db.session.commit()
 
     admin_emails = yaml_data.get("admins", [])

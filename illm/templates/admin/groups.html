@@ -32,9 +32,12 @@
       <td>
         <a href="{{ url_for('admin.group_detail', gid=group.id) }}" class="btn btn-sm btn-outline-primary">View</a>
         {% if not group.config_managed %}
-        <form method="post" action="{{ url_for('admin.delete_group', gid=group.id) }}" class="d-inline"
-              onsubmit="return confirm('Deactivate this group?')">
-          <button class="btn btn-sm btn-outline-danger">Delete</button>
+        <form method="post" action="{{ url_for('admin.toggle_group', gid=group.id) }}" class="d-inline">
+          {% if group.active %}
+          <button class="btn btn-sm btn-outline-danger">Deactivate</button>
+          {% else %}
+          <button class="btn btn-sm btn-outline-success">Activate</button>
+          {% endif %}
         </form>
         {% endif %}
       </td>

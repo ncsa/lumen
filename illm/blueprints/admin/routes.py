@@ -61,13 +61,13 @@ def update_group(gid):
     return redirect(url_for("admin.group_detail", gid=gid))
 
 
-@admin_bp.route("/groups/<int:gid>/delete", methods=["POST"])
+@admin_bp.route("/groups/<int:gid>/toggle", methods=["POST"])
 @admin_required
-def delete_group(gid):
+def toggle_group(gid):
     group = Group.query.get_or_404(gid)
     if group.config_managed:
         abort(403)
-    group.active = False
+    group.active = not group.active
     db.session.commit()
     return redirect(url_for("admin.groups"))
 
@@ -196,7 +196,7 @@ def user_limits(eid):
     group_details = []
     for m in memberships:
         group = Group.query.get(m.group_id)
-        if group:
+        if group and group.active:
             glimits = GroupModelLimit.query.filter_by(group_id=group.id).order_by(
                 GroupModelLimit.model_config_id.nullsfirst()
             ).all()

@@ -24,10 +24,10 @@
       {% elif eff[0] == -2 %}
       <td colspan="4"><span class="text-success">Unlimited</span></td>
       {% else %}
-      <td>{{ eff[0] }}</td>
-      <td>{{ eff[1] }}</td>
-      <td>{{ eff[2] }}</td>
-      <td>{{ tokens_left.get(model.id, '—') }}</td>
+      <td>{{ "{:,}".format(eff[0]) }}</td>
+      <td>{{ "{:,}".format(eff[1]) }}</td>
+      <td>{{ "{:,}".format(eff[2]) }}</td>
+      {% set tl = tokens_left.get(model.id) %}<td>{{ "{:,}".format(tl) if tl is not none else '—' }}</td>
       {% endif %}
     </tr>
     {% else %}
@@ -62,10 +62,10 @@
       <td>
         {% if limit.max_tokens == -2 %}<span class="text-success">Unlimited</span>
         {% elif limit.max_tokens == 0 %}<span class="text-danger">Blocked</span>
-        {% else %}{{ limit.max_tokens }}{% endif %}
+        {% else %}{{ "{:,}".format(limit.max_tokens) }}{% endif %}
       </td>
-      <td>{{ limit.refresh_tokens }}</td>
-      <td>{{ limit.starting_tokens }}</td>
+      <td>{{ "{:,}".format(limit.refresh_tokens) }}</td>
+      <td>{{ "{:,}".format(limit.starting_tokens) }}</td>
       <td>
         {% if not limit.config_managed %}
         <form method="post" action="{{ url_for('admin.delete_user_limit', eid=entity.id, lid=limit.id) }}" class="d-inline">
@@ -113,10 +113,10 @@
         {% if gl.max_tokens == -2 %}<span class="text-success">Unlimited</span>
         {% elif gl.max_tokens == -1 %}<span class="text-muted">Defer</span>
         {% elif gl.max_tokens == 0 %}<span class="text-danger">Blocked</span>
-        {% else %}{{ gl.max_tokens }}{% endif %}
+        {% else %}{{ "{:,}".format(gl.max_tokens) }}{% endif %}
       </td>
-      <td>{{ gl.refresh_tokens }}</td>
-      <td>{{ gl.starting_tokens }}</td>
+      <td>{{ "{:,}".format(gl.refresh_tokens) }}</td>
+      <td>{{ "{:,}".format(gl.starting_tokens) }}</td>
     </tr>
     {% else %}
     <tr><td colspan="4" class="text-muted text-center">No limits set for this group.</td></tr>
