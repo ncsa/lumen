@@ -114,13 +114,18 @@ def create_app():
         )
         return {"nav_services": services}
 
-    # Sync models from yaml into DB on every startup
-    from illm.commands import sync_models_from_yaml
+    # Sync models and groups from yaml into DB on every startup
+    from illm.commands import sync_models_from_yaml, sync_groups_from_yaml
     with app.app_context():
         try:
             sync_models_from_yaml(yaml_data)
         except Exception as e:
             print(f"WARNING: Could not sync models from yaml (run 'flask db upgrade' first): {e}",
+                  file=sys.stderr)
+        try:
+            sync_groups_from_yaml(yaml_data)
+        except Exception as e:
+            print(f"WARNING: Could not sync groups from yaml (run 'flask db upgrade' first): {e}",
                   file=sys.stderr)
 
     # Start background health checker

@@ -25,16 +25,18 @@
   <tbody>
     {% for group in groups %}
     <tr>
-      <td>{{ group.name }}</td>
+      <td>{{ group.name }}{% if group.config_managed %} 🔒{% endif %}</td>
       <td class="text-muted">{{ group.description or '' }}</td>
       <td>{{ member_counts[group.id] }}</td>
       <td>{% if group.active %}✓{% else %}<span class="text-danger">✗</span>{% endif %}</td>
       <td>
         <a href="{{ url_for('admin.group_detail', gid=group.id) }}" class="btn btn-sm btn-outline-primary">View</a>
+        {% if not group.config_managed %}
         <form method="post" action="{{ url_for('admin.delete_group', gid=group.id) }}" class="d-inline"
               onsubmit="return confirm('Deactivate this group?')">
           <button class="btn btn-sm btn-outline-danger">Delete</button>
         </form>
+        {% endif %}
       </td>
     </tr>
     {% else %}

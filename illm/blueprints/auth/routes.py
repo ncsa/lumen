@@ -24,34 +24,83 @@ def make_initials(name: str) -> str:
     return "??"
 
 
-def seed_model_limits(entity: Entity):
-    """Create EntityModelLimit rows for all active models using models.yaml defaults."""
-    from flask import current_app
+def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict):
+    """Sync group memberships and per-user model limits from yaml_data. Does not commit."""
+    from illm.models.group import Group
+    from illm.models.group_member import GroupMember
 
-    yaml_data = current_app.config.get("YAML_DATA", {})
-    tokens_cfg = yaml_data.get("users", {}).get("tokens", {})
-    maximum = tokens_cfg.get("maximum", 0)
-    refresh = tokens_cfg.get("refresh", 0)
-    starting = tokens_cfg.get("starting", maximum)
+    users_cfg = yaml_data.get("users", {})
 
-    for model_config in ModelConfig.query.filter_by(active=True).all():
-        existing = EntityModelLimit.query.filter_by(
-            entity_id=entity.id, model_config_id=model_config.id
-        ).first()
-        if not existing:
+    # Compute desired group names: implicit default + users.default.groups + users.<email>.groups
+    desired_names = ["default"]
+    for name in users_cfg.get("default", {}).get("groups", []):
+        if name not in desired_names:
+            desired_names.append(name)
+    for name in users_cfg.get(email, {}).get("groups", []):
+        if name not in desired_names:
+            desired_names.append(name)
+
+    # Resolve group names to IDs (skip unknown)
+    desired_ids = set()
+    for name in desired_names:
+        group = Group.query.filter_by(name=name).first()
+        if group:
+            desired_ids.add(group.id)
+
+    # Current memberships
+    existing_members = GroupMember.query.filter_by(entity_id=entity.id).all()
+    existing_by_group = {m.group_id: m for m in existing_members}
+
+    # Remove config_managed memberships no longer desired
+    for group_id, member in existing_by_group.items():
+        if member.config_managed and group_id not in desired_ids:
+            db.session.delete(member)
+
+    # Add missing desired groups
+    for group_id in desired_ids:
+        if group_id not in existing_by_group:
+            db.session.add(GroupMember(group_id=group_id, entity_id=entity.id, config_managed=True))
+
+    # Per-user model limits from users.<email>.models
+    models_cfg = users_cfg.get(email, {}).get("models", {})
+    existing_limits = {lim.model_config_id: lim
+                       for lim in EntityModelLimit.query.filter_by(entity_id=entity.id).all()}
+
+    desired_model_ids = set()
+    for model_key, limit_def in models_cfg.items():
+        if model_key == "default":
+            model_config_id = None
+        else:
+            mc = ModelConfig.query.filter_by(model_name=model_key).first()
+            if mc is None:
+                continue
+            model_config_id = mc.id
+        desired_model_ids.add(model_config_id)
+
+        max_tokens = limit_def.get("max", 0)
+        refresh_tokens = limit_def.get("refresh", 0)
+        starting_tokens = limit_def.get("starting", max_tokens)
+
+        if model_config_id in existing_limits:
+            lim = existing_limits[model_config_id]
+            lim.max_tokens = max_tokens
+            lim.refresh_tokens = refresh_tokens
+            lim.starting_tokens = starting_tokens
+            lim.config_managed = True
+        else:
             db.session.add(EntityModelLimit(
                 entity_id=entity.id,
-                model_config_id=model_config.id,
-                max_tokens=maximum,
-                refresh_tokens=refresh,
-                starting_tokens=starting,
+                model_config_id=model_config_id,
+                max_tokens=max_tokens,
+                refresh_tokens=refresh_tokens,
+                starting_tokens=starting_tokens,
+                config_managed=True,
             ))
-        if not EntityModelBalance.query.filter_by(entity_id=entity.id, model_config_id=model_config.id).first():
-            db.session.add(EntityModelBalance(
-                entity_id=entity.id,
-                model_config_id=model_config.id,
-                tokens_left=starting,
-            ))
+
+    # Remove config_managed limits no longer in yaml for this user
+    for model_config_id, lim in existing_limits.items():
+        if lim.config_managed and model_config_id not in desired_model_ids:
+            db.session.delete(lim)
 
 
 @auth_bp.route("/")
@@ -78,6 +127,8 @@ def callback():
 
     name = userinfo.get("name") or userinfo.get("given_name") or email.split("@")[0]
 
+    yaml_data = current_app.config.get("YAML_DATA", {})
+
     entity = Entity.query.filter_by(email=email, entity_type="user").first()
     if not entity:
         entity = Entity(
@@ -90,17 +141,16 @@ def callback():
         )
         db.session.add(entity)
         db.session.flush()
-        seed_model_limits(entity)
-        db.session.commit()
     elif not entity.active:
         return "Account disabled.", 403
     else:
         entity.name = name
         entity.initials = make_initials(name)
-        db.session.commit()
 
-    yaml_data = current_app.config.get("YAML_DATA", {})
-    admin_emails = yaml_data.get("users", {}).get("admins", [])
+    sync_user_from_yaml(entity, email, yaml_data)
+    db.session.commit()
+
+    admin_emails = yaml_data.get("admins", [])
 
     session["entity_id"] = entity.id
     session["entity_name"] = entity.name

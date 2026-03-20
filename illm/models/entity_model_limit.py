@@ -12,3 +12,4 @@ class EntityModelLimit(db.Model):
     max_tokens = db.Column(db.BigInteger, default=0, nullable=False)
     refresh_tokens = db.Column(db.Integer, default=0, nullable=False)
     starting_tokens = db.Column(db.BigInteger, default=0, nullable=False)
+    config_managed = db.Column(db.Boolean, default=False, nullable=False)

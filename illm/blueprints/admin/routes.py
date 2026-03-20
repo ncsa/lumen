@@ -53,6 +53,8 @@ def group_detail(gid):
 @admin_required
 def update_group(gid):
     group = Group.query.get_or_404(gid)
+    if group.config_managed:
+        abort(403)
     group.name = request.form.get("name", group.name).strip()
     group.description = request.form.get("description", "").strip() or None
     db.session.commit()
@@ -63,6 +65,8 @@ def update_group(gid):
 @admin_required
 def delete_group(gid):
     group = Group.query.get_or_404(gid)
+    if group.config_managed:
+        abort(403)
     group.active = False
     db.session.commit()
     return redirect(url_for("admin.groups"))
@@ -72,6 +76,8 @@ def delete_group(gid):
 @admin_required
 def add_member(gid):
     group = Group.query.get_or_404(gid)
+    if group.config_managed:
+        abort(403)
     email = request.form.get("email", "").strip()
     entity = Entity.query.filter_by(email=email, entity_type="user").first()
     if entity:
@@ -88,6 +94,8 @@ def remove_member(gid, mid):
     member = GroupMember.query.get_or_404(mid)
     if member.group_id != gid:
         abort(404)
+    if member.config_managed:
+        abort(403)
     entity_id = member.entity_id
     db.session.delete(member)
     db.session.commit()
@@ -109,7 +117,9 @@ def group_limits(gid):
 @admin_bp.route("/groups/<int:gid>/limits", methods=["POST"])
 @admin_required
 def upsert_group_limit(gid):
-    Group.query.get_or_404(gid)
+    group = Group.query.get_or_404(gid)
+    if group.config_managed:
+        abort(403)
     raw_model = request.form.get("model_config_id", "").strip()
     model_config_id = int(raw_model) if raw_model else None
     max_tokens = int(request.form.get("max_tokens", -1))
@@ -141,6 +151,9 @@ def delete_group_limit(gid, lid):
     limit = GroupModelLimit.query.get_or_404(lid)
     if limit.group_id != gid:
         abort(404)
+    group = Group.query.get_or_404(gid)
+    if group.config_managed:
+        abort(403)
     db.session.delete(limit)
     db.session.commit()
     return redirect(url_for("admin.group_detail", gid=gid))
@@ -214,6 +227,8 @@ def upsert_user_limit(eid):
         entity_id=eid, model_config_id=model_config_id
     ).first()
     if existing:
+        if existing.config_managed:
+            abort(403)
         existing.max_tokens = max_tokens
         existing.refresh_tokens = refresh_tokens
         existing.starting_tokens = starting_tokens
@@ -242,6 +257,8 @@ def delete_user_limit(eid, lid):
     limit = EntityModelLimit.query.get_or_404(lid)
     if limit.entity_id != eid:
         abort(404)
+    if limit.config_managed:
+        abort(403)
     db.session.delete(limit)
     db.session.commit()
     return redirect(url_for("admin.user_limits", eid=eid))

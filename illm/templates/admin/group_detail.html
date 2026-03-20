@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Admin – Group: {{ group.name }}{% endblock %}
 {% block content %}
-<h1>Group: {{ group.name }}</h1>
+<h1>Group: {{ group.name }}{% if group.config_managed %} 🔒{% endif %}</h1>
 <ilw-content>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <small class="text-muted">{% if group.active %}active{% else %}inactive{% endif %}</small>
@@ -19,9 +19,13 @@
       <td>{{ entity.name }}</td>
       <td>{{ entity.email }}</td>
       <td>
+        {% if not member.config_managed %}
         <form method="post" action="{{ url_for('admin.remove_member', gid=group.id, mid=member.id) }}" class="d-inline">
           <button class="btn btn-sm btn-outline-danger">Remove</button>
         </form>
+        {% else %}
+        🔒
+        {% endif %}
       </td>
     </tr>
     {% else %}
@@ -30,14 +34,20 @@
   </tbody>
 </table>
 
+{% if not group.config_managed %}
 <form method="post" action="{{ url_for('admin.add_member', gid=group.id) }}" class="d-flex gap-2 mb-4">
   <input name="email" type="email" class="form-control form-control-sm" placeholder="User email" required>
   <button class="btn btn-primary btn-sm">Add Member</button>
 </form>
+{% else %}
+<p class="text-muted mb-4"><small>🔒 Group membership is managed by config.yaml.</small></p>
+{% endif %}
 
 <div class="d-flex justify-content-between align-items-center mb-2">
   <h5 class="mb-0">Token Limits</h5>
+  {% if not group.config_managed %}
   <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addLimitModal">+ Add Limit</button>
+  {% endif %}
 </div>
 
 <table class="table table-bordered align-middle">
@@ -63,9 +73,13 @@
       <td>{{ limit.refresh_tokens }}</td>
       <td>{{ limit.starting_tokens }}</td>
       <td>
+        {% if not group.config_managed %}
         <form method="post" action="{{ url_for('admin.delete_group_limit', gid=group.id, lid=limit.id) }}" class="d-inline">
           <button class="btn btn-sm btn-outline-danger">Delete</button>
         </form>
+        {% else %}
+        🔒
+        {% endif %}
       </td>
     </tr>
     {% else %}
@@ -74,6 +88,7 @@
   </tbody>
 </table>
 
+{% if not group.config_managed %}
 <!-- Add Limit Modal -->
 <div class="modal fade" id="addLimitModal" tabindex="-1">
   <div class="modal-dialog">
@@ -112,5 +127,6 @@
     </form>
   </div>
 </div>
+{% endif %}
 </ilw-content>
 {% endblock %}

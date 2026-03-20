@@ -54,11 +54,15 @@ def _watcher(app, config_path):
                 app.config["YAML_DATA"] = new_data
                 chat_cfg = new_data.get("chat", {})
                 app.config["CHAT_CONVERSATION_REMOVE_MODE"] = chat_cfg.get("remove", "hide")
-                from illm.commands import sync_models_from_yaml
+                from illm.commands import sync_models_from_yaml, sync_groups_from_yaml
                 try:
                     sync_models_from_yaml(new_data)
                 except Exception as e:
                     logger.warning("config_watcher: sync_models_from_yaml failed: %s", e)
+                try:
+                    sync_groups_from_yaml(new_data)
+                except Exception as e:
+                    logger.warning("config_watcher: sync_groups_from_yaml failed: %s", e)
 
             logger.info("config.yaml reloaded")
         except Exception as e:

@@ -9,6 +9,7 @@ class Group(db.Model):
     name = db.Column(db.String(128), unique=True, nullable=False)
     description = db.Column(db.Text, nullable=True)
     active = db.Column(db.Boolean, default=True, nullable=False)
+    config_managed = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     members = db.relationship("GroupMember", backref="group", lazy="dynamic", cascade="all, delete-orphan")

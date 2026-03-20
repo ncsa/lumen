@@ -48,6 +48,69 @@ def sync_models_from_yaml(yaml_data):
     db.session.commit()
 
 
+def sync_groups_from_yaml(yaml_data):
+    """Upsert Group and GroupModelLimit rows from yaml_data['groups']. Must run inside an app context."""
+    from illm.models.group import Group
+    from illm.models.group_model_limit import GroupModelLimit
+    from illm.models.model_config import ModelConfig
+
+    groups_cfg = yaml_data.get("groups", {})
+    yaml_group_names = set(groups_cfg.keys())
+
+    for group_name, group_def in groups_cfg.items():
+        group = Group.query.filter_by(name=group_name).first()
+        if not group:
+            group = Group(name=group_name, config_managed=True)
+            db.session.add(group)
+            db.session.flush()
+        else:
+            group.config_managed = True
+
+        # Build desired limits: map model_config_id -> (max, refresh, starting)
+        desired_limits = {}
+        for model_key, limit_def in group_def.items():
+            if model_key == "default":
+                model_config_id = None
+            else:
+                mc = ModelConfig.query.filter_by(model_name=model_key).first()
+                if mc is None:
+                    continue
+                model_config_id = mc.id
+            max_tokens = limit_def.get("max", 0)
+            refresh_tokens = limit_def.get("refresh", 0)
+            starting_tokens = limit_def.get("starting", max_tokens)
+            desired_limits[model_config_id] = (max_tokens, refresh_tokens, starting_tokens)
+
+        # Upsert GroupModelLimit rows
+        existing_limits = {lim.model_config_id: lim for lim in group.limits.all()}
+        for model_config_id, (max_t, refresh_t, starting_t) in desired_limits.items():
+            if model_config_id in existing_limits:
+                lim = existing_limits[model_config_id]
+                lim.max_tokens = max_t
+                lim.refresh_tokens = refresh_t
+                lim.starting_tokens = starting_t
+            else:
+                db.session.add(GroupModelLimit(
+                    group_id=group.id,
+                    model_config_id=model_config_id,
+                    max_tokens=max_t,
+                    refresh_tokens=refresh_t,
+                    starting_tokens=starting_t,
+                ))
+
+        # Remove limits no longer in yaml (for this group)
+        for model_config_id, lim in existing_limits.items():
+            if model_config_id not in desired_limits:
+                db.session.delete(lim)
+
+    # Remove config_managed groups no longer in yaml
+    for group in Group.query.filter_by(config_managed=True).all():
+        if group.name not in yaml_group_names:
+            db.session.delete(group)
+
+    db.session.commit()
+
+
 @click.command("init-db")
 @with_appcontext
 def init_db_cmd():
