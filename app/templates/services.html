@@ -2,14 +2,15 @@
 {% block title %}Services — iLLM{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4>Services</h4>
-  {% if session.get("is_admin") %}
+<h1>Services</h1>
+<ilw-content>
+{% if session.get("is_admin") %}
+<div class="mb-3">
   <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createServiceModal">
     + New Service
   </button>
-  {% endif %}
 </div>
+{% endif %}
 
 {% if services %}
 <div class="row g-3">
@@ -80,6 +81,7 @@
     </div>
   </div>
 </div>
+</ilw-content>
 {% endblock %}
 
 {% block scripts %}

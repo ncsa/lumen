@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Admin – Group: {{ group.name }}{% endblock %}
 {% block content %}
+<h1>Group: {{ group.name }}</h1>
+<ilw-content>
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">Group: {{ group.name }}
-    <small class="text-muted fs-6">{% if group.active %}active{% else %}inactive{% endif %}</small>
-  </h4>
+  <small class="text-muted">{% if group.active %}active{% else %}inactive{% endif %}</small>
   <a href="{{ url_for('admin.groups') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
 </div>
 
@@ -112,4 +112,5 @@
     </form>
   </div>
 </div>
+</ilw-content>
 {% endblock %}

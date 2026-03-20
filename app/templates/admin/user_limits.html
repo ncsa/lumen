@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Admin – Limits: {{ entity.name }}{% endblock %}
 {% block content %}
+<h1>Limits: {{ entity.name }}</h1>
+<ilw-content>
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h4 class="mb-0">Limits: {{ entity.name }}
-    <small class="text-muted fs-6">{{ entity.email }}</small>
-  </h4>
+  <small class="text-muted">{{ entity.email }}</small>
   <a href="{{ url_for('admin.users') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
 </div>
 
@@ -161,4 +161,5 @@
     </form>
   </div>
 </div>
+</ilw-content>
 {% endblock %}

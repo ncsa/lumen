@@ -1,13 +1,14 @@
 /* ── Chat page layout ────────────────────────────────────────── */
 .chat-page-layout {
   display: flex;
-  height: calc(100vh - 76px);
+  height: calc(100vh - var(--chat-top, 200px) - 100px);
   overflow: hidden;
   margin: 0 -1.5rem;
 }
 
 .chat-main {
   min-width: 0;
+  min-height: 0;
 }
 
 .chat-messages {
@@ -17,6 +18,7 @@
 /* ── Sidebar ─────────────────────────────────────────────────── */
 .conv-list {
   overflow-y: auto;
+  min-height: 0;
 }
 
 .conv-item {
@@ -84,14 +86,14 @@
 }
 
 .chat-bubble-assistant {
-  background-color: #e9ecef;
-  color: #212529;
+  background-color: var(--il-altgeld, #e84a27);
+  color: #fff;
   border-bottom-left-radius: 0.25rem;
 }
 
 /* ── Message metadata & info icon ────────────────────────────── */
 .msg-meta {
-  font-size: 0.72rem;
+  font-size: 0.82rem;
   color: #6c757d;
   margin-top: 2px;
 }
@@ -154,18 +156,37 @@
   background-color: #13294b;
 }
 
+/* ── Override Bootstrap outline-primary with il-blue ─────────── */
+.btn-outline-primary {
+  color: #13294b !important;
+  border-color: #13294b !important;
+}
+
+.btn-outline-primary:hover,
+.btn-outline-primary:focus,
+.btn-outline-primary:active {
+  background-color: #13294b !important;
+  border-color: #13294b !important;
+  color: #fff !important;
+}
+
 /* ── Override Bootstrap primary color with il-blue ───────────── */
-.btn-primary {
-  background-color: #13294b;
-  border-color: #13294b;
+.btn-primary,
+ilw-content .btn-primary {
+  background-color: #13294b !important;
+  border-color: #13294b !important;
+  color: #fff !important;
 }
 
 .btn-primary:hover,
 .btn-primary:focus,
 .btn-primary:active,
-.btn-primary.active {
-  background-color: #0e1f38;
-  border-color: #0e1f38;
+.btn-primary.active,
+ilw-content .btn-primary:hover,
+ilw-content .btn-primary:focus,
+ilw-content .btn-primary:active {
+  background-color: #0e1f38 !important;
+  border-color: #0e1f38 !important;
 }
 
 .btn-primary:focus,
@@ -217,6 +238,13 @@
   background-color: #0e1f38;
   border-color: #0e1f38;
   color: #fff;
+}
+
+/* ── Chat input ──────────────────────────────────────────────── */
+#chat-input {
+  max-height: 150px;
+  overflow-y: auto;
+  resize: none;
 }
 
 /* ── Misc ────────────────────────────────────────────────────── */

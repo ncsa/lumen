@@ -2,19 +2,15 @@
 {% block title %}Usage — iLLM{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h4>
-    Usage
-    {% if scope_entity %}
-    <small class="text-muted fw-normal">— {{ scope_entity.name }}</small>
-    {% endif %}
-  </h4>
+<div class="d-flex justify-content-between align-items-center">
+  <h1>Usage{% if scope_entity %} — {{ scope_entity.name }}{% endif %}</h1>
   {% if not scope_entity %}
   <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#apiKeyModal">
     + New API Key
   </button>
   {% endif %}
 </div>
+<ilw-content>
 
 <!-- Status summary cards -->
 <div class="row g-3 mb-4">
@@ -223,6 +219,7 @@
   </div>
 </div>
 {% endif %}
+</ilw-content>
 {% endblock %}
 
 {% block scripts %}

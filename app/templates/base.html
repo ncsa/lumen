@@ -6,84 +6,70 @@
   <title>{% block title %}iLLM{% endblock %}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <link rel="stylesheet" href="https://cdn.toolkit.illinois.edu/3/toolkit.css">
+  <script type="module" src="https://cdn.toolkit.illinois.edu/3/toolkit.js"></script>
 </head>
 <body>
 
-<nav class="navbar navbar-expand-lg navbar-illm">
-  <div class="container-fluid">
-    <a class="navbar-brand fw-bold d-flex align-items-center" href="{{ url_for('chat.chat_page') }}">
-      <img src="{{ url_for('static', filename='img/block-i.png') }}" alt="I" height="28" style="margin-right:6px">LLM
-    </a>
-    <div class="navbar-nav me-auto">
-      <a class="nav-link {% if request.endpoint == 'chat.chat_page' %}active{% endif %}"
-         href="{{ url_for('chat.chat_page') }}">Chat</a>
-
-      {% if nav_services %}
-      <div class="nav-item dropdown">
-        <a class="nav-link dropdown-toggle {% if request.blueprint == 'services' %}active{% endif %}"
-           href="#" role="button" data-bs-toggle="dropdown">Services</a>
-        <ul class="dropdown-menu">
-          {% for svc in nav_services %}
-          <li>
-            <a class="dropdown-item" href="{{ url_for('usage.service_usage_page', sid=svc.id) }}">
-              {{ svc.name }}
-            </a>
-          </li>
-          {% endfor %}
-          <li><hr class="dropdown-divider"></li>
-          <li>
-            <a class="dropdown-item" href="{{ url_for('services.index') }}">Manage Services</a>
-          </li>
-        </ul>
-      </div>
-      {% else %}
-      <a class="nav-link {% if request.blueprint == 'services' %}active{% endif %}"
-         href="{{ url_for('services.index') }}">Services</a>
-      {% endif %}
-
-      <a class="nav-link {% if request.endpoint == 'usage.index' %}active{% endif %}"
-         href="{{ url_for('usage.index') }}">Usage</a>
-      <a class="nav-link {% if request.endpoint == 'models_page.index' %}active{% endif %}"
-         href="{{ url_for('models_page.index') }}">Models</a>
-      {% if session.get('is_admin') %}
-      <a class="nav-link {% if request.blueprint == 'admin' %}active{% endif %}"
-         href="{{ url_for('admin.groups') }}">Admin</a>
-      {% endif %}
-    </div>
-
-    <div class="d-flex align-items-center gap-2">
-      <div class="avatar-wrapper" title="{{ session.get('entity_name', '') }}">
-        {% if session.get('gravatar_hash') %}
-        <img class="avatar-img"
-             src="https://www.gravatar.com/avatar/{{ session.gravatar_hash }}?d=404&s=36"
-             alt="{{ session.get('entity_name', '') }}"
-             onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+<ilw-page class="ilw-margin ilw-font" style="display:flex;flex-direction:column;min-height:100vh">
+  <ilw-header slot="header">
+    <a slot="site-name" href="{{ url_for('chat.chat_page') }}">iLLM</a>
+    <nav slot="links" aria-label="Utility">
+      <ul>
+        <li><a href="{{ url_for('auth.logout') }}">Log Out</a></li>
+      </ul>
+    </nav>
+    <ilw-header-menu slot="navigation">
+      <ul>
+        <li><a href="{{ url_for('chat.chat_page') }}">Chat</a></li>
+        {% if nav_services %}
+        <li>
+          <ilw-header-menu-section>
+            <span slot="label">Services</span>
+            <ul>
+              {% for svc in nav_services %}
+              <li><a href="{{ url_for('usage.service_usage_page', sid=svc.id) }}">{{ svc.name }}</a></li>
+              {% endfor %}
+              <li><a href="{{ url_for('services.index') }}">Manage Services</a></li>
+            </ul>
+          </ilw-header-menu-section>
+        </li>
+        {% else %}
+        <li><a href="{{ url_for('services.index') }}">Services</a></li>
         {% endif %}
-        <div class="avatar-initials"
-             {% if session.get('gravatar_hash') %}style="display:none"{% endif %}>
-          {{ session.get('initials', '??') }}
+        <li><a href="{{ url_for('usage.index') }}">Usage</a></li>
+        <li><a href="{{ url_for('models_page.index') }}">Models</a></li>
+        {% if session.get('is_admin') %}
+        <li><a href="{{ url_for('admin.groups') }}">Admin</a></li>
+        {% endif %}
+      </ul>
+    </ilw-header-menu>
+  </ilw-header>
+
+  <main style="flex:1;overflow:hidden;display:flex;flex-direction:column">
+    <div class="container-fluid mt-3 px-4" style="flex:1;overflow:hidden">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+        <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         </div>
-      </div>
-      <span class="small" style="color:#13294b">{{ session.get('entity_name', '') }}</span>
-      <a class="btn btn-sm btn-logout ms-1" href="{{ url_for('auth.logout') }}">Log Out</a>
-    </div>
-  </div>
-</nav>
+        {% endfor %}
+      {% endif %}
+      {% endwith %}
 
-<div class="container-fluid mt-3 px-4">
-  {% with messages = get_flashed_messages(with_categories=true) %}
-  {% if messages %}
-    {% for category, message in messages %}
-    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
-      {{ message }}
-      <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+      {% block content %}{% endblock %}
     </div>
-    {% endfor %}
-  {% endif %}
-  {% endwith %}
+  </main>
 
-  {% block content %}{% endblock %}
-</div>
+  <ilw-spacer height="20px"></ilw-spacer>
+
+  <ilw-footer slot="footer">
+    <p slot="primary-unit"><a href="https://ncsa.illinois.edu">National Center for Supercomputing Applications</a></p>
+    <p slot="site-name"><a href="{{ url_for('chat.chat_page') }}">iLLM</a></p>
+  </ilw-footer>
+</ilw-page>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>

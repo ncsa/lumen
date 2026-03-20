@@ -13,7 +13,7 @@
     <div class="d-flex flex-column h-100">
       <div class="d-flex align-items-center px-3 py-2 border-bottom">
         <span class="fw-semibold small d-none d-md-inline">Conversations</span>
-        <button class="btn btn-sm btn-outline-primary ms-auto" id="new-chat-btn">+ New</button>
+        <button class="btn btn-sm btn-primary ms-auto" id="new-chat-btn">+ New</button>
       </div>
       <div id="conv-list" class="conv-list overflow-auto flex-fill"></div>
     </div>
@@ -36,7 +36,6 @@
         <option value="{{ model.model_name }}">{{ model.model_name }}</option>
         {% endfor %}
       </select>
-      <button class="btn btn-sm btn-outline-secondary ms-auto" id="clear-chat-btn">Clear</button>
     </div>
 
     <div id="chat-messages" class="chat-messages flex-fill overflow-auto p-3"></div>
@@ -45,7 +44,7 @@
       <form id="chat-form" class="d-flex gap-2">
         <textarea id="chat-input" class="form-control" rows="2"
                   placeholder="Type your message… (Enter to send, Shift+Enter for newline)"></textarea>
-        <button type="submit" id="send-btn" class="btn btn-primary align-self-end">Send</button>
+        <button type="submit" id="send-btn" class="btn btn-primary align-self-stretch">Send</button>
       </form>
     </div>
   </div>
@@ -56,6 +55,13 @@
 {% block scripts %}
 <script>
 (function () {
+  // ── Chat layout height ───────────────────────────────────────
+  const el = document.querySelector('.chat-page-layout');
+  if (el) {
+    const top = el.getBoundingClientRect().top;
+    document.documentElement.style.setProperty('--chat-top', top + 'px');
+  }
+
   const STORAGE_MODEL_KEY = "illm_model";
   let chatHistory = [];
   let activeConversationId = null;
@@ -86,11 +92,6 @@
     document.querySelectorAll(".conv-item").forEach(el => el.classList.remove("active"));
   });
 
-  // ── Clear Chat (visual only) ────────────────────────────────────
-  document.getElementById("clear-chat-btn").addEventListener("click", () => {
-    chatHistory = [];
-    document.getElementById("chat-messages").innerHTML = "";
-  });
 
   // ── Load conversations on page load ─────────────────────────────
   loadConversations();

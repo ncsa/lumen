@@ -6,17 +6,31 @@
   <title>iLLM — Login</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <link rel="stylesheet" href="https://cdn.toolkit.illinois.edu/3/toolkit.css">
+  <script type="module" src="https://cdn.toolkit.illinois.edu/3/toolkit.js"></script>
 </head>
 <body class="bg-light">
-<div class="d-flex align-items-center justify-content-center min-vh-100">
-  <div class="card shadow-sm p-5 text-center" style="max-width:420px;width:100%">
-    <h1 class="mb-2 fw-bold d-flex align-items-center justify-content-center">
-      <img src="{{ url_for('static', filename='img/block-i.png') }}" alt="I" height="40" style="margin-right:8px">LLM
-    </h1>
-    <p class="text-muted mb-4">Your AI gateway</p>
-    <a href="{{ url_for('auth.login') }}" class="btn btn-login btn-lg">Login with OAuth2</a>
-  </div>
-</div>
+
+<ilw-page class="ilw-margin ilw-font">
+  <ilw-header slot="header" menu="none">
+    <a slot="site-name" href="/">iLLM</a>
+  </ilw-header>
+
+  <main class="d-flex align-items-center justify-content-center" style="min-height:60vh">
+    <div class="card shadow-sm p-5 text-center" style="max-width:420px;width:100%">
+      <img src="{{ url_for('static', filename='img/block-i.png') }}" alt="I" style="height:80px;width:78px" class="mb-2 d-block mx-auto">
+      <h1 class="mb-2 fw-bold">iLLM</h1>
+      <p class="text-muted mb-4">Your AI gateway</p>
+      <a href="{{ url_for('auth.login') }}" class="btn btn-login btn-lg">Login with OAuth2</a>
+    </div>
+  </main>
+
+  <ilw-footer slot="footer">
+    <p slot="primary-unit"><a href="https://ncsa.illinois.edu">National Center for Supercomputing Applications</a></p>
+    <p slot="site-name"><a href="/">iLLM</a></p>
+  </ilw-footer>
+</ilw-page>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
