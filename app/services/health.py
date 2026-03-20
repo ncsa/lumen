@@ -18,8 +18,10 @@ def start_health_checker(app):
                     for ep in endpoints:
                         try:
                             client = openai.OpenAI(api_key=ep.api_key, base_url=ep.url)
-                            client.models.list()
-                            ep.healthy = True
+                            models = client.models.list()
+                            model_ids = {m.id for m in models.data}
+                            expected = ep.model_name or ep.model_config.model_name
+                            ep.healthy = expected in model_ids
                         except Exception:
                             ep.healthy = False
                         ep.last_checked_at = datetime.utcnow()

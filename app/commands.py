@@ -40,6 +40,10 @@ def sync_models_from_yaml(yaml_data):
                     healthy=False,
                 )
                 db.session.add(ep)
+            else:
+                existing_ep = next(e for e in config.endpoints if e.url == ep_def["url"])
+                existing_ep.api_key = ep_def["api_key"]
+                existing_ep.model_name = ep_def.get("model") or None
 
     db.session.commit()
 
