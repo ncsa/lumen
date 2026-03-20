@@ -7,7 +7,7 @@ echo "Syncing dependencies..."
 uv sync
 
 echo "Applying migrations..."
-uv run flask db upgrade
+uv run flask --app run db upgrade
 
 echo "Starting app..."
-uv run flask run --debug
+uv run illm

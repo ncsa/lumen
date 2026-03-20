@@ -1,3 +1,17 @@
+app:
+  secret_key: change-me-to-something-random
+  database_url: sqlite:///illm_dev.db
+  debug: true   # set to false in production
+
+oauth2:
+  # Register at https://cilogon.org/oauth2/register to get client_id and client_secret
+  client_id:
+  client_secret:
+  # Example (CILogon): https://cilogon.org/.well-known/openid-configuration
+  server_metadata_url:
+  redirect_uri: http://localhost:5000/callback
+  scopes: openid email profile
+
 chat:
   remove: hide   # "hide" = soft-delete conversations (recoverable) | "delete" = hard delete
 

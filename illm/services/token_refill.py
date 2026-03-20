@@ -10,9 +10,9 @@ def start_token_refiller(app):
         while True:
             try:
                 with app.app_context():
-                    from app.models.entity_model_balance import EntityModelBalance
-                    from app.extensions import db
-                    from app.services.llm import get_effective_limit
+                    from illm.models.entity_model_balance import EntityModelBalance
+                    from illm.extensions import db
+                    from illm.services.llm import get_effective_limit
 
                     now = datetime.utcnow()
                     balances = EntityModelBalance.query.filter(

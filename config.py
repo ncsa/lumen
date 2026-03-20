@@ -8,7 +8,7 @@ class Config:
     SQLALCHEMY_DATABASE_URI = _db_url.replace("postgres://", "postgresql://", 1)
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
-    MODELS_YAML_PATH = os.environ.get("MODELS_YAML_PATH", "./models.yaml")
+    CONFIG_YAML = os.environ.get("CONFIG_YAML", "./config.yaml")
 
     OAUTH2_CLIENT_ID = os.environ.get("OAUTH2_CLIENT_ID", "")
     OAUTH2_CLIENT_SECRET = os.environ.get("OAUTH2_CLIENT_SECRET", "")

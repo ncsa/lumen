@@ -9,12 +9,12 @@ from sqlalchemy import update as sa_update
 
 logger = logging.getLogger(__name__)
 
-from app.extensions import db
-from app.models.api_key import APIKey
-from app.models.entity import Entity
-from app.models.model_config import ModelConfig
-from app.services.cost import calculate_cost
-from app.services.llm import check_and_deduct_tokens, deduct_tokens, get_effective_limit, get_next_endpoint, update_stats
+from illm.extensions import db
+from illm.models.api_key import APIKey
+from illm.models.entity import Entity
+from illm.models.model_config import ModelConfig
+from illm.services.cost import calculate_cost
+from illm.services.llm import check_and_deduct_tokens, deduct_tokens, get_effective_limit, get_next_endpoint, update_stats
 
 api_bp = Blueprint("api", __name__, url_prefix="/v1")
 

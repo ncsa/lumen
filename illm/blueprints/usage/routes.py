@@ -4,15 +4,15 @@ from datetime import datetime, timedelta
 from flask import Blueprint, render_template, request, jsonify, session
 from sqlalchemy import func
 
-from app.decorators import login_required
-from app.extensions import db
-from app.models.api_key import APIKey
-from app.models.entity import Entity
-from app.models.entity_manager import EntityManager
-from app.models.model_config import ModelConfig
-from app.models.entity_model_balance import EntityModelBalance
-from app.models.model_stat import ModelStat
-from app.services.llm import get_effective_limit
+from illm.decorators import login_required
+from illm.extensions import db
+from illm.models.api_key import APIKey
+from illm.models.entity import Entity
+from illm.models.entity_manager import EntityManager
+from illm.models.model_config import ModelConfig
+from illm.models.entity_model_balance import EntityModelBalance
+from illm.models.model_stat import ModelStat
+from illm.services.llm import get_effective_limit
 
 usage_bp = Blueprint("usage", __name__)
 

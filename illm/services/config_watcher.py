@@ -1,0 +1,70 @@
+import logging
+import os
+import threading
+import time
+
+import yaml
+
+logger = logging.getLogger(__name__)
+
+_RESTART_REQUIRED = [
+    ("app", "secret_key"),
+    ("app", "database_url"),
+]
+
+
+def _check_restart_required(old_data, new_data):
+    for section, key in _RESTART_REQUIRED:
+        old_val = old_data.get(section, {}).get(key)
+        new_val = new_data.get(section, {}).get(key)
+        if old_val != new_val:
+            logger.warning(
+                "config.yaml changed: '%s.%s' requires a restart to take effect",
+                section, key,
+            )
+    old_oauth2 = old_data.get("oauth2", {})
+    new_oauth2 = new_data.get("oauth2", {})
+    if old_oauth2 != new_oauth2:
+        for key in set(list(old_oauth2) + list(new_oauth2)):
+            if old_oauth2.get(key) != new_oauth2.get(key):
+                logger.warning(
+                    "config.yaml changed: 'oauth2.%s' requires a restart to take effect", key
+                )
+
+
+def _watcher(app, config_path):
+    last_mtime = None
+    while True:
+        time.sleep(5)
+        try:
+            mtime = os.path.getmtime(config_path)
+            if last_mtime is None:
+                last_mtime = mtime
+                continue
+            if mtime == last_mtime:
+                continue
+            last_mtime = mtime
+
+            with open(config_path) as f:
+                new_data = yaml.safe_load(f)
+
+            with app.app_context():
+                old_data = app.config.get("YAML_DATA", {})
+                _check_restart_required(old_data, new_data)
+                app.config["YAML_DATA"] = new_data
+                chat_cfg = new_data.get("chat", {})
+                app.config["CHAT_CONVERSATION_REMOVE_MODE"] = chat_cfg.get("remove", "hide")
+                from illm.commands import sync_models_from_yaml
+                try:
+                    sync_models_from_yaml(new_data)
+                except Exception as e:
+                    logger.warning("config_watcher: sync_models_from_yaml failed: %s", e)
+
+            logger.info("config.yaml reloaded")
+        except Exception as e:
+            logger.warning("config_watcher error: %s", e)
+
+
+def start_config_watcher(app, config_path):
+    t = threading.Thread(target=_watcher, args=(app, config_path), daemon=True)
+    t.start()

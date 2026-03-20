@@ -1,7 +1,7 @@
 from flask import Blueprint, render_template
 
-from app.decorators import login_required
-from app.models.model_config import ModelConfig
+from illm.decorators import login_required
+from illm.models.model_config import ModelConfig
 
 models_page_bp = Blueprint("models_page", __name__)
 

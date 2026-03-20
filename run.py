@@ -1,9 +1,11 @@
-from dotenv import load_dotenv
-load_dotenv()
-
-from app import create_app
+from illm import create_app
 
 app = create_app()
 
+
+def main():
+    app.run(debug=app.config.get("DEBUG", False))
+
+
 if __name__ == "__main__":
-    app.run(debug=True)
+    main()

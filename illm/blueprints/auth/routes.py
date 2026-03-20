@@ -2,11 +2,11 @@ import hashlib
 
 from flask import Blueprint, redirect, url_for, session, render_template, current_app
 
-from app.extensions import db, oauth
-from app.models.entity import Entity
-from app.models.entity_model_balance import EntityModelBalance
-from app.models.model_config import ModelConfig
-from app.models.entity_model_limit import EntityModelLimit
+from illm.extensions import db, oauth
+from illm.models.entity import Entity
+from illm.models.entity_model_balance import EntityModelBalance
+from illm.models.model_config import ModelConfig
+from illm.models.entity_model_limit import EntityModelLimit
 
 auth_bp = Blueprint("auth", __name__)
 

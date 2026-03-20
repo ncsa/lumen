@@ -5,12 +5,12 @@ from flask import Blueprint, current_app, jsonify, render_template, request, ses
 
 logger = logging.getLogger(__name__)
 
-from app.decorators import login_required
-from app.extensions import db
-from app.models.conversation import Conversation
-from app.models.message import Message
-from app.models.model_config import ModelConfig
-from app.services.llm import check_and_deduct_tokens, get_effective_limit, send_message
+from illm.decorators import login_required
+from illm.extensions import db
+from illm.models.conversation import Conversation
+from illm.models.message import Message
+from illm.models.model_config import ModelConfig
+from illm.services.llm import check_and_deduct_tokens, get_effective_limit, send_message
 
 chat_bp = Blueprint("chat", __name__)
 

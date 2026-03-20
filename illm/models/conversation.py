@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from app.extensions import db
+from illm.extensions import db
 
 
 class Conversation(db.Model):

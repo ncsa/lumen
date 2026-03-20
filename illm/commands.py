@@ -5,8 +5,8 @@ from .extensions import db
 
 def sync_models_from_yaml(yaml_data):
     """Upsert ModelConfig and ModelEndpoint rows from yaml_data. Must run inside an app context."""
-    from app.models.model_config import ModelConfig
-    from app.models.model_endpoint import ModelEndpoint
+    from illm.models.model_config import ModelConfig
+    from illm.models.model_endpoint import ModelEndpoint
 
     for model_def in yaml_data.get("models", []):
         config = ModelConfig.query.filter_by(model_name=model_def["name"]).first()

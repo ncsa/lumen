@@ -1,9 +1,9 @@
 from flask import Blueprint, render_template, request, jsonify, session
 
-from app.decorators import login_required, admin_required
-from app.extensions import db
-from app.models.entity import Entity
-from app.models.entity_manager import EntityManager
+from illm.decorators import login_required, admin_required
+from illm.extensions import db
+from illm.models.entity import Entity
+from illm.models.entity_manager import EntityManager
 
 services_bp = Blueprint("services", __name__)
 

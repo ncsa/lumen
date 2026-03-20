@@ -11,8 +11,8 @@ def start_health_checker(app):
             try:
                 with app.app_context():
                     import openai
-                    from app.models.model_endpoint import ModelEndpoint
-                    from app.extensions import db
+                    from illm.models.model_endpoint import ModelEndpoint
+                    from illm.extensions import db
 
                     endpoints = ModelEndpoint.query.all()
                     for ep in endpoints:

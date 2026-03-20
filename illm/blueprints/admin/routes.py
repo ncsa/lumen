@@ -1,15 +1,15 @@
 from flask import Blueprint, render_template, request, redirect, url_for, abort
 
-from app.decorators import admin_required
-from app.extensions import db
-from app.models.entity import Entity
-from app.models.group import Group
-from app.models.group_member import GroupMember
-from app.models.entity_model_balance import EntityModelBalance
-from app.models.group_model_limit import GroupModelLimit
-from app.models.model_config import ModelConfig
-from app.models.entity_model_limit import EntityModelLimit
-from app.services.llm import get_effective_limit
+from illm.decorators import admin_required
+from illm.extensions import db
+from illm.models.entity import Entity
+from illm.models.group import Group
+from illm.models.group_member import GroupMember
+from illm.models.entity_model_balance import EntityModelBalance
+from illm.models.group_model_limit import GroupModelLimit
+from illm.models.model_config import ModelConfig
+from illm.models.entity_model_limit import EntityModelLimit
+from illm.services.llm import get_effective_limit
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 

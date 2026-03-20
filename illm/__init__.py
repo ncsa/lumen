@@ -13,27 +13,42 @@ def create_app():
     from config import Config
     app.config.from_object(Config)
 
-    # Validate models.yaml at startup
-    models_yaml_path = app.config["MODELS_YAML_PATH"]
-    if not os.path.exists(models_yaml_path):
+    # Validate config.yaml at startup
+    config_yaml_path = app.config["CONFIG_YAML"]
+    if not os.path.exists(config_yaml_path):
         print(
-            f"ERROR: models.yaml not found at '{models_yaml_path}'. App cannot start.",
+            f"ERROR: config.yaml not found at '{config_yaml_path}'. App cannot start.",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    with open(models_yaml_path) as f:
+    with open(config_yaml_path) as f:
         yaml_data = yaml.safe_load(f)
 
     active_models = [m for m in yaml_data.get("models", []) if m.get("active", True)]
     if not active_models:
         print(
-            "ERROR: models.yaml contains no active models. App cannot start.",
+            "ERROR: config.yaml contains no active models. App cannot start.",
             file=sys.stderr,
         )
         sys.exit(1)
 
     app.config["YAML_DATA"] = yaml_data
+
+    # Override Flask config from yaml app/oauth2 sections
+    app_cfg = yaml_data.get("app", {})
+    if "secret_key" in app_cfg:
+        app.config["SECRET_KEY"] = app_cfg["secret_key"]
+    if "database_url" in app_cfg:
+        db_url = app_cfg["database_url"].replace("postgres://", "postgresql://", 1)
+        app.config["SQLALCHEMY_DATABASE_URI"] = db_url
+    if "debug" in app_cfg:
+        app.config["DEBUG"] = app_cfg["debug"]
+
+    oauth2_cfg = yaml_data.get("oauth2", {})
+    for key in ("client_id", "client_secret", "server_metadata_url", "redirect_uri", "scopes"):
+        if key in oauth2_cfg:
+            app.config[f"OAUTH2_{key.upper()}"] = oauth2_cfg[key]
 
     chat_cfg = yaml_data.get("chat", {})
     app.config["CHAT_CONVERSATION_REMOVE_MODE"] = chat_cfg.get("remove", "hide")
@@ -56,13 +71,13 @@ def create_app():
     from . import models  # noqa: F401
 
     # Register blueprints
-    from app.blueprints.auth.routes import auth_bp
-    from app.blueprints.chat.routes import chat_bp
-    from app.blueprints.models_page.routes import models_page_bp
-    from app.blueprints.services.routes import services_bp
-    from app.blueprints.usage.routes import usage_bp
-    from app.blueprints.api.routes import api_bp
-    from app.blueprints.admin.routes import admin_bp
+    from illm.blueprints.auth.routes import auth_bp
+    from illm.blueprints.chat.routes import chat_bp
+    from illm.blueprints.models_page.routes import models_page_bp
+    from illm.blueprints.services.routes import services_bp
+    from illm.blueprints.usage.routes import usage_bp
+    from illm.blueprints.api.routes import api_bp
+    from illm.blueprints.admin.routes import admin_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(chat_bp)
@@ -73,7 +88,7 @@ def create_app():
     app.register_blueprint(admin_bp)
 
     # Register CLI commands
-    from app.commands import init_db_cmd
+    from illm.commands import init_db_cmd
     app.cli.add_command(init_db_cmd)
 
     # Context processor: inject nav_services into all templates
@@ -81,8 +96,8 @@ def create_app():
     def inject_nav():
         if not session.get("entity_id"):
             return {"nav_services": []}
-        from app.models.entity_manager import EntityManager
-        from app.models.entity import Entity
+        from illm.models.entity_manager import EntityManager
+        from illm.models.entity import Entity
 
         assocs = EntityManager.query.filter_by(user_entity_id=session["entity_id"]).all()
         service_ids = [a.service_entity_id for a in assocs]
@@ -100,7 +115,7 @@ def create_app():
         return {"nav_services": services}
 
     # Sync models from yaml into DB on every startup
-    from app.commands import sync_models_from_yaml
+    from illm.commands import sync_models_from_yaml
     with app.app_context():
         try:
             sync_models_from_yaml(yaml_data)
@@ -109,11 +124,15 @@ def create_app():
                   file=sys.stderr)
 
     # Start background health checker
-    from app.services.health import start_health_checker
+    from illm.services.health import start_health_checker
     start_health_checker(app)
 
     # Start background token refiller
-    from app.services.token_refill import start_token_refiller
+    from illm.services.token_refill import start_token_refiller
     start_token_refiller(app)
+
+    # Start config file watcher
+    from illm.services.config_watcher import start_config_watcher
+    start_config_watcher(app, config_yaml_path)
 
     return app

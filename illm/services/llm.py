@@ -4,15 +4,15 @@ from datetime import datetime
 
 import openai
 
-from app.extensions import db
-from app.models.entity_model_balance import EntityModelBalance
-from app.models.entity_model_limit import EntityModelLimit
-from app.models.model_config import ModelConfig
-from app.models.model_endpoint import ModelEndpoint
-from app.models.model_stat import ModelStat
-from app.models.group_member import GroupMember
-from app.models.group_model_limit import GroupModelLimit
-from app.services.cost import calculate_cost
+from illm.extensions import db
+from illm.models.entity_model_balance import EntityModelBalance
+from illm.models.entity_model_limit import EntityModelLimit
+from illm.models.model_config import ModelConfig
+from illm.models.model_endpoint import ModelEndpoint
+from illm.models.model_stat import ModelStat
+from illm.models.group_member import GroupMember
+from illm.models.group_model_limit import GroupModelLimit
+from illm.services.cost import calculate_cost
 
 _rr_counters: dict = {}
 _rr_lock = threading.Lock()

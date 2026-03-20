@@ -16,5 +16,15 @@ dependencies = [
     "a2wsgi>=1.10",
 ]
 
+[project.scripts]
+illm = "run:main"
+
 [dependency-groups]
 dev = []
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
