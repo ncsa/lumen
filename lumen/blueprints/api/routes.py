@@ -1,15 +1,16 @@
 import json
 import logging
 from datetime import datetime
+from decimal import Decimal
 from functools import wraps
 
 import openai
-from flask import Blueprint, request, jsonify, g, Response, stream_with_context
+from flask import Blueprint, current_app, request, jsonify, g, Response, stream_with_context
 from sqlalchemy import update as sa_update
 
 logger = logging.getLogger(__name__)
 
-from lumen.extensions import db
+from lumen.extensions import db, limiter
 from lumen.models.api_key import APIKey
 from lumen.services.crypto import hash_api_key
 from lumen.models.entity import Entity
@@ -20,6 +21,16 @@ from lumen.services.llm import check_and_deduct_tokens, deduct_tokens, get_effec
 api_bp = Blueprint("api", __name__, url_prefix="/v1")
 
 
+def _api_key_id():
+    api_key = getattr(g, "api_key", None)
+    return str(api_key.id) if api_key else (request.remote_addr or "unknown")
+
+
+def _api_limit():
+    cfg = current_app.config.get("YAML_DATA", {})
+    return cfg.get("rate_limiting", {}).get("limit", "30 per minute")
+
+
 def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int, cost: float):
     db.session.execute(
         sa_update(APIKey)
@@ -28,7 +39,7 @@ def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int
             requests=APIKey.requests + 1,
             input_tokens=APIKey.input_tokens + input_tokens,
             output_tokens=APIKey.output_tokens + output_tokens,
-            cost=APIKey.cost + cost,
+            cost=APIKey.cost + Decimal(str(cost)),
             last_used_at=datetime.utcnow(),
         )
     )
@@ -66,6 +77,7 @@ def api_key_required(f):
 
 @api_bp.route("/models", methods=["GET"])
 @api_key_required
+@limiter.limit(_api_limit, key_func=_api_key_id)
 def list_models():
     entity_id = g.entity.id
     configs = ModelConfig.query.filter_by(active=True).all()
@@ -84,6 +96,7 @@ def list_models():
 
 @api_bp.route("/models/<model_id>", methods=["GET"])
 @api_key_required
+@limiter.limit(_api_limit, key_func=_api_key_id)
 def get_model(model_id):
     config = ModelConfig.query.filter_by(model_name=model_id, active=True).first()
     if not config:
@@ -173,6 +186,7 @@ def _do_chat(model_name: str, messages: list, stream: bool):
 
 @api_bp.route("/chat/completions", methods=["POST"])
 @api_key_required
+@limiter.limit(_api_limit, key_func=_api_key_id)
 def chat_completions():
     data = request.get_json()
     if not data:
@@ -190,6 +204,7 @@ def chat_completions():
 
 @api_bp.route("/completions", methods=["POST"])
 @api_key_required
+@limiter.limit(_api_limit, key_func=_api_key_id)
 def completions():
     data = request.get_json()
     if not data:

@@ -6,7 +6,7 @@ from flask import Blueprint, current_app, jsonify, render_template, request, ses
 logger = logging.getLogger(__name__)
 
 from lumen.decorators import login_required
-from lumen.extensions import db
+from lumen.extensions import db, limiter
 from lumen.models.conversation import Conversation
 from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
@@ -15,8 +15,19 @@ from lumen.services.llm import check_and_deduct_tokens, get_effective_limit, sen
 chat_bp = Blueprint("chat", __name__)
 
 
+def _chat_entity_id():
+    entity_id = session.get("entity_id")
+    return str(entity_id) if entity_id else (request.remote_addr or "unknown")
+
+
+def _chat_limit():
+    cfg = current_app.config.get("YAML_DATA", {})
+    return cfg.get("rate_limiting", {}).get("limit", "30 per minute")
+
+
 @chat_bp.route("/chat")
 @login_required
+@limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def chat_page():
     entity_id = session["entity_id"]
     all_models = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
@@ -26,6 +37,7 @@ def chat_page():
 
 @chat_bp.route("/chat/send", methods=["POST"])
 @login_required
+@limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def chat_send():
     data = request.get_json()
     if not data:
@@ -96,6 +108,7 @@ def chat_send():
 
 @chat_bp.route("/chat/conversations")
 @login_required
+@limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def list_conversations():
     entity_id = session["entity_id"]
     convs = (
@@ -124,6 +137,7 @@ def list_conversations():
 
 @chat_bp.route("/chat/conversations/<int:cid>/messages")
 @login_required
+@limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def get_conversation_messages(cid):
     entity_id = session["entity_id"]
     conv = Conversation.query.filter_by(
@@ -156,6 +170,7 @@ def get_conversation_messages(cid):
 
 @chat_bp.route("/chat/conversations/<int:cid>", methods=["DELETE"])
 @login_required
+@limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def delete_conversation(cid):
     entity_id = session["entity_id"]
     conv = Conversation.query.filter_by(id=cid, entity_id=entity_id).first()

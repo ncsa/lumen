@@ -164,3 +164,32 @@ Supported fields: `affiliation`, `member_of`, `idp`, `ou`. Groups assigned by ru
 chat:
   remove: hide   # "hide" = soft-delete (recoverable) | "delete" = permanent
 ```
+
+### Rate limiting
+
+All endpoints are rate-limited per authenticated user (API key ID for `/v1/*` routes, session user ID for `/chat/*` routes). The limit is a single string in flask-limiter notation (`N per second/minute/hour`):
+
+```yaml
+rate_limiting:
+  limit: "30 per minute"
+  # storage_url: redis://localhost:6379/0  # optional; use Redis in multi-worker deployments
+```
+
+By default, limits are tracked in-memory (per-process). For multi-worker deployments (e.g. gunicorn with multiple workers), set `storage_url` to a shared Redis instance so limits are enforced across all workers. Changing `storage_url` requires a restart; changing `limit` takes effect within ~5 seconds (hot-reloaded).
+
+### Database connection pool
+
+Controls how SQLAlchemy manages database connections. The defaults (pool size 5, overflow 10) are fine for light use; increase them for production or high-concurrency workloads. Changes require a restart.
+
+```yaml
+app:
+  db_pool:
+    pool_size: 20        # persistent connections kept open
+    max_overflow: 30     # burst connections allowed above pool_size
+    pool_timeout: 10     # seconds to wait for a free connection before returning an error
+    pool_recycle: 1800   # recycle connections after 30 min to avoid stale-connection errors
+    pool_pre_ping: true  # test each connection before use; silently replaces stale ones
+```
+
+`pool_size + max_overflow` is the maximum number of simultaneous DB connections. For 50 concurrent requests, set these to at least 50 combined.
+

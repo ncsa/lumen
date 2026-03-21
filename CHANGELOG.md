@@ -7,7 +7,11 @@ All notable changes to Lumen will be documented in this file.
 ### Changed
 - All timestamps displayed to users are now shown in their local timezone instead of hardcoded UTC
 
+### Added
+- Database connection pool settings now configurable in `config.yaml` under `app.db_pool` (`pool_size`, `max_overflow`, `pool_timeout`, `pool_recycle`, `pool_pre_ping`); requires restart to take effect
+
 ### Security
+- Per-endpoint rate limiting (flask-limiter); single limit configurable under `rate_limiting.limit` in `config.yaml`, keyed by authenticated identity (API key ID or session user ID); returns OpenAI-style JSON 429 for API routes and plain JSON for chat routes
 - `secret_key` and `encryption_key` now default to `""` in `config.yaml.example`; the app refuses to start if either is empty, preventing accidental deployment with known default secrets
 - API keys are now stored as HMAC-SHA256 hashes in the database; only a short hint (`sk_abcd...xyzw`) is retained for display, so a leaked database backup yields no usable keys
 - Disabled user accounts are now immediately blocked from the chat interface; existing sessions are cleared on the next request

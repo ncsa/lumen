@@ -8,6 +8,12 @@ app:
   encryption_key: ""
   database_url: sqlite:///lumen_dev.db
   debug: true   # set to false in production
+  db_pool:
+    pool_size: 20        # persistent connections kept open (default: 5)
+    max_overflow: 30     # extra connections allowed above pool_size (default: 10)
+    pool_timeout: 10     # seconds to wait for a connection before error (default: 30)
+    pool_recycle: 1800   # recycle connections after N seconds to avoid stale-connection errors
+    pool_pre_ping: true  # test each connection before use; silently replaces stale ones
 
 oauth2:
   # Register at https://cilogon.org/oauth2/register to get client_id and client_secret
@@ -25,6 +31,10 @@ oauth2:
 
 chat:
   remove: hide   # "hide" = soft-delete conversations (recoverable) | "delete" = hard delete
+
+rate_limiting:
+  # storage_url: redis://localhost:6379/0  # omit for in-memory (single-process); requires restart to change
+  limit: "30 per minute"  # applies to every endpoint, keyed by authenticated user identity
 
 users:
   tokens:

@@ -3,7 +3,7 @@ import os
 import sys
 
 import yaml
-from flask import Flask, session
+from flask import Flask, jsonify, request, session
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 
@@ -36,6 +36,11 @@ def create_app():
 
     app.config["YAML_DATA"] = yaml_data
 
+    # Configure rate limiting
+    rl_cfg = yaml_data.get("rate_limiting", {})
+    if rl_url := rl_cfg.get("storage_url"):
+        app.config["RATELIMIT_STORAGE_URI"] = rl_url
+
     # Override Flask config from yaml app/oauth2 sections
     app_cfg = yaml_data.get("app", {})
     secret_key = app_cfg.get("secret_key", "")
@@ -51,6 +56,13 @@ def create_app():
     if "database_url" in app_cfg:
         db_url = app_cfg["database_url"].replace("postgres://", "postgresql://", 1)
         app.config["SQLALCHEMY_DATABASE_URI"] = db_url
+    db_pool = app_cfg.get("db_pool", {})
+    if db_pool:
+        app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+            k: db_pool[k]
+            for k in ("pool_size", "max_overflow", "pool_timeout", "pool_recycle", "pool_pre_ping")
+            if k in db_pool
+        }
     if "debug" in app_cfg:
         app.config["DEBUG"] = app_cfg["debug"]
     app.config["APP_NAME"] = app_cfg.get("name", "Lumen")
@@ -71,10 +83,15 @@ def create_app():
         logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
     # Initialize extensions
-    from .extensions import db, migrate, oauth
+    from .extensions import db, migrate, oauth, limiter
     db.init_app(app)
     migrate.init_app(app, db)
     oauth.init_app(app)
+    limiter.init_app(app)
+    if rl_cfg.get("storage_url"):
+        app.logger.warning(
+            "rate_limiting.storage_url requires a restart to take effect; it is not hot-reloaded."
+        )
 
     oauth.register(
         name="provider",
@@ -103,6 +120,14 @@ def create_app():
     app.register_blueprint(usage_bp)
     app.register_blueprint(api_bp)
     app.register_blueprint(admin_bp)
+
+    # Rate limit error handler
+    @app.errorhandler(429)
+    def ratelimit_handler(e):
+        if request.path.startswith("/v1/"):
+            return jsonify({"error": {"message": "Rate limit exceeded. Please slow down.",
+                                       "type": "rate_limit_error", "code": "rate_limit_exceeded"}}), 429
+        return jsonify({"error": "Rate limit exceeded. Please slow down."}), 429
 
     # Register CLI commands
     from lumen.commands import init_db_cmd
