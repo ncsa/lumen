@@ -172,13 +172,10 @@ def callback():
     sync_user_from_yaml(entity, email, yaml_data, userinfo=userinfo)
     db.session.commit()
 
-    admin_emails = yaml_data.get("admins", [])
-
     session["entity_id"] = entity.id
     session["entity_name"] = entity.name
     session["initials"] = entity.initials
     session["gravatar_hash"] = entity.gravatar_hash or ""
-    session["is_admin"] = email in admin_emails
     return redirect(url_for("chat.chat_page"))
 
 

@@ -1,11 +1,17 @@
 from functools import wraps
-from flask import session, redirect, url_for, jsonify
+from flask import session, redirect, url_for, jsonify, current_app
+
+from lumen.models.entity import Entity
 
 
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get("entity_id"):
+            return redirect(url_for("auth.landing"))
+        entity = Entity.query.get(session["entity_id"])
+        if not entity or not entity.active:
+            session.clear()
             return redirect(url_for("auth.landing"))
         return f(*args, **kwargs)
     return decorated
@@ -16,7 +22,13 @@ def admin_required(f):
     def decorated(*args, **kwargs):
         if not session.get("entity_id"):
             return redirect(url_for("auth.landing"))
-        if not session.get("is_admin"):
+        entity = Entity.query.get(session["entity_id"])
+        if not entity or not entity.active:
+            session.clear()
+            return redirect(url_for("auth.landing"))
+        yaml_data = current_app.config.get("YAML_DATA", {})
+        admin_emails = yaml_data.get("admins", [])
+        if entity.email not in admin_emails:
             return jsonify({"error": "Forbidden"}), 403
         return f(*args, **kwargs)
     return decorated
