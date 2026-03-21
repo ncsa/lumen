@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- All timestamps displayed to users are now shown in their local timezone instead of hardcoded UTC
+
 ### Security
 - API keys are now stored as HMAC-SHA256 hashes in the database; only a short hint (`sk_abcd...xyzw`) is retained for display, so a leaked database backup yields no usable keys
 - Disabled user accounts are now immediately blocked from the chat interface; existing sessions are cleared on the next request

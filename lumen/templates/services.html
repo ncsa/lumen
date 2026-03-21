@@ -20,7 +20,7 @@
       <div class="card-body">
         <h5 class="card-title">{{ svc.name }}</h5>
         <p class="text-muted small mb-3">
-          Created: {{ svc.created_at.strftime("%Y-%m-%d") if svc.created_at else "N/A" }}
+          Created: {% if svc.created_at %}<span class="local-datetime" data-utc="{{ svc.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>{% else %}N/A{% endif %}
         </p>
         <div class="d-flex gap-2 flex-wrap">
           <a href="{{ url_for('usage.service_usage_page', sid=svc.id) }}"

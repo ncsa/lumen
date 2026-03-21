@@ -9,4 +9,15 @@ document.addEventListener("DOMContentLoaded", function () {
       if (bsAlert) bsAlert.close();
     }, 5000);
   });
+
+  // Convert UTC ISO timestamps to local time for display
+  document.querySelectorAll(".local-datetime[data-utc]").forEach(function (el) {
+    const d = new Date(el.dataset.utc);
+    if (!isNaN(d)) {
+      el.textContent = d.toLocaleString([], {
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit",
+      });
+    }
+  });
 });

@@ -66,6 +66,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ---
 
+All times shown to the user must be in their local timezone. All times stored in the DB are UTC. In templates, emit `<span class="local-datetime" data-utc="{{ dt.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>` and let the JS in app.js convert it to local time. Never hardcode "UTC" in displayed timestamps.
 Dependencies are managed with uv, code is run with uv
 Styles and collors match university of illinois, see https://builder3.toolkit.illinois.edu/getting_started/index.html
 When adding variables to config.yaml, make sure they are hot loaded if possible or print a warning

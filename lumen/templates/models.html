@@ -35,7 +35,7 @@
       <td>
         {% set checked_at = endpoints | map(attribute="last_checked_at") | select("ne", None) | list %}
         {% if checked_at %}
-          {{ (checked_at | max).strftime("%Y-%m-%d %H:%M UTC") }}
+          <span class="local-datetime" data-utc="{{ (checked_at | max).strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
         {% else %}
           <span class="text-muted">Never</span>
         {% endif %}

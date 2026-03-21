@@ -117,7 +117,7 @@
         <td class="text-end">{{ "{:,}".format(chat_agg[2] or 0) }}</td>
         <td class="text-end">${{ "%.6f"|format((chat_agg[3] or 0)|float) }}</td>
         <td>
-          {{ chat_agg[4].strftime("%Y-%m-%d %H:%M UTC") if chat_agg[4] else "—" }}
+          {% if chat_agg[4] %}<span class="local-datetime" data-utc="{{ chat_agg[4].strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>{% else %}—{% endif %}
         </td>
         {% if not scope_entity %}<td></td>{% endif %}
       </tr>
@@ -134,7 +134,7 @@
         <td class="text-end">{{ "{:,}".format(key.input_tokens) }}</td>
         <td class="text-end">{{ "{:,}".format(key.output_tokens) }}</td>
         <td class="text-end">${{ "%.6f"|format(key.cost|float) }}</td>
-        <td>{{ key.last_used_at.strftime("%Y-%m-%d %H:%M UTC") if key.last_used_at else "—" }}</td>
+        <td>{% if key.last_used_at %}<span class="local-datetime" data-utc="{{ key.last_used_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>{% else %}—{% endif %}</td>
         {% if not scope_entity %}
         <td>
           {% if key.active %}
@@ -173,7 +173,7 @@
         <td class="text-end">{{ "{:,}".format(row[2] or 0) }}</td>
         <td class="text-end">{{ "{:,}".format(row[3] or 0) }}</td>
         <td class="text-end">${{ "%.6f"|format((row[4] or 0)|float) }}</td>
-        <td>{{ row[5].strftime("%Y-%m-%d %H:%M UTC") if row[5] else "—" }}</td>
+        <td>{% if row[5] %}<span class="local-datetime" data-utc="{{ row[5].strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>{% else %}—{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
