@@ -21,15 +21,11 @@
     {% for config in configs %}
     {% set endpoints = config.endpoints.all() %}
     {% set healthy_eps = endpoints | selectattr("healthy") | list %}
-    <tr>
-      <td>
-        <strong>{{ config.model_name }}</strong>
-        {% if not config.active %}
-        <span class="badge bg-secondary ms-1">disabled</span>
-        {% endif %}
-      </td>
+    <tr{% if not config.active %} class="text-muted"{% endif %}>
+      <td><strong>{{ config.model_name }}</strong></td>
       <td class="text-end">${{ "%.4f"|format(config.input_cost_per_million | float) }}</td>
       <td class="text-end">${{ "%.4f"|format(config.output_cost_per_million | float) }}</td>
+      {% if config.active %}
       <td class="text-center">{{ endpoints | length }}</td>
       <td class="text-center">
         <span class="fw-bold {% if healthy_eps %}text-success{% else %}text-danger{% endif %}">
@@ -56,6 +52,9 @@
           <span class="badge bg-danger">down</span>
         {% endif %}
       </td>
+      {% else %}
+      <td colspan="4"><span class="badge bg-secondary">disabled</span></td>
+      {% endif %}
     </tr>
     {% else %}
     <tr><td colspan="6" class="text-center text-muted">No models configured.</td></tr>
