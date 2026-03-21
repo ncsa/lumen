@@ -2,6 +2,11 @@
 
 All notable changes to Lumen will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- Renamed Python package from `illm` to `lumen` (directory, imports, console script, CSS classes, storage keys)
+
 ## [1.0.0] - 2026-03-20
 
 ### Added

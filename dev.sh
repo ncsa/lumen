@@ -10,4 +10,4 @@ echo "Applying migrations..."
 uv run flask --app run db upgrade
 
 echo "Starting app..."
-uv run illm
+uv run lumen

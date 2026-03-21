@@ -2,7 +2,7 @@ app:
   name: Lumen
   tagline: Illuminating AI access
   secret_key: change-me-to-something-random
-  database_url: sqlite:///illm_dev.db
+  database_url: sqlite:///lumen_dev.db
   debug: true   # set to false in production
 
 oauth2:
@@ -105,7 +105,7 @@ models:
         api_key: ollama
         model: mistral
 
-  # Example: same iLLM model name backed by both a cloud endpoint and a local Ollama fallback.
+  # Example: same Lumen model name backed by both a cloud endpoint and a local Ollama fallback.
   # Round-robin will distribute load; the health checker will skip unhealthy ones.
   - name: phi3
     active: true

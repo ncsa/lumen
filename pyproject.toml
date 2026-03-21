@@ -1,5 +1,5 @@
 [project]
-name = "illm"
+name = "lumen"
 version = "1.0.0"
 requires-python = ">=3.11"
 dependencies = [
@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-illm = "run:main"
+lumen = "run:main"
 
 [dependency-groups]
 dev = []

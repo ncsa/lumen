@@ -1,4 +1,4 @@
-from illm import create_app
+from lumen import create_app
 
 app = create_app()
 

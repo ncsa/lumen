@@ -1,0 +1,332 @@
+{% extends "base.html" %}
+{% block title %}Chat — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="chat-page-layout">
+
+  <!-- Sidebar: offcanvas on mobile, static inline on desktop -->
+  <div class="chat-sidebar offcanvas offcanvas-start" tabindex="-1" id="chatSidebar">
+    <div class="offcanvas-header d-md-none border-bottom">
+      <h6 class="offcanvas-title fw-semibold mb-0">Conversations</h6>
+      <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+    </div>
+    <div class="d-flex flex-column h-100">
+      <div class="d-flex align-items-center px-3 py-2 border-bottom">
+        <span class="fw-semibold small d-none d-md-inline">Conversations</span>
+        <button class="btn btn-sm btn-primary ms-auto" id="new-chat-btn">+ New</button>
+      </div>
+      <div id="conv-list" class="conv-list overflow-auto flex-fill"></div>
+    </div>
+  </div>
+
+  <!-- Chat main -->
+  <div class="chat-main d-flex flex-column flex-fill">
+    <div class="chat-header d-flex align-items-center gap-2 px-3 py-2 border-bottom flex-shrink-0">
+      <!-- Mobile hamburger -->
+      <button class="btn btn-sm btn-outline-secondary d-md-none"
+              data-bs-toggle="offcanvas" data-bs-target="#chatSidebar"
+              aria-controls="chatSidebar">☰</button>
+      <!-- Desktop collapse -->
+      <button class="btn btn-sm btn-outline-secondary d-none d-md-inline-block"
+              id="sidebar-toggle-btn" title="Toggle sidebar">←</button>
+
+      <label for="model-picker" class="form-label mb-0 fw-semibold">Model:</label>
+      <select id="model-picker" class="form-select form-select-sm" style="max-width:280px">
+        {% for model in active_models %}
+        <option value="{{ model.model_name }}">{{ model.model_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div id="chat-messages" class="chat-messages flex-fill overflow-auto p-3"></div>
+
+    <div class="chat-input-bar px-3 py-2 border-top flex-shrink-0">
+      <form id="chat-form" class="d-flex gap-2">
+        <textarea id="chat-input" class="form-control" rows="2"
+                  placeholder="Type your message… (Enter to send, Shift+Enter for newline)"></textarea>
+        <button type="submit" id="send-btn" class="btn btn-primary align-self-stretch">Send</button>
+      </form>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+<script>
+(function () {
+  // ── Chat layout height ───────────────────────────────────────
+  const el = document.querySelector('.chat-page-layout');
+  if (el) {
+    const top = el.getBoundingClientRect().top;
+    document.documentElement.style.setProperty('--chat-top', top + 'px');
+  }
+
+  const STORAGE_MODEL_KEY = "lumen_model";
+  let chatHistory = [];
+  let activeConversationId = null;
+
+  // ── Model picker ────────────────────────────────────────────────
+  const picker = document.getElementById("model-picker");
+  const savedModel = localStorage.getItem(STORAGE_MODEL_KEY);
+  if (savedModel) {
+    for (const opt of picker.options) {
+      if (opt.value === savedModel) { picker.value = savedModel; break; }
+    }
+  }
+  picker.addEventListener("change", () => localStorage.setItem(STORAGE_MODEL_KEY, picker.value));
+
+  // ── Sidebar toggle (desktop) ────────────────────────────────────
+  document.getElementById("sidebar-toggle-btn").addEventListener("click", () => {
+    const sidebar = document.getElementById("chatSidebar");
+    sidebar.classList.toggle("d-none");
+    document.getElementById("sidebar-toggle-btn").textContent =
+      sidebar.classList.contains("d-none") ? "→" : "←";
+  });
+
+  // ── New Chat ────────────────────────────────────────────────────
+  document.getElementById("new-chat-btn").addEventListener("click", () => {
+    activeConversationId = null;
+    chatHistory = [];
+    document.getElementById("chat-messages").innerHTML = "";
+    document.querySelectorAll(".conv-item").forEach(el => el.classList.remove("active"));
+  });
+
+
+  // ── Load conversations on page load ─────────────────────────────
+  loadConversations();
+
+  async function loadConversations() {
+    try {
+      const resp = await fetch("/chat/conversations");
+      if (!resp.ok) return;
+      const data = await resp.json();
+      renderSidebar(data.conversations);
+    } catch (e) {}
+  }
+
+  function renderSidebar(conversations) {
+    const list = document.getElementById("conv-list");
+    list.innerHTML = "";
+    conversations.forEach(conv => {
+      const item = document.createElement("div");
+      item.className = "conv-item d-flex align-items-center px-3 py-2" +
+        (conv.id === activeConversationId ? " active" : "");
+      item.dataset.id = conv.id;
+
+      const info = document.createElement("div");
+      info.className = "flex-fill overflow-hidden me-1";
+      info.innerHTML =
+        `<div class="small fw-medium text-truncate">${escHtml(conv.title)}</div>` +
+        `<div class="msg-meta text-truncate">${escHtml(conv.last_message_preview || "")}</div>`;
+
+      const removeBtn = document.createElement("button");
+      removeBtn.className = "conv-remove-btn btn btn-link btn-sm p-0 text-muted";
+      removeBtn.title = "Remove";
+      removeBtn.textContent = "✕";
+      removeBtn.addEventListener("click", e => {
+        e.stopPropagation();
+        removeConversation(conv.id);
+      });
+
+      item.appendChild(info);
+      item.appendChild(removeBtn);
+      item.addEventListener("click", () => loadConversation(conv.id));
+      list.appendChild(item);
+    });
+  }
+
+  async function loadConversation(id) {
+    try {
+      const resp = await fetch(`/chat/conversations/${id}/messages`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      activeConversationId = id;
+      chatHistory = [];
+      const container = document.getElementById("chat-messages");
+      container.innerHTML = "";
+      data.messages.forEach(msg => {
+        chatHistory.push({ role: msg.role, content: msg.content });
+        appendBubble(msg.role, msg.content, msg.meta || null, msg.created_at || null, false);
+      });
+      container.scrollTop = container.scrollHeight;
+      document.querySelectorAll(".conv-item").forEach(el => {
+        el.classList.toggle("active", parseInt(el.dataset.id) === id);
+      });
+    } catch (e) {}
+  }
+
+  async function removeConversation(id) {
+    try {
+      await fetch(`/chat/conversations/${id}`, { method: "DELETE" });
+      if (id === activeConversationId) {
+        activeConversationId = null;
+        chatHistory = [];
+        document.getElementById("chat-messages").innerHTML = "";
+      }
+      loadConversations();
+    } catch (e) {}
+  }
+
+  // ── Bubble rendering ────────────────────────────────────────────
+  function formatTimestamp(utcIsoStr) {
+    // utcIsoStr is Python's isoformat() output (no 'Z'), or null for "just now"
+    const d = utcIsoStr ? new Date(utcIsoStr + "Z") : new Date();
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  function appendBubble(role, content, meta, timestamp, scroll = true) {
+    const container = document.getElementById("chat-messages");
+    const isUser = role === "user";
+
+    const row = document.createElement("div");
+    row.className = "d-flex mb-2 " + (isUser ? "justify-content-end" : "justify-content-start");
+
+    const bubble = document.createElement("div");
+    bubble.className = "chat-bubble " + (isUser ? "chat-bubble-user" : "chat-bubble-assistant");
+    if (isUser) {
+      bubble.appendChild(document.createTextNode(content));
+    } else {
+      bubble.innerHTML = DOMPurify.sanitize(marked.parse(content));
+    }
+
+    const ts = document.createElement("small");
+    ts.className = "msg-meta d-flex align-items-center gap-1";
+    ts.appendChild(document.createTextNode(formatTimestamp(timestamp)));
+
+    if (!isUser && meta) {
+      const infoIcon = document.createElement("span");
+      infoIcon.className = "info-icon";
+      infoIcon.textContent = "ⓘ";
+      infoIcon.setAttribute("data-bs-toggle", "popover");
+      infoIcon.setAttribute("data-bs-trigger", "click");
+      infoIcon.setAttribute("data-bs-placement", "top");
+      infoIcon.setAttribute("data-bs-html", "true");
+      infoIcon.setAttribute("data-bs-content", buildPopoverContent(meta));
+      infoIcon.setAttribute("tabindex", "0");
+      ts.appendChild(infoIcon);
+      new bootstrap.Popover(infoIcon, { container: "body" });
+    }
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "d-flex flex-column " + (isUser ? "align-items-end" : "align-items-start");
+    wrapper.style.maxWidth = "65%";
+    wrapper.appendChild(bubble);
+    wrapper.appendChild(ts);
+    row.appendChild(wrapper);
+
+    container.appendChild(row);
+    if (scroll) container.scrollTop = container.scrollHeight;
+  }
+
+  function buildPopoverContent(meta) {
+    const lines = [];
+    if (meta.input_tokens != null)       lines.push(`<b>Input tokens:</b> ${meta.input_tokens}`);
+    if (meta.output_tokens != null)      lines.push(`<b>Output tokens:</b> ${meta.output_tokens}`);
+    if (meta.duration != null)           lines.push(`<b>Duration:</b> ${meta.duration.toFixed(2)}s`);
+    if (meta.output_speed != null)       lines.push(`<b>Speed:</b> ${meta.output_speed.toFixed(1)} tok/s`);
+    return lines.join("<br>");
+  }
+
+  function addTypingIndicator() {
+    const container = document.getElementById("chat-messages");
+    const row = document.createElement("div");
+    row.className = "d-flex mb-2 justify-content-start";
+    row.id = "typing-indicator";
+    row.innerHTML =
+      `<div class="chat-bubble chat-bubble-assistant py-2 px-3">` +
+      `<span class="typing-dot">●</span>` +
+      `<span class="typing-dot" style="animation-delay:.2s">●</span>` +
+      `<span class="typing-dot" style="animation-delay:.4s">●</span>` +
+      `</div>`;
+    container.appendChild(row);
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function removeTypingIndicator() {
+    const el = document.getElementById("typing-indicator");
+    if (el) el.remove();
+  }
+
+  function escHtml(str) {
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  // ── Send ────────────────────────────────────────────────────────
+  document.getElementById("chat-form").addEventListener("submit", async function (e) {
+    e.preventDefault();
+    const input = document.getElementById("chat-input");
+    const content = input.value.trim();
+    if (!content) return;
+
+    const model = picker.value;
+    if (!model) { alert("Please select a model."); return; }
+
+    input.value = "";
+    chatHistory.push({ role: "user", content });
+    appendBubble("user", content, null, null);
+    addTypingIndicator();
+
+    const sendBtn = document.getElementById("send-btn");
+    sendBtn.disabled = true;
+
+    try {
+      const resp = await fetch("/chat/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: chatHistory, model, conversation_id: activeConversationId }),
+      });
+      const data = await resp.json();
+      removeTypingIndicator();
+      if (!resp.ok) {
+        appendBubble("assistant", "Error: " + (data.error || resp.statusText), null, null);
+      } else {
+        chatHistory.push({ role: "assistant", content: data.reply });
+        const meta = {
+          input_tokens: data.input_tokens,
+          output_tokens: data.output_tokens,
+          duration: data.duration,
+          time_to_first_token: data.time_to_first_token,
+          output_speed: data.output_speed,
+        };
+        appendBubble("assistant", data.reply, meta, null);
+        if (data.conversation_id) {
+          activeConversationId = data.conversation_id;
+          loadConversations();
+        }
+      }
+    } catch (err) {
+      removeTypingIndicator();
+      appendBubble("assistant", "Network error: " + err.message, null, null);
+    } finally {
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  });
+
+  document.getElementById("chat-input").addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      document.getElementById("chat-form").dispatchEvent(
+        new Event("submit", { cancelable: true, bubbles: true })
+      );
+    }
+  });
+
+  // Dismiss popovers on outside click
+  document.addEventListener("click", function (e) {
+    if (!e.target.classList.contains("info-icon")) {
+      document.querySelectorAll(".info-icon[data-bs-toggle='popover']").forEach(el => {
+        const pop = bootstrap.Popover.getInstance(el);
+        if (pop) pop.hide();
+      });
+    }
+  });
+})();
+</script>
+{% endblock %}
