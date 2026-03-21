@@ -45,6 +45,12 @@ def sync_models_from_yaml(yaml_data):
                 existing_ep.api_key = ep_def["api_key"]
                 existing_ep.model_name = ep_def.get("model") or None
 
+    # Deactivate ModelConfig rows no longer in yaml
+    yaml_model_names = {m["name"] for m in yaml_data.get("models", [])}
+    for config in ModelConfig.query.all():
+        if config.model_name not in yaml_model_names:
+            config.active = False
+
     db.session.commit()
 
 
