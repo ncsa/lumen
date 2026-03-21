@@ -60,10 +60,15 @@ Lumen will be available at `https://your-domain`.
 app:
   name: Lumen
   tagline: Illuminating AI access
-  secret_key: change-me-to-something-random   # any long random string
+  secret_key: change-me-to-something-random   # any long random string; used for session cookies
+  encryption_key: change-me-to-something-different  # separate secret used to hash user API keys
   database_url: sqlite:///lumen.db            # or a postgres:// URL
   debug: false
 ```
+
+`encryption_key` can also be supplied via the `LUMEN_ENCRYPTION_KEY` environment variable, which takes precedence over the value in `config.yaml`. This is useful for injecting secrets at deploy time (e.g. via Docker secrets or a Kubernetes secret) without writing them into the config file.
+
+> **Warning:** Rotating `encryption_key` (or `LUMEN_ENCRYPTION_KEY`) invalidates all existing user API keys — users will need to generate new ones.
 
 ### Authentication
 

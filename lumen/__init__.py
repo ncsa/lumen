@@ -40,6 +40,10 @@ def create_app():
     app_cfg = yaml_data.get("app", {})
     if "secret_key" in app_cfg:
         app.config["SECRET_KEY"] = app_cfg["secret_key"]
+    encryption_key = os.environ.get("LUMEN_ENCRYPTION_KEY") or app_cfg.get("encryption_key", "")
+    if not encryption_key:
+        print("WARNING: encryption_key is not set. API key hashing will use an empty secret.", file=sys.stderr)
+    app.config["ENCRYPTION_KEY"] = encryption_key
     if "database_url" in app_cfg:
         db_url = app_cfg["database_url"].replace("postgres://", "postgresql://", 1)
         app.config["SQLALCHEMY_DATABASE_URI"] = db_url

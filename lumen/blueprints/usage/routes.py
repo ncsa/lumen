@@ -7,6 +7,7 @@ from sqlalchemy import func
 from lumen.decorators import login_required
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
+from lumen.services.crypto import hash_api_key
 from lumen.models.entity import Entity
 from lumen.models.entity_manager import EntityManager
 from lumen.models.model_config import ModelConfig
@@ -128,19 +129,21 @@ def create_key():
     if not key or not key.startswith("sk_"):
         return jsonify({"error": "Invalid key"}), 400
 
-    if APIKey.query.filter_by(key=key).first():
+    key_hash = hash_api_key(key)
+    if APIKey.query.filter_by(key_hash=key_hash).first():
         return jsonify({"error": "Key already exists"}), 409
 
     api_key = APIKey(
         entity_id=entity_id,
         name=name or "Unnamed Key",
-        key=key,
+        key_hash=key_hash,
+        key_hint=f"{key[:7]}...{key[-4:]}",
         active=True,
     )
     db.session.add(api_key)
     db.session.commit()
 
-    return jsonify({"id": api_key.id, "name": api_key.name, "key": api_key.key}), 201
+    return jsonify({"id": api_key.id, "name": api_key.name, "key": key}), 201
 
 
 @usage_bp.route("/usage/keys/<int:kid>", methods=["DELETE"])

@@ -48,3 +48,5 @@ instance/
 # Logs
 *.log
 logs/
+
+SECURITY_REVIEW.md

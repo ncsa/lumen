@@ -5,6 +5,7 @@ All notable changes to Lumen will be documented in this file.
 ## [Unreleased]
 
 ### Security
+- API keys are now stored as HMAC-SHA256 hashes in the database; only a short hint (`sk_abcd...xyzw`) is retained for display, so a leaked database backup yields no usable keys
 - Disabled user accounts are now immediately blocked from the chat interface; existing sessions are cleared on the next request
 - Admin privileges are now re-verified on every request against the current config, so removing an admin from config takes effect immediately without requiring a server restart or logout
 - Token refills are now performed exclusively by the background task; removed the on-request lazy refill that could race the background task and grant double tokens

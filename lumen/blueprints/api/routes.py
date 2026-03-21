@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
+from lumen.services.crypto import hash_api_key
 from lumen.models.entity import Entity
 from lumen.models.model_config import ModelConfig
 from lumen.services.cost import calculate_cost
@@ -48,7 +49,7 @@ def api_key_required(f):
         if not token:
             return _err("Empty token", status=400)
 
-        api_key = APIKey.query.filter_by(key=token).first()
+        api_key = APIKey.query.filter_by(key_hash=hash_api_key(token)).first()
         if not api_key or not api_key.active:
             return _err("Invalid or inactive API key", "authentication_error", 401)
 
