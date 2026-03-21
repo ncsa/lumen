@@ -122,24 +122,12 @@ def get_effective_limit(entity_id: int, model_config_id: int):
     return result
 
 
-def _apply_refill(balance, max_tokens: int, refresh_tokens: int):
-    """Apply lazy hourly refill to an EntityModelBalance row in-place."""
-    now = datetime.utcnow()
-    if refresh_tokens > 0 and balance.last_refill_at:
-        hours_elapsed = (now - balance.last_refill_at).total_seconds() / 3600
-        if hours_elapsed >= 1:
-            refill = int(hours_elapsed) * refresh_tokens
-            balance.tokens_left = min(max_tokens, balance.tokens_left + refill)
-            balance.last_refill_at = now
-            db.session.flush()
-
-
 def get_token_balance(entity_id: int, model_config_id: int):
     """Return tokens_left for entity+model, or None if unlimited or blocked."""
     effective = get_effective_limit(entity_id, model_config_id)
     if effective is None:
         return None
-    max_tokens, refresh_tokens, starting = effective
+    max_tokens, _, starting = effective
     if max_tokens == -2:
         return None
 
@@ -155,7 +143,6 @@ def get_token_balance(entity_id: int, model_config_id: int):
         db.session.add(balance)
         db.session.flush()
 
-    _apply_refill(balance, max_tokens, refresh_tokens)
     return balance.tokens_left
 
 

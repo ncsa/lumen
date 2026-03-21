@@ -7,6 +7,7 @@ All notable changes to Lumen will be documented in this file.
 ### Security
 - Disabled user accounts are now immediately blocked from the chat interface; existing sessions are cleared on the next request
 - Admin privileges are now re-verified on every request against the current config, so removing an admin from config takes effect immediately without requiring a server restart or logout
+- Token refills are now performed exclusively by the background task; removed the on-request lazy refill that could race the background task and grant double tokens
 
 ### Changed
 - Renamed Python package from `illm` to `lumen` (directory, imports, console script, CSS classes, storage keys)
