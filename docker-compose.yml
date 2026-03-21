@@ -1,0 +1,129 @@
+services:
+  traefik:
+    image: "traefik:3"
+    container_name: traefik
+    command:
+      - --log.level=INFO
+      - --api=true
+      - --api.dashboard=true
+      - --api.insecure=true
+      # Entrypoints
+      - --entrypoints.http.address=:80
+      - --entrypoints.http.http.redirections.entryPoint.to=https
+      - --entrypoints.https.address=:443
+      - --entrypoints.https.http.tls.certresolver=myresolver
+      # letsencrypt
+      - --certificatesresolvers.myresolver.acme.email=admin@example.com
+      - --certificatesresolvers.myresolver.acme.storage=/config/acme.json
+      # uncomment to use testing certs
+      - --certificatesresolvers.myresolver.acme.httpchallenge=true
+      - --certificatesresolvers.myresolver.acme.httpchallenge.entrypoint=http
+      # Docker setup
+      - --providers.docker=true
+      - --providers.docker.endpoint=unix:///var/run/docker.sock
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.watch=true
+    restart: "unless-stopped"
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "80:80"
+      - "443:443"
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - "./traefik:/config"
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+
+  # frontend
+  lumen:
+    image: ncsa/lumen:latest
+    container_name: lumen
+    restart: unless-stopped
+    environment:
+      - CONFIG_YAML=/app/instance/config.yaml
+    volumes:
+      - ./lumen:/app/instance
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.lumen.entrypoints=https"
+      - "traefik.http.routers.lumen.rule=Host(`lumen.example.com`)"
+
+  # models
+  # make sure to add to lumen/config.yaml
+  nemotron-cascade-2:
+    image: vllm/vllm-openai:v0.18.0
+    container_name: nemotron-cascade-2
+    command: >
+      --port 8000
+      --enable-auto-tool-choice
+      --tool-call-parser hermes
+      --gpu-memory-utilization 0.93
+      --model nvidia/Nemotron-Cascade-2-30B-A3B
+      --max-model-len 32768
+      --max-num-seqs 32
+      --attention-backend flashinfer
+      --enable-prefix-caching
+      --trust-remote-code
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+    shm_size: "16gb"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+    environment:
+      - HF_HUB_OFFLINE=1 # skip huggingface.co network calls entirely
+      - HF_DATASETS_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+      - TRITON_CACHE_DIR=/root/.triton/cache
+      - CUDA_CACHE_PATH=/root/.nv/ComputeCache
+      - CUDA_CACHE_MAXSIZE=10737418240
+    volumes:
+      - ./cache:/root/.cache/huggingface
+      - ./vllm_cache:/root/.cache/vllm
+      - ./triton_cache:/root/.triton/cache
+
+  qwen3-coder-next:
+    image: nvcr.io/nvidia/vllm:26.01-py3
+    container_name: qwen3-coder-next
+    command: >
+      vllm serve Qwen/Qwen3-Coder-Next-FP8
+      --port 8001
+      --enable-auto-tool-choice
+      --tool-call-parser qwen3_coder
+      --gpu-memory-utilization 0.8
+      --max-model-len 131072
+      --attention-backend flashinfer
+      --enable-prefix-caching
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
+    shm_size: "16gb"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+    environment:
+      - HF_HUB_OFFLINE=1 # skip huggingface.co network calls entirely
+      - HF_DATASETS_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+      - TRITON_CACHE_DIR=/root/.triton/cache
+      - CUDA_CACHE_PATH=/root/.nv/ComputeCache
+      - CUDA_CACHE_MAXSIZE=10737418240
+    volumes:
+      - ./cache:/root/.cache/huggingface
+      - ./vllm_cache:/root/.cache/vllm
+      - ./triton_cache:/root/.triton/cache
