@@ -1,11 +1,11 @@
 app:
   name: Lumen
   tagline: Illuminating AI access
-  secret_key: change-me-to-something-random
+  secret_key: ""
   # Dedicated secret for hashing API keys stored in the database.
   # WARNING: rotating this value invalidates ALL existing user API keys.
   # Can be overridden at runtime with the LUMEN_ENCRYPTION_KEY environment variable.
-  encryption_key: change-me-to-something-different
+  encryption_key: ""
   database_url: sqlite:///lumen_dev.db
   debug: true   # set to false in production
 
