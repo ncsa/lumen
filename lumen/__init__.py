@@ -67,6 +67,7 @@ def create_app():
         app.config["DEBUG"] = app_cfg["debug"]
     app.config["APP_NAME"] = app_cfg.get("name", "Lumen")
     app.config["APP_TAGLINE"] = app_cfg.get("tagline", "")
+    app.config["DEV_USER"] = app_cfg.get("dev_user", "")
 
     oauth2_cfg = yaml_data.get("oauth2", {})
     for key in ("client_id", "client_secret", "server_metadata_url", "redirect_uri", "scopes"):
@@ -96,13 +97,21 @@ def create_app():
             "rate_limiting.storage_url requires a restart to take effect; it is not hot-reloaded."
         )
 
-    oauth.register(
-        name="provider",
-        client_id=app.config["OAUTH2_CLIENT_ID"],
-        client_secret=app.config["OAUTH2_CLIENT_SECRET"],
-        server_metadata_url=app.config["OAUTH2_SERVER_METADATA_URL"],
-        client_kwargs={"scope": app.config["OAUTH2_SCOPES"]},
-    )
+    if app.config["DEV_USER"]:
+        app.logger.warning("DEV_USER is set (%s). OAuth is bypassed. DO NOT use in production.",
+                           app.config["DEV_USER"])
+
+    if app.config.get("OAUTH2_CLIENT_ID"):
+        oauth.register(
+            name="provider",
+            client_id=app.config["OAUTH2_CLIENT_ID"],
+            client_secret=app.config["OAUTH2_CLIENT_SECRET"],
+            server_metadata_url=app.config["OAUTH2_SERVER_METADATA_URL"],
+            client_kwargs={"scope": app.config["OAUTH2_SCOPES"]},
+        )
+    elif not app.config["DEV_USER"]:
+        app.logger.error("Neither oauth2.client_id nor app.dev_user is configured. App cannot start.")
+        sys.exit(1)
 
     # Import all models so Flask-Migrate can detect them
     from . import models  # noqa: F401
