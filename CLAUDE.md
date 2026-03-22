@@ -72,3 +72,5 @@ Imports at top of file only; except inside Flask app factory (`create_app`) wher
 Styles and collors match university of illinois, see https://builder3.toolkit.illinois.edu/getting_started/index.html
 When adding variables to config.yaml, make sure they are hot loaded if possible or print a warning
 track changes in the CHANGELOG.md, if no unrelease section exists, then add it.
+KaTeX is self-hosted in `lumen/static/vendor/katex/` (JS, CSS, fonts). Math rendering is handled in `chat.html` via `renderMarkdownWithMath()` which extracts LaTeX before marked.js can mangle it.
+For local testing without OAuth or a real LLM: set `app.dev_user` in config.yaml and use `uv run dummy` (dummy backend on port 9999). See the "Local Development" section in README.md.

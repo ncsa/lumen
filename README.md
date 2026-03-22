@@ -52,6 +52,77 @@ Lumen will be available at `https://your-domain`.
 
 ---
 
+## Local Development
+
+If you want to run Lumen locally without Docker or CILogon credentials:
+
+### 1. Install dependencies
+
+```bash
+uv sync
+```
+
+### 2. Create a local config
+
+```bash
+cp config.yaml.example config.yaml
+```
+
+Edit `config.yaml` with at minimum:
+
+```yaml
+app:
+  secret_key: "any-random-string"
+  encryption_key: "another-random-string"
+  database_url: sqlite:///lumen_dev.db
+  debug: true
+  dev_user: dev@example.com    # bypasses OAuth — logs in as this email automatically
+```
+
+And at least one model under `models:`. Two options:
+
+**Option A: Built-in echo server** (no external dependencies)
+
+The repo includes a lightweight echo server that mirrors your message back with sample math. Add this to your `config.yaml`:
+
+```yaml
+models:
+  - name: dummy
+    active: true
+    input_cost_per_million: 0.0
+    output_cost_per_million: 0.0
+    endpoints:
+      - url: http://localhost:9999/v1
+        api_key: dummy
+```
+
+Start it in a separate terminal before running Lumen:
+
+```bash
+uv run dummy
+```
+
+**Option B: Ollama** (real local models)
+
+Install [Ollama](https://ollama.ai), pull a model, and keep the `llama3` entry in `config.yaml` pointing at `http://localhost:11434/v1`:
+
+```bash
+ollama pull llama3.2
+```
+
+### 3. Initialize the database and start
+
+```bash
+uv run flask db upgrade
+uv run lumen
+```
+
+Visit `http://localhost:5000`, click **Login**, and you'll be auto-logged in as `dev@example.com`.
+
+> **Note:** The `dev_user` option skips OAuth entirely. Remove it (or leave it empty) to use normal CILogon authentication.
+
+---
+
 ## Configuration Reference (`config.yaml`)
 
 ### App settings
