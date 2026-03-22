@@ -127,48 +127,49 @@ def _do_chat(model_name: str, messages: list, stream: bool):
     if endpoint is None:
         return _err(f"No healthy endpoints for model '{model_name}'", "server_error", 503)
 
-    client = openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url)
     remote_model = endpoint.model_name or model_name
 
     if stream:
         api_key = g.api_key
 
         def generate():
-            try:
-                resp_stream = client.chat.completions.create(
-                    model=remote_model, messages=messages, stream=True,
-                    stream_options={"include_usage": True},
-                )
-                usage = None
-                for chunk in resp_stream:
-                    if chunk.usage is not None:
-                        usage = chunk.usage
-                    yield f"data: {json.dumps(chunk.model_dump())}\n\n"
-                yield "data: [DONE]\n\n"
-
-                if usage is not None:
-                    cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens, model_config)
-                    deduct_tokens(entity_id, model_config.id, usage.prompt_tokens + usage.completion_tokens)
-                    update_stats(entity_id, model_config.id, "api", usage.prompt_tokens, usage.completion_tokens, cost)
-                    _record_api_key_usage(api_key.id, usage.prompt_tokens, usage.completion_tokens, cost)
-                    db.session.commit()
-                else:
-                    logger.warning(
-                        "Upstream did not return usage data for streaming request "
-                        "(model=%s, entity_id=%s) — tokens and cost not recorded.",
-                        model_name, entity_id,
+            with openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url) as client:
+                try:
+                    resp_stream = client.chat.completions.create(
+                        model=remote_model, messages=messages, stream=True,
+                        stream_options={"include_usage": True},
                     )
-            except Exception as e:
-                logger.error(
-                    "Error during streaming request (model=%s, entity_id=%s): %s",
-                    model_name, entity_id, e,
-                )
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                    usage = None
+                    for chunk in resp_stream:
+                        if chunk.usage is not None:
+                            usage = chunk.usage
+                        yield f"data: {json.dumps(chunk.model_dump())}\n\n"
+                    yield "data: [DONE]\n\n"
+
+                    if usage is not None:
+                        cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens, model_config)
+                        deduct_tokens(entity_id, model_config.id, usage.prompt_tokens + usage.completion_tokens)
+                        update_stats(entity_id, model_config.id, "api", usage.prompt_tokens, usage.completion_tokens, cost)
+                        _record_api_key_usage(api_key.id, usage.prompt_tokens, usage.completion_tokens, cost)
+                        db.session.commit()
+                    else:
+                        logger.warning(
+                            "Upstream did not return usage data for streaming request "
+                            "(model=%s, entity_id=%s) — tokens and cost not recorded.",
+                            model_name, entity_id,
+                        )
+                except Exception as e:
+                    logger.error(
+                        "Error during streaming request (model=%s, entity_id=%s): %s",
+                        model_name, entity_id, e,
+                    )
+                    yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
         return Response(stream_with_context(generate()), content_type="text/event-stream")
 
     try:
-        response = client.chat.completions.create(model=remote_model, messages=messages)
+        with openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url) as client:
+            response = client.chat.completions.create(model=remote_model, messages=messages)
     except Exception as e:
         return _err(str(e), "api_error", 500)
 
@@ -231,10 +232,10 @@ def completions():
     if endpoint is None:
         return _err(f"No healthy endpoints for model '{model_name}'", "server_error", 503)
 
-    client = openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url)
     remote_model = endpoint.model_name or model_name
     try:
-        response = client.chat.completions.create(model=remote_model, messages=messages)
+        with openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url) as client:
+            response = client.chat.completions.create(model=remote_model, messages=messages)
     except Exception as e:
         return _err(str(e), "api_error", 500)
 
