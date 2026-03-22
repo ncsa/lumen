@@ -2,6 +2,12 @@
 
 All notable changes to Lumen will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- LaTeX math rendering in chat responses using KaTeX (self-hosted); supports `$...$`, `$$...$$`, `\(...\)`, and `\[...\]` delimiters
+- `app.dev_user` config option to bypass OAuth for local development; set to an email address to auto-login without OAuth credentials
+
 ## [1.1.0] - 2026-03-21
 
 ### Fixed
