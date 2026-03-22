@@ -2,6 +2,10 @@ import time
 import threading
 from datetime import datetime
 
+from lumen.extensions import db
+from lumen.models.entity_model_balance import EntityModelBalance
+from lumen.services.llm import get_effective_limit
+
 
 def start_token_refiller(app):
     """Start a background daemon thread that refills token budgets every 60s."""
@@ -10,9 +14,6 @@ def start_token_refiller(app):
         while True:
             try:
                 with app.app_context():
-                    from lumen.models.entity_model_balance import EntityModelBalance
-                    from lumen.extensions import db
-                    from lumen.services.llm import get_effective_limit
 
                     now = datetime.utcnow()
                     balances = EntityModelBalance.query.filter(

@@ -5,6 +5,8 @@ import time
 
 import yaml
 
+from lumen.commands import sync_models_from_yaml, sync_groups_from_yaml
+
 logger = logging.getLogger(__name__)
 
 _RESTART_REQUIRED = [
@@ -61,13 +63,13 @@ def _watcher(app, config_path):
                 logs_cfg = app_cfg.get("logs", {})
                 werkzeug_level = logging.WARNING if not logs_cfg.get("access", True) else logging.INFO
                 logging.getLogger("werkzeug").setLevel(werkzeug_level)
+                app.config["LOG_MODEL_HEALTH"] = logs_cfg.get("model", False)
 
                 oauth2_cfg = new_data.get("oauth2", {})
                 app.config["OAUTH2_PARAMS"] = oauth2_cfg.get("params") or {}
 
                 chat_cfg = new_data.get("chat", {})
                 app.config["CHAT_CONVERSATION_REMOVE_MODE"] = chat_cfg.get("remove", "hide")
-                from lumen.commands import sync_models_from_yaml, sync_groups_from_yaml
                 try:
                     sync_models_from_yaml(new_data)
                 except Exception as e:
@@ -77,7 +79,7 @@ def _watcher(app, config_path):
                 except Exception as e:
                     logger.warning("config_watcher: sync_groups_from_yaml failed: %s", e)
 
-            logger.info("config.yaml reloaded")
+            app.logger.info("config.yaml reloaded")
         except Exception as e:
             logger.warning("config_watcher error: %s", e)
 

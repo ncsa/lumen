@@ -81,6 +81,7 @@ def create_app():
     logs_cfg = app_cfg.get("logs", {})
     if not logs_cfg.get("access", True):
         logging.getLogger("werkzeug").setLevel(logging.WARNING)
+    app.config["LOG_MODEL_HEALTH"] = logs_cfg.get("model", False)
 
     # Initialize extensions
     from .extensions import db, migrate, oauth, limiter
@@ -179,16 +180,19 @@ def create_app():
             print(f"WARNING: Could not sync groups from yaml (run 'flask db upgrade' first): {e}",
                   file=sys.stderr)
 
-    # Start background health checker
-    from lumen.services.health import start_health_checker
-    start_health_checker(app)
+    # Start background health checker (skip in reloader parent process to avoid duplicate threads)
+    if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        from lumen.services.health import start_health_checker
+        start_health_checker(app)
 
-    # Start background token refiller
-    from lumen.services.token_refill import start_token_refiller
-    start_token_refiller(app)
+    # Start background token refiller (skip in reloader parent process to avoid duplicate threads)
+    if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        from lumen.services.token_refill import start_token_refiller
+        start_token_refiller(app)
 
-    # Start config file watcher
-    from lumen.services.config_watcher import start_config_watcher
-    start_config_watcher(app, config_yaml_path)
+    # Start config file watcher (skip in reloader parent process to avoid duplicate threads)
+    if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        from lumen.services.config_watcher import start_config_watcher
+        start_config_watcher(app, config_yaml_path)
 
     return app

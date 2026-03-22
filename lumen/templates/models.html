@@ -22,7 +22,13 @@
     {% set endpoints = config.endpoints.all() %}
     {% set healthy_eps = endpoints | selectattr("healthy") | list %}
     <tr>
-      <td><strong>{{ config.model_name }}</strong></td>
+      <td>
+        {% if is_admin %}
+        <button class="btn btn-sm btn-outline-secondary py-0 px-1 me-1 ep-toggle" data-bs-toggle="collapse"
+                data-bs-target="#ep-{{ config.id }}" aria-expanded="false" aria-label="Toggle endpoints">▶</button>
+        {% endif %}
+        <strong>{{ config.model_name }}</strong>
+      </td>
       <td class="text-end">${{ "%.4f"|format(config.input_cost_per_million | float) }}</td>
       <td class="text-end">${{ "%.4f"|format(config.output_cost_per_million | float) }}</td>
       <td class="text-center">{{ endpoints | length }}</td>
@@ -54,10 +60,47 @@
         {% endif %}
       </td>
     </tr>
+    {% if is_admin %}
+    <tbody class="collapse table-secondary" id="ep-{{ config.id }}">
+      {% if endpoints %}
+      {% for ep in endpoints %}
+      <tr>
+        <td colspan="2">{{ ep.url }}</td>
+        <td colspan="3">{{ ep.model_name or config.model_name }}</td>
+        <td>
+          {% if ep.last_checked_at %}
+            <span class="local-datetime" data-utc="{{ ep.last_checked_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
+          {% else %}
+            <span class="text-muted">Never</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if ep.healthy %}
+            <span class="badge bg-success">up</span>
+          {% else %}
+            <span class="badge bg-danger">down</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      {% else %}
+      <tr>
+        <td colspan="7" class="text-muted fst-italic">no endpoints defined</td>
+      </tr>
+      {% endif %}
+    </tbody>
+    {% endif %}
     {% else %}
-    <tr><td colspan="6" class="text-center text-muted">No models configured.</td></tr>
+    <tr><td colspan="7" class="text-center text-muted">No models configured.</td></tr>
     {% endfor %}
   </tbody>
 </table>
 </ilw-content>
+{% endblock %}
+
+{% block scripts %}
+<style>
+  .ep-toggle { transition: transform 0.2s; display: inline-block; }
+  .ep-toggle[aria-expanded="true"] { transform: rotate(90deg); }
+</style>
 {% endblock %}

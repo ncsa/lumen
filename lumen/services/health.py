@@ -2,6 +2,11 @@ import time
 import threading
 from datetime import datetime
 
+import openai
+
+from lumen.extensions import db
+from lumen.models.model_endpoint import ModelEndpoint
+
 
 def start_health_checker(app):
     """Start a background daemon thread that checks all endpoints every 60s."""
@@ -10,20 +15,24 @@ def start_health_checker(app):
         while True:
             try:
                 with app.app_context():
-                    import openai
-                    from lumen.models.model_endpoint import ModelEndpoint
-                    from lumen.extensions import db
 
+                    log_enabled = app.config.get("LOG_MODEL_HEALTH", False)
                     endpoints = ModelEndpoint.query.all()
                     for ep in endpoints:
                         try:
-                            client = openai.OpenAI(api_key=ep.api_key, base_url=ep.url)
-                            models = client.models.list()
+                            with openai.OpenAI(api_key=ep.api_key, base_url=ep.url) as client:
+                                models = client.models.list()
                             model_ids = {m.id for m in models.data}
                             expected = ep.model_name or ep.model_config.model_name
                             ep.healthy = expected in model_ids
-                        except Exception:
+                            if log_enabled:
+                                found = "found" if ep.healthy else "NOT FOUND"
+                                app.logger.info("health check %s → endpoint UP, model '%s' %s", ep.url, expected, found)
+                        except Exception as e:
                             ep.healthy = False
+                            if log_enabled:
+                                cause = e.__cause__ or e
+                                app.logger.info("health check %s → endpoint DOWN (%r)", ep.url, cause)
                         ep.last_checked_at = datetime.utcnow()
                     db.session.commit()
             except Exception:

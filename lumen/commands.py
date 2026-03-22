@@ -1,12 +1,16 @@
 import click
+from flask import current_app
 from flask.cli import with_appcontext
+
 from .extensions import db
+from lumen.models.group import Group
+from lumen.models.group_model_limit import GroupModelLimit
+from lumen.models.model_config import ModelConfig
+from lumen.models.model_endpoint import ModelEndpoint
 
 
 def sync_models_from_yaml(yaml_data):
     """Upsert ModelConfig and ModelEndpoint rows from yaml_data. Must run inside an app context."""
-    from lumen.models.model_config import ModelConfig
-    from lumen.models.model_endpoint import ModelEndpoint
 
     for model_def in yaml_data.get("models", []):
         config = ModelConfig.query.filter_by(model_name=model_def["name"]).first()
@@ -45,21 +49,19 @@ def sync_models_from_yaml(yaml_data):
                 existing_ep.api_key = ep_def["api_key"]
                 existing_ep.model_name = ep_def.get("model") or None
 
-    # Deactivate ModelConfig rows no longer in yaml
+    # Deactivate ModelConfig rows no longer in yaml and remove their endpoints
     yaml_model_names = {m["name"] for m in yaml_data.get("models", [])}
     for config in ModelConfig.query.all():
         if config.model_name not in yaml_model_names:
             config.active = False
+            for ep in list(config.endpoints):
+                db.session.delete(ep)
 
     db.session.commit()
 
 
 def sync_groups_from_yaml(yaml_data):
     """Upsert Group and GroupModelLimit rows from yaml_data['groups']. Must run inside an app context."""
-    from lumen.models.group import Group
-    from lumen.models.group_model_limit import GroupModelLimit
-    from lumen.models.model_config import ModelConfig
-
     groups_cfg = yaml_data.get("groups", {})
     yaml_group_names = set(groups_cfg.keys())
 
@@ -121,6 +123,5 @@ def sync_groups_from_yaml(yaml_data):
 @with_appcontext
 def init_db_cmd():
     """Sync ModelConfig and ModelEndpoint from models.yaml."""
-    from flask import current_app
     sync_models_from_yaml(current_app.config["YAML_DATA"])
     click.echo("Database synced with models from models.yaml.")

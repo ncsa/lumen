@@ -7,6 +7,8 @@ from lumen.models.entity import Entity
 from lumen.models.entity_model_balance import EntityModelBalance
 from lumen.models.model_config import ModelConfig
 from lumen.models.entity_model_limit import EntityModelLimit
+from lumen.models.group import Group
+from lumen.models.group_member import GroupMember
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -26,8 +28,6 @@ def make_initials(name: str) -> str:
 
 def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=None):
     """Sync group memberships and per-user model limits from yaml_data. Does not commit."""
-    from lumen.models.group import Group
-    from lumen.models.group_member import GroupMember
 
     users_cfg = yaml_data.get("users", {})
 
