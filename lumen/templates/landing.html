@@ -21,7 +21,12 @@
       <img src="{{ url_for('static', filename='img/block-i.png') }}" alt="I" style="height:80px;width:78px" class="mb-2 d-block mx-auto">
       <h1 class="mb-2 fw-bold">{{ app_name }}</h1>
       {% if app_tagline %}<p class="text-muted mb-4">{{ app_tagline }}</p>{% endif %}
-      <a href="{{ url_for('auth.login') }}" class="btn btn-login btn-lg">Login with OAuth2</a>
+      {% if has_provider %}
+      <a href="{{ url_for('auth.login') }}" class="btn btn-login btn-lg w-100">Login with OAuth2</a>
+      {% endif %}
+      {% if has_dev %}
+      <a href="{{ url_for('auth.devlogin') }}" class="btn btn-outline-primary btn-lg w-100 {% if has_provider %}mt-2{% endif %}">Dev Login</a>
+      {% endif %}
     </div>
   </main>
 

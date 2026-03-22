@@ -128,7 +128,9 @@ def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=No
 def landing():
     if session.get("entity_id"):
         return redirect(url_for("chat.chat_page"))
-    return render_template("landing.html")
+    has_provider = hasattr(oauth, "provider")
+    has_dev = bool(current_app.config.get("DEV_USER"))
+    return render_template("landing.html", has_provider=has_provider, has_dev=has_dev)
 
 
 @auth_bp.route("/login")
@@ -136,6 +138,38 @@ def login():
     redirect_uri = url_for("auth.callback", _external=True)
     params = current_app.config.get("OAUTH2_PARAMS", {})
     return oauth.provider.authorize_redirect(redirect_uri=redirect_uri, **params)
+
+
+
+@auth_bp.route("/devlogin")
+def devlogin():
+    email = current_app.config.get("DEV_USER")
+    if not email:
+        return "Dev login not configured.", 403
+    yaml_data = current_app.config.get("YAML_DATA", {})
+    name = email.split("@")[0]
+
+    entity = Entity.query.filter_by(email=email, entity_type="user").first()
+    if not entity:
+        entity = Entity(
+            entity_type="user",
+            email=email,
+            name=name,
+            initials=make_initials(name),
+            gravatar_hash=gravatar_md5(email),
+            active=True,
+        )
+        db.session.add(entity)
+        db.session.flush()
+
+    sync_user_from_yaml(entity, email, yaml_data)
+    db.session.commit()
+
+    session["entity_id"] = entity.id
+    session["entity_name"] = entity.name
+    session["initials"] = entity.initials
+    session["gravatar_hash"] = entity.gravatar_hash or ""
+    return redirect(url_for("chat.chat_page"))
 
 
 @auth_bp.route("/callback")

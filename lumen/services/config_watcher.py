@@ -11,6 +11,7 @@ _RESTART_REQUIRED = [
     ("app", "secret_key"),
     ("app", "database_url"),
     ("app", "debug"),
+    ("app", "dev_user"),
 ]
 
 
