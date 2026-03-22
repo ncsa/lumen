@@ -12,7 +12,7 @@ Usage:
   uv run locust --headless -u 10 -r 2 --run-time 60s
 """
 import itertools
-import os
+import random
 import time
 from pathlib import Path
 
@@ -25,17 +25,51 @@ with _config_path.open() as f:
 
 _keys = _config["api_keys"]
 _model = _config["model"]
-_prompt = _config["prompt"]
 _base_url = _config["base_url"]
+_questions = _config.get("questions", ["static"])
+_static_prompts = _config.get("prompts", ["Say hello in one sentence."])
 
 # Cycle through keys; each user picks the next available one.
 _key_cycle = itertools.cycle(_keys)
 _key_lock = __import__("threading").Lock()
 
+_OPS = ["+", "-", "*", "/"]
+
+
+def _math_question() -> str:
+    """Generate a random arithmetic question with 1–3 operation groups."""
+    num_groups = random.randint(1, 3)
+    groups = []
+    for _ in range(num_groups):
+        a = random.randint(1, 50)
+        b = random.randint(1, 50)
+        op = random.choice(_OPS)
+        # Avoid division by zero
+        if op == "/" and b == 0:
+            b = 1
+        groups.append(f"({a} {op} {b})")
+
+    if len(groups) == 1:
+        expr = groups[0].strip("()")
+    else:
+        connectors = [random.choice(["+", "-", "*"]) for _ in range(len(groups) - 1)]
+        expr = groups[0]
+        for connector, group in zip(connectors, groups[1:]):
+            expr = f"{expr} {connector} {group}"
+
+    return f"What is {expr}? Just give the numeric answer."
+
 
 def _next_key() -> str:
     with _key_lock:
         return next(_key_cycle)
+
+
+def _get_prompt() -> str:
+    question_type = random.choice(_questions)
+    if question_type == "math":
+        return _math_question()
+    return random.choice(_static_prompts)
 
 
 class LumenUser(HttpUser):
@@ -50,7 +84,7 @@ class LumenUser(HttpUser):
     def chat_completion(self):
         payload = {
             "model": _model,
-            "messages": [{"role": "user", "content": _prompt}],
+            "messages": [{"role": "user", "content": _get_prompt()}],
             "stream": False,
         }
         start = time.monotonic()
