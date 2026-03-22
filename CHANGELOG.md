@@ -11,6 +11,7 @@ All notable changes to Lumen will be documented in this file.
 - All timestamps displayed to users are now shown in their local timezone instead of hardcoded UTC
 
 ### Added
+- Locust load testing toolkit in `loadtesting/`; `uv run dummy` starts a fake LLM backend, `uv run locust` runs the tests, `setup_users.py` provisions test accounts; `locust` is dev-only and excluded from Docker
 - Database connection pool settings now configurable in `config.yaml` under `app.db_pool` (`pool_size`, `max_overflow`, `pool_timeout`, `pool_recycle`, `pool_pre_ping`); requires restart to take effect
 
 ### Security

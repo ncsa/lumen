@@ -19,9 +19,11 @@ dependencies = [
 
 [project.scripts]
 lumen = "run:main"
+dummy = "loadtesting.dummy_backend:main"
+locust = "loadtesting.runner:main"
 
 [dependency-groups]
-dev = []
+dev = ["locust>=2.28"]
 
 [tool.uv]
 package = true

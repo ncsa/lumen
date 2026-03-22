@@ -33,3 +33,6 @@ env/
 
 *.log
 logs/
+
+loadtesting/
+LOADTESTING.md
