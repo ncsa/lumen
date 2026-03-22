@@ -4,7 +4,7 @@
 {% block content %}
 <h1>Services</h1>
 <ilw-content>
-{% if session.get("is_admin") %}
+{% if is_admin %}
 <div class="mb-3">
   <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createServiceModal">
     + New Service

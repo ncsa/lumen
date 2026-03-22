@@ -24,7 +24,7 @@
         <li><a href="{{ url_for('chat.chat_page') }}">Chat</a></li>
         <li><a href="{{ url_for('usage.index') }}">Usage</a></li>
         <li><a href="{{ url_for('models_page.index') }}">Models</a></li>
-        {% if session.get('is_admin') %}
+        {% if is_admin %}
         <li><a href="{{ url_for('admin.groups') }}">Admin</a></li>
         {% endif %}
       </ul>

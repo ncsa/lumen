@@ -17,6 +17,11 @@ def login_required(f):
     return decorated
 
 
+def is_admin(entity):
+    yaml_data = current_app.config.get("YAML_DATA", {})
+    return entity.email in yaml_data.get("admins", [])
+
+
 def admin_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -26,9 +31,7 @@ def admin_required(f):
         if not entity or not entity.active:
             session.clear()
             return redirect(url_for("auth.landing"))
-        yaml_data = current_app.config.get("YAML_DATA", {})
-        admin_emails = yaml_data.get("admins", [])
-        if entity.email not in admin_emails:
+        if not is_admin(entity):
             return jsonify({"error": "Forbidden"}), 403
         return f(*args, **kwargs)
     return decorated

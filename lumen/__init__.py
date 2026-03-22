@@ -136,12 +136,17 @@ def create_app():
     # Context processor: inject app_name and nav_services into all templates
     @app.context_processor
     def inject_nav():
-        result = {"app_name": app.config["APP_NAME"], "app_tagline": app.config["APP_TAGLINE"]}
+        result = {"app_name": app.config["APP_NAME"], "app_tagline": app.config["APP_TAGLINE"], "is_admin": False}
         if not session.get("entity_id"):
             result["nav_services"] = []
             return result
         from lumen.models.entity_manager import EntityManager
         from lumen.models.entity import Entity
+
+        from lumen.decorators import is_admin
+        entity = Entity.query.get(session["entity_id"])
+        if entity:
+            result["is_admin"] = is_admin(entity)
 
         assocs = EntityManager.query.filter_by(user_entity_id=session["entity_id"]).all()
         service_ids = [a.service_entity_id for a in assocs]
