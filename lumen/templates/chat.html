@@ -55,6 +55,7 @@
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+<script src="{{ url_for('static', filename='vendor/katex/katex.min.js') }}"></script>
 <script>
 (function () {
   // ── Chat layout height ───────────────────────────────────────
@@ -62,6 +63,49 @@
   if (el) {
     const top = el.getBoundingClientRect().top;
     document.documentElement.style.setProperty('--chat-top', top + 'px');
+  }
+
+  // ── Math + Markdown rendering ───────────────────────────────
+  function renderMarkdownWithMath(text) {
+    const mathRegions = [];
+    // Extract math regions before marked can mangle them.
+    // Order matters: match $$ before $, \[..\] before \(..\).
+    // Skip content inside backtick code spans/fences.
+    function extract(re, display) {
+      text = text.replace(re, (match, latex) => {
+        const idx = mathRegions.length;
+        mathRegions.push({ latex, display });
+        return `%%MATH_${idx}%%`;
+      });
+    }
+    // Strip code blocks/spans first so $ inside them isn't matched
+    const codeBlocks = [];
+    text = text.replace(/(```[\s\S]*?```|`[^`\n]+`)/g, (m) => {
+      const idx = codeBlocks.length;
+      codeBlocks.push(m);
+      return `%%CODE_${idx}%%`;
+    });
+    extract(/\$\$([\s\S]+?)\$\$/g, true);
+    extract(/\\\[([\s\S]+?)\\\]/g, true);
+    extract(/\\\(([\s\S]+?)\\\)/g, false);
+    // Inline $...$: require non-space after opening and before closing $,
+    // and don't match lone $ (e.g. "$100").
+    extract(/\$([^\s$](?:[^$]*[^\s$])?)\$/g, false);
+    // Restore code blocks
+    text = text.replace(/%%CODE_(\d+)%%/g, (_, i) => codeBlocks[i]);
+
+    let html = DOMPurify.sanitize(marked.parse(text));
+
+    // Replace placeholders with rendered KaTeX
+    html = html.replace(/%%MATH_(\d+)%%/g, (_, i) => {
+      const { latex, display } = mathRegions[i];
+      try {
+        return katex.renderToString(latex, { displayMode: display, throwOnError: false });
+      } catch (e) {
+        return `<code>${escHtml(latex)}</code>`;
+      }
+    });
+    return html;
   }
 
   const STORAGE_MODEL_KEY = "lumen_model";
@@ -189,7 +233,7 @@
     if (isUser) {
       bubble.appendChild(document.createTextNode(content));
     } else {
-      bubble.innerHTML = DOMPurify.sanitize(marked.parse(content));
+      bubble.innerHTML = renderMarkdownWithMath(content);
     }
 
     const ts = document.createElement("small");
