@@ -111,7 +111,7 @@ def get_model(model_id):
     )
 
 
-def _do_chat(model_name: str, messages: list, stream: bool):
+def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
     """Shared logic for chat completions (used by both endpoints)."""
     model_config = ModelConfig.query.filter_by(model_name=model_name, active=True).first()
     if not model_config:
@@ -138,6 +138,7 @@ def _do_chat(model_name: str, messages: list, stream: bool):
                     resp_stream = client.chat.completions.create(
                         model=remote_model, messages=messages, stream=True,
                         stream_options={"include_usage": True},
+                        **kwargs,
                     )
                     usage = None
                     for chunk in resp_stream:
@@ -169,7 +170,7 @@ def _do_chat(model_name: str, messages: list, stream: bool):
 
     try:
         with openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url) as client:
-            response = client.chat.completions.create(model=remote_model, messages=messages)
+            response = client.chat.completions.create(model=remote_model, messages=messages, **kwargs)
     except Exception as e:
         return _err(str(e), "api_error", 500)
 
@@ -200,7 +201,8 @@ def chat_completions():
     if not model_name or not messages:
         return _err("model and messages are required")
 
-    return _do_chat(model_name, messages, stream)
+    extra = {k: v for k, v in data.items() if k not in ("model", "messages", "stream")}
+    return _do_chat(model_name, messages, stream, **extra)
 
 
 @api_bp.route("/completions", methods=["POST"])
