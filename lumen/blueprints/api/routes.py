@@ -135,9 +135,10 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
         def generate():
             with openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url) as client:
                 try:
+                    stream_options = {**kwargs.pop("stream_options", {}), "include_usage": True}
                     resp_stream = client.chat.completions.create(
                         model=remote_model, messages=messages, stream=True,
-                        stream_options={"include_usage": True},
+                        stream_options=stream_options,
                         **kwargs,
                     )
                     usage = None
