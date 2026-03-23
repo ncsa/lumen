@@ -5,11 +5,12 @@
 <ilw-content>
 <ul class="nav nav-tabs mb-3">
   <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.groups') }}">Groups</a></li>
-  <li class="nav-item"><a class="nav-link active" href="{{ url_for('admin.users') }}">Users</a></li>
+  <li class="nav-item"><a class="nav-link active" href="{{ url_for('admin.users') }}" aria-current="page">Users</a></li>
 </ul>
 <h2>Users</h2>
 
 <table class="table table-bordered align-middle">
+  <caption class="visually-hidden">User accounts with group membership and status</caption>
   <thead class="table-light">
     <tr>
       <th>Name</th>
@@ -24,7 +25,7 @@
     <tr>
       <td>{{ user.name }}</td>
       <td>{{ user.email }}</td>
-      <td>{% if user.active %}✓{% else %}<span class="text-danger">✗</span>{% endif %}</td>
+      <td>{% if user.active %}<span aria-label="Active">✓</span>{% else %}<span class="text-danger" aria-label="Inactive">✗</span>{% endif %}</td>
       <td>
         {% for group in user_groups[user.id] %}
         <span class="badge bg-secondary">{{ group.name }}</span>

@@ -6,6 +6,7 @@
 <ilw-content>
 
 <table class="table table-bordered table-hover align-middle">
+  <caption class="visually-hidden">Model health and endpoint status</caption>
   <thead class="table-light">
     <tr>
       <th>Model</th>
@@ -55,7 +56,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="6" class="text-center text-muted">No models configured.</td></tr>
+    <tr><td colspan="7" class="text-center text-muted">No models configured.</td></tr>
     {% endfor %}
   </tbody>
 </table>

@@ -8,6 +8,8 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
   <link rel="stylesheet" href="https://cdn.toolkit.illinois.edu/3/toolkit.css">
   <script type="module" src="https://cdn.toolkit.illinois.edu/3/toolkit.js"></script>
+  <script src="{{ url_for('static', filename='vendor/skipto/skipto.min.js') }}"
+          data-skipto="colorTheme:illinois"></script>
 </head>
 <body class="bg-light">
 
@@ -16,9 +18,9 @@
     <a slot="site-name" href="/">{{ app_name }}</a>
   </ilw-header>
 
-  <main class="d-flex align-items-center justify-content-center" style="min-height:60vh">
+  <main id="main-content" class="d-flex align-items-center justify-content-center" style="min-height:60vh">
     <div class="card shadow-sm p-5 text-center" style="max-width:420px;width:100%">
-      <img src="{{ url_for('static', filename='img/block-i.png') }}" alt="I" style="height:80px;width:78px" class="mb-2 d-block mx-auto">
+      <img src="{{ url_for('static', filename='img/block-i.png') }}" alt="University of Illinois Block I logo" style="height:80px;width:78px" class="mb-2 d-block mx-auto">
       <h1 class="mb-2 fw-bold">{{ app_name }}</h1>
       {% if app_tagline %}<p class="text-muted mb-4">{{ app_tagline }}</p>{% endif %}
       {% if has_provider %}

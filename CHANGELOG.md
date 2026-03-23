@@ -7,6 +7,32 @@ All notable changes to Lumen will be documented in this file.
 ### Added
 - LaTeX math rendering in chat responses using KaTeX (self-hosted); supports `$...$`, `$$...$$`, `\(...\)`, and `\[...\]` delimiters
 - `app.dev_user` config option to bypass OAuth for local development; set to an email address to auto-login without OAuth credentials
+- WCAG 2.1 AA accessibility compliance across all pages
+- SkipTo.js v5.10.1 (self-hosted) for landmark/heading skip navigation (WCAG 2.4.1 Bypass Blocks)
+- ARIA live region on chat messages area (`role="log"`) so screen readers announce new messages
+- Screen-reader-only text for typing indicator ("Assistant is typing")
+- Keyboard navigation for conversation sidebar items (Enter/Space to select)
+- `aria-label` on all icon-only buttons (hamburger, sidebar toggle, close, remove, info)
+- `aria-labelledby` on all modal dialogs; `for`/`id` associations on all form labels and inputs
+- `role="img"` with `aria-label` on all emoji used as meaningful content (🔒, ✓, ✗)
+- Table `<caption>` elements (visually hidden) on all data tables
+- Visually-hidden "Actions" text in empty `<th>` cells
+- `aria-selected` and left-border indicator on active conversation item
+- Progress bar `aria-label` for token balance display
+
+### Fixed
+- Color contrast on assistant chat bubble: darkened from `#e84a27` (3.0:1) to `#b5300c` (5.5:1) (WCAG 1.4.3)
+- `.msg-meta` text color darkened from `#6c757d` to `#596068` for contrast on light backgrounds
+- Alert auto-dismiss increased from 5s to 20s with pause on hover/focus (WCAG 2.2.1)
+- `overflow:hidden` on `<main>` and `.chat-page-layout` changed to `overflow:auto` to prevent clipping at zoom (WCAG 1.4.10)
+- Heading hierarchy corrected from h1→h5 to h1→h2 in usage, group detail, and user limits pages
+- Conversation remove button now visible on keyboard focus (not just hover)
+- Focus ring added for `.btn-outline-primary:focus-visible`
+- Logo alt text improved from "I" to "University of Illinois Block I logo"
+- Wrong `colspan="6"` fixed to `colspan="7"` on models empty-state row
+- `aria-current="page"` added to active admin nav tabs
+- Focus management: chat input receives focus after loading a conversation; new-chat button after deletion
+- Dynamic status messages in services page now use `role="alert" aria-live="assertive"`
 
 ## [1.1.0] - 2026-03-21
 

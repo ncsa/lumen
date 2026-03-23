@@ -4,7 +4,7 @@
 <h1>Admin</h1>
 <ilw-content>
 <ul class="nav nav-tabs mb-3">
-  <li class="nav-item"><a class="nav-link active" href="{{ url_for('admin.groups') }}">Groups</a></li>
+  <li class="nav-item"><a class="nav-link active" href="{{ url_for('admin.groups') }}" aria-current="page">Groups</a></li>
   <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.users') }}">Users</a></li>
 </ul>
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -13,6 +13,7 @@
 </div>
 
 <table class="table table-bordered align-middle">
+  <caption class="visually-hidden">Group listing with membership and status</caption>
   <thead class="table-light">
     <tr>
       <th>Name</th>
@@ -25,10 +26,10 @@
   <tbody>
     {% for group in groups %}
     <tr>
-      <td>{{ group.name }}{% if group.config_managed %} 🔒{% endif %}</td>
+      <td>{{ group.name }}{% if group.config_managed %} <span role="img" aria-label="Managed by config">🔒</span>{% endif %}</td>
       <td class="text-muted">{{ group.description or '' }}</td>
       <td>{{ member_counts[group.id] }}</td>
-      <td>{% if group.active %}✓{% else %}<span class="text-danger">✗</span>{% endif %}</td>
+      <td>{% if group.active %}<span aria-label="Active">✓</span>{% else %}<span class="text-danger" aria-label="Inactive">✗</span>{% endif %}</td>
       <td>
         <a href="{{ url_for('admin.group_detail', gid=group.id) }}" class="btn btn-sm btn-outline-primary">View</a>
         {% if not group.config_managed %}
@@ -49,21 +50,21 @@
 </table>
 
 <!-- New Group Modal -->
-<div class="modal fade" id="newGroupModal" tabindex="-1">
+<div class="modal fade" id="newGroupModal" tabindex="-1" aria-labelledby="newGroupModalLabel">
   <div class="modal-dialog">
     <form method="post" action="{{ url_for('admin.create_group') }}" class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title">New Group</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        <h5 class="modal-title" id="newGroupModalLabel">New Group</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
         <div class="mb-3">
-          <label class="form-label">Name</label>
-          <input name="name" type="text" class="form-control" required>
+          <label class="form-label" for="group-name-input">Name</label>
+          <input name="name" id="group-name-input" type="text" class="form-control" required>
         </div>
         <div class="mb-3">
-          <label class="form-label">Description</label>
-          <input name="description" type="text" class="form-control">
+          <label class="form-label" for="group-desc-input">Description</label>
+          <input name="description" id="group-desc-input" type="text" class="form-control">
         </div>
       </div>
       <div class="modal-footer">
