@@ -8,6 +8,7 @@ app:
   encryption_key: ""
   database_url: sqlite:///lumen_dev.db
   debug: true   # set to false in production
+  # dev_user: dev@example.com  # Allows bypass of OAuth; can log in as this email directly
   db_pool:
     pool_size: 20        # persistent connections kept open (default: 5)
     max_overflow: 30     # extra connections allowed above pool_size (default: 10)
