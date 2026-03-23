@@ -9,6 +9,8 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
   <link rel="stylesheet" href="https://cdn.toolkit.illinois.edu/3/toolkit.css">
   <script type="module" src="https://cdn.toolkit.illinois.edu/3/toolkit.js"></script>
+  <script src="https://skipto-landmarks-headings.github.io/page-script-5/dist/skipto.min.js"
+          data-skipto="colorTheme:illinois"></script>
 </head>
 <body>
 
@@ -33,14 +35,14 @@
     </ilw-header-menu>
   </ilw-header>
 
-  <main style="flex:1;overflow:hidden;display:flex;flex-direction:column">
+  <main id="main-content" style="flex:1;overflow:auto;display:flex;flex-direction:column">
     <div class="container-fluid mt-3 px-4" style="flex:1;overflow:hidden">
       {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         {% for category, message in messages %}
         <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
           {{ message }}
-          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close alert"></button>
         </div>
         {% endfor %}
       {% endif %}

@@ -8,14 +8,14 @@
   <div class="chat-sidebar offcanvas offcanvas-start" tabindex="-1" id="chatSidebar">
     <div class="offcanvas-header d-md-none border-bottom">
       <h6 class="offcanvas-title fw-semibold mb-0">Conversations</h6>
-      <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+      <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close conversations panel"></button>
     </div>
     <div class="d-flex flex-column h-100">
       <div class="d-flex align-items-center px-3 py-2 border-bottom">
         <span class="fw-semibold small d-none d-md-inline">Conversations</span>
         <button class="btn btn-sm btn-primary ms-auto" id="new-chat-btn">+ New</button>
       </div>
-      <div id="conv-list" class="conv-list overflow-auto flex-fill"></div>
+      <div id="conv-list" class="conv-list overflow-auto flex-fill" role="list" aria-label="Conversations"></div>
     </div>
   </div>
 
@@ -25,10 +25,10 @@
       <!-- Mobile hamburger -->
       <button class="btn btn-sm btn-outline-secondary d-md-none"
               data-bs-toggle="offcanvas" data-bs-target="#chatSidebar"
-              aria-controls="chatSidebar">☰</button>
+              aria-controls="chatSidebar" aria-label="Open conversations menu">☰</button>
       <!-- Desktop collapse -->
       <button class="btn btn-sm btn-outline-secondary d-none d-md-inline-block"
-              id="sidebar-toggle-btn" title="Toggle sidebar">←</button>
+              id="sidebar-toggle-btn" aria-label="Toggle sidebar">←</button>
 
       <label for="model-picker" class="form-label mb-0 fw-semibold">Model:</label>
       <select id="model-picker" class="form-select form-select-sm" style="max-width:280px">
@@ -38,10 +38,11 @@
       </select>
     </div>
 
-    <div id="chat-messages" class="chat-messages flex-fill overflow-auto p-3"></div>
+    <div id="chat-messages" class="chat-messages flex-fill overflow-auto p-3" role="log" aria-live="polite" aria-label="Chat messages"></div>
 
     <div class="chat-input-bar px-3 py-2 border-top flex-shrink-0">
       <form id="chat-form" class="d-flex gap-2">
+        <label for="chat-input" class="visually-hidden">Message</label>
         <textarea id="chat-input" class="form-control" rows="2"
                   placeholder="Type your message… (Enter to send, Shift+Enter for newline)"></textarea>
         <button type="submit" id="send-btn" class="btn btn-primary align-self-stretch">Send</button>
@@ -155,10 +156,15 @@
     const list = document.getElementById("conv-list");
     list.innerHTML = "";
     conversations.forEach(conv => {
+      const isActive = conv.id === activeConversationId;
       const item = document.createElement("div");
       item.className = "conv-item d-flex align-items-center px-3 py-2" +
-        (conv.id === activeConversationId ? " active" : "");
+        (isActive ? " active" : "");
       item.dataset.id = conv.id;
+      item.setAttribute("role", "listitem");
+      item.setAttribute("tabindex", "0");
+      item.setAttribute("aria-label", conv.title);
+      item.setAttribute("aria-selected", isActive ? "true" : "false");
 
       const info = document.createElement("div");
       info.className = "flex-fill overflow-hidden me-1";
@@ -168,7 +174,7 @@
 
       const removeBtn = document.createElement("button");
       removeBtn.className = "conv-remove-btn btn btn-link btn-sm p-0 text-muted";
-      removeBtn.title = "Remove";
+      removeBtn.setAttribute("aria-label", "Remove conversation: " + conv.title);
       removeBtn.textContent = "✕";
       removeBtn.addEventListener("click", e => {
         e.stopPropagation();
@@ -178,6 +184,12 @@
       item.appendChild(info);
       item.appendChild(removeBtn);
       item.addEventListener("click", () => loadConversation(conv.id));
+      item.addEventListener("keydown", e => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          loadConversation(conv.id);
+        }
+      });
       list.appendChild(item);
     });
   }
@@ -197,8 +209,11 @@
       });
       container.scrollTop = container.scrollHeight;
       document.querySelectorAll(".conv-item").forEach(el => {
-        el.classList.toggle("active", parseInt(el.dataset.id) === id);
+        const match = parseInt(el.dataset.id) === id;
+        el.classList.toggle("active", match);
+        el.setAttribute("aria-selected", match ? "true" : "false");
       });
+      document.getElementById("chat-input").focus();
     } catch (e) {}
   }
 
@@ -211,6 +226,7 @@
         document.getElementById("chat-messages").innerHTML = "";
       }
       loadConversations();
+      document.getElementById("new-chat-btn").focus();
     } catch (e) {}
   }
 
@@ -244,6 +260,8 @@
       const infoIcon = document.createElement("span");
       infoIcon.className = "info-icon";
       infoIcon.textContent = "ⓘ";
+      infoIcon.setAttribute("role", "button");
+      infoIcon.setAttribute("aria-label", "Message details");
       infoIcon.setAttribute("data-bs-toggle", "popover");
       infoIcon.setAttribute("data-bs-trigger", "click");
       infoIcon.setAttribute("data-bs-placement", "top");
@@ -281,9 +299,10 @@
     row.id = "typing-indicator";
     row.innerHTML =
       `<div class="chat-bubble chat-bubble-assistant py-2 px-3">` +
-      `<span class="typing-dot">●</span>` +
-      `<span class="typing-dot" style="animation-delay:.2s">●</span>` +
-      `<span class="typing-dot" style="animation-delay:.4s">●</span>` +
+      `<span class="visually-hidden">Assistant is typing</span>` +
+      `<span class="typing-dot" aria-hidden="true">●</span>` +
+      `<span class="typing-dot" aria-hidden="true" style="animation-delay:.2s">●</span>` +
+      `<span class="typing-dot" aria-hidden="true" style="animation-delay:.4s">●</span>` +
       `</div>`;
     container.appendChild(row);
     container.scrollTop = container.scrollHeight;

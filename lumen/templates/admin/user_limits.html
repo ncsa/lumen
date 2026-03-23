@@ -8,8 +8,9 @@
   <a href="{{ url_for('admin.users') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
 </div>
 
-<h5>Effective Limits</h5>
+<h2>Effective Limits</h2>
 <table class="table table-bordered align-middle mb-4" style="table-layout:fixed">
+  <caption class="visually-hidden">Effective token limits for this user</caption>
   <colgroup><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
   <thead class="table-light">
     <tr><th>Model</th><th>Max</th><th>Refresh</th><th>Starting</th><th>Balance</th></tr>
@@ -37,14 +38,15 @@
 </table>
 
 <div class="d-flex justify-content-between align-items-center mb-2">
-  <h5 class="mb-0">User Config</h5>
+  <h2 class="mb-0">User Config</h2>
   <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addLimitModal">+ Add Limit</button>
 </div>
 
 <table class="table table-bordered align-middle mb-4" style="table-layout:fixed">
+  <caption class="visually-hidden">User-specific token limit overrides</caption>
   <colgroup><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
   <thead class="table-light">
-    <tr><th>Model</th><th>Max</th><th>Refresh</th><th>Starting</th><th></th></tr>
+    <tr><th>Model</th><th>Max</th><th>Refresh</th><th>Starting</th><th><span class="visually-hidden">Actions</span></th></tr>
   </thead>
   <tbody>
     {% for limit in limits %}
@@ -57,7 +59,7 @@
           {% set mc = models | selectattr('id', 'equalto', limit.model_config_id) | first %}
           {{ mc.model_name if mc else limit.model_config_id }}
         {% endif %}
-        {% if limit.config_managed %} 🔒{% endif %}
+        {% if limit.config_managed %} <span role="img" aria-label="Managed by config">🔒</span>{% endif %}
       </td>
       <td>
         {% if limit.max_tokens == -2 %}<span class="text-success">Unlimited</span>
@@ -81,11 +83,11 @@
   </tbody>
 </table>
 
-<h5>Groups</h5>
+<h2>Groups</h2>
 {% if group_details %}
 {% for membership, group, glimits in group_details %}
 <div class="d-flex justify-content-between align-items-center mb-1">
-  <strong>{{ group.name }}{% if membership.config_managed %} 🔒{% endif %}</strong>
+  <strong>{{ group.name }}{% if membership.config_managed %} <span role="img" aria-label="Managed by config">🔒</span>{% endif %}</strong>
   {% if not membership.config_managed %}
   <form method="post" action="{{ url_for('admin.remove_member', gid=group.id, mid=membership.id) }}">
     <input type="hidden" name="back" value="user_limits">
@@ -94,6 +96,7 @@
   {% endif %}
 </div>
 <table class="table table-bordered align-middle mb-3" style="table-layout:fixed;width:80%">
+  <caption class="visually-hidden">Token limits from group {{ group.name }}</caption>
   <colgroup><col style="width:25%"><col style="width:25%"><col style="width:25%"><col style="width:25%"></colgroup>
   <thead class="table-light">
     <tr><th>Model</th><th>Max</th><th>Refresh</th><th>Starting</th></tr>
@@ -129,17 +132,17 @@
 {% endif %}
 
 <!-- Add Limit Modal -->
-<div class="modal fade" id="addLimitModal" tabindex="-1">
+<div class="modal fade" id="addLimitModal" tabindex="-1" aria-labelledby="addLimitModalLabel">
   <div class="modal-dialog">
     <form method="post" action="{{ url_for('admin.upsert_user_limit', eid=entity.id) }}" class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title">Add / Update Limit</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        <h5 class="modal-title" id="addLimitModalLabel">Add / Update Limit</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
         <div class="mb-3">
-          <label class="form-label">Model</label>
-          <select name="model_config_id" class="form-select">
+          <label class="form-label" for="ul-model-select">Model</label>
+          <select name="model_config_id" id="ul-model-select" class="form-select">
             <option value="">Default (all models)</option>
             {% for model in models %}
             <option value="{{ model.id }}">{{ model.model_name }}</option>
@@ -147,16 +150,16 @@
           </select>
         </div>
         <div class="mb-3">
-          <label class="form-label">Max Tokens <small class="text-muted">(-2=unlimited, -1=defer, 0=block)</small></label>
-          <input name="max_tokens" type="number" class="form-control" value="-1" required>
+          <label class="form-label" for="ul-max-tokens">Max Tokens <small class="text-muted">(-2=unlimited, -1=defer, 0=block)</small></label>
+          <input name="max_tokens" id="ul-max-tokens" type="number" class="form-control" value="-1" required>
         </div>
         <div class="mb-3">
-          <label class="form-label">Refresh Tokens / Hour</label>
-          <input name="refresh_tokens" type="number" class="form-control" value="0" min="0">
+          <label class="form-label" for="ul-refresh-tokens">Refresh Tokens / Hour</label>
+          <input name="refresh_tokens" id="ul-refresh-tokens" type="number" class="form-control" value="0" min="0">
         </div>
         <div class="mb-3">
-          <label class="form-label">Starting Tokens</label>
-          <input name="starting_tokens" type="number" class="form-control" value="0" min="0">
+          <label class="form-label" for="ul-starting-tokens">Starting Tokens</label>
+          <input name="starting_tokens" id="ul-starting-tokens" type="number" class="form-control" value="0" min="0">
         </div>
       </div>
       <div class="modal-footer">

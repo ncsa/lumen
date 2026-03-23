@@ -37,10 +37,11 @@
 </div>
 
 <!-- Token Limits by Model -->
-<h5 class="mt-3">Token Limits by Model</h5>
+<h2 class="mt-3">Token Limits by Model</h2>
 {% if model_limits %}
 <div class="table-responsive mb-4">
   <table class="table table-bordered align-middle">
+    <caption class="visually-hidden">Token limits and balances by model</caption>
     <thead class="table-light">
       <tr>
         <th>Model</th>
@@ -69,7 +70,8 @@
             <div class="progress-bar" role="progressbar"
                  style="width:{{ pct }}%"
                  aria-valuenow="{{ row.tokens_left }}"
-                 aria-valuemin="0" aria-valuemax="{{ row.token_limit }}"></div>
+                 aria-valuemin="0" aria-valuemax="{{ row.token_limit }}"
+                 aria-label="Token balance for {{ row.model_name }}"></div>
           </div>
           {% endif %}
         </td>
@@ -94,9 +96,10 @@
 {% endif %}
 
 <!-- Section 1: Token Sources -->
-<h5 class="mt-3">Token Sources</h5>
+<h2 class="mt-3">Token Sources</h2>
 <div class="table-responsive">
   <table class="table table-bordered align-middle">
+    <caption class="visually-hidden">Usage statistics by token source</caption>
     <thead class="table-light">
       <tr>
         <th>Source</th>
@@ -105,7 +108,7 @@
         <th class="text-end">Output Tokens</th>
         <th class="text-end">Cost (USD)</th>
         <th>Last Used</th>
-        {% if not scope_entity %}<th></th>{% endif %}
+        {% if not scope_entity %}<th><span class="visually-hidden">Actions</span></th>{% endif %}
       </tr>
     </thead>
     <tbody>
@@ -151,10 +154,11 @@
 </div>
 
 <!-- Section 2: Usage by Model -->
-<h5 class="mt-4">Usage by Model</h5>
+<h2 class="mt-4">Usage by Model</h2>
 {% if model_usage %}
 <div class="table-responsive">
   <table class="table table-bordered align-middle">
+    <caption class="visually-hidden">Usage statistics by model</caption>
     <thead class="table-light">
       <tr>
         <th>Model</th>
@@ -185,20 +189,20 @@
 
 {% if not scope_entity %}
 <!-- API Key Modal -->
-<div class="modal fade" id="apiKeyModal" tabindex="-1">
+<div class="modal fade" id="apiKeyModal" tabindex="-1" aria-labelledby="apiKeyModalLabel">
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title">New API Key</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        <h5 class="modal-title" id="apiKeyModalLabel">New API Key</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
         <div class="mb-3">
-          <label class="form-label">Key Name</label>
+          <label class="form-label" for="key-name-input">Key Name</label>
           <input type="text" id="key-name-input" class="form-control" placeholder="e.g. My App">
         </div>
         <div class="mb-3">
-          <label class="form-label">
+          <label class="form-label" for="key-display">
             Generated Key
             <small class="text-danger fw-semibold">— copy now, it won't be shown again</small>
           </label>

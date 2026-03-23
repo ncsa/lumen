@@ -2,7 +2,7 @@
 .chat-page-layout {
   display: flex;
   height: calc(100vh - var(--chat-top, 200px) - 100px);
-  overflow: hidden;
+  overflow: auto;
   margin: 0 -1.5rem;
 }
 
@@ -33,6 +33,7 @@
 
 .conv-item.active {
   background: #e8f0fe;
+  border-left: 3px solid #13294b;
 }
 
 .conv-remove-btn {
@@ -43,7 +44,8 @@
   text-decoration: none;
 }
 
-.conv-item:hover .conv-remove-btn {
+.conv-item:hover .conv-remove-btn,
+.conv-remove-btn:focus {
   opacity: 1;
 }
 
@@ -86,7 +88,7 @@
 }
 
 .chat-bubble-assistant {
-  background-color: var(--il-altgeld, #e84a27);
+  background-color: #b5300c;
   color: #fff;
   border-bottom-left-radius: 0.25rem;
 }
@@ -147,7 +149,7 @@
 /* ── Message metadata & info icon ────────────────────────────── */
 .msg-meta {
   font-size: 0.82rem;
-  color: #6c757d;
+  color: #596068;
   margin-top: 2px;
 }
 
@@ -221,6 +223,10 @@
   background-color: #13294b !important;
   border-color: #13294b !important;
   color: #fff !important;
+}
+
+.btn-outline-primary:focus-visible {
+  box-shadow: 0 0 0 0.25rem rgba(19, 41, 75, 0.4);
 }
 
 /* ── Override Bootstrap primary color with il-blue ───────────── */
