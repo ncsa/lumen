@@ -68,8 +68,28 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 All times shown to the user must be in their local timezone. All times stored in the DB are UTC. In templates, emit `<span class="local-datetime" data-utc="{{ dt.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>` and let the JS in app.js convert it to local time. Never hardcode "UTC" in displayed timestamps.
 Dependencies are managed with uv, code is run with uv
-Styles and collors match university of illinois, see https://builder3.toolkit.illinois.edu/getting_started/index.html
+Styles and colors match University of Illinois, see https://builder3.toolkit.illinois.edu/getting_started/index.html
 When adding variables to config.yaml, make sure they are hot loaded if possible or print a warning
-track changes in the CHANGELOG.md, if no unrelease section exists, then add it.
+Track changes in the CHANGELOG.md, if no unreleased section exists, then add it.
 KaTeX is self-hosted in `lumen/static/vendor/katex/` (JS, CSS, fonts). Math rendering is handled in `chat.html` via `renderMarkdownWithMath()` which extracts LaTeX before marked.js can mangle it.
 For local testing without OAuth or a real LLM: set `app.dev_user` in config.yaml and use `uv run dummy` (dummy backend on port 9999). See the "Local Development" section in README.md.
+
+## 5. Accessibility (WCAG 2.1 AA)
+
+**All HTML must be WCAG 2.1 AA compliant. This is not optional.**
+
+When writing or modifying HTML/JS:
+- **ARIA labels:** Every interactive element needs an accessible name. Icon-only buttons (`✕`, `☰`, `←`, `ⓘ`) require `aria-label`. Never rely on `title` alone.
+- **Form labels:** Every `<input>`, `<select>`, and `<textarea>` must have an associated `<label>` with a `for`/`id` pair. Use `class="visually-hidden"` if the label should not be visible. Placeholder text is not a label substitute.
+- **Modals:** Add `aria-labelledby` pointing to the modal title's `id`. Close buttons need `aria-label="Close"`.
+- **Dynamic content:** Use `aria-live="polite"` (or `role="log"`) for areas updated via JS (chat messages, status results). Use `role="alert" aria-live="assertive"` for error/success feedback.
+- **Keyboard access:** If an element has a click handler, it must also be focusable (`tabindex="0"`) with a `keydown` handler for Enter/Space, or use a native `<button>`/`<a>`. Hover-only visibility must also trigger on `:focus`.
+- **Color contrast:** Normal text needs 4.5:1 minimum. Do not use UIUC orange (`#e84a27`) as a background with white text (only 3.0:1). Use `#b5300c` or darker. Verify with a contrast checker.
+- **Headings:** Maintain proper hierarchy (h1 → h2 → h3). Never skip from h1 to h5.
+- **Tables:** Data tables need `<caption>` (use `class="visually-hidden"` if needed). Empty `<th>` cells for action columns need `<span class="visually-hidden">Actions</span>`.
+- **Emoji as content:** Wrap meaningful emoji in `<span role="img" aria-label="description">`.
+- **Skip navigation:** SkipTo.js is loaded in `base.html` and `landing.html` from `lumen/static/vendor/skipto/`. Do not remove it.
+- **Timed content:** Auto-dismiss timers must be at least 20 seconds and pause on hover/focus (WCAG 2.2.1).
+- **Overflow:** Never use `overflow:hidden` on scrollable content containers — use `overflow:auto` to prevent clipping at zoom.
+- **Focus management:** After JS changes page content (loading data, deleting items), move focus to a logical target (e.g., input field, action button).
+- **Active/selected state:** Never convey state through color alone. Combine with a border, icon, bold, or `aria-selected`/`aria-current`.
