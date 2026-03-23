@@ -10,4 +10,4 @@ RUN uv sync --frozen --no-dev
 
 EXPOSE 5000
 
-CMD ["sh", "entrypoint.sh"]
+ENTRYPOINT ["sh", "entrypoint.sh"]

@@ -1,3 +1,5 @@
+docker-compose.yml
+
 # Python
 __pycache__/
 *.py[cod]

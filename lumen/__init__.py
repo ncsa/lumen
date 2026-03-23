@@ -53,7 +53,7 @@ def create_app():
         app.logger.error("app.encryption_key is not set in config.yaml (or LUMEN_ENCRYPTION_KEY env var). App cannot start.")
         sys.exit(1)
     app.config["ENCRYPTION_KEY"] = encryption_key
-    if "database_url" in app_cfg:
+    if "database_url" in app_cfg and not os.environ.get("DATABASE_URL"):
         db_url = app_cfg["database_url"].replace("postgres://", "postgresql://", 1)
         app.config["SQLALCHEMY_DATABASE_URI"] = db_url
     db_pool = app_cfg.get("db_pool", {})
@@ -78,9 +78,11 @@ def create_app():
     chat_cfg = yaml_data.get("chat", {})
     app.config["CHAT_CONVERSATION_REMOVE_MODE"] = chat_cfg.get("remove", "hide")
 
+    app.logger.setLevel(logging.INFO)
     logs_cfg = app_cfg.get("logs", {})
     if not logs_cfg.get("access", True):
         logging.getLogger("werkzeug").setLevel(logging.WARNING)
+        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     app.config["LOG_MODEL_HEALTH"] = logs_cfg.get("model", False)
 
     # Initialize extensions
@@ -180,18 +182,22 @@ def create_app():
             print(f"WARNING: Could not sync groups from yaml (run 'flask db upgrade' first): {e}",
                   file=sys.stderr)
 
-    # Start background health checker (skip in reloader parent process to avoid duplicate threads)
-    if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+    # Start background threads only in the main worker process.
+    # - Werkzeug dev server: double-imports the app; only run in the child (WERKZEUG_RUN_MAIN=true).
+    # - Uvicorn: create_app() is only called in worker processes, always run unless
+    #   BACKGROUND_WORKER=false is set (use this to disable on extra workers).
+    if os.environ.get("WERKZEUG_RUN_MAIN") is not None:
+        _run_background = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+    else:
+        _run_background = os.environ.get("BACKGROUND_WORKER", "true") != "false"
+
+    if _run_background:
         from lumen.services.health import start_health_checker
         start_health_checker(app)
 
-    # Start background token refiller (skip in reloader parent process to avoid duplicate threads)
-    if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
         from lumen.services.token_refill import start_token_refiller
         start_token_refiller(app)
 
-    # Start config file watcher (skip in reloader parent process to avoid duplicate threads)
-    if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
         from lumen.services.config_watcher import start_config_watcher
         start_config_watcher(app, config_yaml_path)
 

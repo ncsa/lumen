@@ -1,52 +1,46 @@
 {% extends "base.html" %}
-{% block title %}Admin – Groups{% endblock %}
+{% block title %}Groups{% endblock %}
 {% block content %}
-<h1>Admin</h1>
 <ilw-content>
-<ul class="nav nav-tabs mb-3">
-  <li class="nav-item"><a class="nav-link active" href="{{ url_for('admin.groups') }}">Groups</a></li>
-  <li class="nav-item"><a class="nav-link" href="{{ url_for('admin.users') }}">Users</a></li>
-</ul>
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h2>Groups</h2>
+  <h1>Groups</h1>
   <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#newGroupModal">+ New Group</button>
 </div>
 
-<table class="table table-bordered align-middle">
+<div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+  <div class="d-flex align-items-center gap-2">
+    <label class="text-muted small mb-0">Display</label>
+    <select id="perPage" class="form-select form-select-sm" style="width:auto">
+      <option value="25">25</option>
+      <option value="50">50</option>
+      <option value="100">100</option>
+      <option value="200">200</option>
+    </select>
+    <span class="text-muted small mb-0">results</span>
+  </div>
+</div>
+
+<div class="table-responsive">
+<table class="table table-striped table-hover align-middle mb-0">
   <thead class="table-light">
     <tr>
-      <th>Name</th>
-      <th>Description</th>
-      <th>Members</th>
-      <th>Active</th>
+      <th class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th class="sort-header" data-col="description">Description <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th class="sort-header" data-col="members">Members <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th class="sort-header" data-col="active">Active <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
       <th>Actions</th>
     </tr>
   </thead>
-  <tbody>
-    {% for group in groups %}
-    <tr>
-      <td>{{ group.name }}{% if group.config_managed %} 🔒{% endif %}</td>
-      <td class="text-muted">{{ group.description or '' }}</td>
-      <td>{{ member_counts[group.id] }}</td>
-      <td>{% if group.active %}✓{% else %}<span class="text-danger">✗</span>{% endif %}</td>
-      <td>
-        <a href="{{ url_for('admin.group_detail', gid=group.id) }}" class="btn btn-sm btn-outline-primary">View</a>
-        {% if not group.config_managed %}
-        <form method="post" action="{{ url_for('admin.toggle_group', gid=group.id) }}" class="d-inline">
-          {% if group.active %}
-          <button class="btn btn-sm btn-outline-danger">Deactivate</button>
-          {% else %}
-          <button class="btn btn-sm btn-outline-success">Activate</button>
-          {% endif %}
-        </form>
-        {% endif %}
-      </td>
-    </tr>
-    {% else %}
-    <tr><td colspan="5" class="text-muted text-center">No groups yet.</td></tr>
-    {% endfor %}
+  <tbody id="groupTableBody">
+    <tr><td colspan="5" class="text-center text-muted py-3">Loading…</td></tr>
   </tbody>
 </table>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mt-2 flex-wrap gap-2">
+  <span id="rangeLabel" class="text-muted small"></span>
+  <div id="pagination" class="d-flex gap-1 flex-wrap"></div>
+</div>
 
 <!-- New Group Modal -->
 <div class="modal fade" id="newGroupModal" tabindex="-1">
@@ -73,5 +67,160 @@
     </form>
   </div>
 </div>
+
 </ilw-content>
+
+<style>
+.sort-header { cursor: pointer; user-select: none; white-space: nowrap; }
+.sort-arrows { display: inline-flex; flex-direction: column; font-size: 0.6em; line-height: 1.1; float: right; margin-left: 6px; margin-top: 2px; }
+.sa-up, .sa-dn { color: #adb5bd; }
+.sort-asc .sa-up { color: #212529; }
+.sort-desc .sa-dn { color: #212529; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  let page = parseInt(params.get('page') || '1');
+  let perPage = parseInt(params.get('per_page') || '25');
+  let sort = params.get('sort') || 'name';
+  let order = params.get('order') || 'asc';
+
+  const tbody = document.getElementById('groupTableBody');
+  const paginationEl = document.getElementById('pagination');
+  const rangeLabel = document.getElementById('rangeLabel');
+  const perPageSel = document.getElementById('perPage');
+
+  perPageSel.value = String(perPage);
+
+  function fmt(n) { return n.toLocaleString(); }
+
+  function updateSortHeaders() {
+    document.querySelectorAll('.sort-header').forEach(th => {
+      th.classList.remove('sort-asc', 'sort-desc');
+      if (th.dataset.col === sort) th.classList.add(order === 'asc' ? 'sort-asc' : 'sort-desc');
+    });
+  }
+
+  function syncUrl() {
+    const p = new URLSearchParams({ page, per_page: perPage, sort, order });
+    history.replaceState(null, '', '?' + p.toString());
+  }
+
+  function renderPagination(total, currentPage, pp) {
+    const pages = Math.ceil(total / pp);
+    if (pages <= 1) { paginationEl.innerHTML = ''; return; }
+
+    const btn = (p, label, disabled, active) =>
+      `<button class="btn btn-sm ${active ? 'btn-primary' : 'btn-outline-secondary'}" ${disabled ? 'disabled' : ''} data-page="${p}">${label}</button>`;
+
+    let html = btn(currentPage - 1, '&laquo;', currentPage === 1, false);
+    let start = Math.max(1, currentPage - 3);
+    let end = Math.min(pages, currentPage + 3);
+    if (start > 1) { html += btn(1, '1', false, false); if (start > 2) html += '<span class="px-1 text-muted">…</span>'; }
+    for (let p = start; p <= end; p++) html += btn(p, p, false, p === currentPage);
+    if (end < pages) { if (end < pages - 1) html += '<span class="px-1 text-muted">…</span>'; html += btn(pages, pages, false, false); }
+    html += btn(currentPage + 1, '&raquo;', currentPage === pages, false);
+
+    paginationEl.innerHTML = html;
+    paginationEl.querySelectorAll('button[data-page]').forEach(b => {
+      b.addEventListener('click', () => { page = parseInt(b.dataset.page); fetchGroups(); });
+    });
+  }
+
+  function fetchGroups() {
+    updateSortHeaders();
+    syncUrl();
+    const qs = new URLSearchParams({ page, per_page: perPage, sort, order });
+
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">Loading…</td></tr>';
+
+    fetch('/admin/api/groups?' + qs.toString())
+      .then(r => r.json())
+      .then(data => {
+        const start = (data.page - 1) * data.per_page + 1;
+        const end = Math.min(data.page * data.per_page, data.total);
+        rangeLabel.textContent = data.total
+          ? `Showing ${fmt(start)} to ${fmt(end)} of ${fmt(data.total)} entries`
+          : 'No entries found';
+
+        if (!data.groups.length) {
+          tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">No groups found.</td></tr>';
+          paginationEl.innerHTML = '';
+          return;
+        }
+
+        tbody.innerHTML = data.groups.map(g => {
+          const name = g.name + (g.config_managed ? ' 🔒' : '');
+          const activeIcon = g.active ? '✓' : '<span class="text-danger">✗</span>';
+          const toggleLabel = g.active ? 'Deactivate' : 'Activate';
+          const toggleClass = g.active ? 'btn-outline-danger' : 'btn-outline-success';
+          const toggleBtn = g.config_managed
+            ? ''
+            : `<button class="btn btn-sm ${toggleClass} toggle-btn" data-id="${g.id}">${toggleLabel}</button>`;
+          return `<tr id="group-row-${g.id}">
+            <td>${name}</td>
+            <td class="text-muted">${g.description}</td>
+            <td>${fmt(g.members)}</td>
+            <td>${activeIcon}</td>
+            <td>
+              <a href="/admin/groups/${g.id}" class="btn btn-sm btn-outline-primary">View</a>
+              ${toggleBtn}
+            </td>
+          </tr>`;
+        }).join('');
+
+        tbody.querySelectorAll('.toggle-btn').forEach(btn => {
+          btn.addEventListener('click', () => toggleGroup(btn));
+        });
+
+        renderPagination(data.total, data.page, data.per_page);
+      })
+      .catch(() => {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">Failed to load groups.</td></tr>';
+      });
+  }
+
+  function toggleGroup(btn) {
+    const id = btn.dataset.id;
+    btn.disabled = true;
+    fetch(`/admin/groups/${id}/toggle`, { method: 'POST' })
+      .then(r => r.json())
+      .then(data => {
+        const row = document.getElementById(`group-row-${id}`);
+        if (data.active) {
+          row.cells[3].innerHTML = '✓';
+          btn.textContent = 'Deactivate';
+          btn.className = 'btn btn-sm btn-outline-danger toggle-btn';
+        } else {
+          row.cells[3].innerHTML = '<span class="text-danger">✗</span>';
+          btn.textContent = 'Activate';
+          btn.className = 'btn btn-sm btn-outline-success toggle-btn';
+        }
+        btn.disabled = false;
+      })
+      .catch(() => { btn.disabled = false; });
+  }
+
+  document.querySelectorAll('.sort-header').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      if (sort === col) { order = order === 'asc' ? 'desc' : 'asc'; }
+      else { sort = col; order = 'asc'; }
+      page = 1;
+      fetchGroups();
+    });
+  });
+
+  perPageSel.addEventListener('change', () => {
+    perPage = parseInt(perPageSel.value);
+    page = 1;
+    fetchGroups();
+  });
+
+  fetchGroups();
+})();
+</script>
 {% endblock %}

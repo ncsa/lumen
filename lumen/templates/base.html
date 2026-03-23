@@ -25,7 +25,8 @@
         <li><a href="{{ url_for('usage.index') }}">Usage</a></li>
         <li><a href="{{ url_for('models_page.index') }}">Models</a></li>
         {% if is_admin %}
-        <li><a href="{{ url_for('admin.groups') }}">Admin</a></li>
+        <li><a href="{{ url_for('admin.users') }}">Users</a></li>
+        <li><a href="{{ url_for('admin.groups') }}">Groups</a></li>
         {% endif %}
       </ul>
     </ilw-header-menu>

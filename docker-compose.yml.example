@@ -34,13 +34,33 @@ services:
       - "./traefik:/config"
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
 
+  postgres:
+    image: postgres:18-alpine
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=lumen
+      - POSTGRES_USER=lumen
+      - POSTGRES_PASSWORD=lumen
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lumen"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # frontend
   lumen:
     image: ncsa/lumen:latest
     container_name: lumen
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       - CONFIG_YAML=/app/instance/config.yaml
+      - DATABASE_URL=postgresql://lumen:lumen@postgres/lumen
     volumes:
       - ./lumen:/app/instance
     labels:
@@ -127,3 +147,6 @@ services:
       - ./cache:/root/.cache/huggingface
       - ./vllm_cache:/root/.cache/vllm
       - ./triton_cache:/root/.triton/cache
+
+volumes:
+  postgres_data:

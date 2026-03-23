@@ -1,17 +1,22 @@
-from flask import Blueprint, render_template, request, redirect, url_for, abort
+from flask import Blueprint, render_template, request, redirect, url_for, abort, jsonify
+from sqlalchemy import func, case
 
 from lumen.decorators import admin_required
 from lumen.extensions import db
+from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
+from lumen.models.entity_model_balance import EntityModelBalance
+from lumen.models.entity_model_limit import EntityModelLimit
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
-from lumen.models.entity_model_balance import EntityModelBalance
 from lumen.models.group_model_limit import GroupModelLimit
 from lumen.models.model_config import ModelConfig
-from lumen.models.entity_model_limit import EntityModelLimit
 from lumen.services.llm import get_effective_limit
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
+
+_BIGINT_MAX = 9223372036854775807
+_VALID_PER_PAGE = {25, 50, 100, 200}
 
 
 # ---------------------------------------------------------------------------
@@ -21,9 +26,7 @@ admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 @admin_bp.route("/groups")
 @admin_required
 def groups():
-    all_groups = Group.query.order_by(Group.name).all()
-    member_counts = {g.id: g.members.count() for g in all_groups}
-    return render_template("admin/groups.html", groups=all_groups, member_counts=member_counts)
+    return render_template("admin/groups.html")
 
 
 @admin_bp.route("/groups", methods=["POST"])
@@ -69,7 +72,7 @@ def toggle_group(gid):
         abort(403)
     group.active = not group.active
     db.session.commit()
-    return redirect(url_for("admin.groups"))
+    return jsonify({"active": group.active})
 
 
 @admin_bp.route("/groups/<int:gid>/members", methods=["POST"])
@@ -99,7 +102,6 @@ def remove_member(gid, mid):
     entity_id = member.entity_id
     db.session.delete(member)
     db.session.commit()
-    # If referred from user limits page, go back there; otherwise group detail
     back = request.form.get("back")
     if back == "user_limits":
         return redirect(url_for("admin.user_limits", eid=entity_id))
@@ -160,20 +162,99 @@ def delete_group_limit(gid, lid):
 
 
 # ---------------------------------------------------------------------------
+# Groups API
+# ---------------------------------------------------------------------------
+
+@admin_bp.route("/api/groups")
+@admin_required
+def api_groups():
+    page = max(1, request.args.get("page", 1, type=int))
+    per_page = request.args.get("per_page", 25, type=int)
+    if per_page not in _VALID_PER_PAGE:
+        per_page = 25
+    sort = request.args.get("sort", "name")
+    order = request.args.get("order", "asc")
+
+    member_count_sq = (
+        db.session.query(
+            GroupMember.group_id,
+            func.count(GroupMember.id).label("member_count"),
+        )
+        .group_by(GroupMember.group_id)
+        .subquery()
+    )
+
+    q = (
+        db.session.query(Group, func.coalesce(member_count_sq.c.member_count, 0).label("member_count"))
+        .outerjoin(member_count_sq, Group.id == member_count_sq.c.group_id)
+        .filter(Group.name != "default")
+    )
+
+    sort_col = {
+        "name": Group.name,
+        "description": Group.description,
+        "active": Group.active,
+        "members": member_count_sq.c.member_count,
+    }.get(sort, Group.name)
+
+    q = q.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
+
+    total = q.count()
+    rows = q.offset((page - 1) * per_page).limit(per_page).all()
+
+    return jsonify({
+        "groups": [
+            {
+                "id": g.id,
+                "name": g.name,
+                "description": g.description or "",
+                "members": count,
+                "active": g.active,
+                "config_managed": g.config_managed,
+            }
+            for g, count in rows
+        ],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Users
 # ---------------------------------------------------------------------------
 
 @admin_bp.route("/users")
 @admin_required
 def users():
-    all_users = Entity.query.filter_by(entity_type="user").order_by(Entity.name).all()
-    # Build group membership map
-    user_groups = {}
-    for user in all_users:
-        memberships = GroupMember.query.filter_by(entity_id=user.id).all()
-        groups_list = [Group.query.get(m.group_id) for m in memberships]
-        user_groups[user.id] = [g for g in groups_list if g]
-    return render_template("admin/users.html", users=all_users, user_groups=user_groups)
+    total_users = Entity.query.filter_by(entity_type="user").count()
+    stats = (
+        db.session.query(
+            func.coalesce(func.sum(APIKey.requests), 0),
+            func.coalesce(func.sum(APIKey.input_tokens + APIKey.output_tokens), 0),
+            func.coalesce(func.sum(APIKey.cost), 0),
+        )
+        .join(Entity, APIKey.entity_id == Entity.id)
+        .filter(Entity.entity_type == "user")
+        .one()
+    )
+    total_requests, total_tokens, total_cost = stats
+    return render_template(
+        "admin/users.html",
+        total_users=total_users,
+        total_requests=int(total_requests),
+        total_tokens=int(total_tokens),
+        total_cost=float(total_cost),
+    )
+
+
+@admin_bp.route("/users/<int:eid>/toggle", methods=["POST"])
+@admin_required
+def toggle_user(eid):
+    entity = Entity.query.get_or_404(eid)
+    entity.active = not entity.active
+    db.session.commit()
+    return jsonify({"active": entity.active})
 
 
 @admin_bp.route("/users/<int:eid>/limits")
@@ -183,7 +264,6 @@ def user_limits(eid):
     limits = EntityModelLimit.query.filter_by(entity_id=eid).all()
     models = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
 
-    # Compute effective limits per model and current balance
     effective = {}
     balance_rows = {b.model_config_id: b.tokens_left for b in EntityModelBalance.query.filter_by(entity_id=eid).all()}
     tokens_left = {}
@@ -193,7 +273,6 @@ def user_limits(eid):
         if eff is not None and eff[0] != -2:
             tokens_left[model.id] = balance_rows.get(model.id, eff[2])
 
-    # Build (membership, group, group_limits) tuples
     memberships = GroupMember.query.filter_by(entity_id=eid).all()
     group_details = []
     for m in memberships:
@@ -264,3 +343,113 @@ def delete_user_limit(eid, lid):
     db.session.delete(limit)
     db.session.commit()
     return redirect(url_for("admin.user_limits", eid=eid))
+
+
+# ---------------------------------------------------------------------------
+# Users API
+# ---------------------------------------------------------------------------
+
+@admin_bp.route("/api/users")
+@admin_required
+def api_users():
+    page = max(1, request.args.get("page", 1, type=int))
+    per_page = request.args.get("per_page", 25, type=int)
+    if per_page not in _VALID_PER_PAGE:
+        per_page = 25
+    sort = request.args.get("sort", "name")
+    order = request.args.get("order", "asc")
+    search = request.args.get("search", "").strip()
+
+    api_stats_sq = (
+        db.session.query(
+            APIKey.entity_id,
+            func.coalesce(func.sum(APIKey.requests), 0).label("requests"),
+            func.coalesce(func.sum(APIKey.input_tokens + APIKey.output_tokens), 0).label("tokens_used"),
+            func.coalesce(func.sum(APIKey.cost), 0).label("cost"),
+        )
+        .group_by(APIKey.entity_id)
+        .subquery()
+    )
+
+    balance_sq = (
+        db.session.query(
+            EntityModelBalance.entity_id,
+            func.coalesce(func.sum(EntityModelBalance.tokens_left), 0).label("tokens_available"),
+        )
+        .group_by(EntityModelBalance.entity_id)
+        .subquery()
+    )
+
+    unlimited_sq = (
+        db.session.query(EntityModelLimit.entity_id)
+        .filter(EntityModelLimit.max_tokens == -2)
+        .distinct()
+        .subquery()
+    )
+
+    tokens_avail_sort = case(
+        (unlimited_sq.c.entity_id != None, _BIGINT_MAX),  # noqa: E711
+        else_=func.coalesce(balance_sq.c.tokens_available, 0),
+    )
+
+    q = (
+        db.session.query(
+            Entity,
+            func.coalesce(api_stats_sq.c.requests, 0).label("requests"),
+            func.coalesce(api_stats_sq.c.tokens_used, 0).label("tokens_used"),
+            func.coalesce(api_stats_sq.c.cost, 0).label("cost"),
+            tokens_avail_sort.label("tokens_available"),
+        )
+        .filter(Entity.entity_type == "user")
+        .outerjoin(api_stats_sq, Entity.id == api_stats_sq.c.entity_id)
+        .outerjoin(balance_sq, Entity.id == balance_sq.c.entity_id)
+        .outerjoin(unlimited_sq, Entity.id == unlimited_sq.c.entity_id)
+    )
+
+    if search:
+        like = f"%{search}%"
+        q = q.filter(Entity.name.ilike(like) | Entity.email.ilike(like))
+
+    sort_col = {
+        "name": Entity.name,
+        "email": Entity.email,
+        "active": Entity.active,
+        "requests": func.coalesce(api_stats_sq.c.requests, 0),
+        "tokens_used": func.coalesce(api_stats_sq.c.tokens_used, 0),
+        "cost": func.coalesce(api_stats_sq.c.cost, 0),
+        "tokens_available": tokens_avail_sort,
+    }.get(sort, Entity.name)
+
+    q = q.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
+
+    total = q.count()
+    rows = q.offset((page - 1) * per_page).limit(per_page).all()
+
+    # Batch-fetch group memberships for returned users
+    user_ids = [entity.id for entity, *_ in rows]
+    memberships = GroupMember.query.filter(GroupMember.entity_id.in_(user_ids)).all() if user_ids else []
+    group_ids = {m.group_id for m in memberships}
+    groups_by_id = {g.id: g.name for g in Group.query.filter(Group.id.in_(group_ids)).all()} if group_ids else {}
+    user_groups = {}
+    for m in memberships:
+        user_groups.setdefault(m.entity_id, []).append(groups_by_id.get(m.group_id, ""))
+
+    return jsonify({
+        "users": [
+            {
+                "id": entity.id,
+                "name": entity.name,
+                "email": entity.email or "",
+                "active": entity.active,
+                "groups": user_groups.get(entity.id, []),
+                "requests": int(requests),
+                "tokens_used": int(tokens_used),
+                "cost": float(cost),
+                "tokens_available": -2 if int(tokens_available) == _BIGINT_MAX else int(tokens_available),
+            }
+            for entity, requests, tokens_used, cost, tokens_available in rows
+        ],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+    })

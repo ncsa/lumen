@@ -63,6 +63,7 @@ def _watcher(app, config_path):
                 logs_cfg = app_cfg.get("logs", {})
                 werkzeug_level = logging.WARNING if not logs_cfg.get("access", True) else logging.INFO
                 logging.getLogger("werkzeug").setLevel(werkzeug_level)
+                logging.getLogger("uvicorn.access").setLevel(werkzeug_level)
                 app.config["LOG_MODEL_HEALTH"] = logs_cfg.get("model", False)
 
                 oauth2_cfg = new_data.get("oauth2", {})
