@@ -7,7 +7,7 @@ class Conversation(db.Model):
     __tablename__ = "conversations"
 
     id = db.Column(db.Integer, primary_key=True)
-    entity_id = db.Column(db.Integer, db.ForeignKey("entities.id"), nullable=False)
+    entity_id = db.Column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), nullable=False)
     title = db.Column(db.String(40), nullable=False, default="")
     model = db.Column(db.String(128), nullable=False, default="")
     hidden = db.Column(db.Boolean, nullable=False, default=False)
@@ -15,5 +15,5 @@ class Conversation(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     messages = db.relationship(
-        "Message", backref="conversation", lazy=True, cascade="all, delete-orphan"
+        "Message", backref="conversation", lazy=True, cascade="all, delete-orphan", passive_deletes=True
     )

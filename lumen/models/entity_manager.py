@@ -8,8 +8,8 @@ class EntityManager(db.Model):
     )
 
     id = db.Column(db.Integer, primary_key=True)
-    user_entity_id = db.Column(db.Integer, db.ForeignKey("entities.id"), nullable=False)
-    service_entity_id = db.Column(db.Integer, db.ForeignKey("entities.id"), nullable=False)
+    user_entity_id = db.Column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), nullable=False)
+    service_entity_id = db.Column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), nullable=False)
 
     user = db.relationship("Entity", foreign_keys=[user_entity_id], backref="managed_services_assoc")
     service = db.relationship("Entity", foreign_keys=[service_entity_id], backref="manager_assoc")

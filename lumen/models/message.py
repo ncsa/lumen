@@ -8,7 +8,7 @@ class Message(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     conversation_id = db.Column(
-        db.Integer, db.ForeignKey("conversations.id"), nullable=False
+        db.Integer, db.ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
     )
     role = db.Column(db.String(16), nullable=False)
     content = db.Column(db.Text, nullable=False)

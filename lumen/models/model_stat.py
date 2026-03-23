@@ -9,8 +9,8 @@ class ModelStat(db.Model):
     )
 
     id = db.Column(db.Integer, primary_key=True)
-    entity_id = db.Column(db.Integer, db.ForeignKey("entities.id"), nullable=False)
-    model_config_id = db.Column(db.Integer, db.ForeignKey("model_configs.id"), nullable=False)
+    entity_id = db.Column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), nullable=False)
+    model_config_id = db.Column(db.Integer, db.ForeignKey("model_configs.id", ondelete="CASCADE"), nullable=False)
     source = db.Column(db.String(8), nullable=False)  # 'chat' or 'api'
     requests = db.Column(db.Integer, default=0, nullable=False)
     input_tokens = db.Column(db.BigInteger, default=0, nullable=False)

@@ -6,7 +6,7 @@ class APIKey(db.Model):
     __tablename__ = "api_keys"
 
     id = db.Column(db.Integer, primary_key=True)
-    entity_id = db.Column(db.Integer, db.ForeignKey("entities.id"), nullable=False)
+    entity_id = db.Column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), nullable=False)
     name = db.Column(db.String(128), nullable=False, default="")
     key_hash = db.Column(db.String(64), unique=True, nullable=True)
     key_hint = db.Column(db.String(32), nullable=True)

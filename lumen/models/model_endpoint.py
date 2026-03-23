@@ -6,7 +6,7 @@ class ModelEndpoint(db.Model):
     __tablename__ = "model_endpoints"
 
     id = db.Column(db.Integer, primary_key=True)
-    model_config_id = db.Column(db.Integer, db.ForeignKey("model_configs.id"), nullable=False)
+    model_config_id = db.Column(db.Integer, db.ForeignKey("model_configs.id", ondelete="CASCADE"), nullable=False)
     url = db.Column(db.String(256), nullable=False)
     api_key = db.Column(db.String(256), nullable=False)
     # If set, this name is sent to the endpoint instead of the parent ModelConfig.model_name,
