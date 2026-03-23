@@ -2,6 +2,11 @@
 
 All notable changes to Lumen will be documented in this file.
 
+## [1.2.1] - 2026-03-23
+
+### Fixed
+- Chat message timestamps showed "Invalid Date" with PostgreSQL; `isoformat()` returns `+00:00` offset which broke the JS date parser when `"Z"` was appended — switched to `strftime('%Y-%m-%dT%H:%M:%S')` for consistent output across backends
+
 ## [1.2.0] - 2026-03-23
 
 ### Fixed

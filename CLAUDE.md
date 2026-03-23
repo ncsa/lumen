@@ -72,6 +72,7 @@ Imports at top of file only; except inside Flask app factory (`create_app`) wher
 Styles and colors match University of Illinois, see https://builder3.toolkit.illinois.edu/getting_started/index.html
 When adding variables to config.yaml, make sure they are hot loaded if possible or print a warning
 Track changes in the CHANGELOG.md, if no unreleased section exists, then add it.
+When bumping the version in pyproject.toml, also run `uv lock` to update uv.lock.
 For local testing without OAuth or a real LLM: set `app.dev_user` in config.yaml and use `uv run dummy` (dummy backend on port 9999). See the "Local Development" section in README.md.
 
 ## 5. Accessibility (WCAG 2.1 AA)

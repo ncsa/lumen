@@ -129,7 +129,7 @@ def list_conversations():
             "id": conv.id,
             "title": conv.title,
             "model": conv.model,
-            "updated_at": conv.updated_at.isoformat() if conv.updated_at else None,
+            "updated_at": conv.updated_at.strftime('%Y-%m-%dT%H:%M:%S') if conv.updated_at else None,
             "last_message_preview": last_msg.content[:60] if last_msg else "",
         })
     return jsonify({"conversations": result})
@@ -154,7 +154,7 @@ def get_conversation_messages(cid):
         m = {
             "role": msg.role,
             "content": msg.content,
-            "created_at": msg.created_at.isoformat() if msg.created_at else None,
+            "created_at": msg.created_at.strftime('%Y-%m-%dT%H:%M:%S') if msg.created_at else None,
         }
         if msg.role == "assistant":
             m["meta"] = {
