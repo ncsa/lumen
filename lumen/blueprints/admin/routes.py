@@ -13,6 +13,7 @@ from lumen.models.group_member import GroupMember
 from lumen.models.group_limit import GroupLimit
 from lumen.models.group_model_access import GroupModelAccess
 from lumen.models.model_config import ModelConfig
+from lumen.models.model_stat import ModelStat
 from lumen.services.llm import get_pool_limit
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
@@ -256,11 +257,11 @@ def users():
     total_users = Entity.query.filter_by(entity_type="user").count()
     stats = (
         db.session.query(
-            func.coalesce(func.sum(APIKey.requests), 0),
-            func.coalesce(func.sum(APIKey.input_tokens + APIKey.output_tokens), 0),
-            func.coalesce(func.sum(APIKey.cost), 0),
+            func.coalesce(func.sum(ModelStat.requests), 0),
+            func.coalesce(func.sum(ModelStat.input_tokens + ModelStat.output_tokens), 0),
+            func.coalesce(func.sum(ModelStat.cost), 0),
         )
-        .join(Entity, APIKey.entity_id == Entity.id)
+        .join(Entity, ModelStat.entity_id == Entity.id)
         .filter(Entity.entity_type == "user")
         .one()
     )
@@ -397,12 +398,12 @@ def api_users():
 
     api_stats_sq = (
         db.session.query(
-            APIKey.entity_id,
-            func.coalesce(func.sum(APIKey.requests), 0).label("requests"),
-            func.coalesce(func.sum(APIKey.input_tokens + APIKey.output_tokens), 0).label("tokens_used"),
-            func.coalesce(func.sum(APIKey.cost), 0).label("cost"),
+            ModelStat.entity_id,
+            func.coalesce(func.sum(ModelStat.requests), 0).label("requests"),
+            func.coalesce(func.sum(ModelStat.input_tokens + ModelStat.output_tokens), 0).label("tokens_used"),
+            func.coalesce(func.sum(ModelStat.cost), 0).label("cost"),
         )
-        .group_by(APIKey.entity_id)
+        .group_by(ModelStat.entity_id)
         .subquery()
     )
 

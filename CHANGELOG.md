@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Admin users page showed 0 requests/tokens/cost for users who only used the chat interface; stats now read from `model_stats` (covering both chat and API usage) instead of `api_keys` (API-only)
+
 ### Changed
 - Token budgets are now a single shared pool per user; all model requests draw from one pool, with pool size taken from the largest grant across the user's groups
 - Model access is now a separate boolean per user/group, independent of pool size; user-level settings override groups
