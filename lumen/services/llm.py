@@ -5,14 +5,16 @@ from datetime import datetime
 import openai
 
 from lumen.extensions import db
-from lumen.models.entity_model_balance import EntityModelBalance
-from lumen.models.entity_model_limit import EntityModelLimit
+from lumen.models.entity_balance import EntityBalance
+from lumen.models.entity_limit import EntityLimit
+from lumen.models.entity_model_access import EntityModelAccess
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
-from lumen.models.group_model_limit import GroupModelLimit
+from lumen.models.group_limit import GroupLimit
+from lumen.models.group_model_access import GroupModelAccess
 from lumen.services.cost import calculate_cost
 
 _rr_counters: dict = {}
@@ -34,23 +36,9 @@ def get_next_endpoint(model_config_id: int):
     return endpoints[idx]
 
 
-def get_effective_limit(entity_id: int, model_config_id: int):
-    """
-    Compute effective (max_tokens, refresh_tokens, starting_tokens) for entity+model.
-
-    Returns (max_tokens, refresh_tokens, starting_tokens) or None if blocked.
-    max_tokens == -2 means unlimited.
-
-    Resolution algorithm:
-    1. Collect per-model entries (model_config_id = M) from user + all groups.
-    2. Split into explicit (max_tokens != -1) vs defer (max_tokens == -1 or absent).
-    3. If any explicit entries: positive wins over 0; all-0 => BLOCKED.
-       Defaults (NULL rows) are NOT consulted when any explicit entry exists.
-    4. If all defer => fall back to default rows (model_config_id = NULL).
-    5. Apply same logic to defaults. No config => BLOCKED.
-    """
-    # Collect active group IDs for this entity
-    group_ids = [
+def _get_active_group_ids(entity_id: int) -> list:
+    """Return list of active group IDs the entity belongs to."""
+    return [
         m.group_id for m in (
             GroupMember.query
             .join(Group, Group.id == GroupMember.group_id)
@@ -59,71 +47,85 @@ def get_effective_limit(entity_id: int, model_config_id: int):
         )
     ]
 
-    def resolve(rows):
-        """Given list of (max_tokens, refresh_tokens, starting_tokens), apply resolution."""
-        if not rows:
-            return "defer"
-        explicit = [(mt, rt, st) for mt, rt, st in rows if mt != -1]
-        if explicit:
-            positives = [(mt, rt, st) for mt, rt, st in explicit if mt > 0 or mt == -2]
-            if positives:
-                # -2 (unlimited) wins everything; otherwise take max by max_tokens
-                if any(mt == -2 for mt, rt, st in positives):
-                    return (-2, 0, 0)
-                best = max(positives, key=lambda x: x[0])
-                return best
-            # All explicit are 0 => BLOCKED
-            return None
-        # All defer (-1) => caller handles fallback to defaults
-        return "defer"
 
-    # Per-model rows from user
-    user_row = EntityModelLimit.query.filter_by(
+def get_model_access(entity_id: int, model_config_id: int) -> bool:
+    """
+    Return True if entity can access the given model, False otherwise.
+
+    Resolution:
+    1. User-level EntityModelAccess overrides everything.
+    2. If any active group grants access (allowed=True), return True.
+    3. No config = blocked (False).
+    """
+    user_access = EntityModelAccess.query.filter_by(
         entity_id=entity_id, model_config_id=model_config_id
     ).first()
-    per_model_rows = []
-    if user_row is not None:
-        per_model_rows.append((user_row.max_tokens, user_row.refresh_tokens, user_row.starting_tokens))
+    if user_access is not None:
+        return user_access.allowed
 
-    # Per-model rows from groups
+    group_ids = _get_active_group_ids(entity_id)
     if group_ids:
-        group_rows = GroupModelLimit.query.filter(
-            GroupModelLimit.group_id.in_(group_ids),
-            GroupModelLimit.model_config_id == model_config_id,
-        ).all()
-        for r in group_rows:
-            per_model_rows.append((r.max_tokens, r.refresh_tokens, r.starting_tokens))
+        group_access = GroupModelAccess.query.filter(
+            GroupModelAccess.group_id.in_(group_ids),
+            GroupModelAccess.model_config_id == model_config_id,
+            GroupModelAccess.allowed == True,  # noqa: E712
+        ).first()
+        if group_access is not None:
+            return True
 
-    result = resolve(per_model_rows)
-    if result is None:
-        return None  # BLOCKED
-    if result != "defer":
-        return result
+    return False
 
-    # All per-model entries defer (or none exist) => check default rows (model_config_id IS NULL)
-    user_default = EntityModelLimit.query.filter_by(
-        entity_id=entity_id, model_config_id=None
-    ).first()
-    default_rows = []
-    if user_default is not None:
-        default_rows.append((user_default.max_tokens, user_default.refresh_tokens, user_default.starting_tokens))
 
-    if group_ids:
-        group_defaults = GroupModelLimit.query.filter(
-            GroupModelLimit.group_id.in_(group_ids),
-            GroupModelLimit.model_config_id == None,  # noqa: E711
-        ).all()
-        for r in group_defaults:
-            default_rows.append((r.max_tokens, r.refresh_tokens, r.starting_tokens))
+def get_pool_limit(entity_id: int):
+    """
+    Return (max_tokens, refresh_tokens, starting_tokens) for entity's token pool, or None if blocked.
 
-    result = resolve(default_rows)
-    if result is None or result == "defer":
-        return None  # BLOCKED (no config or all defer with no defaults)
-    return result
+    max_tokens == -2 means unlimited.
+
+    Resolution: take the best limit from user's EntityLimit and their active group GroupLimits.
+    User EntityLimit with max_tokens == 0 blocks regardless of groups.
+    -2 (unlimited) wins over any positive value.
+    """
+    user_limit = EntityLimit.query.filter_by(entity_id=entity_id).first()
+    if user_limit is not None and user_limit.max_tokens == 0:
+        return None  # explicitly blocked
+
+    group_ids = _get_active_group_ids(entity_id)
+    group_limits = GroupLimit.query.filter(
+        GroupLimit.group_id.in_(group_ids)
+    ).all() if group_ids else []
+
+    candidates = []
+    if user_limit is not None and user_limit.max_tokens != 0:
+        candidates.append((user_limit.max_tokens, user_limit.refresh_tokens, user_limit.starting_tokens))
+    for gl in group_limits:
+        if gl.max_tokens != 0:
+            candidates.append((gl.max_tokens, gl.refresh_tokens, gl.starting_tokens))
+
+    if not candidates:
+        return None
+
+    # -2 (unlimited) wins; otherwise take highest max_tokens
+    for c in candidates:
+        if c[0] == -2:
+            return (-2, 0, 0)
+    return max(candidates, key=lambda x: x[0])
+
+
+def get_effective_limit(entity_id: int, model_config_id: int):
+    """
+    Return (max_tokens, refresh_tokens, starting_tokens) or None if blocked/no access.
+
+    Checks model access first, then returns the entity's token pool.
+    max_tokens == -2 means unlimited.
+    """
+    if not get_model_access(entity_id, model_config_id):
+        return None
+    return get_pool_limit(entity_id)
 
 
 def get_token_balance(entity_id: int, model_config_id: int):
-    """Return tokens_left for entity+model, or None if unlimited or blocked."""
+    """Return tokens_left for entity's pool, or None if unlimited or blocked."""
     effective = get_effective_limit(entity_id, model_config_id)
     if effective is None:
         return None
@@ -131,13 +133,10 @@ def get_token_balance(entity_id: int, model_config_id: int):
     if max_tokens == -2:
         return None
 
-    balance = EntityModelBalance.query.filter_by(
-        entity_id=entity_id, model_config_id=model_config_id
-    ).first()
+    balance = EntityBalance.query.filter_by(entity_id=entity_id).first()
     if balance is None:
-        balance = EntityModelBalance(
+        balance = EntityBalance(
             entity_id=entity_id,
-            model_config_id=model_config_id,
             tokens_left=starting,
         )
         db.session.add(balance)
@@ -147,7 +146,7 @@ def get_token_balance(entity_id: int, model_config_id: int):
 
 
 def subtract_tokens(entity_id: int, model_config_id: int, tokens_used: int):
-    """Deduct tokens_used from the balance row (no-op for unlimited or blocked)."""
+    """Deduct tokens_used from the entity's pool balance (no-op for unlimited or blocked)."""
     effective = get_effective_limit(entity_id, model_config_id)
     if effective is None:
         return
@@ -155,9 +154,7 @@ def subtract_tokens(entity_id: int, model_config_id: int, tokens_used: int):
     if max_tokens == -2:
         return
 
-    balance = EntityModelBalance.query.filter_by(
-        entity_id=entity_id, model_config_id=model_config_id
-    ).first()
+    balance = EntityBalance.query.filter_by(entity_id=entity_id).first()
     if balance:
         balance.tokens_left = balance.tokens_left - tokens_used
         db.session.flush()

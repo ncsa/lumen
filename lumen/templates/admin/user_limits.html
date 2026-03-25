@@ -8,84 +8,103 @@
   <a href="{{ url_for('admin.users') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
 </div>
 
-<h2>Effective Limits</h2>
-<table class="table table-bordered align-middle mb-4" style="table-layout:fixed">
-  <caption class="visually-hidden">Effective token limits for this user</caption>
-  <colgroup><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
+<h2>Effective Token Pool</h2>
+<table class="table table-bordered align-middle mb-4" style="table-layout:fixed;width:80%">
+  <caption class="visually-hidden">Effective token pool for this user</caption>
+  <colgroup><col style="width:25%"><col style="width:25%"><col style="width:25%"><col style="width:25%"></colgroup>
   <thead class="table-light">
-    <tr><th>Model</th><th>Max</th><th>Refresh</th><th>Starting</th><th>Balance</th></tr>
+    <tr><th>Max Tokens</th><th>Refresh / Hour</th><th>Starting</th><th>Balance</th></tr>
   </thead>
   <tbody>
-    {% for model in models %}
-    {% set eff = effective[model.id] %}
-    <tr>
-      <td>{{ model.model_name }}</td>
-      {% if eff is none %}
-      <td colspan="4"><span class="text-danger">Blocked</span></td>
-      {% elif eff[0] == -2 %}
-      <td colspan="4"><span class="text-success">Unlimited</span></td>
-      {% else %}
-      <td>{{ "{:,}".format(eff[0]) }}</td>
-      <td>{{ "{:,}".format(eff[1]) }}</td>
-      <td>{{ "{:,}".format(eff[2]) }}</td>
-      {% set tl = tokens_left.get(model.id) %}<td>{{ "{:,}".format(tl) if tl is not none else '—' }}</td>
-      {% endif %}
-    </tr>
+    {% if effective_pool is none %}
+    <tr><td colspan="4"><span class="text-danger">Blocked (no pool configured)</span></td></tr>
+    {% elif effective_pool[0] == -2 %}
+    <tr><td colspan="4"><span class="text-success">Unlimited</span></td></tr>
     {% else %}
-    <tr><td colspan="5" class="text-muted text-center">No active models.</td></tr>
-    {% endfor %}
+    <tr>
+      <td>{{ "{:,}".format(effective_pool[0]) }}</td>
+      <td>{{ "{:,}".format(effective_pool[1]) }}</td>
+      <td>{{ "{:,}".format(effective_pool[2]) }}</td>
+      <td>{{ "{:,}".format(entity_balance.tokens_left) if entity_balance else '—' }}</td>
+    </tr>
+    {% endif %}
   </tbody>
 </table>
 
 <div class="d-flex justify-content-between align-items-center mb-2">
-  <h2 class="mb-0">User Config</h2>
-  <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addLimitModal">+ Add Limit</button>
+  <h2 class="mb-0">User Token Pool Override</h2>
+  <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#editPoolModal">
+    {{ "Edit Pool" if entity_limit else "Set Pool Override" }}
+  </button>
 </div>
 
-<table class="table table-bordered align-middle mb-4" style="table-layout:fixed">
-  <caption class="visually-hidden">User-specific token limit overrides</caption>
-  <colgroup><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"><col style="width:20%"></colgroup>
+{% if entity_limit %}
+<table class="table table-bordered align-middle mb-2" style="table-layout:fixed;width:80%">
+  <caption class="visually-hidden">User-specific token pool override</caption>
+  <colgroup><col style="width:33%"><col style="width:33%"><col style="width:34%"></colgroup>
   <thead class="table-light">
-    <tr><th>Model</th><th>Max</th><th>Refresh</th><th>Starting</th><th><span class="visually-hidden">Actions</span></th></tr>
+    <tr><th>Max Tokens</th><th>Refresh / Hour</th><th>Starting Tokens</th></tr>
   </thead>
   <tbody>
-    {% for limit in limits %}
-    {% if limit.max_tokens != -1 %}
     <tr>
       <td>
-        {% if limit.model_config_id is none %}
-          <em>Default (all models)</em>
+        {% if entity_limit.max_tokens == -2 %}<span class="text-success">Unlimited</span>
+        {% elif entity_limit.max_tokens == 0 %}<span class="text-danger">Blocked</span>
+        {% else %}{{ "{:,}".format(entity_limit.max_tokens) }}{% endif %}
+        {% if entity_limit.config_managed %} <span role="img" aria-label="Managed by config">🔒</span>{% endif %}
+      </td>
+      <td>{{ "{:,}".format(entity_limit.refresh_tokens) }}</td>
+      <td>{{ "{:,}".format(entity_limit.starting_tokens) }}</td>
+    </tr>
+  </tbody>
+</table>
+{% if not entity_limit.config_managed %}
+<form method="post" action="{{ url_for('admin.delete_user_pool', eid=entity.id) }}" class="mb-4">
+  <button class="btn btn-sm btn-outline-danger">Remove Override</button>
+</form>
+{% else %}
+<p class="text-muted mb-4"><small><span role="img" aria-label="Locked">🔒</span> Pool override is managed by config.yaml.</small></p>
+{% endif %}
+{% else %}
+<p class="text-muted mb-4">No direct pool override. Pool size comes from group membership.</p>
+{% endif %}
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <h2 class="mb-0">User Model Access Overrides</h2>
+  <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addAccessModal">+ Add Override</button>
+</div>
+
+<table class="table table-bordered align-middle mb-4">
+  <caption class="visually-hidden">User-specific model access overrides</caption>
+  <thead class="table-light">
+    <tr><th>Model</th><th>Access</th><th><span class="visually-hidden">Actions</span></th></tr>
+  </thead>
+  <tbody>
+    {% for access in entity_model_access %}
+    <tr>
+      <td>{{ access.model_config.model_name }}</td>
+      <td>
+        {% if access.allowed %}
+        <span class="text-success">Allowed</span>
         {% else %}
-          {% set mc = models | selectattr('id', 'equalto', limit.model_config_id) | first %}
-          {{ mc.model_name if mc else limit.model_config_id }}
+        <span class="text-danger">Denied</span>
         {% endif %}
-        {% if limit.config_managed %} <span role="img" aria-label="Managed by config">🔒</span>{% endif %}
       </td>
       <td>
-        {% if limit.max_tokens == -2 %}<span class="text-success">Unlimited</span>
-        {% elif limit.max_tokens == 0 %}<span class="text-danger">Blocked</span>
-        {% else %}{{ "{:,}".format(limit.max_tokens) }}{% endif %}
-      </td>
-      <td>{{ "{:,}".format(limit.refresh_tokens) }}</td>
-      <td>{{ "{:,}".format(limit.starting_tokens) }}</td>
-      <td>
-        {% if not limit.config_managed %}
-        <form method="post" action="{{ url_for('admin.delete_user_limit', eid=entity.id, lid=limit.id) }}" class="d-inline">
-          <button class="btn btn-sm btn-outline-secondary">Reset to Defer</button>
+        <form method="post" action="{{ url_for('admin.delete_user_access', eid=entity.id, amid=access.id) }}" class="d-inline">
+          <button class="btn btn-sm btn-outline-danger">Remove</button>
         </form>
-        {% endif %}
       </td>
     </tr>
-    {% endif %}
     {% else %}
-    <tr><td colspan="5" class="text-muted text-center">No limits configured.</td></tr>
+    <tr><td colspan="3" class="text-muted text-center">No overrides. Access is inherited from groups.</td></tr>
     {% endfor %}
   </tbody>
 </table>
 
 <h2>Groups</h2>
 {% if group_details %}
-{% for membership, group, glimits in group_details %}
+{% for membership, group, glimit, gaccess in group_details %}
 <div class="d-flex justify-content-between align-items-center mb-1">
   <strong>{{ group.name }}{% if membership.config_managed %} <span role="img" aria-label="Managed by config">🔒</span>{% endif %}</strong>
   {% if not membership.config_managed %}
@@ -95,71 +114,85 @@
   </form>
   {% endif %}
 </div>
-<table class="table table-bordered align-middle mb-3" style="table-layout:fixed;width:80%">
-  <caption class="visually-hidden">Token limits from group {{ group.name }}</caption>
-  <colgroup><col style="width:25%"><col style="width:25%"><col style="width:25%"><col style="width:25%"></colgroup>
-  <thead class="table-light">
-    <tr><th>Model</th><th>Max</th><th>Refresh</th><th>Starting</th></tr>
-  </thead>
-  <tbody>
-    {% for gl in glimits %}
-    <tr>
-      <td>
-        {% if gl.model_config_id is none %}
-          <em>Default (all models)</em>
-        {% else %}
-          {% set mc = models | selectattr('id', 'equalto', gl.model_config_id) | first %}
-          {{ mc.model_name if mc else gl.model_config_id }}
-        {% endif %}
-      </td>
-      <td>
-        {% if gl.max_tokens == -2 %}<span class="text-success">Unlimited</span>
-        {% elif gl.max_tokens == -1 %}<span class="text-muted">Defer</span>
-        {% elif gl.max_tokens == 0 %}<span class="text-danger">Blocked</span>
-        {% else %}{{ "{:,}".format(gl.max_tokens) }}{% endif %}
-      </td>
-      <td>{{ "{:,}".format(gl.refresh_tokens) }}</td>
-      <td>{{ "{:,}".format(gl.starting_tokens) }}</td>
-    </tr>
-    {% else %}
-    <tr><td colspan="4" class="text-muted text-center">No limits set for this group.</td></tr>
+<div class="mb-3 ms-2">
+  {% if glimit %}
+  <p class="mb-1"><strong>Pool:</strong>
+    {% if glimit.max_tokens == -2 %}<span class="text-success">Unlimited</span>
+    {% elif glimit.max_tokens == 0 %}<span class="text-danger">Blocked</span>
+    {% else %}{{ "{:,}".format(glimit.max_tokens) }} max, {{ "{:,}".format(glimit.refresh_tokens) }}/hr, {{ "{:,}".format(glimit.starting_tokens) }} starting
+    {% endif %}
+  </p>
+  {% else %}
+  <p class="mb-1 text-muted"><em>No pool configured for this group.</em></p>
+  {% endif %}
+  {% if gaccess %}
+  <p class="mb-0"><strong>Model access:</strong>
+    {% for a in gaccess %}
+    <span class="badge {% if a.allowed %}bg-success{% else %}bg-danger{% endif %} me-1">{{ a.model_config.model_name }}</span>
     {% endfor %}
-  </tbody>
-</table>
+  </p>
+  {% else %}
+  <p class="mb-0 text-muted"><em>No model access configured for this group.</em></p>
+  {% endif %}
+</div>
 {% endfor %}
 {% else %}
 <p class="text-muted">Not in any groups.</p>
 {% endif %}
 
-<!-- Add Limit Modal -->
-<div class="modal fade" id="addLimitModal" tabindex="-1" aria-labelledby="addLimitModalLabel">
+<!-- Edit Pool Modal -->
+<div class="modal fade" id="editPoolModal" tabindex="-1" aria-labelledby="editPoolModalLabel">
   <div class="modal-dialog">
-    <form method="post" action="{{ url_for('admin.upsert_user_limit', eid=entity.id) }}" class="modal-content">
+    <form method="post" action="{{ url_for('admin.upsert_user_pool', eid=entity.id) }}" class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title" id="addLimitModalLabel">Add / Update Limit</h5>
+        <h5 class="modal-title" id="editPoolModalLabel">Set Token Pool Override</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
         <div class="mb-3">
-          <label class="form-label" for="ul-model-select">Model</label>
-          <select name="model_config_id" id="ul-model-select" class="form-select">
-            <option value="">Default (all models)</option>
+          <label class="form-label" for="ul-max-tokens">Max Tokens <small class="text-muted">(-2 = unlimited, 0 = block)</small></label>
+          <input name="max_tokens" id="ul-max-tokens" type="number" class="form-control" value="{{ entity_limit.max_tokens if entity_limit else 0 }}" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="ul-refresh-tokens">Refresh Tokens / Hour</label>
+          <input name="refresh_tokens" id="ul-refresh-tokens" type="number" class="form-control" value="{{ entity_limit.refresh_tokens if entity_limit else 0 }}" min="0">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="ul-starting-tokens">Starting Tokens</label>
+          <input name="starting_tokens" id="ul-starting-tokens" type="number" class="form-control" value="{{ entity_limit.starting_tokens if entity_limit else 0 }}" min="0">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Add Model Access Override Modal -->
+<div class="modal fade" id="addAccessModal" tabindex="-1" aria-labelledby="addAccessModalLabel">
+  <div class="modal-dialog">
+    <form method="post" action="{{ url_for('admin.upsert_user_access', eid=entity.id) }}" class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="addAccessModalLabel">Set Model Access Override</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label" for="ua-model-select">Model</label>
+          <select name="model_config_id" id="ua-model-select" class="form-select" required>
             {% for model in models %}
             <option value="{{ model.id }}">{{ model.model_name }}</option>
             {% endfor %}
           </select>
         </div>
         <div class="mb-3">
-          <label class="form-label" for="ul-max-tokens">Max Tokens <small class="text-muted">(-2=unlimited, -1=defer, 0=block)</small></label>
-          <input name="max_tokens" id="ul-max-tokens" type="number" class="form-control" value="-1" required>
-        </div>
-        <div class="mb-3">
-          <label class="form-label" for="ul-refresh-tokens">Refresh Tokens / Hour</label>
-          <input name="refresh_tokens" id="ul-refresh-tokens" type="number" class="form-control" value="0" min="0">
-        </div>
-        <div class="mb-3">
-          <label class="form-label" for="ul-starting-tokens">Starting Tokens</label>
-          <input name="starting_tokens" id="ul-starting-tokens" type="number" class="form-control" value="0" min="0">
+          <label class="form-label" for="ua-allowed-select">Access</label>
+          <select name="allowed" id="ua-allowed-select" class="form-select">
+            <option value="true">Allowed</option>
+            <option value="false">Denied</option>
+          </select>
         </div>
       </div>
       <div class="modal-footer">

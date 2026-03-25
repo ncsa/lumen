@@ -13,5 +13,4 @@ class ModelConfig(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     endpoints = db.relationship("ModelEndpoint", backref="model_config", lazy="dynamic", cascade="all, delete-orphan", passive_deletes=True)
-    limits = db.relationship("EntityModelLimit", backref="model_config", lazy="dynamic", passive_deletes=True)
     stats = db.relationship("ModelStat", backref="model_config", lazy="dynamic", passive_deletes=True)

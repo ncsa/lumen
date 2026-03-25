@@ -4,9 +4,9 @@ from flask import Blueprint, redirect, url_for, session, render_template, curren
 
 from lumen.extensions import db, oauth
 from lumen.models.entity import Entity
-from lumen.models.entity_model_balance import EntityModelBalance
+from lumen.models.entity_limit import EntityLimit
+from lumen.models.entity_model_access import EntityModelAccess
 from lumen.models.model_config import ModelConfig
-from lumen.models.entity_model_limit import EntityModelLimit
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
 
@@ -82,46 +82,58 @@ def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=No
         if group_id not in existing_by_group:
             db.session.add(GroupMember(group_id=group_id, entity_id=entity.id, config_managed=True))
 
-    # Per-user model limits from users.<email>.models
-    models_cfg = users_cfg.get(email, {}).get("models", {})
-    existing_limits = {lim.model_config_id: lim
-                       for lim in EntityModelLimit.query.filter_by(entity_id=entity.id).all()}
-
-    desired_model_ids = set()
-    for model_key, limit_def in models_cfg.items():
-        if model_key == "default":
-            model_config_id = None
-        else:
-            mc = ModelConfig.query.filter_by(model_name=model_key).first()
-            if mc is None:
-                continue
-            model_config_id = mc.id
-        desired_model_ids.add(model_config_id)
-
-        max_tokens = limit_def.get("max", 0)
-        refresh_tokens = limit_def.get("refresh", 0)
-        starting_tokens = limit_def.get("starting", max_tokens)
-
-        if model_config_id in existing_limits:
-            lim = existing_limits[model_config_id]
-            lim.max_tokens = max_tokens
-            lim.refresh_tokens = refresh_tokens
-            lim.starting_tokens = starting_tokens
-            lim.config_managed = True
-        else:
-            db.session.add(EntityModelLimit(
+    # Per-user token pool from users.<email>.pool (or flat max/refresh/starting keys)
+    user_cfg = users_cfg.get(email, {})
+    pool_cfg = user_cfg.get("pool") or (
+        {"max": user_cfg["max"], "refresh": user_cfg.get("refresh", 0), "starting": user_cfg.get("starting", user_cfg["max"])}
+        if "max" in user_cfg else None
+    )
+    if pool_cfg:
+        max_tokens = pool_cfg.get("max", 0)
+        refresh_tokens = pool_cfg.get("refresh", 0)
+        starting_tokens = pool_cfg.get("starting", max_tokens)
+        limit = EntityLimit.query.filter_by(entity_id=entity.id).first()
+        if limit and limit.config_managed:
+            limit.max_tokens = max_tokens
+            limit.refresh_tokens = refresh_tokens
+            limit.starting_tokens = starting_tokens
+        elif not limit:
+            db.session.add(EntityLimit(
                 entity_id=entity.id,
-                model_config_id=model_config_id,
                 max_tokens=max_tokens,
                 refresh_tokens=refresh_tokens,
                 starting_tokens=starting_tokens,
                 config_managed=True,
             ))
+    else:
+        # Remove config_managed limit if no longer in yaml
+        limit = EntityLimit.query.filter_by(entity_id=entity.id, config_managed=True).first()
+        if limit:
+            db.session.delete(limit)
 
-    # Remove config_managed limits no longer in yaml for this user
-    for model_config_id, lim in existing_limits.items():
-        if lim.config_managed and model_config_id not in desired_model_ids:
-            db.session.delete(lim)
+    # Per-user model access from users.<email>.models list
+    allowed_models = user_cfg.get("models", [])
+    existing_access = {a.model_config_id: a
+                       for a in EntityModelAccess.query.filter_by(entity_id=entity.id).all()
+                       if a.allowed}  # only track config-managed allows
+
+    desired_model_ids = set()
+    for model_name in allowed_models:
+        mc = ModelConfig.query.filter_by(model_name=model_name).first()
+        if mc is None:
+            continue
+        desired_model_ids.add(mc.id)
+        if mc.id not in existing_access:
+            db.session.add(EntityModelAccess(
+                entity_id=entity.id,
+                model_config_id=mc.id,
+                allowed=True,
+            ))
+
+    # Remove config-managed access rows no longer in yaml
+    for model_config_id, acc in existing_access.items():
+        if model_config_id not in desired_model_ids:
+            db.session.delete(acc)
 
 
 @auth_bp.route("/")

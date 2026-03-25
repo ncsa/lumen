@@ -5,13 +5,15 @@ from lumen.decorators import admin_required
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
-from lumen.models.entity_model_balance import EntityModelBalance
-from lumen.models.entity_model_limit import EntityModelLimit
+from lumen.models.entity_balance import EntityBalance
+from lumen.models.entity_limit import EntityLimit
+from lumen.models.entity_model_access import EntityModelAccess
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
-from lumen.models.group_model_limit import GroupModelLimit
+from lumen.models.group_limit import GroupLimit
+from lumen.models.group_model_access import GroupModelAccess
 from lumen.models.model_config import ModelConfig
-from lumen.services.llm import get_effective_limit
+from lumen.services.llm import get_pool_limit
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -47,9 +49,17 @@ def create_group():
 def group_detail(gid):
     group = Group.query.get_or_404(gid)
     members = group.members.join(Entity, GroupMember.entity_id == Entity.id).add_entity(Entity).all()
-    limits = group.limits.all()
+    group_limit = GroupLimit.query.filter_by(group_id=gid).first()
+    group_model_access = GroupModelAccess.query.filter_by(group_id=gid).all()
     models = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
-    return render_template("admin/group_detail.html", group=group, members=members, limits=limits, models=models)
+    return render_template(
+        "admin/group_detail.html",
+        group=group,
+        members=members,
+        group_limit=group_limit,
+        group_model_access=group_model_access,
+        models=models,
+    )
 
 
 @admin_bp.route("/groups/<int:gid>", methods=["POST"])
@@ -108,37 +118,24 @@ def remove_member(gid, mid):
     return redirect(url_for("admin.group_detail", gid=gid))
 
 
-@admin_bp.route("/groups/<int:gid>/limits")
+@admin_bp.route("/groups/<int:gid>/pool", methods=["POST"])
 @admin_required
-def group_limits(gid):
-    group = Group.query.get_or_404(gid)
-    limits = group.limits.all()
-    return render_template("admin/group_limits.html", group=group, limits=limits)
-
-
-@admin_bp.route("/groups/<int:gid>/limits", methods=["POST"])
-@admin_required
-def upsert_group_limit(gid):
+def upsert_group_pool(gid):
     group = Group.query.get_or_404(gid)
     if group.config_managed:
         abort(403)
-    raw_model = request.form.get("model_config_id", "").strip()
-    model_config_id = int(raw_model) if raw_model else None
-    max_tokens = int(request.form.get("max_tokens", -1))
+    max_tokens = int(request.form.get("max_tokens", 0))
     refresh_tokens = int(request.form.get("refresh_tokens", 0))
     starting_tokens = int(request.form.get("starting_tokens", 0))
 
-    existing = GroupModelLimit.query.filter_by(
-        group_id=gid, model_config_id=model_config_id
-    ).first()
-    if existing:
-        existing.max_tokens = max_tokens
-        existing.refresh_tokens = refresh_tokens
-        existing.starting_tokens = starting_tokens
+    limit = GroupLimit.query.filter_by(group_id=gid).first()
+    if limit:
+        limit.max_tokens = max_tokens
+        limit.refresh_tokens = refresh_tokens
+        limit.starting_tokens = starting_tokens
     else:
-        db.session.add(GroupModelLimit(
+        db.session.add(GroupLimit(
             group_id=gid,
-            model_config_id=model_config_id,
             max_tokens=max_tokens,
             refresh_tokens=refresh_tokens,
             starting_tokens=starting_tokens,
@@ -147,16 +144,45 @@ def upsert_group_limit(gid):
     return redirect(url_for("admin.group_detail", gid=gid))
 
 
-@admin_bp.route("/groups/<int:gid>/limits/<int:lid>/delete", methods=["POST"])
+@admin_bp.route("/groups/<int:gid>/pool/delete", methods=["POST"])
 @admin_required
-def delete_group_limit(gid, lid):
-    limit = GroupModelLimit.query.get_or_404(lid)
-    if limit.group_id != gid:
+def delete_group_pool(gid):
+    group = Group.query.get_or_404(gid)
+    if group.config_managed:
+        abort(403)
+    GroupLimit.query.filter_by(group_id=gid).delete()
+    db.session.commit()
+    return redirect(url_for("admin.group_detail", gid=gid))
+
+
+@admin_bp.route("/groups/<int:gid>/access", methods=["POST"])
+@admin_required
+def upsert_group_access(gid):
+    group = Group.query.get_or_404(gid)
+    if group.config_managed:
+        abort(403)
+    model_config_id = int(request.form.get("model_config_id"))
+    allowed = request.form.get("allowed", "true").lower() in ("true", "1", "yes")
+
+    existing = GroupModelAccess.query.filter_by(group_id=gid, model_config_id=model_config_id).first()
+    if existing:
+        existing.allowed = allowed
+    else:
+        db.session.add(GroupModelAccess(group_id=gid, model_config_id=model_config_id, allowed=allowed))
+    db.session.commit()
+    return redirect(url_for("admin.group_detail", gid=gid))
+
+
+@admin_bp.route("/groups/<int:gid>/access/<int:amid>/delete", methods=["POST"])
+@admin_required
+def delete_group_access(gid, amid):
+    access = GroupModelAccess.query.get_or_404(amid)
+    if access.group_id != gid:
         abort(404)
     group = Group.query.get_or_404(gid)
     if group.config_managed:
         abort(403)
-    db.session.delete(limit)
+    db.session.delete(access)
     db.session.commit()
     return redirect(url_for("admin.group_detail", gid=gid))
 
@@ -261,52 +287,43 @@ def toggle_user(eid):
 @admin_required
 def user_limits(eid):
     entity = Entity.query.get_or_404(eid)
-    limits = EntityModelLimit.query.filter_by(entity_id=eid).all()
     models = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
 
-    effective = {}
-    balance_rows = {b.model_config_id: b.tokens_left for b in EntityModelBalance.query.filter_by(entity_id=eid).all()}
-    tokens_left = {}
-    for model in models:
-        eff = get_effective_limit(eid, model.id)
-        effective[model.id] = eff
-        if eff is not None and eff[0] != -2:
-            tokens_left[model.id] = balance_rows.get(model.id, eff[2])
+    entity_limit = EntityLimit.query.filter_by(entity_id=eid).first()
+    entity_balance = EntityBalance.query.filter_by(entity_id=eid).first()
+    effective_pool = get_pool_limit(eid)
+    entity_model_access = EntityModelAccess.query.filter_by(entity_id=eid).all()
 
     memberships = GroupMember.query.filter_by(entity_id=eid).all()
     group_details = []
     for m in memberships:
         group = Group.query.get(m.group_id)
         if group and group.active:
-            glimits = GroupModelLimit.query.filter_by(group_id=group.id).order_by(
-                GroupModelLimit.model_config_id.nullsfirst()
-            ).all()
-            group_details.append((m, group, glimits))
+            glimit = GroupLimit.query.filter_by(group_id=group.id).first()
+            gaccess = GroupModelAccess.query.filter_by(group_id=group.id).all()
+            group_details.append((m, group, glimit, gaccess))
 
     return render_template(
         "admin/user_limits.html",
         entity=entity,
-        limits=limits,
         models=models,
-        effective=effective,
-        tokens_left=tokens_left,
+        entity_limit=entity_limit,
+        entity_balance=entity_balance,
+        effective_pool=effective_pool,
+        entity_model_access=entity_model_access,
         group_details=group_details,
     )
 
 
-@admin_bp.route("/users/<int:eid>/limits", methods=["POST"])
+@admin_bp.route("/users/<int:eid>/pool", methods=["POST"])
 @admin_required
-def upsert_user_limit(eid):
+def upsert_user_pool(eid):
     Entity.query.get_or_404(eid)
-    raw_model = request.form.get("model_config_id", "").strip()
-    model_config_id = int(raw_model) if raw_model else None
-    max_tokens = int(request.form.get("max_tokens", -1))
+    max_tokens = int(request.form.get("max_tokens", 0))
     refresh_tokens = int(request.form.get("refresh_tokens", 0))
     starting_tokens = int(request.form.get("starting_tokens", 0))
 
-    existing = EntityModelLimit.query.filter_by(
-        entity_id=eid, model_config_id=model_config_id
-    ).first()
+    existing = EntityLimit.query.filter_by(entity_id=eid).first()
     if existing:
         if existing.config_managed:
             abort(403)
@@ -314,33 +331,51 @@ def upsert_user_limit(eid):
         existing.refresh_tokens = refresh_tokens
         existing.starting_tokens = starting_tokens
     else:
-        db.session.add(EntityModelLimit(
+        db.session.add(EntityLimit(
             entity_id=eid,
-            model_config_id=model_config_id,
             max_tokens=max_tokens,
             refresh_tokens=refresh_tokens,
             starting_tokens=starting_tokens,
         ))
-        if model_config_id is not None:
-            if not EntityModelBalance.query.filter_by(entity_id=eid, model_config_id=model_config_id).first():
-                db.session.add(EntityModelBalance(
-                    entity_id=eid,
-                    model_config_id=model_config_id,
-                    tokens_left=starting_tokens,
-                ))
     db.session.commit()
     return redirect(url_for("admin.user_limits", eid=eid))
 
 
-@admin_bp.route("/users/<int:eid>/limits/<int:lid>/delete", methods=["POST"])
+@admin_bp.route("/users/<int:eid>/pool/delete", methods=["POST"])
 @admin_required
-def delete_user_limit(eid, lid):
-    limit = EntityModelLimit.query.get_or_404(lid)
-    if limit.entity_id != eid:
+def delete_user_pool(eid):
+    limit = EntityLimit.query.filter_by(entity_id=eid).first()
+    if limit:
+        if limit.config_managed:
+            abort(403)
+        db.session.delete(limit)
+        db.session.commit()
+    return redirect(url_for("admin.user_limits", eid=eid))
+
+
+@admin_bp.route("/users/<int:eid>/access", methods=["POST"])
+@admin_required
+def upsert_user_access(eid):
+    Entity.query.get_or_404(eid)
+    model_config_id = int(request.form.get("model_config_id"))
+    allowed = request.form.get("allowed", "true").lower() in ("true", "1", "yes")
+
+    existing = EntityModelAccess.query.filter_by(entity_id=eid, model_config_id=model_config_id).first()
+    if existing:
+        existing.allowed = allowed
+    else:
+        db.session.add(EntityModelAccess(entity_id=eid, model_config_id=model_config_id, allowed=allowed))
+    db.session.commit()
+    return redirect(url_for("admin.user_limits", eid=eid))
+
+
+@admin_bp.route("/users/<int:eid>/access/<int:amid>/delete", methods=["POST"])
+@admin_required
+def delete_user_access(eid, amid):
+    access = EntityModelAccess.query.get_or_404(amid)
+    if access.entity_id != eid:
         abort(404)
-    if limit.config_managed:
-        abort(403)
-    db.session.delete(limit)
+    db.session.delete(access)
     db.session.commit()
     return redirect(url_for("admin.user_limits", eid=eid))
 
@@ -373,16 +408,15 @@ def api_users():
 
     balance_sq = (
         db.session.query(
-            EntityModelBalance.entity_id,
-            func.coalesce(func.sum(EntityModelBalance.tokens_left), 0).label("tokens_available"),
+            EntityBalance.entity_id,
+            EntityBalance.tokens_left.label("tokens_available"),
         )
-        .group_by(EntityModelBalance.entity_id)
         .subquery()
     )
 
     unlimited_sq = (
-        db.session.query(EntityModelLimit.entity_id)
-        .filter(EntityModelLimit.max_tokens == -2)
+        db.session.query(EntityLimit.entity_id)
+        .filter(EntityLimit.max_tokens == -2)
         .distinct()
         .subquery()
     )

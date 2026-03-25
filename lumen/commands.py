@@ -4,7 +4,8 @@ from flask.cli import with_appcontext
 
 from .extensions import db
 from lumen.models.group import Group
-from lumen.models.group_model_limit import GroupModelLimit
+from lumen.models.group_limit import GroupLimit
+from lumen.models.group_model_access import GroupModelAccess
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 
@@ -61,7 +62,13 @@ def sync_models_from_yaml(yaml_data):
 
 
 def sync_groups_from_yaml(yaml_data):
-    """Upsert Group and GroupModelLimit rows from yaml_data['groups']. Must run inside an app context."""
+    """Upsert Group, GroupLimit, and GroupModelAccess rows from yaml_data['groups'].
+
+    New config format per group (flat keys):
+      max, refresh, starting  -> GroupLimit (token pool)
+      models: [name, ...]     -> GroupModelAccess (allowed=True for each named model)
+      rules: [...]            -> auto-membership rules (handled at login, not here)
+    """
     groups_cfg = yaml_data.get("groups", {})
     yaml_group_names = set(groups_cfg.keys())
 
@@ -74,42 +81,40 @@ def sync_groups_from_yaml(yaml_data):
         else:
             group.config_managed = True
 
-        # Build desired limits: map model_config_id -> (max, refresh, starting)
-        desired_limits = {}
-        for model_key, limit_def in group_def.items():
-            if model_key == "default":
-                model_config_id = None
+        # Upsert GroupLimit (token pool)
+        if "max" in group_def:
+            max_tokens = group_def["max"]
+            refresh_tokens = group_def.get("refresh", 0)
+            starting_tokens = group_def.get("starting", max_tokens)
+            limit = GroupLimit.query.filter_by(group_id=group.id).first()
+            if limit:
+                limit.max_tokens = max_tokens
+                limit.refresh_tokens = refresh_tokens
+                limit.starting_tokens = starting_tokens
             else:
-                mc = ModelConfig.query.filter_by(model_name=model_key).first()
-                if mc is None:
-                    continue
-                model_config_id = mc.id
-            max_tokens = limit_def.get("max", 0)
-            refresh_tokens = limit_def.get("refresh", 0)
-            starting_tokens = limit_def.get("starting", max_tokens)
-            desired_limits[model_config_id] = (max_tokens, refresh_tokens, starting_tokens)
-
-        # Upsert GroupModelLimit rows
-        existing_limits = {lim.model_config_id: lim for lim in group.limits.all()}
-        for model_config_id, (max_t, refresh_t, starting_t) in desired_limits.items():
-            if model_config_id in existing_limits:
-                lim = existing_limits[model_config_id]
-                lim.max_tokens = max_t
-                lim.refresh_tokens = refresh_t
-                lim.starting_tokens = starting_t
-            else:
-                db.session.add(GroupModelLimit(
+                db.session.add(GroupLimit(
                     group_id=group.id,
-                    model_config_id=model_config_id,
-                    max_tokens=max_t,
-                    refresh_tokens=refresh_t,
-                    starting_tokens=starting_t,
+                    max_tokens=max_tokens,
+                    refresh_tokens=refresh_tokens,
+                    starting_tokens=starting_tokens,
                 ))
+        else:
+            GroupLimit.query.filter_by(group_id=group.id).delete()
 
-        # Remove limits no longer in yaml (for this group)
-        for model_config_id, lim in existing_limits.items():
-            if model_config_id not in desired_limits:
-                db.session.delete(lim)
+        # Upsert GroupModelAccess (replace all on each sync)
+        GroupModelAccess.query.filter_by(group_id=group.id).delete()
+        for model_name in group_def.get("models", []):
+            mc = ModelConfig.query.filter_by(model_name=model_name).first()
+            if mc is None:
+                current_app.logger.warning(
+                    f"sync_groups_from_yaml: model '{model_name}' not found, skipping access grant for group '{group_name}'"
+                )
+                continue
+            db.session.add(GroupModelAccess(
+                group_id=group.id,
+                model_config_id=mc.id,
+                allowed=True,
+            ))
 
     # Remove config_managed groups no longer in yaml
     for group in Group.query.filter_by(config_managed=True).all():

@@ -13,4 +13,5 @@ class Group(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     members = db.relationship("GroupMember", backref="group", lazy="dynamic", cascade="all, delete-orphan", passive_deletes=True)
-    limits = db.relationship("GroupModelLimit", backref="group", lazy="dynamic", cascade="all, delete-orphan", passive_deletes=True)
+    limit = db.relationship("GroupLimit", backref="group", uselist=False, cascade="all, delete-orphan", passive_deletes=True)
+    model_access = db.relationship("GroupModelAccess", backref="group", lazy="dynamic", cascade="all, delete-orphan", passive_deletes=True)

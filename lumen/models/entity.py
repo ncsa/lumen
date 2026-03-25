@@ -15,5 +15,6 @@ class Entity(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     api_keys = db.relationship("APIKey", backref="entity", lazy="dynamic", cascade="all, delete-orphan", passive_deletes=True)
-    entity_model_limits = db.relationship("EntityModelLimit", backref="entity", lazy="dynamic", passive_deletes=True)
+    entity_limit = db.relationship("EntityLimit", backref="entity", uselist=False, cascade="all, delete-orphan", passive_deletes=True)
+    entity_balance = db.relationship("EntityBalance", backref="entity", uselist=False, cascade="all, delete-orphan", passive_deletes=True)
     model_stats = db.relationship("ModelStat", backref="entity", lazy="dynamic", passive_deletes=True)

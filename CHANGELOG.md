@@ -2,6 +2,14 @@
 
 All notable changes to Lumen will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- Token budgets are now a single shared pool per user; all model requests draw from one pool, with pool size taken from the largest grant across the user's groups
+- Model access is now a separate boolean per user/group, independent of pool size; user-level settings override groups
+- Group config format updated: `max`/`refresh`/`starting` keys for pool size, `models: [...]` list for access grants
+- Usage page shows token pool as summary cards; Usage by Model lists all accessible models with a Status column and "Show disabled" filter
+
 ## [1.2.1] - 2026-03-23
 
 ### Fixed

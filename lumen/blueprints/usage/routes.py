@@ -11,9 +11,9 @@ from lumen.services.crypto import hash_api_key
 from lumen.models.entity import Entity
 from lumen.models.entity_manager import EntityManager
 from lumen.models.model_config import ModelConfig
-from lumen.models.entity_model_balance import EntityModelBalance
+from lumen.models.entity_balance import EntityBalance
 from lumen.models.model_stat import ModelStat
-from lumen.services.llm import get_effective_limit
+from lumen.services.llm import get_pool_limit, get_model_access
 
 usage_bp = Blueprint("usage", __name__)
 
@@ -33,46 +33,87 @@ def _get_usage_data(eid: int) -> dict:
 
     api_keys = APIKey.query.filter_by(entity_id=eid).order_by(APIKey.created_at).all()
 
-    model_usage = (
+    # Single token pool and accessible models
+    pool = get_pool_limit(eid)
+    balance = EntityBalance.query.filter_by(entity_id=eid).first()
+    all_active_models = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
+    accessible_model_ids = {mc.id for mc in all_active_models if get_model_access(eid, mc.id)}
+
+    # Usage stats keyed by model_config_id
+    usage_rows = (
         db.session.query(
-            ModelConfig.model_name,
+            ModelStat.model_config_id,
             func.sum(ModelStat.requests),
             func.sum(ModelStat.input_tokens),
             func.sum(ModelStat.output_tokens),
             func.sum(ModelStat.cost),
             func.max(ModelStat.last_used_at),
         )
-        .join(ModelConfig, ModelStat.model_config_id == ModelConfig.id)
         .filter(ModelStat.entity_id == eid)
-        .group_by(ModelConfig.model_name)
+        .group_by(ModelStat.model_config_id)
         .all()
     )
+    usage_by_id = {r[0]: r for r in usage_rows}
 
-    # Per-model limits: show all models the entity has access to via effective limits
-    all_models = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
-    balance_rows = {
-        r.model_config_id: r
-        for r in EntityModelBalance.query.filter_by(entity_id=eid).all()
-    }
-    model_limits = []
-    for mc in all_models:
-        eff = get_effective_limit(eid, mc.id)
-        if eff is None:
-            continue
-        max_tokens, refresh_tokens, starting = eff
-        bal = balance_rows.get(mc.id)
-        tokens_left = bal.tokens_left if bal else starting
-        last_refill_at = bal.last_refill_at if bal else None
-        model_limits.append({
+    # Models to show: all accessible active models + inactive models with past usage
+    models_to_show_ids = set()
+    for mc in all_active_models:
+        if mc.id in accessible_model_ids:
+            models_to_show_ids.add(mc.id)
+    for mid in usage_by_id:
+        models_to_show_ids.add(mid)
+
+    all_relevant_models = (
+        ModelConfig.query
+        .filter(ModelConfig.id.in_(models_to_show_ids))
+        .order_by(ModelConfig.model_name)
+        .all()
+    ) if models_to_show_ids else []
+
+    def model_status(mc):
+        if not mc.active:
+            return "disabled"
+        endpoints = list(mc.endpoints)
+        if not endpoints:
+            return "down"
+        healthy = sum(1 for e in endpoints if e.healthy)
+        if healthy == 0:
+            return "down"
+        if healthy < len(endpoints):
+            return "degraded"
+        return "ok"
+
+    model_usage = []
+    for mc in all_relevant_models:
+        u = usage_by_id.get(mc.id)
+        has_access = mc.id in accessible_model_ids
+        status = "disabled" if not has_access else model_status(mc)
+        model_usage.append({
             "model_name": mc.model_name,
+            "requests": int(u[1] or 0) if u else 0,
+            "input_tokens": int(u[2] or 0) if u else 0,
+            "output_tokens": int(u[3] or 0) if u else 0,
+            "cost": float(u[4] or 0) if u else 0.0,
+            "last_used_at": u[5] if u else None,
+            "status": status,
+            "disabled": status == "disabled",
+        })
+
+    if pool is not None:
+        max_tokens, refresh_tokens, starting = pool
+        tokens_left = balance.tokens_left if balance else starting
+        last_refill_at = balance.last_refill_at if balance else None
+        token_pool = {
             "token_limit": max_tokens,
             "tokens_left": tokens_left,
             "tokens_per_hour": refresh_tokens,
             "next_refill": (last_refill_at + timedelta(hours=1)) if (refresh_tokens > 0 and last_refill_at) else None,
-        })
+        }
+    else:
+        token_pool = None
 
-    total_tokens_used = sum(int(row[2] or 0) + int(row[3] or 0) for row in model_usage)
-    total_cost = sum(float(row[4] or 0) for row in model_usage)
+    total_tokens_used = sum(r[2] + r[3] for r in usage_rows)
+    total_cost = sum(float(r[4] or 0) for r in usage_rows)
 
     status = {
         "total_tokens_used": total_tokens_used,
@@ -83,7 +124,7 @@ def _get_usage_data(eid: int) -> dict:
         "chat_agg": chat_agg,
         "api_keys": api_keys,
         "model_usage": model_usage,
-        "model_limits": model_limits,
+        "token_pool": token_pool,
         "status": status,
     }
 

@@ -32,8 +32,9 @@ def main():
     from lumen.extensions import db
     from lumen.models.api_key import APIKey
     from lumen.models.entity import Entity
-    from lumen.models.entity_model_balance import EntityModelBalance
-    from lumen.models.entity_model_limit import EntityModelLimit
+    from lumen.models.entity_balance import EntityBalance
+    from lumen.models.entity_limit import EntityLimit
+    from lumen.models.entity_model_access import EntityModelAccess
     from lumen.models.model_config import ModelConfig
     from lumen.services.crypto import hash_api_key
 
@@ -69,9 +70,8 @@ def main():
             )
             db.session.add(api_key)
 
-            limit = EntityModelLimit(
+            limit = EntityLimit(
                 entity_id=entity.id,
-                model_config_id=model_config.id,
                 max_tokens=args.tokens,
                 refresh_tokens=0,
                 starting_tokens=args.tokens,
@@ -79,12 +79,18 @@ def main():
             )
             db.session.add(limit)
 
-            balance = EntityModelBalance(
+            balance = EntityBalance(
                 entity_id=entity.id,
-                model_config_id=model_config.id,
                 tokens_left=args.tokens,
             )
             db.session.add(balance)
+
+            access = EntityModelAccess(
+                entity_id=entity.id,
+                model_config_id=model_config.id,
+                allowed=True,
+            )
+            db.session.add(access)
 
             raw_keys.append(raw_key)
             print(f"  {name}: {raw_key}")
