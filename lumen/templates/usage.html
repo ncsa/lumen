@@ -288,7 +288,7 @@ if (showDisabledCb) {
 // Show next refill as "in X minutes"
 document.querySelectorAll(".local-time[data-utc]").forEach(el => {
   const mins = Math.max(0, Math.round((new Date(el.dataset.utc) - Date.now()) / 60000));
-  el.textContent = mins <= 1 ? "in less than a minute" : `in ${mins} minutes`;
+  el.textContent = mins <= 1 ? "in seconds" : `in ${mins} minutes`;
 });
 
 // API Key modal — generate key on open
