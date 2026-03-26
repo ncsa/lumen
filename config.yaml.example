@@ -133,3 +133,10 @@ models:
       - url: http://gpu-server.internal/v1
         api_key: internal-key
         model: phi-3-mini-128k-instruct   # different name at the internal endpoint
+
+# Prometheus metrics endpoint (/metrics)
+prometheus:
+  enabled: false
+  token: ""          # Optional. Set to a long random string to require Bearer token auth. Leave empty for no auth.
+  multiproc_dir: ""  # Optional. Path for multi-worker aggregation (e.g. /tmp/prometheus_multiproc).
+                     # For multiple containers, mount a shared volume at this path.

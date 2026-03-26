@@ -15,6 +15,7 @@ dependencies = [
     "uvicorn>=0.30",
     "a2wsgi>=1.10",
     "flask-limiter>=3.5",
+    "prometheus_client>=0.20",
 ]
 
 [project.scripts]

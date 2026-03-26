@@ -36,6 +36,24 @@ def create_app():
 
     app.config["YAML_DATA"] = yaml_data
 
+    # Initialize Prometheus registry with DB collector
+    from prometheus_client import CollectorRegistry
+    from lumen.blueprints.metrics.routes import LumenDBCollector
+    prom_registry = CollectorRegistry()
+    prom_registry.register(LumenDBCollector())
+    app.config["PROMETHEUS_REGISTRY"] = prom_registry
+
+    # Wrap wsgi_app with HTTP metrics middleware if prometheus is enabled.
+    # PROMETHEUS_MULTIPROC_DIR must be set before prometheus_client metric objects
+    # are created (imported), so we set it here before importing the middleware.
+    prom_cfg = yaml_data.get("prometheus", {})
+    if prom_cfg.get("enabled", False):
+        multiproc_dir = prom_cfg.get("multiproc_dir", "")
+        if multiproc_dir:
+            os.environ.setdefault("PROMETHEUS_MULTIPROC_DIR", multiproc_dir)
+        from lumen.blueprints.metrics.middleware import make_metrics_middleware
+        app.wsgi_app = make_metrics_middleware(app.wsgi_app)
+
     # Configure rate limiting
     rl_cfg = yaml_data.get("rate_limiting", {})
     if rl_url := rl_cfg.get("storage_url"):
@@ -125,6 +143,7 @@ def create_app():
     from lumen.blueprints.usage.routes import usage_bp
     from lumen.blueprints.api.routes import api_bp
     from lumen.blueprints.admin.routes import admin_bp
+    from lumen.blueprints.metrics.routes import metrics_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(chat_bp)
@@ -133,6 +152,7 @@ def create_app():
     app.register_blueprint(usage_bp)
     app.register_blueprint(api_bp)
     app.register_blueprint(admin_bp)
+    app.register_blueprint(metrics_bp)
 
     # Rate limit error handler
     @app.errorhandler(429)

@@ -13,6 +13,8 @@ _RESTART_REQUIRED = [
     ("app", "secret_key"),
     ("app", "database_url"),
     ("app", "debug"),
+    ("prometheus", "enabled"),
+    ("prometheus", "multiproc_dir"),
 ]
 
 
