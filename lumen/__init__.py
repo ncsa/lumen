@@ -68,6 +68,7 @@ def create_app():
     app.config["APP_NAME"] = app_cfg.get("name", "Lumen")
     app.config["APP_TAGLINE"] = app_cfg.get("tagline", "")
     app.config["DEV_USER"] = app_cfg.get("dev_user", "")
+    app.config["GITHUB_URL"] = app_cfg.get("github_url", "https://github.com/ncsa/lumen")
 
     oauth2_cfg = yaml_data.get("oauth2", {})
     for key in ("client_id", "client_secret", "server_metadata_url", "redirect_uri", "scopes"):
@@ -148,7 +149,7 @@ def create_app():
     # Context processor: inject app_name and nav_services into all templates
     @app.context_processor
     def inject_nav():
-        result = {"app_name": app.config["APP_NAME"], "app_tagline": app.config["APP_TAGLINE"], "is_admin": False}
+        result = {"app_name": app.config["APP_NAME"], "app_tagline": app.config["APP_TAGLINE"], "is_admin": False, "github_url": app.config.get("GITHUB_URL", "")}
         if not session.get("entity_id"):
             result["nav_services"] = []
             return result

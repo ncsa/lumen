@@ -57,6 +57,11 @@
   <ilw-footer slot="footer">
     <p slot="primary-unit"><a href="https://ncsa.illinois.edu">National Center for Supercomputing Applications</a></p>
     <p slot="site-name"><a href="{{ url_for('chat.chat_page') }}">{{ app_name }}</a></p>
+    <div slot="actions">
+      <a href="https://computes.illinois.edu" target="_blank" rel="noopener noreferrer">Illinois Computes</a>
+      <a href="{{ github_url }}" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
+      <a href="{{ github_url }}/issues" target="_blank" rel="noopener noreferrer">Request Feature</a>
+    </div>
   </ilw-footer>
 </ilw-page>
 
