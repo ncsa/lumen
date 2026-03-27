@@ -11,6 +11,7 @@ from lumen.models.entity_model_access import EntityModelAccess
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
+from lumen.models.request_log import RequestLog
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
 from lumen.models.group_limit import GroupLimit
@@ -185,8 +186,10 @@ def update_stats(
     input_tokens: int,
     output_tokens: int,
     cost: float,
+    endpoint_id: int = None,
+    duration: float = 0.0,
 ):
-    """Update or create ModelStat running totals."""
+    """Update or create ModelStat running totals and append a RequestLog row."""
     stat = ModelStat.query.filter_by(
         entity_id=entity_id, model_config_id=model_config_id, source=source
     ).first()
@@ -206,6 +209,19 @@ def update_stats(
     stat.output_tokens += output_tokens
     stat.cost = float(stat.cost) + cost
     stat.last_used_at = datetime.utcnow()
+
+    log = RequestLog(
+        time=datetime.utcnow(),
+        entity_id=entity_id,
+        model_config_id=model_config_id,
+        model_endpoint_id=endpoint_id,
+        source=source,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost=cost,
+        duration=duration,
+    )
+    db.session.add(log)
     db.session.flush()
 
 
@@ -237,7 +253,8 @@ def send_message(
 
     if entity_id is not None:
         deduct_tokens(entity_id, config.id, usage.prompt_tokens + usage.completion_tokens)
-        update_stats(entity_id, config.id, source, usage.prompt_tokens, usage.completion_tokens, cost)
+        update_stats(entity_id, config.id, source, usage.prompt_tokens, usage.completion_tokens, cost,
+                     endpoint_id=endpoint.id, duration=duration)
 
     if api_key_obj is not None:
         api_key_obj.input_tokens += usage.prompt_tokens

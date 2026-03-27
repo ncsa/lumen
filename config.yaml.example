@@ -6,7 +6,7 @@ app:
   # WARNING: rotating this value invalidates ALL existing user API keys.
   # Can be overridden at runtime with the LUMEN_ENCRYPTION_KEY environment variable.
   encryption_key: ""
-  database_url: sqlite:///lumen_dev.db
+  database_url: postgresql://lumen:lumen@localhost:5678/lumen  # TimescaleDB (started by dev.sh)
   debug: true   # set to false in production
   # dev_user: dev@example.com  # Allows bypass of OAuth; can log in as this email directly
   db_pool:

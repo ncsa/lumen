@@ -1,5 +1,7 @@
+from datetime import datetime, timedelta
+
 from flask import Blueprint, render_template, request, redirect, url_for, abort, jsonify
-from sqlalchemy import func, case
+from sqlalchemy import func, case, text
 
 from lumen.decorators import admin_required
 from lumen.extensions import db
@@ -488,3 +490,239 @@ def api_users():
         "page": page,
         "per_page": per_page,
     })
+
+
+# ---------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------
+
+_PERIODS = {
+    "week":  {"offset": timedelta(days=7),   "bucket": "1 day",   "trunc": "day"},
+    "month": {"offset": timedelta(days=30),  "bucket": "1 day",   "trunc": "day"},
+    "year":  {"offset": timedelta(days=365), "bucket": "1 week",  "trunc": "week"},
+    "all":   {"offset": None,                "bucket": "1 month", "trunc": "month"},
+}
+
+
+def _period_start(period_str):
+    """Return UTC datetime for the start of the period, or None for all time."""
+    cfg = _PERIODS.get(period_str, _PERIODS["week"])
+    if cfg["offset"] is None:
+        return None
+    return datetime.utcnow() - cfg["offset"]
+
+
+def _period_bucket(period_str):
+    cfg = _PERIODS.get(period_str, _PERIODS["week"])
+    return cfg["bucket"], cfg["trunc"]
+
+
+@admin_bp.route("/analytics")
+@admin_required
+def analytics():
+    return render_template("admin/analytics.html")
+
+
+@admin_bp.route("/api/analytics/summary")
+@admin_required
+def analytics_summary():
+    period = request.args.get("period", "week")
+    start = _period_start(period)
+
+    if start is not None:
+        row = db.session.execute(text("""
+            SELECT
+                COALESCE(SUM(requests), 0),
+                COALESCE(SUM(input_tokens + output_tokens), 0),
+                COALESCE(SUM(cost), 0.0)
+            FROM request_counts_hourly
+            WHERE bucket >= :start
+        """), {"start": start}).one()
+        new_users = db.session.query(func.count(Entity.id)).filter(
+            Entity.entity_type == "user",
+            Entity.created_at >= start,
+        ).scalar()
+    else:
+        row = db.session.execute(text("""
+            SELECT
+                COALESCE(SUM(requests), 0),
+                COALESCE(SUM(input_tokens + output_tokens), 0),
+                COALESCE(SUM(cost), 0.0)
+            FROM request_counts_hourly
+        """)).one()
+        new_users = db.session.query(func.count(Entity.id)).filter(
+            Entity.entity_type == "user",
+        ).scalar()
+
+    return jsonify({
+        "requests": int(row[0]),
+        "tokens": int(row[1]),
+        "cost": float(row[2]),
+        "new_users": int(new_users),
+    })
+
+
+@admin_bp.route("/api/analytics/users/new")
+@admin_required
+def analytics_users_new():
+    period = request.args.get("period", "week")
+    start = _period_start(period)
+    _, trunc = _period_bucket(period)
+
+    if start is not None:
+        rows = db.session.execute(text("""
+            SELECT date_trunc(:trunc, created_at) AS period, COUNT(*) AS count
+            FROM entities
+            WHERE entity_type = 'user' AND created_at >= :start
+            GROUP BY 1 ORDER BY 1
+        """), {"trunc": trunc, "start": start}).all()
+    else:
+        rows = db.session.execute(text("""
+            SELECT date_trunc(:trunc, created_at) AS period, COUNT(*) AS count
+            FROM entities
+            WHERE entity_type = 'user'
+            GROUP BY 1 ORDER BY 1
+        """), {"trunc": trunc}).all()
+
+    return jsonify([{"period": r[0].isoformat(), "count": int(r[1])} for r in rows])
+
+
+@admin_bp.route("/api/analytics/users/cumulative")
+@admin_required
+def analytics_users_cumulative():
+    period = request.args.get("period", "week")
+    start = _period_start(period)
+    _, trunc = _period_bucket(period)
+
+    if start is not None:
+        rows = db.session.execute(text("""
+            WITH buckets AS (
+                SELECT date_trunc(:trunc, created_at) AS period, COUNT(*) AS new_count
+                FROM entities
+                WHERE entity_type = 'user' AND created_at >= :start
+                GROUP BY 1
+            )
+            SELECT period, SUM(new_count) OVER (ORDER BY period) AS cumulative
+            FROM buckets
+            ORDER BY period
+        """), {"trunc": trunc, "start": start}).all()
+    else:
+        rows = db.session.execute(text("""
+            WITH buckets AS (
+                SELECT date_trunc(:trunc, created_at) AS period, COUNT(*) AS new_count
+                FROM entities
+                WHERE entity_type = 'user'
+                GROUP BY 1
+            )
+            SELECT period, SUM(new_count) OVER (ORDER BY period) AS cumulative
+            FROM buckets
+            ORDER BY period
+        """), {"trunc": trunc}).all()
+
+    return jsonify([{"period": r[0].isoformat(), "count": int(r[1])} for r in rows])
+
+
+@admin_bp.route("/api/analytics/requests")
+@admin_required
+def analytics_requests():
+    period = request.args.get("period", "week")
+    start = _period_start(period)
+    bucket, _ = _period_bucket(period)
+
+    if start is not None:
+        rows = db.session.execute(text(f"""
+            SELECT time_bucket('{bucket}', bucket) AS period, SUM(requests) AS count
+            FROM request_counts_hourly
+            WHERE bucket >= :start
+            GROUP BY 1 ORDER BY 1
+        """), {"start": start}).all()
+    else:
+        rows = db.session.execute(text(f"""
+            SELECT time_bucket('{bucket}', bucket) AS period, SUM(requests) AS count
+            FROM request_counts_hourly
+            GROUP BY 1 ORDER BY 1
+        """)).all()
+
+    return jsonify([{"period": r[0].isoformat(), "count": int(r[1])} for r in rows])
+
+
+@admin_bp.route("/api/analytics/tokens")
+@admin_required
+def analytics_tokens():
+    period = request.args.get("period", "week")
+    start = _period_start(period)
+    bucket, _ = _period_bucket(period)
+
+    if start is not None:
+        rows = db.session.execute(text(f"""
+            SELECT time_bucket('{bucket}', bucket) AS period,
+                   SUM(input_tokens + output_tokens) AS tokens
+            FROM request_counts_hourly
+            WHERE bucket >= :start
+            GROUP BY 1 ORDER BY 1
+        """), {"start": start}).all()
+    else:
+        rows = db.session.execute(text(f"""
+            SELECT time_bucket('{bucket}', bucket) AS period,
+                   SUM(input_tokens + output_tokens) AS tokens
+            FROM request_counts_hourly
+            GROUP BY 1 ORDER BY 1
+        """)).all()
+
+    return jsonify([{"period": r[0].isoformat(), "count": int(r[1])} for r in rows])
+
+
+@admin_bp.route("/api/analytics/models")
+@admin_required
+def analytics_models():
+    period = request.args.get("period", "week")
+    start = _period_start(period)
+
+    if start is not None:
+        rows = db.session.execute(text("""
+            SELECT mc.model_name, SUM(rch.requests) AS requests
+            FROM request_counts_hourly rch
+            JOIN model_configs mc ON rch.model_config_id = mc.id
+            WHERE rch.bucket >= :start
+            GROUP BY mc.model_name
+            ORDER BY requests DESC
+        """), {"start": start}).all()
+    else:
+        rows = db.session.execute(text("""
+            SELECT mc.model_name, SUM(rch.requests) AS requests
+            FROM request_counts_hourly rch
+            JOIN model_configs mc ON rch.model_config_id = mc.id
+            GROUP BY mc.model_name
+            ORDER BY requests DESC
+        """)).all()
+
+    return jsonify([{"model": r[0], "requests": int(r[1])} for r in rows])
+
+
+@admin_bp.route("/api/analytics/heatmap")
+@admin_required
+def analytics_heatmap():
+    period = request.args.get("period", "week")
+    start = _period_start(period)
+
+    if start is not None:
+        rows = db.session.execute(text("""
+            SELECT
+                EXTRACT(DOW FROM bucket)  AS dow,
+                EXTRACT(HOUR FROM bucket) AS hour,
+                SUM(requests) AS count
+            FROM request_counts_hourly
+            WHERE bucket >= :start
+            GROUP BY 1, 2
+        """), {"start": start}).all()
+    else:
+        rows = db.session.execute(text("""
+            SELECT
+                EXTRACT(DOW FROM bucket)  AS dow,
+                EXTRACT(HOUR FROM bucket) AS hour,
+                SUM(requests) AS count
+            FROM request_counts_hourly
+            GROUP BY 1, 2
+        """)).all()
+
+    return jsonify([{"dow": int(r[0]), "hour": int(r[1]), "count": int(r[2])} for r in rows])

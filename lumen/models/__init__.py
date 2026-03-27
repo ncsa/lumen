@@ -13,6 +13,7 @@ from .group import Group
 from .group_member import GroupMember
 from .group_limit import GroupLimit
 from .group_model_access import GroupModelAccess
+from .request_log import RequestLog
 
 __all__ = [
     "Entity",
@@ -30,4 +31,5 @@ __all__ = [
     "GroupMember",
     "GroupLimit",
     "GroupModelAccess",
+    "RequestLog",
 ]

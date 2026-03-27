@@ -1,0 +1,300 @@
+{% extends "base.html" %}
+{% block title %}Analytics{% endblock %}
+{% block content %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+
+<div class="d-flex align-items-center justify-content-between mb-4">
+  <h1 class="mb-0">Analytics</h1>
+  <div class="d-flex align-items-center gap-2">
+    <label for="period-select" class="form-label mb-0 fw-semibold">Period:</label>
+    <select id="period-select" class="form-select form-select-sm" style="width:auto" aria-label="Select time period">
+      <option value="week" selected>Week</option>
+      <option value="month">Month</option>
+      <option value="year">Year</option>
+      <option value="all">All Time</option>
+    </select>
+  </div>
+</div>
+
+<!-- Stat cards -->
+<div class="row g-3 mb-4" role="region" aria-label="Summary statistics">
+  <div class="col-sm-6 col-xl-3">
+    <div class="card text-center">
+      <div class="card-body">
+        <div class="fs-2 fw-bold" id="stat-requests">—</div>
+        <div class="text-muted small">Requests</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
+    <div class="card text-center">
+      <div class="card-body">
+        <div class="fs-2 fw-bold" id="stat-tokens">—</div>
+        <div class="text-muted small">Tokens</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
+    <div class="card text-center">
+      <div class="card-body">
+        <div class="fs-2 fw-bold" id="stat-cost">—</div>
+        <div class="text-muted small">Cost (USD)</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
+    <div class="card text-center">
+      <div class="card-body">
+        <div class="fs-2 fw-bold" id="stat-users">—</div>
+        <div class="text-muted small">New Users</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Row 2: User growth charts -->
+<div class="row g-3 mb-4">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-body">
+        <h2 class="h6 card-title">New Users Over Time</h2>
+        <canvas id="chart-users-new" aria-label="New users over time chart" role="img"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-body">
+        <h2 class="h6 card-title">Total Users (Cumulative)</h2>
+        <canvas id="chart-users-cumul" aria-label="Total users cumulative chart" role="img"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Row 3: Usage charts -->
+<div class="row g-3 mb-4">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-body">
+        <h2 class="h6 card-title">Requests Over Time</h2>
+        <canvas id="chart-requests" aria-label="Requests over time chart" role="img"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-body">
+        <h2 class="h6 card-title">Token Usage Over Time</h2>
+        <canvas id="chart-tokens" aria-label="Token usage over time chart" role="img"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Row 4: Model popularity + heatmap -->
+<div class="row g-3 mb-4">
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h6 card-title">Model Popularity</h2>
+        <canvas id="chart-models" aria-label="Model popularity bar chart" role="img"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card h-100">
+      <div class="card-body">
+        <h2 class="h6 card-title">Usage Heatmap</h2>
+        <p class="text-muted small mb-2">Hour of day (x) × Day of week (y)</p>
+        <div id="heatmap-container" role="img" aria-label="Usage heatmap showing requests by day and hour" style="overflow-x:auto">
+          <table id="heatmap-table" class="table table-sm mb-0" style="font-size:0.65rem;border-collapse:collapse">
+            <caption class="visually-hidden">Request heatmap: rows are days of the week, columns are hours 0–23</caption>
+            <thead>
+              <tr>
+                <th scope="col" style="min-width:2.5rem"></th>
+                <!-- hour headers filled by JS -->
+              </tr>
+            </thead>
+            <tbody id="heatmap-body">
+              <!-- rows filled by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const ILLINOIS_BLUE   = [0,   60,  125]; // #003C7D
+const ILLINOIS_ORANGE = [255, 95,  5];   // #FF5F05
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const CHART_COLOR = '#13294b'; // dark blue for lines/bars
+
+const charts = {};
+
+function heatmapColor(t) {
+  const r = Math.round(ILLINOIS_BLUE[0] + t * (ILLINOIS_ORANGE[0] - ILLINOIS_BLUE[0]));
+  const g = Math.round(ILLINOIS_BLUE[1] + t * (ILLINOIS_ORANGE[1] - ILLINOIS_BLUE[1]));
+  const b = Math.round(ILLINOIS_BLUE[2] + t * (ILLINOIS_ORANGE[2] - ILLINOIS_BLUE[2]));
+  return `rgb(${r},${g},${b})`;
+}
+
+function makeLineChart(id, label) {
+  const ctx = document.getElementById(id).getContext('2d');
+  return new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label,
+        data: [],
+        borderColor: CHART_COLOR,
+        backgroundColor: CHART_COLOR + '22',
+        fill: true,
+        tension: 0,
+        pointRadius: 3,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { maxRotation: 45 } },
+        y: { beginAtZero: true }
+      }
+    }
+  });
+}
+
+function makeBarChart(id, label, horizontal) {
+  const ctx = document.getElementById(id).getContext('2d');
+  return new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: [],
+      datasets: [{
+        label,
+        data: [],
+        backgroundColor: CHART_COLOR,
+      }]
+    },
+    options: {
+      indexAxis: horizontal ? 'y' : 'x',
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: { x: { beginAtZero: true } }
+    }
+  });
+}
+
+function updateLineChart(chart, rows, valueKey) {
+  chart.data.labels = rows.map(r => r.period.substring(0, 16).replace('T', ' '));
+  chart.data.datasets[0].data = rows.map(r => r[valueKey]);
+  chart.update();
+}
+
+function renderHeatmap(rows) {
+  // Build 7×24 grid
+  const grid = Array.from({length: 7}, () => new Array(24).fill(0));
+  let minVal = Infinity, maxVal = 0;
+  for (const r of rows) {
+    grid[r.dow][r.hour] = r.count;
+    if (r.count > maxVal) maxVal = r.count;
+    if (r.count > 0 && r.count < minVal) minVal = r.count;
+  }
+  if (minVal === Infinity) minVal = 0;
+  const range = maxVal - minVal || 1;
+
+  // Build header row
+  const thead = document.querySelector('#heatmap-table thead tr');
+  thead.innerHTML = '<th scope="col" style="min-width:2.5rem"></th>';
+  for (let h = 0; h < 24; h++) {
+    const th = document.createElement('th');
+    th.scope = 'col';
+    th.textContent = h;
+    th.style.cssText = 'width:1.5rem;text-align:center;padding:1px';
+    thead.appendChild(th);
+  }
+
+  // Build body rows (Mon=1 first, then Tue..Sat..Sun=0 last)
+  const tbody = document.getElementById('heatmap-body');
+  tbody.innerHTML = '';
+  const dayOrder = [1, 2, 3, 4, 5, 6, 0]; // Mon-Sun
+  for (const dow of dayOrder) {
+    const tr = document.createElement('tr');
+    const th = document.createElement('th');
+    th.scope = 'row';
+    th.textContent = DAY_NAMES[dow];
+    th.style.cssText = 'font-weight:normal;padding:1px 4px';
+    tr.appendChild(th);
+    for (let h = 0; h < 24; h++) {
+      const count = grid[dow][h];
+      const td = document.createElement('td');
+      const t = count > 0 ? (count - minVal) / range : null;
+      const bg = t === null ? '#e0e0e0' : heatmapColor(t);
+      td.style.cssText = `background:${bg};width:1.5rem;height:1.5rem;padding:0`;
+      td.setAttribute('aria-label', `${DAY_NAMES[dow]} ${h}:00 — ${count} requests`);
+      td.title = `${DAY_NAMES[dow]} ${h}:00: ${count}`;
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+}
+
+async function fetchJSON(endpoint, period) {
+  const resp = await fetch(`/admin/api/analytics/${endpoint}?period=${period}`);
+  return resp.json();
+}
+
+async function refresh(period) {
+  // Clear stat cards
+  ['stat-requests', 'stat-tokens', 'stat-cost', 'stat-users'].forEach(id => {
+    document.getElementById(id).textContent = '…';
+  });
+
+  const [summary, usersNew, usersCumul, reqs, tokens, models, heatmap] = await Promise.all([
+    fetchJSON('summary', period),
+    fetchJSON('users/new', period),
+    fetchJSON('users/cumulative', period),
+    fetchJSON('requests', period),
+    fetchJSON('tokens', period),
+    fetchJSON('models', period),
+    fetchJSON('heatmap', period),
+  ]);
+
+  // Update stat cards
+  document.getElementById('stat-requests').textContent = summary.requests.toLocaleString();
+  document.getElementById('stat-tokens').textContent = summary.tokens.toLocaleString();
+  document.getElementById('stat-cost').textContent = '$' + summary.cost.toFixed(2);
+  document.getElementById('stat-users').textContent = summary.new_users.toLocaleString();
+
+  // Update charts
+  updateLineChart(charts.usersNew, usersNew, 'count');
+  updateLineChart(charts.usersCumul, usersCumul, 'count');
+  updateLineChart(charts.requests, reqs, 'count');
+  updateLineChart(charts.tokens, tokens, 'count');
+
+  // Model bar chart
+  charts.models.data.labels = models.map(m => m.model);
+  charts.models.data.datasets[0].data = models.map(m => m.requests);
+  charts.models.update();
+
+  renderHeatmap(heatmap);
+}
+
+// Initialize charts
+charts.usersNew   = makeLineChart('chart-users-new',  'New Users');
+charts.usersCumul = makeLineChart('chart-users-cumul', 'Total Users');
+charts.requests   = makeLineChart('chart-requests',   'Requests');
+charts.tokens     = makeLineChart('chart-tokens',     'Tokens');
+charts.models     = makeBarChart('chart-models',      'Requests', true);
+
+document.getElementById('period-select').addEventListener('change', function () {
+  refresh(this.value);
+});
+
+refresh('week');
+</script>
+{% endblock %}

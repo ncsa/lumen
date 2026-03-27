@@ -35,7 +35,7 @@ services:
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
 
   postgres:
-    image: postgres:18-alpine
+    image: timescale/timescaledb:latest-pg17
     container_name: postgres
     restart: unless-stopped
     environment:

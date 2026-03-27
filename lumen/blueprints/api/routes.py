@@ -1,5 +1,6 @@
 import json
 import logging
+import time as _time
 from datetime import datetime
 from decimal import Decimal
 from functools import wraps
@@ -151,7 +152,8 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                     if usage is not None:
                         cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens, model_config)
                         deduct_tokens(entity_id, model_config.id, usage.prompt_tokens + usage.completion_tokens)
-                        update_stats(entity_id, model_config.id, "api", usage.prompt_tokens, usage.completion_tokens, cost)
+                        update_stats(entity_id, model_config.id, "api", usage.prompt_tokens, usage.completion_tokens, cost,
+                                     endpoint_id=endpoint.id)
                         _record_api_key_usage(api_key.id, usage.prompt_tokens, usage.completion_tokens, cost)
                         db.session.commit()
                     else:
@@ -170,8 +172,10 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
         return Response(stream_with_context(generate()), content_type="text/event-stream")
 
     try:
+        t0 = _time.time()
         with openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url) as client:
             response = client.chat.completions.create(model=remote_model, messages=messages, **kwargs)
+        duration = _time.time() - t0
     except Exception as e:
         return _err(str(e), "api_error", 500)
 
@@ -179,7 +183,8 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
     cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens, model_config)
 
     deduct_tokens(entity_id, model_config.id, usage.prompt_tokens + usage.completion_tokens)
-    update_stats(entity_id, model_config.id, "api", usage.prompt_tokens, usage.completion_tokens, cost)
+    update_stats(entity_id, model_config.id, "api", usage.prompt_tokens, usage.completion_tokens, cost,
+                 endpoint_id=endpoint.id, duration=duration)
 
     _record_api_key_usage(g.api_key.id, usage.prompt_tokens, usage.completion_tokens, cost)
     db.session.commit()
