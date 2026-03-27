@@ -106,7 +106,7 @@
     <div class="card h-100">
       <div class="card-body">
         <h2 class="h6 card-title">Usage Heatmap</h2>
-        <p class="text-muted small mb-2">Hour of day (x) × Day of week (y)</p>
+        <p class="text-muted small mb-2">Hour of day (x) × Day of week (y) — local time</p>
         <div id="heatmap-container" role="img" aria-label="Usage heatmap showing requests by day and hour" style="overflow-x:auto">
           <table id="heatmap-table" class="table table-sm mb-0" style="font-size:0.65rem;border-collapse:collapse">
             <caption class="visually-hidden">Request heatmap: rows are days of the week, columns are hours 0–23</caption>
@@ -196,13 +196,21 @@ function updateLineChart(chart, rows, valueKey) {
 }
 
 function renderHeatmap(rows) {
+  // Convert UTC (dow, hour) to local time before building the grid.
+  // getTimezoneOffset() returns (UTC - local) in minutes, e.g. 360 for UTC-6.
+  const offsetHours = Math.round(new Date().getTimezoneOffset() / 60);
+
   // Build 7×24 grid
   const grid = Array.from({length: 7}, () => new Array(24).fill(0));
   let minVal = Infinity, maxVal = 0;
   for (const r of rows) {
-    grid[r.dow][r.hour] = r.count;
-    if (r.count > maxVal) maxVal = r.count;
-    if (r.count > 0 && r.count < minVal) minVal = r.count;
+    let localHour = r.hour - offsetHours;
+    let localDow = r.dow;
+    if (localHour < 0) { localHour += 24; localDow = (r.dow - 1 + 7) % 7; }
+    else if (localHour >= 24) { localHour -= 24; localDow = (r.dow + 1) % 7; }
+    grid[localDow][localHour] += r.count;
+    if (grid[localDow][localHour] > maxVal) maxVal = grid[localDow][localHour];
+    if (grid[localDow][localHour] > 0 && grid[localDow][localHour] < minVal) minVal = grid[localDow][localHour];
   }
   if (minVal === Infinity) minVal = 0;
   const range = maxVal - minVal || 1;

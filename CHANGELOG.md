@@ -7,6 +7,9 @@ All notable changes to Lumen will be documented in this file.
 ### Added
 - Models page: optional `description` and `url` fields per model in `config.yaml`; hovering the model name shows the description as a tooltip, and a link icon (Illinois brand `link` icon) opens the URL in a new tab
 
+### Fixed
+- Admin analytics heatmap now displays hours in the browser's local timezone instead of UTC
+
 ## [1.3.0] - 2026-03-26
 
 ### Added
