@@ -10,6 +10,8 @@ class ModelConfig(db.Model):
     input_cost_per_million = db.Column(db.Numeric(12, 6), nullable=False)
     output_cost_per_million = db.Column(db.Numeric(12, 6), nullable=False)
     active = db.Column(db.Boolean, default=True, nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    url = db.Column(db.String(512), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     endpoints = db.relationship("ModelEndpoint", backref="model_config", lazy="dynamic", cascade="all, delete-orphan", passive_deletes=True)

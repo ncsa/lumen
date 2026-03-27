@@ -21,6 +21,8 @@ def sync_models_from_yaml(yaml_data):
                 input_cost_per_million=model_def["input_cost_per_million"],
                 output_cost_per_million=model_def["output_cost_per_million"],
                 active=model_def.get("active", True),
+                description=model_def.get("description") or None,
+                url=model_def.get("url") or None,
             )
             db.session.add(config)
             db.session.flush()
@@ -28,6 +30,8 @@ def sync_models_from_yaml(yaml_data):
             config.input_cost_per_million = model_def["input_cost_per_million"]
             config.output_cost_per_million = model_def["output_cost_per_million"]
             config.active = model_def.get("active", True)
+            config.description = model_def.get("description") or None
+            config.url = model_def.get("url") or None
 
         yaml_urls = {ep_def["url"] for ep_def in model_def.get("endpoints", [])}
         for ep in list(config.endpoints):

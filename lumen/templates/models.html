@@ -28,7 +28,7 @@
         <button class="btn btn-sm btn-outline-secondary py-0 px-1 me-1 ep-toggle" data-bs-toggle="collapse"
                 data-bs-target="#ep-{{ config.id }}" aria-expanded="false" aria-label="Toggle endpoints">▶</button>
         {% endif %}
-        <strong>{{ config.model_name }}</strong>
+        <strong {% if config.description %}title="{{ config.description }}" data-bs-toggle="tooltip" data-bs-placement="right"{% endif %}>{{ config.model_name }}</strong>{% if config.url %}<a href="{{ config.url }}" target="_blank" rel="noopener noreferrer" class="ms-1 text-decoration-none" aria-label="View {{ config.model_name }} on HuggingFace"><ilw-icon icon="link" size="1em"></ilw-icon></a>{% endif %}
       </td>
       <td class="text-end">${{ "%.4f"|format(config.input_cost_per_million | float) }}</td>
       <td class="text-end">${{ "%.4f"|format(config.output_cost_per_million | float) }}</td>
@@ -104,4 +104,7 @@
   .ep-toggle { transition: transform 0.2s; display: inline-block; }
   .ep-toggle[aria-expanded="true"] { transform: rotate(90deg); }
 </style>
+<script>
+  document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
+</script>
 {% endblock %}
