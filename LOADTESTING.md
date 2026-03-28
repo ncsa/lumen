@@ -70,6 +70,23 @@ uv run locust
 uv run locust --headless -u 10 -r 2 --run-time 60s
 ```
 
+### macOS file descriptor limit
+
+With 500+ concurrent users, macOS's default open-file limit (256) will cause `OSError: [Errno 24] Too many open files` in werkzeug. Raise it before starting Lumen:
+
+```bash
+ulimit -n 65536
+```
+
+Also prefer uvicorn over the Flask dev server for load testing — it handles concurrent connections far more efficiently:
+
+```bash
+# Terminal 2 — start Lumen with uvicorn instead of flask run
+ulimit -n 65536 && uv run uvicorn asgi:app --host 0.0.0.0 --port 5000 --workers 4
+```
+
+---
+
 ### Key flags
 
 | Flag | Description |
