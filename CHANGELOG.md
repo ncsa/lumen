@@ -5,6 +5,7 @@ All notable changes to Lumen will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Chat responses now stream token-by-token so users see output as it is generated; markdown and math render incrementally during streaming
 - Models page: optional `description` and `url` fields per model in `config.yaml`; hovering the model name shows the description as a tooltip, and a link icon (Illinois brand `link` icon) opens the URL in a new tab
 - Token balance is now initialized at login so new users see their starting token count on the usage page immediately, rather than after their first API call
 - App log level is now configurable via `app.logs.level` in `config.yaml` (default: `INFO`); set to `DEBUG` for verbose output

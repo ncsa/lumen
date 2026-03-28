@@ -339,30 +339,114 @@
     sendBtn.disabled = true;
 
     try {
-      const resp = await fetch("/chat/send", {
+      const resp = await fetch("/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages: chatHistory, model, conversation_id: activeConversationId }),
       });
-      const data = await resp.json();
-      removeTypingIndicator();
+
       if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        removeTypingIndicator();
         appendBubble("assistant", "Error: " + (data.error || resp.statusText), null, null);
-      } else {
-        chatHistory.push({ role: "assistant", content: data.reply });
-        const meta = {
-          input_tokens: data.input_tokens,
-          output_tokens: data.output_tokens,
-          duration: data.duration,
-          time_to_first_token: data.time_to_first_token,
-          output_speed: data.output_speed,
-        };
-        appendBubble("assistant", data.reply, meta, null);
-        if (data.conversation_id) {
-          activeConversationId = data.conversation_id;
-          loadConversations();
-        }
+        return;
       }
+
+      const container = document.getElementById("chat-messages");
+      let streamBubble = null, streamWrapper = null;
+      let fullText = "";
+      let finalReceived = false;
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop();
+        for (const part of parts) {
+          if (!part.startsWith("data: ")) continue;
+          let event;
+          try { event = JSON.parse(part.slice(6).trim()); } catch { continue; }
+
+          if (event.error) {
+            removeTypingIndicator();
+            if (streamWrapper) streamWrapper.closest(".d-flex.mb-2").remove();
+            appendBubble("assistant", "Error: " + event.error, null, null);
+            finalReceived = true;
+            break;
+          }
+
+          if (event.chunk !== undefined) {
+            if (!streamBubble) {
+              removeTypingIndicator();
+              const row = document.createElement("div");
+              row.className = "d-flex mb-2 justify-content-start";
+              streamWrapper = document.createElement("div");
+              streamWrapper.className = "d-flex flex-column align-items-start";
+              streamWrapper.style.maxWidth = "65%";
+              streamBubble = document.createElement("div");
+              streamBubble.className = "chat-bubble chat-bubble-assistant";
+              streamWrapper.appendChild(streamBubble);
+              row.appendChild(streamWrapper);
+              container.appendChild(row);
+            }
+            fullText += event.chunk;
+            streamBubble.innerHTML = renderMarkdownWithMath(fullText);
+            container.scrollTop = container.scrollHeight;
+          }
+
+          if (event.done) {
+            finalReceived = true;
+            if (streamBubble) {
+              streamBubble.innerHTML = renderMarkdownWithMath(event.reply || fullText);
+            }
+            chatHistory.push({ role: "assistant", content: event.reply || fullText });
+            const meta = {
+              input_tokens: event.input_tokens,
+              output_tokens: event.output_tokens,
+              duration: event.duration,
+              time_to_first_token: event.time_to_first_token,
+              output_speed: event.output_speed,
+            };
+            const ts = document.createElement("small");
+            ts.className = "msg-meta d-flex align-items-center gap-1";
+            ts.appendChild(document.createTextNode(formatTimestamp(null)));
+            if (meta.input_tokens != null) {
+              const infoIcon = document.createElement("span");
+              infoIcon.className = "info-icon";
+              infoIcon.textContent = "ⓘ";
+              infoIcon.setAttribute("role", "button");
+              infoIcon.setAttribute("aria-label", "Message details");
+              infoIcon.setAttribute("data-bs-toggle", "popover");
+              infoIcon.setAttribute("data-bs-trigger", "click");
+              infoIcon.setAttribute("data-bs-placement", "top");
+              infoIcon.setAttribute("data-bs-html", "true");
+              infoIcon.setAttribute("data-bs-content", buildPopoverContent(meta));
+              infoIcon.setAttribute("tabindex", "0");
+              ts.appendChild(infoIcon);
+              new bootstrap.Popover(infoIcon, { container: "body" });
+            }
+            if (streamWrapper) streamWrapper.appendChild(ts);
+            container.scrollTop = container.scrollHeight;
+            if (event.conversation_id) {
+              activeConversationId = event.conversation_id;
+              loadConversations();
+            }
+          }
+        }
+        if (finalReceived) break;
+      }
+
+      // Stream ended without a done event — render whatever we got
+      if (!finalReceived && fullText) {
+        if (streamBubble) streamBubble.innerHTML = renderMarkdownWithMath(fullText);
+        chatHistory.push({ role: "assistant", content: fullText });
+      }
+
     } catch (err) {
       removeTypingIndicator();
       appendBubble("assistant", "Network error: " + err.message, null, null);

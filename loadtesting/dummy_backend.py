@@ -1,6 +1,7 @@
 """Dummy OpenAI-compatible backend for load testing Lumen without hitting real models."""
+import json
 import time
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
 
 app = Flask(__name__)
 
@@ -16,6 +17,7 @@ def list_models():
 @app.post("/v1/chat/completions")
 def chat_completions():
     messages = request.json.get("messages", [])
+    stream = request.json.get("stream", False)
     last_msg = messages[-1]["content"] if messages else "(empty)"
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     reply = (
@@ -26,6 +28,35 @@ def chat_completions():
     )
     prompt_tokens = sum(len(m.get("content", "")) // 4 for m in messages)
     completion_tokens = len(reply) // 4
+
+    if stream:
+        def generate():
+            cid = "chatcmpl-dummy"
+            created = int(time.time())
+            # Stream reply word by word with a small delay
+            words = reply.split(" ")
+            for i, word in enumerate(words):
+                text = word + (" " if i < len(words) - 1 else "")
+                chunk = {
+                    "id": cid, "object": "chat.completion.chunk",
+                    "created": created, "model": "dummy",
+                    "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}],
+                }
+                yield f"data: {json.dumps(chunk)}\n\n"
+                time.sleep(0.02)
+            # Final chunk with usage
+            final = {
+                "id": cid, "object": "chat.completion.chunk",
+                "created": created, "model": "dummy",
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+                          "total_tokens": prompt_tokens + completion_tokens},
+            }
+            yield f"data: {json.dumps(final)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return Response(generate(), content_type="text/event-stream")
+
     return jsonify({
         "id": "chatcmpl-dummy",
         "object": "chat.completion",

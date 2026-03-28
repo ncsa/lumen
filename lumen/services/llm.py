@@ -225,14 +225,13 @@ def update_stats(
     db.session.flush()
 
 
-def send_message(
+def send_message_stream(
     messages: list,
     model: str,
     entity_id: int = None,
-    api_key_obj=None,
     source: str = "chat",
-) -> dict:
-    """Send messages to LLM via round-robin, update stats, return response dict."""
+):
+    """Stream messages to LLM. Yields (chunk_text, None) for each token, then (None, result_dict)."""
     config = ModelConfig.query.filter_by(model_name=model, active=True).first()
     if config is None:
         raise ValueError(f"Unknown or inactive model: {model}")
@@ -244,34 +243,52 @@ def send_message(
     client = openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url)
     remote_model = endpoint.model_name or model
     t0 = time.time()
-    response = client.chat.completions.create(model=remote_model, messages=messages)
-    duration = time.time() - t0
+    t_first = None
+    parts = []
+    usage = None
 
-    usage = response.usage
-    cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens, config)
-    output_speed = usage.completion_tokens / duration if duration > 0 else 0.0
+    stream = client.chat.completions.create(
+        model=remote_model,
+        messages=messages,
+        stream=True,
+        stream_options={"include_usage": True},
+    )
+
+    for chunk in stream:
+        if chunk.usage:
+            usage = chunk.usage
+        if chunk.choices and chunk.choices[0].delta.content:
+            text = chunk.choices[0].delta.content
+            if t_first is None:
+                t_first = time.time() - t0
+            parts.append(text)
+            yield text, None
+
+    duration = time.time() - t0
+    reply = "".join(parts)
+    input_tokens = usage.prompt_tokens if usage else 0
+    output_tokens = usage.completion_tokens if usage else 0
+    cost = calculate_cost(input_tokens, output_tokens, config)
+    output_speed = output_tokens / duration if duration > 0 else 0.0
 
     if entity_id is not None:
-        deduct_tokens(entity_id, config.id, usage.prompt_tokens + usage.completion_tokens)
-        update_stats(entity_id, config.id, source, usage.prompt_tokens, usage.completion_tokens, cost,
-                     endpoint_id=endpoint.id, duration=duration)
+        deduct_tokens(entity_id, config.id, input_tokens + output_tokens)
+        update_stats(
+            entity_id, config.id, source,
+            input_tokens, output_tokens, cost,
+            endpoint_id=endpoint.id, duration=duration,
+        )
+        db.session.commit()
 
-    if api_key_obj is not None:
-        api_key_obj.input_tokens += usage.prompt_tokens
-        api_key_obj.output_tokens += usage.completion_tokens
-        api_key_obj.cost = float(api_key_obj.cost) + cost
-        api_key_obj.last_used_at = datetime.utcnow()
-        db.session.flush()
-
-    db.session.commit()
-
-    return {
-        "reply": response.choices[0].message.content,
-        "model": response.model,
-        "input_tokens": usage.prompt_tokens,
-        "output_tokens": usage.completion_tokens,
+    yield None, {
+        "reply": reply,
+        "model": remote_model,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
         "cost": cost,
         "duration": duration,
-        "time_to_first_token": duration,
+        "time_to_first_token": t_first or duration,
         "output_speed": output_speed,
     }
+
+

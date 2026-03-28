@@ -1,7 +1,8 @@
+import json
 import logging
 from datetime import datetime
 
-from flask import Blueprint, current_app, jsonify, render_template, request, session
+from flask import Blueprint, Response, current_app, jsonify, render_template, request, session, stream_with_context
 
 logger = logging.getLogger(__name__)
 
@@ -10,7 +11,7 @@ from lumen.extensions import db, limiter
 from lumen.models.conversation import Conversation
 from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
-from lumen.services.llm import check_and_deduct_tokens, get_effective_limit, send_message
+from lumen.services.llm import check_and_deduct_tokens, get_effective_limit, send_message_stream
 
 chat_bp = Blueprint("chat", __name__)
 
@@ -35,10 +36,11 @@ def chat_page():
     return render_template("chat.html", active_models=active_models)
 
 
-@chat_bp.route("/chat/send", methods=["POST"])
+
+@chat_bp.route("/chat/stream", methods=["POST"])
 @login_required
 @limiter.limit(_chat_limit, key_func=_chat_entity_id)
-def chat_send():
+def chat_stream():
     data = request.get_json()
     if not data:
         return jsonify({"error": "Invalid request"}), 400
@@ -56,54 +58,69 @@ def chat_send():
     if not model_config:
         return jsonify({"error": f"Unknown model: {model}"}), 400
 
-    try:
-        ok, code, msg = check_and_deduct_tokens(entity_id, model_config.id)
-        if not ok:
-            return jsonify({"error": msg}), code
-        result = send_message(messages, model, entity_id=entity_id, source="chat")
-    except RuntimeError as e:
-        logger.error("chat_send RuntimeError (model=%s, entity=%s): %s", model, entity_id, e)
-        return jsonify({"error": str(e)}), 503
-    except Exception as e:
-        logger.exception("chat_send error (model=%s, entity=%s)", model, entity_id)
-        return jsonify({"error": str(e)}), 500
+    ok, code, msg = check_and_deduct_tokens(entity_id, model_config.id)
+    if not ok:
+        return jsonify({"error": msg}), code
 
-    # Persist conversation and messages
-    conv = None
-    if conversation_id:
-        conv = Conversation.query.filter_by(
-            id=conversation_id, entity_id=entity_id, hidden=False
-        ).first()
+    def generate():
+        try:
+            result = None
+            for chunk, final in send_message_stream(messages, model, entity_id=entity_id, source="chat"):
+                if chunk is not None:
+                    yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+                else:
+                    result = final
 
-    if conv is None:
-        user_msg = next((m for m in reversed(messages) if m["role"] == "user"), None)
-        title = (user_msg["content"][:40] if user_msg else "New Chat")
-        conv = Conversation(entity_id=entity_id, title=title, model=model)
-        db.session.add(conv)
-        db.session.flush()
+            if result is None:
+                yield f"data: {json.dumps({'error': 'Empty response from model'})}\n\n"
+                return
 
-    user_msg = next((m for m in reversed(messages) if m["role"] == "user"), None)
-    if user_msg:
-        db.session.add(Message(
-            conversation_id=conv.id, role="user", content=user_msg["content"]
-        ))
+            conv = None
+            if conversation_id:
+                conv = Conversation.query.filter_by(
+                    id=conversation_id, entity_id=entity_id, hidden=False
+                ).first()
 
-    db.session.add(Message(
-        conversation_id=conv.id,
-        role="assistant",
-        content=result["reply"],
-        input_tokens=result["input_tokens"],
-        output_tokens=result["output_tokens"],
-        time_to_first_token=result.get("time_to_first_token"),
-        duration=result.get("duration"),
-        output_speed=result.get("output_speed"),
-    ))
+            if conv is None:
+                user_msg = next((m for m in reversed(messages) if m["role"] == "user"), None)
+                title = user_msg["content"][:40] if user_msg else "New Chat"
+                conv = Conversation(entity_id=entity_id, title=title, model=model)
+                db.session.add(conv)
+                db.session.flush()
 
-    conv.updated_at = datetime.utcnow()
-    db.session.commit()
+            user_msg = next((m for m in reversed(messages) if m["role"] == "user"), None)
+            if user_msg:
+                db.session.add(Message(
+                    conversation_id=conv.id, role="user", content=user_msg["content"]
+                ))
 
-    result["conversation_id"] = conv.id
-    return jsonify(result)
+            db.session.add(Message(
+                conversation_id=conv.id,
+                role="assistant",
+                content=result["reply"],
+                input_tokens=result["input_tokens"],
+                output_tokens=result["output_tokens"],
+                time_to_first_token=result.get("time_to_first_token"),
+                duration=result.get("duration"),
+                output_speed=result.get("output_speed"),
+            ))
+
+            conv.updated_at = datetime.utcnow()
+            db.session.commit()
+
+            result["conversation_id"] = conv.id
+            result["done"] = True
+            yield f"data: {json.dumps(result)}\n\n"
+
+        except Exception as e:
+            logger.exception("chat_stream error (model=%s, entity=%s)", model, entity_id)
+            db.session.rollback()
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    resp = Response(stream_with_context(generate()), content_type="text/event-stream")
+    resp.headers["X-Accel-Buffering"] = "no"
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 @chat_bp.route("/chat/conversations")
