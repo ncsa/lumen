@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-03-28
+
 ### Added
 - Chat responses now stream token-by-token so users see output as it is generated; markdown and math render incrementally during streaming
 - Models page: optional `description` and `url` fields per model in `config.yaml`; hovering the model name shows the description as a tooltip, and a link icon (Illinois brand `link` icon) opens the URL in a new tab
