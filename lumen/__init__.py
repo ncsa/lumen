@@ -98,8 +98,9 @@ def create_app():
     chat_cfg = yaml_data.get("chat", {})
     app.config["CHAT_CONVERSATION_REMOVE_MODE"] = chat_cfg.get("remove", "hide")
 
-    app.logger.setLevel(logging.INFO)
     logs_cfg = app_cfg.get("logs", {})
+    log_level = getattr(logging, logs_cfg.get("level", "INFO").upper(), logging.INFO)
+    app.logger.setLevel(log_level)
     if not logs_cfg.get("access", True):
         logging.getLogger("werkzeug").setLevel(logging.WARNING)
         logging.getLogger("uvicorn.access").setLevel(logging.WARNING)

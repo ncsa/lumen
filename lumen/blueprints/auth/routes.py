@@ -4,11 +4,13 @@ from flask import Blueprint, redirect, url_for, session, render_template, curren
 
 from lumen.extensions import db, oauth
 from lumen.models.entity import Entity
+from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
 from lumen.models.entity_model_access import EntityModelAccess
 from lumen.models.model_config import ModelConfig
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
+from lumen.services.llm import get_pool_limit
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -134,6 +136,14 @@ def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=No
     for model_config_id, acc in existing_access.items():
         if model_config_id not in desired_model_ids:
             db.session.delete(acc)
+
+    # Initialize token balance on first login so usage page shows starting tokens immediately
+    balance = EntityBalance.query.filter_by(entity_id=entity.id).first()
+    if balance is None:
+        pool = get_pool_limit(entity.id)
+        if pool is not None and pool[0] != -2:
+            _, _, starting_tokens = pool
+            db.session.add(EntityBalance(entity_id=entity.id, tokens_left=starting_tokens))
 
 
 @auth_bp.route("/")
