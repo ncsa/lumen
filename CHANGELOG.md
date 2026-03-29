@@ -4,6 +4,13 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Chat now supports file attachments: drag-and-drop or click the 📎 button to attach a document or image to any message
+- Supported document types (text extracted server-side): `txt`, `md`, `csv`, `json`, `py`, `js`, `ts`, `html`, `css`, `xml`, `yaml`, `yml`, `pdf` (PDF parsed via `pypdf`)
+- Supported image types (passed directly to the model as a vision content block): `png`, `jpg`, `jpeg`, `gif`
+- File type is validated server-side using magic-byte detection (`filetype` library); a binary file with a mismatched extension is rejected
+- Allowed file types and size/text limits are configurable via `chat.upload` in `config.yaml` (`allowed_extensions`, `max_size_mb`, `max_text_chars`); defaults apply if omitted
+
 ## [1.4.0] - 2026-03-28
 
 ### Added

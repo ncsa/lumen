@@ -32,6 +32,28 @@ oauth2:
 
 chat:
   remove: hide   # "hide" = soft-delete conversations (recoverable) | "delete" = hard delete
+  upload:
+    max_size_mb: 10          # maximum file size for document uploads (MB)
+    max_text_chars: 100000   # maximum extracted text characters before truncation
+    allowed_extensions:      # all accepted file types; backend uses magic-byte detection to classify each file
+      - txt
+      - md
+      - csv
+      - json
+      - py
+      - js
+      - ts
+      - html
+      - css
+      - xml
+      - yaml
+      - yml
+      - pdf
+      - png
+      - jpg
+      - jpeg
+      - gif
+      # - webp  # disabled by default; not supported by all models
 
 rate_limiting:
   # storage_url: redis://localhost:6379/0  # omit for in-memory (single-process); requires restart to change

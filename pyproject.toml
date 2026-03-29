@@ -16,6 +16,8 @@ dependencies = [
     "a2wsgi>=1.10",
     "flask-limiter>=3.5",
     "prometheus_client>=0.20",
+    "pypdf>=4.0",
+    "filetype>=1.2",
 ]
 
 [project.scripts]

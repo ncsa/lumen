@@ -41,11 +41,18 @@
     <div id="chat-messages" class="chat-messages flex-fill overflow-auto p-3" role="log" aria-live="polite" aria-label="Chat messages"></div>
 
     <div class="chat-input-bar px-3 py-2 border-top flex-shrink-0">
-      <form id="chat-form" class="d-flex gap-2">
-        <label for="chat-input" class="visually-hidden">Message</label>
-        <textarea id="chat-input" class="form-control" rows="2"
-                  placeholder="Type your message… (Enter to send, Shift+Enter for newline)"></textarea>
-        <button type="submit" id="send-btn" class="btn btn-primary align-self-stretch">Send</button>
+      <form id="chat-form">
+        <div id="attachment-row" class="mb-1 d-none" aria-live="polite"></div>
+        <div class="d-flex gap-2">
+          <label for="chat-input" class="visually-hidden">Message</label>
+          <textarea id="chat-input" class="form-control" rows="2"
+                    placeholder="Type your message… (Enter to send, Shift+Enter for newline)"></textarea>
+          <label for="file-input" class="visually-hidden">Attach a file</label>
+          <input type="file" id="file-input" class="visually-hidden"
+                 accept=".txt,.md,.csv,.json,.py,.js,.ts,.html,.css,.xml,.yaml,.yml,.pdf,.png,.jpg,.jpeg,.gif,.webp">
+          <button type="button" id="attach-btn" class="attach-btn" aria-label="Attach a file"><span aria-hidden="true">📎</span></button>
+          <button type="submit" id="send-btn" class="btn btn-primary align-self-stretch">Send</button>
+        </div>
       </form>
     </div>
   </div>
@@ -112,6 +119,7 @@
   const STORAGE_MODEL_KEY = "lumen_model";
   let chatHistory = [];
   let activeConversationId = null;
+  let pendingAttachment = null; // { type:"image"|"doc", filename, base64?, mimeType?, text? }
 
   // ── Model picker ────────────────────────────────────────────────
   const picker = document.getElementById("model-picker");
@@ -237,7 +245,7 @@
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 
-  function appendBubble(role, content, meta, timestamp, scroll = true) {
+  function appendBubble(role, content, meta, timestamp, scroll = true, attachment = null) {
     const container = document.getElementById("chat-messages");
     const isUser = role === "user";
 
@@ -247,7 +255,52 @@
     const bubble = document.createElement("div");
     bubble.className = "chat-bubble " + (isUser ? "chat-bubble-user" : "chat-bubble-assistant");
     if (isUser) {
-      bubble.appendChild(document.createTextNode(content));
+      // Vision content array (live message with image)
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block.type === "image_url") {
+            const img = document.createElement("img");
+            img.src = block.image_url.url;
+            img.className = "bubble-img";
+            img.alt = attachment ? attachment.filename : "Attached image";
+            bubble.appendChild(img);
+          } else if (block.type === "text" && block.text) {
+            bubble.appendChild(document.createTextNode(block.text));
+          }
+        }
+      } else if (typeof content === "string" && content.startsWith("[Document: ")) {
+        // Stored doc message — show badge + user question
+        const newline = content.indexOf("\n");
+        const header = newline > -1 ? content.slice(0, newline) : content;
+        const rest = content.indexOf("\n\n---\n\n") > -1
+          ? content.slice(content.indexOf("\n\n---\n\n") + 7)
+          : "";
+        const chip = document.createElement("span");
+        chip.className = "attach-chip d-inline-flex mb-1";
+        chip.setAttribute("aria-label", header);
+        chip.textContent = header;
+        bubble.appendChild(chip);
+        if (rest) {
+          bubble.appendChild(document.createElement("br"));
+          bubble.appendChild(document.createTextNode(rest));
+        }
+      } else if (typeof content === "string" && content.startsWith("[Image: ")) {
+        // Stored image placeholder (after page reload)
+        const newline = content.indexOf("\n");
+        const header = newline > -1 ? content.slice(0, newline) : content;
+        const rest = newline > -1 ? content.slice(newline + 1).trim() : "";
+        const chip = document.createElement("span");
+        chip.className = "attach-chip d-inline-flex mb-1";
+        chip.setAttribute("aria-label", header);
+        chip.textContent = header;
+        bubble.appendChild(chip);
+        if (rest) {
+          bubble.appendChild(document.createElement("br"));
+          bubble.appendChild(document.createTextNode(rest));
+        }
+      } else {
+        bubble.appendChild(document.createTextNode(content));
+      }
     } else {
       bubble.innerHTML = renderMarkdownWithMath(content);
     }
@@ -320,19 +373,145 @@
       .replace(/>/g, "&gt;");
   }
 
+  // ── File attachment ─────────────────────────────────────────────
+  function showChip(attachment) {
+    const row = document.getElementById("attachment-row");
+    row.innerHTML = "";
+    row.classList.remove("d-none");
+    const chip = document.createElement("div");
+    chip.className = "attach-chip";
+    if (attachment.type === "image") {
+      const thumb = document.createElement("img");
+      thumb.className = "attach-thumb";
+      thumb.src = attachment.base64;
+      thumb.alt = "";
+      chip.appendChild(thumb);
+    }
+    const name = document.createElement("span");
+    name.className = "chip-name";
+    name.textContent = attachment.filename;
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "chip-remove";
+    removeBtn.type = "button";
+    removeBtn.textContent = "✕";
+    removeBtn.setAttribute("aria-label", "Remove attachment: " + attachment.filename);
+    removeBtn.addEventListener("click", () => {
+      pendingAttachment = null;
+      row.innerHTML = "";
+      row.classList.add("d-none");
+      document.getElementById("file-input").value = "";
+      document.getElementById("chat-input").focus();
+    });
+    chip.appendChild(name);
+    chip.appendChild(removeBtn);
+    row.appendChild(chip);
+  }
+
+  function setAttachmentStatus(msg, isError = false) {
+    const row = document.getElementById("attachment-row");
+    row.innerHTML = "";
+    row.classList.remove("d-none");
+    const notice = document.createElement("span");
+    notice.className = isError ? "text-danger small" : "text-muted small";
+    if (isError) notice.setAttribute("role", "alert");
+    notice.textContent = msg;
+    row.appendChild(notice);
+    if (isError) {
+      let timer = setTimeout(() => dismiss(), 20000);
+      function dismiss() { if (row.contains(notice)) { row.innerHTML = ""; row.classList.add("d-none"); } }
+      notice.addEventListener("mouseenter", () => clearTimeout(timer));
+      notice.addEventListener("focus",      () => clearTimeout(timer));
+      notice.addEventListener("mouseleave", () => { timer = setTimeout(dismiss, 20000); });
+      notice.addEventListener("blur",       () => { timer = setTimeout(dismiss, 20000); });
+    }
+  }
+
+  async function handleFileAttach(file) {
+    if (!file) return;
+    const attachBtn = document.getElementById("attach-btn");
+    attachBtn.disabled = true;
+    setAttachmentStatus("Uploading " + file.name + "…");
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const resp = await fetch("/chat/upload", { method: "POST", body: formData });
+      const data = await resp.json();
+      if (!resp.ok) {
+        setAttachmentStatus("Upload error: " + (data.error || resp.statusText), true);
+        document.getElementById("file-input").value = "";
+        return;
+      }
+      if (data.type === "image") {
+        pendingAttachment = { type: "image", filename: data.filename, base64: data.data_url };
+      } else {
+        pendingAttachment = { type: "doc", filename: data.filename, text: data.text };
+      }
+      showChip(pendingAttachment);
+      document.getElementById("chat-input").focus();
+    } catch (err) {
+      setAttachmentStatus("Upload failed: " + err.message, true);
+      document.getElementById("file-input").value = "";
+    } finally {
+      attachBtn.disabled = false;
+    }
+  }
+
+  document.getElementById("attach-btn").addEventListener("click", () => {
+    document.getElementById("file-input").click();
+  });
+  document.getElementById("file-input").addEventListener("change", (e) => {
+    handleFileAttach(e.target.files[0]);
+  });
+
+  // Drag-and-drop on input bar
+  const inputBar = document.querySelector(".chat-input-bar");
+  inputBar.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    inputBar.classList.add("drag-over");
+  });
+  inputBar.addEventListener("dragleave", (e) => {
+    if (!inputBar.contains(e.relatedTarget)) inputBar.classList.remove("drag-over");
+  });
+  inputBar.addEventListener("drop", (e) => {
+    e.preventDefault();
+    inputBar.classList.remove("drag-over");
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileAttach(file);
+  });
+
   // ── Send ────────────────────────────────────────────────────────
   document.getElementById("chat-form").addEventListener("submit", async function (e) {
     e.preventDefault();
     const input = document.getElementById("chat-input");
-    const content = input.value.trim();
-    if (!content) return;
+    const userText = input.value.trim();
+    if (!userText && !pendingAttachment) return;
 
     const model = picker.value;
     if (!model) { alert("Please select a model."); return; }
 
+    let content;
+    if (pendingAttachment && pendingAttachment.type === "image") {
+      content = [
+        { type: "image_url", image_url: { url: pendingAttachment.base64 } },
+        { type: "text", text: userText || "What is in this image?" },
+      ];
+    } else if (pendingAttachment && pendingAttachment.type === "doc") {
+      const docBlock = `[Document: ${pendingAttachment.filename}]\n\n${pendingAttachment.text}`;
+      content = userText ? `${docBlock}\n\n---\n\n${userText}` : docBlock;
+    } else {
+      content = userText;
+    }
+
+    // Clear attachment before send
+    const attachedForDisplay = pendingAttachment;
+    pendingAttachment = null;
+    document.getElementById("attachment-row").innerHTML = "";
+    document.getElementById("attachment-row").classList.add("d-none");
+    document.getElementById("file-input").value = "";
+
     input.value = "";
     chatHistory.push({ role: "user", content });
-    appendBubble("user", content, null, null);
+    appendBubble("user", content, null, null, true, attachedForDisplay);
     addTypingIndicator();
 
     const sendBtn = document.getElementById("send-btn");

@@ -1,7 +1,11 @@
+import base64
+import io
 import json
 import logging
 from datetime import datetime
 
+import filetype
+import pypdf
 from flask import Blueprint, Response, current_app, jsonify, render_template, request, session, stream_with_context
 
 logger = logging.getLogger(__name__)
@@ -14,6 +18,37 @@ from lumen.models.model_config import ModelConfig
 from lumen.services.llm import check_and_deduct_tokens, get_effective_limit, send_message_stream
 
 chat_bp = Blueprint("chat", __name__)
+
+_DEFAULT_ALLOWED_EXTENSIONS = {
+    "txt", "md", "csv", "json", "py", "js", "ts", "html", "css", "xml", "yaml", "yml",
+    "pdf", "png", "jpg", "jpeg", "gif",
+}
+_DEFAULT_MAX_UPLOAD_MB = 10
+_DEFAULT_MAX_TEXT_CHARS = 100_000
+
+# Expected MIME types for binary document formats (filetype must agree).
+_BINARY_DOC_MIMES = {"pdf": "application/pdf"}
+
+
+def _upload_config():
+    cfg = current_app.config.get("YAML_DATA", {}).get("chat", {}).get("upload", {})
+    allowed = set(cfg.get("allowed_extensions", None) or _DEFAULT_ALLOWED_EXTENSIONS)
+    max_bytes = int(cfg.get("max_size_mb", _DEFAULT_MAX_UPLOAD_MB)) * 1024 * 1024
+    max_chars = int(cfg.get("max_text_chars", _DEFAULT_MAX_TEXT_CHARS))
+    return allowed, max_bytes, max_chars
+
+
+def _message_content_to_text(content):
+    """Flatten OpenAI content (string or list) to a plain string for DB storage."""
+    if isinstance(content, str):
+        return content
+    parts = []
+    for block in content:
+        if block.get("type") == "text":
+            parts.append(block["text"])
+        elif block.get("type") == "image_url":
+            parts.append("[Image: attached]")
+    return "\n".join(parts)
 
 
 def _chat_entity_id():
@@ -35,6 +70,53 @@ def chat_page():
     active_models = [m for m in all_models if get_effective_limit(entity_id, m.id) is not None]
     return render_template("chat.html", active_models=active_models)
 
+
+
+@chat_bp.route("/chat/upload", methods=["POST"])
+@login_required
+def chat_upload():
+    allowed, max_bytes, max_chars = _upload_config()
+
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "No file provided"}), 400
+
+    ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
+    if ext not in allowed:
+        return jsonify({"error": f"Unsupported file type: .{ext}"}), 400
+
+    data = f.read()
+    if len(data) > max_bytes:
+        return jsonify({"error": f"File exceeds {max_bytes // (1024 * 1024)} MB limit"}), 400
+
+    kind = filetype.guess(data)
+
+    # ── Images ───────────────────────────────────────────────────────
+    if kind is not None and kind.mime.startswith("image/"):
+        data_url = f"data:{kind.mime};base64,{base64.b64encode(data).decode()}"
+        return jsonify({"type": "image", "filename": f.filename, "data_url": data_url})
+
+    # ── Documents ────────────────────────────────────────────────────
+    if kind is not None:
+        # Binary file that isn't an image — confirm it's a known doc format.
+        expected_mime = _BINARY_DOC_MIMES.get(ext)
+        if kind.mime != expected_mime:
+            return jsonify({"error": "File content does not match its extension"}), 400
+    # kind is None → plain text (no magic bytes); expected for txt, csv, py, etc.
+
+    if ext == "pdf":
+        try:
+            reader = pypdf.PdfReader(io.BytesIO(data))
+            text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        except Exception as e:
+            return jsonify({"error": f"Could not read PDF: {e}"}), 400
+    else:
+        text = data.decode("utf-8", errors="replace")
+
+    if len(text) > max_chars:
+        text = text[:max_chars] + f"\n\n[Document truncated at {max_chars:,} characters]"
+
+    return jsonify({"type": "doc", "filename": f.filename, "text": text})
 
 
 @chat_bp.route("/chat/stream", methods=["POST"])
@@ -83,7 +165,8 @@ def chat_stream():
 
             if conv is None:
                 user_msg = next((m for m in reversed(messages) if m["role"] == "user"), None)
-                title = user_msg["content"][:40] if user_msg else "New Chat"
+                raw_content = _message_content_to_text(user_msg["content"]) if user_msg else ""
+                title = raw_content[:40] if raw_content else "New Chat"
                 conv = Conversation(entity_id=entity_id, title=title, model=model)
                 db.session.add(conv)
                 db.session.flush()
@@ -91,7 +174,8 @@ def chat_stream():
             user_msg = next((m for m in reversed(messages) if m["role"] == "user"), None)
             if user_msg:
                 db.session.add(Message(
-                    conversation_id=conv.id, role="user", content=user_msg["content"]
+                    conversation_id=conv.id, role="user",
+                    content=_message_content_to_text(user_msg["content"])
                 ))
 
             db.session.add(Message(
