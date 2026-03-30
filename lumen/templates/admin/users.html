@@ -114,7 +114,7 @@
   perPageSel.value = String(perPage);
 
   function fmt(n) { return n.toLocaleString(); }
-  function fmtCost(n) { return '$' + n.toFixed(4); }
+  function fmtCost(n) { return '$' + n.toFixed(2); }
 
   function updateSortHeaders() {
     document.querySelectorAll('.sort-header').forEach(th => {

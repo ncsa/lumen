@@ -30,8 +30,8 @@
         {% endif %}
         <strong {% if config.description %}title="{{ config.description }}" data-bs-toggle="tooltip" data-bs-placement="right"{% endif %}>{{ config.model_name }}</strong>{% if config.url %}<a href="{{ config.url }}" target="_blank" rel="noopener noreferrer" class="ms-1 text-decoration-none" aria-label="View {{ config.model_name }} on HuggingFace"><ilw-icon icon="link" size="1em"></ilw-icon></a>{% endif %}
       </td>
-      <td class="text-end">${{ "%.4f"|format(config.input_cost_per_million | float) }}</td>
-      <td class="text-end">${{ "%.4f"|format(config.output_cost_per_million | float) }}</td>
+      <td class="text-end">${{ "%.2f"|format(config.input_cost_per_million | float) }}</td>
+      <td class="text-end">${{ "%.2f"|format(config.output_cost_per_million | float) }}</td>
       <td class="text-center">{{ endpoints | length }}</td>
       <td class="text-center">
         <span class="fw-bold {% if healthy_eps %}text-success{% else %}text-danger{% endif %}">

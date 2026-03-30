@@ -29,7 +29,7 @@
     <div class="card h-100">
       <div class="card-body">
         <div class="text-muted small mb-1">Total Cost</div>
-        <div class="fs-4 fw-semibold">${{ "%.4f"|format(status.total_cost) }}</div>
+        <div class="fs-4 fw-semibold">${{ "%.2f"|format(status.total_cost) }}</div>
         <div class="text-muted small">USD (all time)</div>
       </div>
     </div>
@@ -128,7 +128,7 @@
         <td class="text-end">{{ "{:,}".format(chat_agg[0] or 0) }}</td>
         <td class="text-end">{{ "{:,}".format(chat_agg[1] or 0) }}</td>
         <td class="text-end">{{ "{:,}".format(chat_agg[2] or 0) }}</td>
-        <td class="text-end">${{ "%.6f"|format((chat_agg[3] or 0)|float) }}</td>
+        <td class="text-end">${{ "%.2f"|format((chat_agg[3] or 0)|float) }}</td>
         <td>
           {% if chat_agg[4] %}<span class="local-datetime" data-utc="{{ chat_agg[4].strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>{% else %}—{% endif %}
         </td>
@@ -143,7 +143,7 @@
         <td class="text-end">{{ "{:,}".format(key.requests) }}</td>
         <td class="text-end">{{ "{:,}".format(key.input_tokens) }}</td>
         <td class="text-end">{{ "{:,}".format(key.output_tokens) }}</td>
-        <td class="text-end">${{ "%.6f"|format(key.cost|float) }}</td>
+        <td class="text-end">${{ "%.2f"|format(key.cost|float) }}</td>
         <td>{% if key.last_used_at %}<span class="local-datetime" data-utc="{{ key.last_used_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>{% else %}—{% endif %}</td>
         {% if not scope_entity %}
         <td>
@@ -201,7 +201,7 @@
         <td class="text-end">{{ "{:,}".format(row.requests) }}</td>
         <td class="text-end">{{ "{:,}".format(row.input_tokens) }}</td>
         <td class="text-end">{{ "{:,}".format(row.output_tokens) }}</td>
-        <td class="text-end">${{ "%.6f"|format(row.cost) }}</td>
+        <td class="text-end">${{ "%.2f"|format(row.cost) }}</td>
         <td>{% if row.last_used_at %}<span class="local-datetime" data-utc="{{ row.last_used_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>{% else %}—{% endif %}</td>
         <td>
           {% if row.status == "ok" %}<span class="badge bg-success">ok</span>

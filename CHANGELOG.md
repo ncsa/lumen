@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- All prices now display rounded to the nearest penny (2 decimal places) instead of showing fractional cents
+
 ### Added
 - Chat now supports file attachments: drag-and-drop or click the 📎 button to attach a document or image to any message
 - Supported document types (text extracted server-side): `txt`, `md`, `csv`, `json`, `py`, `js`, `ts`, `html`, `css`, `xml`, `yaml`, `yml`, `pdf` (PDF parsed via `pypdf`)
