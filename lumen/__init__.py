@@ -164,8 +164,9 @@ def create_app():
         return jsonify({"error": "Rate limit exceeded. Please slow down."}), 429
 
     # Register CLI commands
-    from lumen.commands import init_db_cmd
+    from lumen.commands import init_db_cmd, reassign_model_cmd
     app.cli.add_command(init_db_cmd)
+    app.cli.add_command(reassign_model_cmd)
 
     # Context processor: inject app_name and nav_services into all templates
     @app.context_processor

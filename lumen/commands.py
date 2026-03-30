@@ -134,3 +134,62 @@ def init_db_cmd():
     """Sync ModelConfig and ModelEndpoint from models.yaml."""
     sync_models_from_yaml(current_app.config["YAML_DATA"])
     click.echo("Database synced with models from models.yaml.")
+
+
+@click.command("reassign-model")
+@click.argument("from_id", type=int)
+@click.argument("to_id", type=int)
+@with_appcontext
+def reassign_model_cmd(from_id, to_id):
+    """Move all conversations and stats from one model to another.
+
+    FROM_ID and TO_ID are model_configs.id values.
+    """
+    from lumen.models.conversation import Conversation
+    from lumen.models.model_stat import ModelStat
+    from lumen.models.request_log import RequestLog
+
+    src = ModelConfig.query.get(from_id)
+    dst = ModelConfig.query.get(to_id)
+    if not src:
+        click.echo(f"Error: model_config id {from_id} not found.")
+        raise SystemExit(1)
+    if not dst:
+        click.echo(f"Error: model_config id {to_id} not found.")
+        raise SystemExit(1)
+
+    click.echo(f"Reassigning from '{src.model_name}' (id={from_id}) to '{dst.model_name}' (id={to_id})")
+
+    conv_count = Conversation.query.filter_by(model=src.model_name).update({"model": dst.model_name})
+    click.echo(f"  conversations updated: {conv_count}")
+
+    # For model_stats, merge rows that might collide on the unique constraint
+    existing_dst_stats = {
+        (s.entity_id, s.source): s
+        for s in ModelStat.query.filter_by(model_config_id=to_id).all()
+    }
+    src_stats = ModelStat.query.filter_by(model_config_id=from_id).all()
+    stats_merged = 0
+    stats_moved = 0
+    for stat in src_stats:
+        key = (stat.entity_id, stat.source)
+        if key in existing_dst_stats:
+            dst_stat = existing_dst_stats[key]
+            dst_stat.requests += stat.requests
+            dst_stat.input_tokens += stat.input_tokens
+            dst_stat.output_tokens += stat.output_tokens
+            dst_stat.cost += stat.cost
+            if stat.last_used_at and (not dst_stat.last_used_at or stat.last_used_at > dst_stat.last_used_at):
+                dst_stat.last_used_at = stat.last_used_at
+            db.session.delete(stat)
+            stats_merged += 1
+        else:
+            stat.model_config_id = to_id
+            stats_moved += 1
+    click.echo(f"  model_stats moved: {stats_moved}, merged: {stats_merged}")
+
+    log_count = RequestLog.query.filter_by(model_config_id=from_id).update({"model_config_id": to_id})
+    click.echo(f"  request_logs updated: {log_count}")
+
+    db.session.commit()
+    click.echo("Done.")
