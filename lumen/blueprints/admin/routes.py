@@ -318,6 +318,30 @@ def user_limits(eid):
     )
 
 
+@admin_bp.route("/users/<int:eid>/reset-tokens", methods=["POST"])
+@admin_required
+def reset_user_tokens(eid):
+    entity = Entity.query.get_or_404(eid)
+    pool = get_pool_limit(entity.id)
+    if pool is None:
+        return jsonify({"error": "No token pool configured"}), 400
+    max_tokens, _refresh, starting_tokens = pool
+    if max_tokens == -2:
+        return jsonify({"error": "User has unlimited tokens"}), 400
+    new_balance = max(starting_tokens, max_tokens)
+    balance = EntityBalance.query.filter_by(entity_id=eid).first()
+    if balance:
+        balance.tokens_left = new_balance
+        balance.last_refill_at = datetime.utcnow()
+    else:
+        balance = EntityBalance(
+            entity_id=eid, tokens_left=new_balance, last_refill_at=datetime.utcnow()
+        )
+        db.session.add(balance)
+    db.session.commit()
+    return jsonify({"tokens_available": new_balance})
+
+
 @admin_bp.route("/users/<int:eid>/pool", methods=["POST"])
 @admin_required
 def upsert_user_pool(eid):

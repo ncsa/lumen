@@ -63,12 +63,12 @@
     <tr>
       <th class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
       <th class="sort-header" data-col="email">Email <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th class="sort-header" data-col="active">Active <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th class="sort-header" data-col="tokens_available">Tokens Available <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th class="sort-header" data-col="tokens_used">Tokens Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th class="sort-header" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th class="sort-header" data-col="cost">Cost <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th>Actions</th>
+      <th class="sort-header text-center" data-col="active">Active <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th class="sort-header text-end" data-col="tokens_available">Tokens Available <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th class="sort-header text-end" data-col="tokens_used">Tokens Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th class="sort-header text-end" data-col="cost">Cost <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th><span class="visually-hidden">Actions</span></th>
     </tr>
   </thead>
   <tbody id="userTableBody">
@@ -181,20 +181,24 @@
           return `<tr id="user-row-${u.id}">
             <td>${u.name}</td>
             <td>${u.email}</td>
-            <td>${activeIcon}</td>
-            <td>${tokAvail}</td>
-            <td>${fmt(u.tokens_used)}</td>
-            <td>${fmt(u.requests)}</td>
-            <td>${fmtCost(u.cost)}</td>
-            <td>
-              <a href="/admin/users/${u.id}/limits" class="btn btn-sm btn-outline-primary">Limits</a>
-              <button class="btn btn-sm ${toggleClass} toggle-btn" data-id="${u.id}" data-active="${u.active}">${toggleLabel}</button>
+            <td class="text-center">${activeIcon}</td>
+            <td class="text-end">${tokAvail}</td>
+            <td class="text-end">${fmt(u.tokens_used)}</td>
+            <td class="text-end">${fmt(u.requests)}</td>
+            <td class="text-end">${fmtCost(u.cost)}</td>
+            <td class="text-nowrap">
+              <a href="/admin/users/${u.id}/limits" class="btn btn-sm btn-outline-primary" title="Limits" aria-label="Limits for ${u.name}"><i class="bi bi-sliders" aria-hidden="true"></i></a>
+              <button class="btn btn-sm btn-outline-secondary reset-btn" data-id="${u.id}" data-unlimited="${u.tokens_available === -2}" title="Reset tokens" aria-label="Reset tokens for ${u.name}"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i></button>
+              <button class="btn btn-sm ${toggleClass} toggle-btn" data-id="${u.id}" data-active="${u.active}" title="${toggleLabel}" aria-label="${toggleLabel} ${u.name}"><i class="bi ${u.active ? 'bi-pause-circle' : 'bi-play-circle'}" aria-hidden="true"></i></button>
             </td>
           </tr>`;
         }).join('');
 
         tbody.querySelectorAll('.toggle-btn').forEach(btn => {
           btn.addEventListener('click', () => toggleUser(btn));
+        });
+        tbody.querySelectorAll('.reset-btn').forEach(btn => {
+          btn.addEventListener('click', () => resetTokens(btn));
         });
 
         renderPagination(data.total, data.page, data.per_page);
@@ -213,14 +217,39 @@
         const row = document.getElementById(`user-row-${id}`);
         if (data.active) {
           row.cells[2].innerHTML = '✓';
-          btn.textContent = 'Deactivate';
+          btn.title = 'Deactivate';
+          btn.setAttribute('aria-label', btn.getAttribute('aria-label').replace('Activate', 'Deactivate'));
           btn.className = 'btn btn-sm btn-outline-danger toggle-btn';
+          btn.innerHTML = '<i class="bi bi-pause-circle" aria-hidden="true"></i>';
         } else {
           row.cells[2].innerHTML = '<span class="text-danger">✗</span>';
-          btn.textContent = 'Activate';
+          btn.title = 'Activate';
+          btn.setAttribute('aria-label', btn.getAttribute('aria-label').replace('Deactivate', 'Activate'));
           btn.className = 'btn btn-sm btn-outline-success toggle-btn';
+          btn.innerHTML = '<i class="bi bi-play-circle" aria-hidden="true"></i>';
         }
         btn.dataset.active = data.active;
+        btn.disabled = false;
+      })
+      .catch(() => { btn.disabled = false; });
+  }
+
+  function resetTokens(btn) {
+    const id = btn.dataset.id;
+    if (btn.dataset.unlimited === 'true') {
+      alert('This user has unlimited tokens.');
+      return;
+    }
+    btn.disabled = true;
+    fetch(`/admin/users/${id}/reset-tokens`, { method: 'POST' })
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) {
+          alert(data.error);
+        } else {
+          const row = document.getElementById(`user-row-${id}`);
+          row.cells[3].textContent = data.tokens_available.toLocaleString();
+        }
         btn.disabled = false;
       })
       .catch(() => { btn.disabled = false; });
