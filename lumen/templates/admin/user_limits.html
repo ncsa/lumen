@@ -8,12 +8,12 @@
   <a href="{{ url_for('admin.users') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
 </div>
 
-<h2>Effective Token Pool</h2>
+<h2>Effective Coin Pool</h2>
 <table class="table table-bordered align-middle mb-4" style="table-layout:fixed;width:80%">
-  <caption class="visually-hidden">Effective token pool for this user</caption>
+  <caption class="visually-hidden">Effective coin pool for this user</caption>
   <colgroup><col style="width:25%"><col style="width:25%"><col style="width:25%"><col style="width:25%"></colgroup>
   <thead class="table-light">
-    <tr><th>Max Tokens</th><th>Refresh / Hour</th><th>Starting</th><th>Balance</th></tr>
+    <tr><th>Max Coins</th><th>Coins / Hour</th><th>Starting</th><th>Balance</th></tr>
   </thead>
   <tbody>
     {% if effective_pool is none %}
@@ -22,17 +22,17 @@
     <tr><td colspan="4"><span class="text-success">Unlimited</span></td></tr>
     {% else %}
     <tr>
-      <td>{{ "{:,}".format(effective_pool[0]) }}</td>
-      <td>{{ "{:,}".format(effective_pool[1]) }}</td>
-      <td>{{ "{:,}".format(effective_pool[2]) }}</td>
-      <td>{{ "{:,}".format(entity_balance.tokens_left) if entity_balance else '—' }}</td>
+      <td>{{ "%.4f"|format(effective_pool[0]) }}</td>
+      <td>{{ "%.4f"|format(effective_pool[1]) }}</td>
+      <td>{{ "%.4f"|format(effective_pool[2]) }}</td>
+      <td>{% if entity_balance %}{{ "%.4f"|format(entity_balance.coins_left|float) }}{% else %}—{% endif %}</td>
     </tr>
     {% endif %}
   </tbody>
 </table>
 
 <div class="d-flex justify-content-between align-items-center mb-2">
-  <h2 class="mb-0">User Token Pool Override</h2>
+  <h2 class="mb-0">User Coin Pool Override</h2>
   <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#editPoolModal">
     {{ "Edit Pool" if entity_limit else "Set Pool Override" }}
   </button>
@@ -40,21 +40,21 @@
 
 {% if entity_limit %}
 <table class="table table-bordered align-middle mb-2" style="table-layout:fixed;width:80%">
-  <caption class="visually-hidden">User-specific token pool override</caption>
+  <caption class="visually-hidden">User-specific coin pool override</caption>
   <colgroup><col style="width:33%"><col style="width:33%"><col style="width:34%"></colgroup>
   <thead class="table-light">
-    <tr><th>Max Tokens</th><th>Refresh / Hour</th><th>Starting Tokens</th></tr>
+    <tr><th>Max Coins</th><th>Coins / Hour</th><th>Starting Coins</th></tr>
   </thead>
   <tbody>
     <tr>
       <td>
-        {% if entity_limit.max_tokens == -2 %}<span class="text-success">Unlimited</span>
-        {% elif entity_limit.max_tokens == 0 %}<span class="text-danger">Blocked</span>
-        {% else %}{{ "{:,}".format(entity_limit.max_tokens) }}{% endif %}
+        {% if entity_limit.max_coins == -2 %}<span class="text-success">Unlimited</span>
+        {% elif entity_limit.max_coins == 0 %}<span class="text-danger">Blocked</span>
+        {% else %}{{ "%.4f"|format(entity_limit.max_coins|float) }}{% endif %}
         {% if entity_limit.config_managed %} <span role="img" aria-label="Managed by config">🔒</span>{% endif %}
       </td>
-      <td>{{ "{:,}".format(entity_limit.refresh_tokens) }}</td>
-      <td>{{ "{:,}".format(entity_limit.starting_tokens) }}</td>
+      <td>{{ "%.4f"|format(entity_limit.refresh_coins|float) }}</td>
+      <td>{{ "%.4f"|format(entity_limit.starting_coins|float) }}</td>
     </tr>
   </tbody>
 </table>
@@ -117,9 +117,9 @@
 <div class="mb-3 ms-2">
   {% if glimit %}
   <p class="mb-1"><strong>Pool:</strong>
-    {% if glimit.max_tokens == -2 %}<span class="text-success">Unlimited</span>
-    {% elif glimit.max_tokens == 0 %}<span class="text-danger">Blocked</span>
-    {% else %}{{ "{:,}".format(glimit.max_tokens) }} max, {{ "{:,}".format(glimit.refresh_tokens) }}/hr, {{ "{:,}".format(glimit.starting_tokens) }} starting
+    {% if glimit.max_coins == -2 %}<span class="text-success">Unlimited</span>
+    {% elif glimit.max_coins == 0 %}<span class="text-danger">Blocked</span>
+    {% else %}{{ "%.4f"|format(glimit.max_coins|float) }} max, {{ "%.4f"|format(glimit.refresh_coins|float) }}/hr, {{ "%.4f"|format(glimit.starting_coins|float) }} starting
     {% endif %}
   </p>
   {% else %}
@@ -145,21 +145,21 @@
   <div class="modal-dialog">
     <form method="post" action="{{ url_for('admin.upsert_user_pool', eid=entity.id) }}" class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title" id="editPoolModalLabel">Set Token Pool Override</h5>
+        <h5 class="modal-title" id="editPoolModalLabel">Set Coin Pool Override</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
         <div class="mb-3">
-          <label class="form-label" for="ul-max-tokens">Max Tokens <small class="text-muted">(-2 = unlimited, 0 = block)</small></label>
-          <input name="max_tokens" id="ul-max-tokens" type="number" class="form-control" value="{{ entity_limit.max_tokens if entity_limit else 0 }}" required>
+          <label class="form-label" for="ul-max-coins">Max Coins <small class="text-muted">(-2 = unlimited, 0 = block)</small></label>
+          <input name="max_coins" id="ul-max-coins" type="number" step="any" class="form-control" value="{{ entity_limit.max_coins|float if entity_limit else 0 }}" required>
         </div>
         <div class="mb-3">
-          <label class="form-label" for="ul-refresh-tokens">Refresh Tokens / Hour</label>
-          <input name="refresh_tokens" id="ul-refresh-tokens" type="number" class="form-control" value="{{ entity_limit.refresh_tokens if entity_limit else 0 }}" min="0">
+          <label class="form-label" for="ul-refresh-coins">Coins / Hour</label>
+          <input name="refresh_coins" id="ul-refresh-coins" type="number" step="any" class="form-control" value="{{ entity_limit.refresh_coins|float if entity_limit else 0 }}" min="0">
         </div>
         <div class="mb-3">
-          <label class="form-label" for="ul-starting-tokens">Starting Tokens</label>
-          <input name="starting_tokens" id="ul-starting-tokens" type="number" class="form-control" value="{{ entity_limit.starting_tokens if entity_limit else 0 }}" min="0">
+          <label class="form-label" for="ul-starting-coins">Starting Coins</label>
+          <input name="starting_coins" id="ul-starting-coins" type="number" step="any" class="form-control" value="{{ entity_limit.starting_coins|float if entity_limit else 0 }}" min="0">
         </div>
       </div>
       <div class="modal-footer">

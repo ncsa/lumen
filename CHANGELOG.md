@@ -4,6 +4,14 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Replaced token-based budget with a **coin** system: user balances are now in coins (🪙), deducted by cost (`tokens × coins_per_million / 1M`) rather than raw token count
+- Each model's `input_cost_per_million` / `output_cost_per_million` now represents coins per million tokens (set by admin)
+- Default new-user pool: 20 coins starting, 0.05 coins/hour refill
+- Migration resets all existing user balances to 20 coins; group/entity limits reset to 0 (admin reconfiguration required)
+- All cost/budget displays now show 🪙 prefix instead of $, with 4 decimal places for precision
+- Raw LLM token counts (input/output) are still tracked and shown in usage tables
+
 ### Added
 - Admin users page: reset-tokens button to restore a user's token balance to their starting or max limit (whichever is greater)
 - Bootstrap Icons for action buttons across the admin UI

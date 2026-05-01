@@ -23,6 +23,9 @@ def sync_models_from_yaml(yaml_data):
                 active=model_def.get("active", True),
                 description=model_def.get("description") or None,
                 url=model_def.get("url") or None,
+                max_input_tokens=model_def.get("max_input_tokens") or None,
+                supports_function_calling=model_def.get("supports_function_calling"),
+                supports_vision=model_def.get("supports_vision"),
             )
             db.session.add(config)
             db.session.flush()
@@ -32,6 +35,9 @@ def sync_models_from_yaml(yaml_data):
             config.active = model_def.get("active", True)
             config.description = model_def.get("description") or None
             config.url = model_def.get("url") or None
+            config.max_input_tokens = model_def.get("max_input_tokens") or None
+            config.supports_function_calling = model_def.get("supports_function_calling")
+            config.supports_vision = model_def.get("supports_vision")
 
         yaml_urls = {ep_def["url"] for ep_def in model_def.get("endpoints", [])}
         for ep in list(config.endpoints):
@@ -85,22 +91,22 @@ def sync_groups_from_yaml(yaml_data):
         else:
             group.config_managed = True
 
-        # Upsert GroupLimit (token pool)
+        # Upsert GroupLimit (coin pool)
         if "max" in group_def:
-            max_tokens = group_def["max"]
-            refresh_tokens = group_def.get("refresh", 0)
-            starting_tokens = group_def.get("starting", max_tokens)
+            max_coins = group_def["max"]
+            refresh_coins = group_def.get("refresh", 0)
+            starting_coins = group_def.get("starting", max_coins)
             limit = GroupLimit.query.filter_by(group_id=group.id).first()
             if limit:
-                limit.max_tokens = max_tokens
-                limit.refresh_tokens = refresh_tokens
-                limit.starting_tokens = starting_tokens
+                limit.max_coins = max_coins
+                limit.refresh_coins = refresh_coins
+                limit.starting_coins = starting_coins
             else:
                 db.session.add(GroupLimit(
                     group_id=group.id,
-                    max_tokens=max_tokens,
-                    refresh_tokens=refresh_tokens,
-                    starting_tokens=starting_tokens,
+                    max_coins=max_coins,
+                    refresh_coins=refresh_coins,
+                    starting_coins=starting_coins,
                 ))
         else:
             GroupLimit.query.filter_by(group_id=group.id).delete()

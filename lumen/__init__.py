@@ -227,8 +227,8 @@ def create_app():
         from lumen.services.health import start_health_checker
         start_health_checker(app)
 
-        from lumen.services.token_refill import start_token_refiller
-        start_token_refiller(app)
+        from lumen.services.token_refill import start_coin_refiller
+        start_coin_refiller(app)
 
         from lumen.services.config_watcher import start_config_watcher
         start_config_watcher(app, config_yaml_path)

@@ -7,8 +7,8 @@ from lumen.models.entity_balance import EntityBalance
 from lumen.services.llm import get_pool_limit
 
 
-def start_token_refiller(app):
-    """Start a background daemon thread that refills token budgets every 60s."""
+def start_coin_refiller(app):
+    """Start a background daemon thread that refills coin budgets every 60s."""
 
     def run():
         while True:
@@ -25,11 +25,11 @@ def start_token_refiller(app):
                             pool = get_pool_limit(bal.entity_id)
                             if pool is None:
                                 continue
-                            max_tokens, refresh_tokens, _starting = pool
-                            if max_tokens == -2 or refresh_tokens <= 0:
+                            max_coins, refresh_coins, _starting = pool
+                            if max_coins == -2 or refresh_coins <= 0:
                                 continue
-                            refill = int(hours_elapsed) * refresh_tokens
-                            bal.tokens_left = min(max_tokens, bal.tokens_left + refill)
+                            refill = int(hours_elapsed) * float(refresh_coins)
+                            bal.coins_left = min(max_coins, float(bal.coins_left) + refill)
                             bal.last_refill_at = now
                     db.session.commit()
             except Exception:

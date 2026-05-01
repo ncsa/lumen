@@ -15,7 +15,7 @@ from lumen.extensions import db, limiter
 from lumen.models.conversation import Conversation
 from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
-from lumen.services.llm import check_and_deduct_tokens, get_effective_limit, send_message_stream
+from lumen.services.llm import check_coin_budget, get_effective_limit, send_message_stream
 
 chat_bp = Blueprint("chat", __name__)
 
@@ -140,7 +140,7 @@ def chat_stream():
     if not model_config:
         return jsonify({"error": f"Unknown model: {model}"}), 400
 
-    ok, code, msg = check_and_deduct_tokens(entity_id, model_config.id)
+    ok, code, msg = check_coin_budget(entity_id, model_config.id)
     if not ok:
         return jsonify({"error": msg}), code
 

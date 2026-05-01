@@ -38,7 +38,7 @@
     <div class="card text-center">
       <div class="card-body">
         <div class="fs-2 fw-bold" id="stat-cost">—</div>
-        <div class="text-muted small">Cost (USD)</div>
+        <div class="text-muted small">Coins Spent</div>
       </div>
     </div>
   </div>
@@ -275,7 +275,7 @@ async function refresh(period) {
   // Update stat cards
   document.getElementById('stat-requests').textContent = summary.requests.toLocaleString();
   document.getElementById('stat-tokens').textContent = summary.tokens.toLocaleString();
-  document.getElementById('stat-cost').textContent = '$' + summary.cost.toFixed(2);
+  document.getElementById('stat-cost').textContent = summary.cost.toFixed(4);
   document.getElementById('stat-users').textContent = summary.new_users.toLocaleString();
 
   // Update charts

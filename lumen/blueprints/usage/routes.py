@@ -100,17 +100,17 @@ def _get_usage_data(eid: int) -> dict:
         })
 
     if pool is not None:
-        max_tokens, refresh_tokens, starting = pool
-        tokens_left = balance.tokens_left if balance else starting
+        max_coins, refresh_coins, starting = pool
+        coins_left = float(balance.coins_left) if balance else starting
         last_refill_at = balance.last_refill_at if balance else None
-        token_pool = {
-            "token_limit": max_tokens,
-            "tokens_left": tokens_left,
-            "tokens_per_hour": refresh_tokens,
-            "next_refill": (last_refill_at + timedelta(hours=1)) if (refresh_tokens > 0 and last_refill_at) else None,
+        coin_pool = {
+            "coin_limit": max_coins,
+            "coins_left": coins_left,
+            "coins_per_hour": refresh_coins,
+            "next_refill": (last_refill_at + timedelta(hours=1)) if (refresh_coins > 0 and last_refill_at) else None,
         }
     else:
-        token_pool = None
+        coin_pool = None
 
     total_tokens_used = sum(r[2] + r[3] for r in usage_rows)
     total_cost = sum(float(r[4] or 0) for r in usage_rows)
@@ -124,7 +124,7 @@ def _get_usage_data(eid: int) -> dict:
         "chat_agg": chat_agg,
         "api_keys": api_keys,
         "model_usage": model_usage,
-        "token_pool": token_pool,
+        "coin_pool": coin_pool,
         "status": status,
     }
 

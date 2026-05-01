@@ -79,16 +79,16 @@ def get_model_access(entity_id: int, model_config_id: int) -> bool:
 
 def get_pool_limit(entity_id: int):
     """
-    Return (max_tokens, refresh_tokens, starting_tokens) for entity's token pool, or None if blocked.
+    Return (max_coins, refresh_coins, starting_coins) for entity's coin pool, or None if blocked.
 
-    max_tokens == -2 means unlimited.
+    max_coins == -2 means unlimited.
 
     Resolution: take the best limit from user's EntityLimit and their active group GroupLimits.
-    User EntityLimit with max_tokens == 0 blocks regardless of groups.
+    User EntityLimit with max_coins == 0 blocks regardless of groups.
     -2 (unlimited) wins over any positive value.
     """
     user_limit = EntityLimit.query.filter_by(entity_id=entity_id).first()
-    if user_limit is not None and user_limit.max_tokens == 0:
+    if user_limit is not None and float(user_limit.max_coins) == 0:
         return None  # explicitly blocked
 
     group_ids = _get_active_group_ids(entity_id)
@@ -97,16 +97,16 @@ def get_pool_limit(entity_id: int):
     ).all() if group_ids else []
 
     candidates = []
-    if user_limit is not None and user_limit.max_tokens != 0:
-        candidates.append((user_limit.max_tokens, user_limit.refresh_tokens, user_limit.starting_tokens))
+    if user_limit is not None and float(user_limit.max_coins) != 0:
+        candidates.append((float(user_limit.max_coins), float(user_limit.refresh_coins), float(user_limit.starting_coins)))
     for gl in group_limits:
-        if gl.max_tokens != 0:
-            candidates.append((gl.max_tokens, gl.refresh_tokens, gl.starting_tokens))
+        if float(gl.max_coins) != 0:
+            candidates.append((float(gl.max_coins), float(gl.refresh_coins), float(gl.starting_coins)))
 
     if not candidates:
         return None
 
-    # -2 (unlimited) wins; otherwise take highest max_tokens
+    # -2 (unlimited) wins; otherwise take highest max_coins
     for c in candidates:
         if c[0] == -2:
             return (-2, 0, 0)
@@ -115,68 +115,68 @@ def get_pool_limit(entity_id: int):
 
 def get_effective_limit(entity_id: int, model_config_id: int):
     """
-    Return (max_tokens, refresh_tokens, starting_tokens) or None if blocked/no access.
+    Return (max_coins, refresh_coins, starting_coins) or None if blocked/no access.
 
-    Checks model access first, then returns the entity's token pool.
-    max_tokens == -2 means unlimited.
+    Checks model access first, then returns the entity's coin pool.
+    max_coins == -2 means unlimited.
     """
     if not get_model_access(entity_id, model_config_id):
         return None
     return get_pool_limit(entity_id)
 
 
-def get_token_balance(entity_id: int, model_config_id: int):
-    """Return tokens_left for entity's pool, or None if unlimited or blocked."""
+def get_coin_balance(entity_id: int, model_config_id: int):
+    """Return coins_left for entity's pool, or None if unlimited or blocked."""
     effective = get_effective_limit(entity_id, model_config_id)
     if effective is None:
         return None
-    max_tokens, _, starting = effective
-    if max_tokens == -2:
+    max_coins, _, starting = effective
+    if max_coins == -2:
         return None
 
     balance = EntityBalance.query.filter_by(entity_id=entity_id).first()
     if balance is None:
         balance = EntityBalance(
             entity_id=entity_id,
-            tokens_left=starting,
+            coins_left=starting,
         )
         db.session.add(balance)
         db.session.flush()
 
-    return balance.tokens_left
+    return float(balance.coins_left)
 
 
-def subtract_tokens(entity_id: int, model_config_id: int, tokens_used: int):
-    """Deduct tokens_used from the entity's pool balance (no-op for unlimited or blocked)."""
+def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float):
+    """Deduct coin_cost from the entity's pool balance (no-op for unlimited or blocked)."""
     effective = get_effective_limit(entity_id, model_config_id)
     if effective is None:
         return
-    max_tokens, _refresh, _starting = effective
-    if max_tokens == -2:
+    max_coins, _refresh, _starting = effective
+    if max_coins == -2:
         return
 
     balance = EntityBalance.query.filter_by(entity_id=entity_id).first()
     if balance:
-        balance.tokens_left = balance.tokens_left - tokens_used
+        balance.coins_left = float(balance.coins_left) - coin_cost
         db.session.flush()
 
 
-def check_and_deduct_tokens(entity_id: int, model_config_id: int):
-    """Check token budget. Returns (ok, http_code, error_message)."""
+def check_coin_budget(entity_id: int, model_config_id: int):
+    """Check coin budget. Returns (ok, http_code, error_message)."""
     effective = get_effective_limit(entity_id, model_config_id)
     if effective is None:
         return False, 403, "No access to this model"
     if effective[0] == -2:
         return True, None, None
-    tokens_left = get_token_balance(entity_id, model_config_id)
-    if tokens_left is not None and tokens_left <= 0:
-        return False, 429, "Token budget exhausted"
+    coins_left = get_coin_balance(entity_id, model_config_id)
+    if coins_left is not None and coins_left <= 0:
+        return False, 429, "Coin budget exhausted"
     return True, None, None
 
 
-def deduct_tokens(entity_id: int, model_config_id: int, tokens_used: int):
-    """Deduct actual tokens used from the budget (no-op for unlimited or blocked)."""
-    subtract_tokens(entity_id, model_config_id, tokens_used)
+def deduct_coins(entity_id: int, model_config_id: int, coin_cost: float):
+    """Deduct actual coin cost from the budget (no-op for unlimited or blocked)."""
+    subtract_coins(entity_id, model_config_id, coin_cost)
 
 
 def update_stats(
@@ -272,7 +272,7 @@ def send_message_stream(
     output_speed = output_tokens / duration if duration > 0 else 0.0
 
     if entity_id is not None:
-        deduct_tokens(entity_id, config.id, input_tokens + output_tokens)
+        deduct_coins(entity_id, config.id, cost)
         update_stats(
             entity_id, config.id, source,
             input_tokens, output_tokens, cost,
@@ -290,5 +290,3 @@ def send_message_stream(
         "time_to_first_token": t_first or duration,
         "output_speed": output_speed,
     }
-
-

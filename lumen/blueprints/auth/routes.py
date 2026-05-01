@@ -84,27 +84,27 @@ def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=No
         if group_id not in existing_by_group:
             db.session.add(GroupMember(group_id=group_id, entity_id=entity.id, config_managed=True))
 
-    # Per-user token pool from users.<email>.pool (or flat max/refresh/starting keys)
+    # Per-user coin pool from users.<email>.pool (or flat max/refresh/starting keys)
     user_cfg = users_cfg.get(email, {})
     pool_cfg = user_cfg.get("pool") or (
         {"max": user_cfg["max"], "refresh": user_cfg.get("refresh", 0), "starting": user_cfg.get("starting", user_cfg["max"])}
         if "max" in user_cfg else None
     )
     if pool_cfg:
-        max_tokens = pool_cfg.get("max", 0)
-        refresh_tokens = pool_cfg.get("refresh", 0)
-        starting_tokens = pool_cfg.get("starting", max_tokens)
+        max_coins = pool_cfg.get("max", 0)
+        refresh_coins = pool_cfg.get("refresh", 0)
+        starting_coins = pool_cfg.get("starting", max_coins)
         limit = EntityLimit.query.filter_by(entity_id=entity.id).first()
         if limit and limit.config_managed:
-            limit.max_tokens = max_tokens
-            limit.refresh_tokens = refresh_tokens
-            limit.starting_tokens = starting_tokens
+            limit.max_coins = max_coins
+            limit.refresh_coins = refresh_coins
+            limit.starting_coins = starting_coins
         elif not limit:
             db.session.add(EntityLimit(
                 entity_id=entity.id,
-                max_tokens=max_tokens,
-                refresh_tokens=refresh_tokens,
-                starting_tokens=starting_tokens,
+                max_coins=max_coins,
+                refresh_coins=refresh_coins,
+                starting_coins=starting_coins,
                 config_managed=True,
             ))
     else:
@@ -137,13 +137,13 @@ def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=No
         if model_config_id not in desired_model_ids:
             db.session.delete(acc)
 
-    # Initialize token balance on first login so usage page shows starting tokens immediately
+    # Initialize coin balance on first login so usage page shows starting coins immediately
     balance = EntityBalance.query.filter_by(entity_id=entity.id).first()
     if balance is None:
         pool = get_pool_limit(entity.id)
         if pool is not None and pool[0] != -2:
-            _, _, starting_tokens = pool
-            db.session.add(EntityBalance(entity_id=entity.id, tokens_left=starting_tokens))
+            _, _, starting_coins = pool
+            db.session.add(EntityBalance(entity_id=entity.id, coins_left=starting_coins))
 
 
 @auth_bp.route("/")

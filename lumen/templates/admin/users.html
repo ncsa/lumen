@@ -32,8 +32,8 @@
   <div class="col-sm-6 col-xl-3">
     <div class="card text-center">
       <div class="card-body">
-        <div class="fs-2 fw-bold">${{ "%.2f"|format(total_cost) }}</div>
-        <div class="text-muted small">Total Cost</div>
+        <div class="fs-2 fw-bold">{{ "%.4f"|format(total_cost) }}</div>
+        <div class="text-muted small">Total Coins Spent</div>
       </div>
     </div>
   </div>
@@ -64,10 +64,10 @@
       <th class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
       <th class="sort-header" data-col="email">Email <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
       <th class="sort-header text-center" data-col="active">Active <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th class="sort-header text-end" data-col="tokens_available">Tokens Available <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th class="sort-header text-end" data-col="coins_available">Coins Available <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
       <th class="sort-header text-end" data-col="tokens_used">Tokens Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
       <th class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th class="sort-header text-end" data-col="cost">Cost <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
       <th><span class="visually-hidden">Actions</span></th>
     </tr>
   </thead>
@@ -114,7 +114,7 @@
   perPageSel.value = String(perPage);
 
   function fmt(n) { return n.toLocaleString(); }
-  function fmtCost(n) { return '$' + n.toFixed(2); }
+  function fmtCoins(n) { return n.toFixed(4); }
 
   function updateSortHeaders() {
     document.querySelectorAll('.sort-header').forEach(th => {
@@ -175,20 +175,20 @@
 
         tbody.innerHTML = data.users.map(u => {
           const activeIcon = u.active ? '✓' : '<span class="text-danger">✗</span>';
-          const tokAvail = u.tokens_available === -2 ? '∞' : fmt(u.tokens_available);
+          const coinsAvail = u.coins_available === -2 ? '∞' : fmtCoins(u.coins_available);
           const toggleLabel = u.active ? 'Deactivate' : 'Activate';
           const toggleClass = u.active ? 'btn-outline-danger' : 'btn-outline-success';
           return `<tr id="user-row-${u.id}">
             <td>${u.name}</td>
             <td>${u.email}</td>
             <td class="text-center">${activeIcon}</td>
-            <td class="text-end">${tokAvail}</td>
+            <td class="text-end">${coinsAvail}</td>
             <td class="text-end">${fmt(u.tokens_used)}</td>
             <td class="text-end">${fmt(u.requests)}</td>
-            <td class="text-end">${fmtCost(u.cost)}</td>
+            <td class="text-end">${fmtCoins(u.cost)}</td>
             <td class="text-nowrap">
               <a href="/admin/users/${u.id}/limits" class="btn btn-sm btn-outline-primary" title="Limits" aria-label="Limits for ${u.name}"><i class="bi bi-sliders" aria-hidden="true"></i></a>
-              <button class="btn btn-sm btn-outline-secondary reset-btn" data-id="${u.id}" data-unlimited="${u.tokens_available === -2}" title="Reset tokens" aria-label="Reset tokens for ${u.name}"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i></button>
+              <button class="btn btn-sm btn-outline-secondary reset-btn" data-id="${u.id}" data-unlimited="${u.coins_available === -2}" title="Reset coins" aria-label="Reset coins for ${u.name}"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i></button>
               <button class="btn btn-sm ${toggleClass} toggle-btn" data-id="${u.id}" data-active="${u.active}" title="${toggleLabel}" aria-label="${toggleLabel} ${u.name}"><i class="bi ${u.active ? 'bi-pause-circle' : 'bi-play-circle'}" aria-hidden="true"></i></button>
             </td>
           </tr>`;
@@ -237,7 +237,7 @@
   function resetTokens(btn) {
     const id = btn.dataset.id;
     if (btn.dataset.unlimited === 'true') {
-      alert('This user has unlimited tokens.');
+      alert('This user has unlimited coins.');
       return;
     }
     btn.disabled = true;
@@ -248,7 +248,7 @@
           alert(data.error);
         } else {
           const row = document.getElementById(`user-row-${id}`);
-          row.cells[3].textContent = data.tokens_available.toLocaleString();
+          row.cells[3].textContent = parseFloat(data.coins_available).toFixed(4);
         }
         btn.disabled = false;
       })

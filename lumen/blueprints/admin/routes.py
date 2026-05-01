@@ -127,21 +127,21 @@ def upsert_group_pool(gid):
     group = Group.query.get_or_404(gid)
     if group.config_managed:
         abort(403)
-    max_tokens = int(request.form.get("max_tokens", 0))
-    refresh_tokens = int(request.form.get("refresh_tokens", 0))
-    starting_tokens = int(request.form.get("starting_tokens", 0))
+    max_coins = float(request.form.get("max_coins", 0))
+    refresh_coins = float(request.form.get("refresh_coins", 0))
+    starting_coins = float(request.form.get("starting_coins", 0))
 
     limit = GroupLimit.query.filter_by(group_id=gid).first()
     if limit:
-        limit.max_tokens = max_tokens
-        limit.refresh_tokens = refresh_tokens
-        limit.starting_tokens = starting_tokens
+        limit.max_coins = max_coins
+        limit.refresh_coins = refresh_coins
+        limit.starting_coins = starting_coins
     else:
         db.session.add(GroupLimit(
             group_id=gid,
-            max_tokens=max_tokens,
-            refresh_tokens=refresh_tokens,
-            starting_tokens=starting_tokens,
+            max_coins=max_coins,
+            refresh_coins=refresh_coins,
+            starting_coins=starting_coins,
         ))
     db.session.commit()
     return redirect(url_for("admin.group_detail", gid=gid))
@@ -324,45 +324,45 @@ def reset_user_tokens(eid):
     entity = Entity.query.get_or_404(eid)
     pool = get_pool_limit(entity.id)
     if pool is None:
-        return jsonify({"error": "No token pool configured"}), 400
-    max_tokens, _refresh, starting_tokens = pool
-    if max_tokens == -2:
-        return jsonify({"error": "User has unlimited tokens"}), 400
-    new_balance = max(starting_tokens, max_tokens)
+        return jsonify({"error": "No coin pool configured"}), 400
+    max_coins, _refresh, starting_coins = pool
+    if max_coins == -2:
+        return jsonify({"error": "User has unlimited coins"}), 400
+    new_balance = max(starting_coins, max_coins)
     balance = EntityBalance.query.filter_by(entity_id=eid).first()
     if balance:
-        balance.tokens_left = new_balance
+        balance.coins_left = new_balance
         balance.last_refill_at = datetime.utcnow()
     else:
         balance = EntityBalance(
-            entity_id=eid, tokens_left=new_balance, last_refill_at=datetime.utcnow()
+            entity_id=eid, coins_left=new_balance, last_refill_at=datetime.utcnow()
         )
         db.session.add(balance)
     db.session.commit()
-    return jsonify({"tokens_available": new_balance})
+    return jsonify({"coins_available": new_balance})
 
 
 @admin_bp.route("/users/<int:eid>/pool", methods=["POST"])
 @admin_required
 def upsert_user_pool(eid):
     Entity.query.get_or_404(eid)
-    max_tokens = int(request.form.get("max_tokens", 0))
-    refresh_tokens = int(request.form.get("refresh_tokens", 0))
-    starting_tokens = int(request.form.get("starting_tokens", 0))
+    max_coins = float(request.form.get("max_coins", 0))
+    refresh_coins = float(request.form.get("refresh_coins", 0))
+    starting_coins = float(request.form.get("starting_coins", 0))
 
     existing = EntityLimit.query.filter_by(entity_id=eid).first()
     if existing:
         if existing.config_managed:
             abort(403)
-        existing.max_tokens = max_tokens
-        existing.refresh_tokens = refresh_tokens
-        existing.starting_tokens = starting_tokens
+        existing.max_coins = max_coins
+        existing.refresh_coins = refresh_coins
+        existing.starting_coins = starting_coins
     else:
         db.session.add(EntityLimit(
             entity_id=eid,
-            max_tokens=max_tokens,
-            refresh_tokens=refresh_tokens,
-            starting_tokens=starting_tokens,
+            max_coins=max_coins,
+            refresh_coins=refresh_coins,
+            starting_coins=starting_coins,
         ))
     db.session.commit()
     return redirect(url_for("admin.user_limits", eid=eid))
@@ -436,21 +436,21 @@ def api_users():
     balance_sq = (
         db.session.query(
             EntityBalance.entity_id,
-            EntityBalance.tokens_left.label("tokens_available"),
+            EntityBalance.coins_left.label("coins_available"),
         )
         .subquery()
     )
 
     unlimited_sq = (
         db.session.query(EntityLimit.entity_id)
-        .filter(EntityLimit.max_tokens == -2)
+        .filter(EntityLimit.max_coins == -2)
         .distinct()
         .subquery()
     )
 
-    tokens_avail_sort = case(
+    coins_avail_sort = case(
         (unlimited_sq.c.entity_id != None, _BIGINT_MAX),  # noqa: E711
-        else_=func.coalesce(balance_sq.c.tokens_available, 0),
+        else_=func.coalesce(balance_sq.c.coins_available, 0),
     )
 
     q = (
@@ -459,7 +459,7 @@ def api_users():
             func.coalesce(api_stats_sq.c.requests, 0).label("requests"),
             func.coalesce(api_stats_sq.c.tokens_used, 0).label("tokens_used"),
             func.coalesce(api_stats_sq.c.cost, 0).label("cost"),
-            tokens_avail_sort.label("tokens_available"),
+            coins_avail_sort.label("coins_available"),
         )
         .filter(Entity.entity_type == "user")
         .outerjoin(api_stats_sq, Entity.id == api_stats_sq.c.entity_id)
@@ -478,7 +478,7 @@ def api_users():
         "requests": func.coalesce(api_stats_sq.c.requests, 0),
         "tokens_used": func.coalesce(api_stats_sq.c.tokens_used, 0),
         "cost": func.coalesce(api_stats_sq.c.cost, 0),
-        "tokens_available": tokens_avail_sort,
+        "coins_available": coins_avail_sort,
     }.get(sort, Entity.name)
 
     q = q.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
@@ -506,9 +506,9 @@ def api_users():
                 "requests": int(requests),
                 "tokens_used": int(tokens_used),
                 "cost": float(cost),
-                "tokens_available": -2 if int(tokens_available) == _BIGINT_MAX else int(tokens_available),
+                "coins_available": -2 if float(coins_available) >= _BIGINT_MAX else float(coins_available),
             }
-            for entity, requests, tokens_used, cost, tokens_available in rows
+            for entity, requests, tokens_used, cost, coins_available in rows
         ],
         "total": total,
         "page": page,

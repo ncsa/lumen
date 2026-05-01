@@ -60,9 +60,9 @@ rate_limiting:
   limit: "30 per minute"  # applies to every endpoint, keyed by authenticated user identity
 
 users:
-  tokens:
-    maximum: 0    # default max token budget per user (0 = no access until admin grants)
-    refresh: 0    # tokens replenished per hour (0 = no auto-refresh)
+  coins:
+    maximum: 20   # default max coin budget per user (0 = no access until admin grants, -2 = unlimited)
+    refresh: 0.05 # coins replenished per hour (0 = no auto-refresh)
   admins:
     - admin@example.com
 
@@ -96,8 +96,11 @@ models:
 
   - name: gpt-4o
     active: true
-    input_cost_per_million: 5.0     # USD per 1M input tokens
-    output_cost_per_million: 15.0   # USD per 1M output tokens
+    input_cost_per_million: 5.0     # coins per 1M input tokens
+    output_cost_per_million: 15.0   # coins per 1M output tokens
+    # max_input_tokens: 128000        # optional; context window size
+    # supports_function_calling: true # optional; tool/function call support
+    # supports_vision: true           # optional; image input support (used by upload UI)
     endpoints:
       - url: https://api.openai.com/v1
         api_key: sk-abc123
@@ -155,6 +158,10 @@ models:
       - url: http://gpu-server.internal/v1
         api_key: internal-key
         model: phi-3-mini-128k-instruct   # different name at the internal endpoint
+
+# Monitoring — read-only token for /v1/models (no user account required)
+monitoring:
+  token: ""   # Set to a long random string; leave empty to disable
 
 # Prometheus metrics endpoint (/metrics)
 prometheus:
