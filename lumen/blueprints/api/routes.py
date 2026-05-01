@@ -78,7 +78,7 @@ def _get_request_rates() -> dict:
 
 
 def _model_dict(c, rates: dict) -> dict:
-    """Serialize a ModelConfig to the enriched API response dict."""
+    """Serialize a ModelConfig to an OpenAI/vLLM-compatible response dict."""
     zero = {"last_minute": 0, "last_hour": 0, "last_day": 0}
     eps = list(c.endpoints)
     healthy_count = sum(1 for e in eps if e.healthy)
@@ -88,11 +88,20 @@ def _model_dict(c, rates: dict) -> dict:
         status = "degraded"
     else:
         status = "ok"
+
+    # root is the upstream model identifier (e.g. "Qwen/Qwen3-Coder-Next-FP8")
+    root = eps[0].model_name if eps and eps[0].model_name else c.model_name
+
     d = {
         "id": c.model_name,
         "object": "model",
         "created": int(c.created_at.timestamp()) if c.created_at else 0,
         "owned_by": "lumen",
+        "root": root,
+        "parent": None,
+        # vLLM-compatible context window field
+        "max_model_len": c.context_window,
+        # Lumen status / cost fields
         "status": status,
         "input_cost_per_million": float(c.input_cost_per_million),
         "output_cost_per_million": float(c.output_cost_per_million),
@@ -102,14 +111,22 @@ def _model_dict(c, rates: dict) -> dict:
         },
         "requests": rates.get(c.id, zero),
     }
-    if c.description is not None:
-        d["description"] = c.description
-    if c.max_input_tokens is not None:
-        d["max_input_tokens"] = c.max_input_tokens
-    if c.supports_function_calling is not None:
-        d["supports_function_calling"] = c.supports_function_calling
-    if c.supports_vision is not None:
-        d["supports_vision"] = c.supports_vision
+
+    # Capability fields — omitted when null so clients can detect "unknown" vs "false"
+    for field in (
+        "description",
+        "max_input_tokens",
+        "max_output_tokens",
+        "supports_function_calling",
+        "supports_reasoning",
+        "knowledge_cutoff",
+        "input_modalities",
+        "output_modalities",
+    ):
+        val = getattr(c, field, None)
+        if val is not None:
+            d[field] = val
+
     return d
 
 

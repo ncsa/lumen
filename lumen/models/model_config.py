@@ -14,7 +14,12 @@ class ModelConfig(db.Model):
     url = db.Column(db.String(512), nullable=True)
     max_input_tokens = db.Column(db.Integer, nullable=True)
     supports_function_calling = db.Column(db.Boolean, nullable=True)
-    supports_vision = db.Column(db.Boolean, nullable=True)
+    input_modalities = db.Column(db.JSON, nullable=True)
+    output_modalities = db.Column(db.JSON, nullable=True)
+    context_window = db.Column(db.Integer, nullable=True)
+    max_output_tokens = db.Column(db.Integer, nullable=True)
+    supports_reasoning = db.Column(db.Boolean, nullable=True)
+    knowledge_cutoff = db.Column(db.String(7), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     endpoints = db.relationship("ModelEndpoint", backref="model_config", lazy="dynamic", cascade="all, delete-orphan", passive_deletes=True)

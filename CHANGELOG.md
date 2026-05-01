@@ -15,8 +15,10 @@ All notable changes to Lumen will be documented in this file.
 ### Added
 - Admin users page: reset-tokens button to restore a user's token balance to their starting or max limit (whichever is greater)
 - Bootstrap Icons for action buttons across the admin UI
+- Model config fields: `context_window`, `max_output_tokens`, `supports_reasoning`, `knowledge_cutoff`, `input_modalities`, `output_modalities` — set via config.yaml, synced to DB
 
 ### Changed
+- Replaced `supports_vision` boolean with `input_modalities` JSON array (e.g. `["text", "image"]`)
 - Admin users page: action buttons now use icons (sliders for Limits, play/pause for Activate/Deactivate, refresh for Reset Tokens)
 - Admin users page: numeric columns right-aligned, Active column centered
 - All prices now display rounded to the nearest penny (2 decimal places) instead of showing fractional cents

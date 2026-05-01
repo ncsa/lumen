@@ -25,7 +25,12 @@ def sync_models_from_yaml(yaml_data):
                 url=model_def.get("url") or None,
                 max_input_tokens=model_def.get("max_input_tokens") or None,
                 supports_function_calling=model_def.get("supports_function_calling"),
-                supports_vision=model_def.get("supports_vision"),
+                input_modalities=model_def.get("input_modalities") or None,
+                output_modalities=model_def.get("output_modalities") or None,
+                context_window=model_def.get("context_window") or None,
+                max_output_tokens=model_def.get("max_output_tokens") or None,
+                supports_reasoning=model_def.get("supports_reasoning"),
+                knowledge_cutoff=model_def.get("knowledge_cutoff") or None,
             )
             db.session.add(config)
             db.session.flush()
@@ -37,7 +42,12 @@ def sync_models_from_yaml(yaml_data):
             config.url = model_def.get("url") or None
             config.max_input_tokens = model_def.get("max_input_tokens") or None
             config.supports_function_calling = model_def.get("supports_function_calling")
-            config.supports_vision = model_def.get("supports_vision")
+            config.input_modalities = model_def.get("input_modalities") or None
+            config.output_modalities = model_def.get("output_modalities") or None
+            config.context_window = model_def.get("context_window") or None
+            config.max_output_tokens = model_def.get("max_output_tokens") or None
+            config.supports_reasoning = model_def.get("supports_reasoning")
+            config.knowledge_cutoff = model_def.get("knowledge_cutoff") or None
 
         yaml_urls = {ep_def["url"] for ep_def in model_def.get("endpoints", [])}
         for ep in list(config.endpoints):
