@@ -25,6 +25,10 @@ pip-delete-this-directory.txt
 models.yaml
 config.yaml
 
+# Coverage
+.coverage
+htmlcov/
+
 # Database
 *.db
 *.sqlite
