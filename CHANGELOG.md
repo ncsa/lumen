@@ -4,6 +4,12 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Test suite with 121 tests achieving >50% line coverage: unit tests for cost calculation, crypto, auth helpers, LLM access control (user/group/global rules, coin budget), YAML sync commands; route tests for auth, models, decorators, and admin/chat/usage/services pages; UI tests asserting correct status badge CSS classes and model visibility rules
+
+### Changed
+- `model_detail` request-count queries ported from raw PostgreSQL SQL (`NOW() - INTERVAL`) to SQLAlchemy ORM (`datetime.utcnow() - timedelta(...)`) for SQLite compatibility
+
 ## [1.6.0] - 2026-05-02
 
 ### Added

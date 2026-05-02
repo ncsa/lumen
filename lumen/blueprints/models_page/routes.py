@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests as http_requests
 from flask import Blueprint, abort, redirect, render_template, session, url_for
@@ -7,8 +7,8 @@ from lumen.decorators import login_required
 from lumen.extensions import db
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
+from lumen.models.request_log import RequestLog
 from lumen.services.llm import get_model_access_status, has_model_consent
-from sqlalchemy import text as sa_text
 
 models_page_bp = Blueprint("models_page", __name__)
 
@@ -36,17 +36,15 @@ def detail(model_name):
     else:
         status = "ok"
 
-    sql = sa_text("""
-        SELECT
-            COUNT(*) FILTER (WHERE time > NOW() - INTERVAL '1 hour')  AS last_hour,
-            COUNT(*) FILTER (WHERE time > NOW() - INTERVAL '1 day')   AS last_day
-        FROM request_logs
-        WHERE time > NOW() - INTERVAL '1 day'
-          AND model_config_id = :model_id
-    """)
-    row = db.session.execute(sql, {"model_id": config.id}).fetchone()
-    requests_last_hour = row.last_hour if row else 0
-    requests_last_day = row.last_day if row else 0
+    now = datetime.utcnow()
+    requests_last_hour = RequestLog.query.filter(
+        RequestLog.model_config_id == config.id,
+        RequestLog.time >= now - timedelta(hours=1),
+    ).count()
+    requests_last_day = RequestLog.query.filter(
+        RequestLog.model_config_id == config.id,
+        RequestLog.time >= now - timedelta(days=1),
+    ).count()
 
     entity_id = session.get("entity_id")
     access_status = get_model_access_status(entity_id, config.id) if entity_id else "blocked"
