@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Chat streaming crash ("Cannot read properties of null") for non-reasoning models that don't emit thinking chunks
+
 ### Changed
 - Chat model picker now hides models that have no healthy endpoints available
 
