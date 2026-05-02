@@ -2,6 +2,18 @@
 
 All notable changes to Lumen will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Model detail page at `/models/<name>`: left column shows description and HuggingFace README (fetched server-side, YAML front-matter stripped, rendered as markdown); right sidebar shows availability (status, endpoint health, req/hr, req/24h), model details (context window, max output tokens, modalities, knowledge cutoff, reasoning, function calling), and pricing
+- `notice` field on models: optional markdown text shown as a warning callout on the detail page; hidden when unset; configurable via `config.yaml`
+- Model names on the `/models` health dashboard are now clickable links to the detail page
+- Admin users see each endpoint URL with an up/down badge on the model detail page
+
+### Changed
+- Removed the admin-only chevron toggle and collapsible endpoint rows from the `/models` dashboard (detail page replaces this)
+- HuggingFace README: code blocks wrap instead of overflowing (`white-space: pre-wrap`); images capped at 800px wide; inline `font-family` styles suppressed to match the page design system
+
 ## [1.5.1] - 2026-05-01
 
 ### Fixed

@@ -31,6 +31,7 @@ def sync_models_from_yaml(yaml_data):
                 max_output_tokens=model_def.get("max_output_tokens") or None,
                 supports_reasoning=model_def.get("supports_reasoning"),
                 knowledge_cutoff=model_def.get("knowledge_cutoff") or None,
+                notice=model_def.get("notice") or None,
             )
             db.session.add(config)
             db.session.flush()
@@ -48,6 +49,7 @@ def sync_models_from_yaml(yaml_data):
             config.max_output_tokens = model_def.get("max_output_tokens") or None
             config.supports_reasoning = model_def.get("supports_reasoning")
             config.knowledge_cutoff = model_def.get("knowledge_cutoff") or None
+            config.notice = model_def.get("notice") or None
 
         yaml_urls = {ep_def["url"] for ep_def in model_def.get("endpoints", [])}
         for ep in list(config.endpoints):

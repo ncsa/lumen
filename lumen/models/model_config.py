@@ -20,6 +20,7 @@ class ModelConfig(db.Model):
     max_output_tokens = db.Column(db.Integer, nullable=True)
     supports_reasoning = db.Column(db.Boolean, nullable=True)
     knowledge_cutoff = db.Column(db.String(7), nullable=True)
+    notice = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     endpoints = db.relationship("ModelEndpoint", backref="model_config", lazy="dynamic", cascade="all, delete-orphan", passive_deletes=True)

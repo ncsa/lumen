@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% block title %}{{ config.model_name }} — {{ app_name }}{% endblock %}
+
+{% block content %}
+<ilw-content>
+  <p class="mb-2"><a href="{{ url_for('models_page.index') }}" class="text-decoration-none" aria-label="Back to Models list">← Back to Models</a></p>
+
+  <div class="row g-4">
+
+    {# ── Left: model name + description + HuggingFace README ── #}
+    <div class="col-12 col-lg-8" style="min-width:0">
+      <h1 class="mb-3">
+        {{ config.model_name }}
+        {% if config.url %}
+        <a href="{{ config.url }}" target="_blank" rel="noopener noreferrer"
+           class="ms-2 fs-5 text-decoration-none align-middle"
+           aria-label="View {{ config.model_name }} on HuggingFace">
+          <ilw-icon icon="link" size="1em"></ilw-icon>
+        </a>
+        {% endif %}
+      </h1>
+
+      {% if config.description %}
+      <p>{{ config.description }}</p>
+      {% endif %}
+
+      {% if config.url and "huggingface.co" in config.url %}
+      {% if config.description %}<hr>{% endif %}
+      <div id="hf-readme">
+        <div class="d-flex align-items-center gap-2 text-muted">
+          <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+          <span>Loading README…</span>
+        </div>
+      </div>
+      {% elif not config.description %}
+      <p class="text-muted fst-italic">No description available.</p>
+      {% endif %}
+    </div>
+
+    {# ── Right sidebar ── #}
+    <div class="col-12 col-lg-4 d-flex flex-column gap-3">
+
+      {% if config.notice %}
+      <div class="alert alert-warning mb-0" role="alert" aria-live="polite">
+        <strong>Notice</strong>
+        <div id="model-notice-body" class="mt-1"></div>
+      </div>
+      {% endif %}
+
+      <div class="card">
+        <div class="card-header fw-semibold">Availability</div>
+        <div class="card-body p-0">
+          <table class="table table-sm mb-0">
+            <caption class="visually-hidden">Endpoint availability</caption>
+            <tbody>
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3">Status</th>
+                <td class="text-end pe-3">
+                  {% if status == "ok" %}
+                    <span class="badge bg-success">ok</span>
+                  {% elif status == "degraded" %}
+                    <span class="badge bg-warning text-dark">degraded</span>
+                  {% else %}
+                    <span class="badge bg-danger">down</span>
+                  {% endif %}
+                </td>
+              </tr>
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3">Endpoints</th>
+                <td class="text-end pe-3">{{ healthy_count }}/{{ endpoints | length }} healthy</td>
+              </tr>
+              {% if is_admin %}
+              {% for ep in endpoints %}
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3 small" style="word-break:break-all;">{{ ep.url }}</th>
+                <td class="text-end pe-3"><span class="badge {% if ep.healthy %}bg-success{% else %}bg-danger{% endif %}">{% if ep.healthy %}up{% else %}down{% endif %}</span></td>
+              </tr>
+              {% endfor %}
+              {% endif %}
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3">Requests / hr</th>
+                <td class="text-end pe-3">{{ requests_last_hour | int }}</td>
+              </tr>
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3">Requests / 24h</th>
+                <td class="text-end pe-3">{{ requests_last_day | int }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {% set has_details = config.context_window or config.max_output_tokens or config.input_modalities
+                           or config.output_modalities or config.knowledge_cutoff
+                           or config.supports_reasoning is not none
+                           or config.supports_function_calling is not none %}
+      {% if has_details %}
+      <div class="card">
+        <div class="card-header fw-semibold">Model Details</div>
+        <div class="card-body p-0">
+          <table class="table table-sm mb-0">
+            <caption class="visually-hidden">Model technical details</caption>
+            <tbody>
+              {% if config.context_window %}
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3">Context Window</th>
+                <td class="text-end pe-3">{{ "{:,}".format(config.context_window) }}</td>
+              </tr>
+              {% endif %}
+              {% if config.max_output_tokens %}
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3">Max Output</th>
+                <td class="text-end pe-3">{{ "{:,}".format(config.max_output_tokens) }}</td>
+              </tr>
+              {% endif %}
+              {% if config.input_modalities %}
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3">Input</th>
+                <td class="text-end pe-3">{{ config.input_modalities | join(", ") }}</td>
+              </tr>
+              {% endif %}
+              {% if config.output_modalities %}
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3">Output</th>
+                <td class="text-end pe-3">{{ config.output_modalities | join(", ") }}</td>
+              </tr>
+              {% endif %}
+              {% if config.knowledge_cutoff %}
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3">Knowledge Cutoff</th>
+                <td class="text-end pe-3">{{ config.knowledge_cutoff }}</td>
+              </tr>
+              {% endif %}
+              {% if config.supports_reasoning is not none %}
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3">Reasoning</th>
+                <td class="text-end pe-3">{% if config.supports_reasoning %}✓{% else %}—{% endif %}</td>
+              </tr>
+              {% endif %}
+              {% if config.supports_function_calling is not none %}
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3">Function Calling</th>
+                <td class="text-end pe-3">{% if config.supports_function_calling %}✓{% else %}—{% endif %}</td>
+              </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="card">
+        <div class="card-header fw-semibold">Pricing</div>
+        <div class="card-body p-0">
+          <table class="table table-sm mb-0">
+            <caption class="visually-hidden">Model pricing per million tokens</caption>
+            <tbody>
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3">Input</th>
+                <td class="text-end pe-3">{{ "%.4f"|format(config.input_cost_per_million | float) }} / 1M</td>
+              </tr>
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3">Output</th>
+                <td class="text-end pe-3">{{ "%.4f"|format(config.output_cost_per_million | float) }} / 1M</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>{# end sidebar #}
+  </div>{# end row #}
+</ilw-content>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+<script>
+(function () {
+  {% if config.notice %}
+  const noticeBody = document.getElementById('model-notice-body');
+  if (noticeBody) {
+    noticeBody.innerHTML = DOMPurify.sanitize(marked.parse({{ config.notice | tojson }}));
+  }
+  {% endif %}
+
+  {% if config.url and "huggingface.co" in config.url %}
+  const readmeEl = document.getElementById('hf-readme');
+  fetch({{ url_for('models_page.model_readme', model_name=config.model_name) | tojson }})
+    .then(r => {
+      if (!r.ok) throw new Error('unavailable');
+      return r.text();
+    })
+    .then(md => {
+      const wrap = document.createElement('div');
+      wrap.className = 'hf-readme-content';
+      wrap.innerHTML = DOMPurify.sanitize(marked.parse(md));
+      wrap.querySelectorAll('table').forEach(t => {
+        const scroll = document.createElement('div');
+        scroll.style.overflowX = 'auto';
+        t.parentNode.insertBefore(scroll, t);
+        scroll.appendChild(t);
+      });
+      readmeEl.innerHTML = '';
+      readmeEl.appendChild(wrap);
+    })
+    .catch(() => {
+      readmeEl.innerHTML = '<p class="text-muted fst-italic">README unavailable.</p>';
+    });
+  {% endif %}
+})();
+</script>
+<style>
+  .hf-readme-content table { border-collapse: collapse; margin-bottom: 1rem; }
+  .hf-readme-content table th,
+  .hf-readme-content table td { border: 1px solid #dee2e6; padding: 0.5rem; white-space: nowrap; }
+  .hf-readme-content table thead { background: #f8f9fa; }
+</style>
+{% endblock %}

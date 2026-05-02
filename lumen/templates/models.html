@@ -24,11 +24,9 @@
     {% set healthy_eps = endpoints | selectattr("healthy") | list %}
     <tr>
       <td>
-        {% if is_admin %}
-        <button class="btn btn-sm btn-outline-secondary py-0 px-1 me-1 ep-toggle" data-bs-toggle="collapse"
-                data-bs-target="#ep-{{ config.id }}" aria-expanded="false" aria-label="Toggle endpoints">▶</button>
-        {% endif %}
-        <strong {% if config.description %}title="{{ config.description }}" data-bs-toggle="tooltip" data-bs-placement="right"{% endif %}>{{ config.model_name }}</strong>{% if config.url %}<a href="{{ config.url }}" target="_blank" rel="noopener noreferrer" class="ms-1 text-decoration-none" aria-label="View {{ config.model_name }} on HuggingFace"><ilw-icon icon="link" size="1em"></ilw-icon></a>{% endif %}
+        <a href="{{ url_for('models_page.detail', model_name=config.model_name) }}"
+           class="fw-bold text-decoration-none"
+           {% if config.description %}title="{{ config.description }}" data-bs-toggle="tooltip" data-bs-placement="right"{% endif %}>{{ config.model_name }}</a>
       </td>
       <td class="text-end">{{ "%.4f"|format(config.input_cost_per_million | float) }}</td>
       <td class="text-end">{{ "%.4f"|format(config.output_cost_per_million | float) }}</td>
@@ -61,36 +59,6 @@
         {% endif %}
       </td>
     </tr>
-    {% if is_admin %}
-    <tbody class="collapse table-secondary" id="ep-{{ config.id }}">
-      {% if endpoints %}
-      {% for ep in endpoints %}
-      <tr>
-        <td colspan="2">{{ ep.url }}</td>
-        <td colspan="3">{{ ep.model_name or config.model_name }}</td>
-        <td>
-          {% if ep.last_checked_at %}
-            <span class="local-datetime" data-utc="{{ ep.last_checked_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
-          {% else %}
-            <span class="text-muted">Never</span>
-          {% endif %}
-        </td>
-        <td>
-          {% if ep.healthy %}
-            <span class="badge bg-success">up</span>
-          {% else %}
-            <span class="badge bg-danger">down</span>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-      {% else %}
-      <tr>
-        <td colspan="7" class="text-muted fst-italic">no endpoints defined</td>
-      </tr>
-      {% endif %}
-    </tbody>
-    {% endif %}
     {% else %}
     <tr><td colspan="7" class="text-center text-muted">No models configured.</td></tr>
     {% endfor %}
@@ -100,10 +68,6 @@
 {% endblock %}
 
 {% block scripts %}
-<style>
-  .ep-toggle { transition: transform 0.2s; display: inline-block; }
-  .ep-toggle[aria-expanded="true"] { transform: rotate(90deg); }
-</style>
 <script>
   document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
 </script>
