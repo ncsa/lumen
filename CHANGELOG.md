@@ -2,7 +2,7 @@
 
 All notable changes to Lumen will be documented in this file.
 
-## [Unreleased]
+## [1.5.1] - 2026-05-01
 
 ### Fixed
 - Chat streaming crash ("Cannot read properties of null") for non-reasoning models that don't emit thinking chunks
