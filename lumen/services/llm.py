@@ -254,20 +254,28 @@ def send_message_stream(
         stream_options={"include_usage": True},
     )
 
+    thinking_parts = []
     for chunk in stream:
         if chunk.usage:
             usage = chunk.usage
-        if chunk.choices and chunk.choices[0].delta.content:
-            text = chunk.choices[0].delta.content
-            if t_first is None:
-                t_first = time.time() - t0
-            parts.append(text)
-            yield text, None
+        if chunk.choices:
+            delta = chunk.choices[0].delta
+            reasoning = getattr(delta, "reasoning_content", None)
+            if reasoning:
+                thinking_parts.append(reasoning)
+                yield None, reasoning, None
+            if delta.content:
+                text = delta.content
+                if t_first is None:
+                    t_first = time.time() - t0
+                parts.append(text)
+                yield text, None, None
 
     duration = time.time() - t0
     reply = "".join(parts)
     input_tokens = usage.prompt_tokens if usage else 0
     output_tokens = usage.completion_tokens if usage else 0
+
     cost = calculate_cost(input_tokens, output_tokens, config)
     output_speed = output_tokens / duration if duration > 0 else 0.0
 
@@ -280,7 +288,7 @@ def send_message_stream(
         )
         db.session.commit()
 
-    yield None, {
+    yield None, None, {
         "reply": reply,
         "model": remote_model,
         "input_tokens": input_tokens,

@@ -532,7 +532,7 @@
       }
 
       const container = document.getElementById("chat-messages");
-      let streamBubble = null, streamWrapper = null;
+      let streamBubble = null, streamWrapper = null, thinkingPre = null, thinkingDetails = null;
       let fullText = "";
       let finalReceived = false;
 
@@ -559,19 +559,45 @@
             break;
           }
 
-          if (event.chunk !== undefined) {
-            if (!streamBubble) {
+          if (event.thinking_chunk !== undefined) {
+            if (!streamWrapper) {
               removeTypingIndicator();
               const row = document.createElement("div");
               row.className = "d-flex mb-2 justify-content-start";
               streamWrapper = document.createElement("div");
               streamWrapper.className = "d-flex flex-column align-items-start";
               streamWrapper.style.maxWidth = "65%";
+              row.appendChild(streamWrapper);
+              container.appendChild(row);
+            }
+            if (!thinkingDetails) {
+              thinkingDetails = document.createElement("details");
+              thinkingDetails.className = "thinking-block mb-1";
+              thinkingDetails.open = true;
+              const summary = document.createElement("summary");
+              summary.textContent = "Thinking…";
+              thinkingPre = document.createElement("pre");
+              thinkingPre.className = "thinking-text";
+              thinkingDetails.appendChild(summary);
+              thinkingDetails.appendChild(thinkingPre);
+              streamWrapper.appendChild(thinkingDetails);
+            }
+            thinkingPre.textContent += event.thinking_chunk;
+            requestAnimationFrame(() => {
+              thinkingPre.scrollTop = thinkingPre.scrollHeight;
+              container.scrollTop = container.scrollHeight;
+            });
+          }
+
+          if (event.chunk !== undefined) {
+            if (thinkingDetails) {
+              thinkingDetails.open = false;
+              thinkingDetails.querySelector("summary").textContent = "Thought";
+            }
+            if (!streamBubble) {
               streamBubble = document.createElement("div");
               streamBubble.className = "chat-bubble chat-bubble-assistant";
               streamWrapper.appendChild(streamBubble);
-              row.appendChild(streamWrapper);
-              container.appendChild(row);
             }
             fullText += event.chunk;
             streamBubble.innerHTML = renderMarkdownWithMath(fullText);

@@ -147,8 +147,10 @@ def chat_stream():
     def generate():
         try:
             result = None
-            for chunk, final in send_message_stream(messages, model, entity_id=entity_id, source="chat"):
-                if chunk is not None:
+            for chunk, thinking, final in send_message_stream(messages, model, entity_id=entity_id, source="chat"):
+                if thinking is not None:
+                    yield f"data: {json.dumps({'thinking_chunk': thinking})}\n\n"
+                elif chunk is not None:
                     yield f"data: {json.dumps({'chunk': chunk})}\n\n"
                 else:
                     result = final

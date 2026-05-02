@@ -164,6 +164,42 @@
   opacity: 1;
 }
 
+/* ── Thinking block ─────────────────────────────────────────── */
+.thinking-block {
+  background: #1e2430;
+  border: 1px solid #3a4256;
+  border-radius: 8px;
+  padding: 0.4rem 0.7rem;
+  max-width: 100%;
+}
+
+.thinking-block summary {
+  font-size: 0.8rem;
+  color: #8fa0b8;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.thinking-block summary::before {
+  content: "▶ ";
+  font-size: 0.65rem;
+}
+
+.thinking-block[open] summary::before {
+  content: "▼ ";
+}
+
+.thinking-text {
+  margin: 0.4rem 0 0;
+  font-size: 0.78rem;
+  color: #8fa0b8;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
 /* ── Typing indicator ────────────────────────────────────────── */
 @keyframes blink {
   0%, 80%, 100% { opacity: 0.2; }
