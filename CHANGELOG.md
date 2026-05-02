@@ -2,7 +2,7 @@
 
 All notable changes to Lumen will be documented in this file.
 
-## [Unreleased]
+## [1.5.0] - 2026-05-01
 
 ### Added
 - Chat now streams reasoning model thinking as a collapsible "Thinking…" block above the response; collapses to "Thought" when the answer begins; click to expand and read the full chain-of-thought
