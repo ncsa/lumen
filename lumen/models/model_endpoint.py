@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from ..extensions import db
 
 
@@ -14,4 +14,4 @@ class ModelEndpoint(db.Model):
     model_name = db.Column(db.String(128), nullable=True)
     healthy = db.Column(db.Boolean, default=False, nullable=False)
     last_checked_at = db.Column(db.DateTime, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))

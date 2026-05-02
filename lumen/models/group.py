@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from ..extensions import db
 
 
@@ -11,7 +11,7 @@ class Group(db.Model):
     active = db.Column(db.Boolean, default=True, nullable=False)
     config_managed = db.Column(db.Boolean, default=False, nullable=False)
     model_access_default = db.Column(db.String(20), nullable=True)  # 'whitelist' | 'blacklist' | 'graylist'
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     members = db.relationship("GroupMember", backref="group", lazy="dynamic", cascade="all, delete-orphan", passive_deletes=True)
     limit = db.relationship("GroupLimit", backref="group", uselist=False, cascade="all, delete-orphan", passive_deletes=True)

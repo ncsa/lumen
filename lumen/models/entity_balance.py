@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from ..extensions import db
 
 
@@ -8,4 +8,4 @@ class EntityBalance(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     entity_id = db.Column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), nullable=False, unique=True)
     coins_left = db.Column(db.Numeric(12, 6), default=0)
-    last_refill_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_refill_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))

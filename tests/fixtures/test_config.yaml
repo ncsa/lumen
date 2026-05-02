@@ -5,6 +5,9 @@ app:
   dev_user: testuser@example.com
   database_url: sqlite:///test_lumen.db
 
+rate_limiting:
+  storage_url: "memory://"
+
 admins:
   - admin@example.com
 

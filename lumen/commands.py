@@ -222,8 +222,8 @@ def reassign_model_cmd(from_id, to_id):
     from lumen.models.model_stat import ModelStat
     from lumen.models.request_log import RequestLog
 
-    src = ModelConfig.query.get(from_id)
-    dst = ModelConfig.query.get(to_id)
+    src = db.session.get(ModelConfig, from_id)
+    dst = db.session.get(ModelConfig, to_id)
     if not src:
         click.echo(f"Error: model_config id {from_id} not found.")
         raise SystemExit(1)

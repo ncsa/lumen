@@ -177,9 +177,9 @@ def create_app():
             return result
         from lumen.models.entity_manager import EntityManager
         from lumen.models.entity import Entity
-
+        from lumen.extensions import db
         from lumen.decorators import is_admin
-        entity = Entity.query.get(session["entity_id"])
+        entity = db.session.get(Entity, session["entity_id"])
         if entity:
             result["is_admin"] = is_admin(entity)
 

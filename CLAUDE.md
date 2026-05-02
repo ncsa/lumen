@@ -79,6 +79,8 @@ For local testing without OAuth or a real LLM: set `app.dev_user` in config.yaml
 
 **All HTML must be WCAG 2.1 AA compliant. This is not optional.**
 
+You must have tests that check the code for compliance, and these tests must pass.
+
 When writing or modifying HTML/JS:
 - **ARIA labels:** Every interactive element needs an accessible name. Icon-only buttons (`✕`, `☰`, `←`, `ⓘ`) require `aria-label`. Never rely on `title` alone.
 - **Form labels:** Every `<input>`, `<select>`, and `<textarea>` must have an associated `<label>` with a `for`/`id` pair. Use `class="visually-hidden"` if the label should not be visible. Placeholder text is not a label substitute.
@@ -98,7 +100,7 @@ When writing or modifying HTML/JS:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **lumen** (1265 symbols, 1847 relationships, 35 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **lumen** (1596 symbols, 2581 relationships, 52 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

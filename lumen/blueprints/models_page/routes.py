@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import requests as http_requests
 from flask import Blueprint, abort, redirect, render_template, session, url_for
@@ -36,7 +36,7 @@ def detail(model_name):
     else:
         status = "ok"
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     requests_last_hour = RequestLog.query.filter(
         RequestLog.model_config_id == config.id,
         RequestLog.time >= now - timedelta(hours=1),
@@ -80,7 +80,7 @@ def model_consent(model_name):
         db.session.add(EntityModelConsent(
             entity_id=entity_id,
             model_config_id=config.id,
-            consented_at=datetime.utcnow(),
+            consented_at=datetime.now(timezone.utc).replace(tzinfo=None),
         ))
         db.session.commit()
     return redirect(url_for("models_page.detail", model_name=model_name))

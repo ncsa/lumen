@@ -73,13 +73,13 @@ def test_get_model_access_graylist_without_consent(app, test_user, test_model):
 def test_get_model_access_graylist_with_consent(app, test_user, test_model):
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
-        from datetime import datetime
+        from datetime import datetime, timezone
         from lumen.extensions import db
         from lumen.models.entity_model_consent import EntityModelConsent
         from lumen.models.global_model_access import GlobalModelAccess
         from lumen.services.llm import get_model_access
         db.session.add(GlobalModelAccess(model_config_id=model_id, access_type="graylist"))
-        db.session.add(EntityModelConsent(entity_id=entity_id, model_config_id=model_id, consented_at=datetime.utcnow()))
+        db.session.add(EntityModelConsent(entity_id=entity_id, model_config_id=model_id, consented_at=datetime.now(timezone.utc).replace(tzinfo=None)))
         db.session.commit()
         assert get_model_access(entity_id, model_id) is True
 
@@ -87,11 +87,11 @@ def test_get_model_access_graylist_with_consent(app, test_user, test_model):
 def test_has_model_consent_true(app, test_user, test_model):
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
-        from datetime import datetime
+        from datetime import datetime, timezone
         from lumen.extensions import db
         from lumen.models.entity_model_consent import EntityModelConsent
         from lumen.services.llm import has_model_consent
-        db.session.add(EntityModelConsent(entity_id=entity_id, model_config_id=model_id, consented_at=datetime.utcnow()))
+        db.session.add(EntityModelConsent(entity_id=entity_id, model_config_id=model_id, consented_at=datetime.now(timezone.utc).replace(tzinfo=None)))
         db.session.commit()
         assert has_model_consent(entity_id, model_id) is True
 

@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, render_template, request, redirect, url_for, abort, jsonify
 from sqlalchemy import func, case, text
@@ -50,7 +50,7 @@ def create_group():
 @admin_bp.route("/groups/<int:gid>")
 @admin_required
 def group_detail(gid):
-    group = Group.query.get_or_404(gid)
+    group = db.get_or_404(Group, gid)
     members = group.members.join(Entity, GroupMember.entity_id == Entity.id).add_entity(Entity).all()
     group_limit = GroupLimit.query.filter_by(group_id=gid).first()
     group_model_access = GroupModelAccess.query.filter_by(group_id=gid).all()
@@ -68,7 +68,7 @@ def group_detail(gid):
 @admin_bp.route("/groups/<int:gid>", methods=["POST"])
 @admin_required
 def update_group(gid):
-    group = Group.query.get_or_404(gid)
+    group = db.get_or_404(Group, gid)
     if group.config_managed:
         abort(403)
     group.name = request.form.get("name", group.name).strip()
@@ -80,7 +80,7 @@ def update_group(gid):
 @admin_bp.route("/groups/<int:gid>/toggle", methods=["POST"])
 @admin_required
 def toggle_group(gid):
-    group = Group.query.get_or_404(gid)
+    group = db.get_or_404(Group, gid)
     if group.config_managed:
         abort(403)
     group.active = not group.active
@@ -91,7 +91,7 @@ def toggle_group(gid):
 @admin_bp.route("/groups/<int:gid>/members", methods=["POST"])
 @admin_required
 def add_member(gid):
-    group = Group.query.get_or_404(gid)
+    group = db.get_or_404(Group, gid)
     if group.config_managed:
         abort(403)
     email = request.form.get("email", "").strip()
@@ -107,7 +107,7 @@ def add_member(gid):
 @admin_bp.route("/groups/<int:gid>/members/<int:mid>/remove", methods=["POST"])
 @admin_required
 def remove_member(gid, mid):
-    member = GroupMember.query.get_or_404(mid)
+    member = db.get_or_404(GroupMember, mid)
     if member.group_id != gid:
         abort(404)
     if member.config_managed:
@@ -124,7 +124,7 @@ def remove_member(gid, mid):
 @admin_bp.route("/groups/<int:gid>/pool", methods=["POST"])
 @admin_required
 def upsert_group_pool(gid):
-    group = Group.query.get_or_404(gid)
+    group = db.get_or_404(Group, gid)
     if group.config_managed:
         abort(403)
     max_coins = float(request.form.get("max_coins", 0))
@@ -150,7 +150,7 @@ def upsert_group_pool(gid):
 @admin_bp.route("/groups/<int:gid>/pool/delete", methods=["POST"])
 @admin_required
 def delete_group_pool(gid):
-    group = Group.query.get_or_404(gid)
+    group = db.get_or_404(Group, gid)
     if group.config_managed:
         abort(403)
     GroupLimit.query.filter_by(group_id=gid).delete()
@@ -161,7 +161,7 @@ def delete_group_pool(gid):
 @admin_bp.route("/groups/<int:gid>/access", methods=["POST"])
 @admin_required
 def upsert_group_access(gid):
-    group = Group.query.get_or_404(gid)
+    group = db.get_or_404(Group, gid)
     if group.config_managed:
         abort(403)
     model_config_id = int(request.form.get("model_config_id"))
@@ -181,10 +181,10 @@ def upsert_group_access(gid):
 @admin_bp.route("/groups/<int:gid>/access/<int:amid>/delete", methods=["POST"])
 @admin_required
 def delete_group_access(gid, amid):
-    access = GroupModelAccess.query.get_or_404(amid)
+    access = db.get_or_404(GroupModelAccess, amid)
     if access.group_id != gid:
         abort(404)
-    group = Group.query.get_or_404(gid)
+    group = db.get_or_404(Group, gid)
     if group.config_managed:
         abort(403)
     db.session.delete(access)
@@ -282,7 +282,7 @@ def users():
 @admin_bp.route("/users/<int:eid>/toggle", methods=["POST"])
 @admin_required
 def toggle_user(eid):
-    entity = Entity.query.get_or_404(eid)
+    entity = db.get_or_404(Entity, eid)
     entity.active = not entity.active
     db.session.commit()
     return jsonify({"active": entity.active})
@@ -291,7 +291,7 @@ def toggle_user(eid):
 @admin_bp.route("/users/<int:eid>/limits")
 @admin_required
 def user_limits(eid):
-    entity = Entity.query.get_or_404(eid)
+    entity = db.get_or_404(Entity, eid)
     models = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
 
     entity_limit = EntityLimit.query.filter_by(entity_id=eid).first()
@@ -302,7 +302,7 @@ def user_limits(eid):
     memberships = GroupMember.query.filter_by(entity_id=eid).all()
     group_details = []
     for m in memberships:
-        group = Group.query.get(m.group_id)
+        group = db.session.get(Group, m.group_id)
         if group and group.active:
             glimit = GroupLimit.query.filter_by(group_id=group.id).first()
             gaccess = GroupModelAccess.query.filter_by(group_id=group.id).all()
@@ -323,7 +323,7 @@ def user_limits(eid):
 @admin_bp.route("/users/<int:eid>/reset-tokens", methods=["POST"])
 @admin_required
 def reset_user_tokens(eid):
-    entity = Entity.query.get_or_404(eid)
+    entity = db.get_or_404(Entity, eid)
     pool = get_pool_limit(entity.id)
     if pool is None:
         return jsonify({"error": "No coin pool configured"}), 400
@@ -334,10 +334,10 @@ def reset_user_tokens(eid):
     balance = EntityBalance.query.filter_by(entity_id=eid).first()
     if balance:
         balance.coins_left = new_balance
-        balance.last_refill_at = datetime.utcnow()
+        balance.last_refill_at = datetime.now(timezone.utc).replace(tzinfo=None)
     else:
         balance = EntityBalance(
-            entity_id=eid, coins_left=new_balance, last_refill_at=datetime.utcnow()
+            entity_id=eid, coins_left=new_balance, last_refill_at=datetime.now(timezone.utc).replace(tzinfo=None)
         )
         db.session.add(balance)
     db.session.commit()
@@ -347,7 +347,7 @@ def reset_user_tokens(eid):
 @admin_bp.route("/users/<int:eid>/pool", methods=["POST"])
 @admin_required
 def upsert_user_pool(eid):
-    Entity.query.get_or_404(eid)
+    db.get_or_404(Entity, eid)
     max_coins = float(request.form.get("max_coins", 0))
     refresh_coins = float(request.form.get("refresh_coins", 0))
     starting_coins = float(request.form.get("starting_coins", 0))
@@ -385,7 +385,7 @@ def delete_user_pool(eid):
 @admin_bp.route("/users/<int:eid>/access", methods=["POST"])
 @admin_required
 def upsert_user_access(eid):
-    Entity.query.get_or_404(eid)
+    db.get_or_404(Entity, eid)
     model_config_id = int(request.form.get("model_config_id"))
     allowed = request.form.get("allowed", "true").lower() in ("true", "1", "yes")
 
@@ -401,7 +401,7 @@ def upsert_user_access(eid):
 @admin_bp.route("/users/<int:eid>/access/<int:amid>/delete", methods=["POST"])
 @admin_required
 def delete_user_access(eid, amid):
-    access = EntityModelAccess.query.get_or_404(amid)
+    access = db.get_or_404(EntityModelAccess, amid)
     if access.entity_id != eid:
         abort(404)
     db.session.delete(access)
@@ -535,7 +535,7 @@ def _period_start(period_str):
     cfg = _PERIODS.get(period_str, _PERIODS["week"])
     if cfg["offset"] is None:
         return None
-    return datetime.utcnow() - cfg["offset"]
+    return datetime.now(timezone.utc).replace(tzinfo=None) - cfg["offset"]
 
 
 def _period_bucket(period_str):

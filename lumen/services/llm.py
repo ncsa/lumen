@@ -1,6 +1,6 @@
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 import openai
 from flask import current_app
@@ -273,10 +273,10 @@ def update_stats(
     stat.input_tokens += input_tokens
     stat.output_tokens += output_tokens
     stat.cost = float(stat.cost) + cost
-    stat.last_used_at = datetime.utcnow()
+    stat.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
     log = RequestLog(
-        time=datetime.utcnow(),
+        time=datetime.now(timezone.utc).replace(tzinfo=None),
         entity_id=entity_id,
         model_config_id=model_config_id,
         model_endpoint_id=endpoint_id,

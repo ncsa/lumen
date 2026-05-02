@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from lumen.extensions import db
 
@@ -12,7 +12,7 @@ class Message(db.Model):
     )
     role = db.Column(db.String(16), nullable=False)
     content = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     # Nullable metadata (assistant messages only)
     input_tokens = db.Column(db.Integer, nullable=True)

@@ -1,6 +1,7 @@
 from functools import wraps
 from flask import session, redirect, url_for, jsonify, current_app
 
+from lumen.extensions import db
 from lumen.models.entity import Entity
 
 
@@ -9,7 +10,7 @@ def login_required(f):
     def decorated(*args, **kwargs):
         if not session.get("entity_id"):
             return redirect(url_for("auth.landing"))
-        entity = Entity.query.get(session["entity_id"])
+        entity = db.session.get(Entity, session["entity_id"])
         if not entity or not entity.active:
             session.clear()
             return redirect(url_for("auth.landing"))
@@ -27,7 +28,7 @@ def admin_required(f):
     def decorated(*args, **kwargs):
         if not session.get("entity_id"):
             return redirect(url_for("auth.landing"))
-        entity = Entity.query.get(session["entity_id"])
+        entity = db.session.get(Entity, session["entity_id"])
         if not entity or not entity.active:
             session.clear()
             return redirect(url_for("auth.landing"))

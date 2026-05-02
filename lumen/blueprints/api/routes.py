@@ -1,13 +1,13 @@
 import json
 import logging
 import time as _time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from functools import wraps
 
 import openai
 from flask import Blueprint, current_app, request, jsonify, g, Response, stream_with_context
-from sqlalchemy import text as sa_text, update as sa_update
+from sqlalchemy import case, func, select, update as sa_update
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +16,7 @@ from lumen.models.api_key import APIKey
 from lumen.services.crypto import hash_api_key
 from lumen.models.entity import Entity
 from lumen.models.model_config import ModelConfig
+from lumen.models.request_log import RequestLog
 from lumen.services.cost import calculate_cost
 from lumen.services.llm import check_coin_budget, deduct_coins, get_effective_limit, get_next_endpoint, update_stats
 
@@ -53,24 +54,30 @@ def _get_request_rates() -> dict:
     now = _time.monotonic()
     if now < _rates_cache["expires_at"]:
         return _rates_cache["data"]
-    sql = sa_text("""
-        SELECT
-            model_config_id,
-            COUNT(*) FILTER (WHERE time > NOW() - INTERVAL '1 minute')  AS last_minute,
-            COUNT(*) FILTER (WHERE time > NOW() - INTERVAL '1 hour')    AS last_hour,
-            COUNT(*) FILTER (WHERE time > NOW() - INTERVAL '1 day')     AS last_day
-        FROM request_logs
-        WHERE time > NOW() - INTERVAL '1 day'
-          AND model_config_id IS NOT NULL
-        GROUP BY model_config_id
-    """)
+
+    n = datetime.now(timezone.utc)
+    minute_ago = n - timedelta(minutes=1)
+    hour_ago = n - timedelta(hours=1)
+    day_ago = n - timedelta(days=1)
+
+    stmt = (
+        select(
+            RequestLog.model_config_id,
+            func.count(case((RequestLog.time > minute_ago, 1))).label("last_minute"),
+            func.count(case((RequestLog.time > hour_ago, 1))).label("last_hour"),
+            func.count(case((RequestLog.time > day_ago, 1))).label("last_day"),
+        )
+        .where(RequestLog.time > day_ago)
+        .where(RequestLog.model_config_id.isnot(None))
+        .group_by(RequestLog.model_config_id)
+    )
     result = {
         row.model_config_id: {
             "last_minute": row.last_minute,
             "last_hour": row.last_hour,
             "last_day": row.last_day,
         }
-        for row in db.session.execute(sql).fetchall()
+        for row in db.session.execute(stmt).all()
     }
     _rates_cache["data"] = result
     _rates_cache["expires_at"] = now + 30.0
@@ -160,7 +167,7 @@ def api_key_required(f):
         if not api_key or not api_key.active:
             return _err("Invalid or inactive API key", "authentication_error", 401)
 
-        entity = Entity.query.get(api_key.entity_id)
+        entity = db.session.get(Entity, api_key.entity_id)
         if not entity or not entity.active:
             return _err("Account disabled", "authentication_error", 403)
 

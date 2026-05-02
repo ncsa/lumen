@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from ..extensions import db
 
 
@@ -12,7 +12,7 @@ class Entity(db.Model):
     initials = db.Column(db.String(4), nullable=False, default="")
     gravatar_hash = db.Column(db.String(64), nullable=True)  # users only
     active = db.Column(db.Boolean, default=True, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     api_keys = db.relationship("APIKey", backref="entity", lazy="dynamic", cascade="all, delete-orphan", passive_deletes=True)
     entity_limit = db.relationship("EntityLimit", backref="entity", uselist=False, cascade="all, delete-orphan", passive_deletes=True)

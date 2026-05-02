@@ -5,10 +5,22 @@ All notable changes to Lumen will be documented in this file.
 ## [Unreleased]
 
 ### Added
-- Test suite with 121 tests achieving >50% line coverage: unit tests for cost calculation, crypto, auth helpers, LLM access control (user/group/global rules, coin budget), YAML sync commands; route tests for auth, models, decorators, and admin/chat/usage/services pages; UI tests asserting correct status badge CSS classes and model visibility rules
+- Test suite expanded to 218 tests: added route tests for `/v1` API auth, `/chat/upload`, and admin group/user management; unit tests for token refill math, metrics middleware (`_normalize_path`, WSGI wrapping), config watcher (`_check_restart_required` restart-required key detection), and health checker (healthy/unhealthy/connection-error/name-fallback per endpoint)
+- WCAG 2.1 AA accessibility test suite (`tests/ui/test_accessibility.py`): renders 6 pages via the Flask test client and asserts lang attribute, main landmark, image alt text, form label associations, icon-button aria-label, modal aria-labelledby, data table captions, heading hierarchy, and SkipTo.js presence
+- GitHub Actions CI workflow (`.github/workflows/test.yml`): runs `uv run pytest` on every push to `main` and every pull request
+
+### Fixed
+- `datetime.utcnow()` replaced with `datetime.now(timezone.utc).replace(tzinfo=None)` across 10 models (column defaults), 4 service/blueprint files, and 2 test files — eliminates Python 3.12+ deprecation warnings
+- `Model.query.get(id)` → `db.session.get(Model, id)` and `Model.query.get_or_404(id)` → `db.get_or_404(Model, id)` across all production code and tests — eliminates SQLAlchemy 2.0 legacy API warnings
+- Flask-Limiter in-memory storage warning suppressed in tests by adding `rate_limiting.storage_url: "memory://"` to `test_config.yaml`
+- `<label>` elements without `for` attributes on Display/Search controls in `groups.html` and `users.html`
+- Modal titles changed from `<h5>` to `<h2 class="h5">` across all admin, usage, and services templates to fix heading hierarchy violations (h1 → h5 skip)
+- `lumen/services/health.py`: per-tick check body extracted into `check_all_endpoints()` for testability; `start_health_checker` retains identical loop behaviour
 
 ### Changed
 - `model_detail` request-count queries ported from raw PostgreSQL SQL (`NOW() - INTERVAL`) to SQLAlchemy ORM (`datetime.utcnow() - timedelta(...)`) for SQLite compatibility
+- `/v1/models` request-rate query (`_get_request_rates`) ported from raw PostgreSQL SQL to dialect-agnostic SQLAlchemy Core; same compiled predicate so TimescaleDB chunk pruning is preserved
+- `lumen/services/token_refill.py`: per-tick refill body extracted into `refill_coin_balances()` so the math is testable in isolation; `start_coin_refiller` retains identical loop+sleep behavior
 
 ## [1.6.0] - 2026-05-02
 

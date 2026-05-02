@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from ..extensions import db
 
 
@@ -21,7 +21,7 @@ class ModelConfig(db.Model):
     supports_reasoning = db.Column(db.Boolean, nullable=True)
     knowledge_cutoff = db.Column(db.String(7), nullable=True)
     notice = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     endpoints = db.relationship("ModelEndpoint", backref="model_config", lazy="dynamic", cascade="all, delete-orphan", passive_deletes=True)
     stats = db.relationship("ModelStat", backref="model_config", lazy="dynamic", passive_deletes=True)
