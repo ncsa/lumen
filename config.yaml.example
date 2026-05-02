@@ -66,18 +66,35 @@ users:
   admins:
     - admin@example.com
 
+# Global model access defaults. Applied to all users before per-group rules.
+# default: whitelist|blacklist|graylist — behavior for models not listed anywhere (default: whitelist = allowed)
+# Supported lists: whitelist (always accessible), blacklist (always denied), graylist (needs user acknowledgment)
+# Use "*" in any list as shorthand for setting that list type as the default.
+#model_access:
+#  default: whitelist        # new models are accessible to everyone by default
+#  blacklist: [old-model]    # explicitly deny this model for everyone
+#  graylist: [beta-model]    # require acknowledgment before use
+
 groups:
   # Groups are created/managed via the admin UI. Rules here auto-assign users at login
   # based on CILogon userinfo fields (requires org.cilogon.userinfo scope).
   # Supported matchers: contains (substring) or equals (exact match).
+  # Per-group model_access overrides global model_access for group members.
 
   # aifarms:
   #   rules:
   #     - field: member_of
   #       contains: icc-grp-aifarms   # substring match against the member_of field
-  #   default:
-  #     max: 0
-  #     refresh: 0
+  #   max: 0
+  #   refresh: 0
+  #   model_access:
+  #     whitelist: [gpt-4o, claude-3]   # these models skip graylist for aifarms members
+  #     blacklist: [deprecated-model]
+
+  # restricted-group:
+  #   model_access:
+  #     default: blacklist    # deny everything not in whitelist for this group
+  #     whitelist: [safe-a, safe-b]
 
   # uiuc-staff:
   #   rules:
@@ -85,9 +102,8 @@ groups:
   #       contains: staff@illinois.edu
   #     - field: idp
   #       equals: urn:mace:incommon:uiuc.edu   # exact match
-  #   default:
-  #     max: 0
-  #     refresh: 0
+  #   max: 0
+  #   refresh: 0
 
 models:
   # The top-level "name" is Lumen's internal model identifier — what callers use in API requests.

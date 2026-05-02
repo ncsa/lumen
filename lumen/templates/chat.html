@@ -32,10 +32,18 @@
 
       <label for="model-picker" class="form-label mb-0 fw-semibold">Model:</label>
       <select id="model-picker" class="form-select form-select-sm" style="max-width:280px">
-        {% for model in active_models %}
-        <option value="{{ model.model_name }}">{{ model.model_name }}</option>
+        {% for item in available_models %}
+        <option value="{{ item.model.model_name }}"
+                {% if item.status == 'graylist' and not item.consented %}data-graylist="true" data-model-url="{{ url_for('models_page.detail', model_name=item.model.model_name) }}"{% endif %}>
+          {% if item.status == 'graylist' and not item.consented %}⚠ {% endif %}{{ item.model.model_name }}
+        </option>
         {% endfor %}
       </select>
+      <div id="graylist-warning" class="alert alert-warning py-1 px-2 mb-0 small d-none" role="alert" aria-live="polite">
+        <span aria-hidden="true">⚠</span>
+        This model requires acknowledgment before use.
+        <a id="graylist-link" href="#" class="alert-link">Acknowledge on model page</a>
+      </div>
     </div>
 
     <div id="chat-messages" class="chat-messages flex-fill overflow-auto p-3" role="log" aria-live="polite" aria-label="Chat messages"></div>
@@ -129,7 +137,22 @@
       if (opt.value === savedModel) { picker.value = savedModel; break; }
     }
   }
-  picker.addEventListener("change", () => localStorage.setItem(STORAGE_MODEL_KEY, picker.value));
+  picker.addEventListener("change", () => {
+    localStorage.setItem(STORAGE_MODEL_KEY, picker.value);
+    updateGraylistWarning();
+  });
+
+  function updateGraylistWarning() {
+    const opt = picker.options[picker.selectedIndex];
+    const warning = document.getElementById("graylist-warning");
+    if (opt && opt.dataset.graylist === "true") {
+      document.getElementById("graylist-link").href = opt.dataset.modelUrl;
+      warning.classList.remove("d-none");
+    } else {
+      warning.classList.add("d-none");
+    }
+  }
+  updateGraylistWarning();
 
   // ── Sidebar toggle (desktop) ────────────────────────────────────
   document.getElementById("sidebar-toggle-btn").addEventListener("click", () => {
@@ -488,6 +511,11 @@
 
     const model = picker.value;
     if (!model) { alert("Please select a model."); return; }
+    const selectedOpt = picker.options[picker.selectedIndex];
+    if (selectedOpt && selectedOpt.dataset.graylist === "true") {
+      alert("This model requires acknowledgment before use. Please visit the model page to acknowledge it.");
+      return;
+    }
 
     let content;
     if (pendingAttachment && pendingAttachment.type === "image") {

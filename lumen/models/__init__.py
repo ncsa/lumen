@@ -6,6 +6,8 @@ from .model_endpoint import ModelEndpoint
 from .entity_limit import EntityLimit
 from .entity_balance import EntityBalance
 from .entity_model_access import EntityModelAccess
+from .entity_model_consent import EntityModelConsent
+from .global_model_access import GlobalModelAccess
 from .model_stat import ModelStat
 from .conversation import Conversation
 from .message import Message
@@ -24,6 +26,8 @@ __all__ = [
     "EntityLimit",
     "EntityBalance",
     "EntityModelAccess",
+    "EntityModelConsent",
+    "GlobalModelAccess",
     "ModelStat",
     "Conversation",
     "Message",

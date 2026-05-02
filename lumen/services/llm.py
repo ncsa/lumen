@@ -3,11 +3,14 @@ import time
 from datetime import datetime
 
 import openai
+from flask import current_app
 
 from lumen.extensions import db
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
 from lumen.models.entity_model_access import EntityModelAccess
+from lumen.models.entity_model_consent import EntityModelConsent
+from lumen.models.global_model_access import GlobalModelAccess
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
@@ -17,6 +20,9 @@ from lumen.models.group_member import GroupMember
 from lumen.models.group_limit import GroupLimit
 from lumen.models.group_model_access import GroupModelAccess
 from lumen.services.cost import calculate_cost
+
+# Priority order for access types when multiple apply (lower index = higher priority)
+_ACCESS_PRIORITY = {"blacklist": 0, "graylist": 1, "whitelist": 2}
 
 _rr_counters: dict = {}
 _rr_lock = threading.Lock()
@@ -49,32 +55,91 @@ def _get_active_group_ids(entity_id: int) -> list:
     ]
 
 
-def get_model_access(entity_id: int, model_config_id: int) -> bool:
+def get_model_access_status(entity_id: int, model_config_id: int) -> str:
     """
-    Return True if entity can access the given model, False otherwise.
+    Return 'allowed', 'blocked', or 'graylist' for the given entity + model.
 
     Resolution:
-    1. User-level EntityModelAccess overrides everything.
-    2. If any active group grants access (allowed=True), return True.
-    3. No config = blocked (False).
+    1. User-level EntityModelAccess (allowed=True/False) overrides everything.
+    2. Check active groups' GroupModelAccess: blacklist > whitelist > graylist.
+    3. Check GlobalModelAccess: same priority.
+    4. Apply effective default: most restrictive group model_access_default, then global MODEL_ACCESS_DEFAULT.
     """
     user_access = EntityModelAccess.query.filter_by(
         entity_id=entity_id, model_config_id=model_config_id
     ).first()
     if user_access is not None:
-        return user_access.allowed
+        return "allowed" if user_access.allowed else "blocked"
+
+    # Global blacklist is absolute — no group can override it
+    global_rule = GlobalModelAccess.query.filter_by(model_config_id=model_config_id).first()
+    if global_rule is not None and global_rule.access_type == "blacklist":
+        return "blocked"
 
     group_ids = _get_active_group_ids(entity_id)
+
+    # Check per-model group rules (can override global graylist/whitelist)
     if group_ids:
-        group_access = GroupModelAccess.query.filter(
+        group_rules = GroupModelAccess.query.filter(
             GroupModelAccess.group_id.in_(group_ids),
             GroupModelAccess.model_config_id == model_config_id,
-            GroupModelAccess.allowed == True,  # noqa: E712
-        ).first()
-        if group_access is not None:
-            return True
+        ).all()
+        if group_rules:
+            best = min(group_rules, key=lambda r: _ACCESS_PRIORITY.get(r.access_type, 99))
+            if best.access_type == "blacklist":
+                return "blocked"
+            if best.access_type == "whitelist":
+                return "allowed"
+            return "graylist"
 
-    return False
+    # Check remaining global per-model rules (graylist/whitelist)
+    if global_rule is not None:
+        if global_rule.access_type == "whitelist":
+            return "allowed"
+        return "graylist"
+
+    # Apply effective default
+    if group_ids:
+        group_defaults = [
+            g.model_access_default for g in
+            Group.query.filter(Group.id.in_(group_ids), Group.model_access_default.isnot(None)).all()
+        ]
+        if group_defaults:
+            # Most permissive wins: if any group allows, allow.
+            # This matches individual model rule behavior (any whitelist grants access).
+            if "whitelist" in group_defaults:
+                return "allowed"
+            if "graylist" in group_defaults:
+                return "graylist"
+            return "blocked"
+
+    global_default = current_app.config.get("MODEL_ACCESS_DEFAULT", "whitelist")
+    if global_default == "blacklist":
+        return "blocked"
+    if global_default == "graylist":
+        return "graylist"
+    return "allowed"
+
+
+def has_model_consent(entity_id: int, model_config_id: int) -> bool:
+    """Return True if the entity has consented to use a graylisted model."""
+    return EntityModelConsent.query.filter_by(
+        entity_id=entity_id, model_config_id=model_config_id
+    ).first() is not None
+
+
+def get_model_access(entity_id: int, model_config_id: int) -> bool:
+    """
+    Return True if entity can access the given model, False otherwise.
+
+    For graylisted models, requires prior consent (EntityModelConsent).
+    """
+    status = get_model_access_status(entity_id, model_config_id)
+    if status == "blocked":
+        return False
+    if status == "graylist":
+        return has_model_consent(entity_id, model_config_id)
+    return True
 
 
 def get_pool_limit(entity_id: int):

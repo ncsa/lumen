@@ -103,42 +103,51 @@
 </table>
 
 <h2>Groups</h2>
-{% if group_details %}
-{% for membership, group, glimit, gaccess in group_details %}
+{%- if group_details %}
+{%- for membership, group, glimit, gaccess in group_details %}
 <div class="d-flex justify-content-between align-items-center mb-1">
   <strong>{{ group.name }}{% if membership.config_managed %} <span role="img" aria-label="Managed by config">🔒</span>{% endif %}</strong>
-  {% if not membership.config_managed %}
+  {%- if not membership.config_managed %}
   <form method="post" action="{{ url_for('admin.remove_member', gid=group.id, mid=membership.id) }}">
     <input type="hidden" name="back" value="user_limits">
     <button class="btn btn-sm btn-outline-danger">&times; Remove</button>
   </form>
-  {% endif %}
+  {%- endif %}
 </div>
-<div class="mb-3 ms-2">
-  {% if glimit %}
-  <p class="mb-1"><strong>Pool:</strong>
-    {% if glimit.max_coins == -2 %}<span class="text-success">Unlimited</span>
-    {% elif glimit.max_coins == 0 %}<span class="text-danger">Blocked</span>
-    {% else %}{{ "%.4f"|format(glimit.max_coins|float) }} max, {{ "%.4f"|format(glimit.refresh_coins|float) }}/hr, {{ "%.4f"|format(glimit.starting_coins|float) }} starting
-    {% endif %}
-  </p>
-  {% else %}
-  <p class="mb-1 text-muted"><em>No pool configured for this group.</em></p>
-  {% endif %}
-  {% if gaccess %}
-  <p class="mb-0"><strong>Model access:</strong>
-    {% for a in gaccess %}
-    <span class="badge {% if a.allowed %}bg-success{% else %}bg-danger{% endif %} me-1">{{ a.model_config.model_name }}</span>
-    {% endfor %}
-  </p>
-  {% else %}
-  <p class="mb-0 text-muted"><em>No model access configured for this group.</em></p>
-  {% endif %}
+<div class="mb-2 ms-2 lh-sm">
+  {%- if glimit %}
+  <div class="mb-0"><strong>Pool:</strong>
+    {%- if glimit.max_coins == -2 %} <span class="text-success">Unlimited</span>
+    {%- elif glimit.max_coins == 0 %} <span class="text-danger">Blocked</span>
+    {%- else %} {{ "%.4f"|format(glimit.max_coins|float) }} max, {{ "%.4f"|format(glimit.refresh_coins|float) }}/hr, {{ "%.4f"|format(glimit.starting_coins|float) }} starting
+    {%- endif %}
+  </div>
+  {%- else %}
+  <div class="mb-0 text-muted"><em>No pool configured for this group.</em></div>
+  {%- endif %}
+  <div class="mb-0"><strong>Model access default:</strong>
+    {%- if group.model_access_default == 'whitelist' %}
+    <span class="badge bg-success">whitelist (all allowed)</span>
+    {%- elif group.model_access_default == 'blacklist' %}
+    <span class="badge bg-danger">blacklist (all blocked)</span>
+    {%- elif group.model_access_default == 'graylist' %}
+    <span class="badge bg-warning text-dark">graylist (all need consent)</span>
+    {%- else %}
+    <span class="text-muted">inherited from global</span>
+    {%- endif %}
+  </div>
+  {%- if gaccess %}
+  <div class="mb-0"><strong>Explicit rules:</strong>
+    {%- for a in gaccess %}
+    <span class="badge {% if a.access_type == 'whitelist' %}bg-success{% elif a.access_type == 'blacklist' %}bg-danger{% else %}bg-warning text-dark{% endif %} me-1">{{ a.access_type }}: {{ a.model_config.model_name }}</span>
+    {%- endfor %}
+  </div>
+  {%- endif %}
 </div>
-{% endfor %}
-{% else %}
+{%- endfor %}
+{%- else %}
 <p class="text-muted">Not in any groups.</p>
-{% endif %}
+{%- endif %}
 
 <!-- Edit Pool Modal -->
 <div class="modal fade" id="editPoolModal" tabindex="-1" aria-labelledby="editPoolModalLabel">

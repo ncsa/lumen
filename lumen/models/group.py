@@ -10,6 +10,7 @@ class Group(db.Model):
     description = db.Column(db.Text, nullable=True)
     active = db.Column(db.Boolean, default=True, nullable=False)
     config_managed = db.Column(db.Boolean, default=False, nullable=False)
+    model_access_default = db.Column(db.String(20), nullable=True)  # 'whitelist' | 'blacklist' | 'graylist'
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     members = db.relationship("GroupMember", backref="group", lazy="dynamic", cascade="all, delete-orphan", passive_deletes=True)

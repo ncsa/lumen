@@ -3,11 +3,14 @@ from flask import current_app
 from flask.cli import with_appcontext
 
 from .extensions import db
+from lumen.models.global_model_access import GlobalModelAccess
 from lumen.models.group import Group
 from lumen.models.group_limit import GroupLimit
 from lumen.models.group_model_access import GroupModelAccess
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
+
+_VALID_ACCESS_TYPES = {"whitelist", "blacklist", "graylist"}
 
 
 def sync_models_from_yaml(yaml_data):
@@ -86,10 +89,14 @@ def sync_models_from_yaml(yaml_data):
 def sync_groups_from_yaml(yaml_data):
     """Upsert Group, GroupLimit, and GroupModelAccess rows from yaml_data['groups'].
 
-    New config format per group (flat keys):
-      max, refresh, starting  -> GroupLimit (token pool)
-      models: [name, ...]     -> GroupModelAccess (allowed=True for each named model)
-      rules: [...]            -> auto-membership rules (handled at login, not here)
+    Config format per group:
+      max, refresh, starting    -> GroupLimit (token pool)
+      model_access:             -> GroupModelAccess + model_access_default
+        default: whitelist      -> group default for unlisted models
+        whitelist: [name, ...]
+        blacklist: [name, ...]
+        graylist:  [name, ...]
+      rules: [...]              -> auto-membership rules (handled at login, not here)
     """
     groups_cfg = yaml_data.get("groups", {})
     yaml_group_names = set(groups_cfg.keys())
@@ -102,6 +109,12 @@ def sync_groups_from_yaml(yaml_data):
             db.session.flush()
         else:
             group.config_managed = True
+
+        if "models" in group_def:
+            current_app.logger.warning(
+                f"sync_groups_from_yaml: group '{group_name}' uses deprecated 'models:' key; "
+                "use 'model_access.whitelist:' instead. The key is ignored."
+            )
 
         # Upsert GroupLimit (coin pool)
         if "max" in group_def:
@@ -123,20 +136,30 @@ def sync_groups_from_yaml(yaml_data):
         else:
             GroupLimit.query.filter_by(group_id=group.id).delete()
 
-        # Upsert GroupModelAccess (replace all on each sync)
+        # Upsert GroupModelAccess from model_access: section
         GroupModelAccess.query.filter_by(group_id=group.id).delete()
-        for model_name in group_def.get("models", []):
-            mc = ModelConfig.query.filter_by(model_name=model_name).first()
-            if mc is None:
-                current_app.logger.warning(
-                    f"sync_groups_from_yaml: model '{model_name}' not found, skipping access grant for group '{group_name}'"
-                )
-                continue
-            db.session.add(GroupModelAccess(
-                group_id=group.id,
-                model_config_id=mc.id,
-                allowed=True,
-            ))
+        access_cfg = group_def.get("model_access", {})
+        group_default = None
+        for access_type in _VALID_ACCESS_TYPES:
+            for model_name in access_cfg.get(access_type, []):
+                if model_name == "*":
+                    group_default = access_type
+                    continue
+                mc = ModelConfig.query.filter_by(model_name=model_name).first()
+                if mc is None:
+                    current_app.logger.warning(
+                        f"sync_groups_from_yaml: model '{model_name}' not found in group '{group_name}' {access_type}, skipping"
+                    )
+                    continue
+                db.session.add(GroupModelAccess(
+                    group_id=group.id,
+                    model_config_id=mc.id,
+                    access_type=access_type,
+                ))
+        # Explicit default key overrides * shorthand
+        if "default" in access_cfg:
+            group_default = access_cfg["default"]
+        group.model_access_default = group_default
 
     # Remove config_managed groups no longer in yaml
     for group in Group.query.filter_by(config_managed=True).all():
@@ -146,12 +169,44 @@ def sync_groups_from_yaml(yaml_data):
     db.session.commit()
 
 
+def sync_global_model_access_from_yaml(yaml_data):
+    """Sync GlobalModelAccess from yaml_data['model_access'] and store the default in app config."""
+    access_cfg = yaml_data.get("model_access", {})
+
+    global_default = access_cfg.get("default", "whitelist")
+    current_app.config["MODEL_ACCESS_DEFAULT"] = global_default
+
+    GlobalModelAccess.query.delete()
+    for access_type in _VALID_ACCESS_TYPES:
+        for model_name in access_cfg.get(access_type, []):
+            if model_name == "*":
+                # * is shorthand for default; explicit 'default' key takes precedence
+                if "default" not in access_cfg:
+                    current_app.config["MODEL_ACCESS_DEFAULT"] = access_type
+                    global_default = access_type
+                continue
+            mc = ModelConfig.query.filter_by(model_name=model_name).first()
+            if mc is None:
+                current_app.logger.warning(
+                    f"sync_global_model_access_from_yaml: model '{model_name}' not found in global {access_type}, skipping"
+                )
+                continue
+            db.session.add(GlobalModelAccess(
+                model_config_id=mc.id,
+                access_type=access_type,
+            ))
+    db.session.commit()
+
+
 @click.command("init-db")
 @with_appcontext
 def init_db_cmd():
-    """Sync ModelConfig and ModelEndpoint from models.yaml."""
-    sync_models_from_yaml(current_app.config["YAML_DATA"])
-    click.echo("Database synced with models from models.yaml.")
+    """Sync ModelConfig, ModelEndpoint, Groups, and GlobalModelAccess from config.yaml."""
+    yaml_data = current_app.config["YAML_DATA"]
+    sync_models_from_yaml(yaml_data)
+    sync_groups_from_yaml(yaml_data)
+    sync_global_model_access_from_yaml(yaml_data)
+    click.echo("Database synced from config.yaml.")
 
 
 @click.command("reassign-model")

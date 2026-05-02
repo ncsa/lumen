@@ -9,10 +9,18 @@ All notable changes to Lumen will be documented in this file.
 - `notice` field on models: optional markdown text shown as a warning callout on the detail page; hidden when unset; configurable via `config.yaml`
 - Model names on the `/models` health dashboard are now clickable links to the detail page
 - Admin users see each endpoint URL with an up/down badge on the model detail page
+- Model access lists: whitelist, blacklist, and graylist support for fine-grained model access control
+  - New top-level `model_access:` config section for global defaults with `whitelist`, `blacklist`, `graylist` lists and a `default` field (`whitelist`|`blacklist`|`graylist`, default: `whitelist` = allowed)
+  - Per-group `model_access:` section overrides global rules; each group supports `default`, `whitelist`, `blacklist`, `graylist`, and `*` wildcard shorthand
+  - Graylisted models appear in the chat model picker with a ⚠ indicator; the user must navigate to the model detail page and click "Acknowledge & Enable Access" once before use
+  - Consent is recorded per-user with a timestamp; the model detail page shows the acknowledgment date after consent
+  - Access resolution: user admin override > group rules (blacklist > whitelist > graylist) > global rules > effective default
+  - New DB migration `q7r8s9t0u1v2` adds `global_model_access`, `entity_model_consents` tables; adds `access_type` column to `group_model_access` (replacing `allowed`); adds `model_access_default` to `groups`
 
 ### Changed
 - Removed the admin-only chevron toggle and collapsible endpoint rows from the `/models` dashboard (detail page replaces this)
 - HuggingFace README: code blocks wrap instead of overflowing (`white-space: pre-wrap`); images capped at 800px wide; inline `font-family` styles suppressed to match the page design system
+- Group config: `models: [list]` key is deprecated; use `model_access.whitelist: [list]` instead (warning logged on startup if old key detected)
 
 ## [1.5.1] - 2026-05-01
 

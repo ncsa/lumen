@@ -200,8 +200,8 @@ def create_app():
         result["nav_services"] = services
         return result
 
-    # Sync models and groups from yaml into DB on every startup
-    from lumen.commands import sync_models_from_yaml, sync_groups_from_yaml
+    # Sync models, groups, and global model access from yaml into DB on every startup
+    from lumen.commands import sync_global_model_access_from_yaml, sync_groups_from_yaml, sync_models_from_yaml
     with app.app_context():
         try:
             sync_models_from_yaml(yaml_data)
@@ -212,6 +212,11 @@ def create_app():
             sync_groups_from_yaml(yaml_data)
         except Exception as e:
             print(f"WARNING: Could not sync groups from yaml (run 'flask db upgrade' first): {e}",
+                  file=sys.stderr)
+        try:
+            sync_global_model_access_from_yaml(yaml_data)
+        except Exception as e:
+            print(f"WARNING: Could not sync global model access from yaml (run 'flask db upgrade' first): {e}",
                   file=sys.stderr)
 
     # Start background threads only in the main worker process.

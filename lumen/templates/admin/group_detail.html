@@ -85,24 +85,28 @@
 <div class="d-flex justify-content-between align-items-center mb-2">
   <h2 class="mb-0">Model Access</h2>
   {% if not group.config_managed %}
-  <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addAccessModal">+ Grant Access</button>
+  <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addAccessModal">+ Add Rule</button>
   {% endif %}
 </div>
 
 <table class="table table-bordered align-middle mb-4">
-  <caption class="visually-hidden">Model access grants for this group</caption>
+  <caption class="visually-hidden">Model access rules for this group</caption>
   <thead class="table-light">
-    <tr><th>Model</th><th>Access</th><th><span class="visually-hidden">Actions</span></th></tr>
+    <tr><th>Model</th><th>Access Type</th><th><span class="visually-hidden">Actions</span></th></tr>
   </thead>
   <tbody>
     {% for access in group_model_access %}
     <tr>
       <td>{{ access.model_config.model_name }}</td>
       <td>
-        {% if access.allowed %}
-        <span class="text-success">Allowed</span>
+        {% if access.access_type == 'whitelist' %}
+        <span class="badge bg-success">Whitelist</span>
+        {% elif access.access_type == 'blacklist' %}
+        <span class="badge bg-danger">Blacklist</span>
+        {% elif access.access_type == 'graylist' %}
+        <span class="badge bg-warning text-dark">Graylist</span>
         {% else %}
-        <span class="text-danger">Denied</span>
+        <span class="text-muted">{{ access.access_type }}</span>
         {% endif %}
       </td>
       <td>
@@ -116,7 +120,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="3" class="text-muted text-center">No model access configured.</td></tr>
+    <tr><td colspan="3" class="text-muted text-center">No model access rules configured.</td></tr>
     {% endfor %}
   </tbody>
 </table>
@@ -157,7 +161,7 @@
   <div class="modal-dialog">
     <form method="post" action="{{ url_for('admin.upsert_group_access', gid=group.id) }}" class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title" id="addAccessModalLabel">Grant / Deny Model Access</h5>
+        <h5 class="modal-title" id="addAccessModalLabel">Set Model Access Rule</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
@@ -170,10 +174,11 @@
           </select>
         </div>
         <div class="mb-3">
-          <label class="form-label" for="ga-allowed-select">Access</label>
-          <select name="allowed" id="ga-allowed-select" class="form-select">
-            <option value="true">Allowed</option>
-            <option value="false">Denied</option>
+          <label class="form-label" for="ga-access-type-select">Access Type</label>
+          <select name="access_type" id="ga-access-type-select" class="form-select">
+            <option value="whitelist">Whitelist — explicitly allowed (skips graylist)</option>
+            <option value="blacklist">Blacklist — explicitly denied</option>
+            <option value="graylist">Graylist — allowed after user acknowledgment</option>
           </select>
         </div>
       </div>

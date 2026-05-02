@@ -47,6 +47,33 @@
       </div>
       {% endif %}
 
+      {% if access_status == 'graylist' %}
+      <div class="card border-warning" aria-labelledby="graylist-card-title">
+        <div class="card-header bg-warning bg-opacity-25 fw-semibold" id="graylist-card-title">
+          <span role="img" aria-label="Warning">⚠</span> Access Acknowledgment Required
+        </div>
+        <div class="card-body">
+          {% if consent %}
+          <p class="mb-0 text-success">
+            <strong>Access enabled.</strong> You acknowledged this model on
+            <span class="local-datetime" data-utc="{{ consent.consented_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>.
+          </p>
+          {% else %}
+          <p class="mb-2 small">This model requires acknowledgment before use. By enabling access you confirm you have read any notices and accept responsibility for appropriate use.</p>
+          <form method="post" action="{{ url_for('models_page.model_consent', model_name=config.model_name) }}">
+            <button type="submit" class="btn btn-warning w-100">
+              Acknowledge &amp; Enable Access
+            </button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+      {% elif access_status == 'blocked' %}
+      <div class="alert alert-danger mb-0" role="alert">
+        <strong>Access denied.</strong> You do not have permission to use this model. Contact an administrator if you need access.
+      </div>
+      {% endif %}
+
       <div class="card">
         <div class="card-header fw-semibold">Availability</div>
         <div class="card-body p-0">

@@ -15,7 +15,7 @@ from lumen.extensions import db, limiter
 from lumen.models.conversation import Conversation
 from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
-from lumen.services.llm import check_coin_budget, get_effective_limit, send_message_stream
+from lumen.services.llm import check_coin_budget, get_effective_limit, get_model_access_status, has_model_consent, send_message_stream
 
 chat_bp = Blueprint("chat", __name__)
 
@@ -67,12 +67,23 @@ def _chat_limit():
 def chat_page():
     entity_id = session["entity_id"]
     all_models = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
-    active_models = [
-        m for m in all_models
-        if get_effective_limit(entity_id, m.id) is not None
-        and m.endpoints.filter_by(healthy=True).count() > 0
-    ]
-    return render_template("chat.html", active_models=active_models)
+
+    # Include models that are accessible (not blocked) and have healthy endpoints.
+    # Graylisted models without consent are shown with a warning so the user can navigate
+    # to the model detail page to acknowledge them.
+    available_models = []
+    for m in all_models:
+        if m.endpoints.filter_by(healthy=True).count() == 0:
+            continue
+        status = get_model_access_status(entity_id, m.id)
+        if status == "blocked":
+            continue
+        if get_effective_limit(entity_id, m.id) is None and status != "graylist":
+            continue
+        consented = has_model_consent(entity_id, m.id) if status == "graylist" else True
+        available_models.append({"model": m, "status": status, "consented": consented})
+
+    return render_template("chat.html", available_models=available_models)
 
 
 
