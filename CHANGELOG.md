@@ -2,6 +2,11 @@
 
 All notable changes to Lumen will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- Chat model picker now hides models that have no healthy endpoints available
+
 ## [1.5.0] - 2026-05-01
 
 ### Added

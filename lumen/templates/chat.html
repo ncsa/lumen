@@ -594,6 +594,16 @@
               thinkingDetails.open = false;
               thinkingDetails.querySelector("summary").textContent = "Thought";
             }
+            if (!streamWrapper) {
+              removeTypingIndicator();
+              const row = document.createElement("div");
+              row.className = "d-flex mb-2 justify-content-start";
+              streamWrapper = document.createElement("div");
+              streamWrapper.className = "d-flex flex-column align-items-start";
+              streamWrapper.style.maxWidth = "65%";
+              row.appendChild(streamWrapper);
+              container.appendChild(row);
+            }
             if (!streamBubble) {
               streamBubble = document.createElement("div");
               streamBubble.className = "chat-bubble chat-bubble-assistant";

@@ -67,7 +67,11 @@ def _chat_limit():
 def chat_page():
     entity_id = session["entity_id"]
     all_models = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
-    active_models = [m for m in all_models if get_effective_limit(entity_id, m.id) is not None]
+    active_models = [
+        m for m in all_models
+        if get_effective_limit(entity_id, m.id) is not None
+        and m.endpoints.filter_by(healthy=True).count() > 0
+    ]
     return render_template("chat.html", active_models=active_models)
 
 
