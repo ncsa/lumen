@@ -10,6 +10,7 @@ All notable changes to Lumen will be documented in this file.
 - GitHub Actions CI workflow (`.github/workflows/test.yml`): runs `uv run pytest` on every push to `main` and every pull request
 - GitHub Actions updated to latest major versions: `actions/checkout` v4→v6, `astral-sh/setup-uv` v5→v8, `actions/setup-python` v5→v6
 - `.coverage` and `htmlcov/` added to `.gitignore`
+- Test results summary added to GitHub Actions CI using `dorny/test-reporter@v3` (JUnit XML)
 
 ### Fixed
 - `datetime.utcnow()` replaced with `datetime.now(timezone.utc).replace(tzinfo=None)` across 10 models (column defaults), 4 service/blueprint files, and 2 test files — eliminates Python 3.12+ deprecation warnings

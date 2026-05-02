@@ -9,6 +9,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v6
 
@@ -24,4 +27,12 @@ jobs:
         run: uv sync --frozen
 
       - name: Run tests
-        run: uv run pytest
+        run: uv run pytest --junitxml=junit.xml
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v3
+        if: always()
+        with:
+          name: pytest
+          path: junit.xml
+          reporter: java-junit
