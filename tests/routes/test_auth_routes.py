@@ -44,6 +44,32 @@ def test_devlogin_reuses_existing_user(app, client):
     assert first_id == second_id
 
 
+def test_devlogin_assigns_dev_groups(app, client):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        from lumen.models.entity import Entity
+        db.session.add(Group(name="dev-group", active=True, config_managed=True))
+        db.session.commit()
+
+    original = app.config.get("DEV_USER_GROUPS", [])
+    app.config["DEV_USER_GROUPS"] = ["dev-group"]
+    try:
+        client.get("/devlogin")
+    finally:
+        app.config["DEV_USER_GROUPS"] = original
+
+    with app.app_context():
+        from lumen.models.entity import Entity
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        entity = Entity.query.filter_by(email="testuser@example.com").first()
+        group = Group.query.filter_by(name="dev-group").first()
+        member = GroupMember.query.filter_by(entity_id=entity.id, group_id=group.id).first()
+        assert member is not None
+
+
 def test_logout_clears_session(auth_client):
     with auth_client.session_transaction() as sess:
         assert "entity_id" in sess

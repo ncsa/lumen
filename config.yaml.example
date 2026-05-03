@@ -9,6 +9,10 @@ app:
   database_url: postgresql://lumen:lumen@localhost:5678/lumen  # TimescaleDB (started by dev.sh)
   debug: true   # set to false in production
   # dev_user: dev@example.com  # Allows bypass of OAuth; can log in as this email directly
+  # dev_user:                  # Extended form: also assigns group memberships on every login
+  #   email: dev@example.com
+  #   groups:
+  #     - staff
   db_pool:
     pool_size: 20        # persistent connections kept open (default: 5)
     max_overflow: 30     # extra connections allowed above pool_size (default: 10)
@@ -96,7 +100,7 @@ groups:
   #     default: blacklist    # deny everything not in whitelist for this group
   #     whitelist: [safe-a, safe-b]
 
-  # uiuc-staff:
+  # staff:
   #   rules:
   #     - field: affiliation
   #       contains: staff@illinois.edu

@@ -85,7 +85,13 @@ def create_app():
         app.config["DEBUG"] = app_cfg["debug"]
     app.config["APP_NAME"] = app_cfg.get("name", "Lumen")
     app.config["APP_TAGLINE"] = app_cfg.get("tagline", "")
-    app.config["DEV_USER"] = app_cfg.get("dev_user", "")
+    _dev_raw = app_cfg.get("dev_user", "")
+    if isinstance(_dev_raw, dict):
+        app.config["DEV_USER"] = _dev_raw.get("email", "")
+        app.config["DEV_USER_GROUPS"] = _dev_raw.get("groups") or []
+    else:
+        app.config["DEV_USER"] = _dev_raw or ""
+        app.config["DEV_USER_GROUPS"] = []
     app.config["GITHUB_URL"] = app_cfg.get("github_url", "https://github.com/ncsa/lumen")
 
     oauth2_cfg = yaml_data.get("oauth2", {})

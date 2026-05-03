@@ -77,7 +77,10 @@ app:
   encryption_key: "another-random-string"
   database_url: sqlite:///lumen_dev.db
   debug: true
-  dev_user: dev@example.com    # bypasses OAuth — logs in as this email automatically
+  dev_user:                    # bypasses OAuth — logs in as this email automatically
+    email: dev@example.com
+    groups:                    # optional: assign groups on every dev login
+      - staff
 ```
 
 And at least one model under `models:`. Two options:
@@ -283,7 +286,7 @@ Automatically add users to a group at login based on their CILogon attributes (r
 
 ```yaml
 groups:
-  uiuc-staff:
+  staff:
     rules:
       - field: affiliation
         contains: staff@illinois.edu   # substring match

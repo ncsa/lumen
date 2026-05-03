@@ -169,6 +169,17 @@ def devlogin():
     if not email:
         return "Dev login not configured.", 403
     yaml_data = current_app.config.get("YAML_DATA", {})
+    dev_groups = current_app.config.get("DEV_USER_GROUPS", [])
+    if dev_groups:
+        users = dict(yaml_data.get("users") or {})
+        entry = dict(users.get(email) or {})
+        existing = list(entry.get("groups") or [])
+        for g in dev_groups:
+            if g not in existing:
+                existing.append(g)
+        entry["groups"] = existing
+        users[email] = entry
+        yaml_data = {**yaml_data, "users": users}
     name = email.split("@")[0]
 
     entity = Entity.query.filter_by(email=email, entity_type="user").first()

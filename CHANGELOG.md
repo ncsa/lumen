@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- `app.dev_user` now accepts a dict with `email` and `groups` keys in addition to a plain email string; groups listed under `dev_user.groups` are assigned to the dev user on every `/devlogin`
+
 ## [1.6.1] - 2026-05-02
 
 ### Added
