@@ -1,0 +1,620 @@
+{% extends "base.html" %}
+{% block title %}{{ client.name }} — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-1">
+  <a href="{{ url_for('clients.index') }}" class="btn btn-sm btn-outline-secondary">← Clients</a>
+  {% if is_admin %}
+  {% if client.active %}
+  <button class="btn btn-sm btn-outline-danger"
+          onclick="toggleClient({{ client.id }}, true)">
+    <i class="bi bi-pause-circle" aria-hidden="true"></i> Deactivate
+  </button>
+  {% else %}
+  <button class="btn btn-sm btn-outline-success"
+          onclick="toggleClient({{ client.id }}, false)">
+    <i class="bi bi-play-circle" aria-hidden="true"></i> Activate
+  </button>
+  {% endif %}
+  {% endif %}
+</div>
+<h1 class="mb-0">{{ client.name }}</h1>
+<p class="text-muted small mb-3">
+  {% if client.active %}<span class="badge bg-success me-1">Active</span>
+  {% else %}<span class="badge bg-secondary me-1">Inactive</span>{% endif %}
+  Created:
+  {% if client.created_at %}
+  <span class="local-datetime" data-utc="{{ client.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
+  {% else %}—{% endif %}
+</p>
+<ilw-content>
+
+<!-- Stat cards -->
+<div class="row g-3 mb-4">
+  <div class="col-sm-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="text-muted small mb-1">Total Tokens Used</div>
+        <div class="fs-4 fw-semibold">{{ "{:,}".format(status.total_tokens_used) }}</div>
+        <div class="text-muted small">input + output (all time)</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="text-muted small mb-1">Coins Spent</div>
+        <div class="fs-4 fw-semibold">{{ "%.2f"|format(status.total_cost) }}</div>
+        <div class="text-muted small">all time</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="text-muted small mb-1">Coin Pool</div>
+        {% if coin_pool is none %}
+        <div class="fs-4 fw-semibold text-muted">—</div>
+        <div class="text-muted small">not configured</div>
+        {% elif coin_pool.coin_limit == -2 %}
+        <div class="fs-4 fw-semibold text-success">Unlimited</div>
+        {% else %}
+        <div class="fs-4 fw-semibold">{{ "%.2f"|format(coin_pool.coins_left) }}</div>
+        <div class="text-muted small">of {{ "%.2f"|format(coin_pool.coin_limit) }} max</div>
+        {% if coin_pool.coin_limit > 0 %}
+        {% set pct = [(coin_pool.coins_left / coin_pool.coin_limit * 100)|int, 100]|min %}
+        <div class="progress mt-2" style="height:4px">
+          <div class="progress-bar" role="progressbar"
+               aria-label="Coin pool balance"
+               style="width:{{ pct }}%"
+               aria-valuenow="{{ coin_pool.coins_left }}"
+               aria-valuemin="0" aria-valuemax="{{ coin_pool.coin_limit }}"></div>
+        </div>
+        {% endif %}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="text-muted small mb-1">Coin Refill</div>
+        {% if coin_pool is none or coin_pool.coins_per_hour == 0 %}
+        <div class="fs-4 fw-semibold text-muted">—</div>
+        <div class="text-muted small">no refill configured</div>
+        {% else %}
+        <div class="fs-4 fw-semibold">+{{ "%.2f"|format(coin_pool.coins_per_hour) }}</div>
+        <div class="text-muted small">
+          per hour{% if coin_pool.next_refill %}, next <span class="local-time" data-utc="{{ coin_pool.next_refill.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>{% endif %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Managers -->
+<div class="d-flex justify-content-between align-items-center mt-4 mb-0">
+  <h2 class="mb-0">Managers</h2>
+  {% if is_admin %}
+  <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addManagerModal"
+          aria-haspopup="dialog">+ Add Manager</button>
+  {% endif %}
+</div>
+<div class="table-responsive mt-2">
+  <table class="table table-striped table-hover align-middle mb-0">
+    <caption class="visually-hidden">Users who manage this client</caption>
+    <thead class="table-light">
+      <tr>
+        <th>Name</th>
+        <th>Email</th>
+        {% if is_admin %}<th><span class="visually-hidden">Actions</span></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for mgr in managers %}
+      <tr>
+        <td>{{ mgr.name }}</td>
+        <td>{{ mgr.email or "—" }}</td>
+        {% if is_admin %}
+        <td>
+          <button class="btn btn-sm btn-outline-danger"
+                  onclick="removeManager({{ client.id }}, {{ mgr.id }}, '{{ mgr.name | e }}')"
+                  aria-label="Remove {{ mgr.name }}">Remove</button>
+        </td>
+        {% endif %}
+      </tr>
+      {% else %}
+      <tr><td colspan="{{ 3 if is_admin else 2 }}" class="text-muted text-center">No managers assigned.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+
+<!-- API Keys -->
+<div class="d-flex justify-content-between align-items-center mt-4 mb-0">
+  <h2 class="mb-0">API Keys</h2>
+  <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#apiKeyModal"
+          aria-haspopup="dialog">+ New API Key</button>
+</div>
+<div class="d-flex justify-content-between align-items-center mt-2 mb-1">
+  <div class="d-flex align-items-center gap-1">
+    <input type="checkbox" id="show-deleted-cb" class="form-check-input mt-0" aria-label="Show deleted keys">
+    <label for="show-deleted-cb" class="form-check-label small">Show deleted keys</label>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <label for="key-search" class="text-muted small mb-0">Search:</label>
+    <input id="key-search" type="search" class="form-control form-control-sm" style="width:200px"
+           placeholder="Filter by name…" aria-label="Filter API keys by name">
+  </div>
+</div>
+<div class="table-responsive">
+  <table class="table table-striped table-hover align-middle mb-0" id="key-table">
+    <caption class="visually-hidden">API keys for this client</caption>
+    <thead class="table-light">
+      <tr>
+        <th class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th class="sort-header text-end" data-col="input_tokens">Input Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th class="sort-header text-end" data-col="output_tokens">Output Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th><span class="visually-hidden">Actions</span></th>
+      </tr>
+    </thead>
+    <tbody id="key-tbody">
+      <tr><td colspan="7" class="text-muted text-center">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+<p id="key-empty" class="text-muted" hidden>No API keys match your filter.</p>
+
+
+<!-- Model Access -->
+<div class="d-flex justify-content-between align-items-center mt-4 mb-0">
+  <h2 class="mb-0">Model Access</h2>
+</div>
+<div class="d-flex justify-content-end mt-2 mb-1">
+  <label for="model-search" class="text-muted small mb-0 me-2 align-self-center">Search:</label>
+  <input id="model-search" type="search" class="form-control form-control-sm" style="width:200px"
+         placeholder="Filter by name…" aria-label="Filter models by name">
+</div>
+<div class="table-responsive">
+  <table class="table table-striped table-hover align-middle mb-0" id="model-table">
+    <caption class="visually-hidden">Models this client can access</caption>
+    <thead class="table-light">
+      <tr>
+        <th class="sort-header" data-col="model_name">Model <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th class="sort-header" data-col="access_status">Access <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th class="sort-header" data-col="model_status">Status <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      </tr>
+    </thead>
+    <tbody id="model-tbody">
+      <tr><td colspan="6" class="text-muted text-center">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+<p id="model-empty" class="text-muted" hidden>No models match your filter.</p>
+
+
+<!-- New API Key Modal -->
+<div class="modal fade" id="apiKeyModal" tabindex="-1" aria-labelledby="apiKeyModalLabel">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="apiKeyModalLabel">New API Key</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label" for="key-name-input">Key Name</label>
+          <input type="text" id="key-name-input" class="form-control" placeholder="e.g. production">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="key-display">
+            Generated Key
+            <small class="text-danger fw-semibold">— copy now, it won't be shown again</small>
+          </label>
+          <div class="input-group">
+            <input type="text" id="key-display" class="form-control font-monospace"
+                   readonly placeholder="(click New API Key to generate)">
+            <button class="btn btn-outline-secondary" onclick="copyKey()" aria-label="Copy key to clipboard">Copy</button>
+          </div>
+          <input type="hidden" id="generated-key">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Discard</button>
+        <button class="btn btn-primary" id="save-key-btn" disabled>Save Key</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if is_admin %}
+<!-- Add Manager Modal -->
+<div class="modal fade" id="addManagerModal" tabindex="-1" aria-labelledby="addManagerModalLabel">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="addManagerModalLabel">Add Manager</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small">Add a user as manager by their email address.</p>
+        <div id="add-manager-result" role="alert" aria-live="assertive" class="mb-2"></div>
+        <label for="add-manager-email" class="form-label">Email address</label>
+        <input type="email" id="add-manager-email" class="form-control" placeholder="user@illinois.edu">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <button class="btn btn-primary" id="add-manager-btn">Add Manager</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- Graylist Consent Modal -->
+<div class="modal fade" id="graylistModal" tabindex="-1" aria-labelledby="graylistModalLabel">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header border-warning bg-warning bg-opacity-10">
+        <h2 class="modal-title h5" id="graylistModalLabel">Access Acknowledgment</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="graylist-notice-section" class="mb-3" hidden>
+          <h3 class="h6 fw-semibold text-warning-emphasis">
+            <span role="img" aria-label="warning">⚠</span> Notice
+          </h3>
+          <div id="graylist-notice-body" aria-live="polite"></div>
+        </div>
+        <p class="mb-0 small">
+          This model requires acknowledgment before use. By enabling access you confirm you have read
+          any notices above and accept responsibility for appropriate use of this client.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-warning" id="graylist-accept-btn">Accept &amp; Enable</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+.sort-header { cursor: pointer; user-select: none; white-space: nowrap; }
+.sort-arrows { display: inline-flex; flex-direction: column; font-size: 0.6em; line-height: 1.1; float: right; margin-left: 6px; margin-top: 2px; }
+.sa-up, .sa-dn { color: #adb5bd; }
+.sort-asc .sa-up { color: #212529; }
+.sort-desc .sa-dn { color: #212529; }
+</style>
+
+</ilw-content>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const CLIENT_ID = {{ client.id }};
+
+// Bootstrap tooltips
+document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
+
+// Show next refill as "in X minutes"
+document.querySelectorAll(".local-time[data-utc]").forEach(el => {
+  const mins = Math.max(0, Math.round((new Date(el.dataset.utc) - Date.now()) / 60000));
+  el.textContent = mins <= 1 ? "in seconds" : `in ${mins} minutes`;
+});
+
+// ── Shared sort/filter helpers ────────────────────────────────────────────
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function fmtDate(iso) {
+  if (!iso) return { text: '—', sort: '' };
+  const d = new Date(iso);
+  return { text: d.toLocaleString(undefined, { year:'numeric', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }), sort: iso };
+}
+function makeSortable(tableId, state, numCols, renderFn) {
+  document.querySelectorAll(`#${tableId} .sort-header`).forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      if (state.col === col) state.dir = state.dir === 'asc' ? 'desc' : 'asc';
+      else { state.col = col; state.dir = numCols.has(col) ? 'desc' : 'asc'; }
+      renderFn();
+    });
+  });
+}
+function applySortHeaders(tableId, state) {
+  document.querySelectorAll(`#${tableId} .sort-header`).forEach(th => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.dataset.col === state.col) th.classList.add(state.dir === 'asc' ? 'sort-asc' : 'sort-desc');
+  });
+}
+
+// ── API Keys table ────────────────────────────────────────────────────────
+const KEY_ROWS = [
+  {% for key in api_keys %}
+  {
+    id: {{ key.id }},
+    name: {{ (key.name or "(unnamed)") | tojson }},
+    hint: {{ key.key_hint | tojson }},
+    requests: {{ key.requests or 0 }},
+    input_tokens: {{ key.input_tokens or 0 }},
+    output_tokens: {{ key.output_tokens or 0 }},
+    cost: {{ "%.6f"|format(key.cost|float) }},
+    last_used: {{ key.last_used_at.strftime('%Y-%m-%dT%H:%M:%SZ') | tojson if key.last_used_at else 'null' }},
+    active: {{ key.active | tojson }},
+  },
+  {% endfor %}
+];
+
+const keyState = { col: 'name', dir: 'asc' };
+let keyFilter = '', showDeleted = false;
+const keyTbody = document.getElementById('key-tbody');
+const keyEmpty = document.getElementById('key-empty');
+
+function renderKeys() {
+  const f = keyFilter.toLowerCase();
+  let rows = KEY_ROWS.filter(k => (showDeleted || k.active) && (!f || k.name.toLowerCase().includes(f)));
+  rows.sort((a, b) => {
+    let av, bv;
+    if (keyState.col === 'name') { av = a.name.toLowerCase(); bv = b.name.toLowerCase(); }
+    else if (keyState.col === 'last_used') { av = a.last_used || ''; bv = b.last_used || ''; }
+    else { av = a[keyState.col]; bv = b[keyState.col]; }
+    const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+    return keyState.dir === 'asc' ? cmp : -cmp;
+  });
+  applySortHeaders('key-table', keyState);
+  if (!rows.length) {
+    keyTbody.innerHTML = '';
+    keyEmpty.hidden = false;
+  } else {
+    keyEmpty.hidden = true;
+    keyTbody.innerHTML = rows.map(k => {
+      const dt = fmtDate(k.last_used);
+      const deletedClass = k.active ? '' : ' class="table-secondary text-decoration-line-through text-muted"';
+      const action = k.active
+        ? `<button class="btn btn-sm btn-outline-danger delete-key-btn" data-id="${k.id}" aria-label="Delete key ${escHtml(k.name)}">Delete</button>`
+        : `<span class="badge bg-secondary">deleted</span>`;
+      return `<tr${deletedClass}>
+        <td><span data-bs-toggle="tooltip" data-bs-title="${escHtml(k.hint)}">${escHtml(k.name)}</span></td>
+        <td class="text-end">${k.requests.toLocaleString()}</td>
+        <td class="text-end">${k.input_tokens.toLocaleString()}</td>
+        <td class="text-end">${k.output_tokens.toLocaleString()}</td>
+        <td class="text-end">${parseFloat(k.cost).toFixed(2)}</td>
+        <td>${dt.text}</td>
+        <td>${action}</td>
+      </tr>`;
+    }).join('');
+    keyTbody.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
+    keyTbody.querySelectorAll('.delete-key-btn').forEach(btn => {
+      btn.addEventListener('click', async function () {
+        if (!confirm("Delete this API key? Usage history is kept.")) return;
+        const resp = await fetch("/clients/" + CLIENT_ID + "/keys/" + this.dataset.id, { method: "DELETE" });
+        if (resp.ok) location.reload();
+        else alert("Failed to delete key.");
+      });
+    });
+  }
+}
+
+makeSortable('key-table', keyState, new Set(['requests','input_tokens','output_tokens','cost','last_used']), renderKeys);
+const showDeletedCb = document.getElementById('show-deleted-cb');
+showDeletedCb.addEventListener('change', () => { showDeleted = showDeletedCb.checked; renderKeys(); });
+let keyDebounce;
+document.getElementById('key-search').addEventListener('input', e => {
+  clearTimeout(keyDebounce);
+  keyDebounce = setTimeout(() => { keyFilter = e.target.value.trim(); renderKeys(); }, 200);
+});
+renderKeys();
+
+// ── Model Access table ────────────────────────────────────────────────────
+const MODEL_ROWS = [
+  {% for row in model_access_list %}
+  {
+    model_name: {{ row.model_name | tojson }},
+    model_url: {{ row.model_url | tojson }},
+    requests: {{ row.requests }},
+    cost: {{ "%.6f"|format(row.cost) }},
+    last_used: {{ row.last_used_at.strftime('%Y-%m-%dT%H:%M:%SZ') | tojson if row.last_used_at else 'null' }},
+    access_status: {{ row.access_status | tojson }},
+    consented: {{ row.consented | tojson }},
+    model_status: {{ row.model_status | tojson }},
+    notice: {{ row.notice | tojson if row.notice else 'null' }},
+  },
+  {% endfor %}
+];
+
+const modelState = { col: 'model_name', dir: 'asc' };
+let modelFilter = '';
+const modelTbody = document.getElementById('model-tbody');
+const modelEmpty = document.getElementById('model-empty');
+
+function accessSortKey(row) {
+  if (row.access_status === 'graylist' && !row.consented) return 0;
+  if (row.access_status === 'graylist' && row.consented) return 1;
+  return 2;
+}
+function statusSortKey(s) {
+  return { down: 0, degraded: 1, disabled: 2, ok: 3 }[s] ?? 4;
+}
+
+function renderModels() {
+  const f = modelFilter.toLowerCase();
+  let rows = MODEL_ROWS.filter(r => !f || r.model_name.toLowerCase().includes(f));
+  rows.sort((a, b) => {
+    let av, bv;
+    if (modelState.col === 'model_name') { av = a.model_name.toLowerCase(); bv = b.model_name.toLowerCase(); }
+    else if (modelState.col === 'last_used') { av = a.last_used || ''; bv = b.last_used || ''; }
+    else if (modelState.col === 'access_status') { av = accessSortKey(a); bv = accessSortKey(b); }
+    else if (modelState.col === 'model_status') { av = statusSortKey(a.model_status); bv = statusSortKey(b.model_status); }
+    else { av = a[modelState.col]; bv = b[modelState.col]; }
+    const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+    return modelState.dir === 'asc' ? cmp : -cmp;
+  });
+  applySortHeaders('model-table', modelState);
+  if (!rows.length) {
+    modelTbody.innerHTML = '';
+    modelEmpty.hidden = false;
+  } else {
+    modelEmpty.hidden = true;
+    modelTbody.innerHTML = rows.map(r => {
+      const dt = fmtDate(r.last_used);
+      let accessCell;
+      if (r.access_status === 'allowed') {
+        accessCell = `<span class="badge bg-success"><span role="img" aria-label="check">✓</span> Allowed</span>`;
+      } else if (r.access_status === 'graylist' && r.consented) {
+        accessCell = `<span class="badge bg-success"><span role="img" aria-label="check">✓</span> Consented</span>`;
+      } else {
+        accessCell = `<button class="btn btn-sm btn-warning graylist-btn" data-name="${escHtml(r.model_name)}" data-notice="${escHtml(r.notice || '')}" aria-haspopup="dialog"><span role="img" aria-label="warning">⚠</span> Needs consent</button>`;
+      }
+      const statusBadge = r.model_status === 'ok'
+        ? `<span class="badge bg-success">ok</span>`
+        : r.model_status === 'degraded'
+        ? `<span class="badge bg-warning text-dark">degraded</span>`
+        : r.model_status === 'down'
+        ? `<span class="badge bg-danger">down</span>`
+        : `<span class="badge bg-secondary">disabled</span>`;
+      return `<tr>
+        <td><a href="${escHtml(r.model_url)}">${escHtml(r.model_name)}</a></td>
+        <td class="text-end">${r.requests ? r.requests.toLocaleString() : '—'}</td>
+        <td class="text-end">${r.cost ? parseFloat(r.cost).toFixed(2) : '—'}</td>
+        <td>${dt.text}</td>
+        <td>${accessCell}</td>
+        <td>${statusBadge}</td>
+      </tr>`;
+    }).join('');
+    modelTbody.querySelectorAll('.graylist-btn').forEach(btn => {
+      btn.addEventListener('click', () => openGraylistModal(btn.dataset.name, btn.dataset.notice || null));
+    });
+  }
+}
+
+makeSortable('model-table', modelState, new Set(['requests','cost','last_used']), renderModels);
+let modelDebounce;
+document.getElementById('model-search').addEventListener('input', e => {
+  clearTimeout(modelDebounce);
+  modelDebounce = setTimeout(() => { modelFilter = e.target.value.trim(); renderModels(); }, 200);
+});
+renderModels();
+
+// API Key modal — generate key on open
+const apiKeyModal = document.getElementById("apiKeyModal");
+apiKeyModal.addEventListener("show.bs.modal", async function () {
+  document.getElementById("key-display").value = "(generating…)";
+  document.getElementById("generated-key").value = "";
+  document.getElementById("save-key-btn").disabled = true;
+
+  const resp = await fetch("/usage/keys/generate");
+  const data = await resp.json();
+  document.getElementById("key-display").value = data.key;
+  document.getElementById("generated-key").value = data.key;
+  document.getElementById("save-key-btn").disabled = false;
+});
+
+function copyKey() {
+  const val = document.getElementById("key-display").value;
+  navigator.clipboard.writeText(val).then(() => {
+    const btn = event.target;
+    btn.textContent = "Copied!";
+    setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+  });
+}
+
+document.getElementById("save-key-btn").addEventListener("click", async function () {
+  const name = document.getElementById("key-name-input").value.trim();
+  const key = document.getElementById("generated-key").value;
+  if (!key) return;
+
+  const resp = await fetch("/clients/" + CLIENT_ID + "/keys", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, key }),
+  });
+  if (resp.ok) {
+    bootstrap.Modal.getInstance(apiKeyModal).hide();
+    location.reload();
+  } else {
+    const data = await resp.json();
+    alert("Error: " + (data.error || "Unknown"));
+  }
+});
+
+
+{% if is_admin %}
+// Add manager
+document.getElementById("add-manager-btn").addEventListener("click", async function () {
+  const email = document.getElementById("add-manager-email").value.trim();
+  if (!email) return;
+  const resp = await fetch("/clients/" + CLIENT_ID + "/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  const data = await resp.json();
+  const el = document.getElementById("add-manager-result");
+  if (resp.ok) {
+    el.innerHTML = `<div class="alert alert-success py-1">Added ${data.name}</div>`;
+    document.getElementById("add-manager-email").value = "";
+    setTimeout(() => location.reload(), 800);
+  } else {
+    el.innerHTML = `<div class="alert alert-danger py-1">${data.error || "Error"}</div>`;
+  }
+});
+
+// Remove manager
+function removeManager(sid, uid, name) {
+  if (!confirm(`Remove ${name} as manager?`)) return;
+  fetch("/clients/" + sid + "/users/" + uid, { method: "DELETE" })
+    .then(r => { if (r.ok) location.reload(); else alert("Failed to remove manager."); });
+}
+
+// Toggle client active state
+function toggleClient(sid, currentActive) {
+  fetch("/clients/" + sid + "/toggle", { method: "POST" })
+    .then(r => r.json())
+    .then(() => location.reload())
+    .catch(() => alert("Failed to update client."));
+}
+{% endif %}
+
+// Graylist consent modal
+let graylistModelName = null;
+
+function openGraylistModal(modelName, notice) {
+  graylistModelName = modelName;
+  document.getElementById("graylistModalLabel").textContent = "Access Acknowledgment: " + modelName;
+  const noticeSection = document.getElementById("graylist-notice-section");
+  const noticeBody = document.getElementById("graylist-notice-body");
+  if (notice) {
+    noticeBody.innerHTML = DOMPurify.sanitize(marked.parse(notice));
+    noticeSection.hidden = false;
+  } else {
+    noticeSection.hidden = true;
+  }
+  new bootstrap.Modal(document.getElementById("graylistModal")).show();
+}
+
+document.getElementById("graylist-accept-btn").addEventListener("click", async function () {
+  if (!graylistModelName) return;
+  const resp = await fetch("/clients/" + CLIENT_ID + "/consent/" + encodeURIComponent(graylistModelName), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (resp.ok) {
+    bootstrap.Modal.getInstance(document.getElementById("graylistModal")).hide();
+    location.reload();
+  } else {
+    const data = await resp.json();
+    alert("Error: " + (data.error || "Unknown"));
+  }
+});
+</script>
+{% endblock %}

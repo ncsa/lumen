@@ -19,6 +19,7 @@ from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
 from lumen.models.group_limit import GroupLimit
 from lumen.models.group_model_access import GroupModelAccess
+from lumen.models.entity import Entity
 from lumen.services.cost import calculate_cost
 
 # Priority order for access types when multiple apply (lower index = higher priority)
@@ -112,6 +113,15 @@ def get_model_access_status(entity_id: int, model_config_id: int) -> str:
             if "graylist" in group_defaults:
                 return "graylist"
             return "blocked"
+
+    # Entity-level default (used for service/client entities configured via yaml)
+    entity = db.session.get(Entity, entity_id)
+    if entity and entity.model_access_default:
+        if entity.model_access_default == "blacklist":
+            return "blocked"
+        if entity.model_access_default == "graylist":
+            return "graylist"
+        return "allowed"
 
     global_default = current_app.config.get("MODEL_ACCESS_DEFAULT", "whitelist")
     if global_default == "blacklist":

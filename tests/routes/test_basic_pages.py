@@ -44,13 +44,13 @@ def test_usage_page_loads(auth_client):
     assert resp.status_code == 200
 
 
-def test_services_page_requires_login(client):
-    resp = client.get("/services", follow_redirects=False)
+def test_clients_page_requires_login(client):
+    resp = client.get("/clients", follow_redirects=False)
     assert resp.status_code == 302
 
 
-def test_services_page_loads(auth_client):
-    resp = auth_client.get("/services")
+def test_clients_page_loads(auth_client):
+    resp = auth_client.get("/clients")
     assert resp.status_code == 200
 
 

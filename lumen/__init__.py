@@ -146,7 +146,7 @@ def create_app():
     from lumen.blueprints.auth.routes import auth_bp
     from lumen.blueprints.chat.routes import chat_bp
     from lumen.blueprints.models_page.routes import models_page_bp
-    from lumen.blueprints.services.routes import services_bp
+    from lumen.blueprints.clients.routes import clients_bp
     from lumen.blueprints.usage.routes import usage_bp
     from lumen.blueprints.api.routes import api_bp
     from lumen.blueprints.admin.routes import admin_bp
@@ -155,7 +155,7 @@ def create_app():
     app.register_blueprint(auth_bp)
     app.register_blueprint(chat_bp)
     app.register_blueprint(models_page_bp)
-    app.register_blueprint(services_bp)
+    app.register_blueprint(clients_bp)
     app.register_blueprint(usage_bp)
     app.register_blueprint(api_bp)
     app.register_blueprint(admin_bp)
@@ -174,12 +174,12 @@ def create_app():
     app.cli.add_command(init_db_cmd)
     app.cli.add_command(reassign_model_cmd)
 
-    # Context processor: inject app_name and nav_services into all templates
+    # Context processor: inject app_name and nav_clients into all templates
     @app.context_processor
     def inject_nav():
         result = {"app_name": app.config["APP_NAME"], "app_tagline": app.config["APP_TAGLINE"], "is_admin": False, "github_url": app.config.get("GITHUB_URL", "")}
         if not session.get("entity_id"):
-            result["nav_services"] = []
+            result["nav_clients"] = []
             return result
         from lumen.models.entity_manager import EntityManager
         from lumen.models.entity import Entity
@@ -192,7 +192,7 @@ def create_app():
         assocs = EntityManager.query.filter_by(user_entity_id=session["entity_id"]).all()
         service_ids = [a.service_entity_id for a in assocs]
         if not service_ids:
-            result["nav_services"] = []
+            result["nav_clients"] = []
             return result
         services = (
             Entity.query.filter(
@@ -203,11 +203,11 @@ def create_app():
             .order_by(Entity.name)
             .all()
         )
-        result["nav_services"] = services
+        result["nav_clients"] = services
         return result
 
     # Sync models, groups, and global model access from yaml into DB on every startup
-    from lumen.commands import sync_global_model_access_from_yaml, sync_groups_from_yaml, sync_models_from_yaml
+    from lumen.commands import sync_clients_from_yaml, sync_global_model_access_from_yaml, sync_groups_from_yaml, sync_models_from_yaml
     with app.app_context():
         try:
             sync_models_from_yaml(yaml_data)
@@ -223,6 +223,11 @@ def create_app():
             sync_global_model_access_from_yaml(yaml_data)
         except Exception as e:
             print(f"WARNING: Could not sync global model access from yaml (run 'flask db upgrade' first): {e}",
+                  file=sys.stderr)
+        try:
+            sync_clients_from_yaml(yaml_data)
+        except Exception as e:
+            print(f"WARNING: Could not sync clients from yaml (run 'flask db upgrade' first): {e}",
                   file=sys.stderr)
 
     # Start background threads only in the main worker process.

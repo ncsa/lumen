@@ -3,6 +3,9 @@ from flask import current_app
 from flask.cli import with_appcontext
 
 from .extensions import db
+from lumen.models.entity import Entity
+from lumen.models.entity_limit import EntityLimit
+from lumen.models.entity_model_access import EntityModelAccess
 from lumen.models.global_model_access import GlobalModelAccess
 from lumen.models.group import Group
 from lumen.models.group_limit import GroupLimit
@@ -198,6 +201,82 @@ def sync_global_model_access_from_yaml(yaml_data):
     db.session.commit()
 
 
+def sync_clients_from_yaml(yaml_data):
+    """Sync EntityLimit and EntityModelAccess for client (service) entities from yaml_data['clients'].
+
+    Config format:
+      clients:
+        default:                    <- applied to all clients without a named entry
+          max: 100
+          refresh: 0
+          starting: 100
+          model_access:
+            default: whitelist      <- entity-level default for unlisted models
+            whitelist: [name, ...]
+            blacklist: [name, ...]
+        my-client-name:             <- overrides for a specific client
+          max: 500
+    """
+    clients_cfg = yaml_data.get("clients", {})
+    if not clients_cfg:
+        return
+
+    default_cfg = clients_cfg.get("default", {})
+    named_cfg = {k: v for k, v in clients_cfg.items() if k != "default"}
+
+    service_entities = Entity.query.filter_by(entity_type="service").all()
+
+    for entity in service_entities:
+        cfg = named_cfg.get(entity.name, default_cfg)
+        if not cfg:
+            continue
+
+        # Upsert EntityLimit
+        if "max" in cfg:
+            max_coins = cfg["max"]
+            refresh_coins = cfg.get("refresh", 0)
+            starting_coins = cfg.get("starting", max_coins)
+            limit = EntityLimit.query.filter_by(entity_id=entity.id).first()
+            if limit:
+                limit.max_coins = max_coins
+                limit.refresh_coins = refresh_coins
+                limit.starting_coins = starting_coins
+                limit.config_managed = True
+            else:
+                db.session.add(EntityLimit(
+                    entity_id=entity.id,
+                    max_coins=max_coins,
+                    refresh_coins=refresh_coins,
+                    starting_coins=starting_coins,
+                    config_managed=True,
+                ))
+        else:
+            EntityLimit.query.filter_by(entity_id=entity.id, config_managed=True).delete()
+
+        # Sync model_access
+        access_cfg = cfg.get("model_access", {})
+        entity.model_access_default = access_cfg.get("default") or None
+
+        EntityModelAccess.query.filter_by(entity_id=entity.id).delete()
+        for access_type in ("whitelist", "blacklist"):
+            allowed = (access_type == "whitelist")
+            for model_name in access_cfg.get(access_type, []):
+                mc = ModelConfig.query.filter_by(model_name=model_name).first()
+                if mc is None:
+                    current_app.logger.warning(
+                        f"sync_clients_from_yaml: model '{model_name}' not found for client "
+                        f"'{entity.name}' {access_type}, skipping"
+                    )
+                    continue
+                db.session.add(EntityModelAccess(
+                    entity_id=entity.id,
+                    model_config_id=mc.id,
+                    allowed=allowed,
+                ))
+
+    db.session.commit()
+
+
 @click.command("init-db")
 @with_appcontext
 def init_db_cmd():
@@ -206,6 +285,7 @@ def init_db_cmd():
     sync_models_from_yaml(yaml_data)
     sync_groups_from_yaml(yaml_data)
     sync_global_model_access_from_yaml(yaml_data)
+    sync_clients_from_yaml(yaml_data)
     click.echo("Database synced from config.yaml.")
 
 

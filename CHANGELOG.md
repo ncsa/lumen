@@ -5,6 +5,13 @@ All notable changes to Lumen will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Client accounts: admins can create client accounts (service entities with no login) and assign managers; managers can create/delete API keys for the client; graylist model consent can be accepted on behalf of a client
+- Client list page (`/clients`) shows all clients to admins (with summary stat cards) and only managed clients to regular users; table is sortable and filterable
+- Client detail page (`/clients/<id>`) shows usage stat cards (tokens, coins, coin pool, coin refill), managers table, API keys table (sortable/filterable), and a model access table (sortable/filterable) with requests, coins, last used, access status, and model status columns; graylisted models can be clicked to open a consent modal
+- `clients:` section in `config.yaml` to configure default and named per-client coin pool limits (`max`, `refresh`, `starting`) and model access default (`whitelist`|`blacklist`); synced to DB on startup and on config hot-reload
+- `entity.model_access_default` column (Alembic migration `r8s9t0u1v2w3`) stores per-client model access default; checked in access resolution after group rules and before global default
+- Clients nav link hidden from users who manage no clients
+- End-to-end tests for client API keys: key created via `POST /clients/<sid>/keys` authenticates against `/v1/` endpoints; soft-deleted key returns 401; no-pool key returns 403
 - `app.dev_user` now accepts a dict with `email` and `groups` keys in addition to a plain email string; groups listed under `dev_user.groups` are assigned to the dev user on every `/devlogin`
 
 ### Changed
@@ -25,7 +32,7 @@ All notable changes to Lumen will be documented in this file.
 - `Model.query.get(id)` → `db.session.get(Model, id)` and `Model.query.get_or_404(id)` → `db.get_or_404(Model, id)` across all production code and tests — eliminates SQLAlchemy 2.0 legacy API warnings
 - Flask-Limiter in-memory storage warning suppressed in tests by adding `rate_limiting.storage_url: "memory://"` to `test_config.yaml`
 - `<label>` elements without `for` attributes on Display/Search controls in `groups.html` and `users.html`
-- Modal titles changed from `<h5>` to `<h2 class="h5">` across all admin, usage, and services templates to fix heading hierarchy violations (h1 → h5 skip)
+- Modal titles changed from `<h5>` to `<h2 class="h5">` across all admin, usage, and clients templates to fix heading hierarchy violations (h1 → h5 skip)
 - `lumen/services/health.py`: per-tick check body extracted into `check_all_endpoints()` for testability; `start_health_checker` retains identical loop behaviour
 
 ### Changed

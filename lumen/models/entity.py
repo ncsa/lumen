@@ -13,6 +13,7 @@ class Entity(db.Model):
     gravatar_hash = db.Column(db.String(64), nullable=True)  # users only
     active = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    model_access_default = db.Column(db.String(16), nullable=True)  # whitelist|blacklist|graylist; service entities only
 
     api_keys = db.relationship("APIKey", backref="entity", lazy="dynamic", cascade="all, delete-orphan", passive_deletes=True)
     entity_limit = db.relationship("EntityLimit", backref="entity", uselist=False, cascade="all, delete-orphan", passive_deletes=True)

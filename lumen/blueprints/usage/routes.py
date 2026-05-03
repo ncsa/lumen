@@ -1,15 +1,13 @@
 import secrets
 from datetime import datetime, timedelta
 
-from flask import Blueprint, render_template, request, jsonify, session
+from flask import Blueprint, redirect, render_template, request, jsonify, session, url_for
 from sqlalchemy import func
 
 from lumen.decorators import login_required
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
 from lumen.services.crypto import hash_api_key
-from lumen.models.entity import Entity
-from lumen.models.entity_manager import EntityManager
 from lumen.models.model_config import ModelConfig
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.model_stat import ModelStat
@@ -139,17 +137,7 @@ def index():
 @usage_bp.route("/usage/service/<int:sid>")
 @login_required
 def service_usage_page(sid):
-    entity_id = session["entity_id"]
-
-    assoc = EntityManager.query.filter_by(
-        user_entity_id=entity_id, service_entity_id=sid
-    ).first()
-    if not assoc:
-        return "Forbidden", 403
-
-    service = Entity.query.get_or_404(sid)
-    data = _get_usage_data(sid)
-    return render_template("usage.html", **data, scope_entity=service)
+    return redirect(url_for("clients.detail", sid=sid), 301)
 
 
 @usage_bp.route("/usage/keys/generate")
