@@ -20,13 +20,13 @@ clients_bp = Blueprint("clients", __name__)
 
 def _get_user_clients(entity_id: int):
     assocs = EntityManager.query.filter_by(user_entity_id=entity_id).all()
-    client_ids = [a.service_entity_id for a in assocs]
+    client_ids = [a.client_entity_id for a in assocs]
     if not client_ids:
         return []
     return (
         Entity.query.filter(
             Entity.id.in_(client_ids),
-            Entity.entity_type == "service",
+            Entity.entity_type == "client",
             Entity.active == True,
         )
         .order_by(Entity.name)
@@ -56,7 +56,7 @@ def index():
 
     if is_admin(entity):
         clients = (
-            Entity.query.filter_by(entity_type="service")
+            Entity.query.filter_by(entity_type="client")
             .order_by(Entity.name)
             .all()
         )
@@ -68,11 +68,11 @@ def index():
         manager_counts = {
             row[0]: row[1]
             for row in db.session.query(
-                EntityManager.service_entity_id,
+                EntityManager.client_entity_id,
                 func.count(EntityManager.id),
             )
-            .filter(EntityManager.service_entity_id.in_(client_ids))
-            .group_by(EntityManager.service_entity_id)
+            .filter(EntityManager.client_entity_id.in_(client_ids))
+            .group_by(EntityManager.client_entity_id)
             .all()
         }
         client_stats = {
@@ -117,11 +117,11 @@ def index():
 def detail(sid):
     entity_id = session["entity_id"]
     entity = db.session.get(Entity, entity_id)
-    client = Entity.query.filter_by(id=sid, entity_type="service").first_or_404()
+    client = Entity.query.filter_by(id=sid, entity_type="client").first_or_404()
 
     if not is_admin(entity):
         assoc = EntityManager.query.filter_by(
-            user_entity_id=entity_id, service_entity_id=sid
+            user_entity_id=entity_id, client_entity_id=sid
         ).first()
         if not assoc:
             abort(403)
@@ -131,7 +131,7 @@ def detail(sid):
     managers = (
         db.session.query(Entity)
         .join(EntityManager, EntityManager.user_entity_id == Entity.id)
-        .filter(EntityManager.service_entity_id == sid)
+        .filter(EntityManager.client_entity_id == sid)
         .order_by(Entity.name)
         .all()
     )
@@ -171,7 +171,7 @@ def detail(sid):
 @clients_bp.route("/clients/<int:sid>/toggle", methods=["POST"])
 @admin_required
 def toggle_client(sid):
-    client = Entity.query.filter_by(id=sid, entity_type="service").first_or_404()
+    client = Entity.query.filter_by(id=sid, entity_type="client").first_or_404()
     client.active = not client.active
     db.session.commit()
     return jsonify({"active": client.active})
@@ -188,7 +188,7 @@ def create_client():
     entity_id = session["entity_id"]
 
     client = Entity(
-        entity_type="service",
+        entity_type="client",
         name=name,
         initials=name[:2].upper(),
         active=True,
@@ -196,7 +196,7 @@ def create_client():
     db.session.add(client)
     db.session.flush()
 
-    assoc = EntityManager(user_entity_id=entity_id, service_entity_id=client.id)
+    assoc = EntityManager(user_entity_id=entity_id, client_entity_id=client.id)
     db.session.add(assoc)
     db.session.commit()
 
@@ -206,7 +206,7 @@ def create_client():
 @clients_bp.route("/clients/<int:sid>", methods=["DELETE"])
 @admin_required
 def delete_client(sid):
-    client = Entity.query.filter_by(id=sid, entity_type="service").first_or_404()
+    client = Entity.query.filter_by(id=sid, entity_type="client").first_or_404()
     client.active = False
     db.session.commit()
     return "", 204
@@ -220,19 +220,19 @@ def add_client_manager(sid):
     if not email:
         return jsonify({"error": "Email required"}), 400
 
-    Entity.query.filter_by(id=sid, entity_type="service").first_or_404()
+    Entity.query.filter_by(id=sid, entity_type="client").first_or_404()
 
     user = Entity.query.filter_by(email=email, entity_type="user").first()
     if not user:
         return jsonify({"error": "User not found"}), 404
 
     existing = EntityManager.query.filter_by(
-        user_entity_id=user.id, service_entity_id=sid
+        user_entity_id=user.id, client_entity_id=sid
     ).first()
     if existing:
         return jsonify({"error": "User already manages this client"}), 409
 
-    new_assoc = EntityManager(user_entity_id=user.id, service_entity_id=sid)
+    new_assoc = EntityManager(user_entity_id=user.id, client_entity_id=sid)
     db.session.add(new_assoc)
     db.session.commit()
 
@@ -242,10 +242,10 @@ def add_client_manager(sid):
 @clients_bp.route("/clients/<int:sid>/users/<int:uid>", methods=["DELETE"])
 @admin_required
 def remove_client_manager(sid, uid):
-    Entity.query.filter_by(id=sid, entity_type="service").first_or_404()
+    Entity.query.filter_by(id=sid, entity_type="client").first_or_404()
 
     target_assoc = EntityManager.query.filter_by(
-        user_entity_id=uid, service_entity_id=sid
+        user_entity_id=uid, client_entity_id=sid
     ).first()
     if not target_assoc:
         return jsonify({"error": "Not found"}), 404
@@ -260,11 +260,11 @@ def remove_client_manager(sid, uid):
 def create_client_key(sid):
     entity_id = session["entity_id"]
     entity = db.session.get(Entity, entity_id)
-    Entity.query.filter_by(id=sid, entity_type="service").first_or_404()
+    Entity.query.filter_by(id=sid, entity_type="client").first_or_404()
 
     if not is_admin(entity):
         assoc = EntityManager.query.filter_by(
-            user_entity_id=entity_id, service_entity_id=sid
+            user_entity_id=entity_id, client_entity_id=sid
         ).first()
         if not assoc:
             return jsonify({"error": "Forbidden"}), 403
@@ -301,7 +301,7 @@ def delete_client_key(sid, kid):
 
     if not is_admin(entity):
         assoc = EntityManager.query.filter_by(
-            user_entity_id=entity_id, service_entity_id=sid
+            user_entity_id=entity_id, client_entity_id=sid
         ).first()
         if not assoc:
             return jsonify({"error": "Forbidden"}), 403
@@ -320,11 +320,11 @@ def delete_client_key(sid, kid):
 def client_consent(sid, model_name):
     entity_id = session["entity_id"]
     entity = db.session.get(Entity, entity_id)
-    Entity.query.filter_by(id=sid, entity_type="service").first_or_404()
+    Entity.query.filter_by(id=sid, entity_type="client").first_or_404()
 
     if not is_admin(entity):
         assoc = EntityManager.query.filter_by(
-            user_entity_id=entity_id, service_entity_id=sid
+            user_entity_id=entity_id, client_entity_id=sid
         ).first()
         if not assoc:
             return jsonify({"error": "Forbidden"}), 403

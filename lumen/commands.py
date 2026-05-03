@@ -224,9 +224,9 @@ def sync_clients_from_yaml(yaml_data):
     default_cfg = clients_cfg.get("default", {})
     named_cfg = {k: v for k, v in clients_cfg.items() if k != "default"}
 
-    service_entities = Entity.query.filter_by(entity_type="service").all()
+    client_entities = Entity.query.filter_by(entity_type="client").all()
 
-    for entity in service_entities:
+    for entity in client_entities:
         cfg = named_cfg.get(entity.name, default_cfg)
         if not cfg:
             continue

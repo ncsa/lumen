@@ -1,4 +1,4 @@
-"""Basic smoke tests for chat, usage, services, and admin pages."""
+"""Basic smoke tests for chat, usage, clients, and admin pages."""
 
 
 def test_chat_page_requires_login(client):

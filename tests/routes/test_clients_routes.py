@@ -12,7 +12,7 @@ def service_client(app):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
-        c = Entity(entity_type="service", name="test-svc", initials="TS", active=True)
+        c = Entity(entity_type="client", name="test-svc", initials="TS", active=True)
         db.session.add(c)
         db.session.commit()
         db.session.refresh(c)
@@ -27,7 +27,7 @@ def managed_client(app, service_client, test_user):
         from lumen.models.entity_manager import EntityManager
         db.session.add(EntityManager(
             user_entity_id=test_user["id"],
-            service_entity_id=service_client["id"],
+            client_entity_id=service_client["id"],
         ))
         db.session.commit()
     return service_client
@@ -111,7 +111,7 @@ def test_create_client_succeeds(app, admin_client):
     assert data["name"] == "created-svc"
     with app.app_context():
         from lumen.models.entity import Entity
-        c = Entity.query.filter_by(name="created-svc", entity_type="service").first()
+        c = Entity.query.filter_by(name="created-svc", entity_type="client").first()
         assert c is not None
         assert c.active is True
 
@@ -190,7 +190,7 @@ def test_add_manager_succeeds(app, admin_client, service_client, test_user):
         from lumen.models.entity_manager import EntityManager
         assoc = EntityManager.query.filter_by(
             user_entity_id=test_user["id"],
-            service_entity_id=service_client["id"],
+            client_entity_id=service_client["id"],
         ).first()
         assert assoc is not None
 
@@ -232,7 +232,7 @@ def test_remove_manager_succeeds(app, admin_client, managed_client, test_user):
         from lumen.models.entity_manager import EntityManager
         assoc = EntityManager.query.filter_by(
             user_entity_id=test_user["id"],
-            service_entity_id=managed_client["id"],
+            client_entity_id=managed_client["id"],
         ).first()
         assert assoc is None
 

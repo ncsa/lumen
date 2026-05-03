@@ -190,20 +190,20 @@ def create_app():
             result["is_admin"] = is_admin(entity)
 
         assocs = EntityManager.query.filter_by(user_entity_id=session["entity_id"]).all()
-        service_ids = [a.service_entity_id for a in assocs]
-        if not service_ids:
+        client_ids = [a.client_entity_id for a in assocs]
+        if not client_ids:
             result["nav_clients"] = []
             return result
-        services = (
+        clients = (
             Entity.query.filter(
-                Entity.id.in_(service_ids),
-                Entity.entity_type == "service",
+                Entity.id.in_(client_ids),
+                Entity.entity_type == "client",
                 Entity.active == True,
             )
             .order_by(Entity.name)
             .all()
         )
-        result["nav_clients"] = services
+        result["nav_clients"] = clients
         return result
 
     # Sync models, groups, and global model access from yaml into DB on every startup

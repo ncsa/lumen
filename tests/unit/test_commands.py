@@ -109,7 +109,7 @@ def test_sync_clients_creates_entity_limit(app):
         from lumen.extensions import db
         from lumen.models.entity import Entity
         from lumen.models.entity_limit import EntityLimit
-        client = Entity(entity_type="service", name="test-svc", initials="TS", active=True)
+        client = Entity(entity_type="client", name="test-svc", initials="TS", active=True)
         db.session.add(client)
         db.session.commit()
         yaml_data = {
@@ -130,7 +130,7 @@ def test_sync_clients_named_entry_overrides_default(app):
         from lumen.extensions import db
         from lumen.models.entity import Entity
         from lumen.models.entity_limit import EntityLimit
-        client = Entity(entity_type="service", name="named-svc", initials="NS", active=True)
+        client = Entity(entity_type="client", name="named-svc", initials="NS", active=True)
         db.session.add(client)
         db.session.commit()
         yaml_data = {
@@ -151,7 +151,7 @@ def test_sync_clients_model_access(app):
         from lumen.models.entity_model_access import EntityModelAccess
         from lumen.models.model_config import ModelConfig
         mc = ModelConfig(model_name="svc-model", input_cost_per_million=1.0, output_cost_per_million=1.0, active=True)
-        client = Entity(entity_type="service", name="access-svc", initials="AS", active=True)
+        client = Entity(entity_type="client", name="access-svc", initials="AS", active=True)
         db.session.add_all([mc, client])
         db.session.commit()
         yaml_data = {

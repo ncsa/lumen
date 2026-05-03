@@ -134,9 +134,9 @@ def index():
     return render_template("usage.html", **data, scope_entity=None)
 
 
-@usage_bp.route("/usage/service/<int:sid>")
+@usage_bp.route("/usage/client/<int:sid>")
 @login_required
-def service_usage_page(sid):
+def client_usage_page(sid):
     return redirect(url_for("clients.detail", sid=sid), 301)
 
 
