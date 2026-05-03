@@ -7,6 +7,9 @@ All notable changes to Lumen will be documented in this file.
 ### Added
 - `app.dev_user` now accepts a dict with `email` and `groups` keys in addition to a plain email string; groups listed under `dev_user.groups` are assigned to the dev user on every `/devlogin`
 
+### Changed
+- Coins and costs are now displayed to 2 decimal places (was 4) across all templates
+
 ## [1.6.1] - 2026-05-02
 
 ### Added
