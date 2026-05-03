@@ -58,10 +58,10 @@
       <td>
         {% if group_limit.max_coins == -2 %}<span class="text-success">Unlimited</span>
         {% elif group_limit.max_coins == 0 %}<span class="text-danger">Blocked</span>
-        {% else %}{{ "%.4f"|format(group_limit.max_coins|float) }}{% endif %}
+        {% else %}{{ "%.2f"|format(group_limit.max_coins|float) }}{% endif %}
       </td>
-      <td>{{ "%.4f"|format(group_limit.refresh_coins|float) }}</td>
-      <td>{{ "%.4f"|format(group_limit.starting_coins|float) }}</td>
+      <td>{{ "%.2f"|format(group_limit.refresh_coins|float) }}</td>
+      <td>{{ "%.2f"|format(group_limit.starting_coins|float) }}</td>
     </tr>
   </tbody>
 </table>

@@ -32,7 +32,7 @@
   <div class="col-sm-6 col-xl-3">
     <div class="card text-center">
       <div class="card-body">
-        <div class="fs-2 fw-bold">{{ "%.4f"|format(total_cost) }}</div>
+        <div class="fs-2 fw-bold">{{ "%.2f"|format(total_cost) }}</div>
         <div class="text-muted small">Total Coins Spent</div>
       </div>
     </div>
@@ -114,7 +114,7 @@
   perPageSel.value = String(perPage);
 
   function fmt(n) { return n.toLocaleString(); }
-  function fmtCoins(n) { return n.toFixed(4); }
+  function fmtCoins(n) { return n.toFixed(2); }
 
   function updateSortHeaders() {
     document.querySelectorAll('.sort-header').forEach(th => {
@@ -248,7 +248,7 @@
           alert(data.error);
         } else {
           const row = document.getElementById(`user-row-${id}`);
-          row.cells[3].textContent = parseFloat(data.coins_available).toFixed(4);
+          row.cells[3].textContent = parseFloat(data.coins_available).toFixed(2);
         }
         btn.disabled = false;
       })

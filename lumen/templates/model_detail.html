@@ -184,11 +184,11 @@
             <tbody>
               <tr>
                 <th scope="row" class="text-muted fw-normal ps-3">Input</th>
-                <td class="text-end pe-3">{{ "%.4f"|format(config.input_cost_per_million | float) }} / 1M</td>
+                <td class="text-end pe-3">{{ "%.2f"|format(config.input_cost_per_million | float) }} / 1M</td>
               </tr>
               <tr>
                 <th scope="row" class="text-muted fw-normal ps-3">Output</th>
-                <td class="text-end pe-3">{{ "%.4f"|format(config.output_cost_per_million | float) }} / 1M</td>
+                <td class="text-end pe-3">{{ "%.2f"|format(config.output_cost_per_million | float) }} / 1M</td>
               </tr>
             </tbody>
           </table>

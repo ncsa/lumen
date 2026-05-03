@@ -22,10 +22,10 @@
     <tr><td colspan="4"><span class="text-success">Unlimited</span></td></tr>
     {% else %}
     <tr>
-      <td>{{ "%.4f"|format(effective_pool[0]) }}</td>
-      <td>{{ "%.4f"|format(effective_pool[1]) }}</td>
-      <td>{{ "%.4f"|format(effective_pool[2]) }}</td>
-      <td>{% if entity_balance %}{{ "%.4f"|format(entity_balance.coins_left|float) }}{% else %}—{% endif %}</td>
+      <td>{{ "%.2f"|format(effective_pool[0]) }}</td>
+      <td>{{ "%.2f"|format(effective_pool[1]) }}</td>
+      <td>{{ "%.2f"|format(effective_pool[2]) }}</td>
+      <td>{% if entity_balance %}{{ "%.2f"|format(entity_balance.coins_left|float) }}{% else %}—{% endif %}</td>
     </tr>
     {% endif %}
   </tbody>
@@ -50,11 +50,11 @@
       <td>
         {% if entity_limit.max_coins == -2 %}<span class="text-success">Unlimited</span>
         {% elif entity_limit.max_coins == 0 %}<span class="text-danger">Blocked</span>
-        {% else %}{{ "%.4f"|format(entity_limit.max_coins|float) }}{% endif %}
+        {% else %}{{ "%.2f"|format(entity_limit.max_coins|float) }}{% endif %}
         {% if entity_limit.config_managed %} <span role="img" aria-label="Managed by config">🔒</span>{% endif %}
       </td>
-      <td>{{ "%.4f"|format(entity_limit.refresh_coins|float) }}</td>
-      <td>{{ "%.4f"|format(entity_limit.starting_coins|float) }}</td>
+      <td>{{ "%.2f"|format(entity_limit.refresh_coins|float) }}</td>
+      <td>{{ "%.2f"|format(entity_limit.starting_coins|float) }}</td>
     </tr>
   </tbody>
 </table>
@@ -119,7 +119,7 @@
   <div class="mb-0"><strong>Pool:</strong>
     {%- if glimit.max_coins == -2 %} <span class="text-success">Unlimited</span>
     {%- elif glimit.max_coins == 0 %} <span class="text-danger">Blocked</span>
-    {%- else %} {{ "%.4f"|format(glimit.max_coins|float) }} max, {{ "%.4f"|format(glimit.refresh_coins|float) }}/hr, {{ "%.4f"|format(glimit.starting_coins|float) }} starting
+    {%- else %} {{ "%.2f"|format(glimit.max_coins|float) }} max, {{ "%.2f"|format(glimit.refresh_coins|float) }}/hr, {{ "%.2f"|format(glimit.starting_coins|float) }} starting
     {%- endif %}
   </div>
   {%- else %}
