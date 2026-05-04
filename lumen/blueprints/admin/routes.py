@@ -387,13 +387,15 @@ def delete_user_pool(eid):
 def upsert_user_access(eid):
     db.get_or_404(Entity, eid)
     model_config_id = int(request.form.get("model_config_id"))
-    allowed = request.form.get("allowed", "true").lower() in ("true", "1", "yes")
+    access_type = request.form.get("access_type", "whitelist")
+    if access_type not in ("whitelist", "blacklist", "graylist"):
+        access_type = "whitelist"
 
     existing = EntityModelAccess.query.filter_by(entity_id=eid, model_config_id=model_config_id).first()
     if existing:
-        existing.allowed = allowed
+        existing.access_type = access_type
     else:
-        db.session.add(EntityModelAccess(entity_id=eid, model_config_id=model_config_id, allowed=allowed))
+        db.session.add(EntityModelAccess(entity_id=eid, model_config_id=model_config_id, access_type=access_type))
     db.session.commit()
     return redirect(url_for("admin.user_limits", eid=eid))
 

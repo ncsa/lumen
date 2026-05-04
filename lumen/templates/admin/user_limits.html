@@ -84,10 +84,12 @@
     <tr>
       <td>{{ access.model_config.model_name }}</td>
       <td>
-        {% if access.allowed %}
-        <span class="text-success">Allowed</span>
+        {% if access.access_type == 'whitelist' %}
+        <span class="badge bg-success">Allowed</span>
+        {% elif access.access_type == 'graylist' %}
+        <span class="badge bg-warning text-dark">Graylist</span>
         {% else %}
-        <span class="text-danger">Denied</span>
+        <span class="badge bg-danger">Denied</span>
         {% endif %}
       </td>
       <td>
@@ -198,9 +200,10 @@
         </div>
         <div class="mb-3">
           <label class="form-label" for="ua-allowed-select">Access</label>
-          <select name="allowed" id="ua-allowed-select" class="form-select">
-            <option value="true">Allowed</option>
-            <option value="false">Denied</option>
+          <select name="access_type" id="ua-allowed-select" class="form-select">
+            <option value="whitelist">Allowed</option>
+            <option value="graylist">Graylist (needs consent)</option>
+            <option value="blacklist">Denied</option>
           </select>
         </div>
       </div>

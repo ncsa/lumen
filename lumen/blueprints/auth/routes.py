@@ -117,7 +117,7 @@ def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=No
     allowed_models = user_cfg.get("models", [])
     existing_access = {a.model_config_id: a
                        for a in EntityModelAccess.query.filter_by(entity_id=entity.id).all()
-                       if a.allowed}  # only track config-managed allows
+                       if a.access_type == "whitelist"}  # only track config-managed allows
 
     desired_model_ids = set()
     for model_name in allowed_models:
@@ -129,7 +129,7 @@ def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=No
             db.session.add(EntityModelAccess(
                 entity_id=entity.id,
                 model_config_id=mc.id,
-                allowed=True,
+                access_type="whitelist",
             ))
 
     # Remove config-managed access rows no longer in yaml

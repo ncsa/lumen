@@ -258,8 +258,7 @@ def sync_clients_from_yaml(yaml_data):
         entity.model_access_default = access_cfg.get("default") or None
 
         EntityModelAccess.query.filter_by(entity_id=entity.id).delete()
-        for access_type in ("whitelist", "blacklist"):
-            allowed = (access_type == "whitelist")
+        for access_type in ("whitelist", "blacklist", "graylist"):
             for model_name in access_cfg.get(access_type, []):
                 mc = ModelConfig.query.filter_by(model_name=model_name).first()
                 if mc is None:
@@ -271,7 +270,7 @@ def sync_clients_from_yaml(yaml_data):
                 db.session.add(EntityModelAccess(
                     entity_id=entity.id,
                     model_config_id=mc.id,
-                    allowed=allowed,
+                    access_type=access_type,
                 ))
 
     db.session.commit()
