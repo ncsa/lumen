@@ -2,7 +2,7 @@
 
 All notable changes to Lumen will be documented in this file.
 
-## [Unreleased]
+## [1.7.1] - 2026-05-04
 
 ### Added
 - Help page is now accessible without logging in; unauthenticated visitors see a Login link in the header instead of Log Out and chat navigation
