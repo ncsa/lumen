@@ -61,7 +61,7 @@ def get_model_access_status(entity_id: int, model_config_id: int) -> str:
     Return 'allowed', 'blocked', or 'graylist' for the given entity + model.
 
     Resolution:
-    1. User-level EntityModelAccess (allowed=True/False) overrides everything.
+    1. User-level EntityModelAccess (whitelist/graylist/blacklist) overrides everything.
     2. Check active groups' GroupModelAccess: blacklist > whitelist > graylist.
     3. Check GlobalModelAccess: same priority.
     4. Apply effective default: most restrictive group model_access_default, then global MODEL_ACCESS_DEFAULT.
@@ -70,7 +70,11 @@ def get_model_access_status(entity_id: int, model_config_id: int) -> str:
         entity_id=entity_id, model_config_id=model_config_id
     ).first()
     if user_access is not None:
-        return "allowed" if user_access.allowed else "blocked"
+        if user_access.access_type == "whitelist":
+            return "allowed"
+        if user_access.access_type == "graylist":
+            return "graylist"
+        return "blocked"
 
     # Global blacklist is absolute — no group can override it
     global_rule = GlobalModelAccess.query.filter_by(model_config_id=model_config_id).first()

@@ -166,7 +166,7 @@ def test_sync_clients_model_access(app):
         assert client.model_access_default == "blacklist"
         rule = EntityModelAccess.query.filter_by(entity_id=client.id, model_config_id=mc.id).first()
         assert rule is not None
-        assert rule.allowed is True
+        assert rule.access_type == "whitelist"
 
 
 def test_sync_global_model_access_creates_rule(app):

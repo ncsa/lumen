@@ -50,7 +50,7 @@ def test_user_blocked_model_absent(app, auth_client, test_model, test_user):
         db.session.add(EntityModelAccess(
             entity_id=test_user["id"],
             model_config_id=test_model["id"],
-            allowed=False,
+            access_type="blacklist",
         ))
         db.session.commit()
 
@@ -58,3 +58,33 @@ def test_user_blocked_model_absent(app, auth_client, test_model, test_user):
     soup = BeautifulSoup(resp.data, "html.parser")
     links = [a.get_text(strip=True) for a in soup.find_all("a")]
     assert test_model["model_name"] not in links
+
+
+def test_graylist_model_visible_without_consent(app, auth_client, test_model, test_user):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_model_access import EntityModelAccess
+        db.session.add(EntityModelAccess(
+            entity_id=test_user["id"],
+            model_config_id=test_model["id"],
+            access_type="graylist",
+        ))
+        db.session.commit()
+
+    resp = auth_client.get("/models")
+    soup = BeautifulSoup(resp.data, "html.parser")
+    links = [a.get_text(strip=True) for a in soup.find_all("a")]
+    assert test_model["model_name"] in links
+
+
+def test_global_graylist_model_visible_without_consent(app, auth_client, test_model, test_user):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.global_model_access import GlobalModelAccess
+        db.session.add(GlobalModelAccess(model_config_id=test_model["id"], access_type="graylist"))
+        db.session.commit()
+
+    resp = auth_client.get("/models")
+    soup = BeautifulSoup(resp.data, "html.parser")
+    links = [a.get_text(strip=True) for a in soup.find_all("a")]
+    assert test_model["model_name"] in links

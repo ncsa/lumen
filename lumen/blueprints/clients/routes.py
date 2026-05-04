@@ -136,15 +136,11 @@ def detail(sid):
         .all()
     )
 
-    all_active_models = (
-        ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
-    )
+    all_models = ModelConfig.query.order_by(ModelConfig.model_name).all()
     usage_by_model = {u["model_name"]: u for u in data.get("model_usage", [])}
     model_access_list = []
-    for mc in all_active_models:
+    for mc in all_models:
         access_status = get_model_access_status(sid, mc.id)
-        if access_status == "blocked":
-            continue
         consented = has_model_consent(sid, mc.id) if access_status == "graylist" else None
         u = usage_by_model.get(mc.model_name, {})
         model_access_list.append({
@@ -185,8 +181,6 @@ def create_client():
     if not name:
         return jsonify({"error": "Client name required"}), 400
 
-    entity_id = session["entity_id"]
-
     client = Entity(
         entity_type="client",
         name=name,
@@ -194,10 +188,6 @@ def create_client():
         active=True,
     )
     db.session.add(client)
-    db.session.flush()
-
-    assoc = EntityManager(user_entity_id=entity_id, client_entity_id=client.id)
-    db.session.add(assoc)
     db.session.commit()
 
     return jsonify({"id": client.id, "name": client.name}), 201
@@ -210,6 +200,35 @@ def delete_client(sid):
     client.active = False
     db.session.commit()
     return "", 204
+
+
+@clients_bp.route("/clients/<int:sid>/users/search")
+@admin_required
+def search_client_users(sid):
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify({"users": []})
+
+    Entity.query.filter_by(id=sid, entity_type="client").first_or_404()
+
+    existing_ids = {
+        a.user_entity_id
+        for a in EntityManager.query.filter_by(client_entity_id=sid).all()
+    }
+
+    query = Entity.query.filter(
+        Entity.entity_type == "user",
+        Entity.active == True,
+        db.or_(
+            Entity.email.ilike(f"%{q}%"),
+            Entity.name.ilike(f"%{q}%"),
+        ),
+    )
+    if existing_ids:
+        query = query.filter(~Entity.id.in_(existing_ids))
+
+    users = query.order_by(Entity.name).limit(10).all()
+    return jsonify({"users": [{"id": u.id, "name": u.name, "email": u.email} for u in users]})
 
 
 @clients_bp.route("/clients/<int:sid>/users", methods=["POST"])

@@ -145,7 +145,7 @@ def test_valid_key_filters_blocked_model(
         db.session.add(EntityModelAccess(
             entity_id=test_user["id"],
             model_config_id=test_model["id"],
-            allowed=False,
+            access_type="blacklist",
         ))
         db.session.commit()
 
@@ -168,7 +168,7 @@ def test_get_model_blocked_returns_404(
         db.session.add(EntityModelAccess(
             entity_id=test_user["id"],
             model_config_id=test_model["id"],
-            allowed=False,
+            access_type="blacklist",
         ))
         db.session.commit()
 
@@ -304,7 +304,7 @@ def test_chat_completions_no_access_403(
         db.session.add(EntityModelAccess(
             entity_id=test_user["id"],
             model_config_id=test_model["id"],
-            allowed=False,
+            access_type="blacklist",
         ))
         db.session.commit()
 
@@ -315,3 +315,84 @@ def test_chat_completions_no_access_403(
               "messages": [{"role": "user", "content": "hi"}]},
     )
     assert resp.status_code == 403
+
+
+def test_chat_completions_graylist_no_consent_403(
+    app, client, test_user, test_model, api_key,
+):
+    token, _ = api_key
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_model_access import EntityModelAccess
+        _grant_unlimited_pool(app, test_user["id"])
+        db.session.add(EntityModelAccess(
+            entity_id=test_user["id"],
+            model_config_id=test_model["id"],
+            access_type="graylist",
+        ))
+        db.session.commit()
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"],
+              "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert resp.status_code == 403
+
+
+def test_chat_completions_graylist_with_consent_passes_access(
+    app, client, test_user, test_model, api_key,
+):
+    """Graylist + consent clears the access gate (fails later at endpoint, not at 403)."""
+    token, _ = api_key
+    with app.app_context():
+        from datetime import datetime, timezone
+        from lumen.extensions import db
+        from lumen.models.entity_model_access import EntityModelAccess
+        from lumen.models.entity_model_consent import EntityModelConsent
+        _grant_unlimited_pool(app, test_user["id"])
+        db.session.add(EntityModelAccess(
+            entity_id=test_user["id"],
+            model_config_id=test_model["id"],
+            access_type="graylist",
+        ))
+        db.session.add(EntityModelConsent(
+            entity_id=test_user["id"],
+            model_config_id=test_model["id"],
+            consented_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        ))
+        db.session.commit()
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"],
+              "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert resp.status_code != 403
+
+
+def test_chat_completions_whitelist_passes_access(
+    app, client, test_user, test_model, api_key,
+):
+    """Whitelist clears the access gate (fails later at endpoint, not at 403)."""
+    token, _ = api_key
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_model_access import EntityModelAccess
+        _grant_unlimited_pool(app, test_user["id"])
+        db.session.add(EntityModelAccess(
+            entity_id=test_user["id"],
+            model_config_id=test_model["id"],
+            access_type="whitelist",
+        ))
+        db.session.commit()
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"],
+              "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert resp.status_code != 403

@@ -1,4 +1,4 @@
-"""Tests for config_watcher._check_restart_required."""
+"""Tests for config_watcher._check_restart_required, _watcher, and start_config_watcher."""
 import logging
 
 
@@ -74,3 +74,116 @@ def test_restart_keys_covered():
     assert ("app", "secret_key") in keys
     assert ("app", "database_url") in keys
     assert ("prometheus", "enabled") in keys
+
+
+def test_start_config_watcher_creates_daemon_thread(app, tmp_path):
+    from unittest.mock import MagicMock, patch
+    from lumen.services.config_watcher import start_config_watcher
+
+    config_path = str(tmp_path / "config.yaml")
+    with patch("lumen.services.config_watcher.threading.Thread") as mock_cls:
+        mock_thread = MagicMock()
+        mock_cls.return_value = mock_thread
+        start_config_watcher(app, config_path)
+
+    mock_cls.assert_called_once()
+    assert mock_cls.call_args[1]["daemon"] is True
+    mock_thread.start.assert_called_once()
+
+
+def test_watcher_reloads_config_on_mtime_change(app, tmp_path):
+    import yaml
+    from unittest.mock import patch
+    from lumen.services.config_watcher import _watcher
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.dump({"app": {"name": "Reloaded"}}))
+
+    sleep_count = 0
+
+    def fake_sleep(n):
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count >= 3:
+            raise SystemExit("stop")
+
+    mtime_values = [1.0, 2.0]
+    mtime_idx = 0
+
+    def fake_getmtime(path):
+        nonlocal mtime_idx
+        v = mtime_values[mtime_idx] if mtime_idx < len(mtime_values) else 2.0
+        mtime_idx += 1
+        return v
+
+    with patch("lumen.services.config_watcher.time.sleep", side_effect=fake_sleep):
+        with patch("lumen.services.config_watcher.os.path.getmtime", side_effect=fake_getmtime):
+            try:
+                _watcher(app, str(config_file))
+            except SystemExit:
+                pass
+
+    with app.app_context():
+        assert app.config.get("APP_NAME") == "Reloaded"
+
+
+def test_watcher_skips_when_mtime_unchanged(app, tmp_path):
+    import yaml
+    from unittest.mock import patch
+    from lumen.services.config_watcher import _watcher
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.dump({"app": {"name": "Original"}}))
+    with app.app_context():
+        app.config["APP_NAME"] = "Original"
+
+    sleep_count = 0
+
+    def fake_sleep(n):
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count >= 3:
+            raise SystemExit("stop")
+
+    with patch("lumen.services.config_watcher.time.sleep", side_effect=fake_sleep):
+        with patch("lumen.services.config_watcher.os.path.getmtime", return_value=1.0):
+            try:
+                _watcher(app, str(config_file))
+            except SystemExit:
+                pass
+
+    with app.app_context():
+        assert app.config.get("APP_NAME") == "Original"
+
+
+def test_watcher_handles_read_error_gracefully(app, tmp_path):
+    from unittest.mock import patch
+    from lumen.services.config_watcher import _watcher
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("app:\n  name: Test\n")
+
+    sleep_count = 0
+
+    def fake_sleep(n):
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count >= 3:
+            raise SystemExit("stop")
+
+    mtime_values = [1.0, 2.0]
+    mtime_idx = 0
+
+    def fake_getmtime(path):
+        nonlocal mtime_idx
+        v = mtime_values[mtime_idx] if mtime_idx < len(mtime_values) else 2.0
+        mtime_idx += 1
+        return v
+
+    with patch("lumen.services.config_watcher.time.sleep", side_effect=fake_sleep):
+        with patch("lumen.services.config_watcher.os.path.getmtime", side_effect=fake_getmtime):
+            with patch("builtins.open", side_effect=OSError("disk error")):
+                try:
+                    _watcher(app, str(config_file))
+                except SystemExit:
+                    pass

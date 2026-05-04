@@ -5,6 +5,8 @@ All notable changes to Lumen will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Add Manager dialog now searches users by name or email as you type (up to 10 results), with keyboard-navigable autocomplete dropdown; existing managers are excluded from results
+- Test coverage: all source files now have ≥50% coverage (overall up to 75%); new tests for chat routes (conversations, delete, stream validation), metrics endpoint (auth, disabled/enabled), config watcher (`_watcher` reload and `start_config_watcher`), model access control on both `/chat/stream` and `/v1/chat/completions` (blacklist→403, graylist no consent→403, graylist+consent and whitelist pass the gate)
 - Client accounts: admins can create client accounts (service entities with no login) and assign managers; managers can create/delete API keys for the client; graylist model consent can be accepted on behalf of a client
 - Client list page (`/clients`) shows all clients to admins (with summary stat cards) and only managed clients to regular users; table is sortable and filterable
 - Client detail page (`/clients/<id>`) shows usage stat cards (tokens, coins, coin pool, coin refill), managers table, API keys table (sortable/filterable), and a model access table (sortable/filterable) with requests, coins, last used, access status, and model status columns; graylisted models can be clicked to open a consent modal
@@ -15,6 +17,11 @@ All notable changes to Lumen will be documented in this file.
 - `app.dev_user` now accepts a dict with `email` and `groups` keys in addition to a plain email string; groups listed under `dev_user.groups` are assigned to the dev user on every `/devlogin`
 
 ### Changed
+- New clients no longer automatically add the creating admin as a manager
+- Client detail page Model Access table now includes disabled (inactive) and blocked models, hidden by default behind a "Show disabled" toggle
+- `entity_model_access.allowed` (bool) replaced with `access_type` (whitelist/blacklist/graylist) to support per-entity graylist overrides; Alembic migration `t0u1v2w3x4y5`
+- `clients.model_access.graylist` list in `config.yaml` now syncs to DB as graylist `EntityModelAccess` records, enabling per-client consent-required models alongside a `default: blacklist` policy
+- Admin user limits page now supports setting model access overrides to Allowed, Graylist, or Denied
 - Coins and costs are now displayed to 2 decimal places (was 4) across all templates
 
 ## [1.6.1] - 2026-05-02

@@ -176,10 +176,16 @@
 <div class="d-flex justify-content-between align-items-center mt-4 mb-0">
   <h2 class="mb-0">Model Access</h2>
 </div>
-<div class="d-flex justify-content-end mt-2 mb-1">
-  <label for="model-search" class="text-muted small mb-0 me-2 align-self-center">Search:</label>
-  <input id="model-search" type="search" class="form-control form-control-sm" style="width:200px"
-         placeholder="Filter by name…" aria-label="Filter models by name">
+<div class="d-flex justify-content-between align-items-center mt-2 mb-1">
+  <div class="form-check mb-0">
+    <input class="form-check-input" type="checkbox" id="model-show-disabled">
+    <label class="form-check-label text-muted small" for="model-show-disabled">Show disabled</label>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <label for="model-search" class="text-muted small mb-0">Search:</label>
+    <input id="model-search" type="search" class="form-control form-control-sm" style="width:200px"
+           placeholder="Filter by name…" aria-label="Filter models by name">
+  </div>
 </div>
 <div class="table-responsive">
   <table class="table table-striped table-hover align-middle mb-0" id="model-table">
@@ -246,10 +252,20 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <p class="text-muted small">Add a user as manager by their email address.</p>
+        <p class="text-muted small">Search for a user by name or email address.</p>
         <div id="add-manager-result" role="alert" aria-live="assertive" class="mb-2"></div>
-        <label for="add-manager-email" class="form-label">Email address</label>
-        <input type="email" id="add-manager-email" class="form-control" placeholder="user@illinois.edu">
+        <label for="add-manager-email" class="form-label">Name or email</label>
+        <div class="position-relative">
+          <input type="text" id="add-manager-email" class="form-control"
+                 placeholder="Type to search…"
+                 role="combobox"
+                 aria-autocomplete="list"
+                 aria-expanded="false"
+                 aria-controls="manager-suggestions"
+                 autocomplete="off">
+          <ul id="manager-suggestions" role="listbox" aria-label="Matching users"
+              class="dropdown-menu w-100 mb-0 p-0"></ul>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
@@ -434,6 +450,7 @@ const MODEL_ROWS = [
 
 const modelState = { col: 'model_name', dir: 'asc' };
 let modelFilter = '';
+let modelShowDisabled = false;
 const modelTbody = document.getElementById('model-tbody');
 const modelEmpty = document.getElementById('model-empty');
 
@@ -448,7 +465,10 @@ function statusSortKey(s) {
 
 function renderModels() {
   const f = modelFilter.toLowerCase();
-  let rows = MODEL_ROWS.filter(r => !f || r.model_name.toLowerCase().includes(f));
+  let rows = MODEL_ROWS.filter(r => {
+    if (!modelShowDisabled && (r.model_status === 'disabled' || r.access_status === 'blocked')) return false;
+    return !f || r.model_name.toLowerCase().includes(f);
+  });
   rows.sort((a, b) => {
     let av, bv;
     if (modelState.col === 'model_name') { av = a.model_name.toLowerCase(); bv = b.model_name.toLowerCase(); }
@@ -468,7 +488,9 @@ function renderModels() {
     modelTbody.innerHTML = rows.map(r => {
       const dt = fmtDate(r.last_used);
       let accessCell;
-      if (r.access_status === 'allowed') {
+      if (r.access_status === 'blocked') {
+        accessCell = `<span class="badge bg-danger">Blocked</span>`;
+      } else if (r.access_status === 'allowed') {
         accessCell = `<span class="badge bg-success"><span role="img" aria-label="check">✓</span> Allowed</span>`;
       } else if (r.access_status === 'graylist' && r.consented) {
         accessCell = `<span class="badge bg-success"><span role="img" aria-label="check">✓</span> Consented</span>`;
@@ -502,6 +524,10 @@ let modelDebounce;
 document.getElementById('model-search').addEventListener('input', e => {
   clearTimeout(modelDebounce);
   modelDebounce = setTimeout(() => { modelFilter = e.target.value.trim(); renderModels(); }, 200);
+});
+document.getElementById('model-show-disabled').addEventListener('change', e => {
+  modelShowDisabled = e.target.checked;
+  renderModels();
 });
 renderModels();
 
@@ -549,9 +575,74 @@ document.getElementById("save-key-btn").addEventListener("click", async function
 
 
 {% if is_admin %}
-// Add manager
+// Add manager with user search autocomplete
+const managerInput = document.getElementById("add-manager-email");
+const managerSuggestions = document.getElementById("manager-suggestions");
+let managerDebounce;
+
+function hideSuggestions() {
+  managerSuggestions.classList.remove("show");
+  managerInput.setAttribute("aria-expanded", "false");
+}
+
+function selectSuggestion(email) {
+  managerInput.value = email;
+  hideSuggestions();
+  managerInput.focus();
+}
+
+function showSuggestions(users) {
+  if (!users.length) { hideSuggestions(); return; }
+  managerSuggestions.innerHTML = users.map((u, i) =>
+    `<li role="option" id="mgr-opt-${i}" class="dropdown-item py-1" style="cursor:pointer"
+         tabindex="-1" data-email="${escHtml(u.email)}">
+       <span class="fw-semibold">${escHtml(u.name)}</span>
+       <span class="text-muted small ms-1">${escHtml(u.email)}</span>
+     </li>`
+  ).join('');
+  managerSuggestions.classList.add("show");
+  managerInput.setAttribute("aria-expanded", "true");
+  managerSuggestions.querySelectorAll("li").forEach(li => {
+    li.addEventListener("mousedown", e => { e.preventDefault(); selectSuggestion(li.dataset.email); });
+  });
+}
+
+managerInput.addEventListener("input", function () {
+  clearTimeout(managerDebounce);
+  const q = this.value.trim();
+  if (q.length < 2) { hideSuggestions(); return; }
+  managerDebounce = setTimeout(async () => {
+    try {
+      const resp = await fetch(`/clients/${CLIENT_ID}/users/search?q=${encodeURIComponent(q)}`);
+      if (resp.ok) showSuggestions((await resp.json()).users);
+    } catch (_) {}
+  }, 250);
+});
+
+managerInput.addEventListener("blur", () => setTimeout(hideSuggestions, 150));
+
+managerInput.addEventListener("keydown", function (e) {
+  const first = managerSuggestions.querySelector("li");
+  if (e.key === "ArrowDown" && first) { e.preventDefault(); first.focus(); }
+  else if (e.key === "Escape") { hideSuggestions(); }
+});
+
+managerSuggestions.addEventListener("keydown", function (e) {
+  const focused = document.activeElement;
+  if (e.key === "ArrowDown") { e.preventDefault(); focused.nextElementSibling?.focus(); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); focused.previousElementSibling ? focused.previousElementSibling.focus() : managerInput.focus(); }
+  else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectSuggestion(focused.dataset.email); }
+  else if (e.key === "Escape") { hideSuggestions(); managerInput.focus(); }
+});
+
+document.getElementById("addManagerModal").addEventListener("hidden.bs.modal", () => {
+  managerInput.value = "";
+  hideSuggestions();
+  document.getElementById("add-manager-result").innerHTML = "";
+});
+
 document.getElementById("add-manager-btn").addEventListener("click", async function () {
-  const email = document.getElementById("add-manager-email").value.trim();
+  const email = managerInput.value.trim();
   if (!email) return;
   const resp = await fetch("/clients/" + CLIENT_ID + "/users", {
     method: "POST",
@@ -561,11 +652,12 @@ document.getElementById("add-manager-btn").addEventListener("click", async funct
   const data = await resp.json();
   const el = document.getElementById("add-manager-result");
   if (resp.ok) {
-    el.innerHTML = `<div class="alert alert-success py-1">Added ${data.name}</div>`;
-    document.getElementById("add-manager-email").value = "";
+    el.innerHTML = `<div class="alert alert-success py-1">Added ${escHtml(data.name)}</div>`;
+    managerInput.value = "";
+    hideSuggestions();
     setTimeout(() => location.reload(), 800);
   } else {
-    el.innerHTML = `<div class="alert alert-danger py-1">${data.error || "Error"}</div>`;
+    el.innerHTML = `<div class="alert alert-danger py-1">${escHtml(data.error) || "Error"}</div>`;
   }
 });
 

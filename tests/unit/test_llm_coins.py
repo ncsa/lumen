@@ -23,7 +23,7 @@ def test_subtract_coins_noop_when_blocked(app, test_user, test_model):
         from lumen.extensions import db
         from lumen.models.entity_model_access import EntityModelAccess
         from lumen.services.llm import subtract_coins
-        db.session.add(EntityModelAccess(entity_id=entity_id, model_config_id=model_id, allowed=False))
+        db.session.add(EntityModelAccess(entity_id=entity_id, model_config_id=model_id, access_type="blacklist"))
         db.session.commit()
         # No exception, just no-op
         subtract_coins(entity_id, model_id, 10.0)

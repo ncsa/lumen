@@ -17,7 +17,7 @@ def test_models_blocked_model_not_listed(app, auth_client, test_model, test_user
         db.session.add(EntityModelAccess(
             entity_id=test_user["id"],
             model_config_id=test_model["id"],
-            allowed=False,
+            access_type="blacklist",
         ))
         db.session.commit()
 
@@ -74,7 +74,7 @@ def test_model_detail_blocked_returns_404(app, auth_client, test_model, test_use
         db.session.add(EntityModelAccess(
             entity_id=test_user["id"],
             model_config_id=test_model["id"],
-            allowed=False,
+            access_type="blacklist",
         ))
         db.session.commit()
 

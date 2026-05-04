@@ -242,7 +242,7 @@ def test_check_coin_budget_no_access(app, test_user, test_model):
         from lumen.extensions import db
         from lumen.models.entity_model_access import EntityModelAccess
         from lumen.services.llm import check_coin_budget
-        db.session.add(EntityModelAccess(entity_id=entity_id, model_config_id=model_id, allowed=False))
+        db.session.add(EntityModelAccess(entity_id=entity_id, model_config_id=model_id, access_type="blacklist"))
         db.session.commit()
         ok, code, msg = check_coin_budget(entity_id, model_id)
         assert not ok
