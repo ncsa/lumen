@@ -151,6 +151,8 @@ def detail(sid):
             "consented": consented,
             "model_status": _model_status(mc),
             "requests": u.get("requests", 0),
+            "input_tokens": u.get("input_tokens", 0),
+            "output_tokens": u.get("output_tokens", 0),
             "cost": u.get("cost", 0.0),
             "last_used_at": u.get("last_used_at"),
         })

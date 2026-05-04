@@ -157,8 +157,7 @@
       <tr>
         <th class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-end" data-col="input_tokens">Input Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-end" data-col="output_tokens">Output Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th class="sort-header text-end" data-col="tokens">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th><span class="visually-hidden">Actions</span></th>
@@ -194,6 +193,7 @@
       <tr>
         <th class="sort-header" data-col="model_name">Model <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th class="sort-header text-end" data-col="tokens">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th class="sort-header" data-col="access_status">Access <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
@@ -362,8 +362,7 @@ const KEY_ROWS = [
     name: {{ (key.name or "(unnamed)") | tojson }},
     hint: {{ key.key_hint | tojson }},
     requests: {{ key.requests or 0 }},
-    input_tokens: {{ key.input_tokens or 0 }},
-    output_tokens: {{ key.output_tokens or 0 }},
+    tokens: {{ (key.input_tokens or 0) + (key.output_tokens or 0) }},
     cost: {{ "%.6f"|format(key.cost|float) }},
     last_used: {{ key.last_used_at.strftime('%Y-%m-%dT%H:%M:%SZ') | tojson if key.last_used_at else 'null' }},
     active: {{ key.active | tojson }},
@@ -402,8 +401,7 @@ function renderKeys() {
       return `<tr${deletedClass}>
         <td><span data-bs-toggle="tooltip" data-bs-title="${escHtml(k.hint)}">${escHtml(k.name)}</span></td>
         <td class="text-end">${k.requests.toLocaleString()}</td>
-        <td class="text-end">${k.input_tokens.toLocaleString()}</td>
-        <td class="text-end">${k.output_tokens.toLocaleString()}</td>
+        <td class="text-end">${k.tokens.toLocaleString()}</td>
         <td class="text-end">${parseFloat(k.cost).toFixed(2)}</td>
         <td>${dt.text}</td>
         <td>${action}</td>
@@ -421,7 +419,7 @@ function renderKeys() {
   }
 }
 
-makeSortable('key-table', keyState, new Set(['requests','input_tokens','output_tokens','cost','last_used']), renderKeys);
+makeSortable('key-table', keyState, new Set(['requests','tokens','cost','last_used']), renderKeys);
 const showDeletedCb = document.getElementById('show-deleted-cb');
 showDeletedCb.addEventListener('change', () => { showDeleted = showDeletedCb.checked; renderKeys(); });
 let keyDebounce;
@@ -438,6 +436,7 @@ const MODEL_ROWS = [
     model_name: {{ row.model_name | tojson }},
     model_url: {{ row.model_url | tojson }},
     requests: {{ row.requests }},
+    tokens: {{ (row.input_tokens or 0) + (row.output_tokens or 0) }},
     cost: {{ "%.6f"|format(row.cost) }},
     last_used: {{ row.last_used_at.strftime('%Y-%m-%dT%H:%M:%SZ') | tojson if row.last_used_at else 'null' }},
     access_status: {{ row.access_status | tojson }},
@@ -507,6 +506,7 @@ function renderModels() {
       return `<tr>
         <td><a href="${escHtml(r.model_url)}">${escHtml(r.model_name)}</a></td>
         <td class="text-end">${r.requests ? r.requests.toLocaleString() : '—'}</td>
+        <td class="text-end">${r.tokens ? r.tokens.toLocaleString() : '—'}</td>
         <td class="text-end">${r.cost ? parseFloat(r.cost).toFixed(2) : '—'}</td>
         <td>${dt.text}</td>
         <td>${accessCell}</td>
@@ -519,7 +519,7 @@ function renderModels() {
   }
 }
 
-makeSortable('model-table', modelState, new Set(['requests','cost','last_used']), renderModels);
+makeSortable('model-table', modelState, new Set(['requests','tokens','cost','last_used']), renderModels);
 let modelDebounce;
 document.getElementById('model-search').addEventListener('input', e => {
   clearTimeout(modelDebounce);

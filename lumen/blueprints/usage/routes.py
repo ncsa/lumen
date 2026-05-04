@@ -1,5 +1,5 @@
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, redirect, render_template, request, jsonify, session, url_for
 from sqlalchemy import func
@@ -7,13 +7,29 @@ from sqlalchemy import func
 from lumen.decorators import login_required
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
-from lumen.services.crypto import hash_api_key
-from lumen.models.model_config import ModelConfig
+from lumen.models.conversation import Conversation
 from lumen.models.entity_balance import EntityBalance
+from lumen.models.entity_model_consent import EntityModelConsent
+from lumen.models.model_config import ModelConfig
 from lumen.models.model_stat import ModelStat
-from lumen.services.llm import get_pool_limit, get_model_access
+from lumen.services.crypto import hash_api_key
+from lumen.services.llm import get_pool_limit, get_model_access, get_model_access_status, has_model_consent
 
 usage_bp = Blueprint("usage", __name__)
+
+
+def _model_status(mc) -> str:
+    if not mc.active:
+        return "disabled"
+    endpoints = list(mc.endpoints)
+    if not endpoints:
+        return "down"
+    healthy = sum(1 for e in endpoints if e.healthy)
+    if healthy == 0:
+        return "down"
+    if healthy < len(endpoints):
+        return "degraded"
+    return "ok"
 
 
 def _get_usage_data(eid: int) -> dict:
@@ -28,6 +44,12 @@ def _get_usage_data(eid: int) -> dict:
         .filter_by(entity_id=eid, source="chat")
         .one()
     )
+
+    conversation_count = (
+        db.session.query(func.count(Conversation.id))
+        .filter_by(entity_id=eid)
+        .scalar()
+    ) or 0
 
     api_keys = APIKey.query.filter_by(entity_id=eid).order_by(APIKey.created_at).all()
 
@@ -120,6 +142,7 @@ def _get_usage_data(eid: int) -> dict:
 
     return {
         "chat_agg": chat_agg,
+        "conversation_count": conversation_count,
         "api_keys": api_keys,
         "model_usage": model_usage,
         "coin_pool": coin_pool,
@@ -130,8 +153,31 @@ def _get_usage_data(eid: int) -> dict:
 @usage_bp.route("/usage")
 @login_required
 def index():
-    data = _get_usage_data(session["entity_id"])
-    return render_template("usage.html", **data, scope_entity=None)
+    entity_id = session["entity_id"]
+    data = _get_usage_data(entity_id)
+
+    all_models = ModelConfig.query.order_by(ModelConfig.model_name).all()
+    usage_by_model = {u["model_name"]: u for u in data.get("model_usage", [])}
+    model_access_list = []
+    for mc in all_models:
+        access_status = get_model_access_status(entity_id, mc.id)
+        consented = has_model_consent(entity_id, mc.id) if access_status == "graylist" else None
+        u = usage_by_model.get(mc.model_name, {})
+        model_access_list.append({
+            "model_name": mc.model_name,
+            "model_url": url_for("models_page.detail", model_name=mc.model_name),
+            "notice": mc.notice,
+            "access_status": access_status,
+            "consented": consented,
+            "model_status": _model_status(mc),
+            "requests": u.get("requests", 0),
+            "input_tokens": u.get("input_tokens", 0),
+            "output_tokens": u.get("output_tokens", 0),
+            "cost": u.get("cost", 0.0),
+            "last_used_at": u.get("last_used_at"),
+        })
+
+    return render_template("usage.html", **data, model_access_list=model_access_list)
 
 
 @usage_bp.route("/usage/client/<int:sid>")
@@ -179,7 +225,7 @@ def create_key():
 @login_required
 def delete_key(kid):
     entity_id = session["entity_id"]
-    api_key = APIKey.query.get_or_404(kid)
+    api_key = db.get_or_404(APIKey, kid)
 
     if api_key.entity_id != entity_id:
         return jsonify({"error": "Forbidden"}), 403
@@ -187,3 +233,23 @@ def delete_key(kid):
     api_key.active = False
     db.session.commit()
     return "", 204
+
+
+@usage_bp.route("/usage/consent/<path:model_name>", methods=["POST"])
+@login_required
+def user_consent(model_name):
+    entity_id = session["entity_id"]
+    config = ModelConfig.query.filter_by(model_name=model_name, active=True).first_or_404()
+
+    if get_model_access_status(entity_id, config.id) != "graylist":
+        return jsonify({"error": "Model is not graylisted for this user"}), 400
+
+    if not has_model_consent(entity_id, config.id):
+        db.session.add(EntityModelConsent(
+            entity_id=entity_id,
+            model_config_id=config.id,
+            consented_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        ))
+        db.session.commit()
+
+    return jsonify({"ok": True}), 200

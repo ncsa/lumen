@@ -17,6 +17,7 @@ All notable changes to Lumen will be documented in this file.
 - `app.dev_user` now accepts a dict with `email` and `groups` keys in addition to a plain email string; groups listed under `dev_user.groups` are assigned to the dev user on every `/devlogin`
 
 ### Changed
+- Usage page now has dedicated API Keys section (sortable/filterable with search) and Model Access section (sortable/filterable with access status, consent buttons, and graylist modal), matching the client detail page layout; web chat stats moved to a standalone table
 - New clients no longer automatically add the creating admin as a manager
 - Client detail page Model Access table now includes disabled (inactive) and blocked models, hidden by default behind a "Show disabled" toggle
 - `entity_model_access.allowed` (bool) replaced with `access_type` (whitelist/blacklist/graylist) to support per-entity graylist overrides; Alembic migration `t0u1v2w3x4y5`
