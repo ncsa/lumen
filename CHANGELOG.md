@@ -2,6 +2,15 @@
 
 All notable changes to Lumen will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Help page is now accessible without logging in; unauthenticated visitors see a Login link in the header instead of Log Out and chat navigation
+- Landing (login) page footer now shows Illinois Computes, GitHub Repository, and Request Feature links
+
+### Changed
+- Doc image paths converted from absolute (`/help/img/`) to relative (`../img/`)
+
 ## [1.7.0] - 2026-05-04
 
 ### Added
