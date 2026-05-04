@@ -74,6 +74,7 @@ When adding variables to config.yaml, make sure they are hot loaded if possible 
 Track changes in the CHANGELOG.md, if no unreleased section exists, then add it.
 When bumping the version in pyproject.toml, also run `uv lock` to update uv.lock.
 For local testing without OAuth or a real LLM: set `app.dev_user` in config.yaml and use `uv run dummy` (dummy backend on port 9999). See the "Local Development" section in README.md.
+Screenshots for the help docs live in `docs/img/`. Re-capture them with playwright after any UI change that affects chat, usage, models, model detail, or clients pages. Use `CONFIG_YAML=./dev.config.yaml uv run python -c "from lumen import create_app; ..."` with a dev config that has `dev_user` set.
 SQLAlchemy: never use the legacy `Model.query.get()` or `Model.query.get_or_404()` APIs — they trigger a `LegacyAPIWarning`. Use `db.session.get(Model, pk)` for lookups and `db.get_or_404(Model, pk)` when a missing row should 404.
 
 ## 5. Accessibility (WCAG 2.1 AA)
@@ -101,7 +102,7 @@ When writing or modifying HTML/JS:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **lumen** (2000 symbols, 3314 relationships, 54 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **lumen** (2002 symbols, 3314 relationships, 54 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

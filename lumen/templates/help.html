@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Help — {{ app_name }}{% endblock %}
+
+{% block head %}
+<style>
+.help-sidebar .nav-link.active {
+  color: var(--bs-link-color) !important;
+  background: rgba(0,0,0,0.05) !important;
+  border-radius: 4px;
+}
+.help-sidebar .nav-section-title {
+  margin-top: 8px;
+}
+.help-sidebar .nav-section + .nav-section {
+  border-top: 1px solid var(--bs-border-color);
+}
+.help-markdown h1 { font-size: 1.75rem; font-weight: 700; margin-bottom: 1rem; }
+.help-markdown h2 { font-size: 1.35rem; font-weight: 600; margin-top: 1.75rem; margin-bottom: 0.75rem; padding-bottom: 0.35rem; border-bottom: 1px solid var(--bs-border-color); }
+.help-markdown h3 { font-size: 1.1rem; font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.5rem; }
+.help-markdown p { color: var(--bs-body-color); margin-bottom: 0.75rem; line-height: 1.65; }
+.help-markdown ul, .help-markdown ol { margin-bottom: 0.75rem; padding-left: 1.5rem; }
+.help-markdown li { margin-bottom: 0.25rem; }
+.help-markdown table { width: 100%; margin-bottom: 1rem; border-collapse: collapse; font-size: 0.92rem; }
+.help-markdown th, .help-markdown td { border: 1px solid var(--bs-border-color); padding: 8px 12px; text-align: left; }
+.help-markdown th { background: var(--bs-tertiary-bg); font-weight: 600; }
+.help-markdown code { background: var(--bs-tertiary-bg); padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }
+.help-markdown pre { background: var(--bs-tertiary-bg); padding: 12px; border-radius: 4px; overflow-x: auto; margin-bottom: 1rem; }
+.help-markdown pre code { background: none; padding: 0; }
+.help-markdown a { color: var(--bs-link-color); text-decoration: underline; }
+.help-markdown hr { margin: 1.5rem 0; border-color: var(--bs-border-color); }
+.help-markdown blockquote { border-left: 3px solid var(--bs-border-color); padding-left: 12px; color: var(--bs-secondary-color); margin-bottom: 1rem; }
+.help-markdown img { max-width: 100%; height: auto; border-radius: 4px; margin-bottom: 1rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="help-page" style="display:flex;gap:0;min-height:calc(100vh - var(--chat-top));flex:1">
+
+  <!-- Sidebar -->
+  <aside class="help-sidebar" aria-label="Help navigation" style="width:260px;flex-shrink:0;border-right:1px solid var(--bs-border-color);padding:16px 0;overflow-y:auto;position:sticky;top:var(--chat-top);height:calc(100vh - var(--chat-top))">
+    <div class="px-3 py-2 border-bottom">
+      <h2 class="h6 mb-0 fw-bold" id="help-nav-heading">Help</h2>
+    </div>
+    <nav aria-labelledby="help-nav-heading" style="padding:8px 0">
+      {% for section in sections %}
+      {% if section.get('items') %}
+      <div class="nav-section">
+        <div class="nav-section-title text-uppercase fw-bold small text-muted" style="padding:8px 16px 4px;letter-spacing:0.05em">{{ section.title }}</div>
+        {% for item in section['items'] %}
+        {% set item_path = section.section + '/' + item.filename %}
+        <a href="{{ url_for('help_bp.page', filename=item_path) }}"
+           class="nav-link{% if current_page == item_path %} active{% endif %}"
+           {% if current_page == item_path %}aria-current="page"{% endif %}
+           style="padding:6px 16px;display:block;text-decoration:none;font-size:0.9em">
+          {{ item.title }}
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      {% set item_path = (section.section + '/' + section.filename) if section.section else '' %}
+      <a href="{% if not section.section %}{{ url_for('help_bp.index_page') }}{% else %}{{ url_for('help_bp.page', filename=item_path) }}{% endif %}"
+         class="nav-link{% if current_page == item_path %} active{% endif %}"
+         {% if current_page == item_path %}aria-current="page"{% endif %}
+         style="padding:6px 16px;display:block;text-decoration:none">
+        {{ section.title }}
+      </a>
+      {% endif %}
+      {% endfor %}
+    </nav>
+  </aside>
+
+  <!-- Content -->
+  <main class="help-content" aria-label="Help content" style="flex:1;padding:24px 32px;overflow-y:auto;overflow-x:hidden;min-width:0">
+    <h1 class="mb-3">{{ title }}</h1>
+    <div class="help-markdown" aria-live="polite">{{ page_content | markdown }}</div>
+  </main>
+
+</div>
+{% endblock %}

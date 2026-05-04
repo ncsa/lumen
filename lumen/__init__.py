@@ -151,6 +151,7 @@ def create_app():
     from lumen.blueprints.api.routes import api_bp
     from lumen.blueprints.admin.routes import admin_bp
     from lumen.blueprints.metrics.routes import metrics_bp
+    from lumen.blueprints.help.routes import help_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(chat_bp)
@@ -160,6 +161,7 @@ def create_app():
     app.register_blueprint(api_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(metrics_bp)
+    app.register_blueprint(help_bp)
 
     # Rate limit error handler
     @app.errorhandler(429)
@@ -205,6 +207,17 @@ def create_app():
         )
         result["nav_clients"] = clients
         return result
+
+    # Register markdown Jinja2 filter
+    import markdown as _markdown
+    from markupsafe import Markup
+    _md = _markdown.Markdown(extensions=["tables", "fenced_code", "toc", "codehilite"])
+
+    def _md_filter(text):
+        _md.reset()
+        return Markup(_md.convert(text or ""))
+
+    app.jinja_env.filters["markdown"] = _md_filter
 
     # Sync models, groups, and global model access from yaml into DB on every startup
     from lumen.commands import sync_clients_from_yaml, sync_global_model_access_from_yaml, sync_groups_from_yaml, sync_models_from_yaml
