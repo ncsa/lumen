@@ -2,7 +2,7 @@
 
 All notable changes to Lumen will be documented in this file.
 
-## [Unreleased]
+## [1.7.0] - 2026-05-04
 
 ### Added
 - Help documentation at `/help` with sidebar navigation and markdown rendering; linked from the utility nav next to Log Out; screenshots in `docs/img/` for chat, usage, models, model detail, and clients pages
