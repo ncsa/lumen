@@ -2,7 +2,7 @@
 
 The **Models** page (`/models`) shows every AI model available in your Lumen instance, along with its pricing and current health.
 
-![Models dashboard](/help/img/models.png)
+![Models dashboard](../img/models.png)
 
 ## Table Columns
 

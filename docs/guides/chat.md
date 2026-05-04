@@ -2,7 +2,7 @@
 
 The **Chat** page (`/chat`) is the main interface for interacting with AI models.
 
-![Chat page](/help/img/chat.png)
+![Chat page](../img/chat.png)
 
 ## Page Layout
 

@@ -2,7 +2,7 @@
 
 The model detail page (`/models/<name>`) shows everything you need to know about a specific model before you use it.
 
-![Model detail page](/help/img/model-detail.png)
+![Model detail page](../img/model-detail.png)
 
 ## Page Layout
 

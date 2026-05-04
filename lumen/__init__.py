@@ -179,7 +179,7 @@ def create_app():
     # Context processor: inject app_name and nav_clients into all templates
     @app.context_processor
     def inject_nav():
-        result = {"app_name": app.config["APP_NAME"], "app_tagline": app.config["APP_TAGLINE"], "is_admin": False, "github_url": app.config.get("GITHUB_URL", "")}
+        result = {"app_name": app.config["APP_NAME"], "app_tagline": app.config["APP_TAGLINE"], "is_admin": False, "github_url": app.config.get("GITHUB_URL", ""), "is_logged_in": bool(session.get("entity_id"))}
         if not session.get("entity_id"):
             result["nav_clients"] = []
             return result

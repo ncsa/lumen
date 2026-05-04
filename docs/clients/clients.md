@@ -2,7 +2,7 @@
 
 The **Clients** page (`/clients`) is where you manage application clients — named identities for services or automated processes that need their own API access.
 
-![Clients page](/help/img/clients.png)
+![Clients page](../img/clients.png)
 
 ## What Is a Client?
 

@@ -14,8 +14,13 @@
 <body class="bg-light">
 
 <ilw-page class="ilw-margin ilw-font">
-  <ilw-header slot="header" menu="none">
+  <ilw-header slot="header">
     <a slot="site-name" href="/">{{ app_name }}</a>
+    <nav slot="links" aria-label="Utility">
+      <ul>
+        <li><a href="{{ url_for('help_bp.index_page') }}">Help</a></li>
+      </ul>
+    </nav>
   </ilw-header>
 
   <main id="main-content" class="d-flex align-items-center justify-content-center" style="min-height:60vh">
@@ -35,6 +40,11 @@
   <ilw-footer slot="footer">
     <p slot="primary-unit"><a href="https://ncsa.illinois.edu">National Center for Supercomputing Applications</a></p>
     <p slot="site-name"><a href="/">{{ app_name }}</a></p>
+    <div slot="actions">
+      <a href="https://computes.illinois.edu" target="_blank" rel="noopener noreferrer">Illinois Computes</a>
+      <a href="{{ github_url }}" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
+      <a href="{{ github_url }}/issues" target="_blank" rel="noopener noreferrer">Request Feature</a>
+    </div>
   </ilw-footer>
 </ilw-page>
 

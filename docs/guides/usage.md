@@ -2,7 +2,7 @@
 
 The **Usage** page (`/usage`) shows your coin balance, spending history, model access, and your personal API keys.
 
-![Usage page](/help/img/usage.png)
+![Usage page](../img/usage.png)
 
 ## Status Cards
 
