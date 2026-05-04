@@ -1,17 +1,40 @@
 # API Reference
 
-This section covers how Lumen API keys are structured, created, and used for programmatic access to AI models.
+Lumen exposes an **OpenAI-compatible REST API** at `/v1/`. Any tool or library that works with OpenAI can be pointed at your Lumen instance with minimal changes.
 
-## How Keys Are Used
+## Base URL and Authentication
 
-Lumen exposes an OpenAI-compatible REST API at `/v1/`. The two main endpoints are:
+Replace `https://your-lumen-instance` with your institution's Lumen URL. All requests require an `Authorization` header:
 
-| Endpoint | Purpose |
-|----------|---------|
-| `GET /v1/models` | List available models |
-| `POST /v1/chat/completions` | Send a chat completion request |
+```
+Authorization: Bearer sk_your_api_key_here
+```
 
-To authenticate:
+See [Usage → API Keys](usage.md#api-keys) to create a key.
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/models` | List available models |
+| `POST` | `/v1/chat/completions` | Send a chat message and receive a reply |
+
+---
+
+## List Models
+
+```bash
+curl https://your-lumen-instance/v1/models \
+  -H "Authorization: Bearer sk_your_api_key_here"
+```
+
+Returns a list of model IDs you can use in chat completion requests.
+
+---
+
+## Chat Completions
+
+### Basic request (curl)
 
 ```bash
 curl https://your-lumen-instance/v1/chat/completions \
@@ -19,11 +42,15 @@ curl https://your-lumen-instance/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "gpt-4o",
-    "messages": [{"role": "user", "content": "Hello"}]
+    "messages": [
+      {"role": "user", "content": "Explain quantum entanglement in plain English"}
+    ]
   }'
 ```
 
-The same format works with any OpenAI-compatible SDK (Python, Node.js, etc.):
+### Python (openai SDK)
+
+Install the library once: `pip install openai`
 
 ```python
 from openai import OpenAI
@@ -35,46 +62,183 @@ client = OpenAI(
 
 response = client.chat.completions.create(
     model="gpt-4o",
-    messages=[{"role": "user", "content": "Explain quantum computing"}]
+    messages=[
+        {"role": "user", "content": "Explain quantum entanglement in plain English"}
+    ]
+)
+
+print(response.choices[0].message.content)
+```
+
+### Python — multi-turn conversation
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="sk_your_api_key_here",
+    base_url="https://your-lumen-instance/v1"
+)
+
+history = []
+
+def chat(user_message):
+    history.append({"role": "user", "content": user_message})
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=history
+    )
+    reply = response.choices[0].message.content
+    history.append({"role": "assistant", "content": reply})
+    return reply
+
+print(chat("What is a transformer model?"))
+print(chat("How does the attention mechanism work?"))
+```
+
+### Python — streaming responses
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    api_key="sk_your_api_key_here",
+    base_url="https://your-lumen-instance/v1"
+)
+
+with client.chat.completions.stream(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "Write a short poem about data science"}]
+) as stream:
+    for text in stream.text_stream:
+        print(text, end="", flush=True)
+print()
+```
+
+### Python — system prompt
+
+```python
+response = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[
+        {"role": "system", "content": "You are a helpful research assistant who always cites sources."},
+        {"role": "user", "content": "Summarize recent advances in protein folding"}
+    ]
 )
 print(response.choices[0].message.content)
 ```
 
-## Key Structure
+### Node.js (openai SDK)
 
-Every key follows the format `sk_<random>` and is composed of:
+Install the library once: `npm install openai`
 
-| Field | Description |
-|-------|------------|
-| **id** | Database primary key |
-| **entity_id** | Tied to either a user (`Entity.entity_type = 'user'`) or a client (`Entity.entity_type = 'client'`) |
-| **name** | Human-readable label you assign |
-| **key_hint** | First 7 + last 4 characters (for display after creation) |
-| **active** | Boolean — `false` means revoked (soft-delete) |
-| **requests** | Total number of API requests made |
-| **input_tokens / output_tokens** | Cumulative token counts |
-| **cost** | Total coins (USD) billed to the key |
-| **last_used_at** | Timestamp of the most recent request |
+```javascript
+import OpenAI from "openai";
 
-## Key Lifecycle
+const client = new OpenAI({
+  apiKey: "sk_your_api_key_here",
+  baseURL: "https://your-lumen-instance/v1",
+});
 
-```
-Generate ──> Display Once (must copy) ──> Save ──> Use ──> View / Revoke
-```
+const response = await client.chat.completions.create({
+  model: "gpt-4o",
+  messages: [
+    { role: "user", content: "Explain quantum entanglement in plain English" }
+  ],
+});
 
-1. **Generate** — `POST /usage/keys/generate` creates a random `sk_...` token via `secrets.token_urlsafe(32)`. For client keys, managers may supply their own key.
-2. **Display** — The key is shown once on screen. After closing the modal without saving, it cannot be recovered.
-3. **Save** — The plaintext key is **never stored**. Instead, it is hashed with HMAC-SHA256 (using the admin's `encryption_key` or `LUMEN_ENCRYPTION_KEY` env var) and the hash is saved. This means the plaintext can never be recovered from the database.
-4. **Use** — Each API call validates the key hash, deducts coins, and updates usage counters.
-5. **Revoke** — Setting `active = false` disables the key. Usage history is retained.
-
-## Rate Limiting
-
-All endpoints are rate-limited per authenticated entity (API key ID for `/v1/*` routes, session for `/chat/*`). The default limit is `30 per minute`, configurable in `config.yaml`:
-
-```yaml
-rate_limiting:
-  limit: "30 per minute"
+console.log(response.choices[0].message.content);
 ```
 
-If you exceed the limit, the API returns a 429 error.
+### Node.js — streaming
+
+```javascript
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: "sk_your_api_key_here",
+  baseURL: "https://your-lumen-instance/v1",
+});
+
+const stream = await client.chat.completions.stream({
+  model: "gpt-4o",
+  messages: [{ role: "user", content: "Write a haiku about machine learning" }],
+});
+
+for await (const chunk of stream) {
+  const text = chunk.choices[0]?.delta?.content ?? "";
+  process.stdout.write(text);
+}
+```
+
+### Using Lumen as a drop-in replacement for OpenAI
+
+If you have existing code that uses the OpenAI API, you can redirect it to Lumen by changing two values:
+
+```python
+# Before (standard OpenAI)
+client = OpenAI(api_key="sk-...")
+
+# After (Lumen)
+client = OpenAI(
+    api_key="sk_your_lumen_key",
+    base_url="https://your-lumen-instance/v1"
+)
+```
+
+Everything else — model names, message format, streaming, tool calls — works identically as long as the model you request is available in your Lumen instance.
+
+---
+
+## Using Lumen in Third-Party Chat Tools
+
+Many desktop and web chat applications support custom OpenAI-compatible endpoints. Look for a setting labelled **API Base URL**, **Custom endpoint**, or **OpenAI-compatible server** and enter:
+
+```
+https://your-lumen-instance/v1
+```
+
+Then paste your `sk_...` key as the API key. Common tools that support this pattern include Jan, Open WebUI, Msty, and most AI IDE extensions.
+
+---
+
+## Token Usage in Responses
+
+Every response includes a `usage` field with exact token counts:
+
+```json
+{
+  "choices": [...],
+  "usage": {
+    "prompt_tokens": 42,
+    "completion_tokens": 183,
+    "total_tokens": 225
+  }
+}
+```
+
+These counts drive the coin deduction on your account. You can retrieve the same numbers from the Usage page after the fact.
+
+---
+
+## Rate Limits
+
+If you send too many requests too quickly, the API returns:
+
+```
+HTTP 429 Too Many Requests
+```
+
+Wait a moment and retry. The Usage page shows your recent request volume so you can gauge how close you are to the limit.
+
+---
+
+## Error Responses
+
+| HTTP Status | Meaning |
+|-------------|---------|
+| `401` | Invalid or missing API key |
+| `403` | Your account does not have access to the requested model |
+| `404` | Model not found |
+| `429` | Rate limit exceeded |
+| `503` | Model backend is currently unavailable |

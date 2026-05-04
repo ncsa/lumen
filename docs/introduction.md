@@ -2,31 +2,49 @@
 
 ## What is Lumen?
 
-Lumen is a self-hosted AI chat portal designed for research institutions such as universities and national labs. It provides a web-based interface where users can interact with AI models — including OpenAI-compatible endpoints, Ollama, vLLM, and Hugging Face — while giving administrators centralized control over authentication, model access, and spending budgets.
+Lumen is an AI model gateway for research institutions. It sits in front of many different AI models — hosted on different servers and platforms across your institution — and gives you a single, unified way to reach all of them.
 
-## Key Capabilities
+You can interact with those models through a browser-based chat interface, or point your own applications and tools at Lumen's API and access every model the same way, without needing a separate account or key for each one. A single Lumen API key is all you need.
 
-- **Chat** — A browser-based chat interface with streaming responses, file attachments (images, documents, PDFs), and conversation management.
-- **Federated Authentication** — Login via CILogon, the identity provider service used by research institutions, supporting all major universities and labs.
-- **Coin Budgets** — Every user and client is assigned a coin pool (a token budget mapped to USD). Usage deducts from this pool. Groups can have auto-refreshing budgets.
-- **Model Access Control** — Three access levels: whitelist (fully allowed), graylist (requires one-time user acknowledgment), and blacklist (blocked). Rules apply at the global, group, and per-user levels.
-- **Admin Panel** — Manage users, groups, usage stats, and per-user model access overrides.
-- **Round-Robin Load Balancing** — Distributes requests across multiple backend endpoints for each model, automatically skipping unhealthy ones.
-- **OpenAI-Compatible API** — Programmatic access via a standard `/v1/` API using API keys.
-- **Prometheus Metrics** — Scrape endpoint for monitoring request volume, token counts, and costs.
+## Tokens and Coins
 
-## Architecture at a Glance
+Two numbers matter when you use Lumen: **tokens** and **coins**.
+
+### Tokens
+
+A **token** is the basic unit of text that an AI model processes. Roughly speaking, one token is about four English characters or three-quarters of a word. The sentence "Explain quantum computing in plain terms" is about 8 tokens.
+
+Every AI request involves two kinds of tokens:
+
+| Kind | What it counts |
+|------|---------------|
+| **Input tokens** | Everything you send — your message, any files, and the conversation history |
+| **Output tokens** | The model's reply |
+
+Tokens are how the AI industry measures usage. Lumen tracks them so you can see how much of each model you are consuming.
+
+### Coins
+
+**Coins** are Lumen's internal currency. They exist so that one budget can cover many different models — each with different real-world prices — without you having to think in dollars and cents.
+
+Each model has a published rate in coins per million tokens (shown separately for input and output). When you send a message, the coin cost is calculated like this:
 
 ```
-Browser ──> Lumen (Flask + Bootstrap 5)
-                │
-                ├── CILogon OAuth (authentication)
-                ├── config.yaml → sync → database
-                │       ├── Models & endpoints
-                │       ├── Groups & budgets
-                │       └── Global access rules
-                │
-                └── Backend LLM endpoints (OpenAI, Ollama, vLLM, etc.)
+cost = (input_tokens / 1,000,000 × input_rate)
+     + (output_tokens / 1,000,000 × output_rate)
 ```
 
-Configuration lives in `config.yaml` and is synced to a SQLite or PostgreSQL database on startup. Background services handle endpoint health checks, coin auto-refill, and config hot-reloading.
+Your **coin pool** is your budget. As you use models, coins are deducted from that pool. If your institution auto-refills pools, the balance tops up on a regular schedule.
+
+**In practice:** you rarely need to think about the math. The Usage page shows your balance and burn rate, and the chat interface will warn you before you run out.
+
+## What You Can Do with Lumen
+
+| Feature | Where |
+|---------|-------|
+| Chat with AI models in a browser | [Chat](guides/chat.md) |
+| Track your token and coin usage | [Usage](guides/usage.md) |
+| Create API keys for programmatic access | [Usage → API Keys](guides/usage.md#api-keys) |
+| Use Lumen from your own code or tools | [API Reference](guides/api-reference.md) |
+| Browse available models and their capabilities | [Models](models/models.md) |
+| Manage application clients (managers/admins) | [Clients](clients/clients.md) |

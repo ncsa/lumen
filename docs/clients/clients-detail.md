@@ -1,81 +1,87 @@
-# Client Detail & Management
+# Client Detail
 
-The client detail page (`/clients/<id>`) is where clients are configured: managers are assigned, API keys are created, and model access is reviewed.
+The client detail page (`/clients/<id>`) is where you manage a specific client: view usage, assign managers, create API keys, and check model access.
 
 ![Client detail page](/help/img/client-detail.png)
 
-## Stat Cards
+## Usage Cards
 
-Same layout as the Usage page — shows the client's usage and coin pool:
+The top row shows the client's activity and budget:
 
 | Card | Description |
 |------|-------------|
-| **Total Tokens Used** | All input + output tokens |
-| **Coins Spent** | Total cost |
-| **Coin Pool** | Current balance with progress bar (or "Unlimited" / "not configured") |
+| **Total Tokens Used** | All input + output tokens this client has consumed |
+| **Coins Spent** | Total coins spent by this client |
+| **Coin Pool** | Current balance (or **Unlimited** / **Not configured**) |
 | **Coin Refill** | Auto-refill rate and countdown to next refill |
 
 ## Managers
 
-Managers are users who can administer a client — creating API keys, assigning graylist consent, and viewing usage.
+Managers are the users responsible for a client. They can create and revoke API keys, grant model consent, and view usage — but they cannot manage other managers or deactivate the client.
 
-### Adding a Manager
+### Adding a Manager (admin only)
 
-1. Click **+ Add Manager** (admin-only button)
-2. A search modal opens with an autocomplete input
-3. Type a user's name or email — matching users appear in a dropdown
-4. Use arrow keys to navigate the dropdown, or click a suggestion
-5. Click **Add Manager**
+1. Click **+ Add Manager**.
+2. A search dialog opens. Start typing a user's name or email.
+3. Select the user from the dropdown.
+4. Click **Add Manager**.
 
-Adding a manager records an `EntityManager` row linking the user to this client.
+### Removing a Manager (admin only)
 
-### Removing a Manager
+Click **Remove** next to any manager in the table.
 
-Admins can click **Remove** next to any manager in the table. This deletes the `EntityManager` association.
+### What Managers Can Do
 
-### Permissions of a Manager
-
-A manager can:
-
-- Create API keys for the client
-- Delete (revoke) API keys for the client
-- Grant graylist consent on behalf of the client
-- View the client's usage on this detail page
-
-Managers **cannot**:
-
-- Add or remove other managers
-- Activate or deactivate the client
-- View or modify user-level data
+| Action | Manager | Admin |
+|--------|---------|-------|
+| Create API keys for this client | ✓ | ✓ |
+| Revoke API keys for this client | ✓ | ✓ |
+| Grant model consent for this client | ✓ | ✓ |
+| View usage on this page | ✓ | ✓ |
+| Add / remove managers | — | ✓ |
+| Activate / deactivate the client | — | ✓ |
 
 ## API Keys
 
-This section is identical to the Usage page's API Keys section but scoped to the client entity.
+This section works exactly like the API Keys section on the [Usage page](../guides/usage.md#api-keys), but keys here belong to the client, not to your personal account.
 
-### Creating a Client Key
+### Creating a Key
 
-Managers and admins can create keys for the client:
+1. Click **+ New API Key**.
+2. The key is generated and shown **once** in a dialog — copy it immediately.
+3. Give the key a descriptive name (e.g., `production`, `staging`, `ci-runner`).
+4. Click **Save Key**.
 
-1. Click **+ New API Key**
-2. The key is auto-generated and displayed once
-3. Enter a name (e.g., "production key")
-4. Click **Save Key**
+Keys follow the same `sk_...` format as personal API keys. Use them exactly the same way in code:
 
-Note: Key generation uses the `/usage/keys/generate` endpoint, so client keys use the same `sk_...` format as user keys.
+```python
+from openai import OpenAI
 
-### API Keys Table
+client = OpenAI(
+    api_key="sk_client_key_here",
+    base_url="https://your-lumen-instance/v1"
+)
 
-Same columns and functionality as the user API Keys table:
+response = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "Summarize this dataset: ..."}]
+)
+```
+
+### Key Table
 
 | Column | Description |
 |--------|-------------|
 | **Name** | Label you chose |
+| **Hint** | First 4 + last 4 characters for identification |
 | **Requests / Tokens / Coins** | Usage tracked on this key |
-| **Last Used** | Timestamp of last request |
-| **Actions** | Delete button for active keys |
+| **Last Used** | Timestamp of the last API call |
+| **Actions** | Revoke button for active keys |
 
-Use the "Show deleted keys" checkbox and the search box to find and filter keys.
+Use **Show deleted keys** to view previously revoked keys. Use the search box to filter.
 
 ## Model Access
 
-Similar to the Usage page's Model Access table, this shows the models this client can access, their usage, and access status. Managers can grant graylist consent for the client directly from this page by clicking "Needs Consent" on a model row.
+This table shows which models this client can use and how much it has consumed on each. The columns and access badges are the same as on the [Usage page](../guides/usage.md#model-access).
+
+If a model shows **Needs Consent**, you can click it to grant acknowledgment on behalf of the client, making the model available to all API keys associated with this client.

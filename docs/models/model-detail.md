@@ -1,60 +1,56 @@
 # Model Detail
 
-The model detail page (`/models/<name>`) shows in-depth information about a specific AI model.
+The model detail page (`/models/<name>`) shows everything you need to know about a specific model before you use it.
 
 ![Model detail page](/help/img/model-detail.png)
 
-## Page Structure
+## Page Layout
 
-The page is laid out in two columns:
+The page is split into two columns.
 
 ### Left Column
 
-- **Model name** with a HuggingFace link (if `url` is configured in `config.yaml`)
-- **Description** — A short description from the config
-- **HuggingFace README** — Automatically loaded and rendered from the configured URL (via marked.js)
+- **Model name** with a link to the model's HuggingFace page (when available).
+- **Description** — A short summary of the model.
+- **README** — The model's full documentation, rendered from its HuggingFace repository.
 
-### Right Column (Sidebar)
+### Right Column
 
-Six cards, some of which are conditional:
+#### Access Status
 
-#### Access Acknowledgment (graylisted models only)
+This card appears when the model requires acknowledgment before use:
 
-| State | Displays |
-|-------|----------|
-| **Not yet acknowledged** | Warning card with "Acknowledge & Enable Access" button |
-| **Already acknowledged** | "Access enabled" with date of your acknowledgment |
-| **Blocked** | Red alert saying access is denied |
+| State | What You See |
+|-------|-------------|
+| **Not yet acknowledged** | A warning card with an "Acknowledge & Enable Access" button |
+| **Already acknowledged** | A confirmation with the date you accepted |
+| **Blocked** | A notice that this model is not available to you |
 
-Acknowledgment is a one-time per-user (or per-client) record stored in `EntityModelConsent`.
+Click the button to give one-time consent. After acknowledging, the model is immediately available in the chat interface and API.
 
 #### Availability
 
 | Field | Description |
 |-------|-------------|
-| **Status** | Overall model health: ok / degraded / down |
-| **Endpoints** | Healthy endpoint count vs total |
-| **Endpoint URLs** | Shown only to admins, with per-endpoint up/down badge |
-| **Requests / hr** | Request count in the last hour |
-| **Requests / 24h** | Request count in the last 24 hours |
+| **Status** | Overall health: ok / degraded / down |
+| **Endpoints** | Healthy backend count vs. total |
+| **Requests / hr** | Requests sent to this model in the last hour |
+| **Requests / 24h** | Requests sent to this model in the last 24 hours |
 
-#### Model Details (conditional — only if defined in config)
+#### Model Specifications
 
-Technical specifications from `config.yaml`:
-
-| Field | Source |
-|-------|--------|
-| Context Window | `context_window` — max tokens the model can process |
-| Max Output | `max_output_tokens` — maximum tokens the model can generate |
-| Input | `input_modalities` — e.g., `["text", "image"]` |
-| Output | `output_modalities` — e.g., `["text"]` |
-| Knowledge Cutoff | `knowledge_cutoff` — e.g., `"2024-04"` |
-| Reasoning | `supports_reasoning` — shows a checkmark if true |
-| Function Calling | `supports_function_calling` — shows a checkmark if true |
-
-#### Pricing
+Technical details that help you decide if this model fits your task:
 
 | Field | Description |
 |-------|-------------|
-| **Input** | Cost per million input tokens |
-| **Output** | Cost per million output tokens |
+| **Context Window** | Maximum tokens the model can process in one request (your input + the model's reply combined) |
+| **Max Output** | Maximum tokens the model can generate in a single reply |
+| **Input** | What input types the model accepts — e.g., text, images |
+| **Output** | What the model produces — typically text |
+| **Knowledge Cutoff** | The date beyond which the model has no training data |
+| **Reasoning** | Checkmark if the model supports visible chain-of-thought reasoning |
+| **Function Calling** | Checkmark if the model supports tool/function calling via the API |
+
+#### Pricing
+
+Shows the coin cost per million input tokens and per million output tokens. See the [Introduction](../introduction.md#tokens-and-coins) for how coin costs are calculated.
