@@ -6,7 +6,6 @@ from .extensions import db
 from lumen.models.entity import Entity
 from lumen.models.entity_limit import EntityLimit
 from lumen.models.entity_model_access import EntityModelAccess
-from lumen.models.global_model_access import GlobalModelAccess
 from lumen.models.group import Group
 from lumen.models.group_limit import GroupLimit
 from lumen.models.group_model_access import GroupModelAccess
@@ -172,34 +171,6 @@ def sync_groups_from_yaml(yaml_data):
     db.session.commit()
 
 
-def sync_global_model_access_from_yaml(yaml_data):
-    """Sync GlobalModelAccess from yaml_data['model_access'] and store the default in app config."""
-    access_cfg = yaml_data.get("model_access", {})
-
-    global_default = access_cfg.get("default", "whitelist")
-    current_app.config["MODEL_ACCESS_DEFAULT"] = global_default
-
-    GlobalModelAccess.query.delete()
-    for access_type in _VALID_ACCESS_TYPES:
-        for model_name in access_cfg.get(access_type, []):
-            if model_name == "*":
-                # * is shorthand for default; explicit 'default' key takes precedence
-                if "default" not in access_cfg:
-                    current_app.config["MODEL_ACCESS_DEFAULT"] = access_type
-                    global_default = access_type
-                continue
-            mc = ModelConfig.query.filter_by(model_name=model_name).first()
-            if mc is None:
-                current_app.logger.warning(
-                    f"sync_global_model_access_from_yaml: model '{model_name}' not found in global {access_type}, skipping"
-                )
-                continue
-            db.session.add(GlobalModelAccess(
-                model_config_id=mc.id,
-                access_type=access_type,
-            ))
-    db.session.commit()
-
 
 def sync_clients_from_yaml(yaml_data):
     """Sync EntityLimit and EntityModelAccess for client (service) entities from yaml_data['clients'].
@@ -279,11 +250,10 @@ def sync_clients_from_yaml(yaml_data):
 @click.command("init-db")
 @with_appcontext
 def init_db_cmd():
-    """Sync ModelConfig, ModelEndpoint, Groups, and GlobalModelAccess from config.yaml."""
+    """Sync ModelConfig, ModelEndpoint, Groups, and clients from config.yaml."""
     yaml_data = current_app.config["YAML_DATA"]
     sync_models_from_yaml(yaml_data)
     sync_groups_from_yaml(yaml_data)
-    sync_global_model_access_from_yaml(yaml_data)
     sync_clients_from_yaml(yaml_data)
     click.echo("Database synced from config.yaml.")
 

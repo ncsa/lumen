@@ -13,6 +13,9 @@ All notable changes to Lumen will be documented in this file.
 - Help docs updated: clearer wording for model detail fields, clients section, and coin cost example in introduction
 - Existing help doc cross-links audited and corrected
 
+### Removed
+- Top-level `model_access:` config section removed; use `groups.default.model_access` for site-wide defaults and per-group `model_access` for per-group rules. Alembic migration `u1v2w3x4y5z6` drops the `global_model_access` table.
+
 ## [1.7.2] - 2026-05-04
 
 ### Changed

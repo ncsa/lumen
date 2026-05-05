@@ -5,7 +5,7 @@ import time
 
 import yaml
 
-from lumen.commands import sync_clients_from_yaml, sync_global_model_access_from_yaml, sync_groups_from_yaml, sync_models_from_yaml
+from lumen.commands import sync_clients_from_yaml, sync_groups_from_yaml, sync_models_from_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -89,10 +89,6 @@ def _watcher(app, config_path):
                     sync_groups_from_yaml(new_data)
                 except Exception as e:
                     logger.warning("config_watcher: sync_groups_from_yaml failed: %s", e)
-                try:
-                    sync_global_model_access_from_yaml(new_data)
-                except Exception as e:
-                    logger.warning("config_watcher: sync_global_model_access_from_yaml failed: %s", e)
                 try:
                     sync_clients_from_yaml(new_data)
                 except Exception as e:

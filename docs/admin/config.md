@@ -23,7 +23,6 @@ When running, Lumen watches `config.yaml` for changes and automatically reloads 
 | `models[*].input_cost_per_million` / `output_cost_per_million` | Change pricing |
 | `groups[*]` | Add, edit, or remove user groups |
 | `groups[*].model_access` | Override model access rules per group |
-| `model_access` | Change global model access defaults |
 | `clients.default` | Change default coin pool for new clients |
 | `clients[*]` | Configure individual client budgets and access |
 | `admins` | Update the list of administrator email addresses |

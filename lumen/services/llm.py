@@ -10,7 +10,6 @@ from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
 from lumen.models.entity_model_access import EntityModelAccess
 from lumen.models.entity_model_consent import EntityModelConsent
-from lumen.models.global_model_access import GlobalModelAccess
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
@@ -62,9 +61,9 @@ def get_model_access_status(entity_id: int, model_config_id: int) -> str:
 
     Resolution:
     1. User-level EntityModelAccess (whitelist/graylist/blacklist) overrides everything.
-    2. Check active groups' GroupModelAccess: blacklist > whitelist > graylist.
-    3. Check GlobalModelAccess: same priority.
-    4. Apply effective default: most restrictive group model_access_default, then global MODEL_ACCESS_DEFAULT.
+    2. Group per-model rules (GroupModelAccess): blacklist > whitelist > graylist.
+    3. Effective default: most permissive group model_access_default wins.
+    4. Entity-level default (for client entities).
     """
     user_access = EntityModelAccess.query.filter_by(
         entity_id=entity_id, model_config_id=model_config_id
@@ -76,14 +75,8 @@ def get_model_access_status(entity_id: int, model_config_id: int) -> str:
             return "graylist"
         return "blocked"
 
-    # Global blacklist is absolute — no group can override it
-    global_rule = GlobalModelAccess.query.filter_by(model_config_id=model_config_id).first()
-    if global_rule is not None and global_rule.access_type == "blacklist":
-        return "blocked"
-
     group_ids = _get_active_group_ids(entity_id)
 
-    # Check per-model group rules (can override global graylist/whitelist)
     if group_ids:
         group_rules = GroupModelAccess.query.filter(
             GroupModelAccess.group_id.in_(group_ids),
@@ -96,12 +89,6 @@ def get_model_access_status(entity_id: int, model_config_id: int) -> str:
             if best.access_type == "whitelist":
                 return "allowed"
             return "graylist"
-
-    # Check remaining global per-model rules (graylist/whitelist)
-    if global_rule is not None:
-        if global_rule.access_type == "whitelist":
-            return "allowed"
-        return "graylist"
 
     # Apply effective default
     if group_ids:
@@ -127,11 +114,6 @@ def get_model_access_status(entity_id: int, model_config_id: int) -> str:
             return "graylist"
         return "allowed"
 
-    global_default = current_app.config.get("MODEL_ACCESS_DEFAULT", "whitelist")
-    if global_default == "blacklist":
-        return "blocked"
-    if global_default == "graylist":
-        return "graylist"
     return "allowed"
 
 

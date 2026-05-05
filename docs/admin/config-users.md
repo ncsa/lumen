@@ -60,7 +60,7 @@ groups:
 | `max` | Daily coin budget (0 = denied, -2 = unlimited) |
 | `refresh` | Coins added per hour (0 = no refresh) |
 | `starting` | Initial coin pool when a user is first created |
-| `model_access` | Per-group model access rules (overrides global defaults) |
+| `model_access` | Per-group model access rules |
 
 ## Group Rules
 
@@ -91,27 +91,6 @@ All rules within a group must match for a user to be assigned that group (AND lo
         equals: urn:mace:incommon:myuniversity.edu
 ```
 
-## Global Model Access
-
-`model_access` sets defaults that apply to **all users** before group rules are evaluated:
-
-```yaml
-model_access:
-  default: graylist     # default behavior for unlisted models
-  blacklist: [old-model]    # denied for everyone
-  graylist: [beta-model]    # requires user acknowledgment
-  whitelist: [gpt-4o]       # always available
-```
-
-| List | Behavior |
-|------|----------|
-| `whitelist` | Always accessible regardless of defaults |
-| `blacklist` | Always denied regardless of defaults |
-| `graylist` | Available after the user acknowledges it |
-| `default` | What to do with models not in any list: `whitelist`, `blacklist`, or `graylist` |
-
-Each group can override the global defaults through its own `model_access` section, which uses the same structure. Group rules only add to the global defaults — they don't replace them.
-
 ## The default Group
 
 The `default` group is applied to every user on login, even if no rules match. It defines the baseline budget and model access for someone who isn't assigned to any named group. Always set it explicitly so you know the fallback behavior.
@@ -121,9 +100,6 @@ The `default` group is applied to every user on login, even if no rules match. I
 Here's an example with three tiers:
 
 ```yaml
-model_access:
-  default: blacklist        # nothing is accessible by default
-
 groups:
   default:                    # everyone who doesn't match a named group
     max: 0

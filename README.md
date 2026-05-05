@@ -216,34 +216,12 @@ Lumen supports three access levels for each model:
 Access is resolved in this order for each user + model combination:
 
 1. **User override** (admin-set per-user rule) — wins over everything else
-2. **Global blacklist** — absolute; no group can override it
-3. **Group per-model rules** — blacklist beats whitelist beats graylist
-4. **Global per-model rules** (graylist / whitelist)
-5. **Effective default** — most permissive group `model_access.default` wins; falls back to global `model_access.default`
-
-#### Global model access
-
-```yaml
-model_access:
-  default: whitelist   # default for models not listed: whitelist|blacklist|graylist (default: whitelist)
-  blacklist:
-    - old-model        # always blocked for everyone
-  graylist:
-    - experimental     # requires one-time user acknowledgment
-  whitelist:
-    - safe-model       # always allowed, no acknowledgment ever
-```
-
-Use `*` as a shorthand for setting the default:
-
-```yaml
-model_access:
-  blacklist: ["*"]   # same as: default: blacklist
-```
+2. **Group per-model rules** — blacklist beats whitelist beats graylist
+3. **Effective default** — most permissive group `model_access.default` wins; falls back to `allowed`
 
 #### Per-group model access
 
-Each group can define its own `model_access:` with the same structure:
+Each group can define its own `model_access:` section:
 
 ```yaml
 groups:

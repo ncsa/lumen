@@ -62,9 +62,15 @@ def test_get_model_access_graylist_without_consent(app, test_user, test_model):
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.global_model_access import GlobalModelAccess
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        from lumen.models.group_model_access import GroupModelAccess
         from lumen.services.llm import get_model_access
-        db.session.add(GlobalModelAccess(model_config_id=model_id, access_type="graylist"))
+        group = Group(name="test-group")
+        db.session.add(group)
+        db.session.flush()
+        db.session.add(GroupMember(entity_id=entity_id, group_id=group.id))
+        db.session.add(GroupModelAccess(group_id=group.id, model_config_id=model_id, access_type="graylist"))
         db.session.commit()
         # Graylist without consent → access denied
         assert get_model_access(entity_id, model_id) is False
@@ -76,9 +82,15 @@ def test_get_model_access_graylist_with_consent(app, test_user, test_model):
         from datetime import datetime, timezone
         from lumen.extensions import db
         from lumen.models.entity_model_consent import EntityModelConsent
-        from lumen.models.global_model_access import GlobalModelAccess
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        from lumen.models.group_model_access import GroupModelAccess
         from lumen.services.llm import get_model_access
-        db.session.add(GlobalModelAccess(model_config_id=model_id, access_type="graylist"))
+        group = Group(name="test-group")
+        db.session.add(group)
+        db.session.flush()
+        db.session.add(GroupMember(entity_id=entity_id, group_id=group.id))
+        db.session.add(GroupModelAccess(group_id=group.id, model_config_id=model_id, access_type="graylist"))
         db.session.add(EntityModelConsent(entity_id=entity_id, model_config_id=model_id, consented_at=datetime.now(timezone.utc).replace(tzinfo=None)))
         db.session.commit()
         assert get_model_access(entity_id, model_id) is True
@@ -103,25 +115,3 @@ def test_has_model_consent_false(app, test_user, test_model):
         assert has_model_consent(entity_id, model_id) is False
 
 
-def test_model_access_default_blacklist(app, test_user, test_model):
-    entity_id, model_id = test_user["id"], test_model["id"]
-    with app.app_context():
-        from lumen.services.llm import get_model_access_status
-        app.config["MODEL_ACCESS_DEFAULT"] = "blacklist"
-        try:
-            result = get_model_access_status(entity_id, model_id)
-            assert result == "blocked"
-        finally:
-            del app.config["MODEL_ACCESS_DEFAULT"]
-
-
-def test_model_access_default_graylist(app, test_user, test_model):
-    entity_id, model_id = test_user["id"], test_model["id"]
-    with app.app_context():
-        from lumen.services.llm import get_model_access_status
-        app.config["MODEL_ACCESS_DEFAULT"] = "graylist"
-        try:
-            result = get_model_access_status(entity_id, model_id)
-            assert result == "graylist"
-        finally:
-            del app.config["MODEL_ACCESS_DEFAULT"]

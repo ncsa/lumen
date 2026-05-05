@@ -12,8 +12,14 @@ def test_accessible_model_present_in_table(auth_client, test_model):
 def test_blocked_model_absent_from_table(app, auth_client, test_model, test_user):
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.global_model_access import GlobalModelAccess
-        db.session.add(GlobalModelAccess(model_config_id=test_model["id"], access_type="blacklist"))
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        from lumen.models.group_model_access import GroupModelAccess
+        group = Group(name="test-group")
+        db.session.add(group)
+        db.session.flush()
+        db.session.add(GroupMember(entity_id=test_user["id"], group_id=group.id))
+        db.session.add(GroupModelAccess(group_id=group.id, model_config_id=test_model["id"], access_type="blacklist"))
         db.session.commit()
 
     resp = auth_client.get("/models")
@@ -77,11 +83,17 @@ def test_graylist_model_visible_without_consent(app, auth_client, test_model, te
     assert test_model["model_name"] in links
 
 
-def test_global_graylist_model_visible_without_consent(app, auth_client, test_model, test_user):
+def test_group_graylist_model_visible_without_consent(app, auth_client, test_model, test_user):
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.global_model_access import GlobalModelAccess
-        db.session.add(GlobalModelAccess(model_config_id=test_model["id"], access_type="graylist"))
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        from lumen.models.group_model_access import GroupModelAccess
+        group = Group(name="test-group")
+        db.session.add(group)
+        db.session.flush()
+        db.session.add(GroupMember(entity_id=test_user["id"], group_id=group.id))
+        db.session.add(GroupModelAccess(group_id=group.id, model_config_id=test_model["id"], access_type="graylist"))
         db.session.commit()
 
     resp = auth_client.get("/models")

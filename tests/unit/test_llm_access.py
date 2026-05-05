@@ -34,46 +34,69 @@ def test_user_explicitly_allowed(app, ids):
         assert get_model_access_status(entity_id, model_id) == "allowed"
 
 
-def test_global_blacklist(app, ids):
+def test_group_blacklist(app, ids):
     entity_id, model_id = ids
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.global_model_access import GlobalModelAccess
-        db.session.add(GlobalModelAccess(model_config_id=model_id, access_type="blacklist"))
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        from lumen.models.group_model_access import GroupModelAccess
+        group = Group(name="test-group")
+        db.session.add(group)
+        db.session.flush()
+        db.session.add(GroupMember(entity_id=entity_id, group_id=group.id))
+        db.session.add(GroupModelAccess(group_id=group.id, model_config_id=model_id, access_type="blacklist"))
         db.session.commit()
         assert get_model_access_status(entity_id, model_id) == "blocked"
 
 
-def test_global_graylist(app, ids):
+def test_group_graylist(app, ids):
     entity_id, model_id = ids
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.global_model_access import GlobalModelAccess
-        db.session.add(GlobalModelAccess(model_config_id=model_id, access_type="graylist"))
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        from lumen.models.group_model_access import GroupModelAccess
+        group = Group(name="test-group")
+        db.session.add(group)
+        db.session.flush()
+        db.session.add(GroupMember(entity_id=entity_id, group_id=group.id))
+        db.session.add(GroupModelAccess(group_id=group.id, model_config_id=model_id, access_type="graylist"))
         db.session.commit()
         assert get_model_access_status(entity_id, model_id) == "graylist"
 
 
-def test_global_whitelist(app, ids):
+def test_group_whitelist(app, ids):
     entity_id, model_id = ids
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.global_model_access import GlobalModelAccess
-        db.session.add(GlobalModelAccess(model_config_id=model_id, access_type="whitelist"))
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        from lumen.models.group_model_access import GroupModelAccess
+        group = Group(name="test-group")
+        db.session.add(group)
+        db.session.flush()
+        db.session.add(GroupMember(entity_id=entity_id, group_id=group.id))
+        db.session.add(GroupModelAccess(group_id=group.id, model_config_id=model_id, access_type="whitelist"))
         db.session.commit()
         assert get_model_access_status(entity_id, model_id) == "allowed"
 
 
-def test_user_allowed_overrides_global_blacklist(app, ids):
+def test_user_allowed_overrides_group_blacklist(app, ids):
     entity_id, model_id = ids
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_model_access import EntityModelAccess
-        from lumen.models.global_model_access import GlobalModelAccess
-        db.session.add(GlobalModelAccess(model_config_id=model_id, access_type="blacklist"))
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        from lumen.models.group_model_access import GroupModelAccess
+        group = Group(name="test-group")
+        db.session.add(group)
+        db.session.flush()
+        db.session.add(GroupMember(entity_id=entity_id, group_id=group.id))
+        db.session.add(GroupModelAccess(group_id=group.id, model_config_id=model_id, access_type="blacklist"))
         db.session.add(EntityModelAccess(entity_id=entity_id, model_config_id=model_id, access_type="whitelist"))
         db.session.commit()
-        # User-level access takes precedence over global blacklist
         assert get_model_access_status(entity_id, model_id) == "allowed"
 
 
