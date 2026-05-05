@@ -47,20 +47,20 @@
       <div class="nav-section">
         <div class="nav-section-title text-uppercase fw-bold small text-muted" style="padding:8px 16px 4px;letter-spacing:0.05em">{{ section.title }}</div>
         {% for item in section['items'] %}
-        {% set item_path = section.section + '/' + item.filename %}
-        <a href="{{ url_for('help_bp.page', filename=item_path) }}"
-           class="nav-link{% if current_page == item_path %} active{% endif %}"
-           {% if current_page == item_path %}aria-current="page"{% endif %}
+        {% set href = url_for('help_bp.page', slug=item.slug) %}
+        <a href="{{ href }}"
+           class="nav-link{% if current_slug == item.slug %} active{% endif %}"
+           {% if current_slug == item.slug %}aria-current="page"{% endif %}
            style="padding:6px 16px;display:block;text-decoration:none;font-size:0.9em">
           {{ item.title }}
         </a>
         {% endfor %}
       </div>
       {% else %}
-      {% set item_path = (section.section + '/' + section.filename) if section.section else '' %}
-      <a href="{% if not section.section %}{{ url_for('help_bp.index_page') }}{% else %}{{ url_for('help_bp.page', filename=item_path) }}{% endif %}"
-         class="nav-link{% if current_page == item_path %} active{% endif %}"
-         {% if current_page == item_path %}aria-current="page"{% endif %}
+      {% set href = url_for('help_bp.index_page') if section.slug == '' else url_for('help_bp.page', slug=section.slug) %}
+      <a href="{{ href }}"
+         class="nav-link{% if current_slug == section.slug %} active{% endif %}"
+         {% if current_slug == section.slug %}aria-current="page"{% endif %}
          style="padding:6px 16px;display:block;text-decoration:none">
         {{ section.title }}
       </a>

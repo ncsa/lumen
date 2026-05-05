@@ -2,6 +2,13 @@
 
 All notable changes to Lumen will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- Help docs navigation restructured: `docs/nav.json` is now the single source of truth for page order and slugs
+- Help URLs simplified to clean slugs (`/help`, `/help/chat`, `/help/usage`, `/help/api`, `/help/models`, `/help/models/detail`, `/help/clients`, `/help/clients/detail`) — no longer expose filesystem paths
+- Relative links and image paths in markdown docs are now resolved against the filesystem and rewritten to canonical `/help/` URLs, fixing broken cross-page links in the rendered help
+
 ## [1.7.1] - 2026-05-04
 
 ### Added

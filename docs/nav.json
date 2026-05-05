@@ -1,0 +1,33 @@
+[
+  {
+    "slug": "",
+    "section": "introduction",
+    "title": "Introduction",
+    "filename": "introduction.md"
+  },
+  {
+    "section": "guides",
+    "title": "Guides",
+    "items": [
+      {"slug": "chat",  "title": "Chat",             "filename": "chat.md"},
+      {"slug": "usage", "title": "Usage & API Keys",  "filename": "usage.md"},
+      {"slug": "api",   "title": "API Reference",     "filename": "api-reference.md"}
+    ]
+  },
+  {
+    "section": "models",
+    "title": "Models",
+    "items": [
+      {"slug": "models",        "title": "Model Dashboard", "filename": "models.md"},
+      {"slug": "models/detail", "title": "Model Detail",    "filename": "model-detail.md"}
+    ]
+  },
+  {
+    "section": "clients",
+    "title": "Clients",
+    "items": [
+      {"slug": "clients",        "title": "Clients Overview",   "filename": "clients.md"},
+      {"slug": "clients/detail", "title": "Client Management",  "filename": "clients-detail.md"}
+    ]
+  }
+]
