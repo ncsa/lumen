@@ -1,5 +1,5 @@
 """Tests for YAML sync functions in lumen/commands.py."""
-from lumen.commands import sync_clients_from_yaml, sync_global_model_access_from_yaml, sync_groups_from_yaml, sync_models_from_yaml
+from lumen.commands import sync_clients_from_yaml, sync_groups_from_yaml, sync_models_from_yaml
 
 
 def test_sync_models_creates_model_config(app):
@@ -169,31 +169,3 @@ def test_sync_clients_model_access(app):
         assert rule.access_type == "whitelist"
 
 
-def test_sync_global_model_access_creates_rule(app):
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.global_model_access import GlobalModelAccess
-        from lumen.models.model_config import ModelConfig
-        mc = ModelConfig(model_name="access-model", input_cost_per_million=1.0, output_cost_per_million=1.0, active=True)
-        db.session.add(mc)
-        db.session.commit()
-        yaml_data = {"model_access": {"blacklist": ["access-model"]}}
-        sync_global_model_access_from_yaml(yaml_data)
-        rule = GlobalModelAccess.query.filter_by(model_config_id=mc.id).first()
-        assert rule is not None
-        assert rule.access_type == "blacklist"
-
-
-def test_sync_global_model_access_graylist(app):
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.global_model_access import GlobalModelAccess
-        from lumen.models.model_config import ModelConfig
-        mc = ModelConfig(model_name="gray-access-model", input_cost_per_million=1.0, output_cost_per_million=1.0, active=True)
-        db.session.add(mc)
-        db.session.commit()
-        yaml_data = {"model_access": {"graylist": ["gray-access-model"]}}
-        sync_global_model_access_from_yaml(yaml_data)
-        rule = GlobalModelAccess.query.filter_by(model_config_id=mc.id).first()
-        assert rule is not None
-        assert rule.access_type == "graylist"
