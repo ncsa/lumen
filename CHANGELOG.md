@@ -2,6 +2,17 @@
 
 All notable changes to Lumen will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Admin help docs (`docs/admin/`) covering configuration overview, application settings, user groups and access control, clients, and model configuration
+- `LUMEN_SECRET_KEY` environment variable to override `app.secret_key` without putting it in `config.yaml`
+- Dev server (`run.py`) now watches `docs/nav.json` for changes and hot-reloads automatically
+
+### Changed
+- Help docs updated: clearer wording for model detail fields, clients section, and coin cost example in introduction
+- Existing help doc cross-links audited and corrected
+
 ## [1.7.2] - 2026-05-04
 
 ### Changed

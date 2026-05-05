@@ -61,9 +61,9 @@ def create_app():
 
     # Override Flask config from yaml app/oauth2 sections
     app_cfg = yaml_data.get("app", {})
-    secret_key = app_cfg.get("secret_key", "")
+    secret_key = os.environ.get("LUMEN_SECRET_KEY") or app_cfg.get("secret_key", "")
     if not secret_key:
-        app.logger.error("app.secret_key is not set in config.yaml. App cannot start.")
+        app.logger.error("app.secret_key is not set in config.yaml (or LUMEN_SECRET_KEY env var). App cannot start.")
         sys.exit(1)
     app.config["SECRET_KEY"] = secret_key
     encryption_key = os.environ.get("LUMEN_ENCRYPTION_KEY") or app_cfg.get("encryption_key", "")

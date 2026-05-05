@@ -1,5 +1,7 @@
 # Clients
 
+> **Advanced feature:** The Clients section is for people building services or automated tools that use Lumen. Regular users won't need this page.
+
 The **Clients** page (`/clients`) is where you manage application clients — named identities for services or automated processes that need their own API access.
 
 ![Clients page](../img/clients.png)
@@ -13,7 +15,7 @@ A **client** is a named entity separate from your personal user account. It has 
 - Separate application usage from your personal usage and budget
 - Allow a team to share access to a set of credentials without sharing anyone's personal key
 
-Think of a client as a service account: it has a name (e.g., `research-bot`, `data-pipeline`), it accumulates its own usage history, and its API keys are managed independently.
+Think of a client as a shared identity for automated tools: it has a name (e.g., `research-bot`, `data-pipeline`), it accumulates its own usage history, and its API keys are managed independently.
 
 ## Who Can See What
 
@@ -50,6 +52,8 @@ At the top of the page, four cards summarize the clients you can see:
 Click any column header to sort. Use the search box to filter by name.
 
 ## Creating a Client
+
+> **Admin setup:** Clients are created through the web interface here, but coin budgets and model access defaults are configured in `config.yaml`. See [Configuring Clients](../admin/config-clients.md) for details.
 
 Only administrators can create new clients:
 

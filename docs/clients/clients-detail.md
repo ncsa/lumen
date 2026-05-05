@@ -1,5 +1,7 @@
 # Client Detail
 
+This page is for people managing Lumen-based services and tools. For details on what a client is, start with the [Clients overview](./clients.md).
+
 The client detail page (`/clients/<id>`) is where you manage a specific client: view usage, assign managers, create API keys, and check model access.
 
 ![Client detail page](../img/client-detail.png)

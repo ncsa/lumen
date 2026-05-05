@@ -29,5 +29,16 @@
       {"slug": "clients",        "title": "Clients Overview",   "filename": "clients.md"},
       {"slug": "clients/detail", "title": "Client Management",  "filename": "clients-detail.md"}
     ]
+  },
+  {
+    "section": "admin",
+    "title": "Admin Guide",
+    "items": [
+      {"slug": "admin/config",          "title": "Configuration Overview",      "filename": "config.md"},
+      {"slug": "admin/config/apps",     "title": "Application Settings",        "filename": "config-application.md"},
+      {"slug": "admin/config/users",    "title": "Users & Access Control",      "filename": "config-users.md"},
+      {"slug": "admin/config/clients",  "title": "Configuring Clients",         "filename": "config-clients.md"},
+      {"slug": "admin/config/models",   "title": "Configuring Models",          "filename": "config-models.md"}
+    ]
   }
 ]

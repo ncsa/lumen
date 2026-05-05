@@ -43,13 +43,13 @@ Technical details that help you decide if this model fits your task:
 
 | Field | Description |
 |-------|-------------|
-| **Context Window** | Maximum tokens the model can process in one request (your input + the model's reply combined) |
+| **Context Window** | How much text the model can "remember" in one conversation (roughly the input plus output combined) |
 | **Max Output** | Maximum tokens the model can generate in a single reply |
 | **Input** | What input types the model accepts — e.g., text, images |
 | **Output** | What the model produces — typically text |
 | **Knowledge Cutoff** | The date beyond which the model has no training data |
-| **Reasoning** | Checkmark if the model supports visible chain-of-thought reasoning |
-| **Function Calling** | Checkmark if the model supports tool/function calling via the API |
+| **Reasoning** | Checkmark if the model can show its step-by-step thinking before giving an answer |
+| **Function Calling** | Checkmark if the model can request to run a tool (such as a search script or data query) on the user's computer via the API — not available in Lumen's built-in chat. The user explicitly agrees to each request; the model cannot access data without their consent. |
 
 #### Pricing
 

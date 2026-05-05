@@ -1,5 +1,7 @@
 # API Reference
 
+> **Developer note:** This guide is for people writing code or integrating with Lumen programmatically. If you just want to use the chat interface, you don't need this page.
+
 Lumen exposes an **OpenAI-compatible REST API** at `/v1/`. Any tool or library that works with OpenAI can be pointed at your Lumen instance with minimal changes.
 
 ## Base URL and Authentication
@@ -10,7 +12,7 @@ Replace `https://your-lumen-instance` with your institution's Lumen URL. All req
 Authorization: Bearer sk_your_api_key_here
 ```
 
-See [Usage → API Keys](usage.md#api-keys) to create a key.
+See [Usage → API Keys](../guides/usage.md#api-keys) to create a key.
 
 ## Endpoints
 

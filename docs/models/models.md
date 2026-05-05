@@ -11,8 +11,8 @@ The **Models** page (`/models`) shows every AI model available in your Lumen ins
 | **Model** | Clickable name — links to the model detail page |
 | **Coins / 1M tokens (input)** | Cost per million input tokens |
 | **Coins / 1M tokens (output)** | Cost per million output tokens |
-| **Total Endpoints** | Number of backend servers configured for this model |
-| **Healthy** | How many of those backends are currently reachable |
+| **Total Endpoints** | Number of backend servers (underlying servers providing the model) configured for this model |
+| **Healthy** | How many of those servers are currently reachable |
 | **Last Checked** | When the most recent health check ran |
 | **Status** | Current availability (see below) |
 

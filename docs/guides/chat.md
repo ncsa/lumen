@@ -43,7 +43,7 @@ Supported file types:
 | PDFs | `.pdf` |
 | Images | `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp` |
 
-- **Images** are sent as part of a multimodal message (useful for vision-capable models).
+- **Images** are sent as part of a "see and answer" message, for models that can interpret images.
 - **Documents** are read and prepended to your message text.
 - **PDFs** are parsed and appended as text.
 

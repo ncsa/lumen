@@ -36,6 +36,16 @@ cost = (input_tokens / 1,000,000 × input_rate)
 
 Your **coin pool** is your budget. As you use models, coins are deducted from that pool. If your institution auto-refills pools, the balance tops up on a regular schedule.
 
+**Example:** Ask a model a simple question — the model might use ~1,000 input tokens and ~300 output tokens. If the rates are 0.5 coins per 1M input and 1.0 coins per 1M output, the cost is:
+
+```
+(1,000 / 1,000,000 × 0.5) + (300 / 1,000,000 × 1.0)
+= 0.0005 + 0.0003
+= 0.0008 coins
+```
+
+You'd need over 1,000 similar questions to spend 1 coin.
+
 **In practice:** you rarely need to think about the math. The Usage page shows your balance and burn rate, and the chat interface will warn you before you run out.
 
 ## What You Can Do with Lumen
@@ -48,3 +58,4 @@ Your **coin pool** is your budget. As you use models, coins are deducted from th
 | Use Lumen from your own code or tools | [API Reference](guides/api-reference.md) |
 | Browse available models and their capabilities | [Models](models/models.md) |
 | Manage application clients (managers/admins) | [Clients](clients/clients.md) |
+| Configure Lumen (admins only) | [Admin Guide](admin/config.md) |
