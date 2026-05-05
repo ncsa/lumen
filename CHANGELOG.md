@@ -2,7 +2,7 @@
 
 All notable changes to Lumen will be documented in this file.
 
-## [Unreleased]
+## [1.7.2] - 2026-05-04
 
 ### Changed
 - Help docs navigation restructured: `docs/nav.json` is now the single source of truth for page order and slugs
