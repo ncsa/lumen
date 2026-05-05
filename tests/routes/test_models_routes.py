@@ -26,11 +26,17 @@ def test_models_blocked_model_not_listed(app, auth_client, test_model, test_user
     assert test_model["model_name"].encode() not in resp.data
 
 
-def test_models_globally_blacklisted_not_listed(app, auth_client, test_model):
+def test_models_group_blacklisted_not_listed(app, auth_client, test_model, test_user):
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.global_model_access import GlobalModelAccess
-        db.session.add(GlobalModelAccess(model_config_id=test_model["id"], access_type="blacklist"))
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        from lumen.models.group_model_access import GroupModelAccess
+        group = Group(name="test-group")
+        db.session.add(group)
+        db.session.flush()
+        db.session.add(GroupMember(entity_id=test_user["id"], group_id=group.id))
+        db.session.add(GroupModelAccess(group_id=group.id, model_config_id=test_model["id"], access_type="blacklist"))
         db.session.commit()
 
     resp = auth_client.get("/models")

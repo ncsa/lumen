@@ -347,9 +347,9 @@ def test_delete_key_soft_deletes(app, managed_auth_client, managed_client):
 def test_consent_forbidden_for_non_manager(app, auth_client, service_client, test_model):
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.global_model_access import GlobalModelAccess
-        db.session.add(GlobalModelAccess(
-            model_config_id=test_model["id"], access_type="graylist"
+        from lumen.models.entity_model_access import EntityModelAccess
+        db.session.add(EntityModelAccess(
+            entity_id=service_client["id"], model_config_id=test_model["id"], access_type="graylist"
         ))
         db.session.commit()
 
@@ -369,9 +369,9 @@ def test_consent_non_graylist_model_returns_400(app, managed_auth_client, manage
 def test_consent_graylist_model_succeeds(app, managed_auth_client, managed_client, test_model):
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.global_model_access import GlobalModelAccess
-        db.session.add(GlobalModelAccess(
-            model_config_id=test_model["id"], access_type="graylist"
+        from lumen.models.entity_model_access import EntityModelAccess
+        db.session.add(EntityModelAccess(
+            entity_id=managed_client["id"], model_config_id=test_model["id"], access_type="graylist"
         ))
         db.session.commit()
 
@@ -393,9 +393,9 @@ def test_consent_idempotent(app, managed_auth_client, managed_client, test_model
     """Consenting twice doesn't create duplicate rows."""
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.global_model_access import GlobalModelAccess
-        db.session.add(GlobalModelAccess(
-            model_config_id=test_model["id"], access_type="graylist"
+        from lumen.models.entity_model_access import EntityModelAccess
+        db.session.add(EntityModelAccess(
+            entity_id=managed_client["id"], model_config_id=test_model["id"], access_type="graylist"
         ))
         db.session.commit()
 
