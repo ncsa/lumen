@@ -8,13 +8,16 @@ All notable changes to Lumen will be documented in this file.
 - Admin help docs (`docs/admin/`) covering configuration overview, application settings, user groups and access control, clients, and model configuration
 - `LUMEN_SECRET_KEY` environment variable to override `app.secret_key` without putting it in `config.yaml`
 - Dev server (`run.py`) now watches `docs/nav.json` for changes and hot-reloads automatically
+- Clicking a user's name in the admin users list now navigates to a read-only usage view for that user, showing their name, email, and group memberships
 
 ### Changed
 - Help docs updated: clearer wording for model detail fields, clients section, and coin cost example in introduction
 - Existing help doc cross-links audited and corrected
+- Coin pool and model access overrides are now config-only; the per-user and per-group edit UI has been removed. Use `config.yaml` groups to manage limits and model access.
 
 ### Removed
 - Top-level `model_access:` config section removed; use `groups.default.model_access` for site-wide defaults and per-group `model_access` for per-group rules. Alembic migration `u1v2w3x4y5z6` drops the `global_model_access` table.
+- Admin `/admin/users/<id>/limits` page removed (coin pool overrides and model access overrides are now config-only)
 
 ## [1.7.2] - 2026-05-04
 

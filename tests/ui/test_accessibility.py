@@ -177,8 +177,8 @@ def test_admin_users_page(admin_client):
     _run_all_checks(resp.data, "/admin/users")
 
 
-def test_admin_user_limits_page(admin_client, test_user):
-    url = f"/admin/users/{test_user['id']}/limits"
+def test_admin_user_usage_page_accessibility(admin_client, test_user):
+    url = f"/admin/users/{test_user['id']}/usage"
     resp = admin_client.get(url)
     assert resp.status_code == 200
     _run_all_checks(resp.data, url)

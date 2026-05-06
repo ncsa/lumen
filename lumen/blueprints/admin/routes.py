@@ -9,11 +9,8 @@ from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
-from lumen.models.entity_model_access import EntityModelAccess
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
-from lumen.models.group_limit import GroupLimit
-from lumen.models.group_model_access import GroupModelAccess
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_stat import ModelStat
 from lumen.services.llm import get_pool_limit
@@ -52,16 +49,10 @@ def create_group():
 def group_detail(gid):
     group = db.get_or_404(Group, gid)
     members = group.members.join(Entity, GroupMember.entity_id == Entity.id).add_entity(Entity).all()
-    group_limit = GroupLimit.query.filter_by(group_id=gid).first()
-    group_model_access = GroupModelAccess.query.filter_by(group_id=gid).all()
-    models = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
     return render_template(
         "admin/group_detail.html",
         group=group,
         members=members,
-        group_limit=group_limit,
-        group_model_access=group_model_access,
-        models=models,
     )
 
 
@@ -112,82 +103,7 @@ def remove_member(gid, mid):
         abort(404)
     if member.config_managed:
         abort(403)
-    entity_id = member.entity_id
     db.session.delete(member)
-    db.session.commit()
-    back = request.form.get("back")
-    if back == "user_limits":
-        return redirect(url_for("admin.user_limits", eid=entity_id))
-    return redirect(url_for("admin.group_detail", gid=gid))
-
-
-@admin_bp.route("/groups/<int:gid>/pool", methods=["POST"])
-@admin_required
-def upsert_group_pool(gid):
-    group = db.get_or_404(Group, gid)
-    if group.config_managed:
-        abort(403)
-    max_coins = float(request.form.get("max_coins", 0))
-    refresh_coins = float(request.form.get("refresh_coins", 0))
-    starting_coins = float(request.form.get("starting_coins", 0))
-
-    limit = GroupLimit.query.filter_by(group_id=gid).first()
-    if limit:
-        limit.max_coins = max_coins
-        limit.refresh_coins = refresh_coins
-        limit.starting_coins = starting_coins
-    else:
-        db.session.add(GroupLimit(
-            group_id=gid,
-            max_coins=max_coins,
-            refresh_coins=refresh_coins,
-            starting_coins=starting_coins,
-        ))
-    db.session.commit()
-    return redirect(url_for("admin.group_detail", gid=gid))
-
-
-@admin_bp.route("/groups/<int:gid>/pool/delete", methods=["POST"])
-@admin_required
-def delete_group_pool(gid):
-    group = db.get_or_404(Group, gid)
-    if group.config_managed:
-        abort(403)
-    GroupLimit.query.filter_by(group_id=gid).delete()
-    db.session.commit()
-    return redirect(url_for("admin.group_detail", gid=gid))
-
-
-@admin_bp.route("/groups/<int:gid>/access", methods=["POST"])
-@admin_required
-def upsert_group_access(gid):
-    group = db.get_or_404(Group, gid)
-    if group.config_managed:
-        abort(403)
-    model_config_id = int(request.form.get("model_config_id"))
-    access_type = request.form.get("access_type", "whitelist")
-    if access_type not in ("whitelist", "blacklist", "graylist"):
-        access_type = "whitelist"
-
-    existing = GroupModelAccess.query.filter_by(group_id=gid, model_config_id=model_config_id).first()
-    if existing:
-        existing.access_type = access_type
-    else:
-        db.session.add(GroupModelAccess(group_id=gid, model_config_id=model_config_id, access_type=access_type))
-    db.session.commit()
-    return redirect(url_for("admin.group_detail", gid=gid))
-
-
-@admin_bp.route("/groups/<int:gid>/access/<int:amid>/delete", methods=["POST"])
-@admin_required
-def delete_group_access(gid, amid):
-    access = db.get_or_404(GroupModelAccess, amid)
-    if access.group_id != gid:
-        abort(404)
-    group = db.get_or_404(Group, gid)
-    if group.config_managed:
-        abort(403)
-    db.session.delete(access)
     db.session.commit()
     return redirect(url_for("admin.group_detail", gid=gid))
 
@@ -288,38 +204,6 @@ def toggle_user(eid):
     return jsonify({"active": entity.active})
 
 
-@admin_bp.route("/users/<int:eid>/limits")
-@admin_required
-def user_limits(eid):
-    entity = db.get_or_404(Entity, eid)
-    models = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
-
-    entity_limit = EntityLimit.query.filter_by(entity_id=eid).first()
-    entity_balance = EntityBalance.query.filter_by(entity_id=eid).first()
-    effective_pool = get_pool_limit(eid)
-    entity_model_access = EntityModelAccess.query.filter_by(entity_id=eid).all()
-
-    memberships = GroupMember.query.filter_by(entity_id=eid).all()
-    group_details = []
-    for m in memberships:
-        group = db.session.get(Group, m.group_id)
-        if group and group.active:
-            glimit = GroupLimit.query.filter_by(group_id=group.id).first()
-            gaccess = GroupModelAccess.query.filter_by(group_id=group.id).all()
-            group_details.append((m, group, glimit, gaccess))
-
-    return render_template(
-        "admin/user_limits.html",
-        entity=entity,
-        models=models,
-        entity_limit=entity_limit,
-        entity_balance=entity_balance,
-        effective_pool=effective_pool,
-        entity_model_access=entity_model_access,
-        group_details=group_details,
-    )
-
-
 @admin_bp.route("/users/<int:eid>/reset-tokens", methods=["POST"])
 @admin_required
 def reset_user_tokens(eid):
@@ -344,71 +228,43 @@ def reset_user_tokens(eid):
     return jsonify({"coins_available": new_balance})
 
 
-@admin_bp.route("/users/<int:eid>/pool", methods=["POST"])
+@admin_bp.route("/users/<int:eid>/usage")
 @admin_required
-def upsert_user_pool(eid):
-    db.get_or_404(Entity, eid)
-    max_coins = float(request.form.get("max_coins", 0))
-    refresh_coins = float(request.form.get("refresh_coins", 0))
-    starting_coins = float(request.form.get("starting_coins", 0))
-
-    existing = EntityLimit.query.filter_by(entity_id=eid).first()
-    if existing:
-        if existing.config_managed:
-            abort(403)
-        existing.max_coins = max_coins
-        existing.refresh_coins = refresh_coins
-        existing.starting_coins = starting_coins
-    else:
-        db.session.add(EntityLimit(
-            entity_id=eid,
-            max_coins=max_coins,
-            refresh_coins=refresh_coins,
-            starting_coins=starting_coins,
-        ))
-    db.session.commit()
-    return redirect(url_for("admin.user_limits", eid=eid))
-
-
-@admin_bp.route("/users/<int:eid>/pool/delete", methods=["POST"])
-@admin_required
-def delete_user_pool(eid):
-    limit = EntityLimit.query.filter_by(entity_id=eid).first()
-    if limit:
-        if limit.config_managed:
-            abort(403)
-        db.session.delete(limit)
-        db.session.commit()
-    return redirect(url_for("admin.user_limits", eid=eid))
-
-
-@admin_bp.route("/users/<int:eid>/access", methods=["POST"])
-@admin_required
-def upsert_user_access(eid):
-    db.get_or_404(Entity, eid)
-    model_config_id = int(request.form.get("model_config_id"))
-    access_type = request.form.get("access_type", "whitelist")
-    if access_type not in ("whitelist", "blacklist", "graylist"):
-        access_type = "whitelist"
-
-    existing = EntityModelAccess.query.filter_by(entity_id=eid, model_config_id=model_config_id).first()
-    if existing:
-        existing.access_type = access_type
-    else:
-        db.session.add(EntityModelAccess(entity_id=eid, model_config_id=model_config_id, access_type=access_type))
-    db.session.commit()
-    return redirect(url_for("admin.user_limits", eid=eid))
-
-
-@admin_bp.route("/users/<int:eid>/access/<int:amid>/delete", methods=["POST"])
-@admin_required
-def delete_user_access(eid, amid):
-    access = db.get_or_404(EntityModelAccess, amid)
-    if access.entity_id != eid:
-        abort(404)
-    db.session.delete(access)
-    db.session.commit()
-    return redirect(url_for("admin.user_limits", eid=eid))
+def user_usage(eid):
+    from lumen.blueprints.usage.routes import _get_usage_data, _model_status
+    from lumen.services.llm import get_model_access_status, has_model_consent
+    entity = db.get_or_404(Entity, eid)
+    data = _get_usage_data(eid)
+    all_models = ModelConfig.query.order_by(ModelConfig.model_name).all()
+    usage_by_model = {u["model_name"]: u for u in data.get("model_usage", [])}
+    model_access_list = []
+    for mc in all_models:
+        access_status = get_model_access_status(eid, mc.id)
+        consented = has_model_consent(eid, mc.id) if access_status == "graylist" else None
+        u = usage_by_model.get(mc.model_name, {})
+        model_access_list.append({
+            "model_name": mc.model_name,
+            "model_url": url_for("models_page.detail", model_name=mc.model_name),
+            "notice": mc.notice,
+            "access_status": access_status,
+            "consented": consented,
+            "model_status": _model_status(mc),
+            "requests": u.get("requests", 0),
+            "input_tokens": u.get("input_tokens", 0),
+            "output_tokens": u.get("output_tokens", 0),
+            "cost": u.get("cost", 0.0),
+            "last_used_at": u.get("last_used_at"),
+        })
+    memberships = GroupMember.query.filter_by(entity_id=eid).all()
+    groups = [db.session.get(Group, m.group_id) for m in memberships]
+    groups = [g for g in groups if g and g.active]
+    return render_template(
+        "usage.html",
+        **data,
+        model_access_list=model_access_list,
+        viewing_user=entity,
+        viewing_user_groups=groups,
+    )
 
 
 # ---------------------------------------------------------------------------

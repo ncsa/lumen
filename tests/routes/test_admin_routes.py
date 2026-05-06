@@ -165,148 +165,6 @@ def test_remove_config_managed_member_forbidden(app, admin_client, manual_group,
     assert resp.status_code == 403
 
 
-# ---------------------------------------------------------------------------
-# Group pool
-# ---------------------------------------------------------------------------
-
-def test_upsert_pool_creates_limit(app, admin_client, manual_group):
-    resp = admin_client.post(
-        f"/admin/groups/{manual_group['id']}/pool",
-        data={"max_coins": "500", "refresh_coins": "50", "starting_coins": "500"},
-    )
-    assert resp.status_code == 302
-    with app.app_context():
-        from lumen.models.group_limit import GroupLimit
-        gl = GroupLimit.query.filter_by(group_id=manual_group["id"]).first()
-        assert gl is not None
-        assert float(gl.max_coins) == 500.0
-        assert float(gl.refresh_coins) == 50.0
-
-
-def test_upsert_pool_updates_existing(app, admin_client, manual_group):
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.group_limit import GroupLimit
-        db.session.add(GroupLimit(
-            group_id=manual_group["id"], max_coins=100, refresh_coins=0, starting_coins=100,
-        ))
-        db.session.commit()
-
-    admin_client.post(
-        f"/admin/groups/{manual_group['id']}/pool",
-        data={"max_coins": "999", "refresh_coins": "9", "starting_coins": "999"},
-    )
-    with app.app_context():
-        from lumen.models.group_limit import GroupLimit
-        gl = GroupLimit.query.filter_by(group_id=manual_group["id"]).first()
-        assert float(gl.max_coins) == 999.0
-
-
-def test_upsert_pool_yaml_group_forbidden(admin_client, yaml_group):
-    resp = admin_client.post(
-        f"/admin/groups/{yaml_group['id']}/pool",
-        data={"max_coins": "500", "refresh_coins": "0", "starting_coins": "500"},
-    )
-    assert resp.status_code == 403
-
-
-def test_delete_pool_yaml_group_forbidden(admin_client, yaml_group):
-    resp = admin_client.post(f"/admin/groups/{yaml_group['id']}/pool/delete")
-    assert resp.status_code == 403
-
-
-# ---------------------------------------------------------------------------
-# Group model access
-# ---------------------------------------------------------------------------
-
-def test_upsert_access_creates_row(app, admin_client, manual_group, test_model):
-    resp = admin_client.post(
-        f"/admin/groups/{manual_group['id']}/access",
-        data={"model_config_id": test_model["id"], "access_type": "blacklist"},
-    )
-    assert resp.status_code == 302
-    with app.app_context():
-        from lumen.models.group_model_access import GroupModelAccess
-        rule = GroupModelAccess.query.filter_by(
-            group_id=manual_group["id"], model_config_id=test_model["id"]
-        ).first()
-        assert rule is not None
-        assert rule.access_type == "blacklist"
-
-
-def test_upsert_access_invalid_type_falls_back_to_whitelist(
-    app, admin_client, manual_group, test_model,
-):
-    admin_client.post(
-        f"/admin/groups/{manual_group['id']}/access",
-        data={"model_config_id": test_model["id"], "access_type": "garbage"},
-    )
-    with app.app_context():
-        from lumen.models.group_model_access import GroupModelAccess
-        rule = GroupModelAccess.query.filter_by(
-            group_id=manual_group["id"], model_config_id=test_model["id"]
-        ).first()
-        assert rule.access_type == "whitelist"
-
-
-def test_upsert_access_yaml_group_forbidden(admin_client, yaml_group, test_model):
-    resp = admin_client.post(
-        f"/admin/groups/{yaml_group['id']}/access",
-        data={"model_config_id": test_model["id"], "access_type": "whitelist"},
-    )
-    assert resp.status_code == 403
-
-
-# ---------------------------------------------------------------------------
-# User-level enforcement
-# ---------------------------------------------------------------------------
-
-def test_upsert_user_pool_creates(app, admin_client, test_user):
-    resp = admin_client.post(
-        f"/admin/users/{test_user['id']}/pool",
-        data={"max_coins": "1000", "refresh_coins": "10", "starting_coins": "500"},
-    )
-    assert resp.status_code == 302
-    with app.app_context():
-        from lumen.models.entity_limit import EntityLimit
-        lim = EntityLimit.query.filter_by(entity_id=test_user["id"]).first()
-        assert lim is not None
-        assert float(lim.max_coins) == 1000.0
-
-
-def test_upsert_user_pool_config_managed_forbidden(app, admin_client, test_user):
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_limit import EntityLimit
-        db.session.add(EntityLimit(
-            entity_id=test_user["id"],
-            max_coins=100, refresh_coins=0, starting_coins=100,
-            config_managed=True,
-        ))
-        db.session.commit()
-
-    resp = admin_client.post(
-        f"/admin/users/{test_user['id']}/pool",
-        data={"max_coins": "999", "refresh_coins": "0", "starting_coins": "999"},
-    )
-    assert resp.status_code == 403
-
-
-def test_delete_user_pool_config_managed_forbidden(app, admin_client, test_user):
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_limit import EntityLimit
-        db.session.add(EntityLimit(
-            entity_id=test_user["id"],
-            max_coins=100, refresh_coins=0, starting_coins=100,
-            config_managed=True,
-        ))
-        db.session.commit()
-
-    resp = admin_client.post(f"/admin/users/{test_user['id']}/pool/delete")
-    assert resp.status_code == 403
-
-
 def test_toggle_user_flips_active(app, admin_client, test_user):
     resp = admin_client.post(f"/admin/users/{test_user['id']}/toggle")
     assert resp.status_code == 200
@@ -354,3 +212,9 @@ def test_reset_tokens_resets_balance(app, admin_client, test_user):
         from lumen.models.entity_balance import EntityBalance
         bal = EntityBalance.query.filter_by(entity_id=test_user["id"]).first()
         assert float(bal.coins_left) == 500.0
+
+
+def test_admin_user_usage_page(admin_client, test_user):
+    resp = admin_client.get(f"/admin/users/{test_user['id']}/usage")
+    assert resp.status_code == 200
+    assert test_user["name"].encode() in resp.data

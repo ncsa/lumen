@@ -179,7 +179,7 @@
           const toggleLabel = u.active ? 'Deactivate' : 'Activate';
           const toggleClass = u.active ? 'btn-outline-danger' : 'btn-outline-success';
           return `<tr id="user-row-${u.id}">
-            <td>${u.name}</td>
+            <td><a href="/admin/users/${u.id}/usage">${u.name}</a></td>
             <td>${u.email}</td>
             <td class="text-center">${activeIcon}</td>
             <td class="text-end">${coinsAvail}</td>
@@ -187,7 +187,6 @@
             <td class="text-end">${fmt(u.requests)}</td>
             <td class="text-end">${fmtCoins(u.cost)}</td>
             <td class="text-nowrap">
-              <a href="/admin/users/${u.id}/limits" class="btn btn-sm btn-outline-primary" title="Limits" aria-label="Limits for ${u.name}"><i class="bi bi-sliders" aria-hidden="true"></i></a>
               <button class="btn btn-sm btn-outline-secondary reset-btn" data-id="${u.id}" data-unlimited="${u.coins_available === -2}" title="Reset coins" aria-label="Reset coins for ${u.name}"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i></button>
               <button class="btn btn-sm ${toggleClass} toggle-btn" data-id="${u.id}" data-active="${u.active}" title="${toggleLabel}" aria-label="${toggleLabel} ${u.name}"><i class="bi ${u.active ? 'bi-pause-circle' : 'bi-play-circle'}" aria-hidden="true"></i></button>
             </td>
