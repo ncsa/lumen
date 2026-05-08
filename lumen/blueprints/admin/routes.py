@@ -9,8 +9,6 @@ from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
-from lumen.models.group import Group
-from lumen.models.group_member import GroupMember
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_stat import ModelStat
 from lumen.services.llm import get_pool_limit
@@ -19,152 +17,6 @@ admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
 _BIGINT_MAX = 9223372036854775807
 _VALID_PER_PAGE = {25, 50, 100, 200}
-
-
-# ---------------------------------------------------------------------------
-# Groups
-# ---------------------------------------------------------------------------
-
-@admin_bp.route("/groups")
-@admin_required
-def groups():
-    return render_template("admin/groups.html")
-
-
-@admin_bp.route("/groups", methods=["POST"])
-@admin_required
-def create_group():
-    name = request.form.get("name", "").strip()
-    description = request.form.get("description", "").strip() or None
-    if not name:
-        return redirect(url_for("admin.groups"))
-    group = Group(name=name, description=description)
-    db.session.add(group)
-    db.session.commit()
-    return redirect(url_for("admin.group_detail", gid=group.id))
-
-
-@admin_bp.route("/groups/<int:gid>")
-@admin_required
-def group_detail(gid):
-    group = db.get_or_404(Group, gid)
-    members = group.members.join(Entity, GroupMember.entity_id == Entity.id).add_entity(Entity).all()
-    return render_template(
-        "admin/group_detail.html",
-        group=group,
-        members=members,
-    )
-
-
-@admin_bp.route("/groups/<int:gid>", methods=["POST"])
-@admin_required
-def update_group(gid):
-    group = db.get_or_404(Group, gid)
-    if group.config_managed:
-        abort(403)
-    group.name = request.form.get("name", group.name).strip()
-    group.description = request.form.get("description", "").strip() or None
-    db.session.commit()
-    return redirect(url_for("admin.group_detail", gid=gid))
-
-
-@admin_bp.route("/groups/<int:gid>/toggle", methods=["POST"])
-@admin_required
-def toggle_group(gid):
-    group = db.get_or_404(Group, gid)
-    if group.config_managed:
-        abort(403)
-    group.active = not group.active
-    db.session.commit()
-    return jsonify({"active": group.active})
-
-
-@admin_bp.route("/groups/<int:gid>/members", methods=["POST"])
-@admin_required
-def add_member(gid):
-    group = db.get_or_404(Group, gid)
-    if group.config_managed:
-        abort(403)
-    email = request.form.get("email", "").strip()
-    entity = Entity.query.filter_by(email=email, entity_type="user").first()
-    if entity:
-        existing = GroupMember.query.filter_by(group_id=gid, entity_id=entity.id).first()
-        if not existing:
-            db.session.add(GroupMember(group_id=gid, entity_id=entity.id))
-            db.session.commit()
-    return redirect(url_for("admin.group_detail", gid=gid))
-
-
-@admin_bp.route("/groups/<int:gid>/members/<int:mid>/remove", methods=["POST"])
-@admin_required
-def remove_member(gid, mid):
-    member = db.get_or_404(GroupMember, mid)
-    if member.group_id != gid:
-        abort(404)
-    if member.config_managed:
-        abort(403)
-    db.session.delete(member)
-    db.session.commit()
-    return redirect(url_for("admin.group_detail", gid=gid))
-
-
-# ---------------------------------------------------------------------------
-# Groups API
-# ---------------------------------------------------------------------------
-
-@admin_bp.route("/api/groups")
-@admin_required
-def api_groups():
-    page = max(1, request.args.get("page", 1, type=int))
-    per_page = request.args.get("per_page", 25, type=int)
-    if per_page not in _VALID_PER_PAGE:
-        per_page = 25
-    sort = request.args.get("sort", "name")
-    order = request.args.get("order", "asc")
-
-    member_count_sq = (
-        db.session.query(
-            GroupMember.group_id,
-            func.count(GroupMember.id).label("member_count"),
-        )
-        .group_by(GroupMember.group_id)
-        .subquery()
-    )
-
-    q = (
-        db.session.query(Group, func.coalesce(member_count_sq.c.member_count, 0).label("member_count"))
-        .outerjoin(member_count_sq, Group.id == member_count_sq.c.group_id)
-        .filter(Group.name != "default")
-    )
-
-    sort_col = {
-        "name": Group.name,
-        "description": Group.description,
-        "active": Group.active,
-        "members": member_count_sq.c.member_count,
-    }.get(sort, Group.name)
-
-    q = q.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
-
-    total = q.count()
-    rows = q.offset((page - 1) * per_page).limit(per_page).all()
-
-    return jsonify({
-        "groups": [
-            {
-                "id": g.id,
-                "name": g.name,
-                "description": g.description or "",
-                "members": count,
-                "active": g.active,
-                "config_managed": g.config_managed,
-            }
-            for g, count in rows
-        ],
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-    })
 
 
 # ---------------------------------------------------------------------------
@@ -255,15 +107,11 @@ def user_usage(eid):
             "cost": u.get("cost", 0.0),
             "last_used_at": u.get("last_used_at"),
         })
-    memberships = GroupMember.query.filter_by(entity_id=eid).all()
-    groups = [db.session.get(Group, m.group_id) for m in memberships]
-    groups = [g for g in groups if g and g.active]
     return render_template(
         "usage.html",
         **data,
         model_access_list=model_access_list,
         viewing_user=entity,
-        viewing_user_groups=groups,
     )
 
 
@@ -346,15 +194,6 @@ def api_users():
     total = q.count()
     rows = q.offset((page - 1) * per_page).limit(per_page).all()
 
-    # Batch-fetch group memberships for returned users
-    user_ids = [entity.id for entity, *_ in rows]
-    memberships = GroupMember.query.filter(GroupMember.entity_id.in_(user_ids)).all() if user_ids else []
-    group_ids = {m.group_id for m in memberships}
-    groups_by_id = {g.id: g.name for g in Group.query.filter(Group.id.in_(group_ids)).all()} if group_ids else {}
-    user_groups = {}
-    for m in memberships:
-        user_groups.setdefault(m.entity_id, []).append(groups_by_id.get(m.group_id, ""))
-
     return jsonify({
         "users": [
             {
@@ -362,7 +201,6 @@ def api_users():
                 "name": entity.name,
                 "email": entity.email or "",
                 "active": entity.active,
-                "groups": user_groups.get(entity.id, []),
                 "requests": int(requests),
                 "tokens_used": int(tokens_used),
                 "cost": float(cost),

@@ -54,21 +54,6 @@ def test_clients_page_loads(auth_client):
     assert resp.status_code == 200
 
 
-def test_admin_groups_requires_auth(client):
-    resp = client.get("/admin/groups", follow_redirects=False)
-    assert resp.status_code == 302
-
-
-def test_admin_groups_forbidden_for_non_admin(auth_client):
-    resp = auth_client.get("/admin/groups")
-    assert resp.status_code == 403
-
-
-def test_admin_groups_loads_for_admin(admin_client):
-    resp = admin_client.get("/admin/groups")
-    assert resp.status_code == 200
-
-
 def test_admin_users_loads_for_admin(admin_client):
     resp = admin_client.get("/admin/users")
     assert resp.status_code == 200

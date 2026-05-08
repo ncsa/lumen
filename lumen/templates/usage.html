@@ -9,9 +9,6 @@
   <div class="d-flex align-items-center gap-3 flex-wrap min-w-0">
     <span class="fw-semibold text-truncate">{{ viewing_user.name }}</span>
     <span class="text-muted small">{{ viewing_user.email }}</span>
-    {% if viewing_user_groups %}
-    <span class="text-muted small">Groups: {{ viewing_user_groups | map(attribute='name') | join(', ') }}</span>
-    {% endif %}
   </div>
   <a href="{{ url_for('admin.users') }}" class="btn btn-sm btn-outline-secondary flex-shrink-0">← Back</a>
 </div>

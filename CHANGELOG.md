@@ -16,6 +16,7 @@ All notable changes to Lumen will be documented in this file.
 - Coin pool and model access overrides are now config-only; the per-user and per-group edit UI has been removed. Use `config.yaml` groups to manage limits and model access.
 
 ### Removed
+- Admin Groups page removed from navigation and UI; groups remain config-managed only via `config.yaml`
 - Top-level `model_access:` config section removed; use `groups.default.model_access` for site-wide defaults and per-group `model_access` for per-group rules. Alembic migration `u1v2w3x4y5z6` drops the `global_model_access` table.
 - Admin `/admin/users/<id>/limits` page removed (coin pool overrides and model access overrides are now config-only)
 

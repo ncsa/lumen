@@ -128,21 +128,6 @@ def _run_all_checks(html_bytes, url):
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture
-def group_for_a11y(app):
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.group import Group
-        g = Group(name="a11y-group", config_managed=False, active=True)
-        db.session.add(g)
-        db.session.commit()
-        return {"id": g.id}
-
-
-# ---------------------------------------------------------------------------
 # Page tests
 # ---------------------------------------------------------------------------
 
@@ -156,19 +141,6 @@ def test_models_page(auth_client):
     resp = auth_client.get("/models")
     assert resp.status_code == 200
     _run_all_checks(resp.data, "/models")
-
-
-def test_admin_groups_page(admin_client):
-    resp = admin_client.get("/admin/groups")
-    assert resp.status_code == 200
-    _run_all_checks(resp.data, "/admin/groups")
-
-
-def test_admin_group_detail_page(admin_client, group_for_a11y):
-    url = f"/admin/groups/{group_for_a11y['id']}"
-    resp = admin_client.get(url)
-    assert resp.status_code == 200
-    _run_all_checks(resp.data, url)
 
 
 def test_admin_users_page(admin_client):
