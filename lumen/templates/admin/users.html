@@ -220,7 +220,7 @@
   function toggleUser(btn) {
     const id = btn.dataset.id;
     btn.disabled = true;
-    fetch(`/admin/users/${id}/toggle`, { method: 'POST' })
+    fetch(`/admin/users/${id}/toggle`, { method: 'POST', headers: { "X-CSRFToken": csrfToken } })
       .then(r => r.json())
       .then(data => {
         const row = document.getElementById(`user-row-${id}`);
@@ -250,7 +250,7 @@
       return;
     }
     btn.disabled = true;
-    fetch(`/admin/users/${id}/reset-tokens`, { method: 'POST' })
+    fetch(`/admin/users/${id}/reset-tokens`, { method: 'POST', headers: { "X-CSRFToken": csrfToken } })
       .then(r => r.json())
       .then(data => {
         if (data.error) {

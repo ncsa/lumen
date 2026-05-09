@@ -366,7 +366,7 @@ function renderKeys() {
     keyTbody.querySelectorAll('.delete-key-btn').forEach(btn => {
       btn.addEventListener('click', async function () {
         if (!confirm("Delete this API key? Usage history is kept.")) return;
-        const resp = await fetch("/usage/keys/" + this.dataset.id, { method: "DELETE" });
+        const resp = await fetch("/usage/keys/" + this.dataset.id, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } });
         if (resp.ok) location.reload();
         else alert("Failed to delete key.");
       });
@@ -518,7 +518,7 @@ document.getElementById("save-key-btn").addEventListener("click", async function
 
   const resp = await fetch("/usage/keys", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
     body: JSON.stringify({ name, key }),
   });
   if (resp.ok) {
@@ -553,7 +553,7 @@ document.getElementById("graylist-accept-btn").addEventListener("click", async f
   if (!graylistModelName) return;
   const resp = await fetch("/usage/consent/" + encodeURIComponent(graylistModelName), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
   });
   if (resp.ok) {
     bootstrap.Modal.getInstance(document.getElementById("graylistModal")).hide();

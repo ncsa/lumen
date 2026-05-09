@@ -214,7 +214,7 @@
   function toggleClient(btn) {
     const id = btn.dataset.id;
     btn.disabled = true;
-    fetch(`/clients/${id}/toggle`, { method: 'POST' })
+    fetch(`/clients/${id}/toggle`, { method: 'POST', headers: { "X-CSRFToken": csrfToken } })
       .then(r => r.json())
       .then(data => {
         const idx = ROWS.findIndex(c => c.id === parseInt(id));
@@ -249,7 +249,7 @@ document.getElementById("create-client-btn").addEventListener("click", async fun
   if (!name) return;
   const resp = await fetch("/clients", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
     body: JSON.stringify({ name }),
   });
   if (resp.ok) {

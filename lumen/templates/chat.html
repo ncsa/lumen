@@ -250,7 +250,7 @@
 
   async function removeConversation(id) {
     try {
-      await fetch(`/chat/conversations/${id}`, { method: "DELETE" });
+      await fetch(`/chat/conversations/${id}`, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } });
       if (id === activeConversationId) {
         activeConversationId = null;
         chatHistory = [];
@@ -457,7 +457,7 @@
     const formData = new FormData();
     formData.append("file", file);
     try {
-      const resp = await fetch("/chat/upload", { method: "POST", body: formData });
+      const resp = await fetch("/chat/upload", { method: "POST", body: formData, headers: { "X-CSRFToken": csrfToken } });
       const data = await resp.json();
       if (!resp.ok) {
         setAttachmentStatus("Upload error: " + (data.error || resp.statusText), true);
@@ -548,7 +548,7 @@
     try {
       const resp = await fetch("/chat/stream", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
         body: JSON.stringify({ messages: chatHistory, model, conversation_id: activeConversationId }),
       });
 

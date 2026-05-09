@@ -61,6 +61,7 @@
           {% else %}
           <p class="mb-2 small">This model requires acknowledgment before use. By enabling access you confirm you have read any notices and accept responsibility for appropriate use.</p>
           <form method="post" action="{{ url_for('models_page.model_consent', model_name=config.model_name) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-warning w-100">
               Acknowledge &amp; Enable Access
             </button>

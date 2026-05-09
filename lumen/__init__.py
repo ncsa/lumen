@@ -118,6 +118,9 @@ def create_app():
     migrate.init_app(app, db)
     oauth.init_app(app)
     limiter.init_app(app)
+
+    from flask_wtf.csrf import CSRFProtect
+    csrf = CSRFProtect(app)
     if rl_cfg.get("storage_url"):
         app.logger.warning(
             "rate_limiting.storage_url requires a restart to take effect; it is not hot-reloaded."
@@ -159,6 +162,7 @@ def create_app():
     app.register_blueprint(clients_bp)
     app.register_blueprint(usage_bp)
     app.register_blueprint(api_bp)
+    csrf.exempt(api_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(metrics_bp)
     app.register_blueprint(help_bp)

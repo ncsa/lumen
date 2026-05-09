@@ -7,6 +7,7 @@ from lumen.decorators import login_required
 from lumen.extensions import db
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
+from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.request_log import RequestLog
 from lumen.services.llm import get_model_access_status, has_model_consent
 
@@ -19,7 +20,11 @@ def index():
     entity_id = session.get("entity_id")
     all_configs = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
     configs = [c for c in all_configs if get_model_access_status(entity_id, c.id) != "blocked"]
-    return render_template("models.html", configs=configs)
+    model_ids = [c.id for c in configs]
+    endpoints_map: dict[int, list] = {}
+    for ep in ModelEndpoint.query.filter(ModelEndpoint.model_config_id.in_(model_ids)).all():
+        endpoints_map.setdefault(ep.model_config_id, []).append(ep)
+    return render_template("models.html", configs=configs, endpoints_map=endpoints_map)
 
 
 @models_page_bp.route("/models/<path:model_name>")

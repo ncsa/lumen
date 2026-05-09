@@ -10,11 +10,14 @@ from flask import Blueprint, Response, current_app, jsonify, render_template, re
 
 logger = logging.getLogger(__name__)
 
+from sqlalchemy import func, select
+
 from lumen.decorators import login_required
 from lumen.extensions import db, limiter
 from lumen.models.conversation import Conversation
 from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
+from lumen.models.model_endpoint import ModelEndpoint
 from lumen.services.llm import check_coin_budget, get_effective_limit, get_model_access_status, has_model_consent, send_message_stream
 
 chat_bp = Blueprint("chat", __name__)
@@ -67,13 +70,20 @@ def _chat_limit():
 def chat_page():
     entity_id = session["entity_id"]
     all_models = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
+    healthy_counts = dict(
+        db.session.execute(
+            select(ModelEndpoint.model_config_id, func.count())
+            .where(ModelEndpoint.healthy == True)  # noqa: E712
+            .group_by(ModelEndpoint.model_config_id)
+        ).all()
+    )
 
     # Include models that are accessible (not blocked) and have healthy endpoints.
     # Graylisted models without consent are shown with a warning so the user can navigate
     # to the model detail page to acknowledge them.
     available_models = []
     for m in all_models:
-        if m.endpoints.filter_by(healthy=True).count() == 0:
+        if healthy_counts.get(m.id, 0) == 0:
             continue
         status = get_model_access_status(entity_id, m.id)
         if status == "blocked":
@@ -235,19 +245,31 @@ def list_conversations():
         .order_by(Conversation.updated_at.desc())
         .all()
     )
+    conv_ids = [c.id for c in convs]
+    last_msgs: dict[int, Message] = {}
+    if conv_ids:
+        subq = (
+            select(Message.conversation_id, func.max(Message.created_at).label("max_at"))
+            .group_by(Message.conversation_id)
+            .subquery()
+        )
+        for msg in db.session.execute(
+            select(Message).join(
+                subq,
+                (Message.conversation_id == subq.c.conversation_id)
+                & (Message.created_at == subq.c.max_at)
+            ).where(Message.conversation_id.in_(conv_ids))
+        ).scalars():
+            last_msgs[msg.conversation_id] = msg
+
     result = []
     for conv in convs:
-        last_msg = (
-            Message.query
-            .filter_by(conversation_id=conv.id)
-            .order_by(Message.created_at.desc())
-            .first()
-        )
+        last_msg = last_msgs.get(conv.id)
         result.append({
             "id": conv.id,
             "title": conv.title,
             "model": conv.model,
-            "updated_at": conv.updated_at.strftime('%Y-%m-%dT%H:%M:%S') if conv.updated_at else None,
+            "updated_at": conv.updated_at.strftime('%Y-%m-%dT%H:%M:%SZ') if conv.updated_at else None,
             "last_message_preview": last_msg.content[:60] if last_msg else "",
         })
     return jsonify({"conversations": result})
@@ -272,7 +294,7 @@ def get_conversation_messages(cid):
         m = {
             "role": msg.role,
             "content": msg.content,
-            "created_at": msg.created_at.strftime('%Y-%m-%dT%H:%M:%S') if msg.created_at else None,
+            "created_at": msg.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') if msg.created_at else None,
         }
         if msg.role == "assistant":
             m["meta"] = {

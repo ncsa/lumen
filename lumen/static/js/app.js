@@ -1,6 +1,8 @@
 // app.js — global utilities for Lumen
 // Page-specific logic lives inline in each template's {% block scripts %}.
 
+const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
 document.addEventListener("DOMContentLoaded", function () {
   // Auto-dismiss alerts after 20s; pause timer on hover/focus (WCAG 2.2.1)
   document.querySelectorAll(".alert.alert-dismissible").forEach(function (el) {

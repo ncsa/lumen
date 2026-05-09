@@ -16,6 +16,7 @@ def app():
     from lumen import create_app
     application = create_app()
     application.config["TESTING"] = True
+    application.config["WTF_CSRF_ENABLED"] = False
     with application.app_context():
         from lumen.extensions import db
         db.create_all()

@@ -5,12 +5,18 @@ All notable changes to Lumen will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- CSRF protection via Flask-WTF: the model consent form is now protected; the `/v1/` API blueprint is exempt; JavaScript fetch calls (upload, delete conversation) send `X-CSRFToken` header
+- `todo.md` with detailed follow-up items for deferred technical debt (bulk access resolution, admin SQL pattern, CSS consolidation, SQLAlchemy modernization)
 - Tests for help and usage blueprint routes, covering key management, consent flow, coin pool, model status, and markdown frontmatter parsing
 
 ### Changed
 - Consolidated three copies of `_model_status` into `get_model_status()` in `lumen/services/llm.py`
 
 ### Fixed
+- N+1 queries on `/models` page: model endpoints now fetched in one query and passed to template via `endpoints_map` instead of calling `config.endpoints.all()` per row
+- N+1 queries on `/chat` page: healthy endpoint counts now fetched in one GROUP BY query instead of per-model `.count()` calls
+- N+1 queries in `list_conversations`: last message per conversation now fetched in a single subquery join instead of one query per conversation
+- Datetime timezone in chat JSON responses: `updated_at` and `created_at` now include `Z` suffix so JavaScript interprets them as UTC
 - Removed dead `if not mc.active` branch from inner model status function in `_get_usage_data` (unreachable — only accessible/active models are evaluated there)
 
 ## [1.8.0] - 2026-05-09

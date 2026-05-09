@@ -20,7 +20,7 @@
   </thead>
   <tbody>
     {% for config in configs %}
-    {% set endpoints = config.endpoints.all() %}
+    {% set endpoints = endpoints_map.get(config.id, []) %}
     {% set healthy_eps = endpoints | selectattr("healthy") | list %}
     <tr>
       <td>

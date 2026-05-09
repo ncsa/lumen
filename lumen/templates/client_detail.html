@@ -411,7 +411,7 @@ function renderKeys() {
     keyTbody.querySelectorAll('.delete-key-btn').forEach(btn => {
       btn.addEventListener('click', async function () {
         if (!confirm("Delete this API key? Usage history is kept.")) return;
-        const resp = await fetch("/clients/" + CLIENT_ID + "/keys/" + this.dataset.id, { method: "DELETE" });
+        const resp = await fetch("/clients/" + CLIENT_ID + "/keys/" + this.dataset.id, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } });
         if (resp.ok) location.reload();
         else alert("Failed to delete key.");
       });
@@ -561,7 +561,7 @@ document.getElementById("save-key-btn").addEventListener("click", async function
 
   const resp = await fetch("/clients/" + CLIENT_ID + "/keys", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
     body: JSON.stringify({ name, key }),
   });
   if (resp.ok) {
@@ -646,7 +646,7 @@ document.getElementById("add-manager-btn").addEventListener("click", async funct
   if (!email) return;
   const resp = await fetch("/clients/" + CLIENT_ID + "/users", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
     body: JSON.stringify({ email }),
   });
   const data = await resp.json();
@@ -664,13 +664,13 @@ document.getElementById("add-manager-btn").addEventListener("click", async funct
 // Remove manager
 function removeManager(sid, uid, name) {
   if (!confirm(`Remove ${name} as manager?`)) return;
-  fetch("/clients/" + sid + "/users/" + uid, { method: "DELETE" })
+  fetch("/clients/" + sid + "/users/" + uid, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } })
     .then(r => { if (r.ok) location.reload(); else alert("Failed to remove manager."); });
 }
 
 // Toggle client active state
 function toggleClient(sid, currentActive) {
-  fetch("/clients/" + sid + "/toggle", { method: "POST" })
+  fetch("/clients/" + sid + "/toggle", { method: "POST", headers: { "X-CSRFToken": csrfToken } })
     .then(r => r.json())
     .then(() => location.reload())
     .catch(() => alert("Failed to update client."));
@@ -698,7 +698,7 @@ document.getElementById("graylist-accept-btn").addEventListener("click", async f
   if (!graylistModelName) return;
   const resp = await fetch("/clients/" + CLIENT_ID + "/consent/" + encodeURIComponent(graylistModelName), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
   });
   if (resp.ok) {
     bootstrap.Modal.getInstance(document.getElementById("graylistModal")).hide();
