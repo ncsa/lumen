@@ -73,20 +73,3 @@ Note: PostgreSQL's `time_bucket` accepts a bind parameter for the interval, e.g.
 migrate all inline `<style>` blocks to `lumen/static/css/app.css`, remove Bootstrap
 layout utilities where Toolkit equivalents exist. Keep Bootstrap for form controls and
 utilities not covered by the Toolkit. Large refactor — estimate 2–3 days.
-
----
-
-## [MAINT] Modernize Model.query → db.session.execute(select(...))
-
-**Files:** Most blueprints and `lumen/services/llm.py`
-
-**Problem:** Widespread use of the legacy Flask-SQLAlchemy `Model.query` API
-(e.g., `ModelConfig.query.filter_by(...).all()`). SQLAlchemy 2.0 deprecates this in
-favor of `db.session.execute(select(Model).where(...))`.
-
-**Note:** CLAUDE.md only explicitly forbids `Model.query.get()` and
-`Model.query.get_or_404()`. The general `Model.query` pattern still works and won't
-break. This is purely a modernization task.
-
-**Fix approach:** Grep for `\.query\.` across the codebase and migrate each call to
-SQLAlchemy 2.0 style. Medium effort, low risk if done incrementally blueprint by blueprint.
