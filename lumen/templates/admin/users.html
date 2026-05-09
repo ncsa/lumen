@@ -57,22 +57,23 @@
 </div>
 
 <div class="table-responsive">
-<table class="table table-striped table-hover align-middle mb-0">
+<table class="table table-striped table-hover table-sm align-middle mb-0">
   <caption class="visually-hidden">User accounts with group membership and status</caption>
   <thead class="table-light">
     <tr>
       <th class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th class="sort-header" data-col="email">Email <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th class="sort-header" data-col="joined">Joined <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
       <th class="sort-header text-center" data-col="active">Active <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th class="sort-header text-end" data-col="coins_available">Coins Available <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th class="sort-header text-end" data-col="tokens_used">Tokens Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
       <th class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th class="sort-header text-end" data-col="tokens_used">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th class="sort-header wrap text-end" data-col="coins_available">Coins<br>Left <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th class="sort-header wrap text-end" data-col="cost">Coins<br>Spent <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
       <th><span class="visually-hidden">Actions</span></th>
     </tr>
   </thead>
   <tbody id="userTableBody">
-    <tr><td colspan="8" class="text-center text-muted py-3">Loading…</td></tr>
+    <tr><td colspan="9" class="text-center text-muted py-3">Loading…</td></tr>
   </tbody>
 </table>
 </div>
@@ -86,6 +87,7 @@
 
 <style>
 .sort-header { cursor: pointer; user-select: none; white-space: nowrap; }
+.sort-header.wrap { white-space: normal; }
 .sort-arrows { display: inline-flex; flex-direction: column; font-size: 0.6em; line-height: 1.1; float: right; margin-left: 6px; margin-top: 2px; }
 .sa-up, .sa-dn { color: #adb5bd; }
 .sort-asc .sa-up { color: #212529; }
@@ -115,6 +117,11 @@
 
   function fmt(n) { return n.toLocaleString(); }
   function fmtCoins(n) { return n.toFixed(2); }
+  function fmtDate(utc) {
+    if (!utc) return '—';
+    const d = new Date(utc);
+    return isNaN(d) ? '—' : d.toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' });
+  }
 
   function updateSortHeaders() {
     document.querySelectorAll('.sort-header').forEach(th => {
@@ -156,7 +163,7 @@
     const qs = new URLSearchParams({ page, per_page: perPage, sort, order });
     if (search) qs.set('search', search);
 
-    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">Loading…</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-3">Loading…</td></tr>';
 
     fetch('/admin/api/users?' + qs.toString())
       .then(r => r.json())
@@ -168,7 +175,7 @@
           : 'No entries found';
 
         if (!data.users.length) {
-          tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No users found.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-3">No users found.</td></tr>';
           paginationEl.innerHTML = '';
           return;
         }
@@ -178,13 +185,16 @@
           const coinsAvail = u.coins_available === -2 ? '∞' : fmtCoins(u.coins_available);
           const toggleLabel = u.active ? 'Deactivate' : 'Activate';
           const toggleClass = u.active ? 'btn-outline-danger' : 'btn-outline-success';
+          const joinedCell = fmtDate(u.joined);
+          const lastUsedCell = fmtDate(u.last_used);
           return `<tr id="user-row-${u.id}">
             <td><a href="/admin/users/${u.id}/usage">${u.name}</a></td>
-            <td>${u.email}</td>
+            <td>${joinedCell}</td>
             <td class="text-center">${activeIcon}</td>
-            <td class="text-end">${coinsAvail}</td>
-            <td class="text-end">${fmt(u.tokens_used)}</td>
+            <td>${lastUsedCell}</td>
             <td class="text-end">${fmt(u.requests)}</td>
+            <td class="text-end">${fmt(u.tokens_used)}</td>
+            <td class="text-end">${coinsAvail}</td>
             <td class="text-end">${fmtCoins(u.cost)}</td>
             <td class="text-nowrap">
               <button class="btn btn-sm btn-outline-secondary reset-btn" data-id="${u.id}" data-unlimited="${u.coins_available === -2}" title="Reset coins" aria-label="Reset coins for ${u.name}"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i></button>
@@ -203,7 +213,7 @@
         renderPagination(data.total, data.page, data.per_page);
       })
       .catch(() => {
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-3">Failed to load users.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-danger py-3">Failed to load users.</td></tr>';
       });
   }
 
@@ -247,7 +257,7 @@
           alert(data.error);
         } else {
           const row = document.getElementById(`user-row-${id}`);
-          row.cells[3].textContent = parseFloat(data.coins_available).toFixed(2);
+          row.cells[6].textContent = parseFloat(data.coins_available).toFixed(2); // coins left
         }
         btn.disabled = false;
       })

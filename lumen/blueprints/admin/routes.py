@@ -136,6 +136,7 @@ def api_users():
             func.coalesce(func.sum(ModelStat.requests), 0).label("requests"),
             func.coalesce(func.sum(ModelStat.input_tokens + ModelStat.output_tokens), 0).label("tokens_used"),
             func.coalesce(func.sum(ModelStat.cost), 0).label("cost"),
+            func.max(ModelStat.last_used_at).label("last_used_at"),
         )
         .group_by(ModelStat.entity_id)
         .subquery()
@@ -168,6 +169,7 @@ def api_users():
             func.coalesce(api_stats_sq.c.tokens_used, 0).label("tokens_used"),
             func.coalesce(api_stats_sq.c.cost, 0).label("cost"),
             coins_avail_sort.label("coins_available"),
+            api_stats_sq.c.last_used_at.label("last_used_at"),
         )
         .filter(Entity.entity_type == "user")
         .outerjoin(api_stats_sq, Entity.id == api_stats_sq.c.entity_id)
@@ -181,15 +183,17 @@ def api_users():
 
     sort_col = {
         "name": Entity.name,
-        "email": Entity.email,
         "active": Entity.active,
+        "joined": Entity.created_at,
+        "last_used": api_stats_sq.c.last_used_at,
         "requests": func.coalesce(api_stats_sq.c.requests, 0),
         "tokens_used": func.coalesce(api_stats_sq.c.tokens_used, 0),
         "cost": func.coalesce(api_stats_sq.c.cost, 0),
         "coins_available": coins_avail_sort,
     }.get(sort, Entity.name)
 
-    q = q.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
+    direction = sort_col.desc().nullslast() if order == "desc" else sort_col.asc().nullslast()
+    q = q.order_by(direction)
 
     total = q.count()
     rows = q.offset((page - 1) * per_page).limit(per_page).all()
@@ -199,14 +203,15 @@ def api_users():
             {
                 "id": entity.id,
                 "name": entity.name,
-                "email": entity.email or "",
                 "active": entity.active,
+                "joined": entity.created_at.strftime("%Y-%m-%dT%H:%M:%SZ") if entity.created_at else None,
+                "last_used": last_used_at.strftime("%Y-%m-%dT%H:%M:%SZ") if last_used_at else None,
                 "requests": int(requests),
                 "tokens_used": int(tokens_used),
                 "cost": float(cost),
                 "coins_available": -2 if float(coins_available) >= _BIGINT_MAX else float(coins_available),
             }
-            for entity, requests, tokens_used, cost, coins_available in rows
+            for entity, requests, tokens_used, cost, coins_available, last_used_at in rows
         ],
         "total": total,
         "page": page,
