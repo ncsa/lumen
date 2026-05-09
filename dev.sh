@@ -6,6 +6,7 @@ cd "$(dirname "$0")"
 # Ensure TimescaleDB is running for local dev
 if ! docker ps --format '{{.Names}}' | grep -q '^lumen-tsdb$'; then
   echo "Starting TimescaleDB container..."
+  docker pull timescale/timescaledb:latest-pg17
   docker run -d --name lumen-tsdb \
     -e POSTGRES_DB=lumen \
     -e POSTGRES_USER=lumen \

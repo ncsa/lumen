@@ -9,9 +9,13 @@ All notable changes to Lumen will be documented in this file.
 - `LUMEN_SECRET_KEY` environment variable to override `app.secret_key` without putting it in `config.yaml`
 - Dev server (`run.py`) now watches `docs/nav.json` for changes and hot-reloads automatically
 - Clicking a user's name in the admin users list now navigates to a read-only usage view for that user, showing their name, email, and group memberships
+- `docs/dbschema.md` — full database schema reference with column descriptions, constraints, ER diagram, and access control evaluation order
+- Alembic migration `v2w3x4y5z6a7` adds `COMMENT ON TABLE/COLUMN` to all tables on PostgreSQL
+- `dev.sh` now pulls the latest TimescaleDB image before starting the container
 
 ### Changed
 - Admin users table redesigned: email column replaced with Joined, Last Used, Coins Left, and Coins Spent; never-active users sort to the bottom; dates displayed in the user's local timezone
+- All SQLAlchemy model classes now carry docstrings and `comment=` on every column and table, surfaced as PostgreSQL catalog comments
 - Help docs updated: clearer wording for model detail fields, clients section, and coin cost example in introduction
 - Existing help doc cross-links audited and corrected
 - Coin pool and model access overrides are now config-only; the per-user and per-group edit UI has been removed. Use `config.yaml` groups to manage limits and model access.

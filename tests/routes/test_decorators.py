@@ -1,12 +1,12 @@
 def test_admin_required_returns_403_for_non_admin(app, auth_client, test_user):
     """Non-admin user should get 403 from admin endpoints."""
-    resp = auth_client.get("/admin/groups")
+    resp = auth_client.get("/admin/users")
     assert resp.status_code == 403
 
 
 def test_admin_required_redirects_unauthenticated(client):
     """Unauthenticated user is redirected rather than getting 403."""
-    resp = client.get("/admin/groups", follow_redirects=False)
+    resp = client.get("/admin/users", follow_redirects=False)
     assert resp.status_code == 302
 
 
