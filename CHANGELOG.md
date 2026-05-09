@@ -11,6 +11,7 @@ All notable changes to Lumen will be documented in this file.
 - Clicking a user's name in the admin users list now navigates to a read-only usage view for that user, showing their name, email, and group memberships
 
 ### Changed
+- Admin users table redesigned: email column replaced with Joined, Last Used, Coins Left, and Coins Spent; never-active users sort to the bottom; dates displayed in the user's local timezone
 - Help docs updated: clearer wording for model detail fields, clients section, and coin cost example in introduction
 - Existing help doc cross-links audited and corrected
 - Coin pool and model access overrides are now config-only; the per-user and per-group edit UI has been removed. Use `config.yaml` groups to manage limits and model access.
