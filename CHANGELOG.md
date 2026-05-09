@@ -5,6 +5,7 @@ All notable changes to Lumen will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `entity_stats` table: pre-aggregated per-entity usage totals (requests, tokens, cost, last\_used\_at) maintained in real-time alongside `model_stats`; eliminates full-table GROUP BY scans on the admin users page, admin users API, and clients listing
 - Admin help docs (`docs/admin/`) covering configuration overview, application settings, user groups and access control, clients, and model configuration
 - `LUMEN_SECRET_KEY` environment variable to override `app.secret_key` without putting it in `config.yaml`
 - Dev server (`run.py`) now watches `docs/nav.json` for changes and hot-reloads automatically

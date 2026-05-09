@@ -1,4 +1,5 @@
 """Admin route tests — focus on user management happy paths."""
+import pytest
 
 
 def test_toggle_user_flips_active(app, admin_client, test_user):
@@ -54,3 +55,48 @@ def test_admin_user_usage_page(admin_client, test_user):
     resp = admin_client.get(f"/admin/users/{test_user['id']}/usage")
     assert resp.status_code == 200
     assert test_user["name"].encode() in resp.data
+
+
+# ---------------------------------------------------------------------------
+# /api/users — entity_stats integration
+# ---------------------------------------------------------------------------
+
+def test_api_users_returns_zeros_without_usage(admin_client, test_user):
+    resp = admin_client.get("/admin/api/users")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    user = next(u for u in data["users"] if u["id"] == test_user["id"])
+    assert user["requests"] == 0
+    assert user["tokens_used"] == 0
+    assert float(user["cost"]) == pytest.approx(0.0)
+    assert user["last_used"] is None
+
+
+def test_api_users_reflects_entity_stats(app, admin_client, test_user, test_model):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.services.llm import update_stats
+        update_stats(test_user["id"], test_model["id"], "chat", 100, 50, 0.03)
+        db.session.commit()
+
+    resp = admin_client.get("/admin/api/users")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    user = next(u for u in data["users"] if u["id"] == test_user["id"])
+    assert user["requests"] == 1
+    assert user["tokens_used"] == 150
+    assert float(user["cost"]) == pytest.approx(0.03)
+    assert user["last_used"] is not None
+
+
+def test_api_users_sort_by_requests(app, admin_client, test_user, admin_user, test_model):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.services.llm import update_stats
+        update_stats(test_user["id"], test_model["id"], "chat", 10, 5, 0.001)
+        db.session.commit()
+
+    resp = admin_client.get("/admin/api/users?sort=requests&order=desc")
+    assert resp.status_code == 200
+    ids = [u["id"] for u in resp.get_json()["users"]]
+    assert ids.index(test_user["id"]) < ids.index(admin_user["id"])

@@ -65,6 +65,29 @@ def test_clients_list_admin_sees_all(app, admin_client, service_client):
     assert service_client["name"].encode() in resp.data
 
 
+def test_clients_list_shows_entity_stats(app, admin_client, service_client, test_model):
+    """Client listing reads usage from entity_stats, not a live GROUP BY."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_stat import EntityStat
+        db.session.add(EntityStat(
+            entity_id=service_client["id"],
+            requests=42, input_tokens=1000, output_tokens=500, cost="0.05",
+        ))
+        db.session.commit()
+
+    resp = admin_client.get("/clients")
+    assert resp.status_code == 200
+    # The page should render without error; spot-check the values appear
+    assert b"42" in resp.data
+
+
+def test_clients_list_zero_stats_without_entity_stat(admin_client, service_client):
+    """Clients with no entity_stats row show zero usage, not an error."""
+    resp = admin_client.get("/clients")
+    assert resp.status_code == 200
+
+
 # ---------------------------------------------------------------------------
 # Detail page access
 # ---------------------------------------------------------------------------

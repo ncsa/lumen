@@ -10,7 +10,7 @@ from lumen.models.entity import Entity
 from lumen.models.entity_manager import EntityManager
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
-from lumen.models.model_stat import ModelStat
+from lumen.models.entity_stat import EntityStat
 from lumen.services.crypto import hash_api_key
 from lumen.services.llm import get_model_access_status, has_model_consent
 from lumen.blueprints.usage.routes import _get_usage_data
@@ -76,20 +76,12 @@ def index():
             .all()
         }
         client_stats = {
-            row[0]: {
-                "requests": int(row[1] or 0),
-                "tokens": int(row[2] or 0),
-                "cost": float(row[3] or 0),
+            row.entity_id: {
+                "requests": int(row.requests or 0),
+                "tokens": int((row.input_tokens or 0) + (row.output_tokens or 0)),
+                "cost": float(row.cost or 0),
             }
-            for row in db.session.query(
-                ModelStat.entity_id,
-                func.sum(ModelStat.requests),
-                func.sum(ModelStat.input_tokens + ModelStat.output_tokens),
-                func.sum(ModelStat.cost),
-            )
-            .filter(ModelStat.entity_id.in_(client_ids))
-            .group_by(ModelStat.entity_id)
-            .all()
+            for row in EntityStat.query.filter(EntityStat.entity_id.in_(client_ids)).all()
         }
         total_requests = sum(s["requests"] for s in client_stats.values())
         total_tokens = sum(s["tokens"] for s in client_stats.values())

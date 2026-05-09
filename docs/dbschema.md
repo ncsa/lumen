@@ -143,6 +143,15 @@ erDiagram
         datetime last_used_at
     }
 
+    entity_stats {
+        int entity_id PK
+        int requests
+        bigint input_tokens
+        bigint output_tokens
+        numeric cost
+        datetime last_used_at
+    }
+
     conversations {
         int id PK
         int entity_id FK
@@ -184,6 +193,7 @@ erDiagram
     entities ||--o{ entity_model_access : "overrides"
     entities ||--o{ entity_model_consents : "consents"
     entities ||--o{ model_stats : "accumulates"
+    entities ||--o| entity_stats : "totals"
     entities ||--o{ conversations : "owns"
     entities ||--o{ group_members : "belongs to"
     entities ||--o{ request_logs : "logs"
@@ -222,6 +232,7 @@ erDiagram
 - [group\_model\_access](#group_model_access)
 - [entity\_managers](#entity_managers)
 - [model\_stats](#model_stats)
+- [entity\_stats](#entity_stats)
 - [conversations](#conversations)
 - [messages](#messages)
 - [request\_logs](#request_logs)
@@ -468,6 +479,25 @@ Running aggregated usage counters per entity per model per source. Updated after
 | `last_used_at` | DateTime | NO | UTC timestamp of the most recent request counted in this row |
 
 **Constraints:** `UNIQUE(entity_id, model_config_id, source)`
+
+---
+
+## entity_stats
+
+Pre-aggregated usage totals per entity across all models and sources. One row per entity, maintained atomically alongside `model_stats` on every proxied request. Enables O(1) per-entity lookups in the admin users table and clients listing without scanning `model_stats`.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `entity_id` | Integer (PK, FK → entities) | NO | The entity these counters belong to. Cascades on delete. |
+| `requests` | Integer | NO | Total request count across all models and sources |
+| `input_tokens` | BigInteger | NO | Total input tokens consumed across all models and sources |
+| `output_tokens` | BigInteger | NO | Total output tokens produced across all models and sources |
+| `cost` | Numeric(12,6) | NO | Total cost in USD across all models and sources |
+| `last_used_at` | DateTime | YES | UTC timestamp of the most recent request by this entity; null if never used |
+
+**Notes:**
+- Populated on migration by a `GROUP BY` backfill from `model_stats`.
+- Always current — no refresh lag. Unlike `request_counts_hourly`, this is written synchronously with every request.
 
 ---
 

@@ -12,6 +12,7 @@ from lumen.models.entity_model_access import EntityModelAccess
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
+from lumen.models.entity_stat import EntityStat
 from lumen.models.model_stat import ModelStat
 from lumen.models.request_log import RequestLog
 from lumen.models.group import Group
@@ -270,6 +271,16 @@ def update_stats(
     stat.output_tokens += output_tokens
     stat.cost = float(stat.cost) + cost
     stat.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    estat = EntityStat.query.filter_by(entity_id=entity_id).first()
+    if estat is None:
+        estat = EntityStat(entity_id=entity_id, requests=0, input_tokens=0, output_tokens=0, cost=0)
+        db.session.add(estat)
+    estat.requests += 1
+    estat.input_tokens += input_tokens
+    estat.output_tokens += output_tokens
+    estat.cost = float(estat.cost) + cost
+    estat.last_used_at = stat.last_used_at
 
     log = RequestLog(
         time=datetime.now(timezone.utc).replace(tzinfo=None),

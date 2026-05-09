@@ -9,8 +9,8 @@ from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
+from lumen.models.entity_stat import EntityStat
 from lumen.models.model_config import ModelConfig
-from lumen.models.model_stat import ModelStat
 from lumen.services.llm import get_pool_limit
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
@@ -29,11 +29,11 @@ def users():
     total_users = Entity.query.filter_by(entity_type="user").count()
     stats = (
         db.session.query(
-            func.coalesce(func.sum(ModelStat.requests), 0),
-            func.coalesce(func.sum(ModelStat.input_tokens + ModelStat.output_tokens), 0),
-            func.coalesce(func.sum(ModelStat.cost), 0),
+            func.coalesce(func.sum(EntityStat.requests), 0),
+            func.coalesce(func.sum(EntityStat.input_tokens + EntityStat.output_tokens), 0),
+            func.coalesce(func.sum(EntityStat.cost), 0),
         )
-        .join(Entity, ModelStat.entity_id == Entity.id)
+        .join(Entity, EntityStat.entity_id == Entity.id)
         .filter(Entity.entity_type == "user")
         .one()
     )
@@ -130,18 +130,6 @@ def api_users():
     order = request.args.get("order", "asc")
     search = request.args.get("search", "").strip()
 
-    api_stats_sq = (
-        db.session.query(
-            ModelStat.entity_id,
-            func.coalesce(func.sum(ModelStat.requests), 0).label("requests"),
-            func.coalesce(func.sum(ModelStat.input_tokens + ModelStat.output_tokens), 0).label("tokens_used"),
-            func.coalesce(func.sum(ModelStat.cost), 0).label("cost"),
-            func.max(ModelStat.last_used_at).label("last_used_at"),
-        )
-        .group_by(ModelStat.entity_id)
-        .subquery()
-    )
-
     balance_sq = (
         db.session.query(
             EntityBalance.entity_id,
@@ -165,14 +153,14 @@ def api_users():
     q = (
         db.session.query(
             Entity,
-            func.coalesce(api_stats_sq.c.requests, 0).label("requests"),
-            func.coalesce(api_stats_sq.c.tokens_used, 0).label("tokens_used"),
-            func.coalesce(api_stats_sq.c.cost, 0).label("cost"),
+            func.coalesce(EntityStat.requests, 0).label("requests"),
+            func.coalesce(EntityStat.input_tokens + EntityStat.output_tokens, 0).label("tokens_used"),
+            func.coalesce(EntityStat.cost, 0).label("cost"),
             coins_avail_sort.label("coins_available"),
-            api_stats_sq.c.last_used_at.label("last_used_at"),
+            EntityStat.last_used_at.label("last_used_at"),
         )
         .filter(Entity.entity_type == "user")
-        .outerjoin(api_stats_sq, Entity.id == api_stats_sq.c.entity_id)
+        .outerjoin(EntityStat, Entity.id == EntityStat.entity_id)
         .outerjoin(balance_sq, Entity.id == balance_sq.c.entity_id)
         .outerjoin(unlimited_sq, Entity.id == unlimited_sq.c.entity_id)
     )
@@ -185,10 +173,10 @@ def api_users():
         "name": Entity.name,
         "active": Entity.active,
         "joined": Entity.created_at,
-        "last_used": api_stats_sq.c.last_used_at,
-        "requests": func.coalesce(api_stats_sq.c.requests, 0),
-        "tokens_used": func.coalesce(api_stats_sq.c.tokens_used, 0),
-        "cost": func.coalesce(api_stats_sq.c.cost, 0),
+        "last_used": EntityStat.last_used_at,
+        "requests": func.coalesce(EntityStat.requests, 0),
+        "tokens_used": func.coalesce(EntityStat.input_tokens + EntityStat.output_tokens, 0),
+        "cost": func.coalesce(EntityStat.cost, 0),
         "coins_available": coins_avail_sort,
     }.get(sort, Entity.name)
 
