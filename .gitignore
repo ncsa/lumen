@@ -50,6 +50,7 @@ instance/
 
 # Claude Code
 .claude/
+memory/
 
 # Logs
 *.log
