@@ -63,6 +63,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ## 5. Application Specific Rules
 
 Following rules are here to help the AI avoid the same mistakes again:
+- Sortable table columns: date and numeric columns default to descending order on first click; text columns default to ascending.
 - All times shown to the user must be in their local timezone. All times stored in the DB are UTC. In templates, emit `<span class="local-datetime" data-utc="{{ dt.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>` and let the JS in app.js convert it to local time. Never hardcode "UTC" in displayed timestamps.
 - Dependencies are managed with uv, code is run with uv
 - Imports at top of file only; except inside Flask app factory (`create_app`) where deferred imports are required to avoid circular imports.

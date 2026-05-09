@@ -267,8 +267,9 @@
   document.querySelectorAll('.sort-header').forEach(th => {
     th.addEventListener('click', () => {
       const col = th.dataset.col;
+      const DESC_COLS = new Set(['joined', 'last_used', 'requests', 'tokens_used', 'coins_available', 'cost']);
       if (sort === col) { order = order === 'asc' ? 'desc' : 'asc'; }
-      else { sort = col; order = 'asc'; }
+      else { sort = col; order = DESC_COLS.has(col) ? 'desc' : 'asc'; }
       page = 1;
       fetchUsers();
     });

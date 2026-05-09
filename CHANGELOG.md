@@ -15,6 +15,7 @@ All notable changes to Lumen will be documented in this file.
 - `dev.sh` now pulls the latest TimescaleDB image before starting the container
 
 ### Changed
+- Date columns in sortable tables now default to descending order (newest first) when first clicked
 - Admin users table redesigned: email column replaced with Joined, Last Used, Coins Left, and Coins Spent; never-active users sort to the bottom; dates displayed in the user's local timezone
 - All SQLAlchemy model classes now carry docstrings and `comment=` on every column and table, surfaced as PostgreSQL catalog comments
 - Help docs updated: clearer wording for model detail fields, clients section, and coin cost example in introduction
