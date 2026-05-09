@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-05-09
+
 ### Added
 - `entity_stats` table: pre-aggregated per-entity usage totals (requests, tokens, cost, last\_used\_at) maintained in real-time alongside `model_stats`; eliminates full-table GROUP BY scans on the admin users page, admin users API, and clients listing
 - Admin help docs (`docs/admin/`) covering configuration overview, application settings, user groups and access control, clients, and model configuration
