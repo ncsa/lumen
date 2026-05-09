@@ -4,6 +4,15 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Tests for help and usage blueprint routes, covering key management, consent flow, coin pool, model status, and markdown frontmatter parsing
+
+### Changed
+- Consolidated three copies of `_model_status` into `get_model_status()` in `lumen/services/llm.py`
+
+### Fixed
+- Removed dead `if not mc.active` branch from inner model status function in `_get_usage_data` (unreachable — only accessible/active models are evaluated there)
+
 ## [1.8.0] - 2026-05-09
 
 ### Added
