@@ -10,6 +10,7 @@ All notable changes to Lumen will be documented in this file.
 - Tests for help and usage blueprint routes, covering key management, consent flow, coin pool, model status, and markdown frontmatter parsing
 
 ### Changed
+- Modernized all SQLAlchemy queries from the legacy `Model.query` and `db.session.query()` APIs to `db.session.execute(select(...))` / `db.first_or_404(stmt)` / `db.session.scalar()` across all production files and test files; updated CLAUDE.md to ban both deprecated patterns
 - Consolidated three copies of `_model_status` into `get_model_status()` in `lumen/services/llm.py`
 
 ### Fixed

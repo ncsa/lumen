@@ -1,3 +1,6 @@
+from sqlalchemy import select
+
+
 def test_landing_unauthenticated(client):
     resp = client.get("/")
     assert resp.status_code == 200
@@ -16,8 +19,9 @@ def test_devlogin_creates_user(app, client):
     assert "/chat" in resp.headers["Location"]
 
     with app.app_context():
+        from lumen.extensions import db
         from lumen.models.entity import Entity
-        entity = Entity.query.filter_by(email="testuser@example.com").first()
+        entity = db.session.execute(select(Entity).filter_by(email="testuser@example.com")).scalar_one_or_none()
         assert entity is not None
         assert entity.active is True
 
@@ -61,12 +65,13 @@ def test_devlogin_assigns_dev_groups(app, client):
         app.config["DEV_USER_GROUPS"] = original
 
     with app.app_context():
+        from lumen.extensions import db
         from lumen.models.entity import Entity
         from lumen.models.group import Group
         from lumen.models.group_member import GroupMember
-        entity = Entity.query.filter_by(email="testuser@example.com").first()
-        group = Group.query.filter_by(name="dev-group").first()
-        member = GroupMember.query.filter_by(entity_id=entity.id, group_id=group.id).first()
+        entity = db.session.execute(select(Entity).filter_by(email="testuser@example.com")).scalar_one_or_none()
+        group = db.session.execute(select(Group).filter_by(name="dev-group")).scalar_one_or_none()
+        member = db.session.execute(select(GroupMember).filter_by(entity_id=entity.id, group_id=group.id)).scalar_one_or_none()
         assert member is not None
 
 

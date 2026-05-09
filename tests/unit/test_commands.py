@@ -1,4 +1,6 @@
 """Tests for YAML sync functions in lumen/commands.py."""
+from sqlalchemy import select
+
 from lumen.commands import sync_clients_from_yaml, sync_groups_from_yaml, sync_models_from_yaml
 
 
@@ -17,7 +19,7 @@ def test_sync_models_creates_model_config(app):
             ]
         }
         sync_models_from_yaml(yaml_data)
-        mc = ModelConfig.query.filter_by(model_name="synced-model").first()
+        mc = db.session.execute(select(ModelConfig).filter_by(model_name="synced-model")).scalar_one_or_none()
         assert mc is not None
         assert mc.active is True
         assert float(mc.input_cost_per_million) == 1.0
@@ -35,7 +37,7 @@ def test_sync_models_updates_existing(app):
         sync_models_from_yaml(yaml_data)
         yaml_data["models"][0]["input_cost_per_million"] = 5.0
         sync_models_from_yaml(yaml_data)
-        mc = ModelConfig.query.filter_by(model_name="update-model").first()
+        mc = db.session.execute(select(ModelConfig).filter_by(model_name="update-model")).scalar_one_or_none()
         assert float(mc.input_cost_per_million) == 5.0
 
 
@@ -47,13 +49,14 @@ def test_sync_models_deactivates_removed(app):
         sync_models_from_yaml(yaml1)
         # Sync with empty models list — should deactivate
         sync_models_from_yaml({"models": []})
-        mc = ModelConfig.query.filter_by(model_name="will-be-removed").first()
+        mc = db.session.execute(select(ModelConfig).filter_by(model_name="will-be-removed")).scalar_one_or_none()
         assert mc is not None
         assert mc.active is False
 
 
 def test_sync_models_with_endpoints(app):
     with app.app_context():
+        from lumen.extensions import db
         from lumen.models.model_config import ModelConfig
         from lumen.models.model_endpoint import ModelEndpoint
         yaml_data = {
@@ -68,7 +71,7 @@ def test_sync_models_with_endpoints(app):
             ]
         }
         sync_models_from_yaml(yaml_data)
-        mc = ModelConfig.query.filter_by(model_name="ep-model").first()
+        mc = db.session.execute(select(ModelConfig).filter_by(model_name="ep-model")).scalar_one_or_none()
         assert mc is not None
         eps = list(mc.endpoints)
         assert len(eps) == 1
@@ -77,15 +80,17 @@ def test_sync_models_with_endpoints(app):
 
 def test_sync_groups_creates_group(app):
     with app.app_context():
+        from lumen.extensions import db
         from lumen.models.group import Group
         yaml_data = {"groups": {"test-group": {}}}
         sync_groups_from_yaml(yaml_data)
-        g = Group.query.filter_by(name="test-group").first()
+        g = db.session.execute(select(Group).filter_by(name="test-group")).scalar_one_or_none()
         assert g is not None
 
 
 def test_sync_groups_creates_group_with_limit(app):
     with app.app_context():
+        from lumen.extensions import db
         from lumen.models.group import Group
         from lumen.models.group_limit import GroupLimit
         yaml_data = {
@@ -98,7 +103,7 @@ def test_sync_groups_creates_group_with_limit(app):
             }
         }
         sync_groups_from_yaml(yaml_data)
-        g = Group.query.filter_by(name="limited-group").first()
+        g = db.session.execute(select(Group).filter_by(name="limited-group")).scalar_one_or_none()
         assert g is not None
         assert g.limit is not None
         assert float(g.limit.max_coins) == 100.0
@@ -118,7 +123,7 @@ def test_sync_clients_creates_entity_limit(app):
             }
         }
         sync_clients_from_yaml(yaml_data)
-        limit = EntityLimit.query.filter_by(entity_id=client.id).first()
+        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=client.id)).scalar_one_or_none()
         assert limit is not None
         assert float(limit.max_coins) == 50.0
         assert float(limit.refresh_coins) == 0.5
@@ -140,7 +145,7 @@ def test_sync_clients_named_entry_overrides_default(app):
             }
         }
         sync_clients_from_yaml(yaml_data)
-        limit = EntityLimit.query.filter_by(entity_id=client.id).first()
+        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=client.id)).scalar_one_or_none()
         assert float(limit.max_coins) == 999.0
 
 
@@ -164,7 +169,7 @@ def test_sync_clients_model_access(app):
         sync_clients_from_yaml(yaml_data)
         db.session.refresh(client)
         assert client.model_access_default == "blacklist"
-        rule = EntityModelAccess.query.filter_by(entity_id=client.id, model_config_id=mc.id).first()
+        rule = db.session.execute(select(EntityModelAccess).filter_by(entity_id=client.id, model_config_id=mc.id)).scalar_one_or_none()
         assert rule is not None
         assert rule.access_type == "whitelist"
 

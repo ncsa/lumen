@@ -1,4 +1,5 @@
 """Basic smoke tests for chat, usage, clients, and admin pages."""
+from sqlalchemy import select
 
 
 def test_chat_page_requires_login(client):
@@ -25,7 +26,7 @@ def test_chat_page_with_model(app, auth_client, test_model):
             healthy=True,
         ))
         from lumen.models.entity import Entity
-        entity = Entity.query.filter_by(email="testuser@example.com").first()
+        entity = db.session.execute(select(Entity).filter_by(email="testuser@example.com")).scalar_one_or_none()
         if entity:
             db.session.add(EntityLimit(entity_id=entity.id, max_coins=-2, refresh_coins=0, starting_coins=0))
         db.session.commit()

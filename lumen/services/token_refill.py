@@ -2,6 +2,8 @@ import time
 import threading
 from datetime import datetime, timezone
 
+from sqlalchemy import select
+
 from lumen.extensions import db
 from lumen.models.entity_balance import EntityBalance
 from lumen.services.llm import get_pool_limit
@@ -11,9 +13,9 @@ def refill_coin_balances(now: datetime = None) -> int:
     """Run one refill pass; return the number of balances updated. Caller owns the app context."""
     if now is None:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-    balances = EntityBalance.query.filter(
-        EntityBalance.last_refill_at != None  # noqa: E711
-    ).all()
+    balances = db.session.execute(
+        select(EntityBalance).where(EntityBalance.last_refill_at != None)  # noqa: E711
+    ).scalars().all()
     updated = 0
     for bal in balances:
         hours_elapsed = (now - bal.last_refill_at).total_seconds() / 3600

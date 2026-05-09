@@ -187,6 +187,7 @@ def create_app():
         if not session.get("entity_id"):
             result["nav_clients"] = []
             return result
+        from sqlalchemy import select
         from lumen.models.entity_manager import EntityManager
         from lumen.models.entity import Entity
         from lumen.extensions import db
@@ -195,20 +196,22 @@ def create_app():
         if entity:
             result["is_admin"] = is_admin(entity)
 
-        assocs = EntityManager.query.filter_by(user_entity_id=session["entity_id"]).all()
+        assocs = db.session.execute(
+            select(EntityManager).filter_by(user_entity_id=session["entity_id"])
+        ).scalars().all()
         client_ids = [a.client_entity_id for a in assocs]
         if not client_ids:
             result["nav_clients"] = []
             return result
-        clients = (
-            Entity.query.filter(
+        clients = db.session.execute(
+            select(Entity)
+            .where(
                 Entity.id.in_(client_ids),
                 Entity.entity_type == "client",
                 Entity.active == True,
             )
             .order_by(Entity.name)
-            .all()
-        )
+        ).scalars().all()
         result["nav_clients"] = clients
         return result
 

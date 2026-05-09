@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import openai
 from flask import current_app
+from sqlalchemy import select
 
 from lumen.extensions import db
 from lumen.models.model_endpoint import ModelEndpoint
@@ -13,7 +14,7 @@ def check_all_endpoints() -> int:
     """Run one health-check pass for all endpoints. Caller owns the app context.
     Returns the number of endpoints checked."""
     log_enabled = current_app.config.get("LOG_MODEL_HEALTH", False)
-    endpoints = ModelEndpoint.query.all()
+    endpoints = db.session.execute(select(ModelEndpoint)).scalars().all()
     for ep in endpoints:
         try:
             with openai.OpenAI(api_key=ep.api_key, base_url=ep.url) as client:

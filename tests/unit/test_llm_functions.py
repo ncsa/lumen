@@ -1,5 +1,6 @@
 """Additional LLM service tests: groups, endpoints, coin functions, stats."""
 from datetime import datetime
+from sqlalchemy import func, select
 
 import pytest
 
@@ -215,7 +216,7 @@ def test_get_coin_balance_creates_balance(app, test_user, test_model):
         balance = get_coin_balance(entity_id, model_id)
         assert balance == 50.0
         # Balance row should have been created
-        row = EntityBalance.query.filter_by(entity_id=entity_id).first()
+        row = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()
         assert row is not None
 
 
@@ -305,12 +306,12 @@ def test_update_stats_creates_stat_and_log(app, test_user, test_model):
         from lumen.services.llm import update_stats
         update_stats(entity_id, model_id, "chat", 100, 200, 0.0003)
         db.session.commit()
-        stat = ModelStat.query.filter_by(entity_id=entity_id, model_config_id=model_id, source="chat").first()
+        stat = db.session.execute(select(ModelStat).filter_by(entity_id=entity_id, model_config_id=model_id, source="chat")).scalar_one_or_none()
         assert stat is not None
         assert stat.requests == 1
         assert stat.input_tokens == 100
         assert stat.output_tokens == 200
-        log_count = RequestLog.query.filter_by(entity_id=entity_id, model_config_id=model_id).count()
+        log_count = db.session.scalar(select(func.count()).select_from(RequestLog).filter_by(entity_id=entity_id, model_config_id=model_id))
         assert log_count == 1
 
 
@@ -326,7 +327,7 @@ def test_update_stats_accumulates(app, test_user, test_model):
         time.sleep(0.001)  # ensure distinct timestamps for primary key
         update_stats(entity_id, model_id, "api", 50, 100, 0.0001)
         db.session.commit()
-        stat = ModelStat.query.filter_by(entity_id=entity_id, model_config_id=model_id, source="api").first()
+        stat = db.session.execute(select(ModelStat).filter_by(entity_id=entity_id, model_config_id=model_id, source="api")).scalar_one_or_none()
         assert stat.requests == 2
         assert stat.input_tokens == 100
         assert stat.output_tokens == 200

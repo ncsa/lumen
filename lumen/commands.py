@@ -1,6 +1,7 @@
 import click
 from flask import current_app
 from flask.cli import with_appcontext
+from sqlalchemy import delete, select, update
 
 from .extensions import db
 from lumen.models.entity import Entity
@@ -19,7 +20,7 @@ def sync_models_from_yaml(yaml_data):
     """Upsert ModelConfig and ModelEndpoint rows from yaml_data. Must run inside an app context."""
 
     for model_def in yaml_data.get("models", []):
-        config = ModelConfig.query.filter_by(model_name=model_def["name"]).first()
+        config = db.session.execute(select(ModelConfig).filter_by(model_name=model_def["name"])).scalar_one_or_none()
         if not config:
             config = ModelConfig(
                 model_name=model_def["name"],
@@ -79,7 +80,7 @@ def sync_models_from_yaml(yaml_data):
 
     # Deactivate ModelConfig rows no longer in yaml and remove their endpoints
     yaml_model_names = {m["name"] for m in yaml_data.get("models", [])}
-    for config in ModelConfig.query.all():
+    for config in db.session.execute(select(ModelConfig)).scalars().all():
         if config.model_name not in yaml_model_names:
             config.active = False
             for ep in list(config.endpoints):
@@ -104,7 +105,7 @@ def sync_groups_from_yaml(yaml_data):
     yaml_group_names = set(groups_cfg.keys())
 
     for group_name, group_def in groups_cfg.items():
-        group = Group.query.filter_by(name=group_name).first()
+        group = db.session.execute(select(Group).filter_by(name=group_name)).scalar_one_or_none()
         if not group:
             group = Group(name=group_name, config_managed=True)
             db.session.add(group)
@@ -123,7 +124,7 @@ def sync_groups_from_yaml(yaml_data):
             max_coins = group_def["max"]
             refresh_coins = group_def.get("refresh", 0)
             starting_coins = group_def.get("starting", max_coins)
-            limit = GroupLimit.query.filter_by(group_id=group.id).first()
+            limit = db.session.execute(select(GroupLimit).filter_by(group_id=group.id)).scalar_one_or_none()
             if limit:
                 limit.max_coins = max_coins
                 limit.refresh_coins = refresh_coins
@@ -136,10 +137,10 @@ def sync_groups_from_yaml(yaml_data):
                     starting_coins=starting_coins,
                 ))
         else:
-            GroupLimit.query.filter_by(group_id=group.id).delete()
+            db.session.execute(delete(GroupLimit).where(GroupLimit.group_id == group.id))
 
         # Upsert GroupModelAccess from model_access: section
-        GroupModelAccess.query.filter_by(group_id=group.id).delete()
+        db.session.execute(delete(GroupModelAccess).where(GroupModelAccess.group_id == group.id))
         access_cfg = group_def.get("model_access", {})
         group_default = None
         for access_type in _VALID_ACCESS_TYPES:
@@ -147,7 +148,7 @@ def sync_groups_from_yaml(yaml_data):
                 if model_name == "*":
                     group_default = access_type
                     continue
-                mc = ModelConfig.query.filter_by(model_name=model_name).first()
+                mc = db.session.execute(select(ModelConfig).filter_by(model_name=model_name)).scalar_one_or_none()
                 if mc is None:
                     current_app.logger.warning(
                         f"sync_groups_from_yaml: model '{model_name}' not found in group '{group_name}' {access_type}, skipping"
@@ -164,7 +165,7 @@ def sync_groups_from_yaml(yaml_data):
         group.model_access_default = group_default
 
     # Remove config_managed groups no longer in yaml
-    for group in Group.query.filter_by(config_managed=True).all():
+    for group in db.session.execute(select(Group).filter_by(config_managed=True)).scalars().all():
         if group.name not in yaml_group_names:
             db.session.delete(group)
 
@@ -195,7 +196,7 @@ def sync_clients_from_yaml(yaml_data):
     default_cfg = clients_cfg.get("default", {})
     named_cfg = {k: v for k, v in clients_cfg.items() if k != "default"}
 
-    client_entities = Entity.query.filter_by(entity_type="client").all()
+    client_entities = db.session.execute(select(Entity).filter_by(entity_type="client")).scalars().all()
 
     for entity in client_entities:
         cfg = named_cfg.get(entity.name, default_cfg)
@@ -207,7 +208,7 @@ def sync_clients_from_yaml(yaml_data):
             max_coins = cfg["max"]
             refresh_coins = cfg.get("refresh", 0)
             starting_coins = cfg.get("starting", max_coins)
-            limit = EntityLimit.query.filter_by(entity_id=entity.id).first()
+            limit = db.session.execute(select(EntityLimit).filter_by(entity_id=entity.id)).scalar_one_or_none()
             if limit:
                 limit.max_coins = max_coins
                 limit.refresh_coins = refresh_coins
@@ -222,16 +223,16 @@ def sync_clients_from_yaml(yaml_data):
                     config_managed=True,
                 ))
         else:
-            EntityLimit.query.filter_by(entity_id=entity.id, config_managed=True).delete()
+            db.session.execute(delete(EntityLimit).where(EntityLimit.entity_id == entity.id, EntityLimit.config_managed == True))
 
         # Sync model_access
         access_cfg = cfg.get("model_access", {})
         entity.model_access_default = access_cfg.get("default") or None
 
-        EntityModelAccess.query.filter_by(entity_id=entity.id).delete()
+        db.session.execute(delete(EntityModelAccess).where(EntityModelAccess.entity_id == entity.id))
         for access_type in ("whitelist", "blacklist", "graylist"):
             for model_name in access_cfg.get(access_type, []):
-                mc = ModelConfig.query.filter_by(model_name=model_name).first()
+                mc = db.session.execute(select(ModelConfig).filter_by(model_name=model_name)).scalar_one_or_none()
                 if mc is None:
                     current_app.logger.warning(
                         f"sync_clients_from_yaml: model '{model_name}' not found for client "
@@ -282,15 +283,16 @@ def reassign_model_cmd(from_id, to_id):
 
     click.echo(f"Reassigning from '{src.model_name}' (id={from_id}) to '{dst.model_name}' (id={to_id})")
 
-    conv_count = Conversation.query.filter_by(model=src.model_name).update({"model": dst.model_name})
+    result = db.session.execute(update(Conversation).where(Conversation.model == src.model_name).values(model=dst.model_name))
+    conv_count = result.rowcount
     click.echo(f"  conversations updated: {conv_count}")
 
     # For model_stats, merge rows that might collide on the unique constraint
     existing_dst_stats = {
         (s.entity_id, s.source): s
-        for s in ModelStat.query.filter_by(model_config_id=to_id).all()
+        for s in db.session.execute(select(ModelStat).filter_by(model_config_id=to_id)).scalars().all()
     }
-    src_stats = ModelStat.query.filter_by(model_config_id=from_id).all()
+    src_stats = db.session.execute(select(ModelStat).filter_by(model_config_id=from_id)).scalars().all()
     stats_merged = 0
     stats_moved = 0
     for stat in src_stats:
@@ -310,7 +312,8 @@ def reassign_model_cmd(from_id, to_id):
             stats_moved += 1
     click.echo(f"  model_stats moved: {stats_moved}, merged: {stats_merged}")
 
-    log_count = RequestLog.query.filter_by(model_config_id=from_id).update({"model_config_id": to_id})
+    result = db.session.execute(update(RequestLog).where(RequestLog.model_config_id == from_id).values(model_config_id=to_id))
+    log_count = result.rowcount
     click.echo(f"  request_logs updated: {log_count}")
 
     db.session.commit()

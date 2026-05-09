@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, render_template, request, redirect, url_for, abort, jsonify
-from sqlalchemy import func, case, text
+from sqlalchemy import func, case, select, text
 
 from lumen.decorators import admin_required
 from lumen.extensions import db
@@ -26,17 +26,18 @@ _VALID_PER_PAGE = {25, 50, 100, 200}
 @admin_bp.route("/users")
 @admin_required
 def users():
-    total_users = Entity.query.filter_by(entity_type="user").count()
-    stats = (
-        db.session.query(
+    total_users = db.session.scalar(
+        select(func.count()).select_from(Entity).filter_by(entity_type="user")
+    )
+    stats = db.session.execute(
+        select(
             func.coalesce(func.sum(EntityStat.requests), 0),
             func.coalesce(func.sum(EntityStat.input_tokens + EntityStat.output_tokens), 0),
             func.coalesce(func.sum(EntityStat.cost), 0),
         )
         .join(Entity, EntityStat.entity_id == Entity.id)
-        .filter(Entity.entity_type == "user")
-        .one()
-    )
+        .where(Entity.entity_type == "user")
+    ).one()
     total_requests, total_tokens, total_cost = stats
     return render_template(
         "admin/users.html",
@@ -67,7 +68,7 @@ def reset_user_tokens(eid):
     if max_coins == -2:
         return jsonify({"error": "User has unlimited coins"}), 400
     new_balance = max(starting_coins, max_coins)
-    balance = EntityBalance.query.filter_by(entity_id=eid).first()
+    balance = db.session.execute(select(EntityBalance).filter_by(entity_id=eid)).scalar_one_or_none()
     if balance:
         balance.coins_left = new_balance
         balance.last_refill_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -87,7 +88,7 @@ def user_usage(eid):
     from lumen.services.llm import get_model_access_status, get_model_status, has_model_consent
     entity = db.get_or_404(Entity, eid)
     data = _get_usage_data(eid)
-    all_models = ModelConfig.query.order_by(ModelConfig.model_name).all()
+    all_models = db.session.execute(select(ModelConfig).order_by(ModelConfig.model_name)).scalars().all()
     usage_by_model = {u["model_name"]: u for u in data.get("model_usage", [])}
     model_access_list = []
     for mc in all_models:
@@ -131,7 +132,7 @@ def api_users():
     search = request.args.get("search", "").strip()
 
     balance_sq = (
-        db.session.query(
+        select(
             EntityBalance.entity_id,
             EntityBalance.coins_left.label("coins_available"),
         )
@@ -139,8 +140,8 @@ def api_users():
     )
 
     unlimited_sq = (
-        db.session.query(EntityLimit.entity_id)
-        .filter(EntityLimit.max_coins == -2)
+        select(EntityLimit.entity_id)
+        .where(EntityLimit.max_coins == -2)
         .distinct()
         .subquery()
     )
@@ -150,8 +151,8 @@ def api_users():
         else_=func.coalesce(balance_sq.c.coins_available, 0),
     )
 
-    q = (
-        db.session.query(
+    stmt = (
+        select(
             Entity,
             func.coalesce(EntityStat.requests, 0).label("requests"),
             func.coalesce(EntityStat.input_tokens + EntityStat.output_tokens, 0).label("tokens_used"),
@@ -159,7 +160,7 @@ def api_users():
             coins_avail_sort.label("coins_available"),
             EntityStat.last_used_at.label("last_used_at"),
         )
-        .filter(Entity.entity_type == "user")
+        .where(Entity.entity_type == "user")
         .outerjoin(EntityStat, Entity.id == EntityStat.entity_id)
         .outerjoin(balance_sq, Entity.id == balance_sq.c.entity_id)
         .outerjoin(unlimited_sq, Entity.id == unlimited_sq.c.entity_id)
@@ -167,7 +168,7 @@ def api_users():
 
     if search:
         like = f"%{search}%"
-        q = q.filter(Entity.name.ilike(like) | Entity.email.ilike(like))
+        stmt = stmt.where(Entity.name.ilike(like) | Entity.email.ilike(like))
 
     sort_col = {
         "name": Entity.name,
@@ -181,10 +182,10 @@ def api_users():
     }.get(sort, Entity.name)
 
     direction = sort_col.desc().nullslast() if order == "desc" else sort_col.asc().nullslast()
-    q = q.order_by(direction)
+    stmt = stmt.order_by(direction)
 
-    total = q.count()
-    rows = q.offset((page - 1) * per_page).limit(per_page).all()
+    total = db.session.scalar(select(func.count()).select_from(stmt.subquery()))
+    rows = db.session.execute(stmt.offset((page - 1) * per_page).limit(per_page)).all()
 
     return jsonify({
         "users": [
@@ -253,10 +254,12 @@ def analytics_summary():
             FROM request_counts_hourly
             WHERE bucket >= :start
         """), {"start": start}).one()
-        new_users = db.session.query(func.count(Entity.id)).filter(
-            Entity.entity_type == "user",
-            Entity.created_at >= start,
-        ).scalar()
+        new_users = db.session.scalar(
+            select(func.count(Entity.id)).where(
+                Entity.entity_type == "user",
+                Entity.created_at >= start,
+            )
+        )
     else:
         row = db.session.execute(text("""
             SELECT
@@ -265,9 +268,9 @@ def analytics_summary():
                 COALESCE(SUM(cost), 0.0)
             FROM request_counts_hourly
         """)).one()
-        new_users = db.session.query(func.count(Entity.id)).filter(
-            Entity.entity_type == "user",
-        ).scalar()
+        new_users = db.session.scalar(
+            select(func.count(Entity.id)).where(Entity.entity_type == "user")
+        )
 
     return jsonify({
         "requests": int(row[0]),

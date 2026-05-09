@@ -1,5 +1,6 @@
 """Tests for the clients blueprint (/clients/*)."""
 import pytest
+from sqlalchemy import func, select
 
 
 # ---------------------------------------------------------------------------
@@ -133,8 +134,9 @@ def test_create_client_succeeds(app, admin_client):
     data = resp.get_json()
     assert data["name"] == "created-svc"
     with app.app_context():
+        from lumen.extensions import db
         from lumen.models.entity import Entity
-        c = Entity.query.filter_by(name="created-svc", entity_type="client").first()
+        c = db.session.execute(select(Entity).filter_by(name="created-svc", entity_type="client")).scalar_one_or_none()
         assert c is not None
         assert c.active is True
 
@@ -210,11 +212,11 @@ def test_add_manager_succeeds(app, admin_client, service_client, test_user):
     data = resp.get_json()
     assert data["email"] == "testuser@example.com"
     with app.app_context():
+        from lumen.extensions import db
         from lumen.models.entity_manager import EntityManager
-        assoc = EntityManager.query.filter_by(
-            user_entity_id=test_user["id"],
-            client_entity_id=service_client["id"],
-        ).first()
+        assoc = db.session.execute(
+            select(EntityManager).filter_by(user_entity_id=test_user["id"], client_entity_id=service_client["id"])
+        ).scalar_one_or_none()
         assert assoc is not None
 
 
@@ -252,11 +254,11 @@ def test_remove_manager_succeeds(app, admin_client, managed_client, test_user):
     )
     assert resp.status_code == 204
     with app.app_context():
+        from lumen.extensions import db
         from lumen.models.entity_manager import EntityManager
-        assoc = EntityManager.query.filter_by(
-            user_entity_id=test_user["id"],
-            client_entity_id=managed_client["id"],
-        ).first()
+        assoc = db.session.execute(
+            select(EntityManager).filter_by(user_entity_id=test_user["id"], client_entity_id=managed_client["id"])
+        ).scalar_one_or_none()
         assert assoc is None
 
 
@@ -296,8 +298,9 @@ def test_create_key_succeeds(app, managed_auth_client, managed_client):
     data = resp.get_json()
     assert data["name"] == "prod"
     with app.app_context():
+        from lumen.extensions import db
         from lumen.models.api_key import APIKey
-        key = APIKey.query.filter_by(entity_id=managed_client["id"], name="prod").first()
+        key = db.session.execute(select(APIKey).filter_by(entity_id=managed_client["id"], name="prod")).scalar_one_or_none()
         assert key is not None
         assert key.active is True
 
@@ -404,11 +407,11 @@ def test_consent_graylist_model_succeeds(app, managed_auth_client, managed_clien
     assert resp.status_code == 200
     assert resp.get_json()["ok"] is True
     with app.app_context():
+        from lumen.extensions import db
         from lumen.models.entity_model_consent import EntityModelConsent
-        consent = EntityModelConsent.query.filter_by(
-            entity_id=managed_client["id"],
-            model_config_id=test_model["id"],
-        ).first()
+        consent = db.session.execute(
+            select(EntityModelConsent).filter_by(entity_id=managed_client["id"], model_config_id=test_model["id"])
+        ).scalar_one_or_none()
         assert consent is not None
 
 
@@ -430,11 +433,13 @@ def test_consent_idempotent(app, managed_auth_client, managed_client, test_model
     )
     assert resp.status_code == 200
     with app.app_context():
+        from lumen.extensions import db
         from lumen.models.entity_model_consent import EntityModelConsent
-        count = EntityModelConsent.query.filter_by(
-            entity_id=managed_client["id"],
-            model_config_id=test_model["id"],
-        ).count()
+        count = db.session.scalar(
+            select(func.count()).select_from(EntityModelConsent).filter_by(
+                entity_id=managed_client["id"], model_config_id=test_model["id"]
+            )
+        )
         assert count == 1
 
 

@@ -1,5 +1,6 @@
 """Admin route tests — focus on user management happy paths."""
 import pytest
+from sqlalchemy import select
 
 
 def test_toggle_user_flips_active(app, admin_client, test_user):
@@ -46,8 +47,9 @@ def test_reset_tokens_resets_balance(app, admin_client, test_user):
     assert resp.status_code == 200
     assert resp.get_json()["coins_available"] == 500
     with app.app_context():
+        from lumen.extensions import db
         from lumen.models.entity_balance import EntityBalance
-        bal = EntityBalance.query.filter_by(entity_id=test_user["id"]).first()
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one_or_none()
         assert float(bal.coins_left) == 500.0
 
 

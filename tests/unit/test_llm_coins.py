@@ -1,4 +1,5 @@
 """Tests for subtract_coins, deduct_coins, get_model_access (graylist path), has_model_consent."""
+from sqlalchemy import select
 
 
 def test_subtract_coins_deducts_balance(app, test_user, test_model):
@@ -13,7 +14,7 @@ def test_subtract_coins_deducts_balance(app, test_user, test_model):
         db.session.commit()
         subtract_coins(entity_id, model_id, 10.0)
         db.session.commit()
-        bal = EntityBalance.query.filter_by(entity_id=entity_id).first()
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()
         assert float(bal.coins_left) == 90.0
 
 
@@ -54,7 +55,7 @@ def test_deduct_coins_calls_subtract(app, test_user, test_model):
         db.session.commit()
         deduct_coins(entity_id, model_id, 5.0)
         db.session.commit()
-        bal = EntityBalance.query.filter_by(entity_id=entity_id).first()
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()
         assert float(bal.coins_left) == 95.0
 
 

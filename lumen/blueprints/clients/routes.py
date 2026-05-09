@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from flask import Blueprint, abort, jsonify, redirect, render_template, request, session, url_for
-from sqlalchemy import func
+from sqlalchemy import func, select
 
 from lumen.decorators import admin_required, is_admin, login_required
 from lumen.extensions import db
@@ -19,19 +19,19 @@ clients_bp = Blueprint("clients", __name__)
 
 
 def _get_user_clients(entity_id: int):
-    assocs = EntityManager.query.filter_by(user_entity_id=entity_id).all()
+    assocs = db.session.execute(select(EntityManager).filter_by(user_entity_id=entity_id)).scalars().all()
     client_ids = [a.client_entity_id for a in assocs]
     if not client_ids:
         return []
-    return (
-        Entity.query.filter(
+    return db.session.execute(
+        select(Entity)
+        .where(
             Entity.id.in_(client_ids),
             Entity.entity_type == "client",
             Entity.active == True,
         )
         .order_by(Entity.name)
-        .all()
-    )
+    ).scalars().all()
 
 
 
@@ -42,11 +42,9 @@ def index():
     entity = db.session.get(Entity, entity_id)
 
     if is_admin(entity):
-        clients = (
-            Entity.query.filter_by(entity_type="client")
-            .order_by(Entity.name)
-            .all()
-        )
+        clients = db.session.execute(
+            select(Entity).filter_by(entity_type="client").order_by(Entity.name)
+        ).scalars().all()
     else:
         clients = _get_user_clients(entity_id)
 
@@ -54,13 +52,14 @@ def index():
     if client_ids:
         manager_counts = {
             row[0]: row[1]
-            for row in db.session.query(
-                EntityManager.client_entity_id,
-                func.count(EntityManager.id),
-            )
-            .filter(EntityManager.client_entity_id.in_(client_ids))
-            .group_by(EntityManager.client_entity_id)
-            .all()
+            for row in db.session.execute(
+                select(
+                    EntityManager.client_entity_id,
+                    func.count(EntityManager.id),
+                )
+                .where(EntityManager.client_entity_id.in_(client_ids))
+                .group_by(EntityManager.client_entity_id)
+            ).all()
         }
         client_stats = {
             row.entity_id: {
@@ -68,7 +67,7 @@ def index():
                 "tokens": int((row.input_tokens or 0) + (row.output_tokens or 0)),
                 "cost": float(row.cost or 0),
             }
-            for row in EntityStat.query.filter(EntityStat.entity_id.in_(client_ids)).all()
+            for row in db.session.execute(select(EntityStat).where(EntityStat.entity_id.in_(client_ids))).scalars().all()
         }
         total_requests = sum(s["requests"] for s in client_stats.values())
         total_tokens = sum(s["tokens"] for s in client_stats.values())
@@ -96,26 +95,25 @@ def index():
 def detail(sid):
     entity_id = session["entity_id"]
     entity = db.session.get(Entity, entity_id)
-    client = Entity.query.filter_by(id=sid, entity_type="client").first_or_404()
+    client = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="client"))
 
     if not is_admin(entity):
-        assoc = EntityManager.query.filter_by(
-            user_entity_id=entity_id, client_entity_id=sid
-        ).first()
+        assoc = db.session.execute(
+            select(EntityManager).filter_by(user_entity_id=entity_id, client_entity_id=sid)
+        ).scalar_one_or_none()
         if not assoc:
             abort(403)
 
     data = _get_usage_data(sid)
 
-    managers = (
-        db.session.query(Entity)
+    managers = db.session.execute(
+        select(Entity)
         .join(EntityManager, EntityManager.user_entity_id == Entity.id)
-        .filter(EntityManager.client_entity_id == sid)
+        .where(EntityManager.client_entity_id == sid)
         .order_by(Entity.name)
-        .all()
-    )
+    ).scalars().all()
 
-    all_models = ModelConfig.query.order_by(ModelConfig.model_name).all()
+    all_models = db.session.execute(select(ModelConfig).order_by(ModelConfig.model_name)).scalars().all()
     usage_by_model = {u["model_name"]: u for u in data.get("model_usage", [])}
     model_access_list = []
     for mc in all_models:
@@ -148,7 +146,7 @@ def detail(sid):
 @clients_bp.route("/clients/<int:sid>/toggle", methods=["POST"])
 @admin_required
 def toggle_client(sid):
-    client = Entity.query.filter_by(id=sid, entity_type="client").first_or_404()
+    client = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="client"))
     client.active = not client.active
     db.session.commit()
     return jsonify({"active": client.active})
@@ -177,7 +175,7 @@ def create_client():
 @clients_bp.route("/clients/<int:sid>", methods=["DELETE"])
 @admin_required
 def delete_client(sid):
-    client = Entity.query.filter_by(id=sid, entity_type="client").first_or_404()
+    client = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="client"))
     client.active = False
     db.session.commit()
     return "", 204
@@ -190,25 +188,27 @@ def search_client_users(sid):
     if len(q) < 2:
         return jsonify({"users": []})
 
-    Entity.query.filter_by(id=sid, entity_type="client").first_or_404()
+    db.first_or_404(select(Entity).filter_by(id=sid, entity_type="client"))
 
     existing_ids = {
         a.user_entity_id
-        for a in EntityManager.query.filter_by(client_entity_id=sid).all()
+        for a in db.session.execute(select(EntityManager).filter_by(client_entity_id=sid)).scalars().all()
     }
 
-    query = Entity.query.filter(
-        Entity.entity_type == "user",
-        Entity.active == True,
-        db.or_(
-            Entity.email.ilike(f"%{q}%"),
-            Entity.name.ilike(f"%{q}%"),
-        ),
+    stmt = (
+        select(Entity)
+        .where(
+            Entity.entity_type == "user",
+            Entity.active == True,
+            db.or_(Entity.email.ilike(f"%{q}%"), Entity.name.ilike(f"%{q}%")),
+        )
+        .order_by(Entity.name)
+        .limit(10)
     )
     if existing_ids:
-        query = query.filter(~Entity.id.in_(existing_ids))
+        stmt = stmt.where(~Entity.id.in_(existing_ids))
 
-    users = query.order_by(Entity.name).limit(10).all()
+    users = db.session.execute(stmt).scalars().all()
     return jsonify({"users": [{"id": u.id, "name": u.name, "email": u.email} for u in users]})
 
 
@@ -220,15 +220,15 @@ def add_client_manager(sid):
     if not email:
         return jsonify({"error": "Email required"}), 400
 
-    Entity.query.filter_by(id=sid, entity_type="client").first_or_404()
+    db.first_or_404(select(Entity).filter_by(id=sid, entity_type="client"))
 
-    user = Entity.query.filter_by(email=email, entity_type="user").first()
+    user = db.session.execute(select(Entity).filter_by(email=email, entity_type="user")).scalar_one_or_none()
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    existing = EntityManager.query.filter_by(
-        user_entity_id=user.id, client_entity_id=sid
-    ).first()
+    existing = db.session.execute(
+        select(EntityManager).filter_by(user_entity_id=user.id, client_entity_id=sid)
+    ).scalar_one_or_none()
     if existing:
         return jsonify({"error": "User already manages this client"}), 409
 
@@ -242,11 +242,11 @@ def add_client_manager(sid):
 @clients_bp.route("/clients/<int:sid>/users/<int:uid>", methods=["DELETE"])
 @admin_required
 def remove_client_manager(sid, uid):
-    Entity.query.filter_by(id=sid, entity_type="client").first_or_404()
+    db.first_or_404(select(Entity).filter_by(id=sid, entity_type="client"))
 
-    target_assoc = EntityManager.query.filter_by(
-        user_entity_id=uid, client_entity_id=sid
-    ).first()
+    target_assoc = db.session.execute(
+        select(EntityManager).filter_by(user_entity_id=uid, client_entity_id=sid)
+    ).scalar_one_or_none()
     if not target_assoc:
         return jsonify({"error": "Not found"}), 404
 
@@ -260,12 +260,12 @@ def remove_client_manager(sid, uid):
 def create_client_key(sid):
     entity_id = session["entity_id"]
     entity = db.session.get(Entity, entity_id)
-    Entity.query.filter_by(id=sid, entity_type="client").first_or_404()
+    db.first_or_404(select(Entity).filter_by(id=sid, entity_type="client"))
 
     if not is_admin(entity):
-        assoc = EntityManager.query.filter_by(
-            user_entity_id=entity_id, client_entity_id=sid
-        ).first()
+        assoc = db.session.execute(
+            select(EntityManager).filter_by(user_entity_id=entity_id, client_entity_id=sid)
+        ).scalar_one_or_none()
         if not assoc:
             return jsonify({"error": "Forbidden"}), 403
 
@@ -277,7 +277,7 @@ def create_client_key(sid):
         return jsonify({"error": "Invalid key"}), 400
 
     key_hash = hash_api_key(key)
-    if APIKey.query.filter_by(key_hash=key_hash).first():
+    if db.session.execute(select(APIKey).filter_by(key_hash=key_hash)).scalar_one_or_none():
         return jsonify({"error": "Key already exists"}), 409
 
     api_key = APIKey(
@@ -300,9 +300,9 @@ def delete_client_key(sid, kid):
     entity = db.session.get(Entity, entity_id)
 
     if not is_admin(entity):
-        assoc = EntityManager.query.filter_by(
-            user_entity_id=entity_id, client_entity_id=sid
-        ).first()
+        assoc = db.session.execute(
+            select(EntityManager).filter_by(user_entity_id=entity_id, client_entity_id=sid)
+        ).scalar_one_or_none()
         if not assoc:
             return jsonify({"error": "Forbidden"}), 403
 
@@ -320,16 +320,16 @@ def delete_client_key(sid, kid):
 def client_consent(sid, model_name):
     entity_id = session["entity_id"]
     entity = db.session.get(Entity, entity_id)
-    Entity.query.filter_by(id=sid, entity_type="client").first_or_404()
+    db.first_or_404(select(Entity).filter_by(id=sid, entity_type="client"))
 
     if not is_admin(entity):
-        assoc = EntityManager.query.filter_by(
-            user_entity_id=entity_id, client_entity_id=sid
-        ).first()
+        assoc = db.session.execute(
+            select(EntityManager).filter_by(user_entity_id=entity_id, client_entity_id=sid)
+        ).scalar_one_or_none()
         if not assoc:
             return jsonify({"error": "Forbidden"}), 403
 
-    config = ModelConfig.query.filter_by(model_name=model_name, active=True).first_or_404()
+    config = db.first_or_404(select(ModelConfig).filter_by(model_name=model_name, active=True))
 
     if get_model_access_status(sid, config.id) != "graylist":
         return jsonify({"error": "Model is not graylisted for this client"}), 400

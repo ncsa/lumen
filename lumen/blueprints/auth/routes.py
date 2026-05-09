@@ -1,6 +1,7 @@
 import hashlib
 
 from flask import Blueprint, redirect, url_for, session, render_template, current_app
+from sqlalchemy import select
 
 from lumen.extensions import db, oauth
 from lumen.models.entity import Entity
@@ -66,12 +67,12 @@ def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=No
     # Resolve group names to IDs (skip unknown)
     desired_ids = set()
     for name in desired_names:
-        group = Group.query.filter_by(name=name).first()
+        group = db.session.execute(select(Group).filter_by(name=name)).scalar_one_or_none()
         if group:
             desired_ids.add(group.id)
 
     # Current memberships
-    existing_members = GroupMember.query.filter_by(entity_id=entity.id).all()
+    existing_members = db.session.execute(select(GroupMember).filter_by(entity_id=entity.id)).scalars().all()
     existing_by_group = {m.group_id: m for m in existing_members}
 
     # Remove config_managed memberships no longer desired
@@ -94,7 +95,7 @@ def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=No
         max_coins = pool_cfg.get("max", 0)
         refresh_coins = pool_cfg.get("refresh", 0)
         starting_coins = pool_cfg.get("starting", max_coins)
-        limit = EntityLimit.query.filter_by(entity_id=entity.id).first()
+        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=entity.id)).scalar_one_or_none()
         if limit and limit.config_managed:
             limit.max_coins = max_coins
             limit.refresh_coins = refresh_coins
@@ -109,19 +110,19 @@ def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=No
             ))
     else:
         # Remove config_managed limit if no longer in yaml
-        limit = EntityLimit.query.filter_by(entity_id=entity.id, config_managed=True).first()
+        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=entity.id, config_managed=True)).scalar_one_or_none()
         if limit:
             db.session.delete(limit)
 
     # Per-user model access from users.<email>.models list
     allowed_models = user_cfg.get("models", [])
     existing_access = {a.model_config_id: a
-                       for a in EntityModelAccess.query.filter_by(entity_id=entity.id).all()
+                       for a in db.session.execute(select(EntityModelAccess).filter_by(entity_id=entity.id)).scalars().all()
                        if a.access_type == "whitelist"}  # only track config-managed allows
 
     desired_model_ids = set()
     for model_name in allowed_models:
-        mc = ModelConfig.query.filter_by(model_name=model_name).first()
+        mc = db.session.execute(select(ModelConfig).filter_by(model_name=model_name)).scalar_one_or_none()
         if mc is None:
             continue
         desired_model_ids.add(mc.id)
@@ -138,7 +139,7 @@ def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=No
             db.session.delete(acc)
 
     # Initialize coin balance on first login so usage page shows starting coins immediately
-    balance = EntityBalance.query.filter_by(entity_id=entity.id).first()
+    balance = db.session.execute(select(EntityBalance).filter_by(entity_id=entity.id)).scalar_one_or_none()
     if balance is None:
         pool = get_pool_limit(entity.id)
         if pool is not None and pool[0] != -2:
@@ -182,7 +183,7 @@ def devlogin():
         yaml_data = {**yaml_data, "users": users}
     name = email.split("@")[0]
 
-    entity = Entity.query.filter_by(email=email, entity_type="user").first()
+    entity = db.session.execute(select(Entity).filter_by(email=email, entity_type="user")).scalar_one_or_none()
     if not entity:
         entity = Entity(
             entity_type="user",
@@ -218,7 +219,7 @@ def callback():
 
     yaml_data = current_app.config.get("YAML_DATA", {})
 
-    entity = Entity.query.filter_by(email=email, entity_type="user").first()
+    entity = db.session.execute(select(Entity).filter_by(email=email, entity_type="user")).scalar_one_or_none()
     if not entity:
         entity = Entity(
             entity_type="user",

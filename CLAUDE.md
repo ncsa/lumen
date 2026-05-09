@@ -73,7 +73,7 @@ Following rules are here to help the AI avoid the same mistakes again:
 - When bumping the version in pyproject.toml, also run `uv lock` to update uv.lock.
 - For local testing without OAuth or a real LLM: set `app.dev_user` in config.yaml and use `uv run dummy` (dummy backend on port 9999). See the "Local Development" section in README.md.
 - Screenshots for the help docs live in `docs/img/`. Re-capture them with playwright after any UI change that affects chat, usage, models, model detail, or clients pages. Use `CONFIG_YAML=./dev.config.yaml uv run python -c "from lumen import create_app; ..."` with a dev config that has `dev_user` set.
-- SQLAlchemy: never use the legacy `Model.query.get()` or `Model.query.get_or_404()` APIs — they trigger a `LegacyAPIWarning`. Use `db.session.get(Model, pk)` for lookups and `db.get_or_404(Model, pk)` when a missing row should 404.
+- SQLAlchemy: never use `Model.query` or `db.session.query()` — both are deprecated in SQLAlchemy 2.x and emit `LegacyAPIWarning`. Use `db.session.execute(select(Model)...)` for all queries, `.scalars().all()` / `.scalar_one_or_none()` for results, `db.first_or_404(stmt)` for 404 guards, `db.session.get(Model, pk)` for PK lookups, `db.get_or_404(Model, pk)` when a missing row should 404.
 - updates to the schema should be reflected in docs/dbschema.md and columns/tables should have comments.
 
 ## 6. Accessibility (WCAG 2.1 AA)

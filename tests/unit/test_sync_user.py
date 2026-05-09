@@ -1,5 +1,6 @@
 """Tests for sync_user_from_yaml in auth routes."""
 import pytest
+from sqlalchemy import select
 
 from lumen.blueprints.auth.routes import sync_user_from_yaml
 
@@ -29,7 +30,7 @@ def test_sync_adds_default_group(app, user):
         sync_user_from_yaml(entity, "sync@example.com", {"groups": {"default": {}}})
         db.session.commit()
 
-        member = GroupMember.query.filter_by(entity_id=user).first()
+        member = db.session.execute(select(GroupMember).filter_by(entity_id=user)).scalar_one_or_none()
         assert member is not None
 
 
@@ -51,9 +52,9 @@ def test_sync_adds_named_group(app, user):
         sync_user_from_yaml(entity, "sync@example.com", yaml_data)
         db.session.commit()
 
-        members = GroupMember.query.filter_by(entity_id=user).all()
+        members = db.session.execute(select(GroupMember).filter_by(entity_id=user)).scalars().all()
         group_ids = {m.group_id for m in members}
-        staff = Group.query.filter_by(name="staff").first()
+        staff = db.session.execute(select(Group).filter_by(name="staff")).scalar_one_or_none()
         assert staff.id in group_ids
 
 
@@ -73,7 +74,7 @@ def test_sync_sets_entity_limit(app, user):
         sync_user_from_yaml(entity, "sync@example.com", yaml_data)
         db.session.commit()
 
-        limit = EntityLimit.query.filter_by(entity_id=user).first()
+        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=user)).scalar_one_or_none()
         assert limit is not None
         assert float(limit.max_coins) == 100.0
         assert float(limit.refresh_coins) == 10.0
@@ -99,7 +100,7 @@ def test_sync_removes_stale_group(app, user):
         db.session.commit()
 
         # old-group membership should have been removed
-        member = GroupMember.query.filter_by(entity_id=user, group_id=g2.id).first()
+        member = db.session.execute(select(GroupMember).filter_by(entity_id=user, group_id=g2.id)).scalar_one_or_none()
         assert member is None
 
 
@@ -127,6 +128,6 @@ def test_sync_rule_based_group_assignment(app, user):
         sync_user_from_yaml(entity, "sync@example.com", yaml_data, userinfo=userinfo)
         db.session.commit()
 
-        uiuc_group = Group.query.filter_by(name="uiuc").first()
-        member = GroupMember.query.filter_by(entity_id=user, group_id=uiuc_group.id).first()
+        uiuc_group = db.session.execute(select(Group).filter_by(name="uiuc")).scalar_one_or_none()
+        member = db.session.execute(select(GroupMember).filter_by(entity_id=user, group_id=uiuc_group.id)).scalar_one_or_none()
         assert member is not None

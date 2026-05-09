@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import openai
 from flask import current_app
+from sqlalchemy import select
 
 from lumen.extensions import db
 from lumen.models.entity_balance import EntityBalance
@@ -46,11 +47,9 @@ _rr_lock = threading.Lock()
 
 def get_next_endpoint(model_config_id: int):
     """Return the next healthy endpoint for a model using round-robin, or None."""
-    endpoints = (
-        ModelEndpoint.query.filter_by(model_config_id=model_config_id, healthy=True)
-        .order_by(ModelEndpoint.id)
-        .all()
-    )
+    endpoints = db.session.execute(
+        select(ModelEndpoint).filter_by(model_config_id=model_config_id, healthy=True).order_by(ModelEndpoint.id)
+    ).scalars().all()
     if not endpoints:
         return None
     with _rr_lock:
@@ -62,12 +61,11 @@ def get_next_endpoint(model_config_id: int):
 def _get_active_group_ids(entity_id: int) -> list:
     """Return list of active group IDs the entity belongs to."""
     return [
-        m.group_id for m in (
-            GroupMember.query
+        m.group_id for m in db.session.execute(
+            select(GroupMember)
             .join(Group, Group.id == GroupMember.group_id)
-            .filter(GroupMember.entity_id == entity_id, Group.active == True)  # noqa: E712
-            .all()
-        )
+            .where(GroupMember.entity_id == entity_id, Group.active == True)  # noqa: E712
+        ).scalars().all()
     ]
 
 
@@ -81,9 +79,9 @@ def get_model_access_status(entity_id: int, model_config_id: int) -> str:
     3. Effective default: most permissive group model_access_default wins.
     4. Entity-level default (for client entities).
     """
-    user_access = EntityModelAccess.query.filter_by(
-        entity_id=entity_id, model_config_id=model_config_id
-    ).first()
+    user_access = db.session.execute(
+        select(EntityModelAccess).filter_by(entity_id=entity_id, model_config_id=model_config_id)
+    ).scalar_one_or_none()
     if user_access is not None:
         if user_access.access_type == "whitelist":
             return "allowed"
@@ -94,10 +92,12 @@ def get_model_access_status(entity_id: int, model_config_id: int) -> str:
     group_ids = _get_active_group_ids(entity_id)
 
     if group_ids:
-        group_rules = GroupModelAccess.query.filter(
-            GroupModelAccess.group_id.in_(group_ids),
-            GroupModelAccess.model_config_id == model_config_id,
-        ).all()
+        group_rules = db.session.execute(
+            select(GroupModelAccess).where(
+                GroupModelAccess.group_id.in_(group_ids),
+                GroupModelAccess.model_config_id == model_config_id,
+            )
+        ).scalars().all()
         if group_rules:
             best = min(group_rules, key=lambda r: _ACCESS_PRIORITY.get(r.access_type, 99))
             if best.access_type == "blacklist":
@@ -109,8 +109,9 @@ def get_model_access_status(entity_id: int, model_config_id: int) -> str:
     # Apply effective default
     if group_ids:
         group_defaults = [
-            g.model_access_default for g in
-            Group.query.filter(Group.id.in_(group_ids), Group.model_access_default.isnot(None)).all()
+            g.model_access_default for g in db.session.execute(
+                select(Group).where(Group.id.in_(group_ids), Group.model_access_default.isnot(None))
+            ).scalars().all()
         ]
         if group_defaults:
             # Most permissive wins: if any group allows, allow.
@@ -135,9 +136,9 @@ def get_model_access_status(entity_id: int, model_config_id: int) -> str:
 
 def has_model_consent(entity_id: int, model_config_id: int) -> bool:
     """Return True if the entity has consented to use a graylisted model."""
-    return EntityModelConsent.query.filter_by(
-        entity_id=entity_id, model_config_id=model_config_id
-    ).first() is not None
+    return db.session.execute(
+        select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=model_config_id)
+    ).scalar_one_or_none() is not None
 
 
 def get_model_access(entity_id: int, model_config_id: int) -> bool:
@@ -164,14 +165,14 @@ def get_pool_limit(entity_id: int):
     User EntityLimit with max_coins == 0 blocks regardless of groups.
     -2 (unlimited) wins over any positive value.
     """
-    user_limit = EntityLimit.query.filter_by(entity_id=entity_id).first()
+    user_limit = db.session.execute(select(EntityLimit).filter_by(entity_id=entity_id)).scalar_one_or_none()
     if user_limit is not None and float(user_limit.max_coins) == 0:
         return None  # explicitly blocked
 
     group_ids = _get_active_group_ids(entity_id)
-    group_limits = GroupLimit.query.filter(
-        GroupLimit.group_id.in_(group_ids)
-    ).all() if group_ids else []
+    group_limits = db.session.execute(
+        select(GroupLimit).where(GroupLimit.group_id.in_(group_ids))
+    ).scalars().all() if group_ids else []
 
     candidates = []
     if user_limit is not None and float(user_limit.max_coins) != 0:
@@ -211,7 +212,7 @@ def get_coin_balance(entity_id: int, model_config_id: int):
     if max_coins == -2:
         return None
 
-    balance = EntityBalance.query.filter_by(entity_id=entity_id).first()
+    balance = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()
     if balance is None:
         balance = EntityBalance(
             entity_id=entity_id,
@@ -232,7 +233,7 @@ def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float):
     if max_coins == -2:
         return
 
-    balance = EntityBalance.query.filter_by(entity_id=entity_id).first()
+    balance = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()
     if balance:
         balance.coins_left = float(balance.coins_left) - coin_cost
         db.session.flush()
@@ -267,9 +268,9 @@ def update_stats(
     duration: float = 0.0,
 ):
     """Update or create ModelStat running totals and append a RequestLog row."""
-    stat = ModelStat.query.filter_by(
-        entity_id=entity_id, model_config_id=model_config_id, source=source
-    ).first()
+    stat = db.session.execute(
+        select(ModelStat).filter_by(entity_id=entity_id, model_config_id=model_config_id, source=source)
+    ).scalar_one_or_none()
     if stat is None:
         stat = ModelStat(
             entity_id=entity_id,
@@ -287,7 +288,7 @@ def update_stats(
     stat.cost = float(stat.cost) + cost
     stat.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
-    estat = EntityStat.query.filter_by(entity_id=entity_id).first()
+    estat = db.session.execute(select(EntityStat).filter_by(entity_id=entity_id)).scalar_one_or_none()
     if estat is None:
         estat = EntityStat(entity_id=entity_id, requests=0, input_tokens=0, output_tokens=0, cost=0)
         db.session.add(estat)
@@ -319,7 +320,7 @@ def send_message_stream(
     source: str = "chat",
 ):
     """Stream messages to LLM. Yields (chunk_text, None) for each token, then (None, result_dict)."""
-    config = ModelConfig.query.filter_by(model_name=model, active=True).first()
+    config = db.session.execute(select(ModelConfig).filter_by(model_name=model, active=True)).scalar_one_or_none()
     if config is None:
         raise ValueError(f"Unknown or inactive model: {model}")
 

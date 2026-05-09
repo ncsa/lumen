@@ -1,5 +1,6 @@
 """Tests for refill_coin_balances — the per-tick logic of the coin refiller."""
 from datetime import datetime, timedelta, timezone
+from sqlalchemy import select
 
 
 def _add_balance(db, entity_id, coins_left, last_refill_at):
@@ -44,7 +45,7 @@ def test_skips_balance_younger_than_one_hour(app, test_user):
         assert updated == 0
         # Balance unchanged
         from lumen.models.entity_balance import EntityBalance
-        bal = EntityBalance.query.filter_by(entity_id=test_user["id"]).first()
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one_or_none()
         assert float(bal.coins_left) == 50.0
 
 
@@ -60,7 +61,7 @@ def test_refills_after_full_hour(app, test_user):
         db.session.commit()
 
         assert refill_coin_balances(now=now) == 1
-        bal = EntityBalance.query.filter_by(entity_id=test_user["id"]).first()
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one_or_none()
         assert float(bal.coins_left) == 70.0  # 50 + 2*10
         # last_refill_at advanced
         assert bal.last_refill_at == now
@@ -78,7 +79,7 @@ def test_refill_capped_at_max_coins(app, test_user):
         db.session.commit()
 
         refill_coin_balances(now=now)
-        bal = EntityBalance.query.filter_by(entity_id=test_user["id"]).first()
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one_or_none()
         # 80 + 5*50 = 330; capped at 100
         assert float(bal.coins_left) == 100.0
 
@@ -95,7 +96,7 @@ def test_unlimited_pool_skipped(app, test_user):
         db.session.commit()
 
         assert refill_coin_balances(now=now) == 0
-        bal = EntityBalance.query.filter_by(entity_id=test_user["id"]).first()
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one_or_none()
         assert float(bal.coins_left) == 0.0
 
 
@@ -111,7 +112,7 @@ def test_zero_refresh_coins_skipped(app, test_user):
         db.session.commit()
 
         assert refill_coin_balances(now=now) == 0
-        bal = EntityBalance.query.filter_by(entity_id=test_user["id"]).first()
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one_or_none()
         assert float(bal.coins_left) == 20.0
 
 
@@ -127,7 +128,7 @@ def test_no_pool_skipped(app, test_user):
         db.session.commit()
 
         assert refill_coin_balances(now=now) == 0
-        bal = EntityBalance.query.filter_by(entity_id=test_user["id"]).first()
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one_or_none()
         assert float(bal.coins_left) == 42.0
 
 
@@ -144,5 +145,5 @@ def test_partial_hour_uses_floor(app, test_user):
         db.session.commit()
 
         refill_coin_balances(now=now)
-        bal = EntityBalance.query.filter_by(entity_id=test_user["id"]).first()
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one_or_none()
         assert float(bal.coins_left) == 10.0  # int(1.7) * 10 = 10

@@ -2,7 +2,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, redirect, render_template, request, jsonify, session, url_for
-from sqlalchemy import func
+from sqlalchemy import func, select
 
 from lumen.decorators import login_required
 from lumen.extensions import db
@@ -19,35 +19,31 @@ usage_bp = Blueprint("usage", __name__)
 
 
 def _get_usage_data(eid: int) -> dict:
-    chat_agg = (
-        db.session.query(
+    chat_agg = db.session.execute(
+        select(
             func.sum(ModelStat.requests),
             func.sum(ModelStat.input_tokens),
             func.sum(ModelStat.output_tokens),
             func.sum(ModelStat.cost),
             func.max(ModelStat.last_used_at),
-        )
-        .filter_by(entity_id=eid, source="chat")
-        .one()
-    )
+        ).filter_by(entity_id=eid, source="chat")
+    ).one()
 
-    conversation_count = (
-        db.session.query(func.count(Conversation.id))
-        .filter_by(entity_id=eid)
-        .scalar()
+    conversation_count = db.session.scalar(
+        select(func.count(Conversation.id)).filter_by(entity_id=eid)
     ) or 0
 
-    api_keys = APIKey.query.filter_by(entity_id=eid).order_by(APIKey.created_at).all()
+    api_keys = db.session.execute(select(APIKey).filter_by(entity_id=eid).order_by(APIKey.created_at)).scalars().all()
 
     # Single token pool and accessible models
     pool = get_pool_limit(eid)
-    balance = EntityBalance.query.filter_by(entity_id=eid).first()
-    all_active_models = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
+    balance = db.session.execute(select(EntityBalance).filter_by(entity_id=eid)).scalar_one_or_none()
+    all_active_models = db.session.execute(select(ModelConfig).filter_by(active=True).order_by(ModelConfig.model_name)).scalars().all()
     accessible_model_ids = {mc.id for mc in all_active_models if get_model_access(eid, mc.id)}
 
     # Usage stats keyed by model_config_id
-    usage_rows = (
-        db.session.query(
+    usage_rows = db.session.execute(
+        select(
             ModelStat.model_config_id,
             func.sum(ModelStat.requests),
             func.sum(ModelStat.input_tokens),
@@ -55,10 +51,9 @@ def _get_usage_data(eid: int) -> dict:
             func.sum(ModelStat.cost),
             func.max(ModelStat.last_used_at),
         )
-        .filter(ModelStat.entity_id == eid)
+        .where(ModelStat.entity_id == eid)
         .group_by(ModelStat.model_config_id)
-        .all()
-    )
+    ).all()
     usage_by_id = {r[0]: r for r in usage_rows}
 
     # Models to show: all accessible active models + inactive models with past usage
@@ -70,10 +65,9 @@ def _get_usage_data(eid: int) -> dict:
         models_to_show_ids.add(mid)
 
     all_relevant_models = (
-        ModelConfig.query
-        .filter(ModelConfig.id.in_(models_to_show_ids))
-        .order_by(ModelConfig.model_name)
-        .all()
+        db.session.execute(
+            select(ModelConfig).where(ModelConfig.id.in_(models_to_show_ids)).order_by(ModelConfig.model_name)
+        ).scalars().all()
     ) if models_to_show_ids else []
 
     model_usage = []
@@ -129,7 +123,7 @@ def index():
     entity_id = session["entity_id"]
     data = _get_usage_data(entity_id)
 
-    all_models = ModelConfig.query.order_by(ModelConfig.model_name).all()
+    all_models = db.session.execute(select(ModelConfig).order_by(ModelConfig.model_name)).scalars().all()
     usage_by_model = {u["model_name"]: u for u in data.get("model_usage", [])}
     model_access_list = []
     for mc in all_models:
@@ -178,7 +172,7 @@ def create_key():
         return jsonify({"error": "Invalid key"}), 400
 
     key_hash = hash_api_key(key)
-    if APIKey.query.filter_by(key_hash=key_hash).first():
+    if db.session.execute(select(APIKey).filter_by(key_hash=key_hash)).scalar_one_or_none():
         return jsonify({"error": "Key already exists"}), 409
 
     api_key = APIKey(
@@ -212,7 +206,7 @@ def delete_key(kid):
 @login_required
 def user_consent(model_name):
     entity_id = session["entity_id"]
-    config = ModelConfig.query.filter_by(model_name=model_name, active=True).first_or_404()
+    config = db.first_or_404(select(ModelConfig).filter_by(model_name=model_name, active=True))
 
     if get_model_access_status(entity_id, config.id) != "graylist":
         return jsonify({"error": "Model is not graylisted for this user"}), 400

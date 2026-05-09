@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests as http_requests
 from flask import Blueprint, abort, redirect, render_template, session, url_for
+from sqlalchemy import func, select
 
 from lumen.decorators import login_required
 from lumen.extensions import db
@@ -18,11 +19,11 @@ models_page_bp = Blueprint("models_page", __name__)
 @login_required
 def index():
     entity_id = session.get("entity_id")
-    all_configs = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
+    all_configs = db.session.execute(select(ModelConfig).filter_by(active=True).order_by(ModelConfig.model_name)).scalars().all()
     configs = [c for c in all_configs if get_model_access_status(entity_id, c.id) != "blocked"]
     model_ids = [c.id for c in configs]
     endpoints_map: dict[int, list] = {}
-    for ep in ModelEndpoint.query.filter(ModelEndpoint.model_config_id.in_(model_ids)).all():
+    for ep in db.session.execute(select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(model_ids))).scalars().all():
         endpoints_map.setdefault(ep.model_config_id, []).append(ep)
     return render_template("models.html", configs=configs, endpoints_map=endpoints_map)
 
@@ -30,7 +31,7 @@ def index():
 @models_page_bp.route("/models/<path:model_name>")
 @login_required
 def detail(model_name):
-    config = ModelConfig.query.filter_by(model_name=model_name, active=True).first_or_404()
+    config = db.first_or_404(select(ModelConfig).filter_by(model_name=model_name, active=True))
     endpoints = config.endpoints.all()
 
     healthy_count = sum(1 for e in endpoints if e.healthy)
@@ -42,21 +43,27 @@ def detail(model_name):
         status = "ok"
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    requests_last_hour = RequestLog.query.filter(
-        RequestLog.model_config_id == config.id,
-        RequestLog.time >= now - timedelta(hours=1),
-    ).count()
-    requests_last_day = RequestLog.query.filter(
-        RequestLog.model_config_id == config.id,
-        RequestLog.time >= now - timedelta(days=1),
-    ).count()
+    requests_last_hour = db.session.scalar(
+        select(func.count()).select_from(RequestLog).where(
+            RequestLog.model_config_id == config.id,
+            RequestLog.time >= now - timedelta(hours=1),
+        )
+    )
+    requests_last_day = db.session.scalar(
+        select(func.count()).select_from(RequestLog).where(
+            RequestLog.model_config_id == config.id,
+            RequestLog.time >= now - timedelta(days=1),
+        )
+    )
 
     entity_id = session.get("entity_id")
     access_status = get_model_access_status(entity_id, config.id) if entity_id else "blocked"
     if access_status == "blocked":
         abort(404)
     consent = (
-        EntityModelConsent.query.filter_by(entity_id=entity_id, model_config_id=config.id).first()
+        db.session.execute(
+            select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=config.id)
+        ).scalar_one_or_none()
         if access_status == "graylist" and entity_id
         else None
     )
@@ -77,7 +84,7 @@ def detail(model_name):
 @models_page_bp.route("/models/<path:model_name>/consent", methods=["POST"])
 @login_required
 def model_consent(model_name):
-    config = ModelConfig.query.filter_by(model_name=model_name, active=True).first_or_404()
+    config = db.first_or_404(select(ModelConfig).filter_by(model_name=model_name, active=True))
     entity_id = session["entity_id"]
     if get_model_access_status(entity_id, config.id) != "graylist":
         abort(400)
@@ -94,7 +101,7 @@ def model_consent(model_name):
 @models_page_bp.route("/models/<path:model_name>/readme")
 @login_required
 def model_readme(model_name):
-    config = ModelConfig.query.filter_by(model_name=model_name, active=True).first_or_404()
+    config = db.first_or_404(select(ModelConfig).filter_by(model_name=model_name, active=True))
     if not config.url or "huggingface.co" not in config.url:
         return "", 404
     parts = config.url.replace("https://huggingface.co/", "").split("/")[:2]

@@ -30,15 +30,15 @@ class LumenDBCollector:
     """Custom Prometheus collector that queries the DB on each scrape."""
 
     def collect(self):
-        from sqlalchemy import func
+        from sqlalchemy import func, select
         from lumen.extensions import db
         from lumen.models.model_config import ModelConfig
         from lumen.models.model_endpoint import ModelEndpoint
         from lumen.models.model_stat import ModelStat
         from lumen.models.entity import Entity
 
-        rows = (
-            db.session.query(
+        rows = db.session.execute(
+            select(
                 ModelConfig.model_name,
                 ModelStat.source,
                 func.coalesce(func.sum(ModelStat.requests), 0),
@@ -48,8 +48,7 @@ class LumenDBCollector:
             )
             .join(ModelConfig, ModelStat.model_config_id == ModelConfig.id)
             .group_by(ModelConfig.model_name, ModelStat.source)
-            .all()
-        )
+        ).all()
 
         reqs_m = GaugeMetricFamily(
             "lumen_model_requests_total",
@@ -89,11 +88,10 @@ class LumenDBCollector:
             "1=healthy 0=unhealthy per model endpoint",
             labels=["model", "endpoint_url"],
         )
-        for model_name, url, healthy in (
-            db.session.query(ModelConfig.model_name, ModelEndpoint.url, ModelEndpoint.healthy)
+        for model_name, url, healthy in db.session.execute(
+            select(ModelConfig.model_name, ModelEndpoint.url, ModelEndpoint.healthy)
             .join(ModelConfig, ModelEndpoint.model_config_id == ModelConfig.id)
-            .all()
-        ):
+        ).all():
             health_m.add_metric([model_name, url], 1.0 if healthy else 0.0)
         yield health_m
 
@@ -104,15 +102,11 @@ class LumenDBCollector:
             "User counts: active (not disabled by admin) and total",
             labels=["status"],
         )
-        active_count = (
-            db.session.query(func.count(Entity.id))
-            .filter_by(entity_type="user", active=True)
-            .scalar()
+        active_count = db.session.scalar(
+            select(func.count(Entity.id)).filter_by(entity_type="user", active=True)
         ) or 0
-        total_count = (
-            db.session.query(func.count(Entity.id))
-            .filter_by(entity_type="user")
-            .scalar()
+        total_count = db.session.scalar(
+            select(func.count(Entity.id)).filter_by(entity_type="user")
         ) or 0
         users_m.add_metric(["active"], float(active_count))
         users_m.add_metric(["total"], float(total_count))

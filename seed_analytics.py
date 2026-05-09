@@ -7,6 +7,8 @@ Usage:
 import random
 from datetime import datetime, timedelta
 
+from sqlalchemy import select
+
 from lumen import create_app
 from lumen.extensions import db
 from lumen.models.entity import Entity
@@ -42,7 +44,7 @@ def seed():
         # ------------------------------------------------------------------ #
         model_ids = []
         for m in MODELS:
-            cfg = ModelConfig.query.filter_by(model_name=m["name"]).first()
+            cfg = db.session.execute(select(ModelConfig).filter_by(model_name=m["name"])).scalar_one_or_none()
             if cfg is None:
                 cfg = ModelConfig(
                     model_name=m["name"],
@@ -64,7 +66,7 @@ def seed():
         for i in range(NUM_USERS):
             joined = random_time(START, NOW)
             email = f"seed-user-{i:03d}@example.com"
-            entity = Entity.query.filter_by(email=email).first()
+            entity = db.session.execute(select(Entity).filter_by(email=email)).scalar_one_or_none()
             if entity is None:
                 entity = Entity(
                     entity_type="user",

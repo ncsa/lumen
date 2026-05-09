@@ -163,7 +163,7 @@ def api_key_required(f):
             return f(*args, **kwargs)
 
         g.monitor = False
-        api_key = APIKey.query.filter_by(key_hash=hash_api_key(token)).first()
+        api_key = db.session.execute(select(APIKey).filter_by(key_hash=hash_api_key(token))).scalar_one_or_none()
         if not api_key or not api_key.active:
             return _err("Invalid or inactive API key", "authentication_error", 401)
 
@@ -182,7 +182,7 @@ def api_key_required(f):
 @api_key_required
 @limiter.limit(_api_limit, key_func=_api_key_id)
 def list_models():
-    configs = ModelConfig.query.filter_by(active=True).all()
+    configs = db.session.execute(select(ModelConfig).filter_by(active=True)).scalars().all()
     rates = _get_request_rates()
     if g.monitor:
         data = [_model_dict(c, rates) for c in configs]
@@ -196,7 +196,7 @@ def list_models():
 @api_key_required
 @limiter.limit(_api_limit, key_func=_api_key_id)
 def get_model(model_id):
-    config = ModelConfig.query.filter_by(model_name=model_id, active=True).first()
+    config = db.session.execute(select(ModelConfig).filter_by(model_name=model_id, active=True)).scalar_one_or_none()
     if not config:
         return _err(f"Model '{model_id}' not found", status=404)
     if not g.monitor and get_effective_limit(g.entity.id, config.id) is None:
@@ -207,7 +207,7 @@ def get_model(model_id):
 
 def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
     """Shared logic for chat completions (used by both endpoints)."""
-    model_config = ModelConfig.query.filter_by(model_name=model_name, active=True).first()
+    model_config = db.session.execute(select(ModelConfig).filter_by(model_name=model_name, active=True)).scalar_one_or_none()
     if not model_config:
         return _err(f"Model '{model_name}' not found", status=404)
 
@@ -320,7 +320,7 @@ def completions():
 
     messages = [{"role": "user", "content": prompt}]
 
-    model_config = ModelConfig.query.filter_by(model_name=model_name, active=True).first()
+    model_config = db.session.execute(select(ModelConfig).filter_by(model_name=model_name, active=True)).scalar_one_or_none()
     if not model_config:
         return _err(f"Model '{model_name}' not found", status=404)
 

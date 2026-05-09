@@ -69,7 +69,7 @@ def _chat_limit():
 @limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def chat_page():
     entity_id = session["entity_id"]
-    all_models = ModelConfig.query.filter_by(active=True).order_by(ModelConfig.model_name).all()
+    all_models = db.session.execute(select(ModelConfig).filter_by(active=True).order_by(ModelConfig.model_name)).scalars().all()
     healthy_counts = dict(
         db.session.execute(
             select(ModelEndpoint.model_config_id, func.count())
@@ -161,7 +161,7 @@ def chat_stream():
 
     entity_id = session["entity_id"]
 
-    model_config = ModelConfig.query.filter_by(model_name=model, active=True).first()
+    model_config = db.session.execute(select(ModelConfig).filter_by(model_name=model, active=True)).scalar_one_or_none()
     if not model_config:
         return jsonify({"error": f"Unknown model: {model}"}), 400
 
@@ -186,9 +186,9 @@ def chat_stream():
 
             conv = None
             if conversation_id:
-                conv = Conversation.query.filter_by(
-                    id=conversation_id, entity_id=entity_id, hidden=False
-                ).first()
+                conv = db.session.execute(
+                    select(Conversation).filter_by(id=conversation_id, entity_id=entity_id, hidden=False)
+                ).scalar_one_or_none()
 
             if conv is None:
                 user_msg = next((m for m in reversed(messages) if m["role"] == "user"), None)
@@ -280,15 +280,15 @@ def list_conversations():
 @limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def get_conversation_messages(cid):
     entity_id = session["entity_id"]
-    conv = Conversation.query.filter_by(
-        id=cid, entity_id=entity_id, hidden=False
-    ).first()
+    conv = db.session.execute(
+        select(Conversation).filter_by(id=cid, entity_id=entity_id, hidden=False)
+    ).scalar_one_or_none()
     if not conv:
         return jsonify({"error": "Not found"}), 404
 
-    msgs = (
-        Message.query.filter_by(conversation_id=cid).order_by(Message.created_at).all()
-    )
+    msgs = db.session.execute(
+        select(Message).filter_by(conversation_id=cid).order_by(Message.created_at)
+    ).scalars().all()
     result = []
     for msg in msgs:
         m = {
@@ -313,7 +313,7 @@ def get_conversation_messages(cid):
 @limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def delete_conversation(cid):
     entity_id = session["entity_id"]
-    conv = Conversation.query.filter_by(id=cid, entity_id=entity_id).first()
+    conv = db.session.execute(select(Conversation).filter_by(id=cid, entity_id=entity_id)).scalar_one_or_none()
     if not conv:
         return jsonify({"error": "Not found"}), 404
 
