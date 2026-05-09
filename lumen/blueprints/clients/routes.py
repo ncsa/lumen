@@ -12,7 +12,7 @@ from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.models.entity_stat import EntityStat
 from lumen.services.crypto import hash_api_key
-from lumen.services.llm import get_model_access_status, has_model_consent
+from lumen.services.llm import get_model_access_status, get_model_status, has_model_consent
 from lumen.blueprints.usage.routes import _get_usage_data
 
 clients_bp = Blueprint("clients", __name__)
@@ -33,19 +33,6 @@ def _get_user_clients(entity_id: int):
         .all()
     )
 
-
-def _model_status(mc) -> str:
-    if not mc.active:
-        return "disabled"
-    endpoints = list(mc.endpoints)
-    if not endpoints:
-        return "down"
-    healthy = sum(1 for e in endpoints if e.healthy)
-    if healthy == 0:
-        return "down"
-    if healthy < len(endpoints):
-        return "degraded"
-    return "ok"
 
 
 @clients_bp.route("/clients", methods=["GET"])
@@ -141,7 +128,7 @@ def detail(sid):
             "notice": mc.notice,
             "access_status": access_status,
             "consented": consented,
-            "model_status": _model_status(mc),
+            "model_status": get_model_status(mc),
             "requests": u.get("requests", 0),
             "input_tokens": u.get("input_tokens", 0),
             "output_tokens": u.get("output_tokens", 0),

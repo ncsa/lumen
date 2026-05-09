@@ -13,23 +13,9 @@ from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_stat import ModelStat
 from lumen.services.crypto import hash_api_key
-from lumen.services.llm import get_pool_limit, get_model_access, get_model_access_status, has_model_consent
+from lumen.services.llm import get_pool_limit, get_model_access, get_model_access_status, get_model_status, has_model_consent
 
 usage_bp = Blueprint("usage", __name__)
-
-
-def _model_status(mc) -> str:
-    if not mc.active:
-        return "disabled"
-    endpoints = list(mc.endpoints)
-    if not endpoints:
-        return "down"
-    healthy = sum(1 for e in endpoints if e.healthy)
-    if healthy == 0:
-        return "down"
-    if healthy < len(endpoints):
-        return "degraded"
-    return "ok"
 
 
 def _get_usage_data(eid: int) -> dict:
@@ -90,24 +76,11 @@ def _get_usage_data(eid: int) -> dict:
         .all()
     ) if models_to_show_ids else []
 
-    def model_status(mc):
-        if not mc.active:
-            return "disabled"
-        endpoints = list(mc.endpoints)
-        if not endpoints:
-            return "down"
-        healthy = sum(1 for e in endpoints if e.healthy)
-        if healthy == 0:
-            return "down"
-        if healthy < len(endpoints):
-            return "degraded"
-        return "ok"
-
     model_usage = []
     for mc in all_relevant_models:
         u = usage_by_id.get(mc.id)
         has_access = mc.id in accessible_model_ids
-        status = "disabled" if not has_access else model_status(mc)
+        status = "disabled" if not has_access else get_model_status(mc)
         model_usage.append({
             "model_name": mc.model_name,
             "requests": int(u[1] or 0) if u else 0,
@@ -169,7 +142,7 @@ def index():
             "notice": mc.notice,
             "access_status": access_status,
             "consented": consented,
-            "model_status": _model_status(mc),
+            "model_status": get_model_status(mc),
             "requests": u.get("requests", 0),
             "input_tokens": u.get("input_tokens", 0),
             "output_tokens": u.get("output_tokens", 0),

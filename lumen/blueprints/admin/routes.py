@@ -83,8 +83,8 @@ def reset_user_tokens(eid):
 @admin_bp.route("/users/<int:eid>/usage")
 @admin_required
 def user_usage(eid):
-    from lumen.blueprints.usage.routes import _get_usage_data, _model_status
-    from lumen.services.llm import get_model_access_status, has_model_consent
+    from lumen.blueprints.usage.routes import _get_usage_data
+    from lumen.services.llm import get_model_access_status, get_model_status, has_model_consent
     entity = db.get_or_404(Entity, eid)
     data = _get_usage_data(eid)
     all_models = ModelConfig.query.order_by(ModelConfig.model_name).all()
@@ -100,7 +100,7 @@ def user_usage(eid):
             "notice": mc.notice,
             "access_status": access_status,
             "consented": consented,
-            "model_status": _model_status(mc),
+            "model_status": get_model_status(mc),
             "requests": u.get("requests", 0),
             "input_tokens": u.get("input_tokens", 0),
             "output_tokens": u.get("output_tokens", 0),

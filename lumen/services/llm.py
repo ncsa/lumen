@@ -25,6 +25,21 @@ from lumen.services.cost import calculate_cost
 # Priority order for access types when multiple apply (lower index = higher priority)
 _ACCESS_PRIORITY = {"blacklist": 0, "graylist": 1, "whitelist": 2}
 
+
+def get_model_status(mc) -> str:
+    """Return 'ok', 'degraded', 'down', or 'disabled' for a ModelConfig."""
+    if not mc.active:
+        return "disabled"
+    endpoints = list(mc.endpoints)
+    if not endpoints:
+        return "down"
+    healthy = sum(1 for e in endpoints if e.healthy)
+    if healthy == 0:
+        return "down"
+    if healthy < len(endpoints):
+        return "degraded"
+    return "ok"
+
 _rr_counters: dict = {}
 _rr_lock = threading.Lock()
 
