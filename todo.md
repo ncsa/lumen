@@ -7,10 +7,10 @@
 **Problem:** `get_model_access_status(entity_id, model_config_id)` is called in a loop
 over every active model on both the `/models` page (`models_page/routes.py:21`) and
 the `/chat` page (`chat/routes.py:78`). Each call fires up to 4 DB queries:
-  1. `EntityModelAccess` user-level lookup (short-circuits if found)
-  2. `_get_active_group_ids(entity_id)` — a GROUP JOIN (same result every iteration, N calls)
-  3. `GroupModelAccess` per-model rule lookup
-  4. `Group.model_access_default` lookup
+   1. `EntityModelAccess` user-level lookup (short-circuits if found)
+   2. `_get_active_group_ids(entity_id)` — a GROUP JOIN (same result every iteration, N calls)
+   3. `GroupModelAccess` per-model rule lookup
+   4. `Group.model_access_default` lookup
 
 **Impact:**
 - 10 active models, group member, no user-level rules → ~40 queries per page load
@@ -58,18 +58,36 @@ Note: PostgreSQL's `time_bucket` accepts a bind parameter for the interval, e.g.
 
 ---
 
-## [STYLE] Consolidate Bootstrap 5 + UIUC Toolkit CSS
+## [SECURITY] Missing input validation and sanitization
 
-**Files:** `lumen/templates/base.html`, `lumen/templates/chat.html`, all templates
+**File:** `lumen/blueprints/chat/routes.py` (various locations)
 
-**Problem:** The project loads both Bootstrap 5 and the University of Illinois Toolkit
-(`ilw-*` web components). This causes:
-- Redundant CSS (both define containers, spacing, typography)
-- `<style>` blocks in `chat.html` that override Bootstrap but conflict with Toolkit
-- Inconsistent spacing: Bootstrap `.container` vs Toolkit `ilw-page` margins
-- Component duplication: Bootstrap dropdowns vs `ilw-header-menu`
+**Problem:** Several endpoints lack proper input validation:
+- File upload endpoint (`/chat/upload`) validates extension but could benefit from 
+  additional MIME type validation
+- Text truncation uses user-controlled `max_chars` without upper bounds checking
+- Multiple JSON endpoints trust client-sent data structure
 
-**Fix approach:** Decide on one layout system (likely Toolkit as the Illinois standard),
-migrate all inline `<style>` blocks to `lumen/static/css/app.css`, remove Bootstrap
-layout utilities where Toolkit equivalents exist. Keep Bootstrap for form controls and
-utilities not covered by the Toolkit. Large refactor — estimate 2–3 days.
+**Risk:** While current implementation has some guards, missing validation could 
+lead to resource exhaustion or bypassed security controls if protections change.
+
+**Fix:** Implement comprehensive input validation including:
+- Upper bounds on all user-controllable limits
+- Strict schema validation for JSON inputs
+- Defense-in-depth validation for file uploads (extension + content-type + magic bytes)
+
+---
+## [MAINTENANCE] Inconsistent test coverage
+
+**Observation:** The project has unit tests in `tests/unit/` and UI tests in `tests/ui/` 
+but coverage appears inconsistent across modules.
+
+**Risk:** Critical paths like authentication, authorization, and payment processing 
+may lack adequate test coverage, increasing regression risk.
+
+**Recommendation:** 
+- Conduct coverage analysis to identify undertested areas
+- Prioritize adding tests for security-critical functions
+- Maintain existing test patterns when adding new features
+
+---

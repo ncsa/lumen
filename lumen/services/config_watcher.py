@@ -82,7 +82,7 @@ def _watcher(app, config_path):
                 chat_cfg = new_data.get("chat", {})
                 app.config["CHAT_CONVERSATION_REMOVE_MODE"] = chat_cfg.get("remove", "hide")
 
-                theme_name = app_cfg.get("theme", "illinois")
+                theme_name = app_cfg.get("theme", "default")
                 themes_root = app.config.get("THEMES_ROOT", "")
                 theme_dir = os.path.join(themes_root, theme_name)
                 if os.path.isdir(theme_dir):

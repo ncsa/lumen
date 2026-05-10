@@ -16,7 +16,7 @@ class _ThemeLoader(BaseLoader):
         self._app = app
 
     def get_source(self, environment, template):
-        theme_name = self._app.config.get("THEME_NAME", "illinois")
+        theme_name = self._app.config.get("THEME_NAME", "default")
         path = os.path.join(self._themes_root, theme_name, "templates", template)
         if not os.path.isfile(path):
             raise TemplateNotFound(template)
@@ -116,10 +116,10 @@ def create_app():
     # Load theme — dynamic loader so hot reload works when app.theme changes in config.yaml
     themes_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "themes")
     app.config["THEMES_ROOT"] = themes_root
-    theme_name = app_cfg.get("theme", "illinois")
+    theme_name = app_cfg.get("theme", "default")
     if not os.path.isdir(os.path.join(themes_root, theme_name)):
-        app.logger.warning("Theme '%s' not found, falling back to 'illinois'", theme_name)
-        theme_name = "illinois"
+        app.logger.warning("Theme '%s' not found, falling back to 'default'", theme_name)
+        theme_name = "default"
     app.config["THEME_NAME"] = theme_name
     with open(os.path.join(themes_root, theme_name, "theme.yaml")) as f:
         app.config["THEME"] = yaml.safe_load(f)
