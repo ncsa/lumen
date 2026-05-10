@@ -1,6 +1,6 @@
 # Lumen
 
-Lumen is a self-hosted AI gateway for research institutions. It provides a web chat interface and an OpenAI-compatible API proxy, while giving administrators control over who can access which models and how many tokens each user or group can spend.
+Lumen is a self-hosted AI gateway. It provides a web chat interface and an OpenAI-compatible API proxy, while giving administrators control over who can access which models and how many tokens each user or group can spend. Administrators can configure the system to proxy different models, and for each model it can point to one or more endpoints that host the model.
 
 **Key features:**
 - Web chat interface for AI models (OpenAI-compatible endpoints, Ollama, vLLM, etc.)
