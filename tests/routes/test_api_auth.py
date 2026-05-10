@@ -396,3 +396,37 @@ def test_chat_completions_whitelist_passes_access(
               "messages": [{"role": "user", "content": "hi"}]},
     )
     assert resp.status_code != 403
+
+
+def test_chat_completions_missing_messages_400(client, api_key):
+    """model provided but messages omitted → 400."""
+    token, _ = api_key
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "test-model"},
+    )
+    assert resp.status_code == 400
+    assert resp.get_json()["error"]["type"] == "invalid_request_error"
+
+
+def test_list_models_response_includes_required_openai_fields(
+    app, client, test_user, test_model, test_model_endpoint, api_key,
+):
+    """Each model in /v1/models must carry the OpenAI-spec required fields:
+    id, object='model', created (int), owned_by (str).
+    See: https://platform.openai.com/docs/api-reference/models/object
+    """
+    token, _ = api_key
+    with app.app_context():
+        _grant_unlimited_pool(app, test_user["id"])
+
+    resp = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200
+    data = resp.get_json()["data"]
+    assert data, "Expected at least one model in the list"
+    for m in data:
+        assert "id" in m
+        assert m.get("object") == "model"
+        assert isinstance(m.get("created"), int)
+        assert isinstance(m.get("owned_by"), str)

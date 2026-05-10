@@ -183,3 +183,42 @@ def test_get_pool_limit_blocked(app, ids):
         db.session.add(EntityLimit(entity_id=entity_id, max_coins=0, refresh_coins=0, starting_coins=0))
         db.session.commit()
         assert get_pool_limit(entity_id) is None
+
+
+# ---------------------------------------------------------------------------
+# Entity-level model_access_default (used for client/service entities via yaml)
+# Covers llm.py lines 126-133: the fallthrough after no user or group rules.
+# ---------------------------------------------------------------------------
+
+def test_entity_model_access_default_blacklist(app, ids):
+    """Entity model_access_default=blacklist blocks when no user/group rules exist."""
+    entity_id, model_id = ids
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        entity = db.session.get(Entity, entity_id)
+        entity.model_access_default = "blacklist"
+        db.session.commit()
+        assert get_model_access_status(entity_id, model_id) == "blocked"
+
+
+def test_entity_model_access_default_graylist(app, ids):
+    entity_id, model_id = ids
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        entity = db.session.get(Entity, entity_id)
+        entity.model_access_default = "graylist"
+        db.session.commit()
+        assert get_model_access_status(entity_id, model_id) == "graylist"
+
+
+def test_entity_model_access_default_whitelist(app, ids):
+    entity_id, model_id = ids
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        entity = db.session.get(Entity, entity_id)
+        entity.model_access_default = "whitelist"
+        db.session.commit()
+        assert get_model_access_status(entity_id, model_id) == "allowed"

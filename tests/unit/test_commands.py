@@ -174,3 +174,50 @@ def test_sync_clients_model_access(app):
         assert rule.access_type == "whitelist"
 
 
+def test_sync_groups_removes_limit_when_max_removed(app):
+    """sync_groups_from_yaml deletes an existing GroupLimit when 'max' key is absent (else branch)."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.group import Group
+        from lumen.models.group_limit import GroupLimit
+        # First sync: create group with a token limit.
+        sync_groups_from_yaml({"groups": {"rm-grp": {"max": 100, "refresh": 10, "starting": 100}}})
+        g = db.session.execute(select(Group).filter_by(name="rm-grp")).scalar_one_or_none()
+        assert db.session.execute(select(GroupLimit).filter_by(group_id=g.id)).scalar_one_or_none() is not None
+        # Second sync: same group, no 'max' key — the existing GroupLimit should be deleted.
+        sync_groups_from_yaml({"groups": {"rm-grp": {}}})
+        db.session.expire_all()
+        g = db.session.execute(select(Group).filter_by(name="rm-grp")).scalar_one_or_none()
+        assert db.session.execute(select(GroupLimit).filter_by(group_id=g.id)).scalar_one_or_none() is None
+
+
+def test_sync_groups_skips_unknown_model_in_access(app):
+    """sync_groups_from_yaml logs a warning and skips model names not in the DB."""
+    with app.app_context():
+        yaml_data = {
+            "groups": {
+                "grp": {
+                    "model_access": {"whitelist": ["no-such-model"]}
+                }
+            }
+        }
+        # Must not raise; the unknown model is silently skipped.
+        sync_groups_from_yaml(yaml_data)
+
+
+def test_sync_clients_skips_entity_with_no_matching_config(app):
+    """sync_clients_from_yaml skips a client entity that has no named entry and no default config."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.entity_limit import EntityLimit
+        client = Entity(entity_type="client", name="orphan-svc", initials="OS", active=True)
+        db.session.add(client)
+        db.session.commit()
+        # yaml has a named entry for a different client only — orphan-svc falls through to empty default.
+        yaml_data = {"clients": {"other-svc": {"max": 10.0, "starting": 10.0}}}
+        sync_clients_from_yaml(yaml_data)
+        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=client.id)).scalar_one_or_none()
+        assert limit is None
+
+

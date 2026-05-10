@@ -1,4 +1,5 @@
 import hashlib
+from datetime import datetime, timezone
 
 from flask import Blueprint, redirect, url_for, session, render_template, current_app
 from sqlalchemy import select
@@ -144,7 +145,11 @@ def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=No
         pool = get_pool_limit(entity.id)
         if pool is not None and pool[0] != -2:
             _, _, starting_coins = pool
-            db.session.add(EntityBalance(entity_id=entity.id, coins_left=starting_coins))
+            db.session.add(EntityBalance(
+                entity_id=entity.id,
+                coins_left=starting_coins,
+                last_refill_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            ))
 
 
 @auth_bp.route("/")

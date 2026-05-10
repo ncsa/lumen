@@ -116,3 +116,20 @@ def test_has_model_consent_false(app, test_user, test_model):
         assert has_model_consent(entity_id, model_id) is False
 
 
+def test_subtract_coins_noop_when_no_balance_row(app, test_user, test_model):
+    """subtract_coins is a no-op when no EntityBalance row exists (limit present but balance not yet created)."""
+    entity_id, model_id = test_user["id"], test_model["id"]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.services.llm import subtract_coins
+        from sqlalchemy import select
+        db.session.add(EntityLimit(entity_id=entity_id, max_coins=100, refresh_coins=0, starting_coins=100))
+        db.session.commit()
+        # No EntityBalance row — subtract_coins must not raise and must not create one
+        subtract_coins(entity_id, model_id, 10.0)
+        db.session.commit()
+        assert db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none() is None
+
+

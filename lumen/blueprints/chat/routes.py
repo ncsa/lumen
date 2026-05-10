@@ -239,12 +239,11 @@ def chat_stream():
 @limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def list_conversations():
     entity_id = session["entity_id"]
-    convs = (
-        Conversation.query
+    convs = db.session.execute(
+        select(Conversation)
         .filter_by(entity_id=entity_id, hidden=False)
         .order_by(Conversation.updated_at.desc())
-        .all()
-    )
+    ).scalars().all()
     conv_ids = [c.id for c in convs]
     last_msgs: dict[int, Message] = {}
     if conv_ids:

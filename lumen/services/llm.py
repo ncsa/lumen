@@ -161,30 +161,29 @@ def get_pool_limit(entity_id: int):
 
     max_coins == -2 means unlimited.
 
-    Resolution: take the best limit from user's EntityLimit and their active group GroupLimits.
-    User EntityLimit with max_coins == 0 blocks regardless of groups.
-    -2 (unlimited) wins over any positive value.
+    Resolution: user's EntityLimit always wins over group limits (consistent with model access).
+    If no EntityLimit exists, fall back to the best GroupLimit (-2 beats any positive value).
+    EntityLimit with max_coins == 0 blocks the entity regardless of groups.
     """
     user_limit = db.session.execute(select(EntityLimit).filter_by(entity_id=entity_id)).scalar_one_or_none()
-    if user_limit is not None and float(user_limit.max_coins) == 0:
-        return None  # explicitly blocked
+    if user_limit is not None:
+        if float(user_limit.max_coins) == 0:
+            return None  # explicitly blocked
+        return (float(user_limit.max_coins), float(user_limit.refresh_coins), float(user_limit.starting_coins))
 
+    # No user-level limit — fall back to best group limit.
     group_ids = _get_active_group_ids(entity_id)
+    if not group_ids:
+        return None
     group_limits = db.session.execute(
         select(GroupLimit).where(GroupLimit.group_id.in_(group_ids))
-    ).scalars().all() if group_ids else []
-
-    candidates = []
-    if user_limit is not None and float(user_limit.max_coins) != 0:
-        candidates.append((float(user_limit.max_coins), float(user_limit.refresh_coins), float(user_limit.starting_coins)))
-    for gl in group_limits:
-        if float(gl.max_coins) != 0:
-            candidates.append((float(gl.max_coins), float(gl.refresh_coins), float(gl.starting_coins)))
-
+    ).scalars().all()
+    candidates = [
+        (float(gl.max_coins), float(gl.refresh_coins), float(gl.starting_coins))
+        for gl in group_limits if float(gl.max_coins) != 0
+    ]
     if not candidates:
         return None
-
-    # -2 (unlimited) wins; otherwise take highest max_coins
     for c in candidates:
         if c[0] == -2:
             return (-2, 0, 0)
@@ -217,6 +216,7 @@ def get_coin_balance(entity_id: int, model_config_id: int):
         balance = EntityBalance(
             entity_id=entity_id,
             coins_left=starting,
+            last_refill_at=datetime.now(timezone.utc).replace(tzinfo=None),
         )
         db.session.add(balance)
         db.session.flush()

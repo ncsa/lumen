@@ -131,3 +131,103 @@ def test_sync_rule_based_group_assignment(app, user):
         uiuc_group = db.session.execute(select(Group).filter_by(name="uiuc")).scalar_one_or_none()
         member = db.session.execute(select(GroupMember).filter_by(entity_id=user, group_id=uiuc_group.id)).scalar_one_or_none()
         assert member is not None
+
+
+def test_sync_rule_no_match_does_not_assign_group(app, user):
+    """Rule present but field value doesn't match → user NOT added to the group."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        db.session.add(Group(name="uiuc", active=True, config_managed=True))
+        db.session.commit()
+
+        entity = db.session.get(Entity, user)
+        yaml_data = {
+            "groups": {
+                "uiuc": {
+                    "rules": [{"field": "eppn", "contains": "@illinois.edu"}]
+                }
+            }
+        }
+        userinfo = {"eppn": "testuser@other.edu"}  # doesn't contain @illinois.edu
+        sync_user_from_yaml(entity, "sync@example.com", yaml_data, userinfo=userinfo)
+        db.session.commit()
+
+        uiuc_group = db.session.execute(select(Group).filter_by(name="uiuc")).scalar_one_or_none()
+        member = db.session.execute(select(GroupMember).filter_by(entity_id=user, group_id=uiuc_group.id)).scalar_one_or_none()
+        assert member is None
+
+
+def test_sync_rule_equals_type(app, user):
+    """Rule with 'equals' predicate assigns the group when the field matches exactly."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        db.session.add(Group(name="staff", active=True, config_managed=True))
+        db.session.commit()
+
+        entity = db.session.get(Entity, user)
+        yaml_data = {
+            "groups": {
+                "staff": {
+                    "rules": [{"field": "affiliation", "equals": "staff"}]
+                }
+            }
+        }
+        userinfo = {"affiliation": "staff"}
+        sync_user_from_yaml(entity, "sync@example.com", yaml_data, userinfo=userinfo)
+        db.session.commit()
+
+        staff_group = db.session.execute(select(Group).filter_by(name="staff")).scalar_one_or_none()
+        member = db.session.execute(select(GroupMember).filter_by(entity_id=user, group_id=staff_group.id)).scalar_one_or_none()
+        assert member is not None
+
+
+def test_sync_removes_entity_limit_when_pool_removed_from_yaml(app, user):
+    """If pool config is removed from yaml, any config-managed EntityLimit is deleted (else branch)."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.entity_limit import EntityLimit
+        entity = db.session.get(Entity, user)
+        # First sync: create a config-managed limit.
+        sync_user_from_yaml(entity, "sync@example.com", {
+            "users": {"sync@example.com": {"pool": {"max": 100, "refresh": 10, "starting": 100}}}
+        })
+        db.session.commit()
+        assert db.session.execute(select(EntityLimit).filter_by(entity_id=user)).scalar_one_or_none() is not None
+
+        # Second sync: no pool config → the config-managed limit should be deleted.
+        entity = db.session.get(Entity, user)
+        sync_user_from_yaml(entity, "sync@example.com", {})
+        db.session.commit()
+        assert db.session.execute(select(EntityLimit).filter_by(entity_id=user)).scalar_one_or_none() is None
+
+
+def test_sync_user_model_whitelist(app, user):
+    """users.<email>.models list whitelists specific models for the user."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.entity_model_access import EntityModelAccess
+        from lumen.models.model_config import ModelConfig
+        mc = ModelConfig(model_name="allowed-model", input_cost_per_million=1.0, output_cost_per_million=1.0, active=True)
+        db.session.add(mc)
+        db.session.commit()
+
+        entity = db.session.get(Entity, user)
+        yaml_data = {
+            "users": {"sync@example.com": {"models": ["allowed-model"]}}
+        }
+        sync_user_from_yaml(entity, "sync@example.com", yaml_data)
+        db.session.commit()
+
+        rule = db.session.execute(
+            select(EntityModelAccess).filter_by(entity_id=user, model_config_id=mc.id)
+        ).scalar_one_or_none()
+        assert rule is not None
+        assert rule.access_type == "whitelist"

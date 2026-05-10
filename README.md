@@ -267,6 +267,10 @@ groups:
     starting: 10    # $10 on first login
 ```
 
+Coin budget resolution follows the same priority as model access: a **per-user limit always wins over group limits**. If a user has a per-user limit (set via `users:` in `config.yaml`), that value is used regardless of what any group grants. If no per-user limit exists, the most generous group limit applies (`-2` unlimited beats any positive value).
+
+To cap a specific user below their group's budget, set a per-user limit via the `users:` key in `config.yaml`.
+
 #### Auto-assignment rules
 
 Automatically add users to a group at login based on their CILogon attributes (requires the `org.cilogon.userinfo` scope):

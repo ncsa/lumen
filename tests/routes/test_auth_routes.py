@@ -90,3 +90,14 @@ def test_logout_redirects_to_landing(auth_client):
     resp = auth_client.get("/logout", follow_redirects=False)
     assert resp.status_code == 302
     assert "/" in resp.headers["Location"]
+
+
+def test_devlogin_returns_403_when_not_configured(app, client):
+    """devlogin must return 403 when DEV_USER is not set in config."""
+    original = app.config.pop("DEV_USER", None)
+    try:
+        resp = client.get("/devlogin")
+        assert resp.status_code == 403
+    finally:
+        if original is not None:
+            app.config["DEV_USER"] = original

@@ -352,7 +352,8 @@ def test_get_pool_limit_group_limit(app, test_user, test_model):
         assert result[0] == 500.0
 
 
-def test_get_pool_limit_user_wins_over_group(app, test_user, test_model):
+def test_get_pool_limit_user_limit_beats_lower_group(app, test_user, test_model):
+    """get_pool_limit returns the highest max_coins — user's 200 beats group's 100."""
     entity_id = test_user["id"]
     with app.app_context():
         from lumen.extensions import db
@@ -364,6 +365,50 @@ def test_get_pool_limit_user_wins_over_group(app, test_user, test_model):
         db.session.add(GroupLimit(group_id=g.id, max_coins=100, refresh_coins=0, starting_coins=100))
         db.session.add(EntityLimit(entity_id=entity_id, max_coins=200, refresh_coins=0, starting_coins=200))
         db.session.commit()
-        result = get_pool_limit(entity_id)
-        # Higher max_coins wins
-        assert result[0] == 200.0
+        assert get_pool_limit(entity_id)[0] == 200.0
+
+
+def test_get_pool_limit_user_beats_higher_group(app, test_user, test_model):
+    """User EntityLimit always wins — user's 50 beats group's 999."""
+    entity_id = test_user["id"]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.models.group_limit import GroupLimit
+        from lumen.services.llm import get_pool_limit
+        g = _make_group(db, "grp-limit3")
+        _add_member(db, g.id, entity_id)
+        db.session.add(GroupLimit(group_id=g.id, max_coins=999, refresh_coins=0, starting_coins=999))
+        db.session.add(EntityLimit(entity_id=entity_id, max_coins=50, refresh_coins=0, starting_coins=50))
+        db.session.commit()
+        assert get_pool_limit(entity_id)[0] == 50.0
+
+
+def test_get_pool_limit_user_wins_over_unlimited_group(app, test_user, test_model):
+    """User EntityLimit wins even over an unlimited (-2) group — user sets the cap."""
+    entity_id = test_user["id"]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.models.group_limit import GroupLimit
+        from lumen.services.llm import get_pool_limit
+        g = _make_group(db, "unlimited-grp")
+        _add_member(db, g.id, entity_id)
+        db.session.add(GroupLimit(group_id=g.id, max_coins=-2, refresh_coins=0, starting_coins=0))
+        db.session.add(EntityLimit(entity_id=entity_id, max_coins=500, refresh_coins=10, starting_coins=500))
+        db.session.commit()
+        assert get_pool_limit(entity_id)[0] == 500.0
+
+
+def test_get_pool_limit_group_unlimited_when_no_user_limit(app, test_user, test_model):
+    """Group unlimited (-2) is used when no user EntityLimit exists."""
+    entity_id = test_user["id"]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.group_limit import GroupLimit
+        from lumen.services.llm import get_pool_limit
+        g = _make_group(db, "unlimited-grp2")
+        _add_member(db, g.id, entity_id)
+        db.session.add(GroupLimit(group_id=g.id, max_coins=-2, refresh_coins=0, starting_coins=0))
+        db.session.commit()
+        assert get_pool_limit(entity_id) == (-2, 0, 0)

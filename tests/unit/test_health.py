@@ -18,8 +18,20 @@ def _add_endpoint(db, model_config_id, url, api_key, model_name=None, healthy=Tr
 
 
 def _make_openai_mock(model_ids):
-    """Return a context-manager mock that lists the given model IDs."""
-    model_obj = lambda mid: MagicMock(id=mid)
+    """Return a context-manager mock that lists the given model IDs.
+
+    Model objects carry all four required fields from the OpenAI API spec:
+    id (str), created (int, Unix timestamp), object (Literal["model"]), owned_by (str).
+    See: https://platform.openai.com/docs/api-reference/models/object
+    """
+    def model_obj(mid):
+        m = MagicMock()
+        m.id = mid
+        m.created = 1677610602  # fixed Unix timestamp — arbitrary but spec-valid
+        m.object = "model"
+        m.owned_by = "test-org"
+        return m
+
     client = MagicMock()
     client.models.list.return_value = MagicMock(data=[model_obj(m) for m in model_ids])
     cm = MagicMock()

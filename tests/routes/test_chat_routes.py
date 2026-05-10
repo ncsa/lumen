@@ -123,6 +123,12 @@ def test_chat_stream_missing_model(auth_client):
     assert resp.status_code == 400
 
 
+def test_chat_stream_model_but_no_messages(auth_client, test_model):
+    """model provided but messages list omitted → 400."""
+    resp = auth_client.post("/chat/stream", json={"model": test_model["model_name"]})
+    assert resp.status_code == 400
+
+
 def test_chat_stream_unknown_model(auth_client):
     resp = auth_client.post("/chat/stream", json={
         "messages": [{"role": "user", "content": "hi"}],

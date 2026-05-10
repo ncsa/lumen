@@ -147,3 +147,46 @@ def test_partial_hour_uses_floor(app, test_user):
         refill_coin_balances(now=now)
         bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one_or_none()
         assert float(bal.coins_left) == 10.0  # int(1.7) * 10 = 10
+
+
+def test_skips_balance_with_null_last_refill_at(app, test_user):
+    """EntityBalance rows with last_refill_at=None are excluded from the refill query.
+    In practice this state should not arise because both EntityBalance creation sites now
+    set last_refill_at to the current time — but the guard is still tested here."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.services.token_refill import refill_coin_balances
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        _add_limit(db, test_user["id"], max_coins=100, refresh_coins=10)
+        db.session.add(EntityBalance(entity_id=test_user["id"], coins_left=50, last_refill_at=None))
+        db.session.commit()
+
+        assert refill_coin_balances(now=now) == 0
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one_or_none()
+        assert float(bal.coins_left) == 50.0
+
+
+def test_new_balance_created_with_last_refill_at(app, test_user, test_model):
+    """get_coin_balance must stamp last_refill_at so the new balance is picked up by the refiller."""
+    entity_id, model_id = test_user["id"], test_model["id"]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.services.llm import get_coin_balance
+        from lumen.services.token_refill import refill_coin_balances
+        db.session.add(EntityLimit(entity_id=entity_id, max_coins=100, refresh_coins=10, starting_coins=50))
+        db.session.commit()
+
+        get_coin_balance(entity_id, model_id)
+        db.session.commit()
+
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()
+        assert bal is not None
+        assert bal.last_refill_at is not None, "last_refill_at must be set so the refiller can process this balance"
+
+        # Simulate 2 hours passing — the balance should now be refillable.
+        now = bal.last_refill_at + timedelta(hours=2)
+        updated = refill_coin_balances(now=now)
+        assert updated == 1

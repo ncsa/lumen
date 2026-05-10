@@ -585,3 +585,13 @@ When determining whether an entity may use a model, Lumen evaluates in this prio
 5. **Deny** — if no rule applies, access is denied.
 
 For `graylist` access, the entity must also have a row in `entity_model_consents` for the model.
+
+## Coin Budget Resolution Order
+
+When determining an entity's coin pool, Lumen evaluates in this priority order:
+
+1. **Entity-level** `entity_limits` row → if present, use it (wins over all group limits). Set via `users:` in `config.yaml`. `max_coins = 0` blocks the entity; `max_coins = -2` grants unlimited access.
+2. **Group-level** `group_limits` rows → if no entity limit exists, the most generous group limit is used. `-2` (unlimited) beats any positive value; among positive values, the highest `max_coins` wins.
+3. **No limit** → access is denied (entity cannot use any model).
+
+This mirrors the model access priority: entity-level configuration always overrides group defaults.
