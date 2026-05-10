@@ -4,7 +4,26 @@ import sys
 
 import yaml
 from flask import Flask, jsonify, request, session
+from jinja2 import BaseLoader, ChoiceLoader, TemplateNotFound
 from werkzeug.middleware.proxy_fix import ProxyFix
+
+
+class _ThemeLoader(BaseLoader):
+    """Jinja2 loader that resolves templates from the active theme directory at render time."""
+
+    def __init__(self, themes_root, app):
+        self._themes_root = themes_root
+        self._app = app
+
+    def get_source(self, environment, template):
+        theme_name = self._app.config.get("THEME_NAME", "illinois")
+        path = os.path.join(self._themes_root, theme_name, "templates", template)
+        if not os.path.isfile(path):
+            raise TemplateNotFound(template)
+        mtime = os.path.getmtime(path)
+        with open(path) as f:
+            source = f.read()
+        return source, path, lambda: mtime == os.path.getmtime(path)
 
 
 def create_app():
@@ -93,6 +112,25 @@ def create_app():
         app.config["DEV_USER"] = _dev_raw or ""
         app.config["DEV_USER_GROUPS"] = []
     app.config["GITHUB_URL"] = app_cfg.get("github_url", "https://github.com/ncsa/lumen")
+
+    # Load theme — dynamic loader so hot reload works when app.theme changes in config.yaml
+    themes_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "themes")
+    app.config["THEMES_ROOT"] = themes_root
+    theme_name = app_cfg.get("theme", "illinois")
+    if not os.path.isdir(os.path.join(themes_root, theme_name)):
+        app.logger.warning("Theme '%s' not found, falling back to 'illinois'", theme_name)
+        theme_name = "illinois"
+    app.config["THEME_NAME"] = theme_name
+    with open(os.path.join(themes_root, theme_name, "theme.yaml")) as f:
+        app.config["THEME"] = yaml.safe_load(f)
+    app.jinja_loader = ChoiceLoader([_ThemeLoader(themes_root, app), app.jinja_loader])
+
+    from flask import send_from_directory as _send_from_directory
+
+    @app.route("/theme-static/<path:filename>")
+    def theme_static(filename):
+        theme_dir = os.path.join(app.config["THEMES_ROOT"], app.config["THEME_NAME"], "static")
+        return _send_from_directory(theme_dir, filename)
 
     oauth2_cfg = yaml_data.get("oauth2", {})
     for key in ("client_id", "client_secret", "server_metadata_url", "redirect_uri", "scopes"):
@@ -183,7 +221,7 @@ def create_app():
     # Context processor: inject app_name and nav_clients into all templates
     @app.context_processor
     def inject_nav():
-        result = {"app_name": app.config["APP_NAME"], "app_tagline": app.config["APP_TAGLINE"], "is_admin": False, "github_url": app.config.get("GITHUB_URL", ""), "is_logged_in": bool(session.get("entity_id"))}
+        result = {"app_name": app.config["APP_NAME"], "app_tagline": app.config["APP_TAGLINE"], "is_admin": False, "github_url": app.config.get("GITHUB_URL", ""), "is_logged_in": bool(session.get("entity_id")), "theme": app.config["THEME"]}
         if not session.get("entity_id"):
             result["nav_clients"] = []
             return result

@@ -81,6 +81,20 @@ def _watcher(app, config_path):
 
                 chat_cfg = new_data.get("chat", {})
                 app.config["CHAT_CONVERSATION_REMOVE_MODE"] = chat_cfg.get("remove", "hide")
+
+                theme_name = app_cfg.get("theme", "illinois")
+                themes_root = app.config.get("THEMES_ROOT", "")
+                theme_dir = os.path.join(themes_root, theme_name)
+                if os.path.isdir(theme_dir):
+                    if app.config.get("THEME_NAME") != theme_name:
+                        app.config["THEME_NAME"] = theme_name
+                        with open(os.path.join(theme_dir, "theme.yaml")) as _f:
+                            app.config["THEME"] = yaml.safe_load(_f)
+                        if app.jinja_env.cache is not None:
+                            app.jinja_env.cache.clear()
+                        logger.info("config_watcher: theme switched to '%s'", theme_name)
+                else:
+                    logger.warning("config_watcher: theme '%s' not found, keeping current theme", theme_name)
                 try:
                     sync_models_from_yaml(new_data)
                 except Exception as e:

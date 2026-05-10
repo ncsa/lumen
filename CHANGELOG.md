@@ -5,6 +5,7 @@ All notable changes to Lumen will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Theme system: branding (header, footer, logo, colors, CSS/JS) is defined per-theme in `themes/<name>/`. Set `app.theme` in `config.yaml` to switch themes; changes hot-reload within 5 seconds without a restart. Each theme provides `theme.yaml`, `templates/theme/` partials (header, footer, page_open/close, head_extras), and an optional `static/` folder. Built-in themes: `illinois` (default, Illinois Toolkit web components), `default` (plain Bootstrap), and `uic` (University of Illinois Chicago — uic.edu branding with official SVG logos, 80px navbar, multi-column footer). Chat bubble colors follow the active theme via `--bubble-user` / `--bubble-assistant` CSS variables.
 - CSRF protection via Flask-WTF: the model consent form is now protected; the `/v1/` API blueprint is exempt; JavaScript fetch calls (upload, delete conversation) send `X-CSRFToken` header
 - `todo.md` with detailed follow-up items for deferred technical debt (bulk access resolution, admin SQL pattern, CSS consolidation, SQLAlchemy modernization)
 - Tests for help and usage blueprint routes, covering key management, consent flow, coin pool, model status, and markdown frontmatter parsing

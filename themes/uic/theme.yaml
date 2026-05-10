@@ -1,0 +1,17 @@
+institution: University of Illinois Chicago
+institution_url: https://uic.edu
+primary_color: "#001e62"
+accent_color: "#d50032"
+secondary_color: "#007fa5"
+logo: img/uic-logo.svg
+logo_alt: University of Illinois Chicago
+css: []
+js: []
+skipto_color_theme: ""
+footer_links:
+  - label: UIC Home
+    url: https://uic.edu
+  - label: Library
+    url: https://library.uic.edu
+  - label: Directory
+    url: https://directory.uic.edu

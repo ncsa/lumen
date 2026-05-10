@@ -1,0 +1,29 @@
+<ilw-header slot="header">
+  <a slot="site-name" href="{% if is_logged_in %}{{ url_for('chat.chat_page') }}{% else %}/{% endif %}">{{ app_name }}</a>
+  <nav slot="links" aria-label="Utility">
+    <ul>
+      <li><a href="{{ url_for('help_bp.index_page') }}">Help</a></li>
+      {% if is_logged_in %}
+      <li><a href="{{ url_for('auth.logout') }}">Log Out</a></li>
+      {% else %}
+      <li><a href="{{ url_for('auth.landing') }}">Login</a></li>
+      {% endif %}
+    </ul>
+  </nav>
+  {% if is_logged_in %}
+  <ilw-header-menu slot="navigation">
+    <ul>
+      <li><a href="{{ url_for('chat.chat_page') }}">Chat</a></li>
+      <li><a href="{{ url_for('usage.index') }}">Usage</a></li>
+      <li><a href="{{ url_for('models_page.index') }}">Models</a></li>
+      {% if is_admin or nav_clients %}
+      <li><a href="{{ url_for('clients.index') }}">Clients</a></li>
+      {% endif %}
+      {% if is_admin %}
+      <li><a href="{{ url_for('admin.users') }}">Users</a></li>
+      <li><a href="{{ url_for('admin.analytics') }}">Analytics</a></li>
+      {% endif %}
+    </ul>
+  </ilw-header-menu>
+  {% endif %}
+</ilw-header>

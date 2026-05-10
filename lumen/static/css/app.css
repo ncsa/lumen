@@ -81,14 +81,14 @@
 }
 
 .chat-bubble-user {
-    background-color: #13294b;
+    background-color: var(--bubble-user, #13294b);
     color: #fff;
     border-bottom-right-radius: 0.25rem;
     white-space: pre-wrap;
 }
 
 .chat-bubble-assistant {
-    background-color: #b5300c;
+    background-color: var(--bubble-assistant, #b5300c);
     color: #fff;
     border-bottom-left-radius: 0.25rem;
 }

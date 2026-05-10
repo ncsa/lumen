@@ -8,6 +8,7 @@ app:
   encryption_key: ""
   database_url: postgresql://lumen:lumen@localhost:5678/lumen  # TimescaleDB (started by dev.sh)
   debug: true   # set to false in production
+  # theme: illinois  # Theme to use; themes live in themes/<name>/. Built-in: illinois (default), default
   # dev_user: dev@example.com  # Allows bypass of OAuth; can log in as this email directly
   # dev_user:                  # Extended form: also assigns group memberships on every login
   #   email: dev@example.com

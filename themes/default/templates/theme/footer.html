@@ -1,0 +1,16 @@
+<footer class="py-3 mt-auto" style="background-color:{{ theme.primary_color }}">
+  <div class="default-container">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <div class="text-white-50 small">
+        {% if theme.institution %}<a href="{{ theme.institution_url }}" class="text-white-50">{{ theme.institution }}</a>{% endif %}
+      </div>
+      <div class="d-flex flex-wrap gap-3">
+        {% for link in theme.footer_links %}
+        <a href="{{ link.url }}" class="text-white-50 small" target="_blank" rel="noopener noreferrer">{{ link.label }}</a>
+        {% endfor %}
+        <a href="{{ github_url }}" class="text-white-50 small" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
+        <a href="{{ github_url }}/issues" class="text-white-50 small" target="_blank" rel="noopener noreferrer">Request Feature</a>
+      </div>
+    </div>
+  </div>
+</footer>

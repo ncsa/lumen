@@ -1,0 +1,35 @@
+<header style="background-color:#f5f5f5;border-bottom:1px solid #ddd">
+  <div class="uic-container d-flex align-items-flex-end" style="height:80px">
+    <a href="https://uic.edu" target="_blank" rel="noopener noreferrer" aria-label="University of Illinois Chicago" style="flex-shrink:0">
+      <img src="{{ url_for('theme_static', filename='img/uic-logo.svg') }}"
+           alt="University of Illinois Chicago" style="height:52px;display:block">
+    </a>
+
+    <div style="margin-left:3rem;flex:1;display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap">
+      <nav aria-label="Main navigation" class="d-flex flex-wrap">
+        {% if is_logged_in %}
+        <a href="{{ url_for('chat.chat_page') }}" class="uic-nav-link">Chat</a>
+        <a href="{{ url_for('usage.index') }}" class="uic-nav-link">Usage</a>
+        <a href="{{ url_for('models_page.index') }}" class="uic-nav-link">Models</a>
+        {% if is_admin or nav_clients %}
+        <a href="{{ url_for('clients.index') }}" class="uic-nav-link">Clients</a>
+        {% endif %}
+        {% if is_admin %}
+        <a href="{{ url_for('admin.users') }}" class="uic-nav-link">Users</a>
+        <a href="{{ url_for('admin.analytics') }}" class="uic-nav-link">Analytics</a>
+        {% endif %}
+        {% else %}
+        <a href="/" class="uic-nav-link-brand">{{ app_name }}</a>
+        {% endif %}
+      </nav>
+      <nav aria-label="Utility navigation" class="d-flex flex-wrap">
+        <a href="{{ url_for('help_bp.index_page') }}" class="uic-nav-link">Help</a>
+        {% if is_logged_in %}
+        <a href="{{ url_for('auth.logout') }}" class="uic-nav-link">Log Out</a>
+        {% else %}
+        <a href="{{ url_for('auth.landing') }}" class="uic-nav-link">Login</a>
+        {% endif %}
+      </nav>
+    </div>
+  </div>
+</header>

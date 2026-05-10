@@ -1,0 +1,12 @@
+<ilw-spacer height="20px"></ilw-spacer>
+<ilw-footer slot="footer">
+  {% if theme.institution %}<p slot="primary-unit"><a href="{{ theme.institution_url }}">{{ theme.institution }}</a></p>{% endif %}
+  <p slot="site-name"><a href="{% if is_logged_in %}{{ url_for('chat.chat_page') }}{% else %}/{% endif %}">{{ app_name }}</a></p>
+  <div slot="actions">
+    {% for link in theme.footer_links %}
+    <a href="{{ link.url }}" target="_blank" rel="noopener noreferrer">{{ link.label }}</a>
+    {% endfor %}
+    <a href="{{ github_url }}" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
+    <a href="{{ github_url }}/issues" target="_blank" rel="noopener noreferrer">Request Feature</a>
+  </div>
+</ilw-footer>
