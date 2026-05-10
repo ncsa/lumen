@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Removed SkipTo.js accessibility test check — SkipTo.js is illinois-theme-only and the check was failing for other themes
+
 ## [1.9.0] - 2026-05-09
 
 ### Added
