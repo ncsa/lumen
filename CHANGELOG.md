@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-05-09
+
 ### Added
 - Theme system: branding (header, footer, logo, colors, CSS/JS) is defined per-theme in `themes/<name>/`. Set `app.theme` in `config.yaml` to switch themes; changes hot-reload within 5 seconds without a restart. Each theme provides `theme.yaml`, `templates/theme/` partials (header, footer, page_open/close, head_extras), and an optional `static/` folder. Built-in themes: `illinois` (default, Illinois Toolkit web components), `default` (plain Bootstrap), `uic` (University of Illinois Chicago — uic.edu branding with official SVG logos, 80px navbar, multi-column footer), and `uis` (University of Illinois Springfield — uis.edu branding with official wordmark, white/navy header, 1200px container, three-column footer with campus/site links and social icons). Chat bubble colors follow the active theme via `--bubble-user` / `--bubble-assistant` CSS variables.
 - "About Illinois Computes" and "Feedback & Support" sections added to the Introduction help page, crediting Illinois Computes and NCSA, with links to computes.illinois.edu, the NCSA support email, and the GitHub issue tracker
