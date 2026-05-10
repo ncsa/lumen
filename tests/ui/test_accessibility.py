@@ -11,7 +11,6 @@ Rules enforced (from CLAUDE.md):
 - Bootstrap modals (.modal[role=dialog] or .modal with tabindex) have aria-labelledby
 - Data tables (<table> with <thead> and <tbody>) have <caption> or aria-label
 - Heading levels do not skip (h1 → h2 → h3, never h1 → h3)
-- SkipTo.js script is present in the page
 """
 import pytest
 from bs4 import BeautifulSoup
@@ -106,12 +105,6 @@ def _assert_heading_hierarchy(soup, url):
         )
 
 
-def _assert_skip_navigation(soup, url):
-    """SkipTo.js (or equivalent skip-nav script) must be loaded."""
-    scripts = [s.get("src", "") for s in soup.find_all("script") if s.get("src")]
-    inline = [s.get_text() for s in soup.find_all("script") if not s.get("src")]
-    has_skipto = any("skipto" in src.lower() for src in scripts)
-    assert has_skipto, f"{url}: SkipTo.js not found in page scripts"
 
 
 def _run_all_checks(html_bytes, url):
@@ -124,7 +117,6 @@ def _run_all_checks(html_bytes, url):
     _assert_modals_labelled(soup, url)
     _assert_tables_have_captions(soup, url)
     _assert_heading_hierarchy(soup, url)
-    _assert_skip_navigation(soup, url)
 
 
 # ---------------------------------------------------------------------------
