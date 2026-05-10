@@ -1,0 +1,17 @@
+institution: University of Illinois Springfield
+institution_url: https://uis.edu
+primary_color: "#003366"
+accent_color: "#c8b18b"
+secondary_color: "#555555"
+logo: img/uis-wordmark-blue.png
+logo_alt: University of Illinois Springfield
+css: []
+js: []
+skipto_color_theme: ""
+footer_links:
+  - label: UIS Home
+    url: https://uis.edu
+  - label: Library
+    url: https://library.uis.edu
+  - label: Maps
+    url: https://maps.uis.edu

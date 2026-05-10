@@ -1,0 +1,35 @@
+<header style="background-color:#fff;border-bottom:1px solid #ddd">
+  <div class="uis-container d-flex align-items-center" style="height:80px">
+    <a href="https://uis.edu" target="_blank" rel="noopener noreferrer" aria-label="University of Illinois Springfield" style="flex-shrink:0">
+      <img src="{{ url_for('theme_static', filename='img/uis-wordmark-blue.png') }}"
+           alt="University of Illinois Springfield" style="height:48px;display:block">
+    </a>
+
+    <div style="margin-left:2.5rem;flex:1;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap">
+      <nav aria-label="Main navigation" class="d-flex flex-wrap">
+        {% if is_logged_in %}
+        <a href="{{ url_for('chat.chat_page') }}" class="uis-nav-link">Chat</a>
+        <a href="{{ url_for('usage.index') }}" class="uis-nav-link">Usage</a>
+        <a href="{{ url_for('models_page.index') }}" class="uis-nav-link">Models</a>
+        {% if is_admin or nav_clients %}
+        <a href="{{ url_for('clients.index') }}" class="uis-nav-link">Clients</a>
+        {% endif %}
+        {% if is_admin %}
+        <a href="{{ url_for('admin.users') }}" class="uis-nav-link">Users</a>
+        <a href="{{ url_for('admin.analytics') }}" class="uis-nav-link">Analytics</a>
+        {% endif %}
+        {% else %}
+        <a href="/" class="uis-nav-link-brand">{{ app_name }}</a>
+        {% endif %}
+      </nav>
+      <nav aria-label="Utility navigation" class="d-flex flex-wrap">
+        <a href="{{ url_for('help_bp.index_page') }}" class="uis-nav-link">Help</a>
+        {% if is_logged_in %}
+        <a href="{{ url_for('auth.logout') }}" class="uis-nav-link">Log Out</a>
+        {% else %}
+        <a href="{{ url_for('auth.landing') }}" class="uis-nav-link">Login</a>
+        {% endif %}
+      </nav>
+    </div>
+  </div>
+</header>

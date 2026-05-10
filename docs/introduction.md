@@ -59,3 +59,19 @@ You'd need over 1,000 similar questions to spend 1 coin.
 | Browse available models and their capabilities | [Models](models/models.md) |
 | Manage application clients (managers/admins) | [Clients](clients/clients.md) |
 | Configure Lumen (admins only) | [Admin Guide](admin/config.md) |
+
+## About Illinois Computes
+
+Lumen was developed by the [National Center for Supercomputing Applications (NCSA)](https://www.ncsa.illinois.edu) as part of [Illinois Computes](https://computes.illinois.edu).
+
+Illinois Computes is a commitment from the University of Illinois Urbana-Champaign and the University of Illinois System that funds NCSA to provide — at no cost — computing, storage, and other technology resources, alongside consulting expertise, to researchers across campus and the system.
+
+Illinois Computes' mission is to democratize access to cutting-edge technology and expert support for University of Illinois researchers across all disciplines and domains and all levels of computing experience. It is led by NCSA, drawing on its 40 years of experience supporting research computing nationally.
+
+Illinois Computes supports all disciplines and is committed to meeting researchers where they are, whether they are seasoned experts in research computing or completely new to the idea of using technology to advance their research.
+
+## Feedback & Support
+
+Questions and feedback are welcome. Send an email to [help@ncsa.illinois.edu](mailto:help@ncsa.illinois.edu?subject=Lumen) with **Lumen** in the subject line.
+
+To report a bug or request a feature, open an issue on the [Lumen GitHub repository](https://github.com/ncsa/lumen/issues).
