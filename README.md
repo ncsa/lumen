@@ -1,14 +1,19 @@
 # Lumen
 
-Lumen is a self-hosted AI chat portal for research institutions. It lets your users chat with AI models through a web browser, while giving administrators control over who can access which models and how many tokens each user or group can spend.
+Lumen is a self-hosted AI gateway for research institutions. It provides a web chat interface and an OpenAI-compatible API proxy, while giving administrators control over who can access which models and how many tokens each user or group can spend.
 
 **Key features:**
-- Chat interface for AI models (OpenAI-compatible endpoints, Ollama, vLLM, etc.)
+- Web chat interface for AI models (OpenAI-compatible endpoints, Ollama, vLLM, etc.)
+- OpenAI-compatible API proxy — use Lumen as a drop-in endpoint from any tool or script
+- Clients (machine-to-machine accounts) with their own coin pools and model access rules
+- File and document uploads in chat (text, PDF, images — configurable per deployment)
 - Login via your institution's identity provider through CILogon
 - Token budgets per user and group — with optional auto-refresh
 - Per-model access control: whitelist, blacklist, and graylist (requires user acknowledgment)
-- Admin panel to manage users, groups, and usage
+- Admin panel to manage users, groups, usage, and analytics charts
+- Institutional theming (built-in: `default`, `illinois`, `uic`, `uis`)
 - Round-robin load balancing across multiple model backends
+- Prometheus metrics endpoint
 
 ---
 
@@ -139,7 +144,10 @@ app:
   encryption_key: change-me-to-something-different  # separate secret used to hash user API keys
   database_url: sqlite:///lumen.db            # or a postgres:// URL
   debug: false
+  theme: illinois   # built-in themes: default, illinois, uic, uis
 ```
+
+The `theme` key selects the institutional look and feel. Themes live in `themes/<name>/` and can override templates, static assets, and navigation. If the named theme is not found, Lumen falls back to `default`.
 
 `encryption_key` can also be supplied via the `LUMEN_ENCRYPTION_KEY` environment variable, which takes precedence over the value in `config.yaml`. This is useful for injecting secrets at deploy time (e.g. via Docker secrets or a Kubernetes secret) without writing them into the config file.
 
@@ -179,9 +187,10 @@ models:
     input_cost_per_million: 5.0    # for usage tracking only
     output_cost_per_million: 15.0
     description: "OpenAI GPT-4o"   # optional short description shown in the UI
-    url: https://huggingface.co/... # optional HuggingFace URL — enables README tab on model page
+    url: https://huggingface.co/... # optional link shown in model details; HuggingFace URLs also load the model README
     knowledge_cutoff: "2024-04"    # optional, shown in model details
     supports_reasoning: false      # set true to stream chain-of-thought tokens
+    supports_function_calling: true # optional, shown in model details
     input_modalities: ["text", "image"]   # optional, shown in model details
     output_modalities: ["text"]
     context_window: 128000         # optional token limit shown in model details
@@ -282,6 +291,19 @@ Supported fields: `affiliation`, `member_of`, `idp`, `ou`. Groups assigned by ru
 ```yaml
 chat:
   remove: hide   # "hide" = soft-delete (recoverable) | "delete" = permanent
+  upload:
+    max_size_mb: 10           # maximum file upload size
+    max_text_chars: 100000    # maximum extracted text before truncation
+    allowed_extensions:       # accepted file types (backend uses magic-byte detection)
+      - txt
+      - md
+      - csv
+      - json
+      - py
+      - pdf
+      - png
+      - jpg
+      - jpeg
 ```
 
 ### Rate limiting
@@ -311,4 +333,77 @@ app:
 ```
 
 `pool_size + max_overflow` is the maximum number of simultaneous DB connections. For 50 concurrent requests, set these to at least 50 combined.
+
+### Clients
+
+Clients are machine-to-machine accounts — scripts, applications, or automated pipelines — that talk to Lumen's OpenAI-compatible API using an API key instead of logging in via OAuth. They are distinct from human users: they have no email address, no web chat access, and no per-user coin budget. Instead, each client has its own coin pool and model access rules.
+
+**Creating and managing clients**
+
+Admins create clients via the **Clients** page in the web UI (or via the API). Each client has:
+- One or more named API keys (generated in the UI, shown once, then hashed)
+- A coin pool (balance, cap, and optional hourly refill)
+- A model access policy (whitelist / blacklist / graylist)
+- One or more **managers** — regular users who can view and rotate that client's keys
+
+Managers can see the client's detail page and issue new keys but cannot change budgets or model access. Only admins can create clients, adjust budgets, or assign managers.
+
+**Using a client API key**
+
+Point any OpenAI-compatible tool at Lumen and use the client's API key as the `Authorization: Bearer` token:
+
+```
+base_url: https://your-lumen-domain/v1
+api_key:  lmk-...
+```
+
+**Coin pools**
+
+Client coin pools work the same as user coin pools — each request deducts coins based on tokens used at the model's configured rate. The pool recharges at `refresh` coins per hour up to the `max` cap.
+
+**Default coin pool from config**
+
+The `clients:` block in `config.yaml` sets the default pool parameters for all clients and optional named overrides:
+
+```yaml
+clients:
+  default:
+    max: 100.0        # coin budget (-2 = unlimited, 0 = blocked)
+    refresh: 0.0      # coins added per hour
+    starting: 100.0   # coins when the pool is first created
+    model_access:
+      default: whitelist   # allow all models unless explicitly listed
+
+  research-bot:            # named override for this specific client
+    max: 500.0
+    refresh: 1.0
+    starting: 500.0
+    model_access:
+      default: blacklist   # deny all models not in whitelist
+      whitelist: [gpt-4o, llama3]
+```
+
+Named entries match on the client's name as set in the UI. If a client has no named entry, `default` applies. Changes to `config.yaml` do **not** retroactively update existing coin pools — pool parameters are written to the database when the pool is first created.
+
+**Model access for clients**
+
+Clients follow the same whitelist / blacklist / graylist rules as users. Clients cannot be assigned graylist directly; a manager must visit the client's detail page and click **Accept** on any graylisted model before the client can use it.
+
+### Monitoring
+
+A read-only token for `GET /v1/models` — useful for uptime checkers that don't have a user account:
+
+```yaml
+monitoring:
+  token: "a-long-random-string"   # leave empty to disable
+```
+
+### Prometheus metrics
+
+```yaml
+prometheus:
+  enabled: true
+  token: "a-long-random-string"   # optional; Bearer token auth for /metrics
+  multiproc_dir: "/tmp/prom"      # required for multi-worker aggregation (mount as shared volume)
+```
 

@@ -4,6 +4,10 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- README: updated intro from "chat portal" to "AI gateway" to reflect API proxy capability; added key features for uploads, service accounts, theming, analytics, and Prometheus; added missing config sections (theme, chat.upload, clients, monitoring, prometheus); expanded clients section with full explanation of coin pools, managers, API usage, and model access; added `supports_function_calling` to model config reference; fixed `url` field description
+- config.yaml.example: corrected built-in theme list to `default, illinois, uic, uis`
+
 ## [1.9.1] - 2026-05-09
 
 ### Fixed
