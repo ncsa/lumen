@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.9.2] - 2026-05-10
+
 ### Added
 - Test coverage: spec-compliant OpenAI model mock (adds required `created`, `object`, `owned_by` fields); new negative/else-branch tests for entity `model_access_default`, `subtract_coins` with no balance row, group unlimited pool, `EntityBalance` with null `last_refill_at`, `sync_groups_from_yaml` GroupLimit deletion and unknown-model skip, `sync_clients_from_yaml` no-config skip, `sync_user_from_yaml` non-matching rules / `equals` predicate / limit removal / model whitelist, missing-`messages` 400 on `/v1/chat/completions` and `/chat/stream`, `devlogin` 403 without `DEV_USER`, and OpenAI response field validation on `/v1/models`
 

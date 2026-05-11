@@ -1021,7 +1021,7 @@ wheels = [
 
 [[package]]
 name = "lumen"
-version = "1.9.1"
+version = "1.9.2"
 source = { editable = "." }
 dependencies = [
     { name = "a2wsgi" },
