@@ -263,8 +263,8 @@
 
   // ── Bubble rendering ────────────────────────────────────────────
   function formatTimestamp(utcIsoStr) {
-    // utcIsoStr is Python's isoformat() output (no 'Z'), or null for "just now"
-    const d = utcIsoStr ? new Date(utcIsoStr + "Z") : new Date();
+    // utcIsoStr is already UTC with trailing 'Z' (from strftime), or null for "just now"
+    const d = utcIsoStr ? new Date(utcIsoStr) : new Date();
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 

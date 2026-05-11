@@ -8,6 +8,7 @@ All notable changes to Lumen will be documented in this file.
 - Test coverage: spec-compliant OpenAI model mock (adds required `created`, `object`, `owned_by` fields); new negative/else-branch tests for entity `model_access_default`, `subtract_coins` with no balance row, group unlimited pool, `EntityBalance` with null `last_refill_at`, `sync_groups_from_yaml` GroupLimit deletion and unknown-model skip, `sync_clients_from_yaml` no-config skip, `sync_user_from_yaml` non-matching rules / `equals` predicate / limit removal / model whitelist, missing-`messages` 400 on `/v1/chat/completions` and `/chat/stream`, `devlogin` 403 without `DEV_USER`, and OpenAI response field validation on `/v1/models`
 
 ### Fixed
+- Chat message timestamps showed "Invalid Date" because `formatTimestamp` appended a second `Z` to timestamps already ending in `Z` from the backend's `strftime` format
 - `list_conversations` in `chat/routes.py` used the deprecated `Conversation.query` pattern (banned by CLAUDE.md); replaced with `db.session.execute(select(...))`
 - New `EntityBalance` rows were created without `last_refill_at`, leaving them permanently excluded from the coin refill query (`WHERE last_refill_at IS NOT NULL`); both creation sites (`get_coin_balance` in `llm.py` and `sync_user_from_yaml` in `auth/routes.py`) now stamp the current UTC time so newly created balances are picked up by the refiller after one hour
 
