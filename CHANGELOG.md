@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- vLLM models that emit `delta.reasoning` (instead of `delta.reasoning_content`) now have their chain-of-thought captured and displayed as thinking
+
 ### Added
 - Thinking/reasoning content from the model is now saved to the database and shown again when reloading a past conversation (collapsed "Thought" block)
 - Token popup (ⓘ) now shows thinking tokens and text output tokens as separate values for reasoning models
