@@ -351,6 +351,18 @@
     const wrapper = document.createElement("div");
     wrapper.className = "d-flex flex-column " + (isUser ? "align-items-end" : "align-items-start");
     wrapper.style.maxWidth = "65%";
+    if (!isUser && meta && meta.thinking) {
+      const details = document.createElement("details");
+      details.className = "thinking-block mb-1";
+      const summary = document.createElement("summary");
+      summary.textContent = "Thought";
+      const pre = document.createElement("pre");
+      pre.className = "thinking-text";
+      pre.textContent = meta.thinking;
+      details.appendChild(summary);
+      details.appendChild(pre);
+      wrapper.appendChild(details);
+    }
     wrapper.appendChild(bubble);
     wrapper.appendChild(ts);
     row.appendChild(wrapper);
@@ -361,10 +373,13 @@
 
   function buildPopoverContent(meta) {
     const lines = [];
-    if (meta.input_tokens != null)       lines.push(`<b>Input tokens:</b> ${meta.input_tokens}`);
-    if (meta.output_tokens != null)      lines.push(`<b>Output tokens:</b> ${meta.output_tokens}`);
-    if (meta.duration != null)           lines.push(`<b>Duration:</b> ${meta.duration.toFixed(2)}s`);
-    if (meta.output_speed != null)       lines.push(`<b>Speed:</b> ${meta.output_speed.toFixed(1)} tok/s`);
+    if (meta.input_tokens != null) lines.push(`<b>Input tokens:</b> ${meta.input_tokens}`);
+    if (meta.thinking_tokens != null) lines.push(`<b>Thinking tokens:</b> ${meta.thinking_tokens}`);
+    const textOut = (meta.thinking_tokens != null && meta.output_tokens != null)
+      ? meta.output_tokens - meta.thinking_tokens : meta.output_tokens;
+    if (textOut != null) lines.push(`<b>Output tokens:</b> ${textOut}`);
+    if (meta.duration != null) lines.push(`<b>Duration:</b> ${meta.duration.toFixed(2)}s`);
+    if (meta.output_speed != null) lines.push(`<b>Speed:</b> ${meta.output_speed.toFixed(1)} tok/s`);
     return lines.join("<br>");
   }
 
@@ -651,6 +666,8 @@
             const meta = {
               input_tokens: event.input_tokens,
               output_tokens: event.output_tokens,
+              thinking_tokens: event.thinking_tokens,
+              thinking: event.thinking,
               duration: event.duration,
               time_to_first_token: event.time_to_first_token,
               output_speed: event.output_speed,

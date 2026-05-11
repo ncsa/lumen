@@ -363,6 +363,10 @@ def send_message_stream(
     reply = "".join(parts)
     input_tokens = usage.prompt_tokens if usage else 0
     output_tokens = usage.completion_tokens if usage else 0
+    reasoning_tokens = (
+        getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None)
+        or getattr(usage, "reasoning_tokens", None)
+    ) if usage else None
 
     cost = calculate_cost(input_tokens, output_tokens, config)
     output_speed = output_tokens / duration if duration > 0 else 0.0
@@ -381,6 +385,8 @@ def send_message_stream(
         "model": remote_model,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
+        "thinking": "".join(thinking_parts) if thinking_parts else None,
+        "thinking_tokens": reasoning_tokens,
         "cost": cost,
         "duration": duration,
         "time_to_first_token": t_first or duration,

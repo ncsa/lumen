@@ -173,6 +173,8 @@ erDiagram
         float time_to_first_token
         float duration
         float output_speed
+        text thinking
+        int thinking_tokens
     }
 
     request_logs {
@@ -533,6 +535,8 @@ Individual turns within a conversation. Both user and assistant messages are sto
 | `time_to_first_token` | Float | YES | Seconds from request send to first token received; assistant messages only |
 | `duration` | Float | YES | Total response time in seconds; assistant messages only |
 | `output_speed` | Float | YES | Output tokens per second; assistant messages only |
+| `thinking` | Text | YES | Reasoning/thinking content from the model; assistant messages only |
+| `thinking_tokens` | Integer | YES | Thinking/reasoning token count reported by the model; assistant messages only |
 
 ---
 

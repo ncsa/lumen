@@ -33,3 +33,5 @@ class Message(db.Model):
     duration = db.Column(db.Float, nullable=True, comment="Total response time in seconds; assistant messages only")
     # Output tokens per second
     output_speed = db.Column(db.Float, nullable=True, comment="Output tokens per second; assistant messages only")
+    thinking = db.Column(db.Text, nullable=True, comment="Reasoning/thinking content from the model; assistant messages only")
+    thinking_tokens = db.Column(db.Integer, nullable=True, comment="Thinking/reasoning token count reported by the model; assistant messages only")

@@ -211,6 +211,8 @@ def chat_stream():
                 content=result["reply"],
                 input_tokens=result["input_tokens"],
                 output_tokens=result["output_tokens"],
+                thinking=result.get("thinking"),
+                thinking_tokens=result.get("thinking_tokens"),
                 time_to_first_token=result.get("time_to_first_token"),
                 duration=result.get("duration"),
                 output_speed=result.get("output_speed"),
@@ -299,6 +301,8 @@ def get_conversation_messages(cid):
             m["meta"] = {
                 "input_tokens": msg.input_tokens,
                 "output_tokens": msg.output_tokens,
+                "thinking": msg.thinking,
+                "thinking_tokens": msg.thinking_tokens,
                 "time_to_first_token": msg.time_to_first_token,
                 "duration": msg.duration,
                 "output_speed": msg.output_speed,
