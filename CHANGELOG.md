@@ -10,6 +10,7 @@ All notable changes to Lumen will be documented in this file.
 ### Added
 - Thinking/reasoning content from the model is now saved to the database and shown again when reloading a past conversation (collapsed "Thought" block)
 - Token popup (ⓘ) now shows thinking tokens and text output tokens as separate values for reasoning models
+- Site-wide announcement banner below the navbar, configured via `app.announcement` in config.yaml; supports HTML; colors are theme-configurable (`banner_bg_color`, `banner_text_color`) with a pastel yellow default; hot-reloads without a restart
 
 ## [1.9.2] - 2026-05-10
 

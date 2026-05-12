@@ -4,6 +4,7 @@ import threading
 import time
 
 import yaml
+from markupsafe import Markup
 
 from lumen.commands import sync_clients_from_yaml, sync_groups_from_yaml, sync_models_from_yaml
 
@@ -61,6 +62,7 @@ def _watcher(app, config_path):
                 app_cfg = new_data.get("app", {})
                 app.config["APP_NAME"] = app_cfg.get("name", "Lumen")
                 app.config["APP_TAGLINE"] = app_cfg.get("tagline", "")
+                app.config["APP_ANNOUNCEMENT"] = Markup(app_cfg.get("announcement", "") or "")
                 _dev_raw = app_cfg.get("dev_user", "")
                 if isinstance(_dev_raw, dict):
                     app.config["DEV_USER"] = _dev_raw.get("email", "")

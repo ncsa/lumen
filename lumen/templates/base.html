@@ -17,6 +17,14 @@
 {% include 'theme/page_open.html' %}
   {% include 'theme/header.html' %}
 
+  {% if app_announcement %}
+  <div class="announcement-banner"
+       style="background-color:{{ theme.banner_bg_color }};color:{{ theme.banner_text_color }};border-color:{{ theme.banner_border_color }}"
+       role="region" aria-label="Site announcement">
+    {{ app_announcement }}
+  </div>
+  {% endif %}
+
   <main id="main-content" style="flex:1;overflow:auto;display:flex;flex-direction:column">
     <div class="container-fluid mt-3 px-4" style="flex:1;overflow:hidden">
       {% with messages = get_flashed_messages(with_categories=true) %}

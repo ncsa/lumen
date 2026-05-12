@@ -13,3 +13,6 @@ skipto_color_theme: illinois
 footer_links:
   - label: Illinois Computes
     url: https://computes.illinois.edu
+banner_bg_color: "#fff9c4"
+banner_text_color: "#000000"
+banner_border_color: "#000000"

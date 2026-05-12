@@ -15,3 +15,6 @@ footer_links:
     url: https://library.uic.edu
   - label: Directory
     url: https://directory.uic.edu
+banner_bg_color: "#fff9c4"
+banner_text_color: "#000000"
+banner_border_color: "#000000"

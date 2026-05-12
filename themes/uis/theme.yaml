@@ -15,3 +15,6 @@ footer_links:
     url: https://library.uis.edu
   - label: Maps
     url: https://maps.uis.edu
+banner_bg_color: "#fff9c4"
+banner_text_color: "#000000"
+banner_border_color: "#000000"

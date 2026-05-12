@@ -13,6 +13,14 @@
 {% include 'theme/page_open.html' %}
   {% include 'theme/header.html' %}
 
+  {% if app_announcement %}
+  <div class="announcement-banner"
+       style="background-color:{{ theme.banner_bg_color }};color:{{ theme.banner_text_color }};border-color:{{ theme.banner_border_color }}"
+       role="region" aria-label="Site announcement">
+    {{ app_announcement }}
+  </div>
+  {% endif %}
+
   <main id="main-content" class="d-flex align-items-center justify-content-center" style="min-height:60vh">
     <div class="card shadow-sm p-5 text-center" style="max-width:560px;width:100%">
       {% if theme.logo %}

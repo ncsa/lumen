@@ -5,6 +5,7 @@ import sys
 import yaml
 from flask import Flask, jsonify, request, session
 from jinja2 import BaseLoader, ChoiceLoader, TemplateNotFound
+from markupsafe import Markup
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 
@@ -104,6 +105,7 @@ def create_app():
         app.config["DEBUG"] = app_cfg["debug"]
     app.config["APP_NAME"] = app_cfg.get("name", "Lumen")
     app.config["APP_TAGLINE"] = app_cfg.get("tagline", "")
+    app.config["APP_ANNOUNCEMENT"] = Markup(app_cfg.get("announcement", "") or "")
     _dev_raw = app_cfg.get("dev_user", "")
     if isinstance(_dev_raw, dict):
         app.config["DEV_USER"] = _dev_raw.get("email", "")
@@ -221,7 +223,7 @@ def create_app():
     # Context processor: inject app_name and nav_clients into all templates
     @app.context_processor
     def inject_nav():
-        result = {"app_name": app.config["APP_NAME"], "app_tagline": app.config["APP_TAGLINE"], "is_admin": False, "github_url": app.config.get("GITHUB_URL", ""), "is_logged_in": bool(session.get("entity_id")), "theme": app.config["THEME"]}
+        result = {"app_name": app.config["APP_NAME"], "app_tagline": app.config["APP_TAGLINE"], "app_announcement": app.config.get("APP_ANNOUNCEMENT", Markup("")), "is_admin": False, "github_url": app.config.get("GITHUB_URL", ""), "is_logged_in": bool(session.get("entity_id")), "theme": app.config["THEME"]}
         if not session.get("entity_id"):
             result["nav_clients"] = []
             return result
@@ -255,7 +257,6 @@ def create_app():
 
     # Register markdown Jinja2 filter
     import markdown as _markdown
-    from markupsafe import Markup
     _md = _markdown.Markdown(extensions=["tables", "fenced_code", "toc", "codehilite"])
 
     def _md_filter(text):
