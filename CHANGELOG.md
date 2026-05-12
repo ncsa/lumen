@@ -8,6 +8,7 @@ All notable changes to Lumen will be documented in this file.
 - vLLM models that emit `delta.reasoning` (instead of `delta.reasoning_content`) now have their chain-of-thought captured and displayed as thinking
 
 ### Added
+- Help page sidebar now shows the app name (linked to GitHub), version, and git commit at the bottom; version and commit are baked into the Docker image at build time via `APP_VERSION` and `GIT_COMMIT` build args; local dev shows `develop` / `N/A`
 - Thinking/reasoning content from the model is now saved to the database and shown again when reloading a past conversation (collapsed "Thought" block)
 - Token popup (ⓘ) now shows thinking tokens and text output tokens as separate values for reasoning models
 - Site-wide announcement banner below the navbar, configured via `app.announcement` in config.yaml; supports HTML; colors are theme-configurable (`banner_bg_color`, `banner_text_color`) with a pastel yellow default; hot-reloads without a restart

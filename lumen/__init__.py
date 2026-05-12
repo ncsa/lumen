@@ -114,6 +114,8 @@ def create_app():
         app.config["DEV_USER"] = _dev_raw or ""
         app.config["DEV_USER_GROUPS"] = []
     app.config["GITHUB_URL"] = app_cfg.get("github_url", "https://github.com/ncsa/lumen")
+    app.config["APP_VERSION"] = os.environ.get("APP_VERSION", "develop")
+    app.config["GIT_COMMIT"] = os.environ.get("GIT_COMMIT", "N/A")
 
     # Load theme — dynamic loader so hot reload works when app.theme changes in config.yaml
     themes_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "themes")
@@ -223,7 +225,7 @@ def create_app():
     # Context processor: inject app_name and nav_clients into all templates
     @app.context_processor
     def inject_nav():
-        result = {"app_name": app.config["APP_NAME"], "app_tagline": app.config["APP_TAGLINE"], "app_announcement": app.config.get("APP_ANNOUNCEMENT", Markup("")), "is_admin": False, "github_url": app.config.get("GITHUB_URL", ""), "is_logged_in": bool(session.get("entity_id")), "theme": app.config["THEME"]}
+        result = {"app_name": app.config["APP_NAME"], "app_tagline": app.config["APP_TAGLINE"], "app_announcement": app.config.get("APP_ANNOUNCEMENT", Markup("")), "is_admin": False, "github_url": app.config.get("GITHUB_URL", ""), "app_version": app.config.get("APP_VERSION", "develop"), "git_commit": app.config.get("GIT_COMMIT", "N/A"), "is_logged_in": bool(session.get("entity_id")), "theme": app.config["THEME"]}
         if not session.get("entity_id"):
             result["nav_clients"] = []
             return result
