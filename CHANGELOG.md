@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.9.3] - 2026-05-11
+
 ### Fixed
 - vLLM models that emit `delta.reasoning` (instead of `delta.reasoning_content`) now have their chain-of-thought captured and displayed as thinking
 
