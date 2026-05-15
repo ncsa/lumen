@@ -14,7 +14,7 @@
   <ilw-header-menu slot="navigation">
     <ul>
       <li><a href="{{ url_for('chat.chat_page') }}">Chat</a></li>
-      <li><a href="{{ url_for('usage.index') }}">Usage</a></li>
+      <li><a href="{{ url_for('profile.index') }}">Profile</a></li>
       <li><a href="{{ url_for('models_page.index') }}">Models</a></li>
       {% if is_admin or nav_clients %}
       <li><a href="{{ url_for('clients.index') }}">Clients</a></li>

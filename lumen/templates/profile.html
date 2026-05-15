@@ -1,90 +1,103 @@
 {% extends "base.html" %}
-{% block title %}Usage — {{ app_name }}{% endblock %}
+{% block title %}Profile — {{ app_name }}{% endblock %}
 
 {% block content %}
-<h1>Usage</h1>
 <ilw-content>
 {% if viewing_user %}
-<div class="d-flex align-items-center justify-content-between gap-3 px-3 py-2 mb-4 bg-light border rounded">
-  <div class="d-flex align-items-center gap-3 flex-wrap min-w-0">
-    <span class="fw-semibold text-truncate">{{ viewing_user.name }}</span>
-    <span class="text-muted small">{{ viewing_user.email }}</span>
-  </div>
-  <a href="{{ url_for('admin.users') }}" class="btn btn-sm btn-outline-secondary flex-shrink-0">← Back</a>
+<div class="mb-4">
+  <a href="{{ url_for('admin.users') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
 </div>
 {% endif %}
 
-<!-- Status summary cards -->
-<div class="row g-3 mb-4">
-  <!-- Total tokens used -->
-  <div class="col-sm-6 col-lg-3">
-    <div class="card h-100">
-      <div class="card-body">
-        <div class="text-muted small mb-1">Total Tokens Used</div>
-        <div class="fs-4 fw-semibold">{{ "{:,}".format(status.total_tokens_used) }}</div>
-        <div class="text-muted small">input + output (all time)</div>
+{% if profile_entity %}
+<!-- Profile card -->
+{%- set fav_models = model_usage | selectattr("requests", "gt", 0) | list | sort(attribute="requests", reverse=True) %}
+{%- set fav_model = fav_models[0].model_name if fav_models else none %}
+<div class="card profile-card mb-4">
+  <div class="card-body p-4">
+    <div class="row g-4 align-items-center">
+
+      <!-- Col 1: avatar + name + email, centred -->
+      <div class="col-12 col-md-3 text-center profile-col-identity">
+        <img src="{{ gravatar_url }}" alt="Profile photo for {{ profile_entity.name }}"
+             width="115" height="115" class="rounded-circle profile-avatar-img">
+        <h2 class="profile-name mt-0 mb-0">{{ profile_entity.name }}</h2>
+        <p class="text-muted small mt-0 mb-0">{{ profile_entity.email }}</p>
       </div>
-    </div>
-  </div>
-  <!-- Coins spent -->
-  <div class="col-sm-6 col-lg-3">
-    <div class="card h-100">
-      <div class="card-body">
-        <div class="text-muted small mb-1">Coins Spent</div>
-        <div class="fs-4 fw-semibold">{{ "%.2f"|format(status.total_cost) }}</div>
-        <div class="text-muted small">all time</div>
-      </div>
-    </div>
-  </div>
-  {% if coin_pool is not none %}
-  {% if coin_pool.coin_limit == -2 %}
-  <div class="col-sm-6 col-lg-3">
-    <div class="card h-100">
-      <div class="card-body">
-        <div class="text-muted small mb-1">Coin Pool</div>
-        <div class="fs-4 fw-semibold text-success">Unlimited</div>
-      </div>
-    </div>
-  </div>
-  {% else %}
-  <div class="col-sm-6 col-lg-3">
-    <div class="card h-100">
-      <div class="card-body">
-        <div class="text-muted small mb-1">Coins Available</div>
-        <div class="fs-4 fw-semibold">{{ "%.2f"|format(coin_pool.coins_left) }}</div>
-        <div class="text-muted small">of {{ "%.2f"|format(coin_pool.coin_limit) }} max</div>
-        {% if coin_pool.coin_limit > 0 %}
-        {% set pct = [(coin_pool.coins_left / coin_pool.coin_limit * 100)|int, 100]|min %}
-        <div class="progress mt-2" style="height:4px">
-          <div class="progress-bar" role="progressbar"
-               aria-label="Coin pool balance"
-               style="width:{{ pct }}%"
-               aria-valuenow="{{ coin_pool.coins_left }}"
-               aria-valuemin="0" aria-valuemax="{{ coin_pool.coin_limit }}"></div>
+
+      <!-- Col 2: all info cards in a 2-column grid -->
+      <div class="col-12 col-md-9 profile-col-meta">
+        <div class="row g-2">
+          <!-- Row 1: Groups | Coins Used | Tokens Used -->
+          <div class="col-4">
+            <div class="profile-stat-card p-3 rounded border h-100">
+              <div class="text-muted small mb-1">Groups</div>
+              <div class="d-flex flex-wrap gap-1">
+                {% if profile_groups %}
+                  {% for g in profile_groups %}<span class="badge bg-secondary fw-normal">{{ g.name }}</span>{% endfor %}
+                {% else %}<span class="text-muted small">—</span>{% endif %}
+              </div>
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="profile-stat-card p-3 rounded border">
+              <div class="text-muted small mb-1">Coins Used</div>
+              <div class="fw-bold fs-5">{{ "%.2f"|format(status.total_cost) }}</div>
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="profile-stat-card p-3 rounded border">
+              <div class="text-muted small mb-1">Tokens Used</div>
+              <div class="fw-bold fs-5">{{ "{:,}".format(status.total_tokens_used) }}</div>
+            </div>
+          </div>
+          <!-- Row 2: Favorite Model | Coins Available | Refill Rate -->
+          <div class="col-4">
+            <div class="profile-stat-card p-3 rounded border h-100">
+              <div class="text-muted small mb-1">Favorite Model</div>
+              <div class="fw-semibold small">{% if fav_model %}{{ fav_model }}{% else %}<span class="text-muted">—</span>{% endif %}</div>
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="profile-stat-card p-3 rounded border h-100">
+              <div class="text-muted small mb-1">Coins Available</div>
+              {% if coin_pool is none %}
+                <div class="fw-bold fs-5 text-muted">—</div>
+              {% elif coin_pool.coin_limit == -2 %}
+                <div class="fw-bold fs-5 text-success">Unlimited</div>
+              {% else %}
+                <div class="fw-bold fs-5 mb-2">{{ "%.2f"|format(coin_pool.coins_left) }}{% if coin_pool.coin_limit > 0 %}<span class="text-muted fw-normal fs-6"> / {{ "%.2f"|format(coin_pool.coin_limit) }}</span>{% endif %}</div>
+                {% if coin_pool.coin_limit > 0 %}
+                {%- set pct = [(coin_pool.coins_left / coin_pool.coin_limit * 100)|int, 100]|min %}
+                <div class="progress" style="height:8px">
+                  <div class="progress-bar" role="progressbar"
+                       aria-label="Coin pool balance"
+                       style="width:{{ pct }}%"
+                       aria-valuenow="{{ coin_pool.coins_left }}"
+                       aria-valuemin="0" aria-valuemax="{{ coin_pool.coin_limit }}"></div>
+                </div>
+                {% endif %}
+              {% endif %}
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="profile-stat-card p-3 rounded border">
+              <div class="text-muted small mb-1">Refill Rate</div>
+              {% if coin_pool is not none and coin_pool.coin_limit != -2 and coin_pool.coins_per_hour > 0 %}
+                <div class="fw-bold fs-5">+{{ "%.2f"|format(coin_pool.coins_per_hour) }}<span class="text-muted fw-normal fs-6">/hr</span></div>
+                {% if coin_pool.next_refill %}<div class="text-muted small">next <span class="local-time" data-utc="{{ coin_pool.next_refill.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span></div>{% endif %}
+              {% else %}
+                <div class="fw-bold fs-5 text-muted">—</div>
+              {% endif %}
+            </div>
+          </div>
         </div>
-        {% endif %}
       </div>
+
     </div>
   </div>
-  <div class="col-sm-6 col-lg-3">
-    <div class="card h-100">
-      <div class="card-body">
-        <div class="text-muted small mb-1">Coin Refill</div>
-        {% if coin_pool.coins_per_hour > 0 %}
-        <div class="fs-4 fw-semibold">+{{ "%.2f"|format(coin_pool.coins_per_hour) }}</div>
-        <div class="text-muted small">
-          per hour{% if coin_pool.next_refill %}, next <span class="local-time" data-utc="{{ coin_pool.next_refill.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>{% endif %}
-        </div>
-        {% else %}
-        <div class="fs-4 fw-semibold text-muted">—</div>
-        <div class="text-muted small">no refill configured</div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-  {% endif %}
-  {% endif %}
 </div>
+{% endif %}
 
 
 <!-- Web Chat -->
@@ -258,6 +271,12 @@
 {% endif %}
 
 <style>
+.profile-avatar-img { border: 1px solid rgba(0,0,0,.1); }
+.profile-name { font-size: 1.25rem; font-weight: 600; line-height: 1.25; }
+.profile-stat-card { background: var(--bs-light, #f8f9fa); }
+@media (min-width: 768px) {
+  .profile-col-meta { border-left: 1px solid var(--bs-border-color, #dee2e6); padding-left: 1.5rem !important; }
+}
 .sort-header { cursor: pointer; user-select: none; white-space: nowrap; }
 .sort-arrows { display: inline-flex; flex-direction: column; font-size: 0.6em; line-height: 1.1; float: right; margin-left: 6px; margin-top: 2px; }
 .sa-up, .sa-dn { color: #adb5bd; }
@@ -366,7 +385,7 @@ function renderKeys() {
     keyTbody.querySelectorAll('.delete-key-btn').forEach(btn => {
       btn.addEventListener('click', async function () {
         if (!confirm("Delete this API key? Usage history is kept.")) return;
-        const resp = await fetch("/usage/keys/" + this.dataset.id, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } });
+        const resp = await fetch("/profile/keys/" + this.dataset.id, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } });
         if (resp.ok) location.reload();
         else alert("Failed to delete key.");
       });
@@ -495,7 +514,7 @@ apiKeyModal.addEventListener("show.bs.modal", async function () {
   document.getElementById("generated-key").value = "";
   document.getElementById("save-key-btn").disabled = true;
 
-  const resp = await fetch("/usage/keys/generate");
+  const resp = await fetch("/profile/keys/generate");
   const data = await resp.json();
   document.getElementById("key-display").value = data.key;
   document.getElementById("generated-key").value = data.key;
@@ -516,7 +535,7 @@ document.getElementById("save-key-btn").addEventListener("click", async function
   const key = document.getElementById("generated-key").value;
   if (!key) return;
 
-  const resp = await fetch("/usage/keys", {
+  const resp = await fetch("/profile/keys", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
     body: JSON.stringify({ name, key }),
@@ -551,7 +570,7 @@ function openGraylistModal(modelName, notice) {
 
 document.getElementById("graylist-accept-btn").addEventListener("click", async function () {
   if (!graylistModelName) return;
-  const resp = await fetch("/usage/consent/" + encodeURIComponent(graylistModelName), {
+  const resp = await fetch("/profile/consent/" + encodeURIComponent(graylistModelName), {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
   });

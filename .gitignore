@@ -61,3 +61,6 @@ SECURITY_REVIEW.md
 .stfolder
 lumen.sql
 restore.sh
+
+# model setup
+models/

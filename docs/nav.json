@@ -10,7 +10,7 @@
     "title": "Guides",
     "items": [
       {"slug": "chat",  "title": "Chat",             "filename": "chat.md"},
-      {"slug": "usage", "title": "Usage & API Keys",  "filename": "usage.md"},
+      {"slug": "profile", "title": "Profile & API Keys",  "filename": "profile.md"},
       {"slug": "api",   "title": "API Reference",     "filename": "api-reference.md"}
     ]
   },

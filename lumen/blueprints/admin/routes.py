@@ -81,13 +81,13 @@ def reset_user_tokens(eid):
     return jsonify({"coins_available": new_balance})
 
 
-@admin_bp.route("/users/<int:eid>/usage")
+@admin_bp.route("/users/<int:eid>/profile")
 @admin_required
-def user_usage(eid):
-    from lumen.blueprints.usage.routes import _get_usage_data
+def user_profile(eid):
+    from lumen.blueprints.profile.routes import _get_profile_data, _gravatar_url, _entity_groups
     from lumen.services.llm import get_model_access_status, get_model_status, has_model_consent
     entity = db.get_or_404(Entity, eid)
-    data = _get_usage_data(eid)
+    data = _get_profile_data(eid)
     all_models = db.session.execute(select(ModelConfig).order_by(ModelConfig.model_name)).scalars().all()
     usage_by_model = {u["model_name"]: u for u in data.get("model_usage", [])}
     model_access_list = []
@@ -109,10 +109,13 @@ def user_usage(eid):
             "last_used_at": u.get("last_used_at"),
         })
     return render_template(
-        "usage.html",
+        "profile.html",
         **data,
         model_access_list=model_access_list,
         viewing_user=entity,
+        profile_entity=entity,
+        gravatar_url=_gravatar_url(entity.email, size=230),
+        profile_groups=_entity_groups(eid),
     )
 
 

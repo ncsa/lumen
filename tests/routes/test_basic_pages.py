@@ -35,13 +35,13 @@ def test_chat_page_with_model(app, auth_client, test_model):
     assert resp.status_code == 200
 
 
-def test_usage_page_requires_login(client):
-    resp = client.get("/usage", follow_redirects=False)
+def test_profile_page_requires_login(client):
+    resp = client.get("/profile", follow_redirects=False)
     assert resp.status_code == 302
 
 
-def test_usage_page_loads(auth_client):
-    resp = auth_client.get("/usage")
+def test_profile_page_loads(auth_client):
+    resp = auth_client.get("/profile")
     assert resp.status_code == 200
 
 

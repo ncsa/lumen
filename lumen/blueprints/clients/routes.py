@@ -13,7 +13,7 @@ from lumen.models.model_config import ModelConfig
 from lumen.models.entity_stat import EntityStat
 from lumen.services.crypto import hash_api_key
 from lumen.services.llm import get_model_access_status, get_model_status, has_model_consent
-from lumen.blueprints.usage.routes import _get_usage_data
+from lumen.blueprints.profile.routes import _get_profile_data
 
 clients_bp = Blueprint("clients", __name__)
 
@@ -104,7 +104,7 @@ def detail(sid):
         if not assoc:
             abort(403)
 
-    data = _get_usage_data(sid)
+    data = _get_profile_data(sid)
 
     managers = db.session.execute(
         select(Entity)

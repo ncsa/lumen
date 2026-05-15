@@ -1,8 +1,8 @@
-# Usage & API Keys
+# Profile & API Keys
 
-The **Usage** page (`/usage`) shows your coin balance, spending history, model access, and your personal API keys.
+The **Profile** page (`/profile`) shows your coin balance, spending history, model access, and your personal API keys.
 
-![Usage page](../img/usage.png)
+![Profile page](../img/profile.png)
 
 ## Status Cards
 

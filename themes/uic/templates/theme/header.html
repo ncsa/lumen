@@ -9,7 +9,7 @@
       <nav aria-label="Main navigation" class="d-flex flex-wrap">
         {% if is_logged_in %}
         <a href="{{ url_for('chat.chat_page') }}" class="uic-nav-link">Chat</a>
-        <a href="{{ url_for('usage.index') }}" class="uic-nav-link">Usage</a>
+        <a href="{{ url_for('profile.index') }}" class="uic-nav-link">Profile</a>
         <a href="{{ url_for('models_page.index') }}" class="uic-nav-link">Models</a>
         {% if is_admin or nav_clients %}
         <a href="{{ url_for('clients.index') }}" class="uic-nav-link">Clients</a>

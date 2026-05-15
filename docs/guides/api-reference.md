@@ -12,7 +12,7 @@ Replace `https://your-lumen-instance` with your institution's Lumen URL. All req
 Authorization: Bearer sk_your_api_key_here
 ```
 
-See [Usage → API Keys](../guides/usage.md#api-keys) to create a key.
+See [Profile → API Keys](../guides/profile.md#api-keys) to create a key.
 
 ## Endpoints
 

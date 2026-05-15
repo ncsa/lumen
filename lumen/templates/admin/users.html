@@ -188,7 +188,7 @@
           const joinedCell = fmtDate(u.joined);
           const lastUsedCell = fmtDate(u.last_used);
           return `<tr id="user-row-${u.id}">
-            <td><a href="/admin/users/${u.id}/usage">${u.name}</a></td>
+            <td><a href="/admin/users/${u.id}/profile">${u.name}</a></td>
             <td>${joinedCell}</td>
             <td class="text-center">${activeIcon}</td>
             <td>${lastUsedCell}</td>

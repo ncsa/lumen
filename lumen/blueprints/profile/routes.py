@@ -1,3 +1,4 @@
+import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -7,6 +8,22 @@ from sqlalchemy import func, select
 from lumen.decorators import login_required
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
+from lumen.models.entity import Entity
+from lumen.models.group import Group
+from lumen.models.group_member import GroupMember
+
+
+def _gravatar_url(email: str, size: int = 80) -> str:
+    h = hashlib.md5((email or "").strip().lower().encode()).hexdigest()
+    return f"https://www.gravatar.com/avatar/{h}?s={size}&d=mp"
+
+
+def _entity_groups(eid: int) -> list:
+    return db.session.execute(
+        select(Group).join(GroupMember, Group.id == GroupMember.group_id)
+        .where(GroupMember.entity_id == eid, Group.name != "default")
+        .order_by(Group.name)
+    ).scalars().all()
 from lumen.models.conversation import Conversation
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_model_consent import EntityModelConsent
@@ -15,10 +32,10 @@ from lumen.models.model_stat import ModelStat
 from lumen.services.crypto import hash_api_key
 from lumen.services.llm import get_pool_limit, get_model_access, get_model_access_status, get_model_status, has_model_consent
 
-usage_bp = Blueprint("usage", __name__)
+profile_bp = Blueprint("profile", __name__)
 
 
-def _get_usage_data(eid: int) -> dict:
+def _get_profile_data(eid: int) -> dict:
     chat_agg = db.session.execute(
         select(
             func.sum(ModelStat.requests),
@@ -117,11 +134,11 @@ def _get_usage_data(eid: int) -> dict:
     }
 
 
-@usage_bp.route("/usage")
+@profile_bp.route("/profile")
 @login_required
 def index():
     entity_id = session["entity_id"]
-    data = _get_usage_data(entity_id)
+    data = _get_profile_data(entity_id)
 
     all_models = db.session.execute(select(ModelConfig).order_by(ModelConfig.model_name)).scalars().all()
     usage_by_model = {u["model_name"]: u for u in data.get("model_usage", [])}
@@ -144,23 +161,30 @@ def index():
             "last_used_at": u.get("last_used_at"),
         })
 
-    return render_template("usage.html", **data, model_access_list=model_access_list)
+    profile_entity = db.session.get(Entity, entity_id)
+    return render_template(
+        "profile.html", **data,
+        model_access_list=model_access_list,
+        profile_entity=profile_entity,
+        gravatar_url=_gravatar_url(profile_entity.email if profile_entity else "", size=230),
+        profile_groups=_entity_groups(entity_id),
+    )
 
 
-@usage_bp.route("/usage/client/<int:sid>")
+@profile_bp.route("/profile/client/<int:sid>")
 @login_required
-def client_usage_page(sid):
+def client_profile_page(sid):
     return redirect(url_for("clients.detail", sid=sid), 301)
 
 
-@usage_bp.route("/usage/keys/generate")
+@profile_bp.route("/profile/keys/generate")
 @login_required
 def generate_key():
     key = "sk_" + secrets.token_urlsafe(32)
     return jsonify({"key": key})
 
 
-@usage_bp.route("/usage/keys", methods=["POST"])
+@profile_bp.route("/profile/keys", methods=["POST"])
 @login_required
 def create_key():
     entity_id = session["entity_id"]
@@ -188,7 +212,7 @@ def create_key():
     return jsonify({"id": api_key.id, "name": api_key.name, "key": key}), 201
 
 
-@usage_bp.route("/usage/keys/<int:kid>", methods=["DELETE"])
+@profile_bp.route("/profile/keys/<int:kid>", methods=["DELETE"])
 @login_required
 def delete_key(kid):
     entity_id = session["entity_id"]
@@ -202,7 +226,7 @@ def delete_key(kid):
     return "", 204
 
 
-@usage_bp.route("/usage/consent/<path:model_name>", methods=["POST"])
+@profile_bp.route("/profile/consent/<path:model_name>", methods=["POST"])
 @login_required
 def user_consent(model_name):
     entity_id = session["entity_id"]

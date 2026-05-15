@@ -9,7 +9,7 @@
       {% if is_logged_in %}
       <ul class="navbar-nav me-auto">
         <li class="nav-item"><a class="nav-link" href="{{ url_for('chat.chat_page') }}">Chat</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('usage.index') }}">Usage</a></li>
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('profile.index') }}">Profile</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('models_page.index') }}">Models</a></li>
         {% if is_admin or nav_clients %}
         <li class="nav-item"><a class="nav-link" href="{{ url_for('clients.index') }}">Clients</a></li>

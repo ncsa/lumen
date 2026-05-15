@@ -538,7 +538,7 @@ apiKeyModal.addEventListener("show.bs.modal", async function () {
   document.getElementById("generated-key").value = "";
   document.getElementById("save-key-btn").disabled = true;
 
-  const resp = await fetch("/usage/keys/generate");
+  const resp = await fetch("/profile/keys/generate");
   const data = await resp.json();
   document.getElementById("key-display").value = data.key;
   document.getElementById("generated-key").value = data.key;

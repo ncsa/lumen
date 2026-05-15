@@ -45,7 +45,7 @@ Click **Remove** next to any manager in the table.
 
 ## API Keys
 
-This section works exactly like the API Keys section on the [Usage page](../guides/usage.md#api-keys), but keys here belong to the client, not to your personal account.
+This section works exactly like the API Keys section on the [Profile page](../guides/profile.md#api-keys), but keys here belong to the client, not to your personal account.
 
 ### Creating a Key
 
@@ -84,6 +84,6 @@ Use **Show deleted keys** to view previously revoked keys. Use the search box to
 
 ## Model Access
 
-This table shows which models this client can use and how much it has consumed on each. The columns and access badges are the same as on the [Usage page](../guides/usage.md#model-access).
+This table shows which models this client can use and how much it has consumed on each. The columns and access badges are the same as on the [Profile page](../guides/profile.md#model-access).
 
 If a model shows **Needs Consent**, you can click it to grant acknowledgment on behalf of the client, making the model available to all API keys associated with this client.

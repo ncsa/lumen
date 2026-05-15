@@ -192,7 +192,7 @@ def create_app():
     from lumen.blueprints.chat.routes import chat_bp
     from lumen.blueprints.models_page.routes import models_page_bp
     from lumen.blueprints.clients.routes import clients_bp
-    from lumen.blueprints.usage.routes import usage_bp
+    from lumen.blueprints.profile.routes import profile_bp
     from lumen.blueprints.api.routes import api_bp
     from lumen.blueprints.admin.routes import admin_bp
     from lumen.blueprints.metrics.routes import metrics_bp
@@ -202,7 +202,7 @@ def create_app():
     app.register_blueprint(chat_bp)
     app.register_blueprint(models_page_bp)
     app.register_blueprint(clients_bp)
-    app.register_blueprint(usage_bp)
+    app.register_blueprint(profile_bp)
     app.register_blueprint(api_bp)
     csrf.exempt(api_bp)
     app.register_blueprint(admin_bp)
