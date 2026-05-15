@@ -4,16 +4,22 @@ The **Profile** page (`/profile`) shows your coin balance, spending history, mod
 
 ![Profile page](../img/profile.png)
 
-## Status Cards
+## Profile Card
 
-At the top of the page, four cards summarize your account:
+At the top of the page, a card shows your identity and a summary of your account activity.
 
-| Card | Description |
+The left side displays your avatar (pulled from [Gravatar](https://gravatar.com) based on your email), your display name, and email address.
+
+The right side shows six stat tiles:
+
+| Tile | Description |
 |------|------------|
-| **Total Tokens Used** | All input + output tokens across all models, all time |
-| **Coins Spent** | Total coins spent across all models, all time |
+| **Groups** | The groups you belong to |
+| **Coins Used** | Total coins spent across all models, all time |
+| **Tokens Used** | All input + output tokens across all models, all time |
+| **Favorite Model** | The model you have used most |
 | **Coins Available** | Your current pool balance with a progress bar (when a limit is set) |
-| **Coin Refill** | Auto-refill rate per hour and a countdown to the next refill |
+| **Refill Rate** | Auto-refill rate per hour and a countdown to the next refill |
 
 ### Coin Pool Values
 
@@ -21,7 +27,7 @@ At the top of the page, four cards summarize your account:
 |-------|---------|
 | A positive number | Coins remaining in your budget |
 | **Unlimited** | No cap — you can always send requests |
-| **Not configured** | No budget has been set up for your account |
+| **—** | No budget has been set up for your account |
 | 0 or negative | Budget exhausted; further requests are blocked until a refill or an admin grants more coins |
 
 ## Web Chat Usage
