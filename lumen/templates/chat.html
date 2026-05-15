@@ -346,6 +346,12 @@
       infoIcon.setAttribute("tabindex", "0");
       ts.appendChild(infoIcon);
       new bootstrap.Popover(infoIcon, { container: "body" });
+      if (meta.model) {
+        const modelLabel = document.createElement("span");
+        modelLabel.className = "msg-model text-muted";
+        modelLabel.textContent = meta.model;
+        ts.appendChild(modelLabel);
+      }
     }
 
     const wrapper = document.createElement("div");
@@ -374,7 +380,7 @@
   function buildPopoverContent(meta) {
     const lines = [];
     if (meta.input_tokens != null) lines.push(`<b>Input tokens:</b> ${meta.input_tokens}`);
-    if (meta.thinking_tokens != null) lines.push(`<b>Thinking tokens:</b> ${meta.thinking_tokens}`);
+    if (meta.thinking_tokens != null && meta.thinking_tokens !== 0) lines.push(`<b>Thinking tokens:</b> ${meta.thinking_tokens}`);
     const textOut = (meta.thinking_tokens != null && meta.output_tokens != null)
       ? meta.output_tokens - meta.thinking_tokens : meta.output_tokens;
     if (textOut != null) lines.push(`<b>Output tokens:</b> ${textOut}`);
@@ -664,6 +670,7 @@
             }
             chatHistory.push({ role: "assistant", content: event.reply || fullText });
             const meta = {
+              model: model,
               input_tokens: event.input_tokens,
               output_tokens: event.output_tokens,
               thinking_tokens: event.thinking_tokens,
@@ -689,6 +696,12 @@
               infoIcon.setAttribute("tabindex", "0");
               ts.appendChild(infoIcon);
               new bootstrap.Popover(infoIcon, { container: "body" });
+            }
+            if (meta.model) {
+              const modelLabel = document.createElement("span");
+              modelLabel.className = "msg-model text-muted";
+              modelLabel.textContent = meta.model;
+              ts.appendChild(modelLabel);
             }
             if (streamWrapper) streamWrapper.appendChild(ts);
             container.scrollTop = container.scrollHeight;

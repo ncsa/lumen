@@ -299,6 +299,7 @@ def get_conversation_messages(cid):
         }
         if msg.role == "assistant":
             m["meta"] = {
+                "model": conv.model,
                 "input_tokens": msg.input_tokens,
                 "output_tokens": msg.output_tokens,
                 "thinking": msg.thinking,
