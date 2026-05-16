@@ -40,6 +40,55 @@ def managed_auth_client(auth_client, managed_client):
     return auth_client
 
 
+@pytest.fixture
+def make_api_key(app):
+    """Factory: create an APIKey row for any entity_id. Returns (key_id, raw_key)."""
+    def _make(entity_id, raw_key="sk_testkey12345678", name="test-key"):
+        with app.app_context():
+            from lumen.extensions import db
+            from lumen.models.api_key import APIKey
+            from lumen.services.crypto import hash_api_key
+            key = APIKey(
+                entity_id=entity_id,
+                name=name,
+                key_hash=hash_api_key(raw_key),
+                key_hint=f"{raw_key[:8]}...{raw_key[-4:]}",
+                active=True,
+            )
+            db.session.add(key)
+            db.session.commit()
+            return key.id, raw_key
+    return _make
+
+
+@pytest.fixture
+def make_graylist_access(app):
+    """Factory: grant graylist EntityModelAccess for any (entity_id, model_config_id)."""
+    def _make(entity_id, model_config_id):
+        with app.app_context():
+            from lumen.extensions import db
+            from lumen.models.entity_model_access import EntityModelAccess
+            db.session.add(EntityModelAccess(
+                entity_id=entity_id,
+                model_config_id=model_config_id,
+                access_type="graylist",
+            ))
+            db.session.commit()
+    return _make
+
+
+@pytest.fixture
+def unlimited_pool(app, managed_client):
+    """Grant managed_client an unlimited coin pool."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        db.session.add(EntityLimit(
+            entity_id=managed_client["id"], max_coins=-2, refresh_coins=0, starting_coins=0,
+        ))
+        db.session.commit()
+
+
 # ---------------------------------------------------------------------------
 # List page access
 # ---------------------------------------------------------------------------
@@ -325,43 +374,19 @@ def test_create_key_admin_succeeds(app, admin_client, service_client):
     assert resp.status_code == 201
 
 
-def test_delete_key_forbidden_for_non_manager(app, auth_client, service_client):
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.api_key import APIKey
-        from lumen.services.crypto import hash_api_key
-        key = APIKey(
-            entity_id=service_client["id"], name="k",
-            key_hash=hash_api_key("sk_delkey1234567890"),
-            key_hint="sk_delke...7890", active=True,
-        )
-        db.session.add(key)
-        db.session.commit()
-        key_id = key.id
-
+def test_delete_key_forbidden_for_non_manager(auth_client, service_client, make_api_key):
+    key_id, _ = make_api_key(service_client["id"], raw_key="sk_delkey1234567890", name="k")
     resp = auth_client.delete(f"/clients/{service_client['id']}/keys/{key_id}")
     assert resp.status_code == 403
 
 
-def test_delete_key_soft_deletes(app, managed_auth_client, managed_client):
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.api_key import APIKey
-        from lumen.services.crypto import hash_api_key
-        key = APIKey(
-            entity_id=managed_client["id"], name="to-delete",
-            key_hash=hash_api_key("sk_todelete12345678"),
-            key_hint="sk_todel...5678", active=True,
-        )
-        db.session.add(key)
-        db.session.commit()
-        key_id = key.id
-
+def test_delete_key_soft_deletes(app, managed_auth_client, managed_client, make_api_key):
+    key_id, _ = make_api_key(managed_client["id"], raw_key="sk_todelete12345678", name="to-delete")
     resp = managed_auth_client.delete(f"/clients/{managed_client['id']}/keys/{key_id}")
     assert resp.status_code == 204
     with app.app_context():
-        from lumen.models.api_key import APIKey
         from lumen.extensions import db
+        from lumen.models.api_key import APIKey
         k = db.session.get(APIKey, key_id)
         assert k.active is False
 
@@ -370,15 +395,8 @@ def test_delete_key_soft_deletes(app, managed_auth_client, managed_client):
 # Graylist consent
 # ---------------------------------------------------------------------------
 
-def test_consent_forbidden_for_non_manager(app, auth_client, service_client, test_model):
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
-        db.session.add(EntityModelAccess(
-            entity_id=service_client["id"], model_config_id=test_model["id"], access_type="graylist"
-        ))
-        db.session.commit()
-
+def test_consent_forbidden_for_non_manager(auth_client, service_client, test_model, make_graylist_access):
+    make_graylist_access(service_client["id"], test_model["id"])
     resp = auth_client.post(
         f"/clients/{service_client['id']}/consent/{test_model['model_name']}"
     )
@@ -392,15 +410,8 @@ def test_consent_non_graylist_model_returns_400(app, managed_auth_client, manage
     assert resp.status_code == 400
 
 
-def test_consent_graylist_model_succeeds(app, managed_auth_client, managed_client, test_model):
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
-        db.session.add(EntityModelAccess(
-            entity_id=managed_client["id"], model_config_id=test_model["id"], access_type="graylist"
-        ))
-        db.session.commit()
-
+def test_consent_graylist_model_succeeds(app, managed_auth_client, managed_client, test_model, make_graylist_access):
+    make_graylist_access(managed_client["id"], test_model["id"])
     resp = managed_auth_client.post(
         f"/clients/{managed_client['id']}/consent/{test_model['model_name']}"
     )
@@ -415,16 +426,9 @@ def test_consent_graylist_model_succeeds(app, managed_auth_client, managed_clien
         assert consent is not None
 
 
-def test_consent_idempotent(app, managed_auth_client, managed_client, test_model):
+def test_consent_idempotent(app, managed_auth_client, managed_client, test_model, make_graylist_access):
     """Consenting twice doesn't create duplicate rows."""
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
-        db.session.add(EntityModelAccess(
-            entity_id=managed_client["id"], model_config_id=test_model["id"], access_type="graylist"
-        ))
-        db.session.commit()
-
+    make_graylist_access(managed_client["id"], test_model["id"])
     managed_auth_client.post(
         f"/clients/{managed_client['id']}/consent/{test_model['model_name']}"
     )
@@ -447,22 +451,10 @@ def test_consent_idempotent(app, managed_auth_client, managed_client, test_model
 # Client API key end-to-end: create via route then authenticate against /v1/
 # ---------------------------------------------------------------------------
 
-def _grant_unlimited_pool(app, entity_id):
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_limit import EntityLimit
-        db.session.add(EntityLimit(
-            entity_id=entity_id, max_coins=-2, refresh_coins=0, starting_coins=0,
-        ))
-        db.session.commit()
-
-
 def test_client_key_created_via_route_can_authenticate(
-    app, client, managed_auth_client, managed_client, test_model, test_model_endpoint
+    client, managed_auth_client, managed_client, test_model, test_model_endpoint, unlimited_pool
 ):
     """Key created through POST /clients/<sid>/keys works for /v1/ auth."""
-    _grant_unlimited_pool(app, managed_client["id"])
-
     # Create key via the clients route
     resp = managed_auth_client.post(
         f"/clients/{managed_client['id']}/keys",
@@ -478,11 +470,9 @@ def test_client_key_created_via_route_can_authenticate(
 
 
 def test_client_key_lists_accessible_model(
-    app, client, managed_auth_client, managed_client, test_model, test_model_endpoint
+    client, managed_auth_client, managed_client, test_model, test_model_endpoint, unlimited_pool
 ):
     """Client key sees models it has access to."""
-    _grant_unlimited_pool(app, managed_client["id"])
-
     resp = managed_auth_client.post(
         f"/clients/{managed_client['id']}/keys",
         json={"name": "model-key", "key": "sk_modelkey12345678"},
@@ -496,11 +486,9 @@ def test_client_key_lists_accessible_model(
 
 
 def test_client_key_blocked_after_soft_delete(
-    app, client, managed_auth_client, managed_client, test_model_endpoint
+    client, managed_auth_client, managed_client, test_model_endpoint, unlimited_pool
 ):
     """Key deactivated via DELETE /clients/<sid>/keys/<kid> returns 401."""
-    _grant_unlimited_pool(app, managed_client["id"])
-
     # Create key
     resp = managed_auth_client.post(
         f"/clients/{managed_client['id']}/keys",
@@ -524,7 +512,7 @@ def test_client_key_blocked_after_soft_delete(
 
 
 def test_client_key_no_pool_returns_403(
-    app, client, managed_auth_client, managed_client, test_model, test_model_endpoint
+    client, managed_auth_client, managed_client, test_model, test_model_endpoint
 ):
     """Client key with no coin pool is denied on chat completions (no EntityLimit → 403)."""
     # No pool granted — service entity has no EntityLimit
