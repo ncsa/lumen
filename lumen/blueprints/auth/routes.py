@@ -30,64 +30,59 @@ def make_initials(name: str) -> str:
     return "??"
 
 
-def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=None):
-    """Sync group memberships and per-user model limits from yaml_data. Does not commit."""
-
+def _desired_groups_from_config(email: str, yaml_data: dict) -> list[str]:
+    """Return group names from users.default.groups and users.<email>.groups."""
     users_cfg = yaml_data.get("users", {})
-
-    # Compute desired group names: implicit default + users.default.groups + users.<email>.groups
-    desired_names = ["default"]
+    names: list[str] = ["default"]
     for name in users_cfg.get("default", {}).get("groups", []):
-        if name not in desired_names:
-            desired_names.append(name)
+        if name not in names:
+            names.append(name)
     for name in users_cfg.get(email, {}).get("groups", []):
-        if name not in desired_names:
-            desired_names.append(name)
+        if name not in names:
+            names.append(name)
+    return names
 
-    # Auto-assign groups via CILogon attribute rules
-    if userinfo:
-        groups_cfg = yaml_data.get("groups", {})
-        for group_name, group_def in groups_cfg.items():
-            if group_name in desired_names:
+
+def _groups_from_userinfo_rules(userinfo: dict, yaml_data: dict, existing: list[str]) -> list[str]:
+    """Return additional group names matched by CILogon attribute rules, excluding already-desired ones."""
+    added: list[str] = []
+    for group_name, group_def in yaml_data.get("groups", {}).items():
+        if group_name in existing or group_name in added:
+            continue
+        for rule in (group_def or {}).get("rules", []):
+            field = rule.get("field")
+            if not field:
                 continue
-            for rule in (group_def or {}).get("rules", []):
-                field = rule.get("field")
-                if not field:
-                    continue
-                field_value = userinfo.get(field) or ""
-                if "contains" in rule:
-                    matched = rule["contains"] in field_value
-                elif "equals" in rule:
-                    matched = field_value == rule["equals"]
-                else:
-                    matched = False
-                if matched:
-                    desired_names.append(group_name)
-                    break
+            field_value = userinfo.get(field) or ""
+            if "contains" in rule:
+                matched = rule["contains"] in field_value
+            elif "equals" in rule:
+                matched = field_value == rule["equals"]
+            else:
+                matched = False
+            if matched:
+                added.append(group_name)
+                break
+    return added
 
-    # Resolve group names to IDs (skip unknown)
-    desired_ids = set()
-    for name in desired_names:
-        group = db.session.execute(select(Group).filter_by(name=name)).scalar_one_or_none()
-        if group:
-            desired_ids.add(group.id)
 
-    # Current memberships
+def _reconcile_group_memberships(entity: Entity, desired_ids: set) -> None:
+    """Add missing and remove stale config_managed group memberships for entity."""
     existing_members = db.session.execute(select(GroupMember).filter_by(entity_id=entity.id)).scalars().all()
     existing_by_group = {m.group_id: m for m in existing_members}
-
-    # Remove config_managed memberships no longer desired
     for group_id, member in existing_by_group.items():
         if member.config_managed and group_id not in desired_ids:
             db.session.delete(member)
-
-    # Add missing desired groups
     for group_id in desired_ids:
         if group_id not in existing_by_group:
             db.session.add(GroupMember(group_id=group_id, entity_id=entity.id, config_managed=True))
 
-    # Per-user coin pool from users.<email>.pool (or flat max/refresh/starting keys)
-    user_cfg = users_cfg.get(email, {})
+
+def _apply_user_model_overrides(entity: Entity, email: str, yaml_data: dict) -> None:
+    """Reconcile per-user coin pool limits and model access whitelists from yaml. Does not commit."""
+    user_cfg = yaml_data.get("users", {}).get(email, {})
+
+    # Coin pool
     pool_cfg = user_cfg.get("pool") or (
         {"max": user_cfg["max"], "refresh": user_cfg.get("refresh", 0), "starting": user_cfg.get("starting", user_cfg["max"])}
         if "max" in user_cfg else None
@@ -110,34 +105,44 @@ def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=No
                 config_managed=True,
             ))
     else:
-        # Remove config_managed limit if no longer in yaml
         limit = db.session.execute(select(EntityLimit).filter_by(entity_id=entity.id, config_managed=True)).scalar_one_or_none()
         if limit:
             db.session.delete(limit)
 
-    # Per-user model access from users.<email>.models list
+    # Model access whitelist
     allowed_models = user_cfg.get("models", [])
-    existing_access = {a.model_config_id: a
-                       for a in db.session.execute(select(EntityModelAccess).filter_by(entity_id=entity.id)).scalars().all()
-                       if a.access_type == "whitelist"}  # only track config-managed allows
-
-    desired_model_ids = set()
+    existing_access = {
+        a.model_config_id: a
+        for a in db.session.execute(select(EntityModelAccess).filter_by(entity_id=entity.id)).scalars().all()
+        if a.access_type == "whitelist"
+    }
+    desired_model_ids: set = set()
     for model_name in allowed_models:
         mc = db.session.execute(select(ModelConfig).filter_by(model_name=model_name)).scalar_one_or_none()
         if mc is None:
             continue
         desired_model_ids.add(mc.id)
         if mc.id not in existing_access:
-            db.session.add(EntityModelAccess(
-                entity_id=entity.id,
-                model_config_id=mc.id,
-                access_type="whitelist",
-            ))
-
-    # Remove config-managed access rows no longer in yaml
+            db.session.add(EntityModelAccess(entity_id=entity.id, model_config_id=mc.id, access_type="whitelist"))
     for model_config_id, acc in existing_access.items():
         if model_config_id not in desired_model_ids:
             db.session.delete(acc)
+
+
+def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=None):
+    """Sync group memberships and per-user model limits from yaml_data. Does not commit."""
+    desired_names = _desired_groups_from_config(email, yaml_data)
+    if userinfo:
+        desired_names += _groups_from_userinfo_rules(userinfo, yaml_data, desired_names)
+
+    desired_ids = set()
+    for name in desired_names:
+        group = db.session.execute(select(Group).filter_by(name=name)).scalar_one_or_none()
+        if group:
+            desired_ids.add(group.id)
+
+    _reconcile_group_memberships(entity, desired_ids)
+    _apply_user_model_overrides(entity, email, yaml_data)
 
     # Initialize coin balance on first login so usage page shows starting coins immediately
     balance = db.session.execute(select(EntityBalance).filter_by(entity_id=entity.id)).scalar_one_or_none()
