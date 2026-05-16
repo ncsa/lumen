@@ -145,3 +145,75 @@ def test_last_checked_at_updated_on_failure(app, test_model, test_model_endpoint
 
         db.session.refresh(ep)
         assert ep.last_checked_at is not None
+
+
+def test_logging_healthy_endpoint(app, test_model, test_model_endpoint):
+    """LOG_MODEL_HEALTH=True logs 'found' when model is present (covers lines 26-27)."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_endpoint import ModelEndpoint
+        from lumen.services.health import check_all_endpoints
+
+        ep = db.session.get(ModelEndpoint, test_model_endpoint["id"])
+        ep.model_name = "dummy"
+        db.session.commit()
+
+        app.config["LOG_MODEL_HEALTH"] = True
+        try:
+            mock_cm = _make_openai_mock(["dummy"])
+            with patch("lumen.services.health.openai.OpenAI", return_value=mock_cm):
+                with patch.object(app.logger, "info") as mock_log:
+                    check_all_endpoints()
+            assert mock_log.called
+            log_msg = mock_log.call_args[0][0]
+            assert "endpoint UP" in log_msg
+        finally:
+            app.config["LOG_MODEL_HEALTH"] = False
+
+
+def test_logging_exception_endpoint(app, test_model, test_model_endpoint):
+    """LOG_MODEL_HEALTH=True logs 'endpoint DOWN' on exception (covers lines 33-34)."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_endpoint import ModelEndpoint
+        from lumen.services.health import check_all_endpoints
+
+        ep = db.session.get(ModelEndpoint, test_model_endpoint["id"])
+        ep.healthy = True
+        db.session.commit()
+
+        app.config["LOG_MODEL_HEALTH"] = True
+        try:
+            failing_cm = MagicMock()
+            failing_cm.__enter__ = MagicMock(side_effect=ConnectionError("refused"))
+            failing_cm.__exit__ = MagicMock(return_value=False)
+            with patch("lumen.services.health.openai.OpenAI", return_value=failing_cm):
+                with patch.object(app.logger, "info") as mock_log:
+                    check_all_endpoints()
+            assert mock_log.called
+            log_msg = mock_log.call_args[0][0]
+            assert "endpoint DOWN" in log_msg
+        finally:
+            app.config["LOG_MODEL_HEALTH"] = False
+
+
+def test_start_health_checker_starts_daemon_thread(app):
+    """start_health_checker must start exactly one daemon thread (covers lines 45-55)."""
+    import threading
+    from unittest.mock import patch, MagicMock
+    from lumen.services.health import start_health_checker
+
+    captured = []
+
+    original_thread = threading.Thread
+
+    def fake_thread(*args, **kwargs):
+        t = original_thread(*args, **kwargs)
+        captured.append(t)
+        return t
+
+    with patch("lumen.services.health.threading.Thread", side_effect=fake_thread):
+        start_health_checker(app)
+
+    assert len(captured) == 1
+    assert captured[0].daemon is True

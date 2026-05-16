@@ -190,3 +190,24 @@ def test_new_balance_created_with_last_refill_at(app, test_user, test_model):
         now = bal.last_refill_at + timedelta(hours=2)
         updated = refill_coin_balances(now=now)
         assert updated == 1
+
+
+def test_start_coin_refiller_starts_daemon_thread(app):
+    """start_coin_refiller must start exactly one daemon thread (covers lines 41-51)."""
+    import threading
+    from unittest.mock import patch
+
+    captured = []
+    original_thread = threading.Thread
+
+    def fake_thread(*args, **kwargs):
+        t = original_thread(*args, **kwargs)
+        captured.append(t)
+        return t
+
+    with patch("lumen.services.token_refill.threading.Thread", side_effect=fake_thread):
+        from lumen.services.token_refill import start_coin_refiller
+        start_coin_refiller(app)
+
+    assert len(captured) == 1
+    assert captured[0].daemon is True
