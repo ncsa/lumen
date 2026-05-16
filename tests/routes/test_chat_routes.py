@@ -1,5 +1,6 @@
 """Tests for chat routes (conversations, stream validation, access control)."""
 from datetime import datetime, timezone
+from http import HTTPStatus
 
 
 def _grant_unlimited_pool(app, entity_id):
@@ -13,7 +14,7 @@ def _grant_unlimited_pool(app, entity_id):
 
 def test_list_conversations_empty(auth_client):
     resp = auth_client.get("/chat/conversations")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     assert resp.get_json()["conversations"] == []
 
 
@@ -27,7 +28,7 @@ def test_list_conversations_with_data(app, auth_client, test_user):
 
     resp = auth_client.get("/chat/conversations")
     data = resp.get_json()
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     assert len(data["conversations"]) == 1
     assert data["conversations"][0]["title"] == "Test Chat"
     assert data["conversations"][0]["model"] == "test-model"
@@ -35,7 +36,7 @@ def test_list_conversations_with_data(app, auth_client, test_user):
 
 def test_get_conversation_messages_not_found(auth_client):
     resp = auth_client.get("/chat/conversations/9999/messages")
-    assert resp.status_code == 404
+    assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 def test_get_conversation_messages(app, auth_client, test_user):
@@ -55,7 +56,7 @@ def test_get_conversation_messages(app, auth_client, test_user):
         conv_id = conv.id
 
     resp = auth_client.get(f"/chat/conversations/{conv_id}/messages")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     data = resp.get_json()
     assert len(data["messages"]) == 2
     assert data["messages"][0]["role"] == "user"
@@ -64,7 +65,7 @@ def test_get_conversation_messages(app, auth_client, test_user):
 
 def test_delete_conversation_not_found(auth_client):
     resp = auth_client.delete("/chat/conversations/9999")
-    assert resp.status_code == 404
+    assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 def test_delete_conversation_hides_by_default(app, auth_client, test_user):
@@ -77,7 +78,7 @@ def test_delete_conversation_hides_by_default(app, auth_client, test_user):
         conv_id = conv.id
 
     resp = auth_client.delete(f"/chat/conversations/{conv_id}")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     assert resp.get_json()["ok"] is True
 
     with app.app_context():
@@ -98,7 +99,7 @@ def test_delete_conversation_hard_delete(app, auth_client, test_user):
             conv_id = conv.id
 
         resp = auth_client.delete(f"/chat/conversations/{conv_id}")
-        assert resp.status_code == 200
+        assert resp.status_code == HTTPStatus.OK
 
         with app.app_context():
             from lumen.extensions import db
@@ -110,23 +111,23 @@ def test_delete_conversation_hard_delete(app, auth_client, test_user):
 
 def test_chat_stream_no_body(auth_client):
     resp = auth_client.post("/chat/stream", content_type="application/json", data="")
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
 def test_chat_stream_missing_model_and_messages(auth_client):
     resp = auth_client.post("/chat/stream", json={})
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
 def test_chat_stream_missing_model(auth_client):
     resp = auth_client.post("/chat/stream", json={"messages": [{"role": "user", "content": "hi"}]})
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
 def test_chat_stream_model_but_no_messages(auth_client, test_model):
     """model provided but messages list omitted → 400."""
     resp = auth_client.post("/chat/stream", json={"model": test_model["model_name"]})
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
 def test_chat_stream_unknown_model(auth_client):
@@ -134,7 +135,7 @@ def test_chat_stream_unknown_model(auth_client):
         "messages": [{"role": "user", "content": "hi"}],
         "model": "no-such-model",
     })
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
 # ── Access control ────────────────────────────────────────────────────────────
@@ -155,7 +156,7 @@ def test_chat_stream_blacklisted_model_403(app, auth_client, test_user, test_mod
         "messages": [{"role": "user", "content": "hi"}],
         "model": test_model["model_name"],
     })
-    assert resp.status_code == 403
+    assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
 def test_chat_stream_graylist_no_consent_403(app, auth_client, test_user, test_model):
@@ -174,7 +175,7 @@ def test_chat_stream_graylist_no_consent_403(app, auth_client, test_user, test_m
         "messages": [{"role": "user", "content": "hi"}],
         "model": test_model["model_name"],
     })
-    assert resp.status_code == 403
+    assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
 def test_chat_stream_graylist_with_consent_passes_access(
@@ -202,7 +203,7 @@ def test_chat_stream_graylist_with_consent_passes_access(
         "messages": [{"role": "user", "content": "hi"}],
         "model": test_model["model_name"],
     })
-    assert resp.status_code != 403
+    assert resp.status_code != HTTPStatus.FORBIDDEN
 
 
 def test_chat_stream_whitelist_passes_access(app, auth_client, test_user, test_model):
@@ -222,4 +223,4 @@ def test_chat_stream_whitelist_passes_access(app, auth_client, test_user, test_m
         "messages": [{"role": "user", "content": "hi"}],
         "model": test_model["model_name"],
     })
-    assert resp.status_code != 403
+    assert resp.status_code != HTTPStatus.FORBIDDEN
