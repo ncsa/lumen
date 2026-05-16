@@ -1,4 +1,5 @@
 """Tests for the profile blueprint routes."""
+from http import HTTPStatus
 import json
 import pytest
 
@@ -27,13 +28,13 @@ def _make_model_endpoint(app, model_id, healthy=True):
 
 def test_profile_page_requires_login(client):
     resp = client.get("/profile", follow_redirects=False)
-    assert resp.status_code == 302
+    assert resp.status_code == HTTPStatus.FOUND
 
 
 def test_profile_page_with_model(app, auth_client, test_model):
     _make_model_endpoint(app, test_model["id"])
     resp = auth_client.get("/profile")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
 
 
 def test_profile_page_with_degraded_model(app, auth_client, test_model):
@@ -45,7 +46,7 @@ def test_profile_page_with_degraded_model(app, auth_client, test_model):
         db.session.add(ModelEndpoint(model_config_id=test_model["id"], url="http://b/v1", api_key="k", healthy=False))
         db.session.commit()
     resp = auth_client.get("/profile")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
 
 
 def test_profile_page_with_down_model(app, auth_client, test_model):
@@ -56,12 +57,12 @@ def test_profile_page_with_down_model(app, auth_client, test_model):
         db.session.add(ModelEndpoint(model_config_id=test_model["id"], url="http://a/v1", api_key="k", healthy=False))
         db.session.commit()
     resp = auth_client.get("/profile")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
 
 
 def test_profile_page_with_no_endpoints(app, auth_client, test_model):
     resp = auth_client.get("/profile")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +80,7 @@ def test_client_profile_page_redirects(app, auth_client):
         sid = svc.id
 
     resp = auth_client.get(f"/profile/client/{sid}", follow_redirects=False)
-    assert resp.status_code == 301
+    assert resp.status_code == HTTPStatus.MOVED_PERMANENTLY
     assert "/clients/" in resp.headers["Location"]
 
 
@@ -89,14 +90,14 @@ def test_client_profile_page_redirects(app, auth_client):
 
 def test_generate_key_returns_key(auth_client):
     resp = auth_client.get("/profile/keys/generate")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     data = resp.get_json()
     assert data["key"].startswith("sk_")
 
 
 def test_generate_key_requires_login(client):
     resp = client.get("/profile/keys/generate", follow_redirects=False)
-    assert resp.status_code == 302
+    assert resp.status_code == HTTPStatus.FOUND
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +111,7 @@ def test_create_key_success(auth_client):
         data=json.dumps({"name": "my key", "key": key}),
         content_type="application/json",
     )
-    assert resp.status_code == 201
+    assert resp.status_code == HTTPStatus.CREATED
     data = resp.get_json()
     assert data["name"] == "my key"
     assert "id" in data
@@ -123,7 +124,7 @@ def test_create_key_default_name(auth_client):
         data=json.dumps({"key": key}),
         content_type="application/json",
     )
-    assert resp.status_code == 201
+    assert resp.status_code == HTTPStatus.CREATED
     assert resp.get_json()["name"] == "Unnamed Key"
 
 
@@ -133,7 +134,7 @@ def test_create_key_invalid_key(auth_client):
         data=json.dumps({"key": "badkey"}),
         content_type="application/json",
     )
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
 def test_create_key_missing_key(auth_client):
@@ -142,19 +143,19 @@ def test_create_key_missing_key(auth_client):
         data=json.dumps({}),
         content_type="application/json",
     )
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
 def test_create_key_duplicate(auth_client):
     key = "sk_" + "c" * 32
     auth_client.post("/profile/keys", data=json.dumps({"key": key}), content_type="application/json")
     resp = auth_client.post("/profile/keys", data=json.dumps({"key": key}), content_type="application/json")
-    assert resp.status_code == 409
+    assert resp.status_code == HTTPStatus.CONFLICT
 
 
 def test_create_key_requires_login(client):
     resp = client.post("/profile/keys", data=json.dumps({"key": "sk_x"}), content_type="application/json", follow_redirects=False)
-    assert resp.status_code == 302
+    assert resp.status_code == HTTPStatus.FOUND
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +172,7 @@ def test_delete_key_success(app, auth_client, test_user):
     kid = create_resp.get_json()["id"]
 
     resp = auth_client.delete(f"/profile/keys/{kid}")
-    assert resp.status_code == 204
+    assert resp.status_code == HTTPStatus.NO_CONTENT
 
 
 def test_delete_key_forbidden(app, auth_client, admin_user):
@@ -194,17 +195,17 @@ def test_delete_key_forbidden(app, auth_client, admin_user):
         kid = ak.id
 
     resp = auth_client.delete(f"/profile/keys/{kid}")
-    assert resp.status_code == 403
+    assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
 def test_delete_key_not_found(auth_client):
     resp = auth_client.delete("/profile/keys/999999")
-    assert resp.status_code == 404
+    assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 def test_delete_key_requires_login(client):
     resp = client.delete("/profile/keys/1", follow_redirects=False)
-    assert resp.status_code == 302
+    assert resp.status_code == HTTPStatus.FOUND
 
 
 # ---------------------------------------------------------------------------
@@ -237,25 +238,25 @@ def _make_graylist_model(app, entity_id, model_name="graylist-model"):
 
 def test_user_consent_requires_login(client):
     resp = client.post("/profile/consent/some-model", follow_redirects=False)
-    assert resp.status_code == 302
+    assert resp.status_code == HTTPStatus.FOUND
 
 
 def test_user_consent_model_not_found(auth_client):
     resp = auth_client.post("/profile/consent/nonexistent-model-xyz")
-    assert resp.status_code == 404
+    assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 def test_user_consent_not_graylisted(app, auth_client, test_model):
     """Posting consent for a non-graylisted model returns 400."""
     resp = auth_client.post(f"/profile/consent/{test_model['model_name']}")
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
 def test_user_consent_success(app, auth_client, test_user):
     """Posting consent for a graylisted model records it and returns 200."""
     gm = _make_graylist_model(app, test_user["id"])
     resp = auth_client.post(f"/profile/consent/{gm['model_name']}")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     assert resp.get_json()["ok"] is True
 
     # Verify consent was persisted
@@ -269,7 +270,7 @@ def test_user_consent_idempotent(app, auth_client, test_user):
     gm = _make_graylist_model(app, test_user["id"], model_name="graylist-model-2")
     auth_client.post(f"/profile/consent/{gm['model_name']}")
     resp = auth_client.post(f"/profile/consent/{gm['model_name']}")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +292,7 @@ def test_profile_page_shows_inactive_model(app, auth_client):
         db.session.commit()
 
     resp = auth_client.get("/profile")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +320,7 @@ def test_profile_page_with_coin_pool(app, auth_client, test_user):
         db.session.commit()
 
     resp = auth_client.get("/profile")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
 
 
 # ---------------------------------------------------------------------------
@@ -354,4 +355,4 @@ def test_profile_page_shows_model_with_past_usage(app, auth_client, test_user):
         db.session.commit()
 
     resp = auth_client.get("/profile")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK

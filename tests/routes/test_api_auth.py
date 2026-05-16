@@ -1,4 +1,5 @@
 """Tests for the /v1 API key authentication decorator (api_key_required)."""
+from http import HTTPStatus
 import pytest
 
 
@@ -45,7 +46,7 @@ def inactive_api_key(app, test_user):
 
 def test_missing_authorization_header_400(client, test_model):
     resp = client.get(f"/v1/models/{test_model['model_name']}")
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
     body = resp.get_json()
     assert body["error"]["type"] == "invalid_request_error"
 
@@ -55,7 +56,7 @@ def test_non_bearer_scheme_400(client, test_model):
         f"/v1/models/{test_model['model_name']}",
         headers={"Authorization": "Basic dXNlcjpwYXNz"},
     )
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
 def test_empty_bearer_token_400(client, test_model):
@@ -63,7 +64,7 @@ def test_empty_bearer_token_400(client, test_model):
         f"/v1/models/{test_model['model_name']}",
         headers={"Authorization": "Bearer "},
     )
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +76,7 @@ def test_unknown_token_401(client, test_model):
         f"/v1/models/{test_model['model_name']}",
         headers={"Authorization": "Bearer not-a-real-token"},
     )
-    assert resp.status_code == 401
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
     assert resp.get_json()["error"]["type"] == "authentication_error"
 
 
@@ -84,7 +85,7 @@ def test_inactive_api_key_401(client, test_model, inactive_api_key):
         f"/v1/models/{test_model['model_name']}",
         headers={"Authorization": f"Bearer {inactive_api_key}"},
     )
-    assert resp.status_code == 401
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
 
 
 def test_inactive_entity_403(app, client, test_user, api_key):
@@ -100,7 +101,7 @@ def test_inactive_entity_403(app, client, test_user, api_key):
         "/v1/models/test-model",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert resp.status_code == 403
+    assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +128,7 @@ def test_valid_key_lists_accessible_model(
         "/v1/models",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     body = resp.get_json()
     assert body["object"] == "list"
     ids = [m["id"] for m in body["data"]]
@@ -153,7 +154,7 @@ def test_valid_key_filters_blocked_model(
         "/v1/models",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     ids = [m["id"] for m in resp.get_json()["data"]]
     assert test_model["model_name"] not in ids
 
@@ -176,7 +177,7 @@ def test_get_model_blocked_returns_404(
         f"/v1/models/{test_model['model_name']}",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert resp.status_code == 404
+    assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 def test_get_model_unknown_returns_404(client, api_key):
@@ -185,7 +186,7 @@ def test_get_model_unknown_returns_404(client, api_key):
         "/v1/models/does-not-exist",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert resp.status_code == 404
+    assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +199,7 @@ def test_monitor_token_can_list_models(app, client, test_model):
                                 "monitoring": {"token": monitor}}
     try:
         resp = client.get("/v1/models", headers={"Authorization": f"Bearer {monitor}"})
-        assert resp.status_code == 200
+        assert resp.status_code == HTTPStatus.OK
         # Monitor sees all models, not filtered by entity access
         ids = [m["id"] for m in resp.get_json()["data"]]
         assert test_model["model_name"] in ids
@@ -215,7 +216,7 @@ def test_monitor_token_can_get_model(app, client, test_model):
             f"/v1/models/{test_model['model_name']}",
             headers={"Authorization": f"Bearer {monitor}"},
         )
-        assert resp.status_code == 200
+        assert resp.status_code == HTTPStatus.OK
         assert resp.get_json()["id"] == test_model["model_name"]
     finally:
         app.config["YAML_DATA"].pop("monitoring", None)
@@ -231,7 +232,7 @@ def test_monitor_token_blocked_from_chat_completions(app, client):
             headers={"Authorization": f"Bearer {monitor}"},
             json={"model": "test-model", "messages": [{"role": "user", "content": "hi"}]},
         )
-        assert resp.status_code == 403
+        assert resp.status_code == HTTPStatus.FORBIDDEN
         assert resp.get_json()["error"]["type"] == "authentication_error"
     finally:
         app.config["YAML_DATA"].pop("monitoring", None)
@@ -248,7 +249,7 @@ def test_chat_completions_missing_body_400(client, api_key):
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         data="",
     )
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
 def test_chat_completions_missing_model_400(client, api_key):
@@ -258,7 +259,7 @@ def test_chat_completions_missing_model_400(client, api_key):
         headers={"Authorization": f"Bearer {token}"},
         json={"messages": [{"role": "user", "content": "hi"}]},
     )
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
 def test_chat_completions_unknown_model_404(client, api_key):
@@ -268,7 +269,7 @@ def test_chat_completions_unknown_model_404(client, api_key):
         headers={"Authorization": f"Bearer {token}"},
         json={"model": "nope", "messages": [{"role": "user", "content": "hi"}]},
     )
-    assert resp.status_code == 404
+    assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 def test_chat_completions_no_healthy_endpoint_503(
@@ -290,7 +291,7 @@ def test_chat_completions_no_healthy_endpoint_503(
         json={"model": test_model["model_name"],
               "messages": [{"role": "user", "content": "hi"}]},
     )
-    assert resp.status_code == 503
+    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE
     assert resp.get_json()["error"]["type"] == "server_error"
 
 
@@ -314,7 +315,7 @@ def test_chat_completions_no_access_403(
         json={"model": test_model["model_name"],
               "messages": [{"role": "user", "content": "hi"}]},
     )
-    assert resp.status_code == 403
+    assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
 def test_chat_completions_graylist_no_consent_403(
@@ -338,7 +339,7 @@ def test_chat_completions_graylist_no_consent_403(
         json={"model": test_model["model_name"],
               "messages": [{"role": "user", "content": "hi"}]},
     )
-    assert resp.status_code == 403
+    assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
 def test_chat_completions_graylist_with_consent_passes_access(
@@ -406,7 +407,7 @@ def test_chat_completions_missing_messages_400(client, api_key):
         headers={"Authorization": f"Bearer {token}"},
         json={"model": "test-model"},
     )
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
     assert resp.get_json()["error"]["type"] == "invalid_request_error"
 
 
@@ -422,7 +423,7 @@ def test_list_models_response_includes_required_openai_fields(
         _grant_unlimited_pool(app, test_user["id"])
 
     resp = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"})
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     data = resp.get_json()["data"]
     assert data, "Expected at least one model in the list"
     for m in data:
