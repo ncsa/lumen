@@ -1,6 +1,7 @@
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
+from http import HTTPStatus
 
 from flask import Blueprint, redirect, render_template, request, jsonify, session, url_for
 from sqlalchemy import func, select
@@ -170,7 +171,7 @@ def index():
 @profile_bp.route("/profile/client/<int:sid>")
 @login_required
 def client_profile_page(sid):
-    return redirect(url_for("clients.detail", sid=sid), 301)
+    return redirect(url_for("clients.detail", sid=sid), HTTPStatus.MOVED_PERMANENTLY)
 
 
 @profile_bp.route("/profile/keys/generate")
@@ -189,11 +190,11 @@ def create_key():
     key = (data.get("key") or "").strip()
 
     if not key or not key.startswith("sk_"):
-        return jsonify({"error": "Invalid key"}), 400
+        return jsonify({"error": "Invalid key"}), HTTPStatus.BAD_REQUEST
 
     key_hash = hash_api_key(key)
     if db.session.execute(select(APIKey).filter_by(key_hash=key_hash)).scalar_one_or_none():
-        return jsonify({"error": "Key already exists"}), 409
+        return jsonify({"error": "Key already exists"}), HTTPStatus.CONFLICT
 
     api_key = APIKey(
         entity_id=entity_id,
@@ -205,7 +206,7 @@ def create_key():
     db.session.add(api_key)
     db.session.commit()
 
-    return jsonify({"id": api_key.id, "name": api_key.name, "key": key}), 201
+    return jsonify({"id": api_key.id, "name": api_key.name, "key": key}), HTTPStatus.CREATED
 
 
 @profile_bp.route("/profile/keys/<int:kid>", methods=["DELETE"])
@@ -215,11 +216,11 @@ def delete_key(kid):
     api_key = db.get_or_404(APIKey, kid)
 
     if api_key.entity_id != entity_id:
-        return jsonify({"error": "Forbidden"}), 403
+        return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
 
     api_key.active = False
     db.session.commit()
-    return "", 204
+    return "", HTTPStatus.NO_CONTENT
 
 
 @profile_bp.route("/profile/consent/<path:model_name>", methods=["POST"])
@@ -229,7 +230,7 @@ def user_consent(model_name):
     config = db.first_or_404(select(ModelConfig).filter_by(model_name=model_name, active=True))
 
     if get_model_access_status(entity_id, config.id) != "graylist":
-        return jsonify({"error": "Model is not graylisted for this user"}), 400
+        return jsonify({"error": "Model is not graylisted for this user"}), HTTPStatus.BAD_REQUEST
 
     if not has_model_consent(entity_id, config.id):
         db.session.add(EntityModelConsent(
@@ -239,4 +240,4 @@ def user_consent(model_name):
         ))
         db.session.commit()
 
-    return jsonify({"ok": True}), 200
+    return jsonify({"ok": True}), HTTPStatus.OK

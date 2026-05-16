@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from http import HTTPStatus
 
 from flask import Blueprint, abort, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy import func, select
@@ -158,7 +159,7 @@ def create_client():
     data = request.get_json() or request.form
     name = (data.get("name") or "").strip()
     if not name:
-        return jsonify({"error": "Client name required"}), 400
+        return jsonify({"error": "Client name required"}), HTTPStatus.BAD_REQUEST
 
     client = Entity(
         entity_type="client",
@@ -169,7 +170,7 @@ def create_client():
     db.session.add(client)
     db.session.commit()
 
-    return jsonify({"id": client.id, "name": client.name}), 201
+    return jsonify({"id": client.id, "name": client.name}), HTTPStatus.CREATED
 
 
 @clients_bp.route("/clients/<int:sid>", methods=["DELETE"])
@@ -178,7 +179,7 @@ def delete_client(sid):
     client = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="client"))
     client.active = False
     db.session.commit()
-    return "", 204
+    return "", HTTPStatus.NO_CONTENT
 
 
 @clients_bp.route("/clients/<int:sid>/users/search")
@@ -218,25 +219,25 @@ def add_client_manager(sid):
     data = request.get_json() or {}
     email = (data.get("email") or "").strip()
     if not email:
-        return jsonify({"error": "Email required"}), 400
+        return jsonify({"error": "Email required"}), HTTPStatus.BAD_REQUEST
 
     db.first_or_404(select(Entity).filter_by(id=sid, entity_type="client"))
 
     user = db.session.execute(select(Entity).filter_by(email=email, entity_type="user")).scalar_one_or_none()
     if not user:
-        return jsonify({"error": "User not found"}), 404
+        return jsonify({"error": "User not found"}), HTTPStatus.NOT_FOUND
 
     existing = db.session.execute(
         select(EntityManager).filter_by(user_entity_id=user.id, client_entity_id=sid)
     ).scalar_one_or_none()
     if existing:
-        return jsonify({"error": "User already manages this client"}), 409
+        return jsonify({"error": "User already manages this client"}), HTTPStatus.CONFLICT
 
     new_assoc = EntityManager(user_entity_id=user.id, client_entity_id=sid)
     db.session.add(new_assoc)
     db.session.commit()
 
-    return jsonify({"user_id": user.id, "name": user.name, "email": user.email}), 201
+    return jsonify({"user_id": user.id, "name": user.name, "email": user.email}), HTTPStatus.CREATED
 
 
 @clients_bp.route("/clients/<int:sid>/users/<int:uid>", methods=["DELETE"])
@@ -248,11 +249,11 @@ def remove_client_manager(sid, uid):
         select(EntityManager).filter_by(user_entity_id=uid, client_entity_id=sid)
     ).scalar_one_or_none()
     if not target_assoc:
-        return jsonify({"error": "Not found"}), 404
+        return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
 
     db.session.delete(target_assoc)
     db.session.commit()
-    return "", 204
+    return "", HTTPStatus.NO_CONTENT
 
 
 @clients_bp.route("/clients/<int:sid>/keys", methods=["POST"])
@@ -267,18 +268,18 @@ def create_client_key(sid):
             select(EntityManager).filter_by(user_entity_id=entity_id, client_entity_id=sid)
         ).scalar_one_or_none()
         if not assoc:
-            return jsonify({"error": "Forbidden"}), 403
+            return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
 
     data = request.get_json() or {}
     name = (data.get("name") or "").strip()
     key = (data.get("key") or "").strip()
 
     if not key or not key.startswith("sk_"):
-        return jsonify({"error": "Invalid key"}), 400
+        return jsonify({"error": "Invalid key"}), HTTPStatus.BAD_REQUEST
 
     key_hash = hash_api_key(key)
     if db.session.execute(select(APIKey).filter_by(key_hash=key_hash)).scalar_one_or_none():
-        return jsonify({"error": "Key already exists"}), 409
+        return jsonify({"error": "Key already exists"}), HTTPStatus.CONFLICT
 
     api_key = APIKey(
         entity_id=sid,
@@ -290,7 +291,7 @@ def create_client_key(sid):
     db.session.add(api_key)
     db.session.commit()
 
-    return jsonify({"id": api_key.id, "name": api_key.name, "key": key}), 201
+    return jsonify({"id": api_key.id, "name": api_key.name, "key": key}), HTTPStatus.CREATED
 
 
 @clients_bp.route("/clients/<int:sid>/keys/<int:kid>", methods=["DELETE"])
@@ -304,15 +305,15 @@ def delete_client_key(sid, kid):
             select(EntityManager).filter_by(user_entity_id=entity_id, client_entity_id=sid)
         ).scalar_one_or_none()
         if not assoc:
-            return jsonify({"error": "Forbidden"}), 403
+            return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
 
     api_key = db.get_or_404(APIKey, kid)
     if api_key.entity_id != sid:
-        return jsonify({"error": "Not found"}), 404
+        return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
 
     api_key.active = False
     db.session.commit()
-    return "", 204
+    return "", HTTPStatus.NO_CONTENT
 
 
 @clients_bp.route("/clients/<int:sid>/consent/<path:model_name>", methods=["POST"])
@@ -327,12 +328,12 @@ def client_consent(sid, model_name):
             select(EntityManager).filter_by(user_entity_id=entity_id, client_entity_id=sid)
         ).scalar_one_or_none()
         if not assoc:
-            return jsonify({"error": "Forbidden"}), 403
+            return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
 
     config = db.first_or_404(select(ModelConfig).filter_by(model_name=model_name, active=True))
 
     if get_model_access_status(sid, config.id) != "graylist":
-        return jsonify({"error": "Model is not graylisted for this client"}), 400
+        return jsonify({"error": "Model is not graylisted for this client"}), HTTPStatus.BAD_REQUEST
 
     if not has_model_consent(sid, config.id):
         db.session.add(EntityModelConsent(
@@ -342,4 +343,4 @@ def client_consent(sid, model_name):
         ))
         db.session.commit()
 
-    return jsonify({"ok": True}), 200
+    return jsonify({"ok": True}), HTTPStatus.OK

@@ -1,5 +1,6 @@
 import hashlib
 from datetime import datetime, timezone
+from http import HTTPStatus
 
 from flask import Blueprint, redirect, url_for, session, render_template, current_app
 from sqlalchemy import select
@@ -178,7 +179,7 @@ def login():
 def devlogin():
     email = current_app.config.get("DEV_USER")
     if not email:
-        return "Dev login not configured.", 403
+        return "Dev login not configured.", HTTPStatus.FORBIDDEN
     yaml_data = current_app.config.get("YAML_DATA", {})
     dev_groups = current_app.config.get("DEV_USER_GROUPS", [])
     if dev_groups:
@@ -223,7 +224,7 @@ def callback():
 
     email = userinfo.get("email")
     if not email:
-        return "OAuth2 provider did not return an email address.", 400
+        return "OAuth2 provider did not return an email address.", HTTPStatus.BAD_REQUEST
 
     name = userinfo.get("name") or userinfo.get("given_name") or email.split("@")[0]
 
@@ -242,7 +243,7 @@ def callback():
         db.session.add(entity)
         db.session.flush()
     elif not entity.active:
-        return "Account disabled.", 403
+        return "Account disabled.", HTTPStatus.FORBIDDEN
     else:
         entity.name = name
         entity.initials = make_initials(name)

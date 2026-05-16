@@ -4,6 +4,7 @@ import time as _time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from functools import wraps
+from http import HTTPStatus
 
 import openai
 from flask import Blueprint, current_app, request, jsonify, g, Response, stream_with_context
@@ -137,7 +138,7 @@ def _model_dict(c, rates: dict) -> dict:
     return d
 
 
-def _err(msg: str, err_type: str = "invalid_request_error", status: int = 400):
+def _err(msg: str, err_type: str = "invalid_request_error", status: HTTPStatus = HTTPStatus.BAD_REQUEST):
     return jsonify({"error": {"message": msg, "type": err_type}}), status
 
 
@@ -146,17 +147,17 @@ def api_key_required(f):
     def decorated(*args, **kwargs):
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
-            return _err("Missing or malformed Authorization header", status=400)
+            return _err("Missing or malformed Authorization header", status=HTTPStatus.BAD_REQUEST)
 
         token = auth_header[7:].strip()
         if not token:
-            return _err("Empty token", status=400)
+            return _err("Empty token", status=HTTPStatus.BAD_REQUEST)
 
         yaml_data = current_app.config.get("YAML_DATA", {})
         monitor_token = yaml_data.get("monitoring", {}).get("token", "")
         if monitor_token and token == monitor_token:
             if request.endpoint not in ("api.list_models", "api.get_model"):
-                return _err("Monitor token can only access /v1/models", "authentication_error", 403)
+                return _err("Monitor token can only access /v1/models", "authentication_error", HTTPStatus.FORBIDDEN)
             g.api_key = None
             g.entity = None
             g.monitor = True
@@ -165,11 +166,11 @@ def api_key_required(f):
         g.monitor = False
         api_key = db.session.execute(select(APIKey).filter_by(key_hash=hash_api_key(token))).scalar_one_or_none()
         if not api_key or not api_key.active:
-            return _err("Invalid or inactive API key", "authentication_error", 401)
+            return _err("Invalid or inactive API key", "authentication_error", HTTPStatus.UNAUTHORIZED)
 
         entity = db.session.get(Entity, api_key.entity_id)
         if not entity or not entity.active:
-            return _err("Account disabled", "authentication_error", 403)
+            return _err("Account disabled", "authentication_error", HTTPStatus.FORBIDDEN)
 
         g.api_key = api_key
         g.entity = entity
@@ -198,9 +199,9 @@ def list_models():
 def get_model(model_id):
     config = db.session.execute(select(ModelConfig).filter_by(model_name=model_id, active=True)).scalar_one_or_none()
     if not config:
-        return _err(f"Model '{model_id}' not found", status=404)
+        return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
     if not g.monitor and get_effective_limit(g.entity.id, config.id) is None:
-        return _err(f"Model '{model_id}' not found", status=404)
+        return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
     rates = _get_request_rates()
     return jsonify(_model_dict(config, rates))
 
@@ -209,7 +210,7 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
     """Shared logic for chat completions (used by both endpoints)."""
     model_config = db.session.execute(select(ModelConfig).filter_by(model_name=model_name, active=True)).scalar_one_or_none()
     if not model_config:
-        return _err(f"Model '{model_name}' not found", status=404)
+        return _err(f"Model '{model_name}' not found", status=HTTPStatus.NOT_FOUND)
 
     entity_id = g.entity.id
 
@@ -219,7 +220,7 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
 
     endpoint = get_next_endpoint(model_config.id)
     if endpoint is None:
-        return _err(f"No healthy endpoints for model '{model_name}'", "server_error", 503)
+        return _err(f"No healthy endpoints for model '{model_name}'", "server_error", HTTPStatus.SERVICE_UNAVAILABLE)
 
     remote_model = endpoint.model_name or model_name
 
@@ -270,7 +271,7 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
             response = client.chat.completions.create(model=remote_model, messages=messages, **kwargs)
         duration = _time.time() - t0
     except Exception as e:
-        return _err(str(e), "api_error", 500)
+        return _err(str(e), "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
 
     usage = response.usage
     cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens, model_config)
@@ -322,7 +323,7 @@ def completions():
 
     model_config = db.session.execute(select(ModelConfig).filter_by(model_name=model_name, active=True)).scalar_one_or_none()
     if not model_config:
-        return _err(f"Model '{model_name}' not found", status=404)
+        return _err(f"Model '{model_name}' not found", status=HTTPStatus.NOT_FOUND)
 
     entity_id = g.entity.id
     ok, code, msg = check_coin_budget(entity_id, model_config.id)
@@ -331,14 +332,14 @@ def completions():
 
     endpoint = get_next_endpoint(model_config.id)
     if endpoint is None:
-        return _err(f"No healthy endpoints for model '{model_name}'", "server_error", 503)
+        return _err(f"No healthy endpoints for model '{model_name}'", "server_error", HTTPStatus.SERVICE_UNAVAILABLE)
 
     remote_model = endpoint.model_name or model_name
     try:
         with openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url) as client:
             response = client.chat.completions.create(model=remote_model, messages=messages)
     except Exception as e:
-        return _err(str(e), "api_error", 500)
+        return _err(str(e), "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
 
     usage = response.usage
     cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens, model_config)

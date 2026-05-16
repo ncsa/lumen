@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from http import HTTPStatus
 
 from flask import Blueprint, render_template, request, redirect, url_for, abort, jsonify
 from sqlalchemy import func, case, select, text
@@ -63,10 +64,10 @@ def reset_user_tokens(eid):
     entity = db.get_or_404(Entity, eid)
     pool = get_pool_limit(entity.id)
     if pool is None:
-        return jsonify({"error": "No coin pool configured"}), 400
+        return jsonify({"error": "No coin pool configured"}), HTTPStatus.BAD_REQUEST
     max_coins, _refresh, starting_coins = pool
     if max_coins == -2:
-        return jsonify({"error": "User has unlimited coins"}), 400
+        return jsonify({"error": "User has unlimited coins"}), HTTPStatus.BAD_REQUEST
     new_balance = max(starting_coins, max_coins)
     balance = db.session.execute(select(EntityBalance).filter_by(entity_id=eid)).scalar_one_or_none()
     if balance:

@@ -3,6 +3,7 @@ import io
 import json
 import logging
 from datetime import datetime
+from http import HTTPStatus
 
 import filetype
 import pypdf
@@ -104,15 +105,15 @@ def chat_upload():
 
     f = request.files.get("file")
     if not f or not f.filename:
-        return jsonify({"error": "No file provided"}), 400
+        return jsonify({"error": "No file provided"}), HTTPStatus.BAD_REQUEST
 
     ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
     if ext not in allowed:
-        return jsonify({"error": f"Unsupported file type: .{ext}"}), 400
+        return jsonify({"error": f"Unsupported file type: .{ext}"}), HTTPStatus.BAD_REQUEST
 
     data = f.read()
     if len(data) > max_bytes:
-        return jsonify({"error": f"File exceeds {max_bytes // (1024 * 1024)} MB limit"}), 400
+        return jsonify({"error": f"File exceeds {max_bytes // (1024 * 1024)} MB limit"}), HTTPStatus.BAD_REQUEST
 
     kind = filetype.guess(data)
 
@@ -126,7 +127,7 @@ def chat_upload():
         # Binary file that isn't an image — confirm it's a known doc format.
         expected_mime = _BINARY_DOC_MIMES.get(ext)
         if kind.mime != expected_mime:
-            return jsonify({"error": "File content does not match its extension"}), 400
+            return jsonify({"error": "File content does not match its extension"}), HTTPStatus.BAD_REQUEST
     # kind is None → plain text (no magic bytes); expected for txt, csv, py, etc.
 
     if ext == "pdf":
@@ -134,7 +135,7 @@ def chat_upload():
             reader = pypdf.PdfReader(io.BytesIO(data))
             text = "\n".join(page.extract_text() or "" for page in reader.pages)
         except Exception as e:
-            return jsonify({"error": f"Could not read PDF: {e}"}), 400
+            return jsonify({"error": f"Could not read PDF: {e}"}), HTTPStatus.BAD_REQUEST
     else:
         text = data.decode("utf-8", errors="replace")
 
@@ -150,20 +151,20 @@ def chat_upload():
 def chat_stream():
     data = request.get_json()
     if not data:
-        return jsonify({"error": "Invalid request"}), 400
+        return jsonify({"error": "Invalid request"}), HTTPStatus.BAD_REQUEST
 
     messages = data.get("messages", [])
     model = data.get("model")
     conversation_id = data.get("conversation_id")
 
     if not messages or not model:
-        return jsonify({"error": "Missing messages or model"}), 400
+        return jsonify({"error": "Missing messages or model"}), HTTPStatus.BAD_REQUEST
 
     entity_id = session["entity_id"]
 
     model_config = db.session.execute(select(ModelConfig).filter_by(model_name=model, active=True)).scalar_one_or_none()
     if not model_config:
-        return jsonify({"error": f"Unknown model: {model}"}), 400
+        return jsonify({"error": f"Unknown model: {model}"}), HTTPStatus.BAD_REQUEST
 
     ok, code, msg = check_coin_budget(entity_id, model_config.id)
     if not ok:
@@ -285,7 +286,7 @@ def get_conversation_messages(cid):
         select(Conversation).filter_by(id=cid, entity_id=entity_id, hidden=False)
     ).scalar_one_or_none()
     if not conv:
-        return jsonify({"error": "Not found"}), 404
+        return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
 
     msgs = db.session.execute(
         select(Message).filter_by(conversation_id=cid).order_by(Message.created_at)
@@ -319,7 +320,7 @@ def delete_conversation(cid):
     entity_id = session["entity_id"]
     conv = db.session.execute(select(Conversation).filter_by(id=cid, entity_id=entity_id)).scalar_one_or_none()
     if not conv:
-        return jsonify({"error": "Not found"}), 404
+        return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
 
     mode = current_app.config.get("CHAT_CONVERSATION_REMOVE_MODE", "hide")
     if mode == "delete":
