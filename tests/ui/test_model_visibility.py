@@ -1,9 +1,11 @@
+from http import HTTPStatus
+
 from bs4 import BeautifulSoup
 
 
 def test_accessible_model_present_in_table(auth_client, test_model):
     resp = auth_client.get("/models")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     soup = BeautifulSoup(resp.data, "html.parser")
     links = [a.get_text(strip=True) for a in soup.find_all("a")]
     assert test_model["model_name"] in links
@@ -30,7 +32,7 @@ def test_blocked_model_absent_from_table(app, auth_client, test_model, test_user
 
 def test_no_models_shows_empty_message(auth_client):
     resp = auth_client.get("/models")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     assert b"No models configured." in resp.data
 
 

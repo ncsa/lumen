@@ -1,4 +1,6 @@
 """Tests verifying CSRF protection is enforced on form routes and exempt on the API."""
+from http import HTTPStatus
+
 import pytest
 from bs4 import BeautifulSoup
 
@@ -39,7 +41,7 @@ def _setup_graylist(app, entity_id, model_config_id):
 def test_consent_rejected_without_csrf_token(app, csrf_client, test_model, test_user):
     _setup_graylist(app, test_user["id"], test_model["id"])
     resp = csrf_client.post(f"/models/{test_model['model_name']}/consent")
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
     assert b"CSRF" in resp.data
 
 
@@ -52,7 +54,7 @@ def test_consent_accepted_with_csrf_token(app, csrf_client, test_model, test_use
         data={"csrf_token": token},
         follow_redirects=False,
     )
-    assert resp.status_code == 302
+    assert resp.status_code == HTTPStatus.FOUND
 
 
 def test_delete_conversation_rejected_without_csrf_token(app, csrf_client, test_user):
@@ -65,7 +67,7 @@ def test_delete_conversation_rejected_without_csrf_token(app, csrf_client, test_
         conv_id = conv.id
 
     resp = csrf_client.delete(f"/chat/conversations/{conv_id}")
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
     assert b"CSRF" in resp.data
 
 
@@ -84,7 +86,7 @@ def test_delete_conversation_accepted_with_csrf_token(app, csrf_client, test_use
         f"/chat/conversations/{conv_id}",
         headers={"X-CSRFToken": token},
     )
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
 
 
 def test_api_blueprint_exempt_from_csrf(csrf_client):
@@ -95,7 +97,7 @@ def test_api_blueprint_exempt_from_csrf(csrf_client):
         content_type="application/json",
     )
     # Auth fails (401) — CSRF must not be the reason (400 + CSRF body)
-    assert resp.status_code != 400 or b"CSRF" not in resp.data
+    assert resp.status_code != HTTPStatus.BAD_REQUEST or b"CSRF" not in resp.data
 
 
 def test_stream_rejected_without_csrf_token(csrf_client, test_model):
@@ -105,7 +107,7 @@ def test_stream_rejected_without_csrf_token(csrf_client, test_model):
         json={"messages": [{"role": "user", "content": "hi"}], "model": test_model["model_name"]},
         content_type="application/json",
     )
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
     assert b"CSRF" in resp.data
 
 
@@ -128,4 +130,4 @@ def test_stream_not_rejected_with_csrf_token(app, csrf_client, test_model, test_
         headers={"X-CSRFToken": token},
     )
     # CSRF passes; fails for another reason (no healthy endpoint), not a CSRF 400
-    assert not (resp.status_code == 400 and b"CSRF" in resp.data)
+    assert not (resp.status_code == HTTPStatus.BAD_REQUEST and b"CSRF" in resp.data)

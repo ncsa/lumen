@@ -1,11 +1,13 @@
 """Admin route tests — focus on user management happy paths."""
+from http import HTTPStatus
+
 import pytest
 from sqlalchemy import select
 
 
 def test_toggle_user_flips_active(app, admin_client, test_user):
     resp = admin_client.post(f"/admin/users/{test_user['id']}/toggle")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     assert resp.get_json()["active"] is False
     with app.app_context():
         from lumen.extensions import db
@@ -15,7 +17,7 @@ def test_toggle_user_flips_active(app, admin_client, test_user):
 
 def test_reset_tokens_no_pool_returns_400(admin_client, test_user):
     resp = admin_client.post(f"/admin/users/{test_user['id']}/reset-tokens")
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
 def test_reset_tokens_unlimited_returns_400(app, admin_client, test_user):
@@ -28,7 +30,7 @@ def test_reset_tokens_unlimited_returns_400(app, admin_client, test_user):
         ))
         db.session.commit()
     resp = admin_client.post(f"/admin/users/{test_user['id']}/reset-tokens")
-    assert resp.status_code == 400
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
 def test_reset_tokens_resets_balance(app, admin_client, test_user):
@@ -44,7 +46,7 @@ def test_reset_tokens_resets_balance(app, admin_client, test_user):
         db.session.commit()
 
     resp = admin_client.post(f"/admin/users/{test_user['id']}/reset-tokens")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     assert resp.get_json()["coins_available"] == 500
     with app.app_context():
         from lumen.extensions import db
@@ -55,7 +57,7 @@ def test_reset_tokens_resets_balance(app, admin_client, test_user):
 
 def test_admin_user_profile_page(admin_client, test_user):
     resp = admin_client.get(f"/admin/users/{test_user['id']}/profile")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     assert test_user["name"].encode() in resp.data
 
 
@@ -65,7 +67,7 @@ def test_admin_user_profile_page(admin_client, test_user):
 
 def test_api_users_returns_zeros_without_usage(admin_client, test_user):
     resp = admin_client.get("/admin/api/users")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     data = resp.get_json()
     user = next(u for u in data["users"] if u["id"] == test_user["id"])
     assert user["requests"] == 0
@@ -82,7 +84,7 @@ def test_api_users_reflects_entity_stats(app, admin_client, test_user, test_mode
         db.session.commit()
 
     resp = admin_client.get("/admin/api/users")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     data = resp.get_json()
     user = next(u for u in data["users"] if u["id"] == test_user["id"])
     assert user["requests"] == 1
@@ -99,6 +101,6 @@ def test_api_users_sort_by_requests(app, admin_client, test_user, admin_user, te
         db.session.commit()
 
     resp = admin_client.get("/admin/api/users?sort=requests&order=desc")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     ids = [u["id"] for u in resp.get_json()["users"]]
     assert ids.index(test_user["id"]) < ids.index(admin_user["id"])

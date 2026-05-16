@@ -371,7 +371,7 @@ def test_chat_completions_graylist_with_consent_passes_access(
         json={"model": test_model["model_name"],
               "messages": [{"role": "user", "content": "hi"}]},
     )
-    assert resp.status_code != 403
+    assert resp.status_code != HTTPStatus.FORBIDDEN
 
 
 def test_chat_completions_whitelist_passes_access(
@@ -396,7 +396,7 @@ def test_chat_completions_whitelist_passes_access(
         json={"model": test_model["model_name"],
               "messages": [{"role": "user", "content": "hi"}]},
     )
-    assert resp.status_code != 403
+    assert resp.status_code != HTTPStatus.FORBIDDEN
 
 
 def test_chat_completions_missing_messages_400(client, api_key):

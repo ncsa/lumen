@@ -1,6 +1,7 @@
 import threading
 import time
 from datetime import datetime, timezone
+from http import HTTPStatus
 
 import openai
 from flask import current_app
@@ -243,12 +244,12 @@ def check_coin_budget(entity_id: int, model_config_id: int):
     """Check coin budget. Returns (ok, http_code, error_message)."""
     effective = get_effective_limit(entity_id, model_config_id)
     if effective is None:
-        return False, 403, "No access to this model"
+        return False, HTTPStatus.FORBIDDEN, "No access to this model"
     if effective[0] == -2:
         return True, None, None
     coins_left = get_coin_balance(entity_id, model_config_id)
     if coins_left is not None and coins_left <= 0:
-        return False, 429, "Coin budget exhausted"
+        return False, HTTPStatus.TOO_MANY_REQUESTS, "Coin budget exhausted"
     return True, None, None
 
 

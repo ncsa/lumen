@@ -103,7 +103,7 @@ def detail(sid):
             select(EntityManager).filter_by(user_entity_id=entity_id, client_entity_id=sid)
         ).scalar_one_or_none()
         if not assoc:
-            abort(403)
+            abort(HTTPStatus.FORBIDDEN)
 
     data = _get_profile_data(sid)
 

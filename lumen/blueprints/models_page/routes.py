@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from http import HTTPStatus
 
 import requests as http_requests
 from flask import Blueprint, abort, redirect, render_template, session, url_for
@@ -87,7 +88,7 @@ def model_consent(model_name):
     config = db.first_or_404(select(ModelConfig).filter_by(model_name=model_name, active=True))
     entity_id = session["entity_id"]
     if get_model_access_status(entity_id, config.id) != "graylist":
-        abort(400)
+        abort(HTTPStatus.BAD_REQUEST)
     if not has_model_consent(entity_id, config.id):
         db.session.add(EntityModelConsent(
             entity_id=entity_id,
@@ -103,7 +104,7 @@ def model_consent(model_name):
 def model_readme(model_name):
     config = db.first_or_404(select(ModelConfig).filter_by(model_name=model_name, active=True))
     if not config.url or "huggingface.co" not in config.url:
-        return "", 404
+        return "", HTTPStatus.NOT_FOUND
     parts = config.url.replace("https://huggingface.co/", "").split("/")[:2]
     raw_url = f"https://huggingface.co/{'/'.join(parts)}/raw/main/README.md"
     try:
@@ -115,6 +116,6 @@ def model_readme(model_name):
             end = text.find("\n---", 3)
             if end != -1:
                 text = text[end + 4:].lstrip("\n")
-        return text, 200, {"Content-Type": "text/plain; charset=utf-8"}
+        return text, HTTPStatus.OK, {"Content-Type": "text/plain; charset=utf-8"}
     except Exception:
-        return "", 502
+        return "", HTTPStatus.BAD_GATEWAY

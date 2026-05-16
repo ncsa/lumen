@@ -12,6 +12,8 @@ Rules enforced (from CLAUDE.md):
 - Data tables (<table> with <thead> and <tbody>) have <caption> or aria-label
 - Heading levels do not skip (h1 → h2 → h3, never h1 → h3)
 """
+from http import HTTPStatus
+
 import pytest
 from bs4 import BeautifulSoup
 
@@ -125,24 +127,24 @@ def _run_all_checks(html_bytes, url):
 
 def test_landing_page(client):
     resp = client.get("/")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     _run_all_checks(resp.data, "/")
 
 
 def test_models_page(auth_client):
     resp = auth_client.get("/models")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     _run_all_checks(resp.data, "/models")
 
 
 def test_admin_users_page(admin_client):
     resp = admin_client.get("/admin/users")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     _run_all_checks(resp.data, "/admin/users")
 
 
 def test_admin_user_profile_page_accessibility(admin_client, test_user):
     url = f"/admin/users/{test_user['id']}/profile"
     resp = admin_client.get(url)
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     _run_all_checks(resp.data, url)

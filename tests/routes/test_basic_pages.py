@@ -1,15 +1,17 @@
 """Basic smoke tests for chat, usage, clients, and admin pages."""
+from http import HTTPStatus
+
 from sqlalchemy import select
 
 
 def test_chat_page_requires_login(client):
     resp = client.get("/chat", follow_redirects=False)
-    assert resp.status_code == 302
+    assert resp.status_code == HTTPStatus.FOUND
 
 
 def test_chat_page_loads(auth_client):
     resp = auth_client.get("/chat")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     assert b"chat" in resp.data.lower()
 
 
@@ -32,34 +34,34 @@ def test_chat_page_with_model(app, auth_client, test_model):
         db.session.commit()
 
     resp = auth_client.get("/chat")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
 
 
 def test_profile_page_requires_login(client):
     resp = client.get("/profile", follow_redirects=False)
-    assert resp.status_code == 302
+    assert resp.status_code == HTTPStatus.FOUND
 
 
 def test_profile_page_loads(auth_client):
     resp = auth_client.get("/profile")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
 
 
 def test_clients_page_requires_login(client):
     resp = client.get("/clients", follow_redirects=False)
-    assert resp.status_code == 302
+    assert resp.status_code == HTTPStatus.FOUND
 
 
 def test_clients_page_loads(auth_client):
     resp = auth_client.get("/clients")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
 
 
 def test_admin_users_loads_for_admin(admin_client):
     resp = admin_client.get("/admin/users")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
 
 
 def test_admin_analytics_loads_for_admin(admin_client):
     resp = admin_client.get("/admin/analytics")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK

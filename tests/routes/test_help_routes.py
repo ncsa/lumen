@@ -1,30 +1,31 @@
 """Tests for the help blueprint (/help/*)."""
+from http import HTTPStatus
 
 
 def test_help_index_loads(client):
     resp = client.get("/help/")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     assert b"html" in resp.data.lower()
 
 
 def test_help_index_no_trailing_slash(client):
     resp = client.get("/help/", follow_redirects=True)
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
 
 
 def test_help_valid_slug(client):
     resp = client.get("/help/chat")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
 
 
 def test_help_unknown_slug_returns_404(client):
     resp = client.get("/help/does-not-exist-ever")
-    assert resp.status_code == 404
+    assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 def test_help_img_serves_file(client):
     resp = client.get("/help/img/chat.png")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     assert resp.content_type.startswith("image/")
 
 
@@ -35,7 +36,7 @@ def test_help_all_nav_slugs(client):
     for slug in _SLUG_MAP:
         url = "/help/" if slug == "" else f"/help/{slug}"
         resp = client.get(url)
-        assert resp.status_code == 200, f"slug {slug!r} returned {resp.status_code}"
+        assert resp.status_code == HTTPStatus.OK, f"slug {slug!r} returned {resp.status_code}"
 
 
 def test_rewrite_md_links_image():

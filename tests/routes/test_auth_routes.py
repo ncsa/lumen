@@ -1,21 +1,23 @@
+from http import HTTPStatus
+
 from sqlalchemy import select
 
 
 def test_landing_unauthenticated(client):
     resp = client.get("/")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     assert b"testuser" in resp.data or b"login" in resp.data.lower() or b"Login" in resp.data
 
 
 def test_landing_authenticated_redirects_to_chat(auth_client):
     resp = auth_client.get("/")
-    assert resp.status_code == 302
+    assert resp.status_code == HTTPStatus.FOUND
     assert "/chat" in resp.headers["Location"]
 
 
 def test_devlogin_creates_user(app, client):
     resp = client.get("/devlogin", follow_redirects=False)
-    assert resp.status_code == 302
+    assert resp.status_code == HTTPStatus.FOUND
     assert "/chat" in resp.headers["Location"]
 
     with app.app_context():
@@ -80,7 +82,7 @@ def test_logout_clears_session(auth_client):
         assert "entity_id" in sess
 
     resp = auth_client.get("/logout", follow_redirects=False)
-    assert resp.status_code == 302
+    assert resp.status_code == HTTPStatus.FOUND
 
     with auth_client.session_transaction() as sess:
         assert "entity_id" not in sess
@@ -88,7 +90,7 @@ def test_logout_clears_session(auth_client):
 
 def test_logout_redirects_to_landing(auth_client):
     resp = auth_client.get("/logout", follow_redirects=False)
-    assert resp.status_code == 302
+    assert resp.status_code == HTTPStatus.FOUND
     assert "/" in resp.headers["Location"]
 
 
@@ -97,7 +99,7 @@ def test_devlogin_returns_403_when_not_configured(app, client):
     original = app.config.pop("DEV_USER", None)
     try:
         resp = client.get("/devlogin")
-        assert resp.status_code == 403
+        assert resp.status_code == HTTPStatus.FORBIDDEN
     finally:
         if original is not None:
             app.config["DEV_USER"] = original

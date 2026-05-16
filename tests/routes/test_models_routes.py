@@ -1,12 +1,15 @@
+from http import HTTPStatus
+
+
 def test_models_requires_login(client):
     resp = client.get("/models", follow_redirects=False)
-    assert resp.status_code == 302
+    assert resp.status_code == HTTPStatus.FOUND
     assert "/" in resp.headers["Location"]
 
 
 def test_models_lists_active_model(app, auth_client, test_model):
     resp = auth_client.get("/models")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     assert test_model["model_name"].encode() in resp.data
 
 
@@ -22,7 +25,7 @@ def test_models_blocked_model_not_listed(app, auth_client, test_model, test_user
         db.session.commit()
 
     resp = auth_client.get("/models")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     assert test_model["model_name"].encode() not in resp.data
 
 
@@ -40,7 +43,7 @@ def test_models_group_blacklisted_not_listed(app, auth_client, test_model, test_
         db.session.commit()
 
     resp = auth_client.get("/models")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     assert test_model["model_name"].encode() not in resp.data
 
 
@@ -53,23 +56,23 @@ def test_models_inactive_model_not_listed(app, auth_client):
         db.session.commit()
 
     resp = auth_client.get("/models")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     assert b"inactive-model" not in resp.data
 
 
 def test_model_detail_requires_login(client, test_model):
     resp = client.get(f"/models/{test_model['model_name']}", follow_redirects=False)
-    assert resp.status_code == 302
+    assert resp.status_code == HTTPStatus.FOUND
 
 
 def test_model_detail_404_unknown(auth_client):
     resp = auth_client.get("/models/does-not-exist")
-    assert resp.status_code == 404
+    assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 def test_model_detail_ok(auth_client, test_model):
     resp = auth_client.get(f"/models/{test_model['model_name']}")
-    assert resp.status_code == 200
+    assert resp.status_code == HTTPStatus.OK
     assert test_model["model_name"].encode() in resp.data
 
 
@@ -85,4 +88,4 @@ def test_model_detail_blocked_returns_404(app, auth_client, test_model, test_use
         db.session.commit()
 
     resp = auth_client.get(f"/models/{test_model['model_name']}")
-    assert resp.status_code == 404
+    assert resp.status_code == HTTPStatus.NOT_FOUND

@@ -1,5 +1,6 @@
 import json
 import re
+from http import HTTPStatus
 from pathlib import Path
 
 from flask import Blueprint, abort, redirect, render_template, send_file, url_for
@@ -101,7 +102,7 @@ def img(filename):
 def index_page():
     path = _SLUG_MAP.get("")
     if path is None:
-        abort(404)
+        abort(HTTPStatus.NOT_FOUND)
     title, content = _read_markdown(path)
     return render_template("help.html", title=title, page_content=content,
                            sections=DOC_NAV, current_slug="")
@@ -111,7 +112,7 @@ def index_page():
 def page(slug):
     path = _SLUG_MAP.get(slug)
     if path is None:
-        abort(404)
+        abort(HTTPStatus.NOT_FOUND)
     title, content = _read_markdown(path)
     return render_template("help.html", title=title, page_content=content,
                            sections=DOC_NAV, current_slug=slug)

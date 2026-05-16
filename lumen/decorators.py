@@ -1,4 +1,6 @@
 from functools import wraps
+from http import HTTPStatus
+
 from flask import session, redirect, url_for, jsonify, current_app
 
 from lumen.extensions import db
@@ -33,6 +35,6 @@ def admin_required(f):
             session.clear()
             return redirect(url_for("auth.landing"))
         if not is_admin(entity):
-            return jsonify({"error": "Forbidden"}), 403
+            return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
         return f(*args, **kwargs)
     return decorated

@@ -1,6 +1,7 @@
 import logging
 import os
 from functools import wraps
+from http import HTTPStatus
 
 from flask import Blueprint, Response, current_app, request
 from prometheus_client import CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
@@ -16,12 +17,12 @@ def _metrics_auth_required(f):
         yaml_data = current_app.config.get("YAML_DATA", {})
         prom_cfg = yaml_data.get("prometheus", {})
         if not prom_cfg.get("enabled", False):
-            return Response("Not found", status=404)
+            return Response("Not found", status=HTTPStatus.NOT_FOUND)
         token = prom_cfg.get("token", "")
         if token:
             auth = request.headers.get("Authorization", "")
             if not auth.startswith("Bearer ") or auth[7:].strip() != token:
-                return Response("Unauthorized", status=401, headers={"WWW-Authenticate": "Bearer"})
+                return Response("Unauthorized", status=HTTPStatus.UNAUTHORIZED, headers={"WWW-Authenticate": "Bearer"})
         return f(*args, **kwargs)
     return decorated
 
@@ -131,4 +132,4 @@ def metrics():
         from prometheus_client import REGISTRY
         http_output = generate_latest(REGISTRY)
 
-    return Response(db_output + http_output, status=200, mimetype=CONTENT_TYPE_LATEST)
+    return Response(db_output + http_output, status=HTTPStatus.OK, mimetype=CONTENT_TYPE_LATEST)

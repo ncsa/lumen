@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from http import HTTPStatus
 
 import yaml
 from flask import Flask, jsonify, request, session
@@ -210,12 +211,12 @@ def create_app():
     app.register_blueprint(help_bp)
 
     # Rate limit error handler
-    @app.errorhandler(429)
+    @app.errorhandler(HTTPStatus.TOO_MANY_REQUESTS)
     def ratelimit_handler(e):
         if request.path.startswith("/v1/"):
             return jsonify({"error": {"message": "Rate limit exceeded. Please slow down.",
-                                       "type": "rate_limit_error", "code": "rate_limit_exceeded"}}), 429
-        return jsonify({"error": "Rate limit exceeded. Please slow down."}), 429
+                                       "type": "rate_limit_error", "code": "rate_limit_exceeded"}}), HTTPStatus.TOO_MANY_REQUESTS
+        return jsonify({"error": "Rate limit exceeded. Please slow down."}), HTTPStatus.TOO_MANY_REQUESTS
 
     # Register CLI commands
     from lumen.commands import init_db_cmd, reassign_model_cmd
