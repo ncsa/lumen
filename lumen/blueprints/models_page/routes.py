@@ -60,7 +60,7 @@ def detail(model_name):
     entity_id = session.get("entity_id")
     access_status = get_model_access_status(entity_id, config.id) if entity_id else "blocked"
     if access_status == "blocked":
-        abort(404)
+        abort(HTTPStatus.NOT_FOUND)
     consent = (
         db.session.execute(
             select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=config.id)
