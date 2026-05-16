@@ -35,7 +35,7 @@ from lumen.services.llm import get_pool_limit, get_model_access, get_model_acces
 profile_bp = Blueprint("profile", __name__)
 
 
-def _get_profile_data(eid: int) -> dict:
+def _fetch_chat_stats(eid: int):
     chat_agg = db.session.execute(
         select(
             func.sum(ModelStat.requests),
@@ -45,20 +45,18 @@ def _get_profile_data(eid: int) -> dict:
             func.max(ModelStat.last_used_at),
         ).filter_by(entity_id=eid, source="chat")
     ).one()
-
     conversation_count = db.session.scalar(
         select(func.count(Conversation.id)).filter_by(entity_id=eid)
     ) or 0
+    return chat_agg, conversation_count
 
-    api_keys = db.session.execute(select(APIKey).filter_by(entity_id=eid).order_by(APIKey.created_at)).scalars().all()
 
-    # Single token pool and accessible models
-    pool = get_pool_limit(eid)
-    balance = db.session.execute(select(EntityBalance).filter_by(entity_id=eid)).scalar_one_or_none()
-    all_active_models = db.session.execute(select(ModelConfig).filter_by(active=True).order_by(ModelConfig.model_name)).scalars().all()
+def _build_model_usage(eid: int):
+    all_active_models = db.session.execute(
+        select(ModelConfig).filter_by(active=True).order_by(ModelConfig.model_name)
+    ).scalars().all()
     accessible_model_ids = {mc.id for mc in all_active_models if get_model_access(eid, mc.id)}
 
-    # Usage stats keyed by model_config_id
     usage_rows = db.session.execute(
         select(
             ModelStat.model_config_id,
@@ -73,14 +71,7 @@ def _get_profile_data(eid: int) -> dict:
     ).all()
     usage_by_id = {r[0]: r for r in usage_rows}
 
-    # Models to show: all accessible active models + inactive models with past usage
-    models_to_show_ids = set()
-    for mc in all_active_models:
-        if mc.id in accessible_model_ids:
-            models_to_show_ids.add(mc.id)
-    for mid in usage_by_id:
-        models_to_show_ids.add(mid)
-
+    models_to_show_ids = {mc.id for mc in all_active_models if mc.id in accessible_model_ids} | set(usage_by_id)
     all_relevant_models = (
         db.session.execute(
             select(ModelConfig).where(ModelConfig.id.in_(models_to_show_ids)).order_by(ModelConfig.model_name)
@@ -103,34 +94,39 @@ def _get_profile_data(eid: int) -> dict:
             "disabled": status == "disabled",
         })
 
-    if pool is not None:
-        max_coins, refresh_coins, starting = pool
-        coins_left = float(balance.coins_left) if balance else starting
-        last_refill_at = balance.last_refill_at if balance else None
-        coin_pool = {
-            "coin_limit": max_coins,
-            "coins_left": coins_left,
-            "coins_per_hour": refresh_coins,
-            "next_refill": (last_refill_at + timedelta(hours=1)) if (refresh_coins > 0 and last_refill_at) else None,
-        }
-    else:
-        coin_pool = None
-
     total_tokens_used = sum(r[2] + r[3] for r in usage_rows)
     total_cost = sum(float(r[4] or 0) for r in usage_rows)
+    return model_usage, total_tokens_used, total_cost
 
-    status = {
-        "total_tokens_used": total_tokens_used,
-        "total_cost": total_cost,
+
+def _build_coin_pool(eid: int):
+    pool = get_pool_limit(eid)
+    if pool is None:
+        return None
+    max_coins, refresh_coins, starting = pool
+    balance = db.session.execute(select(EntityBalance).filter_by(entity_id=eid)).scalar_one_or_none()
+    coins_left = float(balance.coins_left) if balance else starting
+    last_refill_at = balance.last_refill_at if balance else None
+    return {
+        "coin_limit": max_coins,
+        "coins_left": coins_left,
+        "coins_per_hour": refresh_coins,
+        "next_refill": (last_refill_at + timedelta(hours=1)) if (refresh_coins > 0 and last_refill_at) else None,
     }
 
+
+def _get_profile_data(eid: int) -> dict:
+    chat_agg, conversation_count = _fetch_chat_stats(eid)
+    api_keys = db.session.execute(select(APIKey).filter_by(entity_id=eid).order_by(APIKey.created_at)).scalars().all()
+    model_usage, total_tokens_used, total_cost = _build_model_usage(eid)
+    coin_pool = _build_coin_pool(eid)
     return {
         "chat_agg": chat_agg,
         "conversation_count": conversation_count,
         "api_keys": api_keys,
         "model_usage": model_usage,
         "coin_pool": coin_pool,
-        "status": status,
+        "status": {"total_tokens_used": total_tokens_used, "total_cost": total_cost},
     }
 
 
