@@ -1,8 +1,62 @@
 """Additional LLM service tests: groups, endpoints, coin functions, stats."""
 from datetime import datetime
+from unittest.mock import MagicMock, patch
 from sqlalchemy import func, select
 
 import pytest
+
+
+# ---------------------------------------------------------------------------
+# Helpers for send_message_stream mocking
+# ---------------------------------------------------------------------------
+
+class _Delta:
+    def __init__(self, content=None, reasoning_content=None):
+        self.content = content
+        self.reasoning_content = reasoning_content
+        self.reasoning = None
+
+
+class _Choice:
+    def __init__(self, delta):
+        self.delta = delta
+
+
+class _Usage:
+    def __init__(self, prompt_tokens=10, completion_tokens=20):
+        self.prompt_tokens = prompt_tokens
+        self.completion_tokens = completion_tokens
+        self.completion_tokens_details = None
+
+
+class _Chunk:
+    def __init__(self, content=None, reasoning_content=None, usage=None):
+        self.usage = usage
+        if content is not None or reasoning_content is not None:
+            self.choices = [_Choice(_Delta(content, reasoning_content))]
+        else:
+            self.choices = []
+
+
+def _mock_openai(chunks):
+    """Return a patched openai.OpenAI class whose stream yields the given chunks."""
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = iter(chunks)
+    mock_cls = MagicMock(return_value=mock_client)
+    return mock_cls
+
+
+def _drain(gen):
+    """Collect all yields from send_message_stream into (texts, thinkings, result)."""
+    texts, thinkings, result = [], [], None
+    for t, th, r in gen:
+        if t is not None:
+            texts.append(t)
+        if th is not None:
+            thinkings.append(th)
+        if r is not None:
+            result = r
+    return texts, thinkings, result
 
 
 # ---------------------------------------------------------------------------
@@ -412,3 +466,179 @@ def test_get_pool_limit_group_unlimited_when_no_user_limit(app, test_user, test_
         db.session.add(GroupLimit(group_id=g.id, max_coins=-2, refresh_coins=0, starting_coins=0))
         db.session.commit()
         assert get_pool_limit(entity_id) == (-2, 0, 0)
+
+
+# ---------------------------------------------------------------------------
+# send_message_stream — streaming path tests
+# ---------------------------------------------------------------------------
+
+def test_stream_unknown_model_raises(app):
+    with app.app_context():
+        from lumen.services.llm import send_message_stream
+        with pytest.raises(ValueError, match="Unknown or inactive model"):
+            list(send_message_stream([], "nonexistent-model"))
+
+
+def test_stream_no_endpoint_raises(app, test_model):
+    with app.app_context():
+        from lumen.services.llm import send_message_stream
+        # test_model exists but has no endpoints
+        with pytest.raises(RuntimeError, match="No healthy endpoints"):
+            list(send_message_stream([], test_model["model_name"]))
+
+
+def test_stream_yields_content_chunks(app, test_model_endpoint):
+    model_name = "test-model"
+    chunks = [
+        _Chunk(content="Hello"),
+        _Chunk(content=" world"),
+        _Chunk(usage=_Usage(prompt_tokens=5, completion_tokens=2)),
+    ]
+    with app.app_context():
+        from lumen.services.llm import send_message_stream
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)):
+            texts, thinkings, result = _drain(send_message_stream([], model_name))
+    assert texts == ["Hello", " world"]
+    assert thinkings == []
+
+
+def test_stream_yields_thinking_chunks(app, test_model_endpoint):
+    chunks = [
+        _Chunk(reasoning_content="step 1"),
+        _Chunk(content="answer"),
+        _Chunk(usage=_Usage()),
+    ]
+    with app.app_context():
+        from lumen.services.llm import send_message_stream
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)):
+            texts, thinkings, result = _drain(send_message_stream([], "test-model"))
+    assert thinkings == ["step 1"]
+    assert texts == ["answer"]
+
+
+def test_stream_final_result_structure(app, test_model_endpoint):
+    chunks = [
+        _Chunk(content="hi"),
+        _Chunk(usage=_Usage(prompt_tokens=3, completion_tokens=1)),
+    ]
+    with app.app_context():
+        from lumen.services.llm import send_message_stream
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)):
+            _, _, result = _drain(send_message_stream([], "test-model"))
+    assert result is not None
+    assert result["reply"] == "hi"
+    assert result["input_tokens"] == 3
+    assert result["output_tokens"] == 1
+    assert "cost" in result
+    assert "duration" in result
+    assert "time_to_first_token" in result
+    assert "output_speed" in result
+
+
+def test_stream_no_usage_defaults_to_zero_tokens(app, test_model_endpoint):
+    # No usage chunk at all — tokens should default to 0
+    chunks = [_Chunk(content="ok")]
+    with app.app_context():
+        from lumen.services.llm import send_message_stream
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)):
+            _, _, result = _drain(send_message_stream([], "test-model"))
+    assert result["input_tokens"] == 0
+    assert result["output_tokens"] == 0
+
+
+def test_stream_thinking_captured_in_result(app, test_model_endpoint):
+    chunks = [
+        _Chunk(reasoning_content="think"),
+        _Chunk(content="done"),
+        _Chunk(usage=_Usage()),
+    ]
+    with app.app_context():
+        from lumen.services.llm import send_message_stream
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)):
+            _, _, result = _drain(send_message_stream([], "test-model"))
+    assert result["thinking"] == "think"
+
+
+def test_stream_no_thinking_is_none(app, test_model_endpoint):
+    chunks = [_Chunk(content="answer"), _Chunk(usage=_Usage())]
+    with app.app_context():
+        from lumen.services.llm import send_message_stream
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)):
+            _, _, result = _drain(send_message_stream([], "test-model"))
+    assert result["thinking"] is None
+
+
+def test_stream_with_entity_creates_stat_and_log(app, test_user, test_model_endpoint):
+    entity_id = test_user["id"]
+    chunks = [
+        _Chunk(content="hello"),
+        _Chunk(usage=_Usage(prompt_tokens=10, completion_tokens=5)),
+    ]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.models.model_stat import ModelStat
+        from lumen.models.request_log import RequestLog
+        from lumen.services.llm import send_message_stream
+        # Unlimited budget so deduct_coins is a no-op
+        db.session.add(EntityLimit(entity_id=entity_id, max_coins=-2, refresh_coins=0, starting_coins=0))
+        db.session.commit()
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)):
+            _drain(send_message_stream([], "test-model", entity_id=entity_id))
+        stat = db.session.execute(
+            select(ModelStat).filter_by(entity_id=entity_id)
+        ).scalar_one_or_none()
+        assert stat is not None
+        assert stat.requests == 1
+        assert stat.input_tokens == 10
+        assert stat.output_tokens == 5
+        log_count = db.session.scalar(
+            select(func.count()).select_from(RequestLog).filter_by(entity_id=entity_id)
+        )
+        assert log_count == 1
+
+
+def test_stream_without_entity_no_stat_or_log(app, test_model_endpoint):
+    chunks = [_Chunk(content="x"), _Chunk(usage=_Usage())]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_stat import ModelStat
+        from lumen.models.request_log import RequestLog
+        from lumen.services.llm import send_message_stream
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)):
+            _drain(send_message_stream([], "test-model"))
+        assert db.session.scalar(select(func.count()).select_from(ModelStat)) == 0
+        assert db.session.scalar(select(func.count()).select_from(RequestLog)) == 0
+
+
+def test_stream_endpoint_model_name_used_in_result(app, test_model_endpoint):
+    # The endpoint has model_name="dummy"; result["model"] should be "dummy"
+    chunks = [_Chunk(content="y"), _Chunk(usage=_Usage())]
+    with app.app_context():
+        from lumen.services.llm import send_message_stream
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)):
+            _, _, result = _drain(send_message_stream([], "test-model"))
+    assert result["model"] == "dummy"
+
+
+def test_stream_with_entity_deducts_coins(app, test_user, test_model_endpoint):
+    entity_id = test_user["id"]
+    chunks = [
+        _Chunk(content="token"),
+        _Chunk(usage=_Usage(prompt_tokens=1000000, completion_tokens=1000000)),
+    ]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.services.llm import send_message_stream
+        db.session.add(EntityLimit(entity_id=entity_id, max_coins=10, refresh_coins=0, starting_coins=10))
+        db.session.add(EntityBalance(entity_id=entity_id, coins_left=10))
+        db.session.commit()
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)):
+            _drain(send_message_stream([], "test-model", entity_id=entity_id))
+        balance = db.session.execute(
+            select(EntityBalance).filter_by(entity_id=entity_id)
+        ).scalar_one()
+        # 1M input tokens at $1/M + 1M output tokens at $2/M = $3.00 cost
+        assert float(balance.coins_left) < 10.0
