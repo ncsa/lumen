@@ -16,76 +16,65 @@ from lumen.models.model_endpoint import ModelEndpoint
 _VALID_ACCESS_TYPES = {"whitelist", "blacklist", "graylist"}
 
 
-def sync_models_from_yaml(yaml_data):
-    """Upsert ModelConfig and ModelEndpoint rows from yaml_data. Must run inside an app context."""
+def _apply_model_fields(config, model_def):
+    config.input_cost_per_million = model_def["input_cost_per_million"]
+    config.output_cost_per_million = model_def["output_cost_per_million"]
+    config.active = model_def.get("active", True)
+    config.description = model_def.get("description") or None
+    config.url = model_def.get("url") or None
+    config.max_input_tokens = model_def.get("max_input_tokens") or None
+    config.supports_function_calling = model_def.get("supports_function_calling")
+    config.input_modalities = model_def.get("input_modalities") or None
+    config.output_modalities = model_def.get("output_modalities") or None
+    config.context_window = model_def.get("context_window") or None
+    config.max_output_tokens = model_def.get("max_output_tokens") or None
+    config.supports_reasoning = model_def.get("supports_reasoning")
+    config.knowledge_cutoff = model_def.get("knowledge_cutoff") or None
+    config.notice = model_def.get("notice") or None
 
-    for model_def in yaml_data.get("models", []):
-        config = db.session.execute(select(ModelConfig).filter_by(model_name=model_def["name"])).scalar_one_or_none()
-        if not config:
-            config = ModelConfig(
-                model_name=model_def["name"],
-                input_cost_per_million=model_def["input_cost_per_million"],
-                output_cost_per_million=model_def["output_cost_per_million"],
-                active=model_def.get("active", True),
-                description=model_def.get("description") or None,
-                url=model_def.get("url") or None,
-                max_input_tokens=model_def.get("max_input_tokens") or None,
-                supports_function_calling=model_def.get("supports_function_calling"),
-                input_modalities=model_def.get("input_modalities") or None,
-                output_modalities=model_def.get("output_modalities") or None,
-                context_window=model_def.get("context_window") or None,
-                max_output_tokens=model_def.get("max_output_tokens") or None,
-                supports_reasoning=model_def.get("supports_reasoning"),
-                knowledge_cutoff=model_def.get("knowledge_cutoff") or None,
-                notice=model_def.get("notice") or None,
-            )
-            db.session.add(config)
-            db.session.flush()
+
+def _reconcile_endpoints(config, model_def):
+    yaml_urls = {ep_def["url"] for ep_def in model_def.get("endpoints", [])}
+    for ep in list(config.endpoints):
+        if ep.url not in yaml_urls:
+            db.session.delete(ep)
+
+    existing_urls = {ep.url for ep in config.endpoints if ep.url in yaml_urls}
+    for ep_def in model_def.get("endpoints", []):
+        if ep_def["url"] not in existing_urls:
+            db.session.add(ModelEndpoint(
+                model_config_id=config.id,
+                url=ep_def["url"],
+                api_key=ep_def["api_key"],
+                model_name=ep_def.get("model") or None,
+                healthy=False,
+            ))
         else:
-            config.input_cost_per_million = model_def["input_cost_per_million"]
-            config.output_cost_per_million = model_def["output_cost_per_million"]
-            config.active = model_def.get("active", True)
-            config.description = model_def.get("description") or None
-            config.url = model_def.get("url") or None
-            config.max_input_tokens = model_def.get("max_input_tokens") or None
-            config.supports_function_calling = model_def.get("supports_function_calling")
-            config.input_modalities = model_def.get("input_modalities") or None
-            config.output_modalities = model_def.get("output_modalities") or None
-            config.context_window = model_def.get("context_window") or None
-            config.max_output_tokens = model_def.get("max_output_tokens") or None
-            config.supports_reasoning = model_def.get("supports_reasoning")
-            config.knowledge_cutoff = model_def.get("knowledge_cutoff") or None
-            config.notice = model_def.get("notice") or None
+            existing_ep = next(e for e in config.endpoints if e.url == ep_def["url"])
+            existing_ep.api_key = ep_def["api_key"]
+            existing_ep.model_name = ep_def.get("model") or None
 
-        yaml_urls = {ep_def["url"] for ep_def in model_def.get("endpoints", [])}
-        for ep in list(config.endpoints):
-            if ep.url not in yaml_urls:
-                db.session.delete(ep)
 
-        existing_urls = {ep.url for ep in config.endpoints if ep.url in yaml_urls}
-        for ep_def in model_def.get("endpoints", []):
-            if ep_def["url"] not in existing_urls:
-                ep = ModelEndpoint(
-                    model_config_id=config.id,
-                    url=ep_def["url"],
-                    api_key=ep_def["api_key"],
-                    model_name=ep_def.get("model") or None,
-                    healthy=False,
-                )
-                db.session.add(ep)
-            else:
-                existing_ep = next(e for e in config.endpoints if e.url == ep_def["url"])
-                existing_ep.api_key = ep_def["api_key"]
-                existing_ep.model_name = ep_def.get("model") or None
-
-    # Deactivate ModelConfig rows no longer in yaml and remove their endpoints
-    yaml_model_names = {m["name"] for m in yaml_data.get("models", [])}
+def _deactivate_removed_models(yaml_model_names):
     for config in db.session.execute(select(ModelConfig)).scalars().all():
         if config.model_name not in yaml_model_names:
             config.active = False
             for ep in list(config.endpoints):
                 db.session.delete(ep)
 
+
+def sync_models_from_yaml(yaml_data):
+    """Upsert ModelConfig and ModelEndpoint rows from yaml_data. Must run inside an app context."""
+    for model_def in yaml_data.get("models", []):
+        config = db.session.execute(select(ModelConfig).filter_by(model_name=model_def["name"])).scalar_one_or_none()
+        if not config:
+            config = ModelConfig(model_name=model_def["name"])
+            db.session.add(config)
+        _apply_model_fields(config, model_def)
+        db.session.flush()  # ensure config.id exists before reconciling endpoints
+        _reconcile_endpoints(config, model_def)
+
+    _deactivate_removed_models({m["name"] for m in yaml_data.get("models", [])})
     db.session.commit()
 
 
