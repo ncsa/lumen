@@ -13,12 +13,14 @@ def test_metrics_disabled_returns_404(client):
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
-def test_metrics_enabled_no_token_returns_200(app, client):
+def test_metrics_enabled_no_token_returns_401(app, client):
+    # At startup, missing token disables prometheus entirely (404).
+    # This test bypasses startup by injecting YAML_DATA directly, so the
+    # decorator still enforces 401 as a belt-and-suspenders check.
     original = _set_prometheus(app, {"enabled": True})
     try:
         resp = client.get("/metrics")
-        assert resp.status_code == HTTPStatus.OK
-        assert b"lumen_model_requests_total" in resp.data
+        assert resp.status_code == HTTPStatus.UNAUTHORIZED
     finally:
         app.config["YAML_DATA"] = original
 

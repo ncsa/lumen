@@ -19,10 +19,11 @@ def _metrics_auth_required(f):
         if not prom_cfg.get("enabled", False):
             return Response("Not found", status=HTTPStatus.NOT_FOUND)
         token = prom_cfg.get("token", "")
-        if token:
-            auth = request.headers.get("Authorization", "")
-            if not auth.startswith("Bearer ") or auth[7:].strip() != token:
-                return Response("Unauthorized", status=HTTPStatus.UNAUTHORIZED, headers={"WWW-Authenticate": "Bearer"})
+        if not token:
+            return Response("Unauthorized", status=HTTPStatus.UNAUTHORIZED, headers={"WWW-Authenticate": "Bearer"})
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer ") or auth[7:].strip() != token:
+            return Response("Unauthorized", status=HTTPStatus.UNAUTHORIZED, headers={"WWW-Authenticate": "Bearer"})
         return f(*args, **kwargs)
     return decorated
 

@@ -2,7 +2,7 @@ import hashlib
 from datetime import datetime, timezone
 from http import HTTPStatus
 
-from flask import Blueprint, redirect, url_for, session, render_template, current_app
+from flask import Blueprint, abort, redirect, url_for, session, render_template, request, current_app
 from sqlalchemy import select
 
 from lumen.extensions import db, oauth
@@ -180,6 +180,8 @@ def devlogin():
     email = current_app.config.get("DEV_USER")
     if not email:
         return "Dev login not configured.", HTTPStatus.FORBIDDEN
+    if not current_app.debug and request.remote_addr not in ("127.0.0.1", "::1"):
+        abort(HTTPStatus.NOT_FOUND)
     yaml_data = current_app.config.get("YAML_DATA", {})
     dev_groups = current_app.config.get("DEV_USER_GROUPS", [])
     if dev_groups:

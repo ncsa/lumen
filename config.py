@@ -2,7 +2,7 @@ import os
 
 
 class Config:
-    SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
+    SECRET_KEY = os.environ.get("SECRET_KEY", "")
 
     _db_url = os.environ.get("DATABASE_URL", "sqlite:///lumen_dev.db")
     SQLALCHEMY_DATABASE_URI = _db_url.replace("postgres://", "postgresql://", 1)

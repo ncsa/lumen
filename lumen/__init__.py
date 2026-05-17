@@ -68,6 +68,13 @@ def create_app():
     # PROMETHEUS_MULTIPROC_DIR must be set before prometheus_client metric objects
     # are created (imported), so we set it here before importing the middleware.
     prom_cfg = yaml_data.get("prometheus", {})
+    if prom_cfg.get("enabled", False) and not prom_cfg.get("token", ""):
+        app.logger.error(
+            "prometheus is enabled but prometheus.token is not set; disabling Prometheus."
+        )
+        prom_cfg = {**prom_cfg, "enabled": False}
+        yaml_data = {**yaml_data, "prometheus": prom_cfg}
+        app.config["YAML_DATA"] = yaml_data
     if prom_cfg.get("enabled", False):
         multiproc_dir = prom_cfg.get("multiproc_dir", "")
         if multiproc_dir:
@@ -79,6 +86,11 @@ def create_app():
     rl_cfg = yaml_data.get("rate_limiting", {})
     if rl_url := rl_cfg.get("storage_url"):
         app.config["RATELIMIT_STORAGE_URI"] = rl_url
+    else:
+        app.logger.warning(
+            "rate_limiting.storage_url is not set; rate limits are per-worker and ineffective "
+            "in multi-worker deployments. Set to a Redis URL for shared rate limiting."
+        )
 
     # Override Flask config from yaml app/oauth2 sections
     app_cfg = yaml_data.get("app", {})
@@ -87,6 +99,10 @@ def create_app():
         app.logger.error("app.secret_key is not set in config.yaml (or LUMEN_SECRET_KEY env var). App cannot start.")
         sys.exit(1)
     app.config["SECRET_KEY"] = secret_key
+    app.config["SESSION_COOKIE_SECURE"] = not app.debug
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["PERMANENT_SESSION_LIFETIME"] = 86400
     encryption_key = os.environ.get("LUMEN_ENCRYPTION_KEY") or app_cfg.get("encryption_key", "")
     if not encryption_key:
         app.logger.error("app.encryption_key is not set in config.yaml (or LUMEN_ENCRYPTION_KEY env var). App cannot start.")
@@ -209,6 +225,15 @@ def create_app():
     app.register_blueprint(admin_bp)
     app.register_blueprint(metrics_bp)
     app.register_blueprint(help_bp)
+
+    @app.after_request
+    def set_security_headers(resp):
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        if not app.debug:
+            resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return resp
 
     # Rate limit error handler
     @app.errorhandler(HTTPStatus.TOO_MANY_REQUESTS)

@@ -7,6 +7,17 @@ All notable changes to Lumen will be documented in this file.
 ### Added
 - Chat assistant messages now show the model name next to the ⓘ icon in the message metadata row; thinking tokens are hidden when zero
 
+### Security
+- Fixed path traversal vulnerability in `/help/img/` route: replaced `send_file` with `send_from_directory` which rejects `../` sequences
+- Added HTTP security response headers (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Strict-Transport-Security`) on all responses
+- Added session cookie security flags (`Secure`, `HttpOnly`, `SameSite=Lax`, 24h lifetime)
+- Changed `SECRET_KEY` fallback in `config.py` from known default to empty string so misconfigured deployments fail loudly
+- Added localhost-only guard to `/devlogin` when not running in debug mode
+- Prometheus with no token configured now logs an error at startup and disables the `/metrics` endpoint (returns 404) instead of serving unauthenticated metrics
+- Added startup warning when rate limiting uses in-memory storage (ineffective under multi-worker deployments)
+- Added allowlist assertions before f-string SQL interpolation in analytics routes
+- Documented `app.announcement` in `config.yaml.example` as trusted operator HTML (not escaped by Jinja2)
+
 ### Fixed
 - `ModelStat` and `EntityStat` counters now use SQL-level atomic increments instead of ORM read-modify-write, preventing lost updates under concurrent requests
 - `subtract_coins` now uses a single atomic `UPDATE ... WHERE coins_left >= cost` so concurrent requests cannot both deduct from an insufficient balance

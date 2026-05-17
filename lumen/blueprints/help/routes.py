@@ -3,7 +3,7 @@ import re
 from http import HTTPStatus
 from pathlib import Path
 
-from flask import Blueprint, abort, redirect, render_template, send_file, url_for
+from flask import Blueprint, abort, redirect, render_template, send_from_directory, url_for
 
 help_bp = Blueprint("help_bp", __name__, url_prefix="/help")
 
@@ -95,7 +95,7 @@ def _read_markdown(path):
 
 @help_bp.route("/img/<path:filename>")
 def img(filename):
-    return send_file(DOCS_DIR / "img" / filename)
+    return send_from_directory(DOCS_DIR / "img", filename)
 
 
 @help_bp.route("/")

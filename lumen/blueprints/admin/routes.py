@@ -222,6 +222,7 @@ _PERIODS = {
     "year":  {"offset": timedelta(days=365), "bucket": "1 week",  "trunc": "week"},
     "all":   {"offset": None,                "bucket": "1 month", "trunc": "month"},
 }
+_VALID_BUCKETS = frozenset(cfg["bucket"] for cfg in _PERIODS.values())
 
 
 def _period_start(period_str):
@@ -350,6 +351,7 @@ def analytics_requests():
     period = request.args.get("period", "week")
     start = _period_start(period)
     bucket, _ = _period_bucket(period)
+    assert bucket in _VALID_BUCKETS
 
     if start is not None:
         rows = db.session.execute(text(f"""
@@ -374,6 +376,7 @@ def analytics_tokens():
     period = request.args.get("period", "week")
     start = _period_start(period)
     bucket, _ = _period_bucket(period)
+    assert bucket in _VALID_BUCKETS
 
     if start is not None:
         rows = db.session.execute(text(f"""
