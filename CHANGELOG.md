@@ -2,6 +2,12 @@
 
 All notable changes to Lumen will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- Help sidebar no longer shows the developer-only Architecture and Database Schema pages
+- Release link in the help sidebar no longer produces a double `v` prefix in the URL (e.g. `vv1.11.0` → `v1.11.0`)
+
 ## [1.11.0] - 2026-05-17
 
 ### Fixed
