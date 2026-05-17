@@ -32,6 +32,8 @@ All notable changes to Lumen will be documented in this file.
 - Docs: corrected access control evaluation order (group defaults resolve before entity default; final fallback is allow not deny)
 
 ### Fixed
+- `refill_coin_balances` now uses a timezone-aware `datetime.now(timezone.utc)` for `now` and compares directly against `last_refill_at` without stripping timezone info; the previous naive/aware mismatch could silently break on non-UTC PostgreSQL sessions and raise `TypeError` once SQLAlchemy returns an aware value
+- Added `tests/unit/test_migrations.py` with a test that asserts the Alembic migration graph has exactly one head, catching unmerged migration branches before they reach review
 - `token_refill`: fixed `TypeError` when subtracting `last_refill_at` from `now` after the column was migrated to `DateTime(timezone=True)`; both comparison sites now strip `tzinfo` before arithmetic
 - `send_message_stream` now wraps the OpenAI client in a `with` statement, ensuring the SSL context and socket are closed after each chat request
 - `entity_balances.last_refill_at` is now written as a timezone-aware datetime matching the `TIMESTAMPTZ` column type, preventing potential `TypeError` on arithmetic with timezone-aware values returned by SQLAlchemy

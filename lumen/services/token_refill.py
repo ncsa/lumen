@@ -19,12 +19,12 @@ logger = logging.getLogger(__name__)
 def refill_coin_balances(now: datetime = None) -> int:
     """Run one refill pass; return the number of balances updated. Caller owns the app context."""
     if now is None:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(timezone.utc)
     balances = db.session.execute(
         select(EntityBalance).where(EntityBalance.last_refill_at != None)  # noqa: E711
     ).scalars().all()
 
-    due = [bal for bal in balances if (now - bal.last_refill_at.replace(tzinfo=None)).total_seconds() / 3600 >= 1]
+    due = [bal for bal in balances if (now - bal.last_refill_at).total_seconds() / 3600 >= 1]
     if not due:
         return 0
 
@@ -59,7 +59,7 @@ def refill_coin_balances(now: datetime = None) -> int:
     updated = 0
     for bal in due:
         eid = bal.entity_id
-        hours_elapsed = (now - bal.last_refill_at.replace(tzinfo=None)).total_seconds() / 3600
+        hours_elapsed = (now - bal.last_refill_at).total_seconds() / 3600
 
         if eid in entity_limits:
             el = entity_limits[eid]
