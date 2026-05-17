@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-05-17
+
 ### Added
 - Chat assistant messages now show the model name next to the ⓘ icon in the message metadata row; thinking tokens are hidden when zero
 
