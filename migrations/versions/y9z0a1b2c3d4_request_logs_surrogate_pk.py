@@ -52,8 +52,11 @@ def upgrade():
         op.execute("UPDATE request_logs SET id = rowid")
         op.alter_column("request_logs", "id", nullable=False)
 
-    # 3. Add new primary key on id
-    op.create_primary_key("request_logs_pkey", "request_logs", ["id"])
+    # 3. Add new primary key; TimescaleDB requires the partition column (time) in the PK
+    if _is_postgresql():
+        op.create_primary_key("request_logs_pkey", "request_logs", ["id", "time"])
+    else:
+        op.create_primary_key("request_logs_pkey", "request_logs", ["id"])
 
     # 4. Add index on time (was implicitly covered by old PK)
     op.create_index("ix_request_logs_time", "request_logs", ["time"])
@@ -63,5 +66,7 @@ def downgrade():
     op.drop_index("ix_request_logs_time", table_name="request_logs")
     op.drop_constraint("request_logs_pkey", "request_logs", type_="primary")
     op.drop_column("request_logs", "id")
-    if not _is_postgresql():
+    if _is_postgresql():
+        pass  # TimescaleDB hypertable had no PK originally
+    else:
         op.create_primary_key("request_logs_pkey", "request_logs", ["time"])

@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Migration `y9z0a1b2c3d4`: use composite `PRIMARY KEY (id, time)` on PostgreSQL so TimescaleDB's requirement that the partition column be part of the primary key is satisfied
+
 ### Added
 - Helm chart at `chart/` for deploying Lumen on Kubernetes; includes bundled PostgreSQL (TimescaleDB) and Redis, standard Ingress and Gateway API HTTPRoute, database migration pre-upgrade Job, and optional in-cluster vLLM/SGLang model inference servers
 - Model storage PVCs default to `ReadWriteMany` access mode to support multi-replica deployments sharing a single volume
