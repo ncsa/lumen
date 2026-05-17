@@ -1,11 +1,12 @@
+import random
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 
 import openai
 from flask import current_app
-from sqlalchemy import select
+from sqlalchemy import select, update as sa_update
 
 from lumen.extensions import db
 from lumen.models.entity_balance import EntityBalance
@@ -234,10 +235,12 @@ def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float):
     if max_coins == -2:
         return
 
-    balance = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()
-    if balance:
-        balance.coins_left = float(balance.coins_left) - coin_cost
-        db.session.flush()
+    db.session.execute(
+        sa_update(EntityBalance)
+        .where(EntityBalance.entity_id == entity_id, EntityBalance.coins_left >= coin_cost)
+        .values(coins_left=EntityBalance.coins_left - coin_cost)
+    )
+    db.session.flush()
 
 
 def check_coin_budget(entity_id: int, model_config_id: int):
@@ -268,39 +271,50 @@ def update_stats(
     endpoint_id: int = None,
     duration: float = 0.0,
 ):
-    """Update or create ModelStat running totals and append a RequestLog row."""
-    stat = db.session.execute(
-        select(ModelStat).filter_by(entity_id=entity_id, model_config_id=model_config_id, source=source)
-    ).scalar_one_or_none()
-    if stat is None:
-        stat = ModelStat(
-            entity_id=entity_id,
-            model_config_id=model_config_id,
-            source=source,
-            requests=0,
-            input_tokens=0,
-            output_tokens=0,
-            cost=0,
-        )
-        db.session.add(stat)
-    stat.requests += 1
-    stat.input_tokens += input_tokens
-    stat.output_tokens += output_tokens
-    stat.cost = float(stat.cost) + cost
-    stat.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    """Update or create ModelStat/EntityStat running totals and append a RequestLog row."""
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-    estat = db.session.execute(select(EntityStat).filter_by(entity_id=entity_id)).scalar_one_or_none()
-    if estat is None:
-        estat = EntityStat(entity_id=entity_id, requests=0, input_tokens=0, output_tokens=0, cost=0)
-        db.session.add(estat)
-    estat.requests += 1
-    estat.input_tokens += input_tokens
-    estat.output_tokens += output_tokens
-    estat.cost = float(estat.cost) + cost
-    estat.last_used_at = stat.last_used_at
+    # Ensure ModelStat row exists before the atomic increment
+    if db.session.execute(
+        select(ModelStat).filter_by(entity_id=entity_id, model_config_id=model_config_id, source=source)
+    ).scalar_one_or_none() is None:
+        db.session.add(ModelStat(
+            entity_id=entity_id, model_config_id=model_config_id, source=source,
+            requests=0, input_tokens=0, output_tokens=0, cost=0,
+        ))
+        db.session.flush()
+
+    db.session.execute(
+        sa_update(ModelStat)
+        .where(ModelStat.entity_id == entity_id, ModelStat.model_config_id == model_config_id, ModelStat.source == source)
+        .values(
+            requests=ModelStat.requests + 1,
+            input_tokens=ModelStat.input_tokens + input_tokens,
+            output_tokens=ModelStat.output_tokens + output_tokens,
+            cost=ModelStat.cost + cost,
+            last_used_at=now,
+        )
+    )
+
+    # Ensure EntityStat row exists before the atomic increment
+    if db.session.execute(select(EntityStat).filter_by(entity_id=entity_id)).scalar_one_or_none() is None:
+        db.session.add(EntityStat(entity_id=entity_id, requests=0, input_tokens=0, output_tokens=0, cost=0))
+        db.session.flush()
+
+    db.session.execute(
+        sa_update(EntityStat)
+        .where(EntityStat.entity_id == entity_id)
+        .values(
+            requests=EntityStat.requests + 1,
+            input_tokens=EntityStat.input_tokens + input_tokens,
+            output_tokens=EntityStat.output_tokens + output_tokens,
+            cost=EntityStat.cost + cost,
+            last_used_at=now,
+        )
+    )
 
     log = RequestLog(
-        time=datetime.now(timezone.utc).replace(tzinfo=None),
+        time=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(microseconds=random.randint(0, 999)),
         entity_id=entity_id,
         model_config_id=model_config_id,
         model_endpoint_id=endpoint_id,

@@ -7,6 +7,11 @@ All notable changes to Lumen will be documented in this file.
 ### Added
 - Chat assistant messages now show the model name next to the ⓘ icon in the message metadata row; thinking tokens are hidden when zero
 
+### Fixed
+- `ModelStat` and `EntityStat` counters now use SQL-level atomic increments instead of ORM read-modify-write, preventing lost updates under concurrent requests
+- `subtract_coins` now uses a single atomic `UPDATE ... WHERE coins_left >= cost` so concurrent requests cannot both deduct from an insufficient balance
+- `request_logs` inserts now add 0–999 µs jitter to the timestamp PK to prevent collisions under concurrent requests
+
 ### Changed
 - Replaced bare integer HTTP status codes with `HTTPStatus` constants across all blueprint files (`api`, `auth`, `chat`, `clients`, `profile`, `admin`)
 - Renamed the "Usage" page to "Profile": URL changed from `/usage` to `/profile`, nav link updated to "Profile" across all themes, and the admin per-user route moved from `/admin/users/<id>/usage` to `/admin/users/<id>/profile`
