@@ -45,7 +45,7 @@ def detail(model_name):
     else:
         status = "ok"
 
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(timezone.utc)
     requests_last_hour = db.session.scalar(
         select(func.count()).select_from(RequestLog).where(
             RequestLog.model_config_id == config.id,

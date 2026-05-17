@@ -8,6 +8,7 @@ All notable changes to Lumen will be documented in this file.
 - Chat assistant messages now show the model name next to the ⓘ icon in the message metadata row; thinking tokens are hidden when zero
 
 ### Changed
+- Removed `.replace(tzinfo=None)` from `RequestLog.time` comparisons in `models_page/routes.py` and `admin/routes.py`; these TIMESTAMPTZ comparisons now use timezone-aware datetimes throughout
 - Graylist model consent now uses a shared modal dialog (`_graylist_modal.html` + `graylist-consent.js`) on the chat, profile, and model detail pages instead of separate implementations; the old form-POST `models_page.model_consent` route has been removed in favour of the JSON `/profile/consent/<model>` endpoint
 - Chat page: accepting a graylist model via the consent dialog now removes the warning triangle from the model picker and hides the banner without a page reload
 - Profile page: accepting a graylist model via the consent dialog now updates the access badge in-place without a page reload

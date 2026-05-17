@@ -69,7 +69,7 @@ Following rules are here to help the AI avoid the same mistakes again:
 - Imports at top of file only; except inside Flask app factory (`create_app`) where deferred imports are required to avoid circular imports.
 - Styles and colors match University of Illinois, see https://builder3.toolkit.illinois.edu/getting_started/index.html
 - When adding variables to config.yaml, make sure they are hot loaded if possible or print a warning
-- Track changes in the CHANGELOG.md, if no unreleased section exists, then add it.
+- Track changes in the CHANGELOG.md, if no unreleased section exists, then add it, make sure to not add a new subsection.
 - When bumping the version in pyproject.toml, also run `uv lock` to update uv.lock.
 - For local testing without OAuth or a real LLM: set `app.dev_user` in config.yaml and use `uv run dummy` (dummy backend on port 9999). See the "Local Development" section in README.md.
 - Screenshots for the help docs live in `docs/img/`. Re-capture them with playwright after any UI change that affects chat, usage, models, model detail, or clients pages. Use `CONFIG_YAML=./dev.config.yaml uv run python -c "from lumen import create_app; ..."` with a dev config that has `dev_user` set.
@@ -102,7 +102,7 @@ When writing or modifying HTML/JS:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **lumen** (2259 symbols, 3608 relationships, 64 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **lumen** (2398 symbols, 3779 relationships, 77 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

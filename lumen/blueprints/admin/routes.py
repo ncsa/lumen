@@ -215,7 +215,7 @@ def _period_start(period_str):
     cfg = _PERIODS.get(period_str, _PERIODS["week"])
     if cfg["offset"] is None:
         return None
-    return datetime.now(timezone.utc).replace(tzinfo=None) - cfg["offset"]
+    return datetime.now(timezone.utc) - cfg["offset"]
 
 
 def _period_bucket(period_str):
