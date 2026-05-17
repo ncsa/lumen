@@ -19,6 +19,14 @@ All notable changes to Lumen will be documented in this file.
 - Documented `app.announcement` in `config.yaml.example` as trusted operator HTML (not escaped by Jinja2)
 
 ### Fixed
+- `APP_ANNOUNCEMENT` in config.yaml is now sanitized with `bleach.clean()` before being marked safe, preventing HTML/JS injection from config-level input
+- `assert` guards before f-string SQL interpolation in analytics routes replaced with explicit `if … abort(BAD_REQUEST)` — `assert` is disabled under Python `-O`
+- `_md_filter` Jinja2 filter documented as operator-only; output must never be applied to user-supplied content
+- Removed misleading `SECRET_KEY` env var read from `config.py`; it was always overwritten at runtime by `LUMEN_SECRET_KEY`, silently ignoring operator intent
+- Monitor token comparison now uses `hmac.compare_digest()` to prevent timing side-channel attacks
+- `/chat/stream` now enforces a 500-message count limit and 500,000-character total payload limit per request
+- Fixed race condition in `update_stats`: seed INSERT for new `(entity, model, source)` triples now wrapped in `try/except IntegrityError` so concurrent first-requests no longer cause an unhandled 500
+- `request_logs` now uses a surrogate `BIGINT` autoincrement PK; `time` is kept as a regular indexed non-unique column, eliminating timestamp collision between concurrent workers
 - Accessibility: `overflow:hidden` on main content wrapper changed to `overflow:auto` to prevent clipping at browser zoom (WCAG 1.4.10)
 - Accessibility: Removed `overflow-y:hidden` from KaTeX display blocks — tall math equations no longer clip at zoom (WCAG 1.4.4)
 - Accessibility: Sortable table `<th>` elements now have `tabindex="0"`, Enter/Space keydown handlers, `aria-sort` attributes, and bold active arrows so sort state is conveyed beyond colour alone (WCAG 1.4.1, 2.1.1, 4.1.2) — affects clients, client detail, profile, and admin users tables

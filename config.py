@@ -2,7 +2,9 @@ import os
 
 
 class Config:
-    SECRET_KEY = os.environ.get("SECRET_KEY", "")
+    # SECRET_KEY is set at runtime from LUMEN_SECRET_KEY env var or config.yaml.
+    # Do not set SECRET_KEY here — it will be overwritten and the env var silently ignored.
+    SECRET_KEY = ""
 
     _db_url = os.environ.get("DATABASE_URL", "sqlite:///lumen_dev.db")
     SQLALCHEMY_DATABASE_URI = _db_url.replace("postgres://", "postgresql://", 1)

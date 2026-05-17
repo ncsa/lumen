@@ -8,6 +8,7 @@ from typing import NamedTuple
 import openai
 from flask import current_app
 from sqlalchemy import select, update as sa_update
+from sqlalchemy.exc import IntegrityError
 
 from lumen.extensions import db
 from lumen.models.entity_balance import EntityBalance
@@ -276,15 +277,21 @@ def update_stats(
     """Update or create ModelStat/EntityStat running totals and append a RequestLog row."""
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-    # Ensure ModelStat row exists before the atomic increment
+    # Ensure ModelStat row exists before the atomic increment.
+    # Use try/except to handle the race where two concurrent first-requests both
+    # see None and both attempt the INSERT — the loser gets IntegrityError which
+    # we swallow; the atomic UPDATE below then succeeds for both.
     if db.session.execute(
         select(ModelStat).filter_by(entity_id=entity_id, model_config_id=model_config_id, source=source)
     ).scalar_one_or_none() is None:
-        db.session.add(ModelStat(
-            entity_id=entity_id, model_config_id=model_config_id, source=source,
-            requests=0, input_tokens=0, output_tokens=0, cost=0,
-        ))
-        db.session.flush()
+        try:
+            db.session.add(ModelStat(
+                entity_id=entity_id, model_config_id=model_config_id, source=source,
+                requests=0, input_tokens=0, output_tokens=0, cost=0,
+            ))
+            db.session.flush()
+        except IntegrityError:
+            db.session.rollback()
 
     db.session.execute(
         sa_update(ModelStat)
@@ -298,10 +305,14 @@ def update_stats(
         )
     )
 
-    # Ensure EntityStat row exists before the atomic increment
+    # Ensure EntityStat row exists before the atomic increment.
+    # Same race-safe pattern as ModelStat above.
     if db.session.execute(select(EntityStat).filter_by(entity_id=entity_id)).scalar_one_or_none() is None:
-        db.session.add(EntityStat(entity_id=entity_id, requests=0, input_tokens=0, output_tokens=0, cost=0))
-        db.session.flush()
+        try:
+            db.session.add(EntityStat(entity_id=entity_id, requests=0, input_tokens=0, output_tokens=0, cost=0))
+            db.session.flush()
+        except IntegrityError:
+            db.session.rollback()
 
     db.session.execute(
         sa_update(EntityStat)

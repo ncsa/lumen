@@ -1,3 +1,5 @@
+import sqlalchemy as sa
+
 from ..extensions import db
 
 
@@ -13,11 +15,19 @@ class RequestLog(db.Model):
     """
 
     __tablename__ = "request_logs"
-    __table_args__ = {"comment": "Append-only request log; TimescaleDB hypertable on PostgreSQL, plain table on SQLite"}
+    __table_args__ = (
+        db.Index("ix_request_logs_time", "time"),
+        {"comment": "Append-only request log; TimescaleDB hypertable on PostgreSQL, plain table on SQLite"},
+    )
 
-    # Used as the SQLAlchemy PK and TimescaleDB partition key; the table is
-    # append-only so ORM-level uniqueness is not enforced.
-    time = db.Column(db.DateTime(timezone=True), primary_key=True, nullable=False, comment="UTC request timestamp; TimescaleDB partition key")
+    id = db.Column(
+        sa.BigInteger().with_variant(sa.Integer(), "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+        comment="Surrogate PK; avoids timestamp collision under concurrent load",
+    )
+    # TimescaleDB partition key; kept non-unique to prevent collisions between concurrent workers.
+    time = db.Column(db.DateTime(timezone=True), nullable=False, index=False, comment="UTC request timestamp; TimescaleDB partition key")
     # SET NULL on delete so historical data is preserved after entity removal
     entity_id = db.Column(
         db.Integer,

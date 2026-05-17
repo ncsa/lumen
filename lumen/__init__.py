@@ -292,6 +292,8 @@ def create_app():
     _md = _markdown.Markdown(extensions=["tables", "fenced_code", "toc", "codehilite"])
 
     def _md_filter(text):
+        # WARNING: output is marked safe — never apply to user-supplied content.
+        # Only use on operator-controlled fields (e.g. mc.notice from config.yaml).
         _md.reset()
         return Markup(_md.convert(text or ""))
 

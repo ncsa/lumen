@@ -3,8 +3,12 @@ import os
 import threading
 import time
 
+import bleach
 import yaml
 from markupsafe import Markup
+
+_ANNOUNCEMENT_ALLOWED_TAGS = {"a", "b", "br", "em", "i", "li", "ol", "p", "strong", "ul"}
+_ANNOUNCEMENT_ALLOWED_ATTRS = {"a": ["href", "title", "target"]}
 
 from lumen.commands import sync_clients_from_yaml, sync_groups_from_yaml, sync_models_from_yaml
 
@@ -16,7 +20,10 @@ def apply_hot_config(app, yaml_data: dict):
     app_cfg = yaml_data.get("app", {})
     app.config["APP_NAME"] = app_cfg.get("name", "Lumen")
     app.config["APP_TAGLINE"] = app_cfg.get("tagline", "")
-    app.config["APP_ANNOUNCEMENT"] = Markup(app_cfg.get("announcement", "") or "")
+    raw_announcement = app_cfg.get("announcement", "") or ""
+    app.config["APP_ANNOUNCEMENT"] = Markup(
+        bleach.clean(raw_announcement, tags=_ANNOUNCEMENT_ALLOWED_TAGS, attributes=_ANNOUNCEMENT_ALLOWED_ATTRS, strip=True)
+    )
     _dev_raw = app_cfg.get("dev_user", "")
     if isinstance(_dev_raw, dict):
         app.config["DEV_USER"] = _dev_raw.get("email", "")

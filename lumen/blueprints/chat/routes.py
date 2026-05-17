@@ -160,6 +160,14 @@ def chat_stream():
     if not messages or not model:
         return jsonify({"error": "Missing messages or model"}), HTTPStatus.BAD_REQUEST
 
+    _MAX_MESSAGES = 500
+    _MAX_CHARS = 500_000
+    if len(messages) > _MAX_MESSAGES:
+        return jsonify({"error": f"Too many messages (max {_MAX_MESSAGES})"}), HTTPStatus.BAD_REQUEST
+    total_chars = sum(len(str(m.get("content", ""))) for m in messages)
+    if total_chars > _MAX_CHARS:
+        return jsonify({"error": f"Message payload too large (max {_MAX_CHARS:,} characters)"}), HTTPStatus.BAD_REQUEST
+
     entity_id = session["entity_id"]
 
     model_config = db.session.execute(select(ModelConfig).filter_by(model_name=model, active=True)).scalar_one_or_none()

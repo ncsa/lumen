@@ -335,7 +335,8 @@ def analytics_requests():
     period = request.args.get("period", "week")
     start = _period_start(period)
     bucket, _ = _period_bucket(period)
-    assert bucket in _VALID_BUCKETS
+    if bucket not in _VALID_BUCKETS:
+        abort(HTTPStatus.BAD_REQUEST)
 
     if start is not None:
         rows = db.session.execute(text(f"""
@@ -360,7 +361,8 @@ def analytics_tokens():
     period = request.args.get("period", "week")
     start = _period_start(period)
     bucket, _ = _period_bucket(period)
-    assert bucket in _VALID_BUCKETS
+    if bucket not in _VALID_BUCKETS:
+        abort(HTTPStatus.BAD_REQUEST)
 
     if start is not None:
         rows = db.session.execute(text(f"""
