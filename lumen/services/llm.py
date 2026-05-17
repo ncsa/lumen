@@ -3,6 +3,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
+from typing import NamedTuple
 
 import openai
 from flask import current_app
@@ -27,6 +28,12 @@ from lumen.services.cost import calculate_cost
 
 # Priority order for access types when multiple apply (lower index = higher priority)
 _ACCESS_PRIORITY = {"blacklist": 0, "graylist": 1, "whitelist": 2}
+
+
+class PoolLimit(NamedTuple):
+    max_coins: float
+    refresh_coins: float
+    starting_coins: float
 
 
 def get_model_status(mc) -> str:
@@ -171,7 +178,7 @@ def get_pool_limit(entity_id: int):
     if user_limit is not None:
         if float(user_limit.max_coins) == 0:
             return None  # explicitly blocked
-        return (float(user_limit.max_coins), float(user_limit.refresh_coins), float(user_limit.starting_coins))
+        return PoolLimit(float(user_limit.max_coins), float(user_limit.refresh_coins), float(user_limit.starting_coins))
 
     # No user-level limit — fall back to best group limit.
     group_ids = _get_active_group_ids(entity_id)
@@ -181,15 +188,15 @@ def get_pool_limit(entity_id: int):
         select(GroupLimit).where(GroupLimit.group_id.in_(group_ids))
     ).scalars().all()
     candidates = [
-        (float(gl.max_coins), float(gl.refresh_coins), float(gl.starting_coins))
+        PoolLimit(float(gl.max_coins), float(gl.refresh_coins), float(gl.starting_coins))
         for gl in group_limits if float(gl.max_coins) != 0
     ]
     if not candidates:
         return None
     for c in candidates:
-        if c[0] == -2:
-            return (-2, 0, 0)
-    return max(candidates, key=lambda x: x[0])
+        if c.max_coins == -2:
+            return PoolLimit(-2, 0, 0)
+    return max(candidates, key=lambda x: x.max_coins)
 
 
 def get_effective_limit(entity_id: int, model_config_id: int):
@@ -254,11 +261,6 @@ def check_coin_budget(entity_id: int, model_config_id: int):
     if coins_left is not None and coins_left <= 0:
         return False, HTTPStatus.TOO_MANY_REQUESTS, "Coin budget exhausted"
     return True, None, None
-
-
-def deduct_coins(entity_id: int, model_config_id: int, coin_cost: float):
-    """Deduct actual coin cost from the budget (no-op for unlimited or blocked)."""
-    subtract_coins(entity_id, model_config_id, coin_cost)
 
 
 def update_stats(
@@ -387,7 +389,7 @@ def send_message_stream(
     output_speed = output_tokens / duration if duration > 0 else 0.0
 
     if entity_id is not None:
-        deduct_coins(entity_id, config.id, cost)
+        subtract_coins(entity_id, config.id, cost)
         update_stats(
             entity_id, config.id, source,
             input_tokens, output_tokens, cost,

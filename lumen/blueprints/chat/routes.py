@@ -2,7 +2,7 @@ import base64
 import io
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from http import HTTPStatus
 
 import filetype
@@ -219,7 +219,7 @@ def chat_stream():
                 output_speed=result.get("output_speed"),
             ))
 
-            conv.updated_at = datetime.utcnow()
+            conv.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
             db.session.commit()
 
             result["conversation_id"] = conv.id

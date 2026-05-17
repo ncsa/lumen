@@ -37,6 +37,18 @@ All notable changes to Lumen will be documented in this file.
 - Replaced bare integer HTTP status codes with `HTTPStatus` constants across all blueprint files (`api`, `auth`, `chat`, `clients`, `profile`, `admin`)
 - Renamed the "Usage" page to "Profile": URL changed from `/usage` to `/profile`, nav link updated to "Profile" across all themes, and the admin per-user route moved from `/admin/users/<id>/usage` to `/admin/users/<id>/profile`
 - Decomposed `sync_user_from_yaml` (complexity 46) in `auth/routes.py` into four focused helpers: `_desired_groups_from_config`, `_groups_from_userinfo_rules`, `_reconcile_group_memberships`, and `_apply_user_model_overrides`
+- `datetime.utcnow()` (deprecated in Python 3.12) replaced with `datetime.now(timezone.utc).replace(tzinfo=None)` in `chat/routes.py` and `api/routes.py`
+- `_watcher` exception handler now uses `logger.exception` to preserve stack traces
+- Mid-file imports in `profile/routes.py` moved to top of file
+- Extracted `_build_model_access_list(entity_id, usage_by_model)` helper in `profile/routes.py`; eliminates ~15-line duplicated loop previously copied across `profile`, `admin`, and `clients` blueprints
+- Extracted `_require_client_access(entity_id, sid)` helper in `clients/routes.py`; eliminates duplicated auth guard across four route handlers
+- Deferred import of profile helpers in `admin/routes.py` moved to module-level (rule: deferred imports only inside `create_app`)
+- `inject_nav` context processor caches `is_admin` and client membership in the Flask session, eliminating 3 DB queries per request after the first
+- Extracted `apply_hot_config(app, yaml_data)` into `config_watcher.py`; `create_app` and `_watcher` now share one implementation of hot-reloadable settings
+- `completions()` API endpoint now uses shared `_preflight()` helper instead of duplicating model-lookup / budget-check / endpoint-selection from `_do_chat`
+- `deduct_coins` one-line wrapper removed; all callers updated to call `subtract_coins` directly
+- f-string log calls in `commands.py` converted to `%s`-style lazy interpolation
+- `get_pool_limit` now returns a `PoolLimit` named tuple (`max_coins`, `refresh_coins`, `starting_coins`) instead of a plain tuple
 - Decomposed `_get_profile_data` (complexity 40) in `profile/routes.py` into three focused helpers: `_fetch_chat_stats`, `_build_model_usage`, and `_build_coin_pool`
 - Decomposed `sync_models_from_yaml` (complexity 40) in `commands.py` into three focused helpers: `_apply_model_fields`, `_reconcile_endpoints`, and `_deactivate_removed_models`
 

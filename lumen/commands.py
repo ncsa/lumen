@@ -104,8 +104,9 @@ def sync_groups_from_yaml(yaml_data):
 
         if "models" in group_def:
             current_app.logger.warning(
-                f"sync_groups_from_yaml: group '{group_name}' uses deprecated 'models:' key; "
-                "use 'model_access.whitelist:' instead. The key is ignored."
+                "sync_groups_from_yaml: group '%s' uses deprecated 'models:' key; "
+                "use 'model_access.whitelist:' instead. The key is ignored.",
+                group_name,
             )
 
         # Upsert GroupLimit (coin pool)
@@ -140,7 +141,8 @@ def sync_groups_from_yaml(yaml_data):
                 mc = db.session.execute(select(ModelConfig).filter_by(model_name=model_name)).scalar_one_or_none()
                 if mc is None:
                     current_app.logger.warning(
-                        f"sync_groups_from_yaml: model '{model_name}' not found in group '{group_name}' {access_type}, skipping"
+                        "sync_groups_from_yaml: model '%s' not found in group '%s' %s, skipping",
+                        model_name, group_name, access_type,
                     )
                     continue
                 db.session.add(GroupModelAccess(
@@ -224,8 +226,8 @@ def sync_clients_from_yaml(yaml_data):
                 mc = db.session.execute(select(ModelConfig).filter_by(model_name=model_name)).scalar_one_or_none()
                 if mc is None:
                     current_app.logger.warning(
-                        f"sync_clients_from_yaml: model '{model_name}' not found for client "
-                        f"'{entity.name}' {access_type}, skipping"
+                        "sync_clients_from_yaml: model '%s' not found for client '%s' %s, skipping",
+                        model_name, entity.name, access_type,
                     )
                     continue
                 db.session.add(EntityModelAccess(

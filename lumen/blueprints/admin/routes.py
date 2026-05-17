@@ -4,6 +4,7 @@ from http import HTTPStatus
 from flask import Blueprint, render_template, request, redirect, url_for, abort, jsonify
 from sqlalchemy import func, case, select, text
 
+from lumen.blueprints.profile.routes import _build_model_access_list, _entity_groups, _get_profile_data, _gravatar_url
 from lumen.decorators import admin_required
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
@@ -12,11 +13,14 @@ from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
 from lumen.models.entity_stat import EntityStat
 from lumen.models.model_config import ModelConfig
-from lumen.services.llm import get_pool_limit
+from lumen.services.llm import get_model_access_status, get_model_status, get_pool_limit, has_model_consent
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
+# Sentinel for "unlimited" sort key: NULL coins_left rows sort last by mapping to BIGINT_MAX.
+# -2 is the canonical "unlimited" value; this encodes it as a sortable integer column.
 _BIGINT_MAX = 9223372036854775807
+# Must match the options rendered by the frontend per-page selector.
 _VALID_PER_PAGE = {25, 50, 100, 200}
 
 
@@ -85,30 +89,10 @@ def reset_user_tokens(eid):
 @admin_bp.route("/users/<int:eid>/profile")
 @admin_required
 def user_profile(eid):
-    from lumen.blueprints.profile.routes import _get_profile_data, _gravatar_url, _entity_groups
-    from lumen.services.llm import get_model_access_status, get_model_status, has_model_consent
     entity = db.get_or_404(Entity, eid)
     data = _get_profile_data(eid)
-    all_models = db.session.execute(select(ModelConfig).order_by(ModelConfig.model_name)).scalars().all()
     usage_by_model = {u["model_name"]: u for u in data.get("model_usage", [])}
-    model_access_list = []
-    for mc in all_models:
-        access_status = get_model_access_status(eid, mc.id)
-        consented = has_model_consent(eid, mc.id) if access_status == "graylist" else None
-        u = usage_by_model.get(mc.model_name, {})
-        model_access_list.append({
-            "model_name": mc.model_name,
-            "model_url": url_for("models_page.detail", model_name=mc.model_name),
-            "notice": mc.notice,
-            "access_status": access_status,
-            "consented": consented,
-            "model_status": get_model_status(mc),
-            "requests": u.get("requests", 0),
-            "input_tokens": u.get("input_tokens", 0),
-            "output_tokens": u.get("output_tokens", 0),
-            "cost": u.get("cost", 0.0),
-            "last_used_at": u.get("last_used_at"),
-        })
+    model_access_list = _build_model_access_list(eid, usage_by_model)
     return render_template(
         "profile.html",
         **data,

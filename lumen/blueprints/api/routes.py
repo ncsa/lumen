@@ -19,10 +19,12 @@ from lumen.models.entity import Entity
 from lumen.models.model_config import ModelConfig
 from lumen.models.request_log import RequestLog
 from lumen.services.cost import calculate_cost
-from lumen.services.llm import check_coin_budget, deduct_coins, get_effective_limit, get_next_endpoint, update_stats
+from lumen.services.llm import check_coin_budget, subtract_coins, get_effective_limit, get_next_endpoint, update_stats
 
 api_bp = Blueprint("api", __name__, url_prefix="/v1")
 
+# Per-worker in-memory cache. Under multi-worker deployments each worker holds its own
+# copy; effective cache lifetime is correct per-worker but not shared across workers.
 _rates_cache: dict = {"data": {}, "expires_at": 0.0}
 
 
@@ -45,7 +47,7 @@ def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int
             input_tokens=APIKey.input_tokens + input_tokens,
             output_tokens=APIKey.output_tokens + output_tokens,
             cost=APIKey.cost + Decimal(str(cost)),
-            last_used_at=datetime.utcnow(),
+            last_used_at=datetime.now(timezone.utc).replace(tzinfo=None),
         )
     )
 
@@ -206,21 +208,27 @@ def get_model(model_id):
     return jsonify(_model_dict(config, rates))
 
 
-def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
-    """Shared logic for chat completions (used by both endpoints)."""
+def _preflight(model_name: str):
+    """Look up model, check coin budget, select endpoint. Returns (model_config, endpoint, None) or (None, None, error_response)."""
     model_config = db.session.execute(select(ModelConfig).filter_by(model_name=model_name, active=True)).scalar_one_or_none()
     if not model_config:
-        return _err(f"Model '{model_name}' not found", status=HTTPStatus.NOT_FOUND)
-
-    entity_id = g.entity.id
-
-    ok, code, msg = check_coin_budget(entity_id, model_config.id)
+        return None, None, _err(f"Model '{model_name}' not found", status=HTTPStatus.NOT_FOUND)
+    ok, code, msg = check_coin_budget(g.entity.id, model_config.id)
     if not ok:
-        return _err(msg, status=code)
-
+        return None, None, _err(msg, status=code)
     endpoint = get_next_endpoint(model_config.id)
     if endpoint is None:
-        return _err(f"No healthy endpoints for model '{model_name}'", "server_error", HTTPStatus.SERVICE_UNAVAILABLE)
+        return None, None, _err(f"No healthy endpoints for model '{model_name}'", "server_error", HTTPStatus.SERVICE_UNAVAILABLE)
+    return model_config, endpoint, None
+
+
+def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
+    """Shared logic for chat completions (used by both endpoints)."""
+    model_config, endpoint, err = _preflight(model_name)
+    if err:
+        return err
+
+    entity_id = g.entity.id
 
     remote_model = endpoint.model_name or model_name
 
@@ -245,7 +253,7 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
 
                     if usage is not None:
                         cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens, model_config)
-                        deduct_coins(entity_id, model_config.id, cost)
+                        subtract_coins(entity_id, model_config.id, cost)
                         update_stats(entity_id, model_config.id, "api", usage.prompt_tokens, usage.completion_tokens, cost,
                                      endpoint_id=endpoint.id)
                         _record_api_key_usage(api_key.id, usage.prompt_tokens, usage.completion_tokens, cost)
@@ -276,7 +284,7 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
     usage = response.usage
     cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens, model_config)
 
-    deduct_coins(entity_id, model_config.id, cost)
+    subtract_coins(entity_id, model_config.id, cost)
     update_stats(entity_id, model_config.id, "api", usage.prompt_tokens, usage.completion_tokens, cost,
                  endpoint_id=endpoint.id, duration=duration)
 
@@ -321,19 +329,11 @@ def completions():
 
     messages = [{"role": "user", "content": prompt}]
 
-    model_config = db.session.execute(select(ModelConfig).filter_by(model_name=model_name, active=True)).scalar_one_or_none()
-    if not model_config:
-        return _err(f"Model '{model_name}' not found", status=HTTPStatus.NOT_FOUND)
+    model_config, endpoint, err = _preflight(model_name)
+    if err:
+        return err
 
     entity_id = g.entity.id
-    ok, code, msg = check_coin_budget(entity_id, model_config.id)
-    if not ok:
-        return _err(msg, status=code)
-
-    endpoint = get_next_endpoint(model_config.id)
-    if endpoint is None:
-        return _err(f"No healthy endpoints for model '{model_name}'", "server_error", HTTPStatus.SERVICE_UNAVAILABLE)
-
     remote_model = endpoint.model_name or model_name
     try:
         with openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url) as client:
@@ -344,7 +344,7 @@ def completions():
     usage = response.usage
     cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens, model_config)
 
-    deduct_coins(entity_id, model_config.id, cost)
+    subtract_coins(entity_id, model_config.id, cost)
     update_stats(entity_id, model_config.id, "api", usage.prompt_tokens, usage.completion_tokens, cost)
 
     _record_api_key_usage(g.api_key.id, usage.prompt_tokens, usage.completion_tokens, cost)

@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from http import HTTPStatus
 
-from flask import Blueprint, abort, jsonify, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, jsonify, render_template, request, session
 from sqlalchemy import func, select
 
 from lumen.decorators import admin_required, is_admin, login_required
@@ -13,10 +13,21 @@ from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.models.entity_stat import EntityStat
 from lumen.services.crypto import hash_api_key
-from lumen.services.llm import get_model_access_status, get_model_status, has_model_consent
-from lumen.blueprints.profile.routes import _get_profile_data
+from lumen.services.llm import get_model_access_status, has_model_consent
+from lumen.blueprints.profile.routes import _build_model_access_list, _get_profile_data
 
 clients_bp = Blueprint("clients", __name__)
+
+
+def _require_client_access(entity_id: int, sid: int):
+    """Abort 403 if entity_id is not an admin and does not manage client sid."""
+    entity = db.session.get(Entity, entity_id)
+    if not is_admin(entity):
+        assoc = db.session.execute(
+            select(EntityManager).filter_by(user_entity_id=entity_id, client_entity_id=sid)
+        ).scalar_one_or_none()
+        if not assoc:
+            abort(HTTPStatus.FORBIDDEN)
 
 
 def _get_user_clients(entity_id: int):
@@ -95,15 +106,8 @@ def index():
 @login_required
 def detail(sid):
     entity_id = session["entity_id"]
-    entity = db.session.get(Entity, entity_id)
     client = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="client"))
-
-    if not is_admin(entity):
-        assoc = db.session.execute(
-            select(EntityManager).filter_by(user_entity_id=entity_id, client_entity_id=sid)
-        ).scalar_one_or_none()
-        if not assoc:
-            abort(HTTPStatus.FORBIDDEN)
+    _require_client_access(entity_id, sid)
 
     data = _get_profile_data(sid)
 
@@ -114,26 +118,8 @@ def detail(sid):
         .order_by(Entity.name)
     ).scalars().all()
 
-    all_models = db.session.execute(select(ModelConfig).order_by(ModelConfig.model_name)).scalars().all()
     usage_by_model = {u["model_name"]: u for u in data.get("model_usage", [])}
-    model_access_list = []
-    for mc in all_models:
-        access_status = get_model_access_status(sid, mc.id)
-        consented = has_model_consent(sid, mc.id) if access_status == "graylist" else None
-        u = usage_by_model.get(mc.model_name, {})
-        model_access_list.append({
-            "model_name": mc.model_name,
-            "model_url": url_for("models_page.detail", model_name=mc.model_name),
-            "notice": mc.notice,
-            "access_status": access_status,
-            "consented": consented,
-            "model_status": get_model_status(mc),
-            "requests": u.get("requests", 0),
-            "input_tokens": u.get("input_tokens", 0),
-            "output_tokens": u.get("output_tokens", 0),
-            "cost": u.get("cost", 0.0),
-            "last_used_at": u.get("last_used_at"),
-        })
+    model_access_list = _build_model_access_list(sid, usage_by_model)
 
     return render_template(
         "client_detail.html",
@@ -260,15 +246,8 @@ def remove_client_manager(sid, uid):
 @login_required
 def create_client_key(sid):
     entity_id = session["entity_id"]
-    entity = db.session.get(Entity, entity_id)
     db.first_or_404(select(Entity).filter_by(id=sid, entity_type="client"))
-
-    if not is_admin(entity):
-        assoc = db.session.execute(
-            select(EntityManager).filter_by(user_entity_id=entity_id, client_entity_id=sid)
-        ).scalar_one_or_none()
-        if not assoc:
-            return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
+    _require_client_access(entity_id, sid)
 
     data = request.get_json() or {}
     name = (data.get("name") or "").strip()
@@ -298,14 +277,7 @@ def create_client_key(sid):
 @login_required
 def delete_client_key(sid, kid):
     entity_id = session["entity_id"]
-    entity = db.session.get(Entity, entity_id)
-
-    if not is_admin(entity):
-        assoc = db.session.execute(
-            select(EntityManager).filter_by(user_entity_id=entity_id, client_entity_id=sid)
-        ).scalar_one_or_none()
-        if not assoc:
-            return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
+    _require_client_access(entity_id, sid)
 
     api_key = db.get_or_404(APIKey, kid)
     if api_key.entity_id != sid:
@@ -320,15 +292,8 @@ def delete_client_key(sid, kid):
 @login_required
 def client_consent(sid, model_name):
     entity_id = session["entity_id"]
-    entity = db.session.get(Entity, entity_id)
     db.first_or_404(select(Entity).filter_by(id=sid, entity_type="client"))
-
-    if not is_admin(entity):
-        assoc = db.session.execute(
-            select(EntityManager).filter_by(user_entity_id=entity_id, client_entity_id=sid)
-        ).scalar_one_or_none()
-        if not assoc:
-            return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
+    _require_client_access(entity_id, sid)
 
     config = db.first_or_404(select(ModelConfig).filter_by(model_name=model_name, active=True))
 

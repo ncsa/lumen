@@ -120,19 +120,14 @@ def create_app():
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["PERMANENT_SESSION_LIFETIME"] = 86400
-    app.config["APP_NAME"] = app_cfg.get("name", "Lumen")
-    app.config["APP_TAGLINE"] = app_cfg.get("tagline", "")
-    app.config["APP_ANNOUNCEMENT"] = Markup(app_cfg.get("announcement", "") or "")
-    _dev_raw = app_cfg.get("dev_user", "")
-    if isinstance(_dev_raw, dict):
-        app.config["DEV_USER"] = _dev_raw.get("email", "")
-        app.config["DEV_USER_GROUPS"] = _dev_raw.get("groups") or []
-    else:
-        app.config["DEV_USER"] = _dev_raw or ""
-        app.config["DEV_USER_GROUPS"] = []
-    app.config["GITHUB_URL"] = app_cfg.get("github_url", "https://github.com/ncsa/lumen")
+    from lumen.services.config_watcher import apply_hot_config
+    apply_hot_config(app, yaml_data)
     app.config["APP_VERSION"] = os.environ.get("APP_VERSION", "develop")
     app.config["GIT_COMMIT"] = os.environ.get("GIT_COMMIT", "N/A")
+
+    logs_cfg = app_cfg.get("logs", {})
+    log_level = getattr(logging, logs_cfg.get("level", "INFO").upper(), logging.INFO)
+    app.logger.setLevel(log_level)
 
     # Load theme — dynamic loader so hot reload works when app.theme changes in config.yaml
     themes_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "themes")
@@ -157,19 +152,6 @@ def create_app():
     for key in ("client_id", "client_secret", "server_metadata_url", "redirect_uri", "scopes"):
         if key in oauth2_cfg:
             app.config[f"OAUTH2_{key.upper()}"] = oauth2_cfg[key]
-    if "params" in oauth2_cfg:
-        app.config["OAUTH2_PARAMS"] = oauth2_cfg.get("params") or {}
-
-    chat_cfg = yaml_data.get("chat", {})
-    app.config["CHAT_CONVERSATION_REMOVE_MODE"] = chat_cfg.get("remove", "hide")
-
-    logs_cfg = app_cfg.get("logs", {})
-    log_level = getattr(logging, logs_cfg.get("level", "INFO").upper(), logging.INFO)
-    app.logger.setLevel(log_level)
-    if not logs_cfg.get("access", True):
-        logging.getLogger("werkzeug").setLevel(logging.WARNING)
-        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-    app.config["LOG_MODEL_HEALTH"] = logs_cfg.get("model", False)
 
     # Initialize extensions
     from .extensions import db, migrate, oauth, limiter
@@ -251,36 +233,58 @@ def create_app():
     # Context processor: inject app_name and nav_clients into all templates
     @app.context_processor
     def inject_nav():
-        result = {"app_name": app.config["APP_NAME"], "app_tagline": app.config["APP_TAGLINE"], "app_announcement": app.config.get("APP_ANNOUNCEMENT", Markup("")), "is_admin": False, "github_url": app.config.get("GITHUB_URL", ""), "app_version": app.config.get("APP_VERSION", "develop"), "git_commit": app.config.get("GIT_COMMIT", "N/A"), "is_logged_in": bool(session.get("entity_id")), "theme": app.config["THEME"]}
+        result = {
+            "app_name": app.config["APP_NAME"],
+            "app_tagline": app.config["APP_TAGLINE"],
+            "app_announcement": app.config.get("APP_ANNOUNCEMENT", Markup("")),
+            "is_admin": False,
+            "github_url": app.config.get("GITHUB_URL", ""),
+            "app_version": app.config.get("APP_VERSION", "develop"),
+            "git_commit": app.config.get("GIT_COMMIT", "N/A"),
+            "is_logged_in": bool(session.get("entity_id")),
+            "theme": app.config["THEME"],
+        }
         if not session.get("entity_id"):
             result["nav_clients"] = []
             return result
+
+        # Cache is_admin and client membership in the session to avoid 3 DB queries per request.
+        # Cache is populated on first request after login and cleared on logout.
+        nav_cache = session.get("_nav")
+        if nav_cache is not None:
+            result["is_admin"] = nav_cache["is_admin"]
+            result["nav_clients"] = nav_cache["client_ids"]
+            return result
+
         from sqlalchemy import select
         from lumen.models.entity_manager import EntityManager
         from lumen.models.entity import Entity
         from lumen.extensions import db
-        from lumen.decorators import is_admin
+        from lumen.decorators import is_admin as _is_admin
         entity = db.session.get(Entity, session["entity_id"])
-        if entity:
-            result["is_admin"] = is_admin(entity)
+        is_admin_val = _is_admin(entity) if entity else False
+        result["is_admin"] = is_admin_val
 
         assocs = db.session.execute(
             select(EntityManager).filter_by(user_entity_id=session["entity_id"])
         ).scalars().all()
         client_ids = [a.client_entity_id for a in assocs]
-        if not client_ids:
-            result["nav_clients"] = []
-            return result
-        clients = db.session.execute(
-            select(Entity)
-            .where(
-                Entity.id.in_(client_ids),
-                Entity.entity_type == "client",
-                Entity.active == True,
-            )
-            .order_by(Entity.name)
-        ).scalars().all()
-        result["nav_clients"] = clients
+        if client_ids:
+            clients = db.session.execute(
+                select(Entity)
+                .where(
+                    Entity.id.in_(client_ids),
+                    Entity.entity_type == "client",
+                    Entity.active == True,
+                )
+                .order_by(Entity.name)
+            ).scalars().all()
+            active_client_ids = [c.id for c in clients]
+        else:
+            active_client_ids = []
+
+        session["_nav"] = {"is_admin": is_admin_val, "client_ids": active_client_ids}
+        result["nav_clients"] = active_client_ids
         return result
 
     # Register markdown Jinja2 filter

@@ -9,9 +9,18 @@ from sqlalchemy import func, select
 from lumen.decorators import login_required
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
+from lumen.models.conversation import Conversation
 from lumen.models.entity import Entity
+from lumen.models.entity_balance import EntityBalance
+from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
+from lumen.models.model_config import ModelConfig
+from lumen.models.model_stat import ModelStat
+from lumen.services.crypto import hash_api_key
+from lumen.services.llm import get_pool_limit, get_model_access, get_model_access_status, get_model_status, has_model_consent
+
+profile_bp = Blueprint("profile", __name__)
 
 
 def _gravatar_url(email: str, size: int = 80) -> str:
@@ -25,15 +34,30 @@ def _entity_groups(eid: int) -> list:
         .where(GroupMember.entity_id == eid, Group.name != "default")
         .order_by(Group.name)
     ).scalars().all()
-from lumen.models.conversation import Conversation
-from lumen.models.entity_balance import EntityBalance
-from lumen.models.entity_model_consent import EntityModelConsent
-from lumen.models.model_config import ModelConfig
-from lumen.models.model_stat import ModelStat
-from lumen.services.crypto import hash_api_key
-from lumen.services.llm import get_pool_limit, get_model_access, get_model_access_status, get_model_status, has_model_consent
 
-profile_bp = Blueprint("profile", __name__)
+
+def _build_model_access_list(entity_id: int, usage_by_model: dict) -> list:
+    """Build model access list for an entity, merging access status with usage stats."""
+    all_models = db.session.execute(select(ModelConfig).order_by(ModelConfig.model_name)).scalars().all()
+    result = []
+    for mc in all_models:
+        access_status = get_model_access_status(entity_id, mc.id)
+        consented = has_model_consent(entity_id, mc.id) if access_status == "graylist" else None
+        u = usage_by_model.get(mc.model_name, {})
+        result.append({
+            "model_name": mc.model_name,
+            "model_url": url_for("models_page.detail", model_name=mc.model_name),
+            "notice": mc.notice,
+            "access_status": access_status,
+            "consented": consented,
+            "model_status": get_model_status(mc),
+            "requests": u.get("requests", 0),
+            "input_tokens": u.get("input_tokens", 0),
+            "output_tokens": u.get("output_tokens", 0),
+            "cost": u.get("cost", 0.0),
+            "last_used_at": u.get("last_used_at"),
+        })
+    return result
 
 
 def _fetch_chat_stats(eid: int):
@@ -137,26 +161,8 @@ def index():
     entity_id = session["entity_id"]
     data = _get_profile_data(entity_id)
 
-    all_models = db.session.execute(select(ModelConfig).order_by(ModelConfig.model_name)).scalars().all()
     usage_by_model = {u["model_name"]: u for u in data.get("model_usage", [])}
-    model_access_list = []
-    for mc in all_models:
-        access_status = get_model_access_status(entity_id, mc.id)
-        consented = has_model_consent(entity_id, mc.id) if access_status == "graylist" else None
-        u = usage_by_model.get(mc.model_name, {})
-        model_access_list.append({
-            "model_name": mc.model_name,
-            "model_url": url_for("models_page.detail", model_name=mc.model_name),
-            "notice": mc.notice,
-            "access_status": access_status,
-            "consented": consented,
-            "model_status": get_model_status(mc),
-            "requests": u.get("requests", 0),
-            "input_tokens": u.get("input_tokens", 0),
-            "output_tokens": u.get("output_tokens", 0),
-            "cost": u.get("cost", 0.0),
-            "last_used_at": u.get("last_used_at"),
-        })
+    model_access_list = _build_model_access_list(entity_id, usage_by_model)
 
     profile_entity = db.session.get(Entity, entity_id)
     return render_template(

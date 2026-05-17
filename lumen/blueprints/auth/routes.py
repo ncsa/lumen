@@ -149,8 +149,8 @@ def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=No
     balance = db.session.execute(select(EntityBalance).filter_by(entity_id=entity.id)).scalar_one_or_none()
     if balance is None:
         pool = get_pool_limit(entity.id)
-        if pool is not None and pool[0] != -2:
-            _, _, starting_coins = pool
+        if pool is not None and pool.max_coins != -2:
+            starting_coins = pool.starting_coins
             db.session.add(EntityBalance(
                 entity_id=entity.id,
                 coins_left=starting_coins,

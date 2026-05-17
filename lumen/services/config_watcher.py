@@ -10,6 +10,31 @@ from lumen.commands import sync_clients_from_yaml, sync_groups_from_yaml, sync_m
 
 logger = logging.getLogger(__name__)
 
+
+def apply_hot_config(app, yaml_data: dict):
+    """Apply hot-reloadable yaml settings to app.config. Called at startup and on config reload."""
+    app_cfg = yaml_data.get("app", {})
+    app.config["APP_NAME"] = app_cfg.get("name", "Lumen")
+    app.config["APP_TAGLINE"] = app_cfg.get("tagline", "")
+    app.config["APP_ANNOUNCEMENT"] = Markup(app_cfg.get("announcement", "") or "")
+    _dev_raw = app_cfg.get("dev_user", "")
+    if isinstance(_dev_raw, dict):
+        app.config["DEV_USER"] = _dev_raw.get("email", "")
+        app.config["DEV_USER_GROUPS"] = _dev_raw.get("groups") or []
+    else:
+        app.config["DEV_USER"] = _dev_raw or ""
+        app.config["DEV_USER_GROUPS"] = []
+    app.config["GITHUB_URL"] = app_cfg.get("github_url", "https://github.com/ncsa/lumen")
+
+    logs_cfg = app_cfg.get("logs", {})
+    werkzeug_level = logging.WARNING if not logs_cfg.get("access", True) else logging.INFO
+    logging.getLogger("werkzeug").setLevel(werkzeug_level)
+    logging.getLogger("uvicorn.access").setLevel(werkzeug_level)
+    app.config["LOG_MODEL_HEALTH"] = logs_cfg.get("model", False)
+
+    app.config["OAUTH2_PARAMS"] = yaml_data.get("oauth2", {}).get("params") or {}
+    app.config["CHAT_CONVERSATION_REMOVE_MODE"] = yaml_data.get("chat", {}).get("remove", "hide")
+
 _RESTART_REQUIRED = [
     ("app", "secret_key"),
     ("app", "database_url"),
@@ -58,32 +83,9 @@ def _watcher(app, config_path):
                 old_data = app.config.get("YAML_DATA", {})
                 _check_restart_required(old_data, new_data)
                 app.config["YAML_DATA"] = new_data
+                apply_hot_config(app, new_data)
 
                 app_cfg = new_data.get("app", {})
-                app.config["APP_NAME"] = app_cfg.get("name", "Lumen")
-                app.config["APP_TAGLINE"] = app_cfg.get("tagline", "")
-                app.config["APP_ANNOUNCEMENT"] = Markup(app_cfg.get("announcement", "") or "")
-                _dev_raw = app_cfg.get("dev_user", "")
-                if isinstance(_dev_raw, dict):
-                    app.config["DEV_USER"] = _dev_raw.get("email", "")
-                    app.config["DEV_USER_GROUPS"] = _dev_raw.get("groups") or []
-                else:
-                    app.config["DEV_USER"] = _dev_raw or ""
-                    app.config["DEV_USER_GROUPS"] = []
-                app.config["GITHUB_URL"] = app_cfg.get("github_url", "https://github.com/ncsa/lumen")
-
-                logs_cfg = app_cfg.get("logs", {})
-                werkzeug_level = logging.WARNING if not logs_cfg.get("access", True) else logging.INFO
-                logging.getLogger("werkzeug").setLevel(werkzeug_level)
-                logging.getLogger("uvicorn.access").setLevel(werkzeug_level)
-                app.config["LOG_MODEL_HEALTH"] = logs_cfg.get("model", False)
-
-                oauth2_cfg = new_data.get("oauth2", {})
-                app.config["OAUTH2_PARAMS"] = oauth2_cfg.get("params") or {}
-
-                chat_cfg = new_data.get("chat", {})
-                app.config["CHAT_CONVERSATION_REMOVE_MODE"] = chat_cfg.get("remove", "hide")
-
                 theme_name = app_cfg.get("theme", "default")
                 themes_root = app.config.get("THEMES_ROOT", "")
                 theme_dir = os.path.join(themes_root, theme_name)
@@ -111,8 +113,8 @@ def _watcher(app, config_path):
                     logger.warning("config_watcher: sync_clients_from_yaml failed: %s", e)
 
             app.logger.info("config.yaml reloaded")
-        except Exception as e:
-            logger.warning("config_watcher error: %s", e)
+        except Exception:
+            logger.exception("config_watcher error")
 
 
 def start_config_watcher(app, config_path):
