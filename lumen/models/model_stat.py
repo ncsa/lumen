@@ -25,5 +25,7 @@ class ModelStat(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint("entity_id", "model_config_id", "source"),
+        db.Index("ix_model_stats_entity_id", "entity_id"),
+        db.Index("ix_model_stats_model_config_id", "model_config_id"),
         {"comment": "Aggregated usage counters per (entity, model, source) triple; updated on every proxied request"},
     )

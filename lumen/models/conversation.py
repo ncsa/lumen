@@ -12,7 +12,10 @@ class Conversation(db.Model):
     """
 
     __tablename__ = "conversations"
-    __table_args__ = {"comment": "Chat sessions created through the Lumen web UI; hidden=true is a soft delete"}
+    __table_args__ = (
+        db.Index("ix_conversations_entity_hidden_updated", "entity_id", "hidden", "updated_at"),
+        {"comment": "Chat sessions created through the Lumen web UI; hidden=true is a soft delete"},
+    )
 
     id = db.Column(db.Integer, primary_key=True, comment="Primary key")
     entity_id = db.Column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), nullable=False, comment="The owning user entity")

@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
+from urllib.parse import urlparse
 
 import requests as http_requests
 from flask import Blueprint, abort, redirect, render_template, session, url_for
@@ -103,9 +104,12 @@ def model_consent(model_name):
 @login_required
 def model_readme(model_name):
     config = db.first_or_404(select(ModelConfig).filter_by(model_name=model_name, active=True))
-    if not config.url or "huggingface.co" not in config.url:
+    parsed = urlparse(config.url or "")
+    if parsed.netloc != "huggingface.co":
         return "", HTTPStatus.NOT_FOUND
-    parts = config.url.replace("https://huggingface.co/", "").split("/")[:2]
+    parts = parsed.path.strip("/").split("/")[:2]
+    if len(parts) < 2:
+        return "", HTTPStatus.NOT_FOUND
     raw_url = f"https://huggingface.co/{'/'.join(parts)}/raw/main/README.md"
     try:
         r = http_requests.get(raw_url, timeout=10)

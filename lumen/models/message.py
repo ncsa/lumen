@@ -12,7 +12,10 @@ class Message(db.Model):
     """
 
     __tablename__ = "messages"
-    __table_args__ = {"comment": "Individual turns within a conversation; performance metadata columns are assistant-only"}
+    __table_args__ = (
+        db.Index("ix_messages_conversation_id", "conversation_id"),
+        {"comment": "Individual turns within a conversation; performance metadata columns are assistant-only"},
+    )
 
     id = db.Column(db.Integer, primary_key=True, comment="Primary key")
     conversation_id = db.Column(

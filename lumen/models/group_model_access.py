@@ -21,5 +21,6 @@ class GroupModelAccess(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint("group_id", "model_config_id", name="uq_gma_group_model"),
+        db.Index("ix_group_model_access_group_id", "group_id"),
         {"comment": "Per-group model access overrides; lower priority than entity_model_access rows"},
     )

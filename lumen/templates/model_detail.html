@@ -118,7 +118,7 @@
         </div>
       </div>
 
-      {% set has_details = config.context_window or config.max_output_tokens or config.input_modalities
+      {% set has_details = config.url or config.context_window or config.max_output_tokens or config.input_modalities
                            or config.output_modalities or config.knowledge_cutoff
                            or config.supports_reasoning is not none
                            or config.supports_function_calling is not none %}
@@ -129,6 +129,17 @@
           <table class="table table-sm mb-0">
             <caption class="visually-hidden">Model technical details</caption>
             <tbody>
+              {% if config.url %}
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3">HuggingFace</th>
+                <td class="text-end pe-3">
+                  <a href="{{ config.url }}" target="_blank" rel="noopener noreferrer"
+                     aria-label="View {{ config.model_name }} on HuggingFace (opens in new tab)">
+                    Model page
+                  </a>
+                </td>
+              </tr>
+              {% endif %}
               {% if config.context_window %}
               <tr>
                 <th scope="row" class="text-muted fw-normal ps-3">Context Window</th>

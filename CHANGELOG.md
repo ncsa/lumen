@@ -4,6 +4,24 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+- Fixed Prometheus `/metrics` token comparison to use `hmac.compare_digest()` preventing timing side-channel attacks
+- Fixed `model_readme` URL check to use `urlparse` hostname validation, preventing SSRF via credential-injection URLs
+
+### Fixed
+- `/v1/completions` now records `endpoint_id` and `duration` in `RequestLog`, matching the `/v1/chat/completions` behaviour
+- Background threads in `health.py` and `token_refill.py` now log exceptions with `logger.exception()` instead of silently swallowing them
+- Health checker joins `ModelConfig.model_name` upfront instead of lazy-loading `ep.model_config` inside the loop; accessing the backref on a `lazy="dynamic"` + `delete-orphan` relationship caused `StaleDataError` on commit
+- `refill_coin_balances` now bulk-loads `EntityLimit`, `GroupMember`, and `GroupLimit` rows before the loop, eliminating N+1 queries per entity
+- `_build_model_access_list` and `chat_page` now bulk-resolve model access status, consents, and endpoint health in a fixed number of queries, replacing N+1 per-model queries
+- Added `bulk_model_access_info()` helper to `services/llm.py` for efficient entity-wide access resolution
+- Model endpoint lists are now pre-fetched in bulk on the profile page, eliminating one lazy SELECT per model
+
+### Database
+- Added composite index `ix_conversations_entity_hidden_updated` on `conversations(entity_id, hidden, updated_at)` to speed up `list_conversations` queries
+- Added `ix_messages_conversation_id` index to `messages.conversation_id`
+- Added FK indexes on `group_members.entity_id`, `entity_model_access.entity_id`, `group_model_access.group_id`, `model_stats.(entity_id, model_config_id)`, `request_logs.(entity_id, model_config_id)`, and `api_keys.entity_id`
+
 ### Added
 - Chat assistant messages now show the model name next to the ⓘ icon in the message metadata row; thinking tokens are hidden when zero
 

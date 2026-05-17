@@ -23,5 +23,6 @@ class EntityModelAccess(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint("entity_id", "model_config_id", name="uq_ema_entity_model"),
+        db.Index("ix_entity_model_access_entity_id", "entity_id"),
         {"comment": "Per-entity model access overrides; entity-level takes precedence over group-level"},
     )

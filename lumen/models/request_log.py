@@ -17,6 +17,8 @@ class RequestLog(db.Model):
     __tablename__ = "request_logs"
     __table_args__ = (
         db.Index("ix_request_logs_time", "time"),
+        db.Index("ix_request_logs_entity_id", "entity_id"),
+        db.Index("ix_request_logs_model_config_id", "model_config_id"),
         {"comment": "Append-only request log; TimescaleDB hypertable on PostgreSQL, plain table on SQLite"},
     )
 

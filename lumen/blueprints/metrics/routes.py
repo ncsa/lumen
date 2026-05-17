@@ -21,8 +21,10 @@ def _metrics_auth_required(f):
         token = prom_cfg.get("token", "")
         if not token:
             return Response("Unauthorized", status=HTTPStatus.UNAUTHORIZED, headers={"WWW-Authenticate": "Bearer"})
+        import hmac as _hmac
         auth = request.headers.get("Authorization", "")
-        if not auth.startswith("Bearer ") or auth[7:].strip() != token:
+        bearer = auth[7:].strip() if auth.startswith("Bearer ") else ""
+        if not bearer or not _hmac.compare_digest(bearer, token):
             return Response("Unauthorized", status=HTTPStatus.UNAUTHORIZED, headers={"WWW-Authenticate": "Bearer"})
         return f(*args, **kwargs)
     return decorated

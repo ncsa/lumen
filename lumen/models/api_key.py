@@ -11,7 +11,10 @@ class APIKey(db.Model):
     """
 
     __tablename__ = "api_keys"
-    __table_args__ = {"comment": "API keys for entity authentication; only the SHA-256 hash is stored, never the plaintext"}
+    __table_args__ = (
+        db.Index("ix_api_keys_entity_id", "entity_id"),
+        {"comment": "API keys for entity authentication; only the SHA-256 hash is stored, never the plaintext"},
+    )
 
     id = db.Column(db.Integer, primary_key=True, comment="Primary key")
     entity_id = db.Column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), nullable=False, comment="Owning entity")

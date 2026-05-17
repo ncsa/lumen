@@ -20,5 +20,6 @@ class GroupMember(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint("group_id", "entity_id"),
+        db.Index("ix_group_members_entity_id", "entity_id"),
         {"comment": "Association between entities and groups; an entity may belong to multiple groups"},
     )

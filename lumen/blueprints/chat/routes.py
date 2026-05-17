@@ -19,7 +19,7 @@ from lumen.models.conversation import Conversation
 from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
-from lumen.services.llm import check_coin_budget, get_effective_limit, get_model_access_status, has_model_consent, send_message_stream
+from lumen.services.llm import bulk_model_access_info, check_coin_budget, get_pool_limit, send_message_stream
 
 chat_bp = Blueprint("chat", __name__)
 
@@ -79,6 +79,12 @@ def chat_page():
         ).all()
     )
 
+    model_ids = [m.id for m in all_models]
+    # Bulk-resolve access and consents to avoid N+1 per-model DB queries
+    access_statuses, consented_ids = bulk_model_access_info(entity_id, model_ids)
+    # Pool limit is entity-level; fetch once rather than once per model via get_effective_limit
+    pool = get_pool_limit(entity_id)
+
     # Include models that are accessible (not blocked) and have healthy endpoints.
     # Graylisted models without consent are shown with a warning so the user can navigate
     # to the model detail page to acknowledge them.
@@ -86,12 +92,12 @@ def chat_page():
     for m in all_models:
         if healthy_counts.get(m.id, 0) == 0:
             continue
-        status = get_model_access_status(entity_id, m.id)
+        status = access_statuses.get(m.id, "allowed")
         if status == "blocked":
             continue
-        if get_effective_limit(entity_id, m.id) is None and status != "graylist":
+        if pool is None and status != "graylist":
             continue
-        consented = has_model_consent(entity_id, m.id) if status == "graylist" else True
+        consented = (m.id in consented_ids) if status == "graylist" else True
         available_models.append({"model": m, "status": status, "consented": consented})
 
     return render_template("chat.html", available_models=available_models)

@@ -36,6 +36,86 @@ class PoolLimit(NamedTuple):
     starting_coins: float
 
 
+def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
+    """
+    Bulk-resolve model access status and consents for one entity across many models.
+
+    Returns (access_statuses, consented_ids) where access_statuses is a dict
+    {model_config_id: "allowed"|"blocked"|"graylist"} and consented_ids is a set of
+    model_config_ids where the entity has accepted the graylist notice.
+
+    Issues a fixed set of queries regardless of the number of models — replaces N+1
+    per-model calls to get_model_access_status / has_model_consent.
+    """
+    if not model_config_ids:
+        return {}, set()
+
+    ema_by_model = {
+        r.model_config_id: r.access_type
+        for r in db.session.execute(
+            select(EntityModelAccess).where(
+                EntityModelAccess.entity_id == entity_id,
+                EntityModelAccess.model_config_id.in_(model_config_ids),
+            )
+        ).scalars().all()
+    }
+
+    group_ids = _get_active_group_ids(entity_id)
+
+    gma_by_model: dict = {}
+    group_defaults: list = []
+    if group_ids:
+        for r in db.session.execute(
+            select(GroupModelAccess).where(
+                GroupModelAccess.group_id.in_(group_ids),
+                GroupModelAccess.model_config_id.in_(model_config_ids),
+            )
+        ).scalars().all():
+            gma_by_model.setdefault(r.model_config_id, []).append(r.access_type)
+
+        group_defaults = [
+            g.model_access_default
+            for g in db.session.execute(
+                select(Group).where(Group.id.in_(group_ids), Group.model_access_default.isnot(None))
+            ).scalars().all()
+        ]
+
+    entity = db.session.get(Entity, entity_id)
+    entity_default = entity.model_access_default if entity else None
+
+    consented_ids = {
+        r.model_config_id
+        for r in db.session.execute(
+            select(EntityModelConsent).where(
+                EntityModelConsent.entity_id == entity_id,
+                EntityModelConsent.model_config_id.in_(model_config_ids),
+            )
+        ).scalars().all()
+    }
+
+    access_statuses: dict = {}
+    for mc_id in model_config_ids:
+        if mc_id in ema_by_model:
+            t = ema_by_model[mc_id]
+            access_statuses[mc_id] = "allowed" if t == "whitelist" else ("graylist" if t == "graylist" else "blocked")
+        elif group_ids and mc_id in gma_by_model:
+            best = min(gma_by_model[mc_id], key=lambda t: _ACCESS_PRIORITY.get(t, 99))
+            access_statuses[mc_id] = "blocked" if best == "blacklist" else ("allowed" if best == "whitelist" else "graylist")
+        elif group_defaults:
+            if "whitelist" in group_defaults:
+                access_statuses[mc_id] = "allowed"
+            elif "graylist" in group_defaults:
+                access_statuses[mc_id] = "graylist"
+            else:
+                access_statuses[mc_id] = "blocked"
+        elif entity_default:
+            access_statuses[mc_id] = "blocked" if entity_default == "blacklist" else ("graylist" if entity_default == "graylist" else "allowed")
+        else:
+            access_statuses[mc_id] = "allowed"
+
+    return access_statuses, consented_ids
+
+
 def get_model_status(mc) -> str:
     """Return 'ok', 'degraded', 'down', or 'disabled' for a ModelConfig."""
     if not mc.active:

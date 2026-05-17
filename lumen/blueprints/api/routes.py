@@ -337,8 +337,10 @@ def completions():
     entity_id = g.entity.id
     remote_model = endpoint.model_name or model_name
     try:
+        t0 = _time.time()
         with openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url) as client:
             response = client.chat.completions.create(model=remote_model, messages=messages)
+        duration = _time.time() - t0
     except Exception as e:
         return _err(str(e), "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
 
@@ -346,7 +348,8 @@ def completions():
     cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens, model_config)
 
     subtract_coins(entity_id, model_config.id, cost)
-    update_stats(entity_id, model_config.id, "api", usage.prompt_tokens, usage.completion_tokens, cost)
+    update_stats(entity_id, model_config.id, "api", usage.prompt_tokens, usage.completion_tokens, cost,
+                 endpoint_id=endpoint.id, duration=duration)
 
     _record_api_key_usage(g.api_key.id, usage.prompt_tokens, usage.completion_tokens, cost)
     db.session.commit()

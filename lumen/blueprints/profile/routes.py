@@ -16,9 +16,10 @@ from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
 from lumen.models.model_config import ModelConfig
+from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
 from lumen.services.crypto import hash_api_key
-from lumen.services.llm import get_pool_limit, get_model_access, get_model_access_status, get_model_status, has_model_consent
+from lumen.services.llm import bulk_model_access_info, get_pool_limit, get_model_access, get_model_access_status, get_model_status, has_model_consent
 
 profile_bp = Blueprint("profile", __name__)
 
@@ -39,18 +40,44 @@ def _entity_groups(eid: int) -> list:
 def _build_model_access_list(entity_id: int, usage_by_model: dict) -> list:
     """Build model access list for an entity, merging access status with usage stats."""
     all_models = db.session.execute(select(ModelConfig).order_by(ModelConfig.model_name)).scalars().all()
+    model_ids = [mc.id for mc in all_models]
+
+    # Bulk-fetch endpoints to avoid one lazy SELECT per model in get_model_status
+    eps_by_model: dict = {}
+    if model_ids:
+        for ep in db.session.execute(
+            select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(model_ids))
+        ).scalars().all():
+            eps_by_model.setdefault(ep.model_config_id, []).append(ep)
+
+    # Bulk-resolve access and consents to avoid N+1 per-model queries
+    access_statuses, consented_ids = bulk_model_access_info(entity_id, model_ids)
+
     result = []
     for mc in all_models:
-        access_status = get_model_access_status(entity_id, mc.id)
-        consented = has_model_consent(entity_id, mc.id) if access_status == "graylist" else None
+        access_status = access_statuses.get(mc.id, "allowed")
+        consented = (mc.id in consented_ids) if access_status == "graylist" else None
         u = usage_by_model.get(mc.model_name, {})
+        if not mc.active:
+            model_status = "disabled"
+        else:
+            eps = eps_by_model.get(mc.id, [])
+            healthy = sum(1 for e in eps if e.healthy)
+            if not eps:
+                model_status = "down"
+            elif healthy == 0:
+                model_status = "down"
+            elif healthy < len(eps):
+                model_status = "degraded"
+            else:
+                model_status = "ok"
         result.append({
             "model_name": mc.model_name,
             "model_url": url_for("models_page.detail", model_name=mc.model_name),
             "notice": mc.notice,
             "access_status": access_status,
             "consented": consented,
-            "model_status": get_model_status(mc),
+            "model_status": model_status,
             "requests": u.get("requests", 0),
             "input_tokens": u.get("input_tokens", 0),
             "output_tokens": u.get("output_tokens", 0),
