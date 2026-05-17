@@ -2,7 +2,7 @@
 
 All notable changes to Lumen will be documented in this file.
 
-## [Unreleased]
+## [1.11.1] - 2026-05-17
 
 ### Fixed
 - Help sidebar no longer shows the developer-only Architecture and Database Schema pages
