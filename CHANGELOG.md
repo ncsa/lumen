@@ -2,7 +2,7 @@
 
 All notable changes to Lumen will be documented in this file.
 
-## [Unreleased]
+## [1.11.0] - 2026-05-17
 
 ### Fixed
 - Migration `y9z0a1b2c3d4`: use composite `PRIMARY KEY (id, time)` on PostgreSQL so TimescaleDB's requirement that the partition column be part of the primary key is satisfied
