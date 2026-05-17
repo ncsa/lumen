@@ -73,7 +73,7 @@
         <a href="{{ github_url }}" target="_blank" rel="noopener noreferrer" style="text-decoration:none">Lumen</a>
       </div>
       <div style="padding:2px 16px;font-size:0.9em">
-        Release <a href="{{ github_url ~ '/releases/tag/v' ~ app_version if app_version != 'develop' else github_url ~ '/releases' }}" target="_blank" rel="noopener noreferrer" style="text-decoration:none">{{ app_version }}</a>
+        Release <a href="{{ github_url ~ '/releases/tag/' ~ app_version if app_version != 'develop' else github_url ~ '/releases' }}" target="_blank" rel="noopener noreferrer" style="text-decoration:none">{{ app_version }}</a>
       </div>
       <div style="padding:2px 16px;font-size:0.9em">
         Commit <a href="{{ github_url ~ '/commit/' ~ git_commit if git_commit != 'N/A' else github_url ~ '/commits' }}" target="_blank" rel="noopener noreferrer" class="font-monospace" title="{{ git_commit }}" style="text-decoration:none">{{ git_commit[:7] if git_commit != 'N/A' else 'N/A' }}</a>

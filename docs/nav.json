@@ -31,14 +31,6 @@
     ]
   },
   {
-    "section": "architecture",
-    "title": "Architecture",
-    "items": [
-      {"slug": "architecture", "title": "Architecture Overview", "filename": "architecture.md"},
-      {"slug": "admin/dbschema", "title": "Database Schema", "filename": "dbschema.md"}
-    ]
-  },
-  {
     "section": "admin",
     "title": "Admin Guide",
     "items": [
