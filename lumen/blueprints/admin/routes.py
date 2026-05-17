@@ -76,10 +76,10 @@ def reset_user_tokens(eid):
     balance = db.session.execute(select(EntityBalance).filter_by(entity_id=eid)).scalar_one_or_none()
     if balance:
         balance.coins_left = new_balance
-        balance.last_refill_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        balance.last_refill_at = datetime.now(timezone.utc)
     else:
         balance = EntityBalance(
-            entity_id=eid, coins_left=new_balance, last_refill_at=datetime.now(timezone.utc).replace(tzinfo=None)
+            entity_id=eid, coins_left=new_balance, last_refill_at=datetime.now(timezone.utc)
         )
         db.session.add(balance)
     db.session.commit()

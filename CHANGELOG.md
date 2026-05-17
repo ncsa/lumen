@@ -5,6 +5,20 @@ All notable changes to Lumen will be documented in this file.
 ## [Unreleased]
 
 ### Security
+- File upload responses now return the sanitized filename instead of the raw browser-supplied name, preventing unsanitized input from reaching client-side DOM rendering paths
+- Non-streaming `/v1/chat/completions` and `/v1/completions` error responses now return a generic message; upstream exception details are logged server-side only
+
+### Fixed
+- `send_message_stream` now wraps the OpenAI client in a `with` statement, ensuring the SSL context and socket are closed after each chat request
+- `entity_balances.last_refill_at` is now written as a timezone-aware datetime matching the `TIMESTAMPTZ` column type, preventing potential `TypeError` on arithmetic with timezone-aware values returned by SQLAlchemy
+- `request_logs.time` is now written as a timezone-aware datetime matching the `DateTime(timezone=True)` column declaration
+
+### Database
+- Added index on `model_endpoints.model_config_id` to avoid full table scans on every endpoint lookup
+
+### Accessibility
+- Fixed `colspan` on API keys table loading row from 7 to 6 to match the actual column count (WCAG 1.3.1)
+
 - Application now refuses to start if `DEV_USER` is set while running in production mode (`SESSION_COOKIE_SECURE=True`), preventing the dev-login bypass from being reachable on public deployments
 - Streaming error responses in `/v1/chat/completions` and `/chat/stream` now return a generic message; upstream exception details (which could include API keys or host names) are logged server-side only
 - Analytics `period` parameter in user-growth endpoints is now validated against the allowed set before use; `trunc` values derived from it are also guarded with an explicit allowlist check

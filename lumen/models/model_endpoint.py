@@ -11,7 +11,10 @@ class ModelEndpoint(db.Model):
     """
 
     __tablename__ = "model_endpoints"
-    __table_args__ = {"comment": "Backend endpoints for model_configs; multiple endpoints enable load distribution and failover"}
+    __table_args__ = (
+        db.Index("ix_model_endpoints_model_config_id", "model_config_id"),
+        {"comment": "Backend endpoints for model_configs; multiple endpoints enable load distribution and failover"},
+    )
 
     id = db.Column(db.Integer, primary_key=True, comment="Primary key")
     model_config_id = db.Column(db.Integer, db.ForeignKey("model_configs.id", ondelete="CASCADE"), nullable=False, comment="Parent model configuration")

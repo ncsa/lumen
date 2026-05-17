@@ -291,8 +291,9 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
         with openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url) as client:
             response = client.chat.completions.create(model=remote_model, messages=messages, **kwargs)
         duration = _time.time() - t0
-    except Exception as e:
-        return _err(str(e), "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
+    except Exception:
+        logger.exception("upstream LLM error")
+        return _err("Upstream error. Please try again.", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
 
     usage = response.usage
     cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens, model_config)
@@ -353,8 +354,9 @@ def completions():
         with openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url) as client:
             response = client.chat.completions.create(model=remote_model, messages=messages)
         duration = _time.time() - t0
-    except Exception as e:
-        return _err(str(e), "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
+    except Exception:
+        logger.exception("upstream LLM error")
+        return _err("Upstream error. Please try again.", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
 
     usage = response.usage
     cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens, model_config)

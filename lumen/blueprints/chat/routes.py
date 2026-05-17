@@ -128,7 +128,7 @@ def chat_upload():
     # ── Images ───────────────────────────────────────────────────────
     if kind is not None and kind.mime.startswith("image/"):
         data_url = f"data:{kind.mime};base64,{base64.b64encode(data).decode()}"
-        return jsonify({"type": "image", "filename": f.filename, "data_url": data_url})
+        return jsonify({"type": "image", "filename": safe_name, "data_url": data_url})
 
     # ── Documents ────────────────────────────────────────────────────
     if kind is not None:
@@ -150,7 +150,7 @@ def chat_upload():
     if len(text) > max_chars:
         text = text[:max_chars] + f"\n\n[Document truncated at {max_chars:,} characters]"
 
-    return jsonify({"type": "doc", "filename": f.filename, "text": text})
+    return jsonify({"type": "doc", "filename": safe_name, "text": text})
 
 
 @chat_bp.route("/chat/stream", methods=["POST"])

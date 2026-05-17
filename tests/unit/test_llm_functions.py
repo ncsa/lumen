@@ -25,6 +25,8 @@ def _mock_openai(chunks):
     """Return a patched openai.OpenAI whose stream yields the given chunks."""
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = iter(chunks)
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
     mock_cls = MagicMock(return_value=mock_client)
     return mock_cls
 

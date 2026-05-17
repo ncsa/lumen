@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 def refill_coin_balances(now: datetime = None) -> int:
     """Run one refill pass; return the number of balances updated. Caller owns the app context."""
     if now is None:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(timezone.utc)
     balances = db.session.execute(
         select(EntityBalance).where(EntityBalance.last_refill_at != None)  # noqa: E711
     ).scalars().all()

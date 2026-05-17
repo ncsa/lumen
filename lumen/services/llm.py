@@ -308,7 +308,7 @@ def get_coin_balance(entity_id: int, model_config_id: int):
         balance = EntityBalance(
             entity_id=entity_id,
             coins_left=starting,
-            last_refill_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            last_refill_at=datetime.now(timezone.utc),
         )
         db.session.add(balance)
         db.session.flush()
@@ -415,7 +415,7 @@ def update_stats(
     )
 
     log = RequestLog(
-        time=datetime.now(timezone.utc).replace(tzinfo=None),
+        time=datetime.now(timezone.utc),
         entity_id=entity_id,
         model_config_id=model_config_id,
         model_endpoint_id=endpoint_id,
@@ -444,36 +444,36 @@ def send_message_stream(
     if endpoint is None:
         raise RuntimeError(f"No healthy endpoints for model '{model}'")
 
-    client = openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url)
     remote_model = endpoint.model_name or model
     t0 = time.time()
     t_first = None
     parts = []
     usage = None
 
-    stream = client.chat.completions.create(
-        model=remote_model,
-        messages=messages,
-        stream=True,
-        stream_options={"include_usage": True},
-    )
+    with openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url) as client:
+        stream = client.chat.completions.create(
+            model=remote_model,
+            messages=messages,
+            stream=True,
+            stream_options={"include_usage": True},
+        )
 
-    thinking_parts = []
-    for chunk in stream:
-        if chunk.usage:
-            usage = chunk.usage
-        if chunk.choices:
-            delta = chunk.choices[0].delta
-            reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
-            if reasoning:
-                thinking_parts.append(reasoning)
-                yield None, reasoning, None
-            if delta.content:
-                text = delta.content
-                if t_first is None:
-                    t_first = time.time() - t0
-                parts.append(text)
-                yield text, None, None
+        thinking_parts = []
+        for chunk in stream:
+            if chunk.usage:
+                usage = chunk.usage
+            if chunk.choices:
+                delta = chunk.choices[0].delta
+                reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                if reasoning:
+                    thinking_parts.append(reasoning)
+                    yield None, reasoning, None
+                if delta.content:
+                    text = delta.content
+                    if t_first is None:
+                        t_first = time.time() - t0
+                    parts.append(text)
+                    yield text, None, None
 
     duration = time.time() - t0
     reply = "".join(parts)

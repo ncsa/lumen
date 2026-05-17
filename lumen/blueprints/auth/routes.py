@@ -154,7 +154,7 @@ def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=No
             db.session.add(EntityBalance(
                 entity_id=entity.id,
                 coins_left=starting_coins,
-                last_refill_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                last_refill_at=datetime.now(timezone.utc),
             ))
 
 
