@@ -42,7 +42,7 @@ uv run python loadtesting/setup_users.py 10 --write-config
 **4. Edit `config.yaml`** if needed (base URL, model, prompt):
 
 ```yaml
-base_url: http://localhost:5000
+base_url: http://localhost:5001
 model: dummy
 prompt: "Say hello in one sentence."
 api_keys:
@@ -82,7 +82,7 @@ Also prefer uvicorn over the Flask dev server for load testing — it handles co
 
 ```bash
 # Terminal 2 — start Lumen with uvicorn instead of flask run
-ulimit -n 65536 && uv run uvicorn asgi:app --host 0.0.0.0 --port 5000 --workers 4
+ulimit -n 65536 && uv run uvicorn asgi:app --host 0.0.0.0 --port 5001 --workers 4
 ```
 
 ---

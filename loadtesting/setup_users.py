@@ -8,8 +8,8 @@ Run from the project root (where config.yaml lives):
 The generated API keys are printed to stdout and optionally written into
 loadtesting/config.yaml (replacing the api_keys list).
 
-Note: on macOS, use base_url: http://127.0.0.1:5000 in config.yaml — AirPlay Receiver
-occupies localhost:5000 on Monterey+ and returns a bare 403.
+Note: on macOS, use base_url: http://127.0.0.1:5001 in config.yaml — AirPlay Receiver
+occupies localhost:5001 on Monterey+ and returns a bare 403.
 """
 import argparse
 import secrets

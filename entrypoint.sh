@@ -6,4 +6,4 @@ if [ "$1" = "bash" ]; then
 fi
 
 uv run --no-sync flask --app run db upgrade
-exec uv run --no-sync uvicorn asgi:app --host 0.0.0.0 --port 5000 $@
+exec uv run --no-sync uvicorn asgi:app --host 0.0.0.0 --port 5001 $@

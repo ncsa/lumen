@@ -126,7 +126,7 @@ uv run flask db upgrade
 uv run lumen
 ```
 
-Visit `http://localhost:5000`, click **Login**, and you'll be auto-logged in as `dev@example.com`.
+Visit `http://localhost:5001`, click **Login**, and you'll be auto-logged in as `dev@example.com`.
 
 > **Note:** The `dev_user` option skips OAuth entirely. Remove it (or leave it empty) to use normal CILogon authentication.
 

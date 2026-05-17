@@ -18,7 +18,7 @@ USERS=${1:-500}
 MODEL=${2:-dummy}
 CONFIG_YAML=${3:-./config.yaml}
 LUMEN_HOST=127.0.0.1
-LUMEN_PORT=5000
+LUMEN_PORT=5001
 DUMMY_PORT=9999
 WORKERS=4
 MONITORING_TOKEN=$(uv run python -c "import yaml; d=yaml.safe_load(open('$CONFIG_YAML')); print(d.get('monitoring',{}).get('token',''))" 2>/dev/null || echo "")

@@ -15,6 +15,6 @@ class Config:
     OAUTH2_CLIENT_ID = os.environ.get("OAUTH2_CLIENT_ID", "")
     OAUTH2_CLIENT_SECRET = os.environ.get("OAUTH2_CLIENT_SECRET", "")
     OAUTH2_SERVER_METADATA_URL = os.environ.get("OAUTH2_SERVER_METADATA_URL", "")
-    OAUTH2_REDIRECT_URI = os.environ.get("OAUTH2_REDIRECT_URI", "http://localhost:5000/callback")
+    OAUTH2_REDIRECT_URI = os.environ.get("OAUTH2_REDIRECT_URI", "http://localhost:5001/callback")
     OAUTH2_SCOPES = os.environ.get("OAUTH2_SCOPES", "openid email profile")
     OAUTH2_PARAMS = {}

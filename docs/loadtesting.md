@@ -50,7 +50,7 @@ uv run python loadtesting/setup_users.py 10 --write-config
 ### 3. Configure `loadtesting/config.yaml`
 
 ```yaml
-base_url: http://127.0.0.1:5000
+base_url: http://127.0.0.1:5001
 model: dummy
 api_keys:
   - sk_...
@@ -65,7 +65,7 @@ prompts:
 
 | Key | Description |
 |-----|-------------|
-| `base_url` | URL of the Lumen instance to test. On macOS use `http://127.0.0.1:5000` — AirPlay Receiver occupies `localhost:5000` on Monterey and later and returns a bare 403. |
+| `base_url` | URL of the Lumen instance to test. On macOS use `http://127.0.0.1:5001` — AirPlay Receiver occupies `localhost:5000` on Monterey and later and returns a bare 403. |
 | `model` | Model name sent in each request |
 | `api_keys` | List of API keys; users are assigned round-robin |
 | `questions` | Mix of question types: `static` (from `prompts`) and/or `math` (randomly generated) |
