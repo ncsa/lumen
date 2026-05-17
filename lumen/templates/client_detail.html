@@ -155,11 +155,11 @@
     <caption class="visually-hidden">API keys for this client</caption>
     <thead class="table-light">
       <tr>
-        <th class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-end" data-col="tokens">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="tokens">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th><span class="visually-hidden">Actions</span></th>
       </tr>
     </thead>
@@ -191,13 +191,13 @@
     <caption class="visually-hidden">Models this client can access</caption>
     <thead class="table-light">
       <tr>
-        <th class="sort-header" data-col="model_name">Model <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-end" data-col="tokens">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header" data-col="access_status">Access <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header" data-col="model_status">Status <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="model_name">Model <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="tokens">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="access_status">Access <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="model_status">Status <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
       </tr>
     </thead>
     <tbody id="model-tbody">
@@ -214,7 +214,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2 class="modal-title h5" id="apiKeyModalLabel">New API Key</h2>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close New API Key dialog"></button>
       </div>
       <div class="modal-body">
         <div class="mb-3">
@@ -641,6 +641,8 @@ managerSuggestions.addEventListener("keydown", function (e) {
   else if (e.key === "ArrowUp") { e.preventDefault(); focused.previousElementSibling ? focused.previousElementSibling.focus() : managerInput.focus(); }
   else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectSuggestion(focused.dataset.email); }
   else if (e.key === "Escape") { hideSuggestions(); managerInput.focus(); }
+  else if (e.key === "Home") { e.preventDefault(); managerSuggestions.querySelector("li")?.focus(); }
+  else if (e.key === "End") { e.preventDefault(); managerSuggestions.querySelector("li:last-child")?.focus(); }
 });
 
 document.getElementById("addManagerModal").addEventListener("hidden.bs.modal", () => {

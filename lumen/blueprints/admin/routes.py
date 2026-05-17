@@ -231,6 +231,8 @@ def analytics():
 @admin_bp.route("/api/analytics/summary")
 @admin_required
 def analytics_summary():
+    if db.engine.dialect.name != "postgresql":
+        return jsonify({"requests": 0, "tokens": 0, "cost": 0.0, "new_users": 0})
     period = request.args.get("period", "week")
     start = _period_start(period)
 
@@ -272,6 +274,8 @@ def analytics_summary():
 @admin_bp.route("/api/analytics/users/new")
 @admin_required
 def analytics_users_new():
+    if db.engine.dialect.name != "postgresql":
+        return jsonify([])
     period = request.args.get("period", "week")
     start = _period_start(period)
     _, trunc = _period_bucket(period)
@@ -297,6 +301,8 @@ def analytics_users_new():
 @admin_bp.route("/api/analytics/users/cumulative")
 @admin_required
 def analytics_users_cumulative():
+    if db.engine.dialect.name != "postgresql":
+        return jsonify([])
     period = request.args.get("period", "week")
     start = _period_start(period)
     _, trunc = _period_bucket(period)
@@ -332,6 +338,8 @@ def analytics_users_cumulative():
 @admin_bp.route("/api/analytics/requests")
 @admin_required
 def analytics_requests():
+    if db.engine.dialect.name != "postgresql":
+        return jsonify([])
     period = request.args.get("period", "week")
     start = _period_start(period)
     bucket, _ = _period_bucket(period)
@@ -358,6 +366,8 @@ def analytics_requests():
 @admin_bp.route("/api/analytics/tokens")
 @admin_required
 def analytics_tokens():
+    if db.engine.dialect.name != "postgresql":
+        return jsonify([])
     period = request.args.get("period", "week")
     start = _period_start(period)
     bucket, _ = _period_bucket(period)
@@ -386,6 +396,8 @@ def analytics_tokens():
 @admin_bp.route("/api/analytics/models")
 @admin_required
 def analytics_models():
+    if db.engine.dialect.name != "postgresql":
+        return jsonify([])
     period = request.args.get("period", "week")
     start = _period_start(period)
 
@@ -413,6 +425,8 @@ def analytics_models():
 @admin_bp.route("/api/analytics/heatmap")
 @admin_required
 def analytics_heatmap():
+    if db.engine.dialect.name != "postgresql":
+        return jsonify([])
     period = request.args.get("period", "week")
     start = _period_start(period)
 

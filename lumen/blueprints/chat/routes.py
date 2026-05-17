@@ -8,6 +8,7 @@ from http import HTTPStatus
 import filetype
 import pypdf
 from flask import Blueprint, Response, current_app, jsonify, render_template, request, session, stream_with_context
+from werkzeug.utils import secure_filename
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +114,8 @@ def chat_upload():
     if not f or not f.filename:
         return jsonify({"error": "No file provided"}), HTTPStatus.BAD_REQUEST
 
-    ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
+    safe_name = secure_filename(f.filename)
+    ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
     if ext not in allowed:
         return jsonify({"error": f"Unsupported file type: .{ext}"}), HTTPStatus.BAD_REQUEST
 

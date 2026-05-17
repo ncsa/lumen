@@ -22,7 +22,6 @@ def _apply_model_fields(config, model_def):
     config.active = model_def.get("active", True)
     config.description = model_def.get("description") or None
     config.url = model_def.get("url") or None
-    config.max_input_tokens = model_def.get("max_input_tokens") or None
     config.supports_function_calling = model_def.get("supports_function_calling")
     config.input_modalities = model_def.get("input_modalities") or None
     config.output_modalities = model_def.get("output_modalities") or None

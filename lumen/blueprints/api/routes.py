@@ -1,6 +1,7 @@
 import hmac
 import json
 import logging
+import threading
 import time as _time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -27,6 +28,7 @@ api_bp = Blueprint("api", __name__, url_prefix="/v1")
 # Per-worker in-memory cache. Under multi-worker deployments each worker holds its own
 # copy; effective cache lifetime is correct per-worker but not shared across workers.
 _rates_cache: dict = {"data": {}, "expires_at": 0.0}
+_rates_lock = threading.Lock()
 
 
 def _api_key_id():
@@ -59,32 +61,36 @@ def _get_request_rates() -> dict:
     if now < _rates_cache["expires_at"]:
         return _rates_cache["data"]
 
-    n = datetime.now(timezone.utc)
-    minute_ago = n - timedelta(minutes=1)
-    hour_ago = n - timedelta(hours=1)
-    day_ago = n - timedelta(days=1)
+    with _rates_lock:
+        if now < _rates_cache["expires_at"]:
+            return _rates_cache["data"]
 
-    stmt = (
-        select(
-            RequestLog.model_config_id,
-            func.count(case((RequestLog.time > minute_ago, 1))).label("last_minute"),
-            func.count(case((RequestLog.time > hour_ago, 1))).label("last_hour"),
-            func.count(case((RequestLog.time > day_ago, 1))).label("last_day"),
+        n = datetime.now(timezone.utc)
+        minute_ago = n - timedelta(minutes=1)
+        hour_ago = n - timedelta(hours=1)
+        day_ago = n - timedelta(days=1)
+
+        stmt = (
+            select(
+                RequestLog.model_config_id,
+                func.count(case((RequestLog.time > minute_ago, 1))).label("last_minute"),
+                func.count(case((RequestLog.time > hour_ago, 1))).label("last_hour"),
+                func.count(case((RequestLog.time > day_ago, 1))).label("last_day"),
+            )
+            .where(RequestLog.time > day_ago)
+            .where(RequestLog.model_config_id.isnot(None))
+            .group_by(RequestLog.model_config_id)
         )
-        .where(RequestLog.time > day_ago)
-        .where(RequestLog.model_config_id.isnot(None))
-        .group_by(RequestLog.model_config_id)
-    )
-    result = {
-        row.model_config_id: {
-            "last_minute": row.last_minute,
-            "last_hour": row.last_hour,
-            "last_day": row.last_day,
+        result = {
+            row.model_config_id: {
+                "last_minute": row.last_minute,
+                "last_hour": row.last_hour,
+                "last_day": row.last_day,
+            }
+            for row in db.session.execute(stmt).all()
         }
-        for row in db.session.execute(stmt).all()
-    }
-    _rates_cache["data"] = result
-    _rates_cache["expires_at"] = now + 30.0
+        _rates_cache["data"] = result
+        _rates_cache["expires_at"] = now + 30.0
     return result
 
 
@@ -126,7 +132,6 @@ def _model_dict(c, rates: dict) -> dict:
     # Capability fields — omitted when null so clients can detect "unknown" vs "false"
     for field in (
         "description",
-        "max_input_tokens",
         "max_output_tokens",
         "supports_function_calling",
         "supports_reasoning",

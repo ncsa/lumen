@@ -283,7 +283,7 @@ def delete_client_key(sid, kid):
     if api_key.entity_id != sid:
         return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
 
-    api_key.active = False
+    db.session.delete(api_key)
     db.session.commit()
     return "", HTTPStatus.NO_CONTENT
 

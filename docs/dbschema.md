@@ -583,10 +583,10 @@ model_configs ──< model_endpoints├──< entity_managers (user→client)
 When determining whether an entity may use a model, Lumen evaluates in this priority order:
 
 1. **Entity-level** `entity_model_access` row for the model → if present, use its `access_type`.
-2. **Group-level** `group_model_access` row for any group the entity belongs to → if found, use its `access_type`.
-3. **Entity default** `entities.model_access_default` → if set, use it.
-4. **Group default** `groups.model_access_default` → for any group the entity belongs to.
-5. **Deny** — if no rule applies, access is denied.
+2. **Group-level** `group_model_access` row for any group the entity belongs to → if found, use the most restrictive `access_type` across matching groups.
+3. **Group default** `groups.model_access_default` → if the entity belongs to groups with a default set, the most permissive group default wins (whitelist > graylist > blacklist).
+4. **Entity default** `entities.model_access_default` → if set, use it (applied only when no group default matched).
+5. **Allow** — if no rule matches, access is granted.
 
 For `graylist` access, the entity must also have a row in `entity_model_consents` for the model.
 

@@ -251,7 +251,7 @@ def delete_key(kid):
     if api_key.entity_id != entity_id:
         return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
 
-    api_key.active = False
+    db.session.delete(api_key)
     db.session.commit()
     return "", HTTPStatus.NO_CONTENT
 

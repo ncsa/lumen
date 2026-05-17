@@ -120,7 +120,7 @@ def create_app():
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["PERMANENT_SESSION_LIFETIME"] = 86400
-    from lumen.services.config_watcher import apply_hot_config
+    from lumen.services.config_watcher import apply_hot_config, _apply_theme
     apply_hot_config(app, yaml_data)
     app.config["APP_VERSION"] = os.environ.get("APP_VERSION", "develop")
     app.config["GIT_COMMIT"] = os.environ.get("GIT_COMMIT", "N/A")
@@ -132,14 +132,11 @@ def create_app():
     # Load theme — dynamic loader so hot reload works when app.theme changes in config.yaml
     themes_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "themes")
     app.config["THEMES_ROOT"] = themes_root
-    theme_name = app_cfg.get("theme", "default")
-    if not os.path.isdir(os.path.join(themes_root, theme_name)):
-        app.logger.warning("Theme '%s' not found, falling back to 'default'", theme_name)
-        theme_name = "default"
-    app.config["THEME_NAME"] = theme_name
-    with open(os.path.join(themes_root, theme_name, "theme.yaml")) as f:
-        app.config["THEME"] = yaml.safe_load(f)
     app.jinja_loader = ChoiceLoader([_ThemeLoader(themes_root, app), app.jinja_loader])
+    _apply_theme(app, yaml_data)
+    if not app.config.get("THEME_NAME"):
+        # Requested theme not found; fall back to default
+        _apply_theme(app, {"app": {"theme": "default"}})
 
     from flask import send_from_directory as _send_from_directory
 

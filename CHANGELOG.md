@@ -7,6 +7,20 @@ All notable changes to Lumen will be documented in this file.
 ### Security
 - Fixed Prometheus `/metrics` token comparison to use `hmac.compare_digest()` preventing timing side-channel attacks
 - Fixed `model_readme` URL check to use `urlparse` hostname validation, preventing SSRF via credential-injection URLs
+- `_md_filter` Jinja filter documented as operator-only; never apply to user-supplied content
+- Upload filenames are sanitized with `werkzeug.utils.secure_filename` before extension extraction and display
+- `_rates_cache` update in the API blueprint is now protected by a `threading.Lock`, eliminating a thundering-herd race under burst traffic
+
+### Accessibility
+- Info-icon `ⓘ` spans now respond to Enter/Space keyboard events to toggle the Bootstrap Popover (WCAG 2.1.1)
+- Active/inactive status icons `✓`/`✗` wrapped in `<span role="img" aria-label="...">` in clients and admin/users tables (WCAG 1.1.1)
+- Autocomplete manager listbox now handles `Home`/`End` keys to jump to first/last suggestion (WCAG 2.1.1)
+- Sidebar toggle button `aria-label` now updates to "Show sidebar" / "Hide sidebar" on each click (WCAG 4.1.2)
+- All sort-header `<th>` elements now carry `scope="col"` for unambiguous screen-reader column association (WCAG 1.3.1)
+- Removed redundant `aria-label` from `#period-select` in analytics; the visible `<label>` is sufficient (WCAG 2.5.3)
+- Added fallback text content inside all five `<canvas>` chart elements for assistive technology that does not expose `aria-label` on canvas (WCAG 1.1.1)
+- Wrapped `✓`/`—` capability flags in `model_detail.html` with `<span role="img" aria-label="...">` (WCAG 1.1.1)
+- Modal close buttons now carry context-specific `aria-label` values ("Close New API Key dialog", "Close Access Acknowledgment dialog") (WCAG 4.1.2)
 
 ### Fixed
 - `/v1/completions` now records `endpoint_id` and `duration` in `RequestLog`, matching the `/v1/chat/completions` behaviour
@@ -18,6 +32,14 @@ All notable changes to Lumen will be documented in this file.
 - Model endpoint lists are now pre-fetched in bulk on the profile page, eliminating one lazy SELECT per model
 
 ### Database
+- `entity_balances.coins_left` and `entity_balances.last_refill_at` are now `NOT NULL`; `last_refill_at` changed to `TIMESTAMP WITH TIME ZONE`
+- `api_keys.key_hash` is now `NOT NULL` (legacy plaintext-to-hash migration is complete)
+- Analytics API endpoints return empty results instead of `OperationalError` when running on SQLite
+- Dropped deprecated `model_configs.max_input_tokens` column; use `context_window` instead
+- Added `CHECK (entity_type IN ('user', 'client'))` constraint on `entities` table
+- API key deletion now hard-deletes the row instead of soft-deactivating it
+- Docs: corrected access control evaluation order (group defaults resolve before entity default; final fallback is allow not deny)
+- Theme-switching logic extracted into `_apply_theme()` in `config_watcher.py`, called from both startup and the hot-reload watcher
 - Added composite index `ix_conversations_entity_hidden_updated` on `conversations(entity_id, hidden, updated_at)` to speed up `list_conversations` queries
 - Added `ix_messages_conversation_id` index to `messages.conversation_id`
 - Added FK indexes on `group_members.entity_id`, `entity_model_access.entity_id`, `group_model_access.group_id`, `model_stats.(entity_id, model_config_id)`, `request_logs.(entity_id, model_config_id)`, and `api_keys.entity_id`

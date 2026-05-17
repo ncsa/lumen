@@ -19,8 +19,7 @@ class APIKey(db.Model):
     id = db.Column(db.Integer, primary_key=True, comment="Primary key")
     entity_id = db.Column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), nullable=False, comment="Owning entity")
     name = db.Column(db.String(128), nullable=False, default="", comment="Human-readable label for the key")
-    # SHA-256 hash of the raw key; nullable only during legacy plaintext-to-hash migration
-    key_hash = db.Column(db.String(64), unique=True, nullable=True, comment="SHA-256 hash of the raw key; null only during legacy migration")
+    key_hash = db.Column(db.String(64), unique=True, nullable=False, comment="SHA-256 hash of the raw key")
     # Last few characters of the raw key shown in the UI for identification
     key_hint = db.Column(db.String(32), nullable=True, comment="Last few characters of the raw key shown in the UI for identification")
     active = db.Column(db.Boolean, default=True, nullable=False, comment="Inactive keys are rejected on all requests")

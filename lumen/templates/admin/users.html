@@ -61,14 +61,14 @@
   <caption class="visually-hidden">User accounts with group membership and status</caption>
   <thead class="table-light">
     <tr>
-      <th class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th class="sort-header" data-col="joined">Joined <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th class="sort-header text-center" data-col="active">Active <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th class="sort-header text-end" data-col="tokens_used">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th class="sort-header wrap text-end" data-col="coins_available">Coins<br>Left <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-      <th class="sort-header wrap text-end" data-col="cost">Coins<br>Spent <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th scope="col" class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th scope="col" class="sort-header" data-col="joined">Joined <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th scope="col" class="sort-header text-center" data-col="active">Active <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th scope="col" class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th scope="col" class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th scope="col" class="sort-header text-end" data-col="tokens_used">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th scope="col" class="sort-header wrap text-end" data-col="coins_available">Coins<br>Left <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      <th scope="col" class="sort-header wrap text-end" data-col="cost">Coins<br>Spent <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
       <th><span class="visually-hidden">Actions</span></th>
     </tr>
   </thead>
@@ -186,7 +186,9 @@
         }
 
         tbody.innerHTML = data.users.map(u => {
-          const activeIcon = u.active ? '✓' : '<span class="text-danger">✗</span>';
+          const activeIcon = u.active
+            ? '<span role="img" aria-label="Active">✓</span>'
+            : '<span role="img" aria-label="Inactive" class="text-danger">✗</span>';
           const coinsAvail = u.coins_available === -2 ? '∞' : fmtCoins(u.coins_available);
           const toggleLabel = u.active ? 'Deactivate' : 'Activate';
           const toggleClass = u.active ? 'btn-outline-danger' : 'btn-outline-success';
@@ -230,13 +232,13 @@
       .then(data => {
         const row = document.getElementById(`user-row-${id}`);
         if (data.active) {
-          row.cells[2].innerHTML = '✓';
+          row.cells[2].innerHTML = '<span role="img" aria-label="Active">✓</span>';
           btn.title = 'Deactivate';
           btn.setAttribute('aria-label', btn.getAttribute('aria-label').replace('Activate', 'Deactivate'));
           btn.className = 'btn btn-sm btn-outline-danger toggle-btn';
           btn.innerHTML = '<i class="bi bi-pause-circle" aria-hidden="true"></i>';
         } else {
-          row.cells[2].innerHTML = '<span class="text-danger">✗</span>';
+          row.cells[2].innerHTML = '<span role="img" aria-label="Inactive" class="text-danger">✗</span>';
           btn.title = 'Activate';
           btn.setAttribute('aria-label', btn.getAttribute('aria-label').replace('Deactivate', 'Activate'));
           btn.className = 'btn btn-sm btn-outline-success toggle-btn';

@@ -389,7 +389,7 @@ def test_delete_key_soft_deletes(app, managed_auth_client, managed_client, make_
         from lumen.extensions import db
         from lumen.models.api_key import APIKey
         k = db.session.get(APIKey, key_id)
-        assert k.active is False
+        assert k is None
 
 
 # ---------------------------------------------------------------------------

@@ -173,13 +173,13 @@
               {% if config.supports_reasoning is not none %}
               <tr>
                 <th scope="row" class="text-muted fw-normal ps-3">Reasoning</th>
-                <td class="text-end pe-3">{% if config.supports_reasoning %}✓{% else %}—{% endif %}</td>
+                <td class="text-end pe-3">{% if config.supports_reasoning %}<span role="img" aria-label="Supported">✓</span>{% else %}<span aria-label="Not supported">—</span>{% endif %}</td>
               </tr>
               {% endif %}
               {% if config.supports_function_calling is not none %}
               <tr>
                 <th scope="row" class="text-muted fw-normal ps-3">Function Calling</th>
-                <td class="text-end pe-3">{% if config.supports_function_calling %}✓{% else %}—{% endif %}</td>
+                <td class="text-end pe-3">{% if config.supports_function_calling %}<span role="img" aria-label="Supported">✓</span>{% else %}<span aria-label="Not supported">—</span>{% endif %}</td>
               </tr>
               {% endif %}
             </tbody>

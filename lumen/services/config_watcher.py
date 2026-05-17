@@ -42,6 +42,25 @@ def apply_hot_config(app, yaml_data: dict):
     app.config["OAUTH2_PARAMS"] = yaml_data.get("oauth2", {}).get("params") or {}
     app.config["CHAT_CONVERSATION_REMOVE_MODE"] = yaml_data.get("chat", {}).get("remove", "hide")
 
+def _apply_theme(app, yaml_data: dict):
+    """Switch the active theme from yaml_data. No-op if unchanged or theme dir not found."""
+    app_cfg = yaml_data.get("app", {})
+    theme_name = app_cfg.get("theme", "default")
+    themes_root = app.config.get("THEMES_ROOT", "")
+    theme_dir = os.path.join(themes_root, theme_name)
+    if not os.path.isdir(theme_dir):
+        logger.warning("config_watcher: theme '%s' not found, keeping current theme", theme_name)
+        return
+    if app.config.get("THEME_NAME") == theme_name:
+        return
+    app.config["THEME_NAME"] = theme_name
+    with open(os.path.join(theme_dir, "theme.yaml")) as _f:
+        app.config["THEME"] = yaml.safe_load(_f)
+    if app.jinja_env.cache is not None:
+        app.jinja_env.cache.clear()
+    logger.info("config_watcher: theme switched to '%s'", theme_name)
+
+
 _RESTART_REQUIRED = [
     ("app", "secret_key"),
     ("app", "database_url"),
@@ -91,21 +110,7 @@ def _watcher(app, config_path):
                 _check_restart_required(old_data, new_data)
                 app.config["YAML_DATA"] = new_data
                 apply_hot_config(app, new_data)
-
-                app_cfg = new_data.get("app", {})
-                theme_name = app_cfg.get("theme", "default")
-                themes_root = app.config.get("THEMES_ROOT", "")
-                theme_dir = os.path.join(themes_root, theme_name)
-                if os.path.isdir(theme_dir):
-                    if app.config.get("THEME_NAME") != theme_name:
-                        app.config["THEME_NAME"] = theme_name
-                        with open(os.path.join(theme_dir, "theme.yaml")) as _f:
-                            app.config["THEME"] = yaml.safe_load(_f)
-                        if app.jinja_env.cache is not None:
-                            app.jinja_env.cache.clear()
-                        logger.info("config_watcher: theme switched to '%s'", theme_name)
-                else:
-                    logger.warning("config_watcher: theme '%s' not found, keeping current theme", theme_name)
+                _apply_theme(app, new_data)
                 try:
                     sync_models_from_yaml(new_data)
                 except Exception as e:

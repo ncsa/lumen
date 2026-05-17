@@ -157,9 +157,11 @@
   // ── Sidebar toggle (desktop) ────────────────────────────────────
   document.getElementById("sidebar-toggle-btn").addEventListener("click", () => {
     const sidebar = document.getElementById("chatSidebar");
+    const btn = document.getElementById("sidebar-toggle-btn");
     sidebar.classList.toggle("d-none");
-    document.getElementById("sidebar-toggle-btn").textContent =
-      sidebar.classList.contains("d-none") ? "→" : "←";
+    const hidden = sidebar.classList.contains("d-none");
+    btn.textContent = hidden ? "→" : "←";
+    btn.setAttribute("aria-label", hidden ? "Show sidebar" : "Hide sidebar");
   });
 
   // ── New Chat ────────────────────────────────────────────────────
@@ -347,6 +349,12 @@
       infoIcon.setAttribute("tabindex", "0");
       ts.appendChild(infoIcon);
       new bootstrap.Popover(infoIcon, { container: "body" });
+      infoIcon.addEventListener("keydown", e => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          bootstrap.Popover.getInstance(infoIcon)?.toggle();
+        }
+      });
       if (meta.model) {
         const modelLabel = document.createElement("span");
         modelLabel.className = "msg-model text-muted";
@@ -705,6 +713,12 @@
               infoIcon.setAttribute("tabindex", "0");
               ts.appendChild(infoIcon);
               new bootstrap.Popover(infoIcon, { container: "body" });
+              infoIcon.addEventListener("keydown", e => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  bootstrap.Popover.getInstance(infoIcon)?.toggle();
+                }
+              });
             }
             if (meta.model) {
               const modelLabel = document.createElement("span");

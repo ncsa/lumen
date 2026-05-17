@@ -63,13 +63,13 @@
     <caption class="visually-hidden">Client accounts list</caption>
     <thead class="table-light">
       <tr>
-        <th class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-center" data-col="managers">Managers <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-center" data-col="active">Active <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-end" data-col="tokens">Tokens Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header" data-col="created">Created <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-center" data-col="managers">Managers <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-center" data-col="active">Active <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="tokens">Tokens Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="created">Created <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th><span class="visually-hidden">Actions</span></th>
       </tr>
     </thead>
@@ -152,7 +152,9 @@
   }
 
   function renderRow(c) {
-    const activeIcon = c.active ? '✓' : '<span class="text-danger">✗</span>';
+    const activeIcon = c.active
+      ? '<span role="img" aria-label="Active">✓</span>'
+      : '<span role="img" aria-label="Inactive" class="text-danger">✗</span>';
     let actions = `<a href="${escHtml(c.detailUrl)}" class="btn btn-sm btn-outline-primary" title="Details" aria-label="Details for ${escHtml(c.name)}"><i class="bi bi-sliders" aria-hidden="true"></i></a>`;
     if (IS_ADMIN) {
       const toggleIcon = c.active ? 'bi-pause-circle' : 'bi-play-circle';

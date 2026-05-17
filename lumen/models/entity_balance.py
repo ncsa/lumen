@@ -14,5 +14,5 @@ class EntityBalance(db.Model):
 
     id = db.Column(db.Integer, primary_key=True, comment="Primary key")
     entity_id = db.Column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), nullable=False, unique=True, comment="The entity this balance belongs to; one row per entity")
-    coins_left = db.Column(db.Numeric(12, 6), default=0, comment="Current spendable coin balance")
-    last_refill_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), comment="UTC timestamp of the most recent coin refill")
+    coins_left = db.Column(db.Numeric(12, 6), default=0, nullable=False, comment="Current spendable coin balance")
+    last_refill_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, comment="UTC timestamp of the most recent coin refill")

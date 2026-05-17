@@ -25,8 +25,6 @@ class ModelConfig(db.Model):
     description = db.Column(db.Text, nullable=True, comment="Human-readable description shown in the UI")
     # Link to provider documentation shown in the UI
     url = db.Column(db.String(512), nullable=True, comment="Link to provider documentation")
-    # Deprecated; prefer context_window
-    max_input_tokens = db.Column(db.Integer, nullable=True, comment="Deprecated; use context_window instead")
     supports_function_calling = db.Column(db.Boolean, nullable=True, comment="Whether the model supports tool/function-calling")
     # e.g. ["text", "image"]
     input_modalities = db.Column(db.JSON, nullable=True, comment='Supported input types, e.g. ["text", "image"]')

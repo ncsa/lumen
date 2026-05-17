@@ -151,11 +151,11 @@
     <caption class="visually-hidden">Your API keys</caption>
     <thead class="table-light">
       <tr>
-        <th class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-end" data-col="tokens">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="tokens">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th><span class="visually-hidden">Actions</span></th>
       </tr>
     </thead>
@@ -187,13 +187,13 @@
     <caption class="visually-hidden">Models you can access</caption>
     <thead class="table-light">
       <tr>
-        <th class="sort-header" data-col="model_name">Model <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-end" data-col="tokens">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header" data-col="access_status">Access <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th class="sort-header" data-col="model_status">Status <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="model_name">Model <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="tokens">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="access_status">Access <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="model_status">Status <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
       </tr>
     </thead>
     <tbody id="model-tbody">
@@ -211,7 +211,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h2 class="modal-title h5" id="apiKeyModalLabel">New API Key</h2>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close New API Key dialog"></button>
       </div>
       <div class="modal-body">
         <div class="mb-3">
@@ -247,7 +247,7 @@
     <div class="modal-content">
       <div class="modal-header border-warning bg-warning bg-opacity-10">
         <h2 class="modal-title h5" id="graylistModalLabel">Access Acknowledgment</h2>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close Access Acknowledgment dialog"></button>
       </div>
       <div class="modal-body">
         <div id="graylist-notice-section" class="mb-3" hidden>
