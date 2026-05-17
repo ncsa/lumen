@@ -1,8 +1,11 @@
+import logging
 import threading
 import time
 from datetime import datetime, timezone
 from http import HTTPStatus
 from typing import NamedTuple
+
+logger = logging.getLogger(__name__)
 
 import openai
 from flask import current_app
@@ -322,11 +325,16 @@ def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float):
     if max_coins == -2:
         return
 
-    db.session.execute(
+    result = db.session.execute(
         sa_update(EntityBalance)
         .where(EntityBalance.entity_id == entity_id, EntityBalance.coins_left >= coin_cost)
         .values(coins_left=EntityBalance.coins_left - coin_cost)
     )
+    if result.rowcount == 0:
+        logger.warning(
+            "subtract_coins: balance exhausted for entity_id=%s (coin_cost=%.4f) — request was not charged",
+            entity_id, coin_cost,
+        )
     db.session.flush()
 
 
@@ -335,10 +343,11 @@ def check_coin_budget(entity_id: int, model_config_id: int):
     effective = get_effective_limit(entity_id, model_config_id)
     if effective is None:
         return False, HTTPStatus.FORBIDDEN, "No access to this model"
-    if effective[0] == -2:
+    max_coins, _, _starting = effective
+    if max_coins == -2:
         return True, None, None
-    coins_left = get_coin_balance(entity_id, model_config_id)
-    if coins_left is not None and coins_left <= 0:
+    balance = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()
+    if balance is not None and float(balance.coins_left) <= 0:
         return False, HTTPStatus.TOO_MANY_REQUESTS, "Coin budget exhausted"
     return True, None, None
 
@@ -364,13 +373,13 @@ def update_stats(
         select(ModelStat).filter_by(entity_id=entity_id, model_config_id=model_config_id, source=source)
     ).scalar_one_or_none() is None:
         try:
-            db.session.add(ModelStat(
-                entity_id=entity_id, model_config_id=model_config_id, source=source,
-                requests=0, input_tokens=0, output_tokens=0, cost=0,
-            ))
-            db.session.flush()
+            with db.session.begin_nested():
+                db.session.add(ModelStat(
+                    entity_id=entity_id, model_config_id=model_config_id, source=source,
+                    requests=0, input_tokens=0, output_tokens=0, cost=0,
+                ))
         except IntegrityError:
-            db.session.rollback()
+            pass
 
     db.session.execute(
         sa_update(ModelStat)
@@ -388,10 +397,10 @@ def update_stats(
     # Same race-safe pattern as ModelStat above.
     if db.session.execute(select(EntityStat).filter_by(entity_id=entity_id)).scalar_one_or_none() is None:
         try:
-            db.session.add(EntityStat(entity_id=entity_id, requests=0, input_tokens=0, output_tokens=0, cost=0))
-            db.session.flush()
+            with db.session.begin_nested():
+                db.session.add(EntityStat(entity_id=entity_id, requests=0, input_tokens=0, output_tokens=0, cost=0))
         except IntegrityError:
-            db.session.rollback()
+            pass
 
     db.session.execute(
         sa_update(EntityStat)

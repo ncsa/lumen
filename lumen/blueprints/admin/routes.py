@@ -207,6 +207,7 @@ _PERIODS = {
     "all":   {"offset": None,                "bucket": "1 month", "trunc": "month"},
 }
 _VALID_BUCKETS = frozenset(cfg["bucket"] for cfg in _PERIODS.values())
+_VALID_TRUNC = frozenset(cfg["trunc"] for cfg in _PERIODS.values())
 
 
 def _period_start(period_str):
@@ -277,8 +278,12 @@ def analytics_users_new():
     if db.engine.dialect.name != "postgresql":
         return jsonify([])
     period = request.args.get("period", "week")
+    if period not in _PERIODS:
+        abort(HTTPStatus.BAD_REQUEST)
     start = _period_start(period)
     _, trunc = _period_bucket(period)
+    if trunc not in _VALID_TRUNC:
+        abort(HTTPStatus.BAD_REQUEST)
 
     if start is not None:
         rows = db.session.execute(text("""
@@ -304,8 +309,12 @@ def analytics_users_cumulative():
     if db.engine.dialect.name != "postgresql":
         return jsonify([])
     period = request.args.get("period", "week")
+    if period not in _PERIODS:
+        abort(HTTPStatus.BAD_REQUEST)
     start = _period_start(period)
     _, trunc = _period_bucket(period)
+    if trunc not in _VALID_TRUNC:
+        abort(HTTPStatus.BAD_REQUEST)
 
     if start is not None:
         rows = db.session.execute(text("""

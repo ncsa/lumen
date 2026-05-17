@@ -165,6 +165,13 @@ def create_app():
         )
 
     if app.config["DEV_USER"]:
+        if app.config["SESSION_COOKIE_SECURE"]:
+            app.logger.error(
+                "DEV_USER is set (%s) but the app is running in production mode. "
+                "Refusing to start — DEV_USER must not be used in production.",
+                app.config["DEV_USER"],
+            )
+            sys.exit(1)
         app.logger.warning("DEV_USER is set (%s). OAuth is bypassed. DO NOT use in production.",
                            app.config["DEV_USER"])
 

@@ -3,6 +3,7 @@ app:
   secret_key: test-secret-key-for-tests-only
   encryption_key: test-enc-key-for-tests-only
   dev_user: testuser@example.com
+  debug: true
   database_url: sqlite:///test_lumen.db
 
 rate_limiting:

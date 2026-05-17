@@ -19,6 +19,7 @@ from lumen.models.api_key import APIKey
 from lumen.services.crypto import hash_api_key
 from lumen.models.entity import Entity
 from lumen.models.model_config import ModelConfig
+from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.request_log import RequestLog
 from lumen.services.cost import calculate_cost
 from lumen.services.llm import check_coin_budget, subtract_coins, get_effective_limit, get_next_endpoint, update_stats
@@ -94,10 +95,9 @@ def _get_request_rates() -> dict:
     return result
 
 
-def _model_dict(c, rates: dict) -> dict:
+def _model_dict(c, rates: dict, eps: list) -> dict:
     """Serialize a ModelConfig to an OpenAI/vLLM-compatible response dict."""
     zero = {"last_minute": 0, "last_hour": 0, "last_day": 0}
-    eps = list(c.endpoints)
     healthy_count = sum(1 for e in eps if e.healthy)
     if not eps or healthy_count == 0:
         status = "down"
@@ -192,12 +192,17 @@ def api_key_required(f):
 @limiter.limit(_api_limit, key_func=_api_key_id)
 def list_models():
     configs = db.session.execute(select(ModelConfig).filter_by(active=True)).scalars().all()
+    eps_by_model: dict = {}
+    for ep in db.session.execute(
+        select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_([c.id for c in configs]))
+    ).scalars().all():
+        eps_by_model.setdefault(ep.model_config_id, []).append(ep)
     rates = _get_request_rates()
     if g.monitor:
-        data = [_model_dict(c, rates) for c in configs]
+        data = [_model_dict(c, rates, eps_by_model.get(c.id, [])) for c in configs]
     else:
         entity_id = g.entity.id
-        data = [_model_dict(c, rates) for c in configs if get_effective_limit(entity_id, c.id) is not None]
+        data = [_model_dict(c, rates, eps_by_model.get(c.id, [])) for c in configs if get_effective_limit(entity_id, c.id) is not None]
     return jsonify({"object": "list", "data": data})
 
 
@@ -210,8 +215,11 @@ def get_model(model_id):
         return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
     if not g.monitor and get_effective_limit(g.entity.id, config.id) is None:
         return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
+    eps = db.session.execute(
+        select(ModelEndpoint).where(ModelEndpoint.model_config_id == config.id)
+    ).scalars().all()
     rates = _get_request_rates()
-    return jsonify(_model_dict(config, rates))
+    return jsonify(_model_dict(config, rates, list(eps)))
 
 
 def _preflight(model_name: str):
@@ -271,11 +279,10 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                             model_name, entity_id,
                         )
                 except Exception as e:
-                    logger.error(
-                        "Error during streaming request (model=%s, entity_id=%s): %s",
-                        model_name, entity_id, e,
+                    logger.exception(
+                        "Error during streaming request (model=%s, entity_id=%s)", model_name, entity_id
                     )
-                    yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                    yield f"data: {json.dumps({'error': 'Upstream error. Please try again.'})}\n\n"
 
         return Response(stream_with_context(generate()), content_type="text/event-stream")
 

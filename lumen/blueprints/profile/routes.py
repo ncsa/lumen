@@ -19,7 +19,7 @@ from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
 from lumen.services.crypto import hash_api_key
-from lumen.services.llm import bulk_model_access_info, get_pool_limit, get_model_access, get_model_access_status, get_model_status, has_model_consent
+from lumen.services.llm import bulk_model_access_info, get_pool_limit, get_model_access_status, has_model_consent
 
 profile_bp = Blueprint("profile", __name__)
 
@@ -107,7 +107,16 @@ def _build_model_usage(eid: int):
     all_active_models = db.session.execute(
         select(ModelConfig).filter_by(active=True).order_by(ModelConfig.model_name)
     ).scalars().all()
-    accessible_model_ids = {mc.id for mc in all_active_models if get_model_access(eid, mc.id)}
+    all_ids = [mc.id for mc in all_active_models]
+    access_statuses, _ = bulk_model_access_info(eid, all_ids)
+    accessible_model_ids = {mid for mid, status in access_statuses.items() if status != "blocked"}
+
+    eps_by_model: dict = {}
+    if all_ids:
+        for ep in db.session.execute(
+            select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(all_ids))
+        ).scalars().all():
+            eps_by_model.setdefault(ep.model_config_id, []).append(ep)
 
     usage_rows = db.session.execute(
         select(
@@ -134,7 +143,17 @@ def _build_model_usage(eid: int):
     for mc in all_relevant_models:
         u = usage_by_id.get(mc.id)
         has_access = mc.id in accessible_model_ids
-        status = "disabled" if not has_access else get_model_status(mc)
+        if not has_access:
+            status = "disabled"
+        else:
+            eps = eps_by_model.get(mc.id, [])
+            healthy = sum(1 for e in eps if e.healthy)
+            if not eps or healthy == 0:
+                status = "down"
+            elif healthy < len(eps):
+                status = "degraded"
+            else:
+                status = "ok"
         model_usage.append({
             "model_name": mc.model_name,
             "requests": int(u[1] or 0) if u else 0,

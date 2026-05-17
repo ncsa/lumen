@@ -5,11 +5,25 @@ All notable changes to Lumen will be documented in this file.
 ## [Unreleased]
 
 ### Security
+- Application now refuses to start if `DEV_USER` is set while running in production mode (`SESSION_COOKIE_SECURE=True`), preventing the dev-login bypass from being reachable on public deployments
+- Streaming error responses in `/v1/chat/completions` and `/chat/stream` now return a generic message; upstream exception details (which could include API keys or host names) are logged server-side only
+- Analytics `period` parameter in user-growth endpoints is now validated against the allowed set before use; `trunc` values derived from it are also guarded with an explicit allowlist check
 - Fixed Prometheus `/metrics` token comparison to use `hmac.compare_digest()` preventing timing side-channel attacks
 - Fixed `model_readme` URL check to use `urlparse` hostname validation, preventing SSRF via credential-injection URLs
 - `_md_filter` Jinja filter documented as operator-only; never apply to user-supplied content
 - Upload filenames are sanitized with `werkzeug.utils.secure_filename` before extension extraction and display
 - `_rates_cache` update in the API blueprint is now protected by a `threading.Lock`, eliminating a thundering-herd race under burst traffic
+
+### Fixed
+- `update_stats` now uses SQLAlchemy savepoints (`begin_nested`) for the concurrent-seed INSERT, so an `IntegrityError` from a racing first request no longer rolls back the entire session and discards the preceding coin deduction
+- `subtract_coins` now logs a warning when the balance is already exhausted and the UPDATE affects 0 rows, making silent no-charge events observable in logs
+- `check_coin_budget` no longer calls `get_effective_limit` twice per request; the resolved limit from the first call is reused for the balance check
+- `/v1/models` and `/v1/models/<id>` now pre-fetch all endpoints in a single query instead of issuing one SELECT per model (eliminates N+1 on the hot models endpoint)
+- `/models` page now resolves model access for all models in a fixed number of queries via `bulk_model_access_info`, replacing per-model `get_model_access_status` calls
+- Profile usage tab now resolves model access and endpoint health in bulk, replacing per-model `get_model_access` and lazy-loaded `get_model_status` calls
+
+### Database
+- Added index on `entity_managers.client_entity_id` to support efficient lookups by client when listing managers
 
 ### Accessibility
 - Info-icon `ⓘ` spans now respond to Enter/Space keyboard events to toggle the Bootstrap Popover (WCAG 2.1.1)

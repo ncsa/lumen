@@ -245,7 +245,7 @@ def chat_stream():
         except Exception as e:
             logger.exception("chat_stream error (model=%s, entity=%s)", model, entity_id)
             db.session.rollback()
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield f"data: {json.dumps({'error': 'An error occurred. Please try again.'})}\n\n"
 
     resp = Response(stream_with_context(generate()), content_type="text/event-stream")
     resp.headers["X-Accel-Buffering"] = "no"

@@ -20,5 +20,6 @@ class EntityManager(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint("user_entity_id", "client_entity_id"),
+        db.Index("ix_entity_managers_client_entity_id", "client_entity_id"),
         {"comment": "Maps users to client entities they are permitted to manage"},
     )

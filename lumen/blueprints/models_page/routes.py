@@ -12,7 +12,7 @@ from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.request_log import RequestLog
-from lumen.services.llm import get_model_access_status, has_model_consent
+from lumen.services.llm import bulk_model_access_info, get_model_access_status, has_model_consent
 
 models_page_bp = Blueprint("models_page", __name__)
 
@@ -22,7 +22,8 @@ models_page_bp = Blueprint("models_page", __name__)
 def index():
     entity_id = session.get("entity_id")
     all_configs = db.session.execute(select(ModelConfig).filter_by(active=True).order_by(ModelConfig.model_name)).scalars().all()
-    configs = [c for c in all_configs if get_model_access_status(entity_id, c.id) != "blocked"]
+    access_statuses, _ = bulk_model_access_info(entity_id, [c.id for c in all_configs])
+    configs = [c for c in all_configs if access_statuses.get(c.id, "allowed") != "blocked"]
     model_ids = [c.id for c in configs]
     endpoints_map: dict[int, list] = {}
     for ep in db.session.execute(select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(model_ids))).scalars().all():
