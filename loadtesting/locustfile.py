@@ -100,6 +100,8 @@ class LumenUser(HttpUser):
                 total = usage.get("total_tokens", "?")
                 resp.success()
             elif resp.status_code == 429:
-                resp.failure(f"Rate limited (429): {resp.text[:120]}")
+                resp.failure(f"Rate limited (429): {resp.text[:200]}")
             else:
-                resp.failure(f"HTTP {resp.status_code}: {resp.text[:120]}")
+                body = resp.text[:200] or "<empty body>"
+                server = resp.headers.get("Server", "unknown")
+                resp.failure(f"HTTP {resp.status_code} (server={server}): {body}")
