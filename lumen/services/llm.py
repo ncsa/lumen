@@ -1,7 +1,6 @@
-import random
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from http import HTTPStatus
 from typing import NamedTuple
 
@@ -327,7 +326,7 @@ def update_stats(
     )
 
     log = RequestLog(
-        time=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(microseconds=random.randint(0, 999)),
+        time=datetime.now(timezone.utc).replace(tzinfo=None),
         entity_id=entity_id,
         model_config_id=model_config_id,
         model_endpoint_id=endpoint_id,
