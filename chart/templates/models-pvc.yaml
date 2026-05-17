@@ -1,0 +1,30 @@
+{{- $root := . }}
+{{- range .Values.models }}
+{{- $replicas := int (.replicas | default 0) }}
+{{- if gt $replicas 0 }}
+{{- $storage := .storage | default dict }}
+{{- if and ($storage.enabled | default false) (not $storage.existingClaim) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ printf "%s-model-%s" $root.Release.Name .name | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "lumen.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: model
+    lumen.ncsa.illinois.edu/model: {{ .name | quote }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - {{ $storage.accessMode | default "ReadWriteOnce" }}
+  resources:
+    requests:
+      storage: {{ $storage.size | default "100Gi" }}
+  {{- if $storage.storageClassName }}
+  storageClassName: {{ $storage.storageClassName | quote }}
+  {{- end }}
+  volumeMode: Filesystem
+{{- end }}
+{{- end }}
+{{- end }}

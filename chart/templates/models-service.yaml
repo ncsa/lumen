@@ -1,0 +1,30 @@
+{{- $root := . }}
+{{- range .Values.models }}
+{{- $replicas := int (.replicas | default 0) }}
+{{- if gt $replicas 0 }}
+{{- $engine := .engine | default "vllm" }}
+{{- $defaultPort := 8000 }}
+{{- $port := int (.port | default $defaultPort) }}
+{{- $modelResourceName := printf "%s-model-%s" $root.Release.Name .name | trunc 63 | trimSuffix "-" }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $modelResourceName }}
+  labels:
+    {{- include "lumen.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: model
+    lumen.ncsa.illinois.edu/model: {{ .name | quote }}
+    lumen.ncsa.illinois.edu/engine: {{ $engine | quote }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ $port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/instance: {{ $root.Release.Name }}
+    lumen.ncsa.illinois.edu/model: {{ .name | quote }}
+{{- end }}
+{{- end }}

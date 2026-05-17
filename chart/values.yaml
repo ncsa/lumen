@@ -1,0 +1,286 @@
+## Lumen Helm Chart Values
+## Full documentation: chart/README.md
+
+# -- Number of Lumen app replicas. ≥2 requires redis for shared rate-limit state.
+replicaCount: 1
+
+image:
+  # -- Container image repository
+  repository: ghcr.io/ncsa/lumen
+  # -- Image tag (defaults to chart appVersion)
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+## Application config ----------------------------------------------------------------
+
+config:
+  # -- Flask session signing key. REQUIRED unless existingSecret is set.
+  secretKey: ""
+  # -- API key hashing secret. REQUIRED unless existingSecret is set.
+  encryptionKey: ""
+  # -- Enable Flask debug mode (never true in production)
+  debug: false
+  # -- List of admin email addresses
+  admins: []
+  dbPool:
+    poolSize: 20
+    maxOverflow: 30
+    poolTimeout: 10
+    poolRecycle: 1800
+    poolPrePing: true
+  # -- UI theme. Built-in options: default, illinois, uic, uis.
+  # Set to a custom name to use a theme mounted via config.themes.
+  theme: "default"
+  # -- Custom themes to mount. Each key is the theme name; pvc is the PVC claim name.
+  # The PVC is mounted read-only at /app/themes/<name>/ and must contain
+  # theme.yaml, templates/theme/, and optionally static/.
+  # Example:
+  #   themes:
+  #     mycorp:
+  #       pvc: mycorp-theme-pvc
+  themes: {}
+  rateLimiting:
+    # -- Rate limit per user, e.g. "30 per minute"
+    limit: "30 per minute"
+
+## OAuth2 / OIDC --------------------------------------------------------------------
+
+oauth2:
+  # -- OIDC client ID. REQUIRED unless existingSecret is set.
+  clientId: ""
+  # -- OIDC client secret. REQUIRED unless existingSecret is set.
+  clientSecret: ""
+  # -- OIDC provider metadata URL. Defaults to CILogon; set to any OIDC provider.
+  serverMetadataUrl: "https://cilogon.org/.well-known/openid-configuration"
+  # -- OAuth2 redirect URI. Computed from ingress/gateway hostname when empty.
+  redirectUri: ""
+  scopes: "openid email profile org.cilogon.userinfo"
+
+# -- Name of a pre-existing Secret containing app credentials.
+# Must have keys: secret-key, encryption-key, oauth2-client-id, oauth2-client-secret.
+# Optionally also: database-url, redis-url.
+existingSecret: ""
+
+## PostgreSQL -----------------------------------------------------------------------
+
+postgresql:
+  # -- Deploy bundled PostgreSQL. Uses TimescaleDB to match production.
+  enabled: true
+  # -- External PostgreSQL URL when postgresql.enabled=false. e.g. postgresql://user:pass@host:5432/db
+  url: ""
+  # -- Existing Secret containing the database URL instead of postgresql.url
+  existingSecret: ""
+  existingSecretKey: "database-url"
+  # -- Container image. Defaults to timescaledb pg17; override to plain postgres:17-alpine if TimescaleDB is not needed.
+  image: "timescale/timescaledb:2.26.4-pg17"
+  auth:
+    username: lumen
+    password: ""
+    database: lumen
+    # -- Existing Secret with key "postgres-password". Skips chart-managed postgresql Secret.
+    existingSecret: ""
+  persistence:
+    enabled: true
+    size: 8Gi
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 2
+      memory: 2Gi
+
+## Redis ----------------------------------------------------------------------------
+
+redis:
+  # -- Deploy bundled Redis.
+  # When false and no redis.url is set, rate limiting falls back to in-memory.
+  enabled: false
+  # -- Container image. Pin to a specific patch version for production.
+  image: "redis:7.4-alpine"
+  # -- External Redis URL when redis.enabled=false. e.g. redis://:password@host:6379/0
+  url: ""
+  # -- Existing Secret containing the redis URL instead of redis.url
+  existingSecret: ""
+  existingSecretKey: "redis-url"
+  port: 6379
+  auth:
+    enabled: false
+    password: ""
+    # -- Existing Secret with key "redis-password". Skips chart-managed redis Secret.
+    existingSecret: ""
+  persistence:
+    # -- Enable a PVC for Redis data. When false, data is lost on pod restart.
+    # Required when replicaCount > 1 to avoid split-brain rate-limit state.
+    enabled: false
+    size: 1Gi
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+## Kubernetes service ---------------------------------------------------------------
+
+service:
+  type: ClusterIP
+  port: 5001
+
+## Ingress (standard Kubernetes Ingress) -------------------------------------------
+
+ingress:
+  # -- Enable standard Ingress
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  tls: []
+  #  - secretName: lumen-tls
+  #    hosts:
+  #      - lumen.example.com
+
+## Gateway API (HTTPRoute for Traefik or other Gateway API implementations) ---------
+
+gateway:
+  # -- Enable Gateway API HTTPRoute
+  enabled: false
+  parentRef:
+    name: traefik-gateway
+    namespace: traefik-system
+  hostname: ""
+  # -- Request timeout for LLM responses
+  timeout: "600s"
+
+## Resources for the Lumen app pod --------------------------------------------------
+
+resources: {}
+#  limits:
+#    cpu: 1
+#    memory: 512Mi
+#  requests:
+#    cpu: 100m
+#    memory: 256Mi
+
+## Pod scheduling -------------------------------------------------------------------
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+podAnnotations: {}
+podSecurityContext: {}
+securityContext: {}
+
+## Model inference servers ----------------------------------------------------------
+## Each entry is always registered in Lumen's config.
+## Set replicas > 0 to deploy the inference server in-cluster.
+## Set replicas = 0 to point Lumen at an external endpoint (url required).
+
+models: []
+# Example — external model (replicas=0):
+# - name: gpt-4o
+#   replicas: 0
+#   model: gpt-4o
+#   url: https://api.openai.com/v1
+#   apiKey: "sk-..."
+#   lumen:
+#     inputCostPerMillion: 2.5
+#     outputCostPerMillion: 10.0
+#     contextWindow: 128000
+#     active: true
+#
+# Example — in-cluster vLLM deployment (replicas>0):
+# - name: llama3-8b
+#   replicas: 1
+#   engine: vllm
+#   image: "vllm/vllm-openai:v0.9.1"        # REQUIRED — pin an explicit tag
+#   model: meta-llama/Meta-Llama-3-8B-Instruct
+#   apiKey: "change-me"
+#   port: 8000
+#   gpu:
+#     enabled: true
+#     count: 1
+#     runtimeClassName: nvidia
+#     tolerations:
+#       - key: dedicated
+#         operator: Equal
+#         value: gpu
+#         effect: NoSchedule
+#   resources:
+#     limits:
+#       cpu: "8"
+#       memory: 80Gi
+#     requests:
+#       cpu: "4"
+#       memory: 16Gi
+#   storage:
+#     enabled: true
+#     existingClaim: ""
+#     size: 100Gi
+#     storageClassName: longhorn
+#     mountPath: /mnt/pvc
+#     accessMode: ReadWriteOnce  # default; use ReadWriteMany for multi-replica shared storage (requires RWX storage class)
+#     prefetch: true             # run a pre-install/pre-upgrade Job to download weights before pods start
+#   shmSize: 10Gi  # /dev/shm size; increase for models with large KV-cache or tensor-parallel ops
+#   extraArgs:
+#     - "--max-model-len=8192"
+#   extraEnv: {}
+#   hfToken:
+#     secretName: ""
+#     secretKey: HF_TOKEN
+#   healthCheck:
+#     startupInitialDelay: 30
+#     startupPeriod: 30
+#     startupFailureThreshold: 60
+#     livenessInitialDelay: 120
+#     livenessPeriod: 15
+#     readinessInitialDelay: 120
+#     readinessPeriod: 15
+#   lumen:
+#     inputCostPerMillion: 0.1
+#     outputCostPerMillion: 0.3
+#     contextWindow: 8192
+#     active: true
+#
+# Example — in-cluster SGLang deployment:
+# - name: qwen3-8b
+#   replicas: 1
+#   engine: sglang
+#   image: "lmsysorg/sglang:v0.5.11-cu129-runtime"  # REQUIRED — pin an explicit tag
+#   model: Qwen/Qwen3-8B
+#   apiKey: "change-me"
+#   port: 8000  # default; override if needed
+#   gpu:
+#     enabled: true
+#     count: 1
+#     runtimeClassName: nvidia
+#   resources:
+#     limits:
+#       cpu: "8"
+#       memory: 80Gi
+#   storage:
+#     enabled: true
+#     size: 50Gi
+#     storageClassName: longhorn
+#     mountPath: /mnt/pvc
+#   shmSize: 10Gi  # /dev/shm size; increase for models with large KV-cache or tensor-parallel ops
+#   extraArgs:
+#     - "--reasoning-parser=qwen3"
+#     - "--tool-call-parser=qwen3_coder"
+#   lumen:
+#     inputCostPerMillion: 0.05
+#     outputCostPerMillion: 0.10
+#     contextWindow: 32768
+#     active: true

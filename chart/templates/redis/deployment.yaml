@@ -1,0 +1,89 @@
+{{- if .Values.redis.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lumen.fullname" . }}-redis
+  labels:
+    {{- include "lumen.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "lumen.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        {{- include "lumen.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redis
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image | default "redis:7.4-alpine" }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          {{- if and .Values.redis.auth.enabled (or .Values.redis.auth.password .Values.redis.auth.existingSecret) }}
+          command:
+            - redis-server
+            - "--requirepass"
+            - "$(REDIS_PASSWORD)"
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.auth.existingSecret | default (printf "%s-redis" (include "lumen.fullname" .)) }}
+                  key: redis-password
+          {{- end }}
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          livenessProbe:
+            exec:
+              command:
+                {{- if and .Values.redis.auth.enabled (or .Values.redis.auth.password .Values.redis.auth.existingSecret) }}
+                - sh
+                - -c
+                - redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping
+                {{- else }}
+                - redis-cli
+                - ping
+                {{- end }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                {{- if and .Values.redis.auth.enabled (or .Values.redis.auth.password .Values.redis.auth.existingSecret) }}
+                - sh
+                - -c
+                - redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping
+                {{- else }}
+                - redis-cli
+                - ping
+                {{- end }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          {{- if (.Values.redis.persistence).enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "lumen.fullname" . }}-redis
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}

@@ -4,6 +4,11 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Helm chart at `chart/` for deploying Lumen on Kubernetes; includes bundled PostgreSQL (TimescaleDB) and Redis, standard Ingress and Gateway API HTTPRoute, database migration pre-upgrade Job, and optional in-cluster vLLM/SGLang model inference servers
+- Model storage PVCs default to `ReadWriteMany` access mode to support multi-replica deployments sharing a single volume
+- `storage.prefetch` flag per model: when `true`, a `pre-install,pre-upgrade` Helm hook Job downloads model weights onto the PVC before any inference pod starts, eliminating concurrent download races
+
 ## [1.10.0] - 2026-05-17
 
 ### Added

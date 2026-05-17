@@ -1,0 +1,67 @@
+{{- $root := . }}
+{{- range .Values.models }}
+{{- $replicas := int (.replicas | default 0) }}
+{{- if gt $replicas 0 }}
+{{- $storage := .storage | default dict }}
+{{- if and ($storage.enabled | default false) ($storage.prefetch | default false) }}
+{{- $modelResourceName := printf "%s-model-%s" $root.Release.Name .name | trunc 63 | trimSuffix "-" }}
+{{- $storageMount := $storage.mountPath | default "/mnt/pvc" }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $modelResourceName }}-prefetch
+  labels:
+    {{- include "lumen.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: model-prefetch
+    lumen.ncsa.illinois.edu/model: {{ .name | quote }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    "helm.sh/hook-weight": "-5"
+spec:
+  # 24h to accommodate large models on slow storage
+  activeDeadlineSeconds: 86400
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: OnFailure
+      {{- with $root.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: prefetch
+          {{- if not .image }}
+          {{- fail (printf "models[%s].image is required for prefetch job" .name) }}
+          {{- end }}
+          image: {{ .image | quote }}
+          imagePullPolicy: IfNotPresent
+          command:
+            - python3
+            - -c
+            - |
+              from huggingface_hub import snapshot_download
+              snapshot_download({{ .model | quote }}, cache_dir={{ $storageMount | quote }})
+          env:
+            - name: HF_HOME
+              value: {{ printf "%s/huggingface" $storageMount | quote }}
+            {{- if .hfToken }}
+            {{- if .hfToken.secretName }}
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .hfToken.secretName }}
+                  key: {{ .hfToken.secretKey | default "HF_TOKEN" }}
+            {{- end }}
+            {{- end }}
+          volumeMounts:
+            - name: model-storage
+              mountPath: {{ $storageMount }}
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: {{ $storage.existingClaim | default (printf "%s-model-%s" $root.Release.Name .name | trunc 63 | trimSuffix "-") }}
+{{- end }}
+{{- end }}
+{{- end }}

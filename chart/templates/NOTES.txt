@@ -1,0 +1,53 @@
+Lumen {{ .Chart.AppVersion }} deployed.
+
+{{- if .Values.ingress.enabled }}
+App URL: https://{{ .Values.ingress.host }}
+{{- else if .Values.gateway.enabled }}
+App URL: https://{{ .Values.gateway.hostname }}
+{{- else }}
+Access Lumen via port-forward:
+  kubectl port-forward svc/{{ include "lumen.fullname" . }} 5001:5001
+  Open http://localhost:5001
+{{- end }}
+
+{{- if .Values.postgresql.enabled }}
+PostgreSQL: bundled ({{ include "lumen.fullname" . }}-postgresql:5432)
+{{- else }}
+PostgreSQL: external ({{ .Values.postgresql.url | default "(from secret)" }})
+{{- end }}
+
+{{- if .Values.redis.enabled }}
+Redis: bundled ({{ include "lumen.fullname" . }}-redis:6379)
+{{- else if .Values.redis.url }}
+Redis: external ({{ .Values.redis.url }})
+{{- else }}
+Redis: disabled (in-memory rate limiting — not suitable for multi-replica deployments)
+{{- end }}
+
+{{- $deployed := 0 }}
+{{- range .Values.models }}
+{{- if gt (int (.replicas | default 0)) 0 }}
+{{- $deployed = add1 $deployed }}
+{{- end }}
+{{- end }}
+{{- if gt $deployed 0 }}
+
+Model inference servers deployed: {{ $deployed }}
+{{- range .Values.models }}
+{{- if gt (int (.replicas | default 0)) 0 }}
+  - {{ .name }} ({{ .engine }}, {{ .replicas }} replica(s))
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- if and (not .Values.existingSecret) (or (not .Values.config.secretKey) (not .Values.config.encryptionKey)) }}
+
+WARNING: config.secretKey and/or config.encryptionKey are not set.
+Set them in values or provide existingSecret with the required keys.
+{{- end }}
+
+{{- if and .Values.postgresql.enabled (eq .Values.postgresql.auth.password "lumen") }}
+
+WARNING: postgresql.auth.password is set to the default value "lumen".
+Change this before deploying to any non-development environment.
+{{- end }}
