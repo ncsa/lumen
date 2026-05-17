@@ -99,10 +99,6 @@ def create_app():
         app.logger.error("app.secret_key is not set in config.yaml (or LUMEN_SECRET_KEY env var). App cannot start.")
         sys.exit(1)
     app.config["SECRET_KEY"] = secret_key
-    app.config["SESSION_COOKIE_SECURE"] = not app.debug
-    app.config["SESSION_COOKIE_HTTPONLY"] = True
-    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-    app.config["PERMANENT_SESSION_LIFETIME"] = 86400
     encryption_key = os.environ.get("LUMEN_ENCRYPTION_KEY") or app_cfg.get("encryption_key", "")
     if not encryption_key:
         app.logger.error("app.encryption_key is not set in config.yaml (or LUMEN_ENCRYPTION_KEY env var). App cannot start.")
@@ -120,6 +116,10 @@ def create_app():
         }
     if "debug" in app_cfg:
         app.config["DEBUG"] = app_cfg["debug"]
+    app.config["SESSION_COOKIE_SECURE"] = not app.debug
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["PERMANENT_SESSION_LIFETIME"] = 86400
     app.config["APP_NAME"] = app_cfg.get("name", "Lumen")
     app.config["APP_TAGLINE"] = app_cfg.get("tagline", "")
     app.config["APP_ANNOUNCEMENT"] = Markup(app_cfg.get("announcement", "") or "")
