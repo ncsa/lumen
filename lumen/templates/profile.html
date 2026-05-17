@@ -240,35 +240,7 @@
 </div>
 
 {% endif %}
-<!-- Graylist Consent Modal -->
-{% if not viewing_user %}
-<div class="modal fade" id="graylistModal" tabindex="-1" aria-labelledby="graylistModalLabel">
-  <div class="modal-dialog modal-lg">
-    <div class="modal-content">
-      <div class="modal-header border-warning bg-warning bg-opacity-10">
-        <h2 class="modal-title h5" id="graylistModalLabel">Access Acknowledgment</h2>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close Access Acknowledgment dialog"></button>
-      </div>
-      <div class="modal-body">
-        <div id="graylist-notice-section" class="mb-3" hidden>
-          <h3 class="h6 fw-semibold text-warning-emphasis">
-            <span role="img" aria-label="warning">⚠</span> Notice
-          </h3>
-          <div id="graylist-notice-body" aria-live="polite"></div>
-        </div>
-        <p class="mb-0 small">
-          This model requires acknowledgment before use. By enabling access you confirm you have read
-          any notices above and accept responsibility for appropriate use.
-        </p>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-warning" id="graylist-accept-btn">Accept &amp; Enable</button>
-      </div>
-    </div>
-  </div>
-</div>
-{% endif %}
+{% if not viewing_user %}{% include '_graylist_modal.html' %}{% endif %}
 
 <style>
 .profile-avatar-img { border: 1px solid rgba(0,0,0,.1); }
@@ -288,6 +260,9 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+<script src="{{ url_for('static', filename='js/graylist-consent.js') }}"></script>
 <script>
 const IS_ADMIN_VIEW = {{ (viewing_user is defined and viewing_user is not none) | tojson }};
 
@@ -299,6 +274,8 @@ document.querySelectorAll(".local-time[data-utc]").forEach(el => {
   const mins = Math.max(0, Math.round((new Date(el.dataset.utc) - Date.now()) / 60000));
   el.textContent = mins <= 1 ? "in seconds" : `in ${mins} minutes`;
 });
+
+let openGraylistModal = () => {};
 
 // ── Shared sort/filter helpers ────────────────────────────────────────────
 function escHtml(s) {
@@ -560,36 +537,10 @@ document.getElementById("save-key-btn").addEventListener("click", async function
 
 // ── Graylist consent modal ────────────────────────────────────────────────
 if (!IS_ADMIN_VIEW) {
-let graylistModelName = null;
-
-function openGraylistModal(modelName, notice) {
-  graylistModelName = modelName;
-  document.getElementById("graylistModalLabel").textContent = "Access Acknowledgment: " + modelName;
-  const noticeSection = document.getElementById("graylist-notice-section");
-  const noticeBody = document.getElementById("graylist-notice-body");
-  if (notice) {
-    noticeBody.innerHTML = DOMPurify.sanitize(marked.parse(notice));
-    noticeSection.hidden = false;
-  } else {
-    noticeSection.hidden = true;
-  }
-  new bootstrap.Modal(document.getElementById("graylistModal")).show();
-}
-
-document.getElementById("graylist-accept-btn").addEventListener("click", async function () {
-  if (!graylistModelName) return;
-  const resp = await fetch("/profile/consent/" + encodeURIComponent(graylistModelName), {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+  openGraylistModal = initGraylistConsent((modelName) => {
+    const row = MODEL_ROWS.find(r => r.model_name === modelName);
+    if (row) { row.consented = true; renderModels(); }
   });
-  if (resp.ok) {
-    bootstrap.Modal.getInstance(document.getElementById("graylistModal")).hide();
-    location.reload();
-  } else {
-    const data = await resp.json();
-    alert("Error: " + (data.error || "Unknown"));
-  }
-});
 } // end if (!IS_ADMIN_VIEW)
 </script>
 {% endblock %}

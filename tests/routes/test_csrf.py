@@ -40,21 +40,21 @@ def _setup_graylist(app, entity_id, model_config_id):
 
 def test_consent_rejected_without_csrf_token(app, csrf_client, test_model, test_user):
     _setup_graylist(app, test_user["id"], test_model["id"])
-    resp = csrf_client.post(f"/models/{test_model['model_name']}/consent")
+    resp = csrf_client.post(f"/profile/consent/{test_model['model_name']}")
     assert resp.status_code == HTTPStatus.BAD_REQUEST
     assert b"CSRF" in resp.data
 
 
 def test_consent_accepted_with_csrf_token(app, csrf_client, test_model, test_user):
     _setup_graylist(app, test_user["id"], test_model["id"])
-    detail = csrf_client.get(f"/models/{test_model['model_name']}")
-    token = _extract_csrf_token(detail)
+    any_page = csrf_client.get("/profile")
+    token = _extract_csrf_token(any_page)
     resp = csrf_client.post(
-        f"/models/{test_model['model_name']}/consent",
-        data={"csrf_token": token},
-        follow_redirects=False,
+        f"/profile/consent/{test_model['model_name']}",
+        headers={"X-CSRFToken": token},
+        content_type="application/json",
     )
-    assert resp.status_code == HTTPStatus.FOUND
+    assert resp.status_code == HTTPStatus.OK
 
 
 def test_delete_conversation_rejected_without_csrf_token(app, csrf_client, test_user):

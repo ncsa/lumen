@@ -3,7 +3,7 @@ from http import HTTPStatus
 from urllib.parse import urlparse
 
 import requests as http_requests
-from flask import Blueprint, abort, redirect, render_template, session, url_for
+from flask import Blueprint, abort, render_template, session
 from sqlalchemy import func, select
 
 from lumen.decorators import login_required
@@ -83,22 +83,6 @@ def detail(model_name):
         consent=consent,
     )
 
-
-@models_page_bp.route("/models/<path:model_name>/consent", methods=["POST"])
-@login_required
-def model_consent(model_name):
-    config = db.first_or_404(select(ModelConfig).filter_by(model_name=model_name, active=True))
-    entity_id = session["entity_id"]
-    if get_model_access_status(entity_id, config.id) != "graylist":
-        abort(HTTPStatus.BAD_REQUEST)
-    if not has_model_consent(entity_id, config.id):
-        db.session.add(EntityModelConsent(
-            entity_id=entity_id,
-            model_config_id=config.id,
-            consented_at=datetime.now(timezone.utc).replace(tzinfo=None),
-        ))
-        db.session.commit()
-    return redirect(url_for("models_page.detail", model_name=model_name))
 
 
 @models_page_bp.route("/models/<path:model_name>/readme")

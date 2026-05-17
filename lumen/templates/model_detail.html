@@ -60,12 +60,9 @@
           </p>
           {% else %}
           <p class="mb-2 small">This model requires acknowledgment before use. By enabling access you confirm you have read any notices and accept responsibility for appropriate use.</p>
-          <form method="post" action="{{ url_for('models_page.model_consent', model_name=config.model_name) }}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-warning w-100">
-              Acknowledge &amp; Enable Access
-            </button>
-          </form>
+          <button type="button" class="btn btn-warning w-100" id="graylist-open-btn" aria-haspopup="dialog">
+            Acknowledge &amp; Enable Access
+          </button>
           {% endif %}
         </div>
       </div>
@@ -210,11 +207,13 @@
     </div>{# end sidebar #}
   </div>{# end row #}
 </ilw-content>
+{% if access_status == 'graylist' and not consent %}{% include '_graylist_modal.html' %}{% endif %}
 {% endblock %}
 
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+<script src="{{ url_for('static', filename='js/graylist-consent.js') }}"></script>
 <script>
 (function () {
   {% if config.notice %}
@@ -249,6 +248,13 @@
     });
   {% endif %}
 })();
+
+{% if access_status == 'graylist' and not consent %}
+const openGraylistModal = initGraylistConsent(() => location.reload());
+document.getElementById('graylist-open-btn').addEventListener('click', () => {
+  openGraylistModal({{ config.model_name | tojson }}, {{ config.notice | tojson if config.notice else 'null' }});
+});
+{% endif %}
 </script>
 <style>
   .hf-readme-content table { border-collapse: collapse; margin-bottom: 1rem; }

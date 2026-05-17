@@ -4,112 +4,13 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
-### Security
-- File upload responses now return the sanitized filename instead of the raw browser-supplied name, preventing unsanitized input from reaching client-side DOM rendering paths
-- Non-streaming `/v1/chat/completions` and `/v1/completions` error responses now return a generic message; upstream exception details are logged server-side only
-
-### Fixed
-- `send_message_stream` now wraps the OpenAI client in a `with` statement, ensuring the SSL context and socket are closed after each chat request
-- `entity_balances.last_refill_at` is now written as a timezone-aware datetime matching the `TIMESTAMPTZ` column type, preventing potential `TypeError` on arithmetic with timezone-aware values returned by SQLAlchemy
-- `request_logs.time` is now written as a timezone-aware datetime matching the `DateTime(timezone=True)` column declaration
-
-### Database
-- Added index on `model_endpoints.model_config_id` to avoid full table scans on every endpoint lookup
-
-### Accessibility
-- Fixed `colspan` on API keys table loading row from 7 to 6 to match the actual column count (WCAG 1.3.1)
-
-- Application now refuses to start if `DEV_USER` is set while running in production mode (`SESSION_COOKIE_SECURE=True`), preventing the dev-login bypass from being reachable on public deployments
-- Streaming error responses in `/v1/chat/completions` and `/chat/stream` now return a generic message; upstream exception details (which could include API keys or host names) are logged server-side only
-- Analytics `period` parameter in user-growth endpoints is now validated against the allowed set before use; `trunc` values derived from it are also guarded with an explicit allowlist check
-- Fixed Prometheus `/metrics` token comparison to use `hmac.compare_digest()` preventing timing side-channel attacks
-- Fixed `model_readme` URL check to use `urlparse` hostname validation, preventing SSRF via credential-injection URLs
-- `_md_filter` Jinja filter documented as operator-only; never apply to user-supplied content
-- Upload filenames are sanitized with `werkzeug.utils.secure_filename` before extension extraction and display
-- `_rates_cache` update in the API blueprint is now protected by a `threading.Lock`, eliminating a thundering-herd race under burst traffic
-
-### Fixed
-- `update_stats` now uses SQLAlchemy savepoints (`begin_nested`) for the concurrent-seed INSERT, so an `IntegrityError` from a racing first request no longer rolls back the entire session and discards the preceding coin deduction
-- `subtract_coins` now logs a warning when the balance is already exhausted and the UPDATE affects 0 rows, making silent no-charge events observable in logs
-- `check_coin_budget` no longer calls `get_effective_limit` twice per request; the resolved limit from the first call is reused for the balance check
-- `/v1/models` and `/v1/models/<id>` now pre-fetch all endpoints in a single query instead of issuing one SELECT per model (eliminates N+1 on the hot models endpoint)
-- `/models` page now resolves model access for all models in a fixed number of queries via `bulk_model_access_info`, replacing per-model `get_model_access_status` calls
-- Profile usage tab now resolves model access and endpoint health in bulk, replacing per-model `get_model_access` and lazy-loaded `get_model_status` calls
-
-### Database
-- Added index on `entity_managers.client_entity_id` to support efficient lookups by client when listing managers
-
-### Accessibility
-- Info-icon `ⓘ` spans now respond to Enter/Space keyboard events to toggle the Bootstrap Popover (WCAG 2.1.1)
-- Active/inactive status icons `✓`/`✗` wrapped in `<span role="img" aria-label="...">` in clients and admin/users tables (WCAG 1.1.1)
-- Autocomplete manager listbox now handles `Home`/`End` keys to jump to first/last suggestion (WCAG 2.1.1)
-- Sidebar toggle button `aria-label` now updates to "Show sidebar" / "Hide sidebar" on each click (WCAG 4.1.2)
-- All sort-header `<th>` elements now carry `scope="col"` for unambiguous screen-reader column association (WCAG 1.3.1)
-- Removed redundant `aria-label` from `#period-select` in analytics; the visible `<label>` is sufficient (WCAG 2.5.3)
-- Added fallback text content inside all five `<canvas>` chart elements for assistive technology that does not expose `aria-label` on canvas (WCAG 1.1.1)
-- Wrapped `✓`/`—` capability flags in `model_detail.html` with `<span role="img" aria-label="...">` (WCAG 1.1.1)
-- Modal close buttons now carry context-specific `aria-label` values ("Close New API Key dialog", "Close Access Acknowledgment dialog") (WCAG 4.1.2)
-
-### Fixed
-- `/v1/completions` now records `endpoint_id` and `duration` in `RequestLog`, matching the `/v1/chat/completions` behaviour
-- Background threads in `health.py` and `token_refill.py` now log exceptions with `logger.exception()` instead of silently swallowing them
-- Health checker joins `ModelConfig.model_name` upfront instead of lazy-loading `ep.model_config` inside the loop; accessing the backref on a `lazy="dynamic"` + `delete-orphan` relationship caused `StaleDataError` on commit
-- `refill_coin_balances` now bulk-loads `EntityLimit`, `GroupMember`, and `GroupLimit` rows before the loop, eliminating N+1 queries per entity
-- `_build_model_access_list` and `chat_page` now bulk-resolve model access status, consents, and endpoint health in a fixed number of queries, replacing N+1 per-model queries
-- Added `bulk_model_access_info()` helper to `services/llm.py` for efficient entity-wide access resolution
-- Model endpoint lists are now pre-fetched in bulk on the profile page, eliminating one lazy SELECT per model
-
-### Database
-- `entity_balances.coins_left` and `entity_balances.last_refill_at` are now `NOT NULL`; `last_refill_at` changed to `TIMESTAMP WITH TIME ZONE`
-- `api_keys.key_hash` is now `NOT NULL` (legacy plaintext-to-hash migration is complete)
-- Analytics API endpoints return empty results instead of `OperationalError` when running on SQLite
-- Dropped deprecated `model_configs.max_input_tokens` column; use `context_window` instead
-- Added `CHECK (entity_type IN ('user', 'client'))` constraint on `entities` table
-- API key deletion now hard-deletes the row instead of soft-deactivating it
-- Docs: corrected access control evaluation order (group defaults resolve before entity default; final fallback is allow not deny)
-- Theme-switching logic extracted into `_apply_theme()` in `config_watcher.py`, called from both startup and the hot-reload watcher
-- Added composite index `ix_conversations_entity_hidden_updated` on `conversations(entity_id, hidden, updated_at)` to speed up `list_conversations` queries
-- Added `ix_messages_conversation_id` index to `messages.conversation_id`
-- Added FK indexes on `group_members.entity_id`, `entity_model_access.entity_id`, `group_model_access.group_id`, `model_stats.(entity_id, model_config_id)`, `request_logs.(entity_id, model_config_id)`, and `api_keys.entity_id`
-
 ### Added
 - Chat assistant messages now show the model name next to the ⓘ icon in the message metadata row; thinking tokens are hidden when zero
 
-### Security
-- Fixed path traversal vulnerability in `/help/img/` route: replaced `send_file` with `send_from_directory` which rejects `../` sequences
-- Added HTTP security response headers (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Strict-Transport-Security`) on all responses
-- Added session cookie security flags (`Secure`, `HttpOnly`, `SameSite=Lax`, 24h lifetime)
-- Changed `SECRET_KEY` fallback in `config.py` from known default to empty string so misconfigured deployments fail loudly
-- Added localhost-only guard to `/devlogin` when not running in debug mode
-- Prometheus with no token configured now logs an error at startup and disables the `/metrics` endpoint (returns 404) instead of serving unauthenticated metrics
-- Added startup warning when rate limiting uses in-memory storage (ineffective under multi-worker deployments)
-- Added allowlist assertions before f-string SQL interpolation in analytics routes
-- Documented `app.announcement` in `config.yaml.example` as trusted operator HTML (not escaped by Jinja2)
-
-### Fixed
-- `APP_ANNOUNCEMENT` in config.yaml is now sanitized with `bleach.clean()` before being marked safe, preventing HTML/JS injection from config-level input
-- `assert` guards before f-string SQL interpolation in analytics routes replaced with explicit `if … abort(BAD_REQUEST)` — `assert` is disabled under Python `-O`
-- `_md_filter` Jinja2 filter documented as operator-only; output must never be applied to user-supplied content
-- Removed misleading `SECRET_KEY` env var read from `config.py`; it was always overwritten at runtime by `LUMEN_SECRET_KEY`, silently ignoring operator intent
-- Monitor token comparison now uses `hmac.compare_digest()` to prevent timing side-channel attacks
-- `/chat/stream` now enforces a 500-message count limit and 500,000-character total payload limit per request
-- Fixed race condition in `update_stats`: seed INSERT for new `(entity, model, source)` triples now wrapped in `try/except IntegrityError` so concurrent first-requests no longer cause an unhandled 500
-- `request_logs` now uses a surrogate `BIGINT` autoincrement PK; `time` is kept as a regular indexed non-unique column, eliminating timestamp collision between concurrent workers
-- Accessibility: `overflow:hidden` on main content wrapper changed to `overflow:auto` to prevent clipping at browser zoom (WCAG 1.4.10)
-- Accessibility: Removed `overflow-y:hidden` from KaTeX display blocks — tall math equations no longer clip at zoom (WCAG 1.4.4)
-- Accessibility: Sortable table `<th>` elements now have `tabindex="0"`, Enter/Space keydown handlers, `aria-sort` attributes, and bold active arrows so sort state is conveyed beyond colour alone (WCAG 1.4.1, 2.1.1, 4.1.2) — affects clients, client detail, profile, and admin users tables
-- Accessibility: SkipTo.js moved from Illinois theme `head_extras.html` into `base.html` and `landing.html` so all themes provide skip navigation (WCAG 2.4.1)
-- Accessibility: Inner `<main>` in `help.html` changed to `<section>` to eliminate duplicate `<main>` landmark (WCAG 1.3.1)
-- Accessibility: Attachment error dismiss now briefly emits an SR-only "dismissed" message before clearing the `aria-live` region (WCAG 4.1.3)
-- Accessibility: `.conv-item:focus-within` now reveals the conversation remove button for keyboard users (WCAG 2.1.1)
-- Accessibility: Admin users search input now has `aria-label="Search users by name or email"` (WCAG 4.1.2)
-- Accessibility: `aria-selected` on `role="listitem"` conversation items replaced with `aria-current` (valid on any role) (WCAG 4.1.2)
-- Accessibility: Empty heatmap day column header now contains a visually-hidden "Day" label in both static HTML and the JS-rendered header row (WCAG 1.3.1)
-- `ModelStat` and `EntityStat` counters now use SQL-level atomic increments instead of ORM read-modify-write, preventing lost updates under concurrent requests
-- `subtract_coins` now uses a single atomic `UPDATE ... WHERE coins_left >= cost` so concurrent requests cannot both deduct from an insufficient balance
-- `request_logs` inserts now add 0–999 µs jitter to the timestamp PK to prevent collisions under concurrent requests
-
 ### Changed
+- Graylist model consent now uses a shared modal dialog (`_graylist_modal.html` + `graylist-consent.js`) on the chat, profile, and model detail pages instead of separate implementations; the old form-POST `models_page.model_consent` route has been removed in favour of the JSON `/profile/consent/<model>` endpoint
+- Chat page: accepting a graylist model via the consent dialog now removes the warning triangle from the model picker and hides the banner without a page reload
+- Profile page: accepting a graylist model via the consent dialog now updates the access badge in-place without a page reload
 - Replaced bare integer HTTP status codes with `HTTPStatus` constants across all blueprint files (`api`, `auth`, `chat`, `clients`, `profile`, `admin`)
 - Renamed the "Usage" page to "Profile": URL changed from `/usage` to `/profile`, nav link updated to "Profile" across all themes, and the admin per-user route moved from `/admin/users/<id>/usage` to `/admin/users/<id>/profile`
 - Decomposed `sync_user_from_yaml` (complexity 46) in `auth/routes.py` into four focused helpers: `_desired_groups_from_config`, `_groups_from_userinfo_rules`, `_reconcile_group_memberships`, and `_apply_user_model_overrides`
@@ -127,6 +28,96 @@ All notable changes to Lumen will be documented in this file.
 - `get_pool_limit` now returns a `PoolLimit` named tuple (`max_coins`, `refresh_coins`, `starting_coins`) instead of a plain tuple
 - Decomposed `_get_profile_data` (complexity 40) in `profile/routes.py` into three focused helpers: `_fetch_chat_stats`, `_build_model_usage`, and `_build_coin_pool`
 - Decomposed `sync_models_from_yaml` (complexity 40) in `commands.py` into three focused helpers: `_apply_model_fields`, `_reconcile_endpoints`, and `_deactivate_removed_models`
+- Theme-switching logic extracted into `_apply_theme()` in `config_watcher.py`, called from both startup and the hot-reload watcher
+- Docs: corrected access control evaluation order (group defaults resolve before entity default; final fallback is allow not deny)
+
+### Fixed
+- `token_refill`: fixed `TypeError` when subtracting `last_refill_at` from `now` after the column was migrated to `DateTime(timezone=True)`; both comparison sites now strip `tzinfo` before arithmetic
+- `send_message_stream` now wraps the OpenAI client in a `with` statement, ensuring the SSL context and socket are closed after each chat request
+- `entity_balances.last_refill_at` is now written as a timezone-aware datetime matching the `TIMESTAMPTZ` column type, preventing potential `TypeError` on arithmetic with timezone-aware values returned by SQLAlchemy
+- `request_logs.time` is now written as a timezone-aware datetime matching the `DateTime(timezone=True)` column declaration
+- `update_stats` now uses SQLAlchemy savepoints (`begin_nested`) for the concurrent-seed INSERT, so an `IntegrityError` from a racing first request no longer rolls back the entire session and discards the preceding coin deduction
+- `subtract_coins` now logs a warning when the balance is already exhausted and the UPDATE affects 0 rows, making silent no-charge events observable in logs
+- `check_coin_budget` no longer calls `get_effective_limit` twice per request; the resolved limit from the first call is reused for the balance check
+- `/v1/models` and `/v1/models/<id>` now pre-fetch all endpoints in a single query instead of issuing one SELECT per model (eliminates N+1 on the hot models endpoint)
+- `/models` page now resolves model access for all models in a fixed number of queries via `bulk_model_access_info`, replacing per-model `get_model_access_status` calls
+- Profile usage tab now resolves model access and endpoint health in bulk, replacing per-model `get_model_access` and lazy-loaded `get_model_status` calls
+- `/v1/completions` now records `endpoint_id` and `duration` in `RequestLog`, matching the `/v1/chat/completions` behaviour
+- Background threads in `health.py` and `token_refill.py` now log exceptions with `logger.exception()` instead of silently swallowing them
+- Health checker joins `ModelConfig.model_name` upfront instead of lazy-loading `ep.model_config` inside the loop; accessing the backref on a `lazy="dynamic"` + `delete-orphan` relationship caused `StaleDataError` on commit
+- `refill_coin_balances` now bulk-loads `EntityLimit`, `GroupMember`, and `GroupLimit` rows before the loop, eliminating N+1 queries per entity
+- `_build_model_access_list` and `chat_page` now bulk-resolve model access status, consents, and endpoint health in a fixed number of queries, replacing N+1 per-model queries
+- Added `bulk_model_access_info()` helper to `services/llm.py` for efficient entity-wide access resolution
+- Model endpoint lists are now pre-fetched in bulk on the profile page, eliminating one lazy SELECT per model
+- `APP_ANNOUNCEMENT` in config.yaml is now sanitized with `bleach.clean()` before being marked safe, preventing HTML/JS injection from config-level input
+- `assert` guards before f-string SQL interpolation in analytics routes replaced with explicit `if … abort(BAD_REQUEST)` — `assert` is disabled under Python `-O`
+- `_md_filter` Jinja2 filter documented as operator-only; output must never be applied to user-supplied content
+- Removed misleading `SECRET_KEY` env var read from `config.py`; it was always overwritten at runtime by `LUMEN_SECRET_KEY`, silently ignoring operator intent
+- Monitor token comparison now uses `hmac.compare_digest()` to prevent timing side-channel attacks
+- `/chat/stream` now enforces a 500-message count limit and 500,000-character total payload limit per request
+- Fixed race condition in `update_stats`: seed INSERT for new `(entity, model, source)` triples now wrapped in `try/except IntegrityError` so concurrent first-requests no longer cause an unhandled 500
+- `request_logs` now uses a surrogate `BIGINT` autoincrement PK; `time` is kept as a regular indexed non-unique column, eliminating timestamp collision between concurrent workers
+- `ModelStat` and `EntityStat` counters now use SQL-level atomic increments instead of ORM read-modify-write, preventing lost updates under concurrent requests
+- `subtract_coins` now uses a single atomic `UPDATE ... WHERE coins_left >= cost` so concurrent requests cannot both deduct from an insufficient balance
+- `request_logs` inserts now add 0–999 µs jitter to the timestamp PK to prevent collisions under concurrent requests
+
+### Database
+- Added migration `z1b2c3d4e5f6` to enforce `NOT NULL` on `entity_balances.coins_left` and `entity_balances.last_refill_at`, convert `last_refill_at` to `TIMESTAMPTZ`, and enforce `NOT NULL` on `api_keys.key_hash`
+- Added merge migration `z2a3b4c5d6e7` to reconcile four divergent heads
+- Added index on `model_endpoints.model_config_id` to avoid full table scans on every endpoint lookup
+- Added index on `entity_managers.client_entity_id` to support efficient lookups by client when listing managers
+- `entity_balances.coins_left` and `entity_balances.last_refill_at` are now `NOT NULL`; `last_refill_at` changed to `TIMESTAMP WITH TIME ZONE`
+- `api_keys.key_hash` is now `NOT NULL` (legacy plaintext-to-hash migration is complete)
+- Analytics API endpoints return empty results instead of `OperationalError` when running on SQLite
+- Dropped deprecated `model_configs.max_input_tokens` column; use `context_window` instead
+- Added `CHECK (entity_type IN ('user', 'client'))` constraint on `entities` table
+- API key deletion now hard-deletes the row instead of soft-deactivating it
+- Added composite index `ix_conversations_entity_hidden_updated` on `conversations(entity_id, hidden, updated_at)` to speed up `list_conversations` queries
+- Added `ix_messages_conversation_id` index to `messages.conversation_id`
+- Added FK indexes on `group_members.entity_id`, `entity_model_access.entity_id`, `group_model_access.group_id`, `model_stats.(entity_id, model_config_id)`, `request_logs.(entity_id, model_config_id)`, and `api_keys.entity_id`
+
+### Accessibility
+- Fixed `colspan` on API keys table loading row from 7 to 6 to match the actual column count (WCAG 1.3.1)
+- Info-icon `ⓘ` spans now respond to Enter/Space keyboard events to toggle the Bootstrap Popover (WCAG 2.1.1)
+- Active/inactive status icons `✓`/`✗` wrapped in `<span role="img" aria-label="...">` in clients and admin/users tables (WCAG 1.1.1)
+- Autocomplete manager listbox now handles `Home`/`End` keys to jump to first/last suggestion (WCAG 2.1.1)
+- Sidebar toggle button `aria-label` now updates to "Show sidebar" / "Hide sidebar" on each click (WCAG 4.1.2)
+- All sort-header `<th>` elements now carry `scope="col"` for unambiguous screen-reader column association (WCAG 1.3.1)
+- Removed redundant `aria-label` from `#period-select` in analytics; the visible `<label>` is sufficient (WCAG 2.5.3)
+- Added fallback text content inside all five `<canvas>` chart elements for assistive technology that does not expose `aria-label` on canvas (WCAG 1.1.1)
+- Wrapped `✓`/`—` capability flags in `model_detail.html` with `<span role="img" aria-label="...">` (WCAG 1.1.1)
+- Modal close buttons now carry context-specific `aria-label` values ("Close New API Key dialog", "Close Access Acknowledgment dialog") (WCAG 4.1.2)
+- `overflow:hidden` on main content wrapper changed to `overflow:auto` to prevent clipping at browser zoom (WCAG 1.4.10)
+- Removed `overflow-y:hidden` from KaTeX display blocks — tall math equations no longer clip at zoom (WCAG 1.4.4)
+- Sortable table `<th>` elements now have `tabindex="0"`, Enter/Space keydown handlers, `aria-sort` attributes, and bold active arrows so sort state is conveyed beyond colour alone (WCAG 1.4.1, 2.1.1, 4.1.2) — affects clients, client detail, profile, and admin users tables
+- SkipTo.js moved from Illinois theme `head_extras.html` into `base.html` and `landing.html` so all themes provide skip navigation (WCAG 2.4.1)
+- Inner `<main>` in `help.html` changed to `<section>` to eliminate duplicate `<main>` landmark (WCAG 1.3.1)
+- Attachment error dismiss now briefly emits an SR-only "dismissed" message before clearing the `aria-live` region (WCAG 4.1.3)
+- `.conv-item:focus-within` now reveals the conversation remove button for keyboard users (WCAG 2.1.1)
+- Admin users search input now has `aria-label="Search users by name or email"` (WCAG 4.1.2)
+- `aria-selected` on `role="listitem"` conversation items replaced with `aria-current` (valid on any role) (WCAG 4.1.2)
+- Empty heatmap day column header now contains a visually-hidden "Day" label in both static HTML and the JS-rendered header row (WCAG 1.3.1)
+
+### Security
+- File upload responses now return the sanitized filename instead of the raw browser-supplied name, preventing unsanitized input from reaching client-side DOM rendering paths
+- Non-streaming `/v1/chat/completions` and `/v1/completions` error responses now return a generic message; upstream exception details are logged server-side only
+- Application now refuses to start if `DEV_USER` is set while running in production mode (`SESSION_COOKIE_SECURE=True`), preventing the dev-login bypass from being reachable on public deployments
+- Streaming error responses in `/v1/chat/completions` and `/chat/stream` now return a generic message; upstream exception details (which could include API keys or host names) are logged server-side only
+- Analytics `period` parameter in user-growth endpoints is now validated against the allowed set before use; `trunc` values derived from it are also guarded with an explicit allowlist check
+- Fixed Prometheus `/metrics` token comparison to use `hmac.compare_digest()` preventing timing side-channel attacks
+- Fixed `model_readme` URL check to use `urlparse` hostname validation, preventing SSRF via credential-injection URLs
+- `_md_filter` Jinja filter documented as operator-only; never apply to user-supplied content
+- Upload filenames are sanitized with `werkzeug.utils.secure_filename` before extension extraction and display
+- `_rates_cache` update in the API blueprint is now protected by a `threading.Lock`, eliminating a thundering-herd race under burst traffic
+- Fixed path traversal vulnerability in `/help/img/` route: replaced `send_file` with `send_from_directory` which rejects `../` sequences
+- Added HTTP security response headers (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Strict-Transport-Security`) on all responses
+- Added session cookie security flags (`Secure`, `HttpOnly`, `SameSite=Lax`, 24h lifetime)
+- Changed `SECRET_KEY` fallback in `config.py` from known default to empty string so misconfigured deployments fail loudly
+- Added localhost-only guard to `/devlogin` when not running in debug mode
+- Prometheus with no token configured now logs an error at startup and disables the `/metrics` endpoint (returns 404) instead of serving unauthenticated metrics
+- Added startup warning when rate limiting uses in-memory storage (ineffective under multi-worker deployments)
+- Added allowlist assertions before f-string SQL interpolation in analytics routes
+- Documented `app.announcement` in `config.yaml.example` as trusted operator HTML (not escaped by Jinja2)
 
 ## [1.9.3] - 2026-05-11
 

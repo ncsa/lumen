@@ -1,0 +1,26 @@
+<div class="modal fade" id="graylistModal" tabindex="-1" aria-labelledby="graylistModalLabel">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header border-warning bg-warning bg-opacity-10">
+        <h2 class="modal-title h5" id="graylistModalLabel">Access Acknowledgment</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close Access Acknowledgment dialog"></button>
+      </div>
+      <div class="modal-body">
+        <div id="graylist-notice-section" class="mb-3" hidden>
+          <h3 class="h6 fw-semibold text-warning-emphasis">
+            <span role="img" aria-label="warning">⚠</span> Notice
+          </h3>
+          <div id="graylist-notice-body" aria-live="polite"></div>
+        </div>
+        <p class="mb-0 small">
+          This model requires acknowledgment before use. By enabling access you confirm you have read
+          any notices above and accept responsibility for appropriate use.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-warning" id="graylist-accept-btn">Accept &amp; Enable</button>
+      </div>
+    </div>
+  </div>
+</div>
