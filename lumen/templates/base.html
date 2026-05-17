@@ -10,6 +10,8 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
   {% include 'theme/head_extras.html' %}
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <script src="https://skipto-landmarks-headings.github.io/page-script-5/dist/skipto.min.js"
+          data-skipto="colorTheme:illinois"></script>
   {% block head %}{% endblock %}
 </head>
 <body>
@@ -26,7 +28,7 @@
   {% endif %}
 
   <main id="main-content" style="flex:1;overflow:auto;display:flex;flex-direction:column">
-    <div class="container-fluid mt-3 px-4" style="flex:1;overflow:hidden">
+    <div class="container-fluid mt-3 px-4" style="flex:1;overflow:auto">
       {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         {% for category, message in messages %}

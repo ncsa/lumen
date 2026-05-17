@@ -19,6 +19,16 @@ All notable changes to Lumen will be documented in this file.
 - Documented `app.announcement` in `config.yaml.example` as trusted operator HTML (not escaped by Jinja2)
 
 ### Fixed
+- Accessibility: `overflow:hidden` on main content wrapper changed to `overflow:auto` to prevent clipping at browser zoom (WCAG 1.4.10)
+- Accessibility: Removed `overflow-y:hidden` from KaTeX display blocks — tall math equations no longer clip at zoom (WCAG 1.4.4)
+- Accessibility: Sortable table `<th>` elements now have `tabindex="0"`, Enter/Space keydown handlers, `aria-sort` attributes, and bold active arrows so sort state is conveyed beyond colour alone (WCAG 1.4.1, 2.1.1, 4.1.2) — affects clients, client detail, profile, and admin users tables
+- Accessibility: SkipTo.js moved from Illinois theme `head_extras.html` into `base.html` and `landing.html` so all themes provide skip navigation (WCAG 2.4.1)
+- Accessibility: Inner `<main>` in `help.html` changed to `<section>` to eliminate duplicate `<main>` landmark (WCAG 1.3.1)
+- Accessibility: Attachment error dismiss now briefly emits an SR-only "dismissed" message before clearing the `aria-live` region (WCAG 4.1.3)
+- Accessibility: `.conv-item:focus-within` now reveals the conversation remove button for keyboard users (WCAG 2.1.1)
+- Accessibility: Admin users search input now has `aria-label="Search users by name or email"` (WCAG 4.1.2)
+- Accessibility: `aria-selected` on `role="listitem"` conversation items replaced with `aria-current` (valid on any role) (WCAG 4.1.2)
+- Accessibility: Empty heatmap day column header now contains a visually-hidden "Day" label in both static HTML and the JS-rendered header row (WCAG 1.3.1)
 - `ModelStat` and `EntityStat` counters now use SQL-level atomic increments instead of ORM read-modify-write, preventing lost updates under concurrent requests
 - `subtract_coins` now uses a single atomic `UPDATE ... WHERE coins_left >= cost` so concurrent requests cannot both deduct from an insufficient balance
 - `request_logs` inserts now add 0–999 µs jitter to the timestamp PK to prevent collisions under concurrent requests

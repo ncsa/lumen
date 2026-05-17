@@ -280,8 +280,8 @@
 .sort-header { cursor: pointer; user-select: none; white-space: nowrap; }
 .sort-arrows { display: inline-flex; flex-direction: column; font-size: 0.6em; line-height: 1.1; float: right; margin-left: 6px; margin-top: 2px; }
 .sa-up, .sa-dn { color: #adb5bd; }
-.sort-asc .sa-up { color: #212529; }
-.sort-desc .sa-dn { color: #212529; }
+.sort-asc .sa-up { color: #212529; font-weight: 700; }
+.sort-desc .sa-dn { color: #212529; font-weight: 700; }
 </style>
 
 </ilw-content>
@@ -311,18 +311,26 @@ function fmtDate(iso) {
 }
 function makeSortable(tableId, state, numCols, renderFn) {
   document.querySelectorAll(`#${tableId} .sort-header`).forEach(th => {
-    th.addEventListener('click', () => {
+    th.setAttribute('tabindex', '0');
+    const activate = () => {
       const col = th.dataset.col;
       if (state.col === col) state.dir = state.dir === 'asc' ? 'desc' : 'asc';
       else { state.col = col; state.dir = numCols.has(col) ? 'desc' : 'asc'; }
       renderFn();
-    });
+    };
+    th.addEventListener('click', activate);
+    th.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
   });
 }
 function applySortHeaders(tableId, state) {
   document.querySelectorAll(`#${tableId} .sort-header`).forEach(th => {
     th.classList.remove('sort-asc', 'sort-desc');
-    if (th.dataset.col === state.col) th.classList.add(state.dir === 'asc' ? 'sort-asc' : 'sort-desc');
+    if (th.dataset.col === state.col) {
+      th.classList.add(state.dir === 'asc' ? 'sort-asc' : 'sort-desc');
+      th.setAttribute('aria-sort', state.dir === 'asc' ? 'ascending' : 'descending');
+    } else {
+      th.removeAttribute('aria-sort');
+    }
   });
 }
 

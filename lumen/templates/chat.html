@@ -195,7 +195,7 @@
       item.setAttribute("role", "listitem");
       item.setAttribute("tabindex", "0");
       item.setAttribute("aria-label", conv.title);
-      item.setAttribute("aria-selected", isActive ? "true" : "false");
+      if (isActive) item.setAttribute("aria-current", "true");
 
       const info = document.createElement("div");
       info.className = "flex-fill overflow-hidden me-1";
@@ -242,7 +242,8 @@
       document.querySelectorAll(".conv-item").forEach(el => {
         const match = parseInt(el.dataset.id) === id;
         el.classList.toggle("active", match);
-        el.setAttribute("aria-selected", match ? "true" : "false");
+        if (match) el.setAttribute("aria-current", "true");
+        else el.removeAttribute("aria-current");
       });
       document.getElementById("chat-input").focus();
     } catch (e) {}
@@ -462,7 +463,15 @@
     row.appendChild(notice);
     if (isError) {
       let timer = setTimeout(() => dismiss(), 20000);
-      function dismiss() { if (row.contains(notice)) { row.innerHTML = ""; row.classList.add("d-none"); } }
+      function dismiss() {
+        if (!row.contains(notice)) return;
+        const sr = document.createElement("span");
+        sr.className = "visually-hidden";
+        sr.textContent = "Attachment error dismissed.";
+        row.innerHTML = "";
+        row.appendChild(sr);
+        setTimeout(() => { row.innerHTML = ""; row.classList.add("d-none"); }, 500);
+      }
       notice.addEventListener("mouseenter", () => clearTimeout(timer));
       notice.addEventListener("focus",      () => clearTimeout(timer));
       notice.addEventListener("mouseleave", () => { timer = setTimeout(dismiss, 20000); });

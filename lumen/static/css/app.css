@@ -45,6 +45,7 @@
 }
 
 .conv-item:hover .conv-remove-btn,
+.conv-item:focus-within .conv-remove-btn,
 .conv-remove-btn:focus {
     opacity: 1;
 }
@@ -148,7 +149,6 @@
 }
 .chat-bubble-assistant .katex-display {
     overflow-x: auto;
-    overflow-y: hidden;
     margin: 0.4rem 0;
 }
 

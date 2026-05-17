@@ -112,7 +112,7 @@
             <caption class="visually-hidden">Request heatmap: rows are days of the week, columns are hours 0–23</caption>
             <thead>
               <tr>
-                <th scope="col" style="min-width:2.5rem"></th>
+                <th scope="col" style="min-width:2.5rem"><span class="visually-hidden">Day</span></th>
                 <!-- hour headers filled by JS -->
               </tr>
             </thead>
@@ -217,7 +217,7 @@ function renderHeatmap(rows) {
 
   // Build header row
   const thead = document.querySelector('#heatmap-table thead tr');
-  thead.innerHTML = '<th scope="col" style="min-width:2.5rem"></th>';
+  thead.innerHTML = '<th scope="col" style="min-width:2.5rem"><span class="visually-hidden">Day</span></th>';
   for (let h = 0; h < 24; h++) {
     const th = document.createElement('th');
     th.scope = 'col';

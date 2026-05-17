@@ -52,7 +52,7 @@
   </div>
   <div class="d-flex align-items-center gap-2">
     <label for="search" class="text-muted small mb-0">Search:</label>
-    <input id="search" type="search" class="form-control form-control-sm" style="width:220px">
+    <input id="search" type="search" class="form-control form-control-sm" style="width:220px" aria-label="Search users by name or email">
   </div>
 </div>
 
@@ -90,8 +90,8 @@
 .sort-header.wrap { white-space: normal; }
 .sort-arrows { display: inline-flex; flex-direction: column; font-size: 0.6em; line-height: 1.1; float: right; margin-left: 6px; margin-top: 2px; }
 .sa-up, .sa-dn { color: #adb5bd; }
-.sort-asc .sa-up { color: #212529; }
-.sort-desc .sa-dn { color: #212529; }
+.sort-asc .sa-up { color: #212529; font-weight: 700; }
+.sort-desc .sa-dn { color: #212529; font-weight: 700; }
 </style>
 {% endblock %}
 
@@ -126,7 +126,12 @@
   function updateSortHeaders() {
     document.querySelectorAll('.sort-header').forEach(th => {
       th.classList.remove('sort-asc', 'sort-desc');
-      if (th.dataset.col === sort) th.classList.add(order === 'asc' ? 'sort-asc' : 'sort-desc');
+      if (th.dataset.col === sort) {
+        th.classList.add(order === 'asc' ? 'sort-asc' : 'sort-desc');
+        th.setAttribute('aria-sort', order === 'asc' ? 'ascending' : 'descending');
+      } else {
+        th.removeAttribute('aria-sort');
+      }
     });
   }
 
@@ -264,15 +269,18 @@
       .catch(() => { btn.disabled = false; });
   }
 
+  const DESC_COLS = new Set(['joined', 'last_used', 'requests', 'tokens_used', 'coins_available', 'cost']);
   document.querySelectorAll('.sort-header').forEach(th => {
-    th.addEventListener('click', () => {
+    th.setAttribute('tabindex', '0');
+    const activate = () => {
       const col = th.dataset.col;
-      const DESC_COLS = new Set(['joined', 'last_used', 'requests', 'tokens_used', 'coins_available', 'cost']);
       if (sort === col) { order = order === 'asc' ? 'desc' : 'asc'; }
       else { sort = col; order = DESC_COLS.has(col) ? 'desc' : 'asc'; }
       page = 1;
       fetchUsers();
-    });
+    };
+    th.addEventListener('click', activate);
+    th.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
   });
 
   searchInput.addEventListener('input', () => {
