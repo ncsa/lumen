@@ -19,9 +19,8 @@ logger = logging.getLogger(__name__)
 def refill_coin_balances(now: datetime = None) -> int:
     """Run one refill pass; return the number of balances updated. Caller owns the app context."""
     if now is None:
-        now = datetime.now(timezone.utc)
-    # Normalize to naive UTC so arithmetic with DB values is consistent on all backends
-    if now.tzinfo is not None:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+    elif now.tzinfo is not None:
         now = now.replace(tzinfo=None)
     one_hour_ago = now - timedelta(hours=1)
     due = db.session.execute(

@@ -5,6 +5,7 @@ All notable changes to Lumen will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- `last_refill_at`: standardize on naive UTC (`TIMESTAMP WITHOUT TIME ZONE`) matching all other `DateTime` columns; removes tz-aware/naive comparison hazard in `token_refill.py`
 - `subtract_coins`: when balance is too low to cover a request cost, the balance is now zeroed out so subsequent requests are blocked rather than silently served for free
 - `subtract_coins`: creates an `EntityBalance` row on first API use if none exists, preventing a silent no-op deduction for new API users
 - `get_coin_balance`: removed the side-effect of creating an `EntityBalance` row; returns `starting_coins` when no row exists without mutating the DB

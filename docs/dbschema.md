@@ -178,7 +178,8 @@ erDiagram
     }
 
     request_logs {
-        datetime time PK
+        bigint id PK
+        datetime time
         int entity_id FK
         int model_config_id FK
         int model_endpoint_id FK
@@ -272,7 +273,7 @@ API keys that entities (users or clients) use to authenticate against the proxy 
 | `id` | Integer | NO | Primary key |
 | `entity_id` | Integer (FK → entities) | NO | The entity that owns this key. Cascades on delete. |
 | `name` | String(128) | NO | Human-readable label for the key (e.g., "Production bot") |
-| `key_hash` | String(64) | YES | SHA-256 hash of the raw key. Unique; null only during legacy migration. |
+| `key_hash` | String(64) | NO | SHA-256 hash of the raw key. Unique. |
 | `key_hint` | String(32) | YES | Last few characters of the raw key shown in the UI for identification |
 | `active` | Boolean | NO | Whether the key is currently usable |
 | `requests` | Integer | NO | Cumulative request count made with this key |
@@ -297,7 +298,6 @@ Configuration and metadata for each AI model that Lumen can proxy. One row per l
 | `active` | Boolean | NO | Whether the model is available for use. Inactive models are hidden from clients. |
 | `description` | Text | YES | Human-readable description shown in the UI |
 | `url` | String(512) | YES | Link to the model's documentation or provider page |
-| `max_input_tokens` | Integer | YES | Maximum context window size in tokens (deprecated; use `context_window`) |
 | `supports_function_calling` | Boolean | YES | Whether the model supports tool/function-calling |
 | `input_modalities` | JSON | YES | List of supported input types, e.g., `["text", "image"]` |
 | `output_modalities` | JSON | YES | List of supported output types, e.g., `["text"]` |
@@ -546,7 +546,8 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
-| `time` | DateTime (with timezone) | NO | UTC timestamp of the request; serves as the primary key and TimescaleDB partition key |
+| `id` | BigInteger | NO | Surrogate primary key (Integer on SQLite); avoids timestamp collision under concurrent load |
+| `time` | DateTime (with timezone) | NO | UTC timestamp of the request; TimescaleDB partition key. Indexed but non-unique. |
 | `entity_id` | Integer (FK → entities) | YES | The entity that made the request; set to NULL if the entity is later deleted |
 | `model_config_id` | Integer (FK → model_configs) | YES | The model used; set to NULL if the model is later deleted |
 | `model_endpoint_id` | Integer (FK → model_endpoints) | YES | The specific backend endpoint that served the request; set to NULL if the endpoint is later deleted |
@@ -558,7 +559,7 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 
 **Notes:**
 - Foreign keys use `SET NULL` on delete (not cascade) to preserve historical log data when entities, models, or endpoints are removed.
-- On PostgreSQL, `time` must be unique at the nanosecond level. High-concurrency deployments should append a nanosecond jitter when inserting to avoid collisions.
+- `time` is indexed but not unique; concurrent workers may insert rows with the same timestamp without collision.
 
 ---
 
