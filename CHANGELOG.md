@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.11.2] - 2026-05-17
+
 ### Fixed
 - `last_refill_at`: standardize on naive UTC (`TIMESTAMP WITHOUT TIME ZONE`) matching all other `DateTime` columns; removes tz-aware/naive comparison hazard in `token_refill.py`
 - `subtract_coins`: when balance is too low to cover a request cost, the balance is now zeroed out so subsequent requests are blocked rather than silently served for free
