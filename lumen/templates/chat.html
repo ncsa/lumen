@@ -194,55 +194,91 @@
   // ── Load conversations on page load ─────────────────────────────
   loadConversations();
 
-  async function loadConversations() {
+  let _lastConvId = null;
+
+  async function loadConversations(append = false) {
     try {
-      const resp = await fetch("/chat/conversations");
+      const url = append && _lastConvId
+        ? `/chat/conversations?before=${_lastConvId}`
+        : "/chat/conversations";
+      const resp = await fetch(url);
       if (!resp.ok) return;
       const data = await resp.json();
-      renderSidebar(data.conversations);
+      if (!append) {
+        renderSidebar(data.conversations, data.has_more);
+      } else {
+        appendSidebar(data.conversations, data.has_more);
+      }
     } catch (e) {}
   }
 
-  function renderSidebar(conversations) {
+  function appendSidebar(conversations, hasMore) {
+    const list = document.getElementById("conv-list");
+    const loadMoreBtn = document.getElementById("conv-load-more");
+    if (loadMoreBtn) loadMoreBtn.remove();
+    conversations.forEach(conv => appendConvItem(list, conv));
+    if (hasMore && conversations.length > 0) {
+      _lastConvId = conversations[conversations.length - 1].id;
+      addLoadMoreButton(list);
+    }
+  }
+
+  function addLoadMoreButton(list) {
+    const btn = document.createElement("button");
+    btn.id = "conv-load-more";
+    btn.className = "btn btn-link btn-sm w-100 text-muted py-2";
+    btn.textContent = "Load more…";
+    btn.addEventListener("click", () => loadConversations(true));
+    list.appendChild(btn);
+  }
+
+  function renderSidebar(conversations, hasMore) {
     const list = document.getElementById("conv-list");
     list.innerHTML = "";
-    conversations.forEach(conv => {
-      const isActive = conv.id === activeConversationId;
-      const item = document.createElement("div");
-      item.className = "conv-item d-flex align-items-center px-3 py-2" +
-        (isActive ? " active" : "");
-      item.dataset.id = conv.id;
-      item.setAttribute("role", "listitem");
-      item.setAttribute("tabindex", "0");
-      item.setAttribute("aria-label", conv.title);
-      if (isActive) item.setAttribute("aria-current", "true");
+    _lastConvId = null;
+    conversations.forEach(conv => appendConvItem(list, conv));
+    if (hasMore && conversations.length > 0) {
+      _lastConvId = conversations[conversations.length - 1].id;
+      addLoadMoreButton(list);
+    }
+  }
 
-      const info = document.createElement("div");
-      info.className = "flex-fill overflow-hidden me-1";
-      info.innerHTML =
-        `<div class="small fw-medium text-truncate">${escHtml(conv.title)}</div>` +
-        `<div class="msg-meta text-truncate">${escHtml(conv.last_message_preview || "")}</div>`;
+  function appendConvItem(list, conv) {
+    const isActive = conv.id === activeConversationId;
+    const item = document.createElement("div");
+    item.className = "conv-item d-flex align-items-center px-3 py-2" +
+      (isActive ? " active" : "");
+    item.dataset.id = conv.id;
+    item.setAttribute("role", "listitem");
+    item.setAttribute("tabindex", "0");
+    item.setAttribute("aria-label", conv.title);
+    if (isActive) item.setAttribute("aria-current", "true");
 
-      const removeBtn = document.createElement("button");
-      removeBtn.className = "conv-remove-btn btn btn-link btn-sm p-0 text-muted";
-      removeBtn.setAttribute("aria-label", "Remove conversation: " + conv.title);
-      removeBtn.textContent = "✕";
-      removeBtn.addEventListener("click", e => {
-        e.stopPropagation();
-        removeConversation(conv.id);
-      });
+    const info = document.createElement("div");
+    info.className = "flex-fill overflow-hidden me-1";
+    info.innerHTML =
+      `<div class="small fw-medium text-truncate">${escHtml(conv.title)}</div>` +
+      `<div class="msg-meta text-truncate">${escHtml(conv.last_message_preview || "")}</div>`;
 
-      item.appendChild(info);
-      item.appendChild(removeBtn);
-      item.addEventListener("click", () => loadConversation(conv.id));
-      item.addEventListener("keydown", e => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          loadConversation(conv.id);
-        }
-      });
-      list.appendChild(item);
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "conv-remove-btn btn btn-link btn-sm p-0 text-muted";
+    removeBtn.setAttribute("aria-label", "Remove conversation: " + conv.title);
+    removeBtn.textContent = "✕";
+    removeBtn.addEventListener("click", e => {
+      e.stopPropagation();
+      removeConversation(conv.id);
     });
+
+    item.appendChild(info);
+    item.appendChild(removeBtn);
+    item.addEventListener("click", () => loadConversation(conv.id));
+    item.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        loadConversation(conv.id);
+      }
+    });
+    list.appendChild(item);
   }
 
   async function loadConversation(id) {

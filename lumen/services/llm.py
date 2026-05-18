@@ -33,6 +33,37 @@ from lumen.services.cost import calculate_cost
 _ACCESS_PRIORITY = {"blacklist": 0, "graylist": 1, "whitelist": 2}
 
 
+def _resolve_single_access(
+    ema_type: str,
+    gma_types: list,
+    group_defaults: list,
+    entity_default: str,
+) -> str:
+    """Resolve 'allowed', 'graylist', or 'blocked' from pre-fetched per-model access data.
+
+    Precedence (highest to lowest):
+    1. Entity model access (ema_type) — whitelist/graylist/blacklist
+    2. Group per-model rules (gma_types) — blacklist beats whitelist beats graylist
+    3. Group defaults (group_defaults) — most permissive wins
+    4. Entity-level default (entity_default)
+    5. Allow by default
+    """
+    if ema_type is not None:
+        return "allowed" if ema_type == "whitelist" else ("graylist" if ema_type == "graylist" else "blocked")
+    if gma_types:
+        best = min(gma_types, key=lambda t: _ACCESS_PRIORITY.get(t, 99))
+        return "blocked" if best == "blacklist" else ("allowed" if best == "whitelist" else "graylist")
+    if group_defaults:
+        if "whitelist" in group_defaults:
+            return "allowed"
+        if "graylist" in group_defaults:
+            return "graylist"
+        return "blocked"
+    if entity_default:
+        return "blocked" if entity_default == "blacklist" else ("graylist" if entity_default == "graylist" else "allowed")
+    return "allowed"
+
+
 class PoolLimit(NamedTuple):
     max_coins: float
     refresh_coins: float
@@ -98,23 +129,12 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
 
     access_statuses: dict = {}
     for mc_id in model_config_ids:
-        if mc_id in ema_by_model:
-            t = ema_by_model[mc_id]
-            access_statuses[mc_id] = "allowed" if t == "whitelist" else ("graylist" if t == "graylist" else "blocked")
-        elif group_ids and mc_id in gma_by_model:
-            best = min(gma_by_model[mc_id], key=lambda t: _ACCESS_PRIORITY.get(t, 99))
-            access_statuses[mc_id] = "blocked" if best == "blacklist" else ("allowed" if best == "whitelist" else "graylist")
-        elif group_defaults:
-            if "whitelist" in group_defaults:
-                access_statuses[mc_id] = "allowed"
-            elif "graylist" in group_defaults:
-                access_statuses[mc_id] = "graylist"
-            else:
-                access_statuses[mc_id] = "blocked"
-        elif entity_default:
-            access_statuses[mc_id] = "blocked" if entity_default == "blacklist" else ("graylist" if entity_default == "graylist" else "allowed")
-        else:
-            access_statuses[mc_id] = "allowed"
+        access_statuses[mc_id] = _resolve_single_access(
+            ema_by_model.get(mc_id),
+            gma_by_model.get(mc_id, []) if group_ids else [],
+            group_defaults if group_ids else [],
+            entity_default,
+        )
 
     return access_statuses, consented_ids
 
@@ -165,65 +185,38 @@ def get_model_access_status(entity_id: int, model_config_id: int) -> str:
     """
     Return 'allowed', 'blocked', or 'graylist' for the given entity + model.
 
-    Resolution:
-    1. User-level EntityModelAccess (whitelist/graylist/blacklist) overrides everything.
-    2. Group per-model rules (GroupModelAccess): blacklist > whitelist > graylist.
-    3. Effective default: most permissive group model_access_default wins.
-    4. Entity-level default (for client entities).
+    Resolution order: entity model access → group model rules → group defaults → entity default.
     """
     user_access = db.session.execute(
         select(EntityModelAccess).filter_by(entity_id=entity_id, model_config_id=model_config_id)
     ).scalar_one_or_none()
-    if user_access is not None:
-        if user_access.access_type == "whitelist":
-            return "allowed"
-        if user_access.access_type == "graylist":
-            return "graylist"
-        return "blocked"
+    ema_type = user_access.access_type if user_access is not None else None
 
     group_ids = _get_active_group_ids(entity_id)
 
+    gma_types: list = []
     if group_ids:
-        group_rules = db.session.execute(
-            select(GroupModelAccess).where(
-                GroupModelAccess.group_id.in_(group_ids),
-                GroupModelAccess.model_config_id == model_config_id,
-            )
-        ).scalars().all()
-        if group_rules:
-            best = min(group_rules, key=lambda r: _ACCESS_PRIORITY.get(r.access_type, 99))
-            if best.access_type == "blacklist":
-                return "blocked"
-            if best.access_type == "whitelist":
-                return "allowed"
-            return "graylist"
+        gma_types = [
+            r.access_type for r in db.session.execute(
+                select(GroupModelAccess).where(
+                    GroupModelAccess.group_id.in_(group_ids),
+                    GroupModelAccess.model_config_id == model_config_id,
+                )
+            ).scalars().all()
+        ]
 
-    # Apply effective default
+    group_defaults: list = []
     if group_ids:
         group_defaults = [
             g.model_access_default for g in db.session.execute(
                 select(Group).where(Group.id.in_(group_ids), Group.model_access_default.isnot(None))
             ).scalars().all()
         ]
-        if group_defaults:
-            # Most permissive wins: if any group allows, allow.
-            # This matches individual model rule behavior (any whitelist grants access).
-            if "whitelist" in group_defaults:
-                return "allowed"
-            if "graylist" in group_defaults:
-                return "graylist"
-            return "blocked"
 
-    # Entity-level default (used for service/client entities configured via yaml)
     entity = db.session.get(Entity, entity_id)
-    if entity and entity.model_access_default:
-        if entity.model_access_default == "blacklist":
-            return "blocked"
-        if entity.model_access_default == "graylist":
-            return "graylist"
-        return "allowed"
+    entity_default = entity.model_access_default if entity else None
 
-    return "allowed"
+    return _resolve_single_access(ema_type, gma_types, group_defaults, entity_default)
 
 
 def has_model_consent(entity_id: int, model_config_id: int) -> bool:
@@ -305,13 +298,7 @@ def get_coin_balance(entity_id: int, model_config_id: int):
 
     balance = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()
     if balance is None:
-        balance = EntityBalance(
-            entity_id=entity_id,
-            coins_left=starting,
-            last_refill_at=datetime.now(timezone.utc),
-        )
-        db.session.add(balance)
-        db.session.flush()
+        return float(starting)
 
     return float(balance.coins_left)
 
@@ -321,9 +308,20 @@ def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float):
     effective = get_effective_limit(entity_id, model_config_id)
     if effective is None:
         return
-    max_coins, _refresh, _starting = effective
+    max_coins, _refresh, starting = effective
     if max_coins == -2:
         return
+
+    # Ensure balance row exists (first API use before login creates it).
+    try:
+        with db.session.begin_nested():
+            db.session.add(EntityBalance(
+                entity_id=entity_id,
+                coins_left=starting,
+                last_refill_at=datetime.now(timezone.utc),
+            ))
+    except IntegrityError:
+        pass
 
     result = db.session.execute(
         sa_update(EntityBalance)
@@ -332,14 +330,26 @@ def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float):
     )
     if result.rowcount == 0:
         logger.warning(
-            "subtract_coins: balance exhausted for entity_id=%s (coin_cost=%.4f) — request was not charged",
+            "subtract_coins: balance exhausted for entity_id=%s (coin_cost=%.4f) — zeroing balance",
             entity_id, coin_cost,
+        )
+        db.session.execute(
+            sa_update(EntityBalance)
+            .where(EntityBalance.entity_id == entity_id)
+            .values(coins_left=0)
         )
     db.session.flush()
 
 
 def check_coin_budget(entity_id: int, model_config_id: int):
-    """Check coin budget. Returns (ok, http_code, error_message)."""
+    """Check coin budget. Returns (ok, http_code, error_message).
+
+    This is an optimistic gate: it checks that the balance is > 0 before the LLM
+    call, but the actual cost is unknown until the call completes. A user with a tiny
+    positive balance will pass this check, consume tokens, and have their balance
+    zeroed by subtract_coins afterward. This is intentional — the budget is a soft
+    spending limit, not a hard reservation.
+    """
     effective = get_effective_limit(entity_id, model_config_id)
     if effective is None:
         return False, HTTPStatus.FORBIDDEN, "No access to this model"

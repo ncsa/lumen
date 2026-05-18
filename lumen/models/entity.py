@@ -28,7 +28,7 @@ class Entity(db.Model):
     # 'whitelist' | 'blacklist' | 'graylist'; primarily used for client entities.
     model_access_default = db.Column(db.String(16), nullable=True, comment="Default model access policy: whitelist, blacklist, or graylist; client entities only")
 
-    api_keys = db.relationship("APIKey", backref="entity", lazy="dynamic", cascade="all, delete-orphan", passive_deletes=True)
+    api_keys = db.relationship("APIKey", backref="entity", lazy="select", cascade="all, delete-orphan", passive_deletes=True)
     entity_limit = db.relationship("EntityLimit", backref="entity", uselist=False, cascade="all, delete-orphan", passive_deletes=True)
     entity_balance = db.relationship("EntityBalance", backref="entity", uselist=False, cascade="all, delete-orphan", passive_deletes=True)
-    model_stats = db.relationship("ModelStat", backref="entity", lazy="dynamic", passive_deletes=True)
+    model_stats = db.relationship("ModelStat", backref="entity", lazy="select", passive_deletes=True)

@@ -243,7 +243,7 @@ def test_get_coin_balance_unlimited(app, test_user, test_model):
         assert get_coin_balance(entity_id, model_id) is None
 
 
-def test_get_coin_balance_creates_balance(app, test_user, test_model):
+def test_get_coin_balance_returns_starting_when_no_row(app, test_user, test_model):
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
         from lumen.extensions import db
@@ -254,9 +254,9 @@ def test_get_coin_balance_creates_balance(app, test_user, test_model):
         db.session.commit()
         balance = get_coin_balance(entity_id, model_id)
         assert balance == 50.0
-        # Balance row should have been created
+        # get_coin_balance must not create a DB row — row creation belongs to subtract_coins/login
         row = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()
-        assert row is not None
+        assert row is None
 
 
 def test_get_coin_balance_existing_balance(app, test_user, test_model):
@@ -360,16 +360,14 @@ def test_update_stats_accumulates(app, test_user, test_model):
         from lumen.extensions import db
         from lumen.models.model_stat import ModelStat
         from lumen.services.llm import update_stats
-        import time
-        update_stats(entity_id, model_id, "api", 50, _IN_TOKENS, 0.0001)
+        update_stats(entity_id, model_id, "api", 50, 100, 0.0001)
         db.session.commit()
-        time.sleep(0.001)  # ensure distinct timestamps for primary key
-        update_stats(entity_id, model_id, "api", 50, _IN_TOKENS, 0.0001)
+        update_stats(entity_id, model_id, "api", 50, 100, 0.0001)
         db.session.commit()
         stat = db.session.execute(select(ModelStat).filter_by(entity_id=entity_id, model_config_id=model_id, source="api")).scalar_one_or_none()
         assert stat.requests == 2
-        assert stat.input_tokens == _IN_TOKENS
-        assert stat.output_tokens == _OUT_TOKENS
+        assert stat.input_tokens == 100   # 50 + 50
+        assert stat.output_tokens == 200  # 100 + 100
 
 
 # ---------------------------------------------------------------------------

@@ -29,7 +29,7 @@ def check_all_endpoints() -> int:
     endpoints = [ep for ep, _ in rows]
     for ep, config_model_name in rows:
         try:
-            with openai.OpenAI(api_key=ep.api_key, base_url=ep.url) as client:
+            with openai.OpenAI(api_key=ep.api_key, base_url=ep.url, timeout=5.0) as client:
                 models = client.models.list()
             model_ids = {m.id for m in models.data}
             expected = ep.model_name or config_model_name

@@ -132,6 +132,7 @@ def _apply_user_model_overrides(entity: Entity, email: str, yaml_data: dict) -> 
 
 def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=None):
     """Sync group memberships and per-user model limits from yaml_data. Does not commit."""
+    session.pop("_nav", None)
     desired_names = _desired_groups_from_config(email, yaml_data)
     if userinfo:
         desired_names += _groups_from_userinfo_rules(userinfo, yaml_data, desired_names)

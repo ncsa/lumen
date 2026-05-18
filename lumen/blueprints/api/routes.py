@@ -22,7 +22,7 @@ from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.request_log import RequestLog
 from lumen.services.cost import calculate_cost
-from lumen.services.llm import check_coin_budget, subtract_coins, get_effective_limit, get_next_endpoint, update_stats
+from lumen.services.llm import bulk_model_access_info, check_coin_budget, subtract_coins, get_effective_limit, get_next_endpoint, get_pool_limit, update_stats
 
 api_bp = Blueprint("api", __name__, url_prefix="/v1")
 
@@ -202,7 +202,16 @@ def list_models():
         data = [_model_dict(c, rates, eps_by_model.get(c.id, [])) for c in configs]
     else:
         entity_id = g.entity.id
-        data = [_model_dict(c, rates, eps_by_model.get(c.id, [])) for c in configs if get_effective_limit(entity_id, c.id) is not None]
+        model_ids = [c.id for c in configs]
+        access_statuses, consented_ids = bulk_model_access_info(entity_id, model_ids)
+        pool = get_pool_limit(entity_id)
+        data = [
+            _model_dict(c, rates, eps_by_model.get(c.id, []))
+            for c in configs
+            if pool is not None
+            and access_statuses.get(c.id, "allowed") != "blocked"
+            and (access_statuses.get(c.id, "allowed") != "graylist" or c.id in consented_ids)
+        ]
     return jsonify({"object": "list", "data": data})
 
 
@@ -296,13 +305,18 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
         return _err("Upstream error. Please try again.", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
 
     usage = response.usage
-    cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens, model_config)
+    if usage is None:
+        logger.warning("Upstream did not return usage data (model=%s, entity_id=%s)", model_name, entity_id)
+        usage_prompt, usage_completion = 0, 0
+    else:
+        usage_prompt, usage_completion = usage.prompt_tokens, usage.completion_tokens
 
+    cost = calculate_cost(usage_prompt, usage_completion, model_config)
     subtract_coins(entity_id, model_config.id, cost)
-    update_stats(entity_id, model_config.id, "api", usage.prompt_tokens, usage.completion_tokens, cost,
+    update_stats(entity_id, model_config.id, "api", usage_prompt, usage_completion, cost,
                  endpoint_id=endpoint.id, duration=duration)
 
-    _record_api_key_usage(g.api_key.id, usage.prompt_tokens, usage.completion_tokens, cost)
+    _record_api_key_usage(g.api_key.id, usage_prompt, usage_completion, cost)
     db.session.commit()
 
     return jsonify(response.model_dump())
@@ -341,6 +355,9 @@ def completions():
     if not model_name or not prompt:
         return _err("model and prompt are required")
 
+    if data.get("stream", False):
+        return _err("Streaming is not supported on /v1/completions; use /v1/chat/completions")
+
     messages = [{"role": "user", "content": prompt}]
 
     model_config, endpoint, err = _preflight(model_name)
@@ -358,14 +375,23 @@ def completions():
         logger.exception("upstream LLM error")
         return _err("Upstream error. Please try again.", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
 
-    usage = response.usage
-    cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens, model_config)
+    if not response.choices:
+        return _err("No response from model", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
 
+    usage = response.usage
+    if usage is None:
+        logger.warning("Upstream did not return usage data (model=%s, entity_id=%s)", model_name, entity_id)
+        usage_prompt, usage_completion, usage_total = 0, 0, 0
+    else:
+        usage_prompt, usage_completion = usage.prompt_tokens, usage.completion_tokens
+        usage_total = usage.total_tokens
+
+    cost = calculate_cost(usage_prompt, usage_completion, model_config)
     subtract_coins(entity_id, model_config.id, cost)
-    update_stats(entity_id, model_config.id, "api", usage.prompt_tokens, usage.completion_tokens, cost,
+    update_stats(entity_id, model_config.id, "api", usage_prompt, usage_completion, cost,
                  endpoint_id=endpoint.id, duration=duration)
 
-    _record_api_key_usage(g.api_key.id, usage.prompt_tokens, usage.completion_tokens, cost)
+    _record_api_key_usage(g.api_key.id, usage_prompt, usage_completion, cost)
     db.session.commit()
 
     return jsonify(
@@ -382,9 +408,9 @@ def completions():
                 }
             ],
             "usage": {
-                "prompt_tokens": usage.prompt_tokens,
-                "completion_tokens": usage.completion_tokens,
-                "total_tokens": usage.total_tokens,
+                "prompt_tokens": usage_prompt,
+                "completion_tokens": usage_completion,
+                "total_tokens": usage_total,
             },
         }
     )

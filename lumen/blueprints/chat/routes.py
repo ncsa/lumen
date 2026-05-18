@@ -12,7 +12,7 @@ from werkzeug.utils import secure_filename
 
 logger = logging.getLogger(__name__)
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 
 from lumen.decorators import login_required
 from lumen.extensions import db, limiter
@@ -107,6 +107,7 @@ def chat_page():
 
 @chat_bp.route("/chat/upload", methods=["POST"])
 @login_required
+@limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def chat_upload():
     allowed, max_bytes, max_chars = _upload_config()
 
@@ -142,8 +143,9 @@ def chat_upload():
         try:
             reader = pypdf.PdfReader(io.BytesIO(data))
             text = "\n".join(page.extract_text() or "" for page in reader.pages)
-        except Exception as e:
-            return jsonify({"error": f"Could not read PDF: {e}"}), HTTPStatus.BAD_REQUEST
+        except Exception:
+            logger.exception("PDF parse error: %s", safe_name)
+            return jsonify({"error": "Could not read PDF"}), HTTPStatus.BAD_REQUEST
     else:
         text = data.decode("utf-8", errors="replace")
 
@@ -258,11 +260,32 @@ def chat_stream():
 @limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def list_conversations():
     entity_id = session["entity_id"]
-    convs = db.session.execute(
+    limit = min(request.args.get("limit", 50, type=int), 200)
+    before_id = request.args.get("before", type=int)
+
+    stmt = (
         select(Conversation)
         .filter_by(entity_id=entity_id, hidden=False)
-        .order_by(Conversation.updated_at.desc())
-    ).scalars().all()
+        .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+    )
+    if before_id is not None:
+        anchor = db.session.execute(
+            select(Conversation).filter_by(id=before_id, entity_id=entity_id)
+        ).scalar_one_or_none()
+        if anchor and anchor.updated_at is not None:
+            stmt = stmt.where(
+                or_(
+                    Conversation.updated_at < anchor.updated_at,
+                    and_(
+                        Conversation.updated_at == anchor.updated_at,
+                        Conversation.id < anchor.id,
+                    ),
+                )
+            )
+
+    convs = db.session.execute(stmt.limit(limit + 1)).scalars().all()
+    has_more = len(convs) > limit
+    convs = convs[:limit]
     conv_ids = [c.id for c in convs]
     last_msgs: dict[int, Message] = {}
     if conv_ids:
@@ -290,7 +313,7 @@ def list_conversations():
             "updated_at": conv.updated_at.strftime('%Y-%m-%dT%H:%M:%SZ') if conv.updated_at else None,
             "last_message_preview": last_msg.content[:60] if last_msg else "",
         })
-    return jsonify({"conversations": result})
+    return jsonify({"conversations": result, "has_more": has_more})
 
 
 @chat_bp.route("/chat/conversations/<int:cid>/messages")

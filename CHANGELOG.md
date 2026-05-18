@@ -2,6 +2,36 @@
 
 All notable changes to Lumen will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- `subtract_coins`: when balance is too low to cover a request cost, the balance is now zeroed out so subsequent requests are blocked rather than silently served for free
+- `subtract_coins`: creates an `EntityBalance` row on first API use if none exists, preventing a silent no-op deduction for new API users
+- `get_coin_balance`: removed the side-effect of creating an `EntityBalance` row; returns `starting_coins` when no row exists without mutating the DB
+- `GET /v1/models`: replaced per-model `get_effective_limit` calls (N+1 queries) with a single `bulk_model_access_info` + `get_pool_limit` call
+- `chat_upload`: added `@limiter.limit` rate limiting (was the only chat endpoint without it)
+- `refill_coin_balances`: use fractional elapsed hours instead of truncating to whole hours, preventing permanent coin loss when the refill thread fires between hour boundaries
+- `refill_coin_balances`: push the "overdue" filter into the SQL query instead of loading all balances into Python first
+- `sync_user_from_yaml`: invalidate the `_nav` session cache on every login so permission changes in `config.yaml` take effect on next login
+- Health checker: added `timeout=5.0` to the `openai.OpenAI` client so a slow endpoint cannot block all health checks
+- Admin analytics routes: replaced f-string SQL interpolation of the bucket interval with a bound `CAST(:bucket AS INTERVAL)` parameter
+- `_reconcile_endpoints`: use `next(..., None)` with a guard instead of bare `next(...)` to avoid `StopIteration` on concurrent config reload
+- `admin_required`: non-API browser requests now receive an HTML 403 page instead of a raw JSON error
+- `list_conversations`: added `limit` (default 50, max 200) and `before` cursor pagination; frontend shows a "Load more…" button when additional conversations exist
+- `list_conversations`: cursor now uses a composite `(updated_at DESC, id DESC)` key to prevent conversations with identical timestamps from being silently skipped on page boundaries
+- `list_conversations`: `before` cursor lookup now filters by `entity_id` to prevent timestamp probing of other users' conversations
+- `list_conversations`: malformed `?limit=` values now fall back to the default instead of returning 500
+- `reset_user_tokens`: reset now restores `starting_coins` rather than `max(starting_coins, max_coins)`, which was incorrectly granting more than the starting allocation
+- `/v1/completions`: requests with `stream: true` now return a 400 error instead of silently ignoring the flag and returning non-streaming JSON
+- `/v1/chat/completions` and `/v1/completions`: guard against upstreams that return `usage=None` or `choices=[]` (content-filtered responses) instead of crashing with `AttributeError`/`IndexError`
+- `chat_upload`: PDF parse errors no longer leak internal exception details to the client; the exception is logged server-side and a generic message is returned
+- `_resolve_single_access`: extracted shared access-resolution helper used by both `get_model_access_status` and `bulk_model_access_info`, eliminating duplicated precedence logic
+- `ModelConfig.endpoints`, `ModelConfig.stats`, `Entity.api_keys`, `Entity.model_stats`: migrated from deprecated `lazy="dynamic"` to `lazy="select"`
+- `_reconcile_endpoints`: build a `{url: endpoint}` dict once instead of iterating the endpoints collection O(n) times per endpoint
+- `_deactivate_removed_models`: replaced Python-side filtering with a SQL `WHERE model_name NOT IN (...)` query and bulk `DELETE`/`UPDATE` statements; also fixed a bug where an empty yaml models list left all existing models active
+- `refill_coin_balances`: normalize `now` to naive UTC at function entry to prevent `TypeError` when mixing timezone-aware and timezone-naive datetimes across database backends
+- Added `*.dump` to `.gitignore` to prevent accidental commit of database dump files
+
 ## [1.11.1] - 2026-05-17
 
 ### Fixed

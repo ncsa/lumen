@@ -72,7 +72,7 @@ def reset_user_tokens(eid):
     max_coins, _refresh, starting_coins = pool
     if max_coins == -2:
         return jsonify({"error": "User has unlimited coins"}), HTTPStatus.BAD_REQUEST
-    new_balance = max(starting_coins, max_coins)
+    new_balance = starting_coins
     balance = db.session.execute(select(EntityBalance).filter_by(entity_id=eid)).scalar_one_or_none()
     if balance:
         balance.coins_left = new_balance
@@ -356,18 +356,18 @@ def analytics_requests():
         abort(HTTPStatus.BAD_REQUEST)
 
     if start is not None:
-        rows = db.session.execute(text(f"""
-            SELECT time_bucket('{bucket}', bucket) AS period, SUM(requests) AS count
+        rows = db.session.execute(text("""
+            SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period, SUM(requests) AS count
             FROM request_counts_hourly
             WHERE bucket >= :start
             GROUP BY 1 ORDER BY 1
-        """), {"start": start}).all()
+        """), {"bucket": bucket, "start": start}).all()
     else:
-        rows = db.session.execute(text(f"""
-            SELECT time_bucket('{bucket}', bucket) AS period, SUM(requests) AS count
+        rows = db.session.execute(text("""
+            SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period, SUM(requests) AS count
             FROM request_counts_hourly
             GROUP BY 1 ORDER BY 1
-        """)).all()
+        """), {"bucket": bucket}).all()
 
     return jsonify([{"period": r[0].isoformat(), "count": int(r[1])} for r in rows])
 
@@ -384,20 +384,20 @@ def analytics_tokens():
         abort(HTTPStatus.BAD_REQUEST)
 
     if start is not None:
-        rows = db.session.execute(text(f"""
-            SELECT time_bucket('{bucket}', bucket) AS period,
+        rows = db.session.execute(text("""
+            SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period,
                    SUM(input_tokens + output_tokens) AS tokens
             FROM request_counts_hourly
             WHERE bucket >= :start
             GROUP BY 1 ORDER BY 1
-        """), {"start": start}).all()
+        """), {"bucket": bucket, "start": start}).all()
     else:
-        rows = db.session.execute(text(f"""
-            SELECT time_bucket('{bucket}', bucket) AS period,
+        rows = db.session.execute(text("""
+            SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period,
                    SUM(input_tokens + output_tokens) AS tokens
             FROM request_counts_hourly
             GROUP BY 1 ORDER BY 1
-        """)).all()
+        """), {"bucket": bucket}).all()
 
     return jsonify([{"period": r[0].isoformat(), "count": int(r[1])} for r in rows])
 

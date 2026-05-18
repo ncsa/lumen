@@ -1,4 +1,5 @@
 """Tests for refill_coin_balances — the per-tick logic of the coin refiller."""
+import pytest
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
@@ -132,8 +133,8 @@ def test_no_pool_skipped(app, test_user):
         assert float(bal.coins_left) == 42.0
 
 
-def test_partial_hour_uses_floor(app, test_user):
-    """1.7 hours elapsed → refill = 1*refresh_coins, not 1.7*."""
+def test_partial_hour_uses_float(app, test_user):
+    """1.7 hours elapsed → refill = 1.7*refresh_coins (no truncation)."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_balance import EntityBalance
@@ -146,7 +147,7 @@ def test_partial_hour_uses_floor(app, test_user):
 
         refill_coin_balances(now=now)
         bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one_or_none()
-        assert float(bal.coins_left) == 10.0  # int(1.7) * 10 = 10
+        assert float(bal.coins_left) == pytest.approx(17.0)  # 1.7 * 10 = 17
 
 
 def test_skips_balance_with_null_last_refill_at(app, test_user):
@@ -168,18 +169,18 @@ def test_skips_balance_with_null_last_refill_at(app, test_user):
 
 
 def test_new_balance_created_with_last_refill_at(app, test_user, test_model):
-    """get_coin_balance must stamp last_refill_at so the new balance is picked up by the refiller."""
+    """subtract_coins must stamp last_refill_at so the new balance is picked up by the refiller."""
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_balance import EntityBalance
         from lumen.models.entity_limit import EntityLimit
-        from lumen.services.llm import get_coin_balance
+        from lumen.services.llm import subtract_coins
         from lumen.services.token_refill import refill_coin_balances
         db.session.add(EntityLimit(entity_id=entity_id, max_coins=100, refresh_coins=10, starting_coins=50))
         db.session.commit()
 
-        get_coin_balance(entity_id, model_id)
+        subtract_coins(entity_id, model_id, 1.0)
         db.session.commit()
 
         bal = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()

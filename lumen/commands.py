@@ -34,13 +34,15 @@ def _apply_model_fields(config, model_def):
 
 def _reconcile_endpoints(config, model_def):
     yaml_urls = {ep_def["url"] for ep_def in model_def.get("endpoints", [])}
-    for ep in list(config.endpoints):
+    # Build dict once to avoid O(n²) iteration over the endpoints collection
+    existing_by_url = {ep.url: ep for ep in config.endpoints}
+
+    for ep in list(existing_by_url.values()):
         if ep.url not in yaml_urls:
             db.session.delete(ep)
 
-    existing_urls = {ep.url for ep in config.endpoints if ep.url in yaml_urls}
     for ep_def in model_def.get("endpoints", []):
-        if ep_def["url"] not in existing_urls:
+        if ep_def["url"] not in existing_by_url:
             db.session.add(ModelEndpoint(
                 model_config_id=config.id,
                 url=ep_def["url"],
@@ -49,17 +51,25 @@ def _reconcile_endpoints(config, model_def):
                 healthy=False,
             ))
         else:
-            existing_ep = next(e for e in config.endpoints if e.url == ep_def["url"])
+            existing_ep = existing_by_url[ep_def["url"]]
             existing_ep.api_key = ep_def["api_key"]
             existing_ep.model_name = ep_def.get("model") or None
 
 
 def _deactivate_removed_models(yaml_model_names):
-    for config in db.session.execute(select(ModelConfig)).scalars().all():
-        if config.model_name not in yaml_model_names:
-            config.active = False
-            for ep in list(config.endpoints):
-                db.session.delete(ep)
+    stmt = select(ModelConfig)
+    if yaml_model_names:
+        stmt = stmt.where(ModelConfig.model_name.notin_(yaml_model_names))
+    deactivated_ids = [c.id for c in db.session.execute(stmt).scalars().all()]
+    if not deactivated_ids:
+        return
+    db.session.execute(
+        delete(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(deactivated_ids))
+    )
+    db.session.execute(
+        update(ModelConfig).where(ModelConfig.id.in_(deactivated_ids)).values(active=False)
+    )
+    db.session.expire_all()
 
 
 def sync_models_from_yaml(yaml_data):

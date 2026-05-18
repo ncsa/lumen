@@ -1,7 +1,7 @@
 import logging
 import time
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
@@ -20,11 +20,16 @@ def refill_coin_balances(now: datetime = None) -> int:
     """Run one refill pass; return the number of balances updated. Caller owns the app context."""
     if now is None:
         now = datetime.now(timezone.utc)
-    balances = db.session.execute(
-        select(EntityBalance).where(EntityBalance.last_refill_at != None)  # noqa: E711
+    # Normalize to naive UTC so arithmetic with DB values is consistent on all backends
+    if now.tzinfo is not None:
+        now = now.replace(tzinfo=None)
+    one_hour_ago = now - timedelta(hours=1)
+    due = db.session.execute(
+        select(EntityBalance).where(
+            EntityBalance.last_refill_at != None,  # noqa: E711
+            EntityBalance.last_refill_at <= one_hour_ago,
+        )
     ).scalars().all()
-
-    due = [bal for bal in balances if (now - bal.last_refill_at).total_seconds() / 3600 >= 1]
     if not due:
         return 0
 
@@ -86,7 +91,7 @@ def refill_coin_balances(now: datetime = None) -> int:
         max_coins, refresh_coins, _starting = pool
         if max_coins == -2 or refresh_coins <= 0:
             continue
-        refill = int(hours_elapsed) * float(refresh_coins)
+        refill = hours_elapsed * float(refresh_coins)
         bal.coins_left = min(max_coins, float(bal.coins_left) + refill)
         bal.last_refill_at = now
         updated += 1

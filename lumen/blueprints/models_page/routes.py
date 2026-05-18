@@ -35,7 +35,7 @@ def index():
 @login_required
 def detail(model_name):
     config = db.first_or_404(select(ModelConfig).filter_by(model_name=model_name, active=True))
-    endpoints = config.endpoints.all()
+    endpoints = list(config.endpoints)
 
     healthy_count = sum(1 for e in endpoints if e.healthy)
     if not endpoints or healthy_count == 0:

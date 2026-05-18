@@ -40,5 +40,5 @@ class ModelConfig(db.Model):
     notice = db.Column(db.Text, nullable=True, comment="Optional admin notice displayed to users on the model detail page")
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), comment="UTC creation timestamp")
 
-    endpoints = db.relationship("ModelEndpoint", backref="model_config", lazy="dynamic", cascade="all, delete-orphan", passive_deletes=True)
-    stats = db.relationship("ModelStat", backref="model_config", lazy="dynamic", passive_deletes=True)
+    endpoints = db.relationship("ModelEndpoint", backref="model_config", lazy="select", cascade="all, delete-orphan", passive_deletes=True)
+    stats = db.relationship("ModelStat", backref="model_config", lazy="select", passive_deletes=True)

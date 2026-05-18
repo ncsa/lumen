@@ -33,6 +33,7 @@ htmlcov/
 *.db
 *.sqlite
 *.sqlite3
+*.dump
 
 # Flask
 instance/
