@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-05-21
+
 ### Added
 - Announcement banner can now be dismissed by clicking the ✕ button; dismissed state is stored in `localStorage` keyed by message content so a new message re-shows the banner automatically.
 - `app.email_themes` in `config.yaml` maps email patterns to theme names (e.g. `"@uic.edu": uic`); domain suffixes (starting with `@`) and exact addresses are supported. Takes precedence over `app.theme`.
