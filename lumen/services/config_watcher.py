@@ -41,6 +41,7 @@ def apply_hot_config(app, yaml_data: dict):
 
     app.config["OAUTH2_PARAMS"] = yaml_data.get("oauth2", {}).get("params") or {}
     app.config["CHAT_CONVERSATION_REMOVE_MODE"] = yaml_data.get("chat", {}).get("remove", "hide")
+    app.config["EMAIL_THEMES"] = app_cfg.get("email_themes") or {}
 
 def _apply_theme(app, yaml_data: dict):
     """Switch the active theme from yaml_data. No-op if unchanged or theme dir not found."""

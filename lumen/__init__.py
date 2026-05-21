@@ -4,7 +4,7 @@ import sys
 from http import HTTPStatus
 
 import yaml
-from flask import Flask, jsonify, request, session
+from flask import Flask, g, jsonify, request, session
 from jinja2 import BaseLoader, ChoiceLoader, TemplateNotFound
 from markupsafe import Markup
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -18,14 +18,28 @@ class _ThemeLoader(BaseLoader):
         self._app = app
 
     def get_source(self, environment, template):
-        theme_name = self._app.config.get("THEME_NAME", "default")
+        try:
+            theme_name = g.theme_name
+        except RuntimeError:
+            theme_name = self._app.config.get("THEME_NAME", "default")
         path = os.path.join(self._themes_root, theme_name, "templates", template)
         if not os.path.isfile(path):
             raise TemplateNotFound(template)
         mtime = os.path.getmtime(path)
         with open(path) as f:
             source = f.read()
-        return source, path, lambda: mtime == os.path.getmtime(path)
+        _app = self._app
+        _themes_root = self._themes_root
+
+        def uptodate():
+            try:
+                current = g.theme_name
+            except RuntimeError:
+                current = _app.config.get("THEME_NAME", "default")
+            expected = os.path.join(_themes_root, current, "templates", template)
+            return expected == path and mtime == os.path.getmtime(path)
+
+        return source, path, uptodate
 
 
 def create_app():
@@ -129,9 +143,22 @@ def create_app():
     log_level = getattr(logging, logs_cfg.get("level", "INFO").upper(), logging.INFO)
     app.logger.setLevel(log_level)
 
+    # Always check template freshness so per-request theme switching reloads theme templates
+    # when the active theme changes between requests.
+    app.jinja_env.auto_reload = True
+
     # Load theme — dynamic loader so hot reload works when app.theme changes in config.yaml
     themes_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "themes")
     app.config["THEMES_ROOT"] = themes_root
+    # Pre-load all valid theme configs for fast per-request skin override lookups
+    _theme_cache: dict = {}
+    for _entry in os.scandir(themes_root):
+        if _entry.is_dir():
+            _theme_yaml = os.path.join(_entry.path, "theme.yaml")
+            if os.path.isfile(_theme_yaml):
+                with open(_theme_yaml) as _f:
+                    _theme_cache[_entry.name] = yaml.safe_load(_f)
+    app.config["THEME_CACHE"] = _theme_cache
     app.jinja_loader = ChoiceLoader([_ThemeLoader(themes_root, app), app.jinja_loader])
     _apply_theme(app, yaml_data)
     if not app.config.get("THEME_NAME"):
@@ -140,9 +167,28 @@ def create_app():
 
     from flask import send_from_directory as _send_from_directory
 
+    @app.before_request
+    def apply_theme_for_request():
+        cache = app.config.get("THEME_CACHE", {})
+        email = session.get("entity_email", "")
+        if email:
+            email_themes = app.config.get("EMAIL_THEMES", {})
+            for pattern, theme_name in email_themes.items():
+                if theme_name in cache:
+                    if pattern.startswith("@") and email.lower().endswith(pattern.lower()):
+                        g.theme = cache[theme_name]
+                        g.theme_name = theme_name
+                        return
+                    elif email.lower() == pattern.lower():
+                        g.theme = cache[theme_name]
+                        g.theme_name = theme_name
+                        return
+        g.theme = app.config["THEME"]
+        g.theme_name = app.config["THEME_NAME"]
+
     @app.route("/theme-static/<path:filename>")
     def theme_static(filename):
-        theme_dir = os.path.join(app.config["THEMES_ROOT"], app.config["THEME_NAME"], "static")
+        theme_dir = os.path.join(app.config["THEMES_ROOT"], g.theme_name, "static")
         return _send_from_directory(theme_dir, filename)
 
     oauth2_cfg = yaml_data.get("oauth2", {})
@@ -246,7 +292,7 @@ def create_app():
             "app_version": app.config.get("APP_VERSION", "develop"),
             "git_commit": app.config.get("GIT_COMMIT", "N/A"),
             "is_logged_in": bool(session.get("entity_id")),
-            "theme": app.config["THEME"],
+            "theme": g.theme,
         }
         if not session.get("entity_id"):
             result["nav_clients"] = []

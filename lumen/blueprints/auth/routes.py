@@ -217,6 +217,7 @@ def devlogin():
     session["entity_name"] = entity.name
     session["initials"] = entity.initials
     session["gravatar_hash"] = entity.gravatar_hash or ""
+    session["entity_email"] = email
     return redirect(url_for("chat.chat_page"))
 
 
@@ -258,6 +259,7 @@ def callback():
     session["entity_name"] = entity.name
     session["initials"] = entity.initials
     session["gravatar_hash"] = entity.gravatar_hash or ""
+    session["entity_email"] = email
     return redirect(url_for("chat.chat_page"))
 
 
