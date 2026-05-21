@@ -25,6 +25,22 @@ document.addEventListener("DOMContentLoaded", function () {
     startTimer();
   });
 
+  // Announcement banner dismiss — hide if this exact message was last dismissed;
+  // clear the stored key when no banner is present so re-posting the same message shows it again.
+  const banner = document.querySelector(".announcement-banner[data-announcement-key]");
+  if (banner) {
+    const current = banner.dataset.announcementKey;
+    if (localStorage.getItem("announcement-last-dismissed") === current) {
+      banner.style.display = "none";
+    }
+    banner.querySelector(".announcement-dismiss").addEventListener("click", function () {
+      localStorage.setItem("announcement-last-dismissed", current);
+      banner.style.display = "none";
+    });
+  } else {
+    localStorage.removeItem("announcement-last-dismissed");
+  }
+
   // Convert UTC ISO timestamps to local time for display
   document.querySelectorAll(".local-datetime[data-utc]").forEach(function (el) {
     const d = new Date(el.dataset.utc);

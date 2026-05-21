@@ -441,12 +441,33 @@ ilw-content .btn-primary:active {
 
 /* ── Announcement banner ─────────────────────────────────────── */
 .announcement-banner {
+    position: relative;
     text-align: center;
-    padding: 0.75rem 1.5rem;
+    padding: 0.75rem 3rem;
     margin: 1rem auto;
     font-size: 1.5rem;
     border: 2px solid;
     border-radius: 0.375rem;
+}
+.announcement-dismiss {
+    position: absolute;
+    top: 50%;
+    right: 0.75rem;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    font-size: 1.25rem;
+    line-height: 1;
+    cursor: pointer;
+    color: inherit;
+    opacity: 0.7;
+    padding: 0.25rem 0.5rem;
+}
+.announcement-dismiss:hover,
+.announcement-dismiss:focus {
+    opacity: 1;
+    outline: 2px solid currentColor;
+    border-radius: 0.25rem;
 }
 
 /* ── Misc ────────────────────────────────────────────────────── */

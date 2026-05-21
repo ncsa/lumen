@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Announcement banner can now be dismissed by clicking the ✕ button; dismissed state is stored in `localStorage` keyed by message content so a new message re-shows the banner automatically.
+
 ## [1.11.2] - 2026-05-17
 
 ### Fixed
