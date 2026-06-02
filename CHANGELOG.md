@@ -13,6 +13,7 @@ All notable changes to Lumen will be documented in this file.
 - Dependency: `flask-limiter[redis]` extra so the `redis` package is installed and Redis-backed rate limiting works.
 
 ### Fixed
+- Helm chart: migration job missing `LUMEN_SECRET_KEY` env var, causing app factory to fail during `flask db upgrade`.
 - Helm chart: migration job moved from `pre-install` to `post-install` hook so PostgreSQL exists before it runs.
 - Helm chart: `runAsUser: 1000` added to migration and lumen containers to satisfy `runAsNonRoot`.
 - Helm chart: `chart/Chart.yaml` version and appVersion updated to `1.12.0` to match the application.

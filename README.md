@@ -149,7 +149,17 @@ app:
 
 The `theme` key selects the institutional look and feel. Themes live in `themes/<name>/` and can override templates, static assets, and navigation. If the named theme is not found, Lumen falls back to `default`.
 
-`encryption_key` can also be supplied via the `LUMEN_ENCRYPTION_KEY` environment variable, which takes precedence over the value in `config.yaml`. This is useful for injecting secrets at deploy time (e.g. via Docker secrets or a Kubernetes secret) without writing them into the config file.
+The following secrets can be supplied via environment variables, which take precedence over values in `config.yaml`. This is useful for injecting secrets at deploy time (e.g. via Docker secrets or a Kubernetes secret) without writing them into the config file.
+
+| Environment variable | Overrides config key |
+|---|---|
+| `LUMEN_SECRET_KEY` | `app.secret_key` |
+| `LUMEN_ENCRYPTION_KEY` | `app.encryption_key` |
+| `OAUTH2_CLIENT_ID` | `oauth2.client_id` |
+| `OAUTH2_CLIENT_SECRET` | `oauth2.client_secret` |
+| `OAUTH2_SERVER_METADATA_URL` | `oauth2.server_metadata_url` |
+| `OAUTH2_REDIRECT_URI` | `oauth2.redirect_uri` |
+| `OAUTH2_SCOPES` | `oauth2.scopes` |
 
 > **Warning:** Rotating `encryption_key` (or `LUMEN_ENCRYPTION_KEY`) invalidates all existing user API keys — users will need to generate new ones.
 
@@ -166,6 +176,8 @@ oauth2:
   # params:
   #   idphint: urn:mace:incommon:uiuc.edu
 ```
+
+`oauth2.client_id` and `oauth2.client_secret` can also be supplied via `OAUTH2_CLIENT_ID` and `OAUTH2_CLIENT_SECRET` environment variables (see table above).
 
 ### Admins
 

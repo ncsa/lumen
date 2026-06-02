@@ -74,6 +74,16 @@ spec:
               value: /tmp/uv-cache
             - name: CONFIG_YAML
               value: /app/config/config.yaml
+            - name: LUMEN_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lumen.secretName" . }}
+                  key: secret-key
+            - name: LUMEN_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lumen.secretName" . }}
+                  key: encryption-key
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

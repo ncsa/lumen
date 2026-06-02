@@ -190,29 +190,24 @@ prometheus:
 
 Some settings can be controlled via environment variables. The precedence depends on the setting:
 
-**These env vars take precedence over `config.yaml`:**
+All of the following environment variables take precedence over the corresponding `config.yaml` values:
 
-| Environment Variable | Effect |
-|---------------------|--------|
+| Environment Variable | Overrides |
+|---------------------|-----------|
 | `CONFIG_YAML` | Path to the config file (default: `./config.yaml`) |
-| `DATABASE_URL` | Overrides `app.database_url`; if set, the yaml value is ignored |
-| `LUMEN_SECRET_KEY` | Overrides `app.secret_key` (used to sign Flask sessions; leaking it allows session forgery) |
-| `LUMEN_ENCRYPTION_KEY` | Overrides `app.encryption_key` for API key hashing |
-
-**These env vars are used as fallbacks when the value is absent from `config.yaml`:**
-
-| Environment Variable | Falls back for |
-|---------------------|----------------|
+| `DATABASE_URL` | `app.database_url` |
+| `LUMEN_SECRET_KEY` | `app.secret_key` |
+| `LUMEN_ENCRYPTION_KEY` | `app.encryption_key` |
 | `OAUTH2_CLIENT_ID` | `oauth2.client_id` |
 | `OAUTH2_CLIENT_SECRET` | `oauth2.client_secret` |
 | `OAUTH2_SERVER_METADATA_URL` | `oauth2.server_metadata_url` |
 | `OAUTH2_REDIRECT_URI` | `oauth2.redirect_uri` |
 | `OAUTH2_SCOPES` | `oauth2.scopes` |
 
-`app.secret_key` must be set either in `config.yaml` or via `LUMEN_SECRET_KEY` — the app will not start without it.
+`app.secret_key` and `app.encryption_key` must be set either in `config.yaml` or via their environment variables — the app will not start without them.
 
 ## Security Notes
 
-- **`app.secret_key`** is used for Flask session encryption. If this is leaked, an attacker can forge user sessions. In production, set it to a long random value and inject it via the `SECRET_KEY` environment variable.
-- **`app.encryption_key`** is used to hash API keys stored in the database. Rotating this value invalidates **all** existing user API keys because the hashes can no longer be verified. Use the `LUMEN_ENCRYPTION_KEY` environment variable to override at runtime without changing the YAML file, or `LUMEN_API_KEY_SECRET` to control the API key hashing specifically.
+- **`app.secret_key`** is used for Flask session signing. If leaked, an attacker can forge user sessions. In production, set it to a long random value and inject it via `LUMEN_SECRET_KEY`.
+- **`app.encryption_key`** is used to hash API keys stored in the database. Rotating this value invalidates **all** existing user API keys because the hashes can no longer be verified. Use `LUMEN_ENCRYPTION_KEY` to inject it at deploy time without writing it into the config file.
 - Never commit `config.yaml` with real secrets to a shared repository. Use `config.yaml.example` as a template and keep your live config file in a private location or inject secrets via environment variables.

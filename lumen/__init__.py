@@ -193,7 +193,10 @@ def create_app():
 
     oauth2_cfg = yaml_data.get("oauth2", {})
     for key in ("client_id", "client_secret", "server_metadata_url", "redirect_uri", "scopes"):
-        if key in oauth2_cfg:
+        env_val = os.environ.get(f"OAUTH2_{key.upper()}")
+        if env_val:
+            app.config[f"OAUTH2_{key.upper()}"] = env_val
+        elif key in oauth2_cfg:
             app.config[f"OAUTH2_{key.upper()}"] = oauth2_cfg[key]
 
     # Initialize extensions

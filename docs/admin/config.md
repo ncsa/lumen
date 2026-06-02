@@ -60,4 +60,4 @@ uv run flask init-db
 
 - `app.secret_key` and `app.encryption_key` should be long random strings in production.
 - Never commit `config.yaml` with real secrets to a shared repository — use the `.example` file as a template and keep your live `config.yaml` in a private location or inject secrets via environment variables.
-- The `app.encryption_key` has special behavior: changing it invalidates **all** existing user API keys and requires a restart. Set the environment variable `LUMEN_API_KEY_SECRET` to override the encryption key at runtime, or set `LUMEN_ENCRYPTION_KEY` to override the `app.encryption_key` value.
+- The `app.encryption_key` has special behavior: changing it invalidates **all** existing user API keys and requires a restart. Use `LUMEN_ENCRYPTION_KEY` to inject it at deploy time without writing it into the config file.
