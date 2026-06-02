@@ -8,6 +8,9 @@ All notable changes to Lumen will be documented in this file.
 - Helm chart: migration job removed — migrations already run in the container entrypoint before uvicorn starts, making the job redundant.
 
 ### Added
+- `/healthz` endpoint that returns 200 when the database is reachable, 503 otherwise; used by Helm chart startup/liveness/readiness probes instead of `/v1/models` which requires authentication.
+
+### Added
 - Helm chart: `wait-for-db` init container in the main deployment to prevent crash-looping before PostgreSQL is ready.
 - Docker image: non-root `lumen` user (UID 1000) and `UV_NO_CACHE=1` to fix permission errors when running as non-root.
 - CI: push Docker image to `ghcr.io/ncsa/lumen` in addition to Docker Hub.

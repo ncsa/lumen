@@ -120,7 +120,7 @@ spec:
               protocol: TCP
           startupProbe:
             httpGet:
-              path: /v1/models
+              path: /healthz
               port: http
             initialDelaySeconds: 10
             periodSeconds: 5
@@ -128,7 +128,7 @@ spec:
             timeoutSeconds: 5
           livenessProbe:
             httpGet:
-              path: /v1/models
+              path: /healthz
               port: http
             initialDelaySeconds: 0
             periodSeconds: 15
@@ -136,7 +136,7 @@ spec:
             timeoutSeconds: 5
           readinessProbe:
             httpGet:
-              path: /v1/models
+              path: /healthz
               port: http
             initialDelaySeconds: 0
             periodSeconds: 5

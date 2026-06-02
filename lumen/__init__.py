@@ -5,6 +5,7 @@ from http import HTTPStatus
 
 import yaml
 from flask import Flask, g, jsonify, request, session
+from sqlalchemy import text
 from jinja2 import BaseLoader, ChoiceLoader, TemplateNotFound
 from markupsafe import Markup
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -260,6 +261,14 @@ def create_app():
     app.register_blueprint(admin_bp)
     app.register_blueprint(metrics_bp)
     app.register_blueprint(help_bp)
+
+    @app.route("/healthz")
+    def healthz():
+        try:
+            db.session.execute(text("SELECT 1"))
+        except Exception:
+            return "", HTTPStatus.SERVICE_UNAVAILABLE
+        return "", HTTPStatus.OK
 
     @app.after_request
     def set_security_headers(resp):
