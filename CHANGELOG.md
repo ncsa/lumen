@@ -8,6 +8,9 @@ All notable changes to Lumen will be documented in this file.
 - Helm chart: `wait-for-db` init container in the main deployment to prevent crash-looping before PostgreSQL is ready.
 - Docker image: non-root `lumen` user (UID 1000) and `UV_NO_CACHE=1` to fix permission errors when running as non-root.
 - CI: push Docker image to `ghcr.io/ncsa/lumen` in addition to Docker Hub.
+- Helm chart: `UV_CACHE_DIR=/tmp/uv-cache` env var in deployment and migration job so uv cache is writable when running as non-root.
+- Helm chart: model fields `supports_reasoning`, `input_modalities`, `output_modalities`, `knowledge_cutoff`, and `url` now rendered into `config.yaml` via the chart template.
+- Dependency: `flask-limiter[redis]` extra so the `redis` package is installed and Redis-backed rate limiting works.
 
 ### Fixed
 - Helm chart: migration job moved from `pre-install` to `post-install` hook so PostgreSQL exists before it runs.

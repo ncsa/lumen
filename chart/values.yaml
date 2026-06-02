@@ -189,6 +189,25 @@ securityContext: {}
 ## Set replicas = 0 to point Lumen at an external endpoint (url required).
 
 models: []
+# Gemma 4 31B IT (external, ICAI-hosted):
+# - name: gemma-4-31b-it
+#   replicas: 0
+#   model: google/gemma-4-31B-it
+#   url: http://google-gemma-4-31b-it-assistant.icai.ncsa.illinois.edu/v1
+#   apiKey: "ja5Shahth2quo3ir0oo0ovaethei7loa"
+#   lumen:
+#     description: "This is for testing purposes"
+#     url: "https://huggingface.co/google/gemma-4-31B-it"
+#     active: true
+#     inputCostPerMillion: 0.05
+#     outputCostPerMillion: 0.10
+#     contextWindow: 262144
+#     maxOutputTokens: 262144
+#     supportsReasoning: true
+#     inputModalities: ["text", "image", "video"]
+#     outputModalities: ["text"]
+#     knowledgeCutoff: "2025-01"
+#
 # Example — external model (replicas=0):
 # - name: gpt-4o
 #   replicas: 0

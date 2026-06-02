@@ -70,6 +70,8 @@ spec:
             - db
             - upgrade
           env:
+            - name: UV_CACHE_DIR
+              value: /tmp/uv-cache
             - name: CONFIG_YAML
               value: /app/config/config.yaml
             - name: DATABASE_URL
