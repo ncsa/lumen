@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Removed
+- Helm chart: migration job removed — migrations already run in the container entrypoint before uvicorn starts, making the job redundant.
+
 ### Added
 - Helm chart: `wait-for-db` init container in the main deployment to prevent crash-looping before PostgreSQL is ready.
 - Docker image: non-root `lumen` user (UID 1000) and `UV_NO_CACHE=1` to fix permission errors when running as non-root.
@@ -13,6 +16,7 @@ All notable changes to Lumen will be documented in this file.
 - Dependency: `flask-limiter[redis]` extra so the `redis` package is installed and Redis-backed rate limiting works.
 
 ### Fixed
+- Migration: `ix_messages_conversation_id` index creation in `z0a1b2c3d4e5` now uses `if_not_exists=True` to avoid failure on databases where it was already created by an earlier migration.
 - Helm chart: migration job missing `LUMEN_SECRET_KEY` env var, causing app factory to fail during `flask db upgrade`.
 - Helm chart: migration job moved from `pre-install` to `post-install` hook so PostgreSQL exists before it runs.
 - Helm chart: `runAsUser: 1000` added to migration and lumen containers to satisfy `runAsNonRoot`.

@@ -22,8 +22,8 @@ def upgrade():
         ["entity_id", "hidden", "updated_at"],
     )
 
-    # Messages: FK-side index for conversation history load
-    op.create_index("ix_messages_conversation_id", "messages", ["conversation_id"])
+    # Messages: FK-side index for conversation history load (may already exist from f3a8b2c1d0e9)
+    op.create_index("ix_messages_conversation_id", "messages", ["conversation_id"], if_not_exists=True)
 
     # Group members: FK-side index for entity membership lookups (_get_active_group_ids)
     op.create_index("ix_group_members_entity_id", "group_members", ["entity_id"])
