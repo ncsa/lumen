@@ -4,6 +4,19 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Helm chart: `wait-for-db` init container in the main deployment to prevent crash-looping before PostgreSQL is ready.
+- Docker image: non-root `lumen` user (UID 1000) and `UV_NO_CACHE=1` to fix permission errors when running as non-root.
+- CI: push Docker image to `ghcr.io/ncsa/lumen` in addition to Docker Hub.
+
+### Fixed
+- Helm chart: migration job moved from `pre-install` to `post-install` hook so PostgreSQL exists before it runs.
+- Helm chart: `runAsUser: 1000` added to migration and lumen containers to satisfy `runAsNonRoot`.
+- Helm chart: `chart/Chart.yaml` version and appVersion updated to `1.12.0` to match the application.
+
+### Changed
+- Helm chart: default image repository changed from `ghcr.io/ncsa/lumen` to `ncsa/lumen` (Docker Hub).
+
 ## [1.12.0] - 2026-05-21
 
 ### Added
