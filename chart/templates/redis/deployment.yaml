@@ -8,6 +8,8 @@ metadata:
     app.kubernetes.io/component: redis
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "lumen.selectorLabels" . | nindent 6 }}
@@ -21,6 +23,7 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 999
+        fsGroup: 999
       containers:
         - name: redis
           image: {{ .Values.redis.image | default "redis:7.4-alpine" }}

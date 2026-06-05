@@ -28,6 +28,12 @@ config:
   encryptionKey: ""
   # -- Enable Flask debug mode (never true in production)
   debug: false
+  # -- Application display name
+  name: "Lumen"
+  # -- Application tagline shown in the UI
+  tagline: "Illuminating AI"
+  # -- Announcement banner text (plain text or markdown)
+  announcement: ""
   # -- List of admin email addresses
   admins: []
   dbPool:
@@ -39,6 +45,15 @@ config:
   # -- UI theme. Built-in options: default, illinois, uic, uis.
   # Set to a custom name to use a theme mounted via config.themes.
   theme: "default"
+  # -- Map email domain suffixes to theme names, e.g. {"@uic.edu": "uic"}
+  emailThemes: {}
+  logs:
+    # -- Log level: DEBUG, INFO, WARNING, ERROR
+    level: "info"
+    # -- Log werkzeug access lines
+    access: false
+    # -- Log per-endpoint model health check results
+    model: false
   # -- Custom themes to mount. Each key is the theme name; pvc is the PVC claim name.
   # The PVC is mounted read-only at /app/themes/<name>/ and must contain
   # theme.yaml, templates/theme/, and optionally static/.
@@ -50,6 +65,42 @@ config:
   rateLimiting:
     # -- Rate limit per user, e.g. "30 per minute"
     limit: "30 per minute"
+  # -- Raw YAML appended verbatim to config.yaml (for settings not covered by chart values)
+  extraConfig: ""
+
+## Model access defaults ------------------------------------------------------------
+# Controls which models users can access before per-group rules are applied.
+# default: whitelist (all allowed), blacklist (all denied), graylist (group rules decide)
+modelAccess:
+  default: whitelist
+  blacklist: []
+  graylist: []
+  whitelist: []
+
+## Groups ---------------------------------------------------------------------------
+# Each key is the group name. Groups are matched in order; the first match wins.
+# Rules are ANDed together. Supported fields: affiliation, idp, email.
+# model_access.default: whitelist|blacklist|graylist
+# Example:
+# groups:
+#   default:
+#     max: 0
+#     refresh: 0
+#     starting: 0
+#     modelAccess:
+#       default: blacklist
+#   uiuc-staff:
+#     rules:
+#       - field: affiliation
+#         contains: staff@illinois.edu
+#       - field: idp
+#         equals: urn:mace:incommon:uiuc.edu
+#     max: 20.0
+#     refresh: 0.05
+#     starting: 20.0
+#     modelAccess:
+#       default: whitelist
+groups: {}
 
 ## OAuth2 / OIDC --------------------------------------------------------------------
 
@@ -63,6 +114,8 @@ oauth2:
   # -- OAuth2 redirect URI. Computed from ingress/gateway hostname when empty.
   redirectUri: ""
   scopes: "openid email profile org.cilogon.userinfo"
+  # -- Extra parameters passed to the authorization redirect (e.g. idphint, skin)
+  params: {}
 
 # -- Name of a pre-existing Secret containing app credentials.
 # Must have keys: secret-key, encryption-key, oauth2-client-id, oauth2-client-secret.
@@ -80,7 +133,7 @@ postgresql:
   existingSecret: ""
   existingSecretKey: "database-url"
   # -- Container image. Defaults to timescaledb pg17; override to plain postgres:17-alpine if TimescaleDB is not needed.
-  image: "timescale/timescaledb:2.26.4-pg17"
+  image: "timescale/timescaledb:2.27.2-pg17"
   auth:
     username: lumen
     password: ""

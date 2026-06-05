@@ -9,14 +9,20 @@ All notable changes to Lumen will be documented in this file.
 
 ### Added
 - `/healthz` endpoint that returns 200 when the database is reachable, 503 otherwise; used by Helm chart startup/liveness/readiness probes instead of `/v1/models` which requires authentication.
-
-### Added
 - Helm chart: `wait-for-db` init container in the main deployment to prevent crash-looping before PostgreSQL is ready.
 - Docker image: non-root `lumen` user (UID 1000) and `UV_NO_CACHE=1` to fix permission errors when running as non-root.
 - CI: push Docker image to `ghcr.io/ncsa/lumen` in addition to Docker Hub.
-- Helm chart: `UV_CACHE_DIR=/tmp/uv-cache` env var in deployment and migration job so uv cache is writable when running as non-root.
+- Helm chart: `UV_CACHE_DIR=/tmp/uv-cache` env var in deployment so uv cache is writable when running as non-root.
 - Helm chart: model fields `supports_reasoning`, `input_modalities`, `output_modalities`, `knowledge_cutoff`, and `url` now rendered into `config.yaml` via the chart template.
 - Dependency: `flask-limiter[redis]` extra so the `redis` package is installed and Redis-backed rate limiting works.
+- Helm chart: `config.name` and `config.tagline` values (defaulting to "Lumen" / "Illuminating AI") rendered into `app.name` / `app.tagline` in `config.yaml`.
+- Helm chart: `config.announcement` value rendered into `app.announcement` in `config.yaml`.
+- Helm chart: `config.emailThemes` map rendered into `app.email_themes` in `config.yaml`.
+- Helm chart: `config.logs.level/access/model` values rendered into `app.logs` in `config.yaml`.
+- Helm chart: `oauth2.params` map rendered into `oauth2.params` in `config.yaml` (e.g. `idphint`, `skin` for CILogon).
+- Helm chart: model name pattern in `values.schema.json` updated to allow dots and underscores in addition to hyphens.
+- Helm chart: Redis Deployment uses `strategy: Recreate` to prevent two pods mounting the same RWO PVC during upgrades.
+- Helm chart: Redis pod `securityContext` includes `fsGroup: 999` so the PVC data directory is writable by the non-root Redis user.
 
 ### Fixed
 - Migration: `ix_messages_conversation_id` index creation in `z0a1b2c3d4e5` now uses `if_not_exists=True` to avoid failure on databases where it was already created by an earlier migration.
@@ -24,9 +30,11 @@ All notable changes to Lumen will be documented in this file.
 - Helm chart: migration job moved from `pre-install` to `post-install` hook so PostgreSQL exists before it runs.
 - Helm chart: `runAsUser: 1000` added to migration and lumen containers to satisfy `runAsNonRoot`.
 - Helm chart: `chart/Chart.yaml` version and appVersion updated to `1.12.0` to match the application.
+- Helm chart: ingress template passes through `ingress.className` and `ingress.annotations` so cert-manager and Traefik annotations are applied correctly.
 
 ### Changed
 - Helm chart: default image repository changed from `ghcr.io/ncsa/lumen` to `ncsa/lumen` (Docker Hub).
+- Helm chart: default TimescaleDB image updated to `timescale/timescaledb:2.27.2-pg17`.
 
 ## [1.12.0] - 2026-05-21
 

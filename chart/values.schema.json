@@ -50,6 +50,18 @@
             "poolPrePing": { "type": "boolean" }
           }
         },
+        "name": { "type": "string" },
+        "tagline": { "type": "string" },
+        "announcement": { "type": "string" },
+        "emailThemes": { "type": "object" },
+        "logs": {
+          "type": "object",
+          "properties": {
+            "level": { "type": "string", "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "debug", "info", "warning", "error"] },
+            "access": { "type": "boolean" },
+            "model": { "type": "boolean" }
+          }
+        },
         "theme": { "type": "string" },
         "themes": {
           "type": "object",
@@ -66,7 +78,8 @@
           "properties": {
             "limit": { "type": "string" }
           }
-        }
+        },
+        "extraConfig": { "type": "string" }
       }
     },
     "oauth2": {
@@ -77,7 +90,8 @@
         "clientSecret": { "type": "string" },
         "serverMetadataUrl": { "type": "string", "format": "uri" },
         "redirectUri": { "type": "string" },
-        "scopes": { "type": "string" }
+        "scopes": { "type": "string" },
+        "params": { "type": "object" }
       }
     },
     "existingSecret": { "type": "string" },
@@ -176,6 +190,47 @@
     "podAnnotations": { "type": "object" },
     "podSecurityContext": { "type": "object" },
     "securityContext": { "type": "object" },
+    "modelAccess": {
+      "type": "object",
+      "properties": {
+        "default": { "type": "string", "enum": ["whitelist", "blacklist", "graylist"] },
+        "blacklist": { "type": "array", "items": { "type": "string" } },
+        "graylist": { "type": "array", "items": { "type": "string" } },
+        "whitelist": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "groups": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "rules": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["field"],
+              "properties": {
+                "field": { "type": "string" },
+                "contains": { "type": "string" },
+                "equals": { "type": "string" }
+              }
+            }
+          },
+          "max": { "type": "number", "minimum": 0 },
+          "refresh": { "type": "number", "minimum": 0 },
+          "starting": { "type": "number", "minimum": 0 },
+          "modelAccess": {
+            "type": "object",
+            "properties": {
+              "default": { "type": "string", "enum": ["whitelist", "blacklist", "graylist"] },
+              "blacklist": { "type": "array", "items": { "type": "string" } },
+              "graylist": { "type": "array", "items": { "type": "string" } },
+              "whitelist": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
     "models": {
       "type": "array",
       "items": {
@@ -185,8 +240,8 @@
         "properties": {
           "name": {
             "type": "string",
-            "pattern": "^[a-z0-9][a-z0-9-]*$",
-            "description": "Must be lowercase alphanumeric and hyphens. Must start with alphanumeric."
+            "pattern": "^[a-z0-9][a-z0-9._-]*$",
+            "description": "Must be lowercase alphanumeric, hyphens, dots, or underscores. Must start with alphanumeric."
           },
           "replicas": {
             "type": "integer",
@@ -272,7 +327,12 @@
               "outputCostPerMillion": { "type": "number", "minimum": 0 },
               "contextWindow": { "type": "integer", "minimum": 1 },
               "maxOutputTokens": { "type": "integer", "minimum": 1 },
-              "description": { "type": "string" }
+              "description": { "type": "string" },
+              "url": { "type": "string" },
+              "knowledgeCutoff": { "type": "string" },
+              "supportsReasoning": { "type": "boolean" },
+              "inputModalities": { "type": "array", "items": { "type": "string" } },
+              "outputModalities": { "type": "array", "items": { "type": "string" } }
             }
           }
         },
