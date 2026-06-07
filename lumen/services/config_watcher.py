@@ -40,7 +40,6 @@ def apply_hot_config(app, yaml_data: dict):
     app.config["LOG_MODEL_HEALTH"] = logs_cfg.get("model", False)
 
     app.config["OAUTH2_PARAMS"] = yaml_data.get("oauth2", {}).get("params") or {}
-    app.config["CHAT_CONVERSATION_REMOVE_MODE"] = yaml_data.get("chat", {}).get("remove", "hide")
     app.config["EMAIL_THEMES"] = app_cfg.get("email_themes") or {}
 
 def _apply_theme(app, yaml_data: dict):

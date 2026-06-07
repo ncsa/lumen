@@ -68,12 +68,15 @@ def test_delete_conversation_not_found(auth_client):
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
-def test_delete_conversation_hides_by_default(app, auth_client, test_user):
+def test_delete_conversation(app, auth_client, test_user):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.conversation import Conversation
-        conv = Conversation(entity_id=test_user["id"], title="To Delete", model="test-model")
+        from lumen.models.message import Message
+        conv = Conversation(entity_id=test_user["id"], title="Gone", model="test-model")
         db.session.add(conv)
+        db.session.flush()
+        db.session.add(Message(conversation_id=conv.id, role="user", content="hello"))
         db.session.commit()
         conv_id = conv.id
 
@@ -84,29 +87,7 @@ def test_delete_conversation_hides_by_default(app, auth_client, test_user):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.conversation import Conversation
-        assert db.session.get(Conversation, conv_id).hidden is True
-
-
-def test_delete_conversation_hard_delete(app, auth_client, test_user):
-    app.config["CHAT_CONVERSATION_REMOVE_MODE"] = "delete"
-    try:
-        with app.app_context():
-            from lumen.extensions import db
-            from lumen.models.conversation import Conversation
-            conv = Conversation(entity_id=test_user["id"], title="Gone", model="test-model")
-            db.session.add(conv)
-            db.session.commit()
-            conv_id = conv.id
-
-        resp = auth_client.delete(f"/chat/conversations/{conv_id}")
-        assert resp.status_code == HTTPStatus.OK
-
-        with app.app_context():
-            from lumen.extensions import db
-            from lumen.models.conversation import Conversation
-            assert db.session.get(Conversation, conv_id) is None
-    finally:
-        app.config["CHAT_CONVERSATION_REMOVE_MODE"] = "hide"
+        assert db.session.get(Conversation, conv_id) is None
 
 
 def test_chat_stream_no_body(auth_client):

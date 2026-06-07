@@ -37,7 +37,6 @@ oauth2:
   #   idphint: urn:mace:incommon:uiuc.edu
 
 chat:
-  remove: hide   # "hide" = soft-delete conversations (recoverable) | "delete" = hard delete
   upload:
     max_size_mb: 10          # maximum file size for document uploads (MB)
     max_text_chars: 100000   # maximum extracted text characters before truncation

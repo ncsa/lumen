@@ -157,7 +157,6 @@ erDiagram
         int entity_id FK
         string title
         string model
-        bool hidden
         datetime created_at
         datetime updated_at
     }
@@ -505,7 +504,7 @@ Pre-aggregated usage totals per entity across all models and sources. One row pe
 
 ## conversations
 
-Chat sessions created through the Lumen web UI. Each conversation belongs to a single entity and holds an ordered list of messages.
+Chat sessions created through the Lumen web UI. Each conversation belongs to a single entity and holds an ordered list of messages. Deleting a conversation permanently removes it and all its messages.
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
@@ -513,7 +512,6 @@ Chat sessions created through the Lumen web UI. Each conversation belongs to a s
 | `entity_id` | Integer (FK → entities) | NO | The entity (user) who owns the conversation. Cascades on delete. |
 | `title` | String(40) | NO | Short auto-generated or user-edited title |
 | `model` | String(128) | NO | Model name used in this conversation (snapshot at creation time) |
-| `hidden` | Boolean | NO | When `true`, the conversation is soft-deleted and not shown in the UI |
 | `created_at` | DateTime | NO | UTC timestamp when the conversation was created |
 | `updated_at` | DateTime | NO | UTC timestamp of the most recent message or edit |
 

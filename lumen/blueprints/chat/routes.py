@@ -206,7 +206,7 @@ def chat_stream():
             conv = None
             if conversation_id:
                 conv = db.session.execute(
-                    select(Conversation).filter_by(id=conversation_id, entity_id=entity_id, hidden=False)
+                    select(Conversation).filter_by(id=conversation_id, entity_id=entity_id)
                 ).scalar_one_or_none()
 
             if conv is None:
@@ -265,7 +265,7 @@ def list_conversations():
 
     stmt = (
         select(Conversation)
-        .filter_by(entity_id=entity_id, hidden=False)
+        .filter_by(entity_id=entity_id)
         .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
     )
     if before_id is not None:
@@ -322,7 +322,7 @@ def list_conversations():
 def get_conversation_messages(cid):
     entity_id = session["entity_id"]
     conv = db.session.execute(
-        select(Conversation).filter_by(id=cid, entity_id=entity_id, hidden=False)
+        select(Conversation).filter_by(id=cid, entity_id=entity_id)
     ).scalar_one_or_none()
     if not conv:
         return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
@@ -361,10 +361,6 @@ def delete_conversation(cid):
     if not conv:
         return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
 
-    mode = current_app.config.get("CHAT_CONVERSATION_REMOVE_MODE", "hide")
-    if mode == "delete":
-        db.session.delete(conv)
-    else:
-        conv.hidden = True
+    db.session.delete(conv)
     db.session.commit()
     return jsonify({"ok": True})

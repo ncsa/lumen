@@ -5,6 +5,7 @@ All notable changes to Lumen will be documented in this file.
 ## [Unreleased]
 
 ### Removed
+- Conversations are now always permanently deleted; the `chat.remove` config key and soft-delete (hide) mode have been removed. Token usage is preserved in request logs and usage stats regardless of conversation deletion.
 - Helm chart: migration job removed — migrations already run in the container entrypoint before uvicorn starts, making the job redundant.
 
 ### Added
