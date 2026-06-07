@@ -65,3 +65,4 @@ restore.sh
 
 # model setup
 models/
+chart/phoenix.yaml

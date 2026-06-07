@@ -2,7 +2,7 @@
 
 All notable changes to Lumen will be documented in this file.
 
-## [Unreleased]
+## [1.13.0] - 2026-06-06
 
 ### Removed
 - Conversations are now always permanently deleted; the `chat.remove` config key and soft-delete (hide) mode have been removed. Token usage is preserved in request logs and usage stats regardless of conversation deletion.
