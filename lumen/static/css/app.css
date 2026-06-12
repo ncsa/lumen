@@ -474,3 +474,7 @@ ilw-content .btn-primary:active {
 .font-monospace {
     font-family: var(--bs-font-monospace);
 }
+
+/* ── Graylist consent popover ────────────────────────────────── */
+.popover-warning { border-color: var(--bs-warning) !important; }
+.popover-warning .popover-header { background-color: var(--bs-warning-bg-subtle); border-bottom-color: var(--bs-warning); }

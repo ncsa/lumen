@@ -34,11 +34,17 @@
       <select id="model-picker" class="form-select form-select-sm" style="max-width:280px">
         {% for item in available_models %}
         <option value="{{ item.model.model_name }}"
-                {% if item.status == 'graylist' and not item.consented %}data-graylist="true" data-notice="{{ item.model.notice or '' }}"{% endif %}>
+                {% if item.status == 'graylist' %}{% if not item.consented %}data-graylist="true"{% else %}data-consented-graylist="true" data-consented-at="{{ item.consent_at.strftime('%Y-%m-%dT%H:%M:%SZ') if item.consent_at else '' }}"{% endif %} data-notice="{{ item.notice or '' }}"{% endif %}>
           {% if item.status == 'graylist' and not item.consented %}⚠ {% endif %}{{ item.model.model_name }}
         </option>
         {% endfor %}
       </select>
+      <button id="graylist-consented-icon" type="button"
+              class="d-none btn btn-sm p-0 border-0 text-warning fs-5 lh-1"
+              aria-label="Graylist acknowledged – click for details"
+              title="Acknowledged – click for details">
+        <i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i>
+      </button>
       <div id="graylist-warning" class="alert alert-warning py-1 px-2 mb-0 small d-none" role="alert" aria-live="polite">
         <span aria-hidden="true">⚠</span>
         This model requires acknowledgment before use.
@@ -146,22 +152,72 @@
     updateGraylistWarning();
   });
 
+  let _consentPopover = null;
+  let _consentPopoverTimer = null;
+
+  function dismissConsentPopover() {
+    if (_consentPopover) { _consentPopover.dispose(); _consentPopover = null; }
+    clearTimeout(_consentPopoverTimer);
+  }
+
   function updateGraylistWarning() {
+    dismissConsentPopover();
     const opt = picker.options[picker.selectedIndex];
     const warning = document.getElementById("graylist-warning");
+    const iconBtn = document.getElementById("graylist-consented-icon");
     if (opt && opt.dataset.graylist === "true") {
       warning.classList.remove("d-none");
+      iconBtn.classList.add("d-none");
+    } else if (opt && opt.dataset.consentedGraylist === "true") {
+      warning.classList.add("d-none");
+      iconBtn.dataset.notice = opt.dataset.notice || "";
+      iconBtn.dataset.consentedAt = opt.dataset.consentedAt || "";
+      iconBtn.classList.remove("d-none");
     } else {
       warning.classList.add("d-none");
+      iconBtn.classList.add("d-none");
     }
   }
   updateGraylistWarning();
+
+  document.getElementById("graylist-consented-icon").addEventListener("click", function () {
+    if (_consentPopover) { dismissConsentPopover(); return; }
+    const notice = this.dataset.notice || "";
+    const consentedAt = this.dataset.consentedAt || "";
+    let content = notice ? DOMPurify.sanitize(marked.parse(notice)) : "";
+    if (consentedAt) {
+      const dt = new Date(consentedAt);
+      content += `<p class="mb-0${notice ? " mt-1" : ""}"><strong>Access enabled.</strong> You acknowledged this model on ${dt.toLocaleString()}.</p>`;
+    }
+    _consentPopover = new bootstrap.Popover(this, {
+      html: true,
+      content: content || "<strong>Access enabled.</strong> This model has been acknowledged.",
+      trigger: "manual",
+      placement: "bottom",
+      title: '<span class="text-warning"><i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i></span> Access Acknowledgment Required',
+      customClass: "popover-warning",
+    });
+    _consentPopover.show();
+    const startTimer = () => {
+      _consentPopoverTimer = setTimeout(dismissConsentPopover, 5000);
+    };
+    startTimer();
+    this.addEventListener("shown.bs.popover", () => {
+      const tip = document.querySelector(".popover");
+      if (tip) {
+        tip.addEventListener("mouseenter", () => clearTimeout(_consentPopoverTimer));
+        tip.addEventListener("mouseleave", startTimer);
+      }
+    }, { once: true });
+  });
 
   // ── Graylist consent modal ──────────────────────────────────────
   const openGraylistModal = initGraylistConsent((modelName) => {
     const opt = Array.from(picker.options).find(o => o.value === modelName);
     if (opt) {
       delete opt.dataset.graylist;
+      opt.dataset.consentedGraylist = "true";
+      opt.dataset.consentedAt = new Date().toISOString();
       opt.textContent = modelName;
     }
     updateGraylistWarning();

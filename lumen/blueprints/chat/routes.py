@@ -82,7 +82,8 @@ def chat_page():
 
     model_ids = [m.id for m in all_models]
     # Bulk-resolve access and consents to avoid N+1 per-model DB queries
-    access_statuses, consented_ids = bulk_model_access_info(entity_id, model_ids)
+    access_statuses, consent_map = bulk_model_access_info(entity_id, model_ids)
+    default_notice = current_app.config.get("GRAYLIST_DEFAULT_NOTICE")
     # Pool limit is entity-level; fetch once rather than once per model via get_effective_limit
     pool = get_pool_limit(entity_id)
 
@@ -98,8 +99,10 @@ def chat_page():
             continue
         if pool is None and status != "graylist":
             continue
-        consented = (m.id in consented_ids) if status == "graylist" else True
-        available_models.append({"model": m, "status": status, "consented": consented})
+        consented = (m.id in consent_map) if status == "graylist" else True
+        consent_at = consent_map.get(m.id) if status == "graylist" else None
+        notice = (m.notice or default_notice) if status == "graylist" else None
+        available_models.append({"model": m, "status": status, "consented": consented, "consent_at": consent_at, "notice": notice})
 
     return render_template("chat.html", available_models=available_models)
 

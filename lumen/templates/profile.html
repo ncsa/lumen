@@ -399,6 +399,7 @@ const MODEL_ROWS = [
     last_used: {{ row.last_used_at.strftime('%Y-%m-%dT%H:%M:%SZ') | tojson if row.last_used_at else 'null' }},
     access_status: {{ row.access_status | tojson }},
     consented: {{ row.consented | tojson }},
+    consented_at: {{ row.consent_at.strftime('%Y-%m-%dT%H:%M:%SZ') | tojson if row.consent_at else 'null' }},
     model_status: {{ row.model_status | tojson }},
     notice: {{ row.notice | tojson if row.notice else 'null' }},
   },
@@ -450,11 +451,11 @@ function renderModels() {
       } else if (r.access_status === 'allowed') {
         accessCell = `<span class="badge bg-success"><span role="img" aria-label="check">✓</span> Allowed</span>`;
       } else if (r.access_status === 'graylist' && r.consented) {
-        accessCell = `<span class="badge bg-success"><span role="img" aria-label="check">✓</span> Consented</span>`;
+        accessCell = `<button class="badge bg-success border-0 consent-info-btn" data-name="${escHtml(r.model_name)}" data-notice="${escHtml(r.notice || '')}" data-consented-at="${escHtml(r.consented_at || '')}" aria-label="Acknowledged – click for details" title="Acknowledged – click for details"><span role="img" aria-label="check">✓</span> Consented</button>`;
       } else {
         accessCell = IS_ADMIN_VIEW
           ? `<span class="badge bg-warning text-dark"><span role="img" aria-label="warning">⚠</span> Needs consent</span>`
-          : `<button class="btn btn-sm btn-warning graylist-btn" data-name="${escHtml(r.model_name)}" data-notice="${escHtml(r.notice || '')}" aria-haspopup="dialog"><span role="img" aria-label="warning">⚠</span> Needs consent</button>`;
+          : `<button class="badge bg-warning text-dark border-0 graylist-btn" data-name="${escHtml(r.model_name)}" data-notice="${escHtml(r.notice || '')}" aria-haspopup="dialog"><span role="img" aria-label="warning">⚠</span> Needs consent</button>`;
       }
       const statusBadge = r.model_status === 'ok'
         ? `<span class="badge bg-success">ok</span>`
@@ -478,6 +479,43 @@ function renderModels() {
     });
   }
 }
+
+let _profileConsentPopover = null;
+let _profileConsentTimer = null;
+function dismissProfileConsentPopover() {
+  if (_profileConsentPopover) { _profileConsentPopover.dispose(); _profileConsentPopover = null; }
+  clearTimeout(_profileConsentTimer);
+}
+modelTbody.addEventListener('click', function (e) {
+  const btn = e.target.closest('.consent-info-btn');
+  if (!btn) return;
+  if (_profileConsentPopover) { dismissProfileConsentPopover(); return; }
+  const notice = btn.dataset.notice || '';
+  const consentedAt = btn.dataset.consentedAt || '';
+  let content = notice ? DOMPurify.sanitize(marked.parse(notice)) : '';
+  if (consentedAt) {
+    const dt = new Date(consentedAt);
+    content += `<p class="mb-0${notice ? ' mt-1' : ''}"><strong>Access enabled.</strong> You acknowledged this model on ${dt.toLocaleString()}.</p>`;
+  }
+  _profileConsentPopover = new bootstrap.Popover(btn, {
+    html: true,
+    content: content || '<strong>Access enabled.</strong> This model has been acknowledged.',
+    trigger: 'manual',
+    placement: 'left',
+    title: '<span class="text-warning"><i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i></span> Access Acknowledgment Required',
+    customClass: 'popover-warning',
+  });
+  _profileConsentPopover.show();
+  const startTimer = () => { _profileConsentTimer = setTimeout(dismissProfileConsentPopover, 5000); };
+  startTimer();
+  btn.addEventListener('shown.bs.popover', () => {
+    const tip = document.querySelector('.popover');
+    if (tip) {
+      tip.addEventListener('mouseenter', () => clearTimeout(_profileConsentTimer));
+      tip.addEventListener('mouseleave', startTimer);
+    }
+  }, { once: true });
+});
 
 makeSortable('model-table', modelState, new Set(['requests','tokens','cost','last_used']), renderModels);
 let modelDebounce;

@@ -40,7 +40,7 @@
     {# ── Right sidebar ── #}
     <div class="col-12 col-lg-4 d-flex flex-column gap-3">
 
-      {% if config.notice %}
+      {% if effective_notice %}
       <div class="alert alert-warning mb-0" role="alert" aria-live="polite">
         <strong>Notice</strong>
         <div id="model-notice-body" class="mt-1"></div>
@@ -54,7 +54,7 @@
         </div>
         <div class="card-body">
           {% if consent %}
-          <p class="mb-0 text-success">
+          <p class="mb-0">
             <strong>Access enabled.</strong> You acknowledged this model on
             <span class="local-datetime" data-utc="{{ consent.consented_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>.
           </p>
@@ -216,10 +216,10 @@
 <script src="{{ url_for('static', filename='js/graylist-consent.js') }}"></script>
 <script>
 (function () {
-  {% if config.notice %}
+  {% if effective_notice %}
   const noticeBody = document.getElementById('model-notice-body');
   if (noticeBody) {
-    noticeBody.innerHTML = DOMPurify.sanitize(marked.parse({{ config.notice | tojson }}));
+    noticeBody.innerHTML = DOMPurify.sanitize(marked.parse({{ effective_notice | tojson }}));
   }
   {% endif %}
 
@@ -252,7 +252,7 @@
 {% if access_status == 'graylist' and not consent %}
 const openGraylistModal = initGraylistConsent(() => location.reload());
 document.getElementById('graylist-open-btn').addEventListener('click', () => {
-  openGraylistModal({{ config.model_name | tojson }}, {{ config.notice | tojson if config.notice else 'null' }});
+  openGraylistModal({{ config.model_name | tojson }}, {{ effective_notice | tojson if effective_notice else 'null' }});
 });
 {% endif %}
 </script>

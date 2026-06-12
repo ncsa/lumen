@@ -74,9 +74,9 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
     """
     Bulk-resolve model access status and consents for one entity across many models.
 
-    Returns (access_statuses, consented_ids) where access_statuses is a dict
-    {model_config_id: "allowed"|"blocked"|"graylist"} and consented_ids is a set of
-    model_config_ids where the entity has accepted the graylist notice.
+    Returns (access_statuses, consent_map) where access_statuses is a dict
+    {model_config_id: "allowed"|"blocked"|"graylist"} and consent_map is a dict
+    {model_config_id: consented_at} for models where the entity has accepted the graylist notice.
 
     Issues a fixed set of queries regardless of the number of models — replaces N+1
     per-model calls to get_model_access_status / has_model_consent.
@@ -117,8 +117,8 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
     entity = db.session.get(Entity, entity_id)
     entity_default = entity.model_access_default if entity else None
 
-    consented_ids = {
-        r.model_config_id
+    consent_map = {
+        r.model_config_id: r.consented_at
         for r in db.session.execute(
             select(EntityModelConsent).where(
                 EntityModelConsent.entity_id == entity_id,
@@ -136,7 +136,7 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
             entity_default,
         )
 
-    return access_statuses, consented_ids
+    return access_statuses, consent_map
 
 
 def get_model_status(mc) -> str:

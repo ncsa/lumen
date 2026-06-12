@@ -6,6 +6,9 @@ All notable changes to Lumen will be documented in this file.
 
 ### Added
 - `api.consent` config flag (default: `true`). Set to `false` to exempt API requests from the graylist model-consent requirement, allowing existing API integrations to keep working while the acknowledgment rollout is in progress. Hot-reloadable.
+- `app.graylist_default_notice` config key: a fallback notice shown for any graylisted model that has no per-model notice set. Hot-reloadable.
+- Chat page: yellow warning icon (⚠) next to the model picker when a graylisted model has already been consented. Hover shows a tooltip; click opens a Bootstrap popover with the notice text and acknowledgment timestamp, auto-dismissing after 5 seconds (pauses on hover).
+- Profile page: "Consented" access cell is now a clickable badge that shows the same acknowledgment popover (notice + timestamp) on click.
 
 ## [1.13.0] - 2026-06-06
 

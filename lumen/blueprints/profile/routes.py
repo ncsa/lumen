@@ -3,7 +3,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 
-from flask import Blueprint, redirect, render_template, request, jsonify, session, url_for
+from flask import Blueprint, current_app, redirect, render_template, request, jsonify, session, url_for
 from sqlalchemy import func, select
 
 from lumen.decorators import login_required
@@ -51,12 +51,13 @@ def _build_model_access_list(entity_id: int, usage_by_model: dict) -> list:
             eps_by_model.setdefault(ep.model_config_id, []).append(ep)
 
     # Bulk-resolve access and consents to avoid N+1 per-model queries
-    access_statuses, consented_ids = bulk_model_access_info(entity_id, model_ids)
+    access_statuses, consent_map = bulk_model_access_info(entity_id, model_ids)
+    default_notice = current_app.config.get("GRAYLIST_DEFAULT_NOTICE")
 
     result = []
     for mc in all_models:
         access_status = access_statuses.get(mc.id, "allowed")
-        consented = (mc.id in consented_ids) if access_status == "graylist" else None
+        consented = (mc.id in consent_map) if access_status == "graylist" else None
         u = usage_by_model.get(mc.model_name, {})
         if not mc.active:
             model_status = "disabled"
@@ -74,7 +75,8 @@ def _build_model_access_list(entity_id: int, usage_by_model: dict) -> list:
         result.append({
             "model_name": mc.model_name,
             "model_url": url_for("models_page.detail", model_name=mc.model_name),
-            "notice": mc.notice,
+            "notice": mc.notice or (default_notice if access_status == "graylist" else None),
+            "consent_at": consent_map.get(mc.id) if access_status == "graylist" else None,
             "access_status": access_status,
             "consented": consented,
             "model_status": model_status,

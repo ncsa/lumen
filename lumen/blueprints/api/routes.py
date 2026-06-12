@@ -203,7 +203,7 @@ def list_models():
     else:
         entity_id = g.entity.id
         model_ids = [c.id for c in configs]
-        access_statuses, consented_ids = bulk_model_access_info(entity_id, model_ids)
+        access_statuses, consent_map = bulk_model_access_info(entity_id, model_ids)
         pool = get_pool_limit(entity_id)
         consent_required = current_app.config.get("API_REQUIRE_MODEL_CONSENT", True)
         data = [
@@ -214,7 +214,7 @@ def list_models():
             and (
                 not consent_required
                 or access_statuses.get(c.id, "allowed") != "graylist"
-                or c.id in consented_ids
+                or c.id in consent_map
             )
         ]
     return jsonify({"object": "list", "data": data})

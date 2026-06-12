@@ -3,7 +3,7 @@ from http import HTTPStatus
 from urllib.parse import urlparse
 
 import requests as http_requests
-from flask import Blueprint, abort, render_template, session
+from flask import Blueprint, abort, current_app, render_template, session
 from sqlalchemy import func, select
 
 from lumen.decorators import login_required
@@ -71,6 +71,8 @@ def detail(model_name):
         else None
     )
 
+    default_notice = current_app.config.get("GRAYLIST_DEFAULT_NOTICE")
+    effective_notice = config.notice or default_notice if access_status == "graylist" else config.notice
     return render_template(
         "model_detail.html",
         config=config,
@@ -81,6 +83,7 @@ def detail(model_name):
         requests_last_day=requests_last_day,
         access_status=access_status,
         consent=consent,
+        effective_notice=effective_notice,
     )
 
 
