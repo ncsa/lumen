@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-06-11
+
 ### Added
 - `api.consent` config flag (default: `true`). Set to `false` to exempt API requests from the graylist model-consent requirement, allowing existing API integrations to keep working while the acknowledgment rollout is in progress. Hot-reloadable.
 - `app.graylist_default_notice` config key: a fallback notice shown for any graylisted model that has no per-model notice set. Hot-reloadable.
