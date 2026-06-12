@@ -226,16 +226,19 @@ def has_model_consent(entity_id: int, model_config_id: int) -> bool:
     ).scalar_one_or_none() is not None
 
 
-def get_model_access(entity_id: int, model_config_id: int) -> bool:
+def get_model_access(entity_id: int, model_config_id: int, require_consent: bool = True) -> bool:
     """
     Return True if entity can access the given model, False otherwise.
 
-    For graylisted models, requires prior consent (EntityModelConsent).
+    For graylisted models, requires prior consent (EntityModelConsent) unless
+    require_consent is False (used to exempt API requests from the consent gate).
     """
     status = get_model_access_status(entity_id, model_config_id)
     if status == "blocked":
         return False
     if status == "graylist":
+        if not require_consent:
+            return True
         return has_model_consent(entity_id, model_config_id)
     return True
 
@@ -275,14 +278,14 @@ def get_pool_limit(entity_id: int):
     return max(candidates, key=lambda x: x.max_coins)
 
 
-def get_effective_limit(entity_id: int, model_config_id: int):
+def get_effective_limit(entity_id: int, model_config_id: int, require_consent: bool = True):
     """
     Return (max_coins, refresh_coins, starting_coins) or None if blocked/no access.
 
     Checks model access first, then returns the entity's coin pool.
     max_coins == -2 means unlimited.
     """
-    if not get_model_access(entity_id, model_config_id):
+    if not get_model_access(entity_id, model_config_id, require_consent=require_consent):
         return None
     return get_pool_limit(entity_id)
 
@@ -341,7 +344,7 @@ def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float):
     db.session.flush()
 
 
-def check_coin_budget(entity_id: int, model_config_id: int):
+def check_coin_budget(entity_id: int, model_config_id: int, require_consent: bool = True):
     """Check coin budget. Returns (ok, http_code, error_message).
 
     This is an optimistic gate: it checks that the balance is > 0 before the LLM
@@ -350,7 +353,7 @@ def check_coin_budget(entity_id: int, model_config_id: int):
     zeroed by subtract_coins afterward. This is intentional — the budget is a soft
     spending limit, not a hard reservation.
     """
-    effective = get_effective_limit(entity_id, model_config_id)
+    effective = get_effective_limit(entity_id, model_config_id, require_consent=require_consent)
     if effective is None:
         return False, HTTPStatus.FORBIDDEN, "No access to this model"
     max_coins, _, _starting = effective

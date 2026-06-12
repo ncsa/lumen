@@ -222,3 +222,40 @@ def test_entity_model_access_default_whitelist(app, ids):
         entity.model_access_default = "whitelist"
         db.session.commit()
         assert get_model_access_status(entity_id, model_id) == "allowed"
+
+
+# ---------------------------------------------------------------------------
+# require_consent=False bypasses the consent gate for graylist models
+# ---------------------------------------------------------------------------
+
+def test_graylist_allows_access_when_require_consent_false(app, ids):
+    """require_consent=False skips the consent DB check — graylist treated as allowed."""
+    entity_id, model_id = ids
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_model_access import EntityModelAccess
+        db.session.add(EntityModelAccess(entity_id=entity_id, model_config_id=model_id, access_type="graylist"))
+        db.session.commit()
+        assert get_model_access(entity_id, model_id, require_consent=False) is True
+
+
+def test_graylist_still_blocked_when_require_consent_true(app, ids):
+    """require_consent=True (default) still gates on consent for graylist models."""
+    entity_id, model_id = ids
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_model_access import EntityModelAccess
+        db.session.add(EntityModelAccess(entity_id=entity_id, model_config_id=model_id, access_type="graylist"))
+        db.session.commit()
+        assert get_model_access(entity_id, model_id, require_consent=True) is False
+
+
+def test_blocked_model_still_blocked_when_require_consent_false(app, ids):
+    """require_consent=False never overrides a hard blacklist block."""
+    entity_id, model_id = ids
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_model_access import EntityModelAccess
+        db.session.add(EntityModelAccess(entity_id=entity_id, model_config_id=model_id, access_type="blacklist"))
+        db.session.commit()
+        assert get_model_access(entity_id, model_id, require_consent=False) is False

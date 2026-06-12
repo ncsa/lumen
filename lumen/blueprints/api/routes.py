@@ -205,12 +205,17 @@ def list_models():
         model_ids = [c.id for c in configs]
         access_statuses, consented_ids = bulk_model_access_info(entity_id, model_ids)
         pool = get_pool_limit(entity_id)
+        consent_required = current_app.config.get("API_REQUIRE_MODEL_CONSENT", True)
         data = [
             _model_dict(c, rates, eps_by_model.get(c.id, []))
             for c in configs
             if pool is not None
             and access_statuses.get(c.id, "allowed") != "blocked"
-            and (access_statuses.get(c.id, "allowed") != "graylist" or c.id in consented_ids)
+            and (
+                not consent_required
+                or access_statuses.get(c.id, "allowed") != "graylist"
+                or c.id in consented_ids
+            )
         ]
     return jsonify({"object": "list", "data": data})
 
@@ -222,8 +227,10 @@ def get_model(model_id):
     config = db.session.execute(select(ModelConfig).filter_by(model_name=model_id, active=True)).scalar_one_or_none()
     if not config:
         return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
-    if not g.monitor and get_effective_limit(g.entity.id, config.id) is None:
-        return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
+    if not g.monitor:
+        consent_required = current_app.config.get("API_REQUIRE_MODEL_CONSENT", True)
+        if get_effective_limit(g.entity.id, config.id, require_consent=consent_required) is None:
+            return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
     eps = db.session.execute(
         select(ModelEndpoint).where(ModelEndpoint.model_config_id == config.id)
     ).scalars().all()
@@ -236,7 +243,8 @@ def _preflight(model_name: str):
     model_config = db.session.execute(select(ModelConfig).filter_by(model_name=model_name, active=True)).scalar_one_or_none()
     if not model_config:
         return None, None, _err(f"Model '{model_name}' not found", status=HTTPStatus.NOT_FOUND)
-    ok, code, msg = check_coin_budget(g.entity.id, model_config.id)
+    consent_required = current_app.config.get("API_REQUIRE_MODEL_CONSENT", True)
+    ok, code, msg = check_coin_budget(g.entity.id, model_config.id, require_consent=consent_required)
     if not ok:
         return None, None, _err(msg, status=code)
     endpoint = get_next_endpoint(model_config.id)

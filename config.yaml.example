@@ -194,6 +194,10 @@ models:
         api_key: internal-key
         model: phi-3-mini-128k-instruct   # different name at the internal endpoint
 
+# API behaviour
+api:
+  consent: true  # set to false to exempt API requests from the graylist model-consent requirement
+
 # Monitoring — read-only token for /v1/models (no user account required)
 monitoring:
   token: ""   # Set to a long random string; leave empty to disable

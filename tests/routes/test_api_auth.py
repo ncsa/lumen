@@ -411,6 +411,155 @@ def test_chat_completions_missing_messages_400(client, api_key):
     assert resp.get_json()["error"]["type"] == "invalid_request_error"
 
 
+# ---------------------------------------------------------------------------
+# api.consent flag — consent: false exempts API from graylist gate
+# ---------------------------------------------------------------------------
+
+def _set_api_consent(app, value: bool):
+    yaml = dict(app.config.get("YAML_DATA") or {})
+    yaml["api"] = {**yaml.get("api", {}), "consent": value}
+    app.config["YAML_DATA"] = yaml
+    app.config["API_REQUIRE_MODEL_CONSENT"] = value
+
+
+def test_consent_false_graylist_chat_completions_passes_access(
+    app, client, test_user, test_model, api_key,
+):
+    """api.consent=false: graylist model clears the access gate (fails later at endpoint, not at 403)."""
+    token, _ = api_key
+    _set_api_consent(app, False)
+    try:
+        with app.app_context():
+            from lumen.extensions import db
+            from lumen.models.entity_model_access import EntityModelAccess
+            _grant_unlimited_pool(app, test_user["id"])
+            db.session.add(EntityModelAccess(
+                entity_id=test_user["id"],
+                model_config_id=test_model["id"],
+                access_type="graylist",
+            ))
+            db.session.commit()
+
+        resp = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"model": test_model["model_name"],
+                  "messages": [{"role": "user", "content": "hi"}]},
+        )
+        assert resp.status_code != HTTPStatus.FORBIDDEN
+    finally:
+        _set_api_consent(app, True)
+
+
+def test_consent_false_graylist_list_models_includes_model(
+    app, client, test_user, test_model, test_model_endpoint, api_key,
+):
+    """api.consent=false: graylist model without consent appears in /v1/models."""
+    token, _ = api_key
+    _set_api_consent(app, False)
+    try:
+        with app.app_context():
+            from lumen.extensions import db
+            from lumen.models.entity_model_access import EntityModelAccess
+            _grant_unlimited_pool(app, test_user["id"])
+            db.session.add(EntityModelAccess(
+                entity_id=test_user["id"],
+                model_config_id=test_model["id"],
+                access_type="graylist",
+            ))
+            db.session.commit()
+
+        resp = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == HTTPStatus.OK
+        ids = [m["id"] for m in resp.get_json()["data"]]
+        assert test_model["model_name"] in ids
+    finally:
+        _set_api_consent(app, True)
+
+
+def test_consent_false_graylist_get_model_returns_model(
+    app, client, test_user, test_model, test_model_endpoint, api_key,
+):
+    """api.consent=false: GET /v1/models/<id> returns graylist model without consent."""
+    token, _ = api_key
+    _set_api_consent(app, False)
+    try:
+        with app.app_context():
+            from lumen.extensions import db
+            from lumen.models.entity_model_access import EntityModelAccess
+            _grant_unlimited_pool(app, test_user["id"])
+            db.session.add(EntityModelAccess(
+                entity_id=test_user["id"],
+                model_config_id=test_model["id"],
+                access_type="graylist",
+            ))
+            db.session.commit()
+
+        resp = client.get(
+            f"/v1/models/{test_model['model_name']}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == HTTPStatus.OK
+        assert resp.get_json()["id"] == test_model["model_name"]
+    finally:
+        _set_api_consent(app, True)
+
+
+def test_consent_true_graylist_chat_completions_403(
+    app, client, test_user, test_model, api_key,
+):
+    """api.consent=true (explicit): graylist model without consent still returns 403."""
+    token, _ = api_key
+    _set_api_consent(app, True)
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_model_access import EntityModelAccess
+        _grant_unlimited_pool(app, test_user["id"])
+        db.session.add(EntityModelAccess(
+            entity_id=test_user["id"],
+            model_config_id=test_model["id"],
+            access_type="graylist",
+        ))
+        db.session.commit()
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"],
+              "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_consent_false_blacklist_still_blocked(
+    app, client, test_user, test_model, api_key,
+):
+    """api.consent=false never bypasses a hard blacklist block."""
+    token, _ = api_key
+    _set_api_consent(app, False)
+    try:
+        with app.app_context():
+            from lumen.extensions import db
+            from lumen.models.entity_model_access import EntityModelAccess
+            _grant_unlimited_pool(app, test_user["id"])
+            db.session.add(EntityModelAccess(
+                entity_id=test_user["id"],
+                model_config_id=test_model["id"],
+                access_type="blacklist",
+            ))
+            db.session.commit()
+
+        resp = client.post(
+            "/v1/chat/completions",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"model": test_model["model_name"],
+                  "messages": [{"role": "user", "content": "hi"}]},
+        )
+        assert resp.status_code == HTTPStatus.FORBIDDEN
+    finally:
+        _set_api_consent(app, True)
+
+
 def test_list_models_response_includes_required_openai_fields(
     app, client, test_user, test_model, test_model_endpoint, api_key,
 ):

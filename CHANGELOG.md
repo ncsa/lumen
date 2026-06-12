@@ -2,6 +2,11 @@
 
 All notable changes to Lumen will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- `api.consent` config flag (default: `true`). Set to `false` to exempt API requests from the graylist model-consent requirement, allowing existing API integrations to keep working while the acknowledgment rollout is in progress. Hot-reloadable.
+
 ## [1.13.0] - 2026-06-06
 
 ### Removed
