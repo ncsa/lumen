@@ -314,7 +314,8 @@ function renderApp() {
       ${row3(field('db-size','Pool Size',ni('db-size',db.pool_size,'1')),field('db-overflow','Max Overflow',ni('db-overflow',db.max_overflow,'1')),field('db-timeout','Timeout (s)',ni('db-timeout',db.pool_timeout,'1')))}
       ${row2(field('db-recycle','Recycle (s)',ni('db-recycle',db.pool_recycle,'1')),field('db-ping','',cbi('db-ping',!!db.pool_pre_ping,'Pool pre-ping')))}
     `)}
-    ${card('Dev User <span class="text-muted fw-normal">(leave blank in production)</span>', `
+    ${card('Dev User', `
+      <p class="text-muted small mb-2">Leave blank in production. Bypasses OAuth and uses this email as the logged-in user.</p>
       ${row2(field('a-dev-email','Email',ti('a-dev-email',devEmail,'dev@example.com')),field('a-dev-groups','Groups',ti('a-dev-groups',devGroups,'staff, admin'),'comma-separated'))}
     `)}
     ${card('Email Themes', `
