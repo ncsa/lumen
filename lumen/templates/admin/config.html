@@ -2,6 +2,25 @@
 {% block title %}Config Editor{% endblock %}
 
 {% block content %}
+<div class="modal fade" id="removed-fields-modal" tabindex="-1" aria-labelledby="removed-fields-title" aria-modal="true" role="dialog">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="removed-fields-title">Fields will be removed</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2">The following fields are not recognized by the editor and will be permanently removed from the config file:</p>
+        <ul id="removed-fields-list" class="mb-0 font-monospace small"></ul>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" id="btn-confirm-save">Remove and save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <style>
   .cfg-layout { display:flex; height:calc(100vh - var(--cfg-top, 200px)); margin:0 -1.5rem 0; overflow:hidden; }
   .cfg-nav { width:155px; min-width:155px; background:#f8f9fa; border-right:1px solid #dee2e6; display:flex; flex-direction:column; flex-shrink:0; }
@@ -31,6 +50,11 @@
       <h5 id="cfg-section-title" class="mb-0">Loading…</h5>
       <span id="cfg-section-desc" class="text-muted small"></span>
     </div>
+    <div id="restart-banner" class="d-none mx-3 mt-2 alert alert-warning alert-dismissible py-2 small" role="alert">
+      <strong>Restart required</strong> — the following settings take effect only after restarting the server:
+      <span id="restart-fields" class="font-monospace"></span>
+      <button type="button" class="btn-close btn-sm" onclick="this.closest('#restart-banner').classList.add('d-none')" aria-label="Close"></button>
+    </div>
     <div id="cfg-body" class="cfg-body">
       <div class="text-center text-muted py-5">Loading configuration…</div>
     </div>
@@ -57,12 +81,12 @@ const state = {
 const SECTIONS = [
   { id:'app',           label:'App',           desc:'Application settings' },
   { id:'oauth2',        label:'OAuth2',         desc:'Authentication configuration' },
+  { id:'admins',        label:'Admins',         desc:'Administrator email addresses' },
   { id:'api',           label:'API',            desc:'API behavior flags' },
   { id:'chat',          label:'Chat',           desc:'Chat interface settings' },
   { id:'rate_limiting', label:'Rate Limiting',  desc:'Request rate limits' },
   { id:'prometheus',    label:'Prometheus',     desc:'Metrics endpoint' },
   { id:'monitoring',    label:'Monitoring',     desc:'Uptime monitoring token' },
-  { id:'admins',        label:'Admins',         desc:'Administrator email addresses' },
   { id:'groups',        label:'Groups',         desc:'User groups and access control' },
   { id:'clients',       label:'Clients',        desc:'API client configurations' },
   { id:'models',        label:'Models',         desc:'AI model configurations' },
@@ -136,21 +160,86 @@ async function loadConfig() {
   }
 }
 
+function findRemovedPaths(orig, curr, prefix = '') {
+  if (orig === null || typeof orig !== 'object') return [];
+  if (curr === null || typeof curr !== 'object') return [];
+  const paths = [];
+  if (Array.isArray(orig)) {
+    if (!Array.isArray(curr)) return [];
+    const len = Math.min(orig.length, curr.length);
+    for (let i = 0; i < len; i++) {
+      paths.push(...findRemovedPaths(orig[i], curr[i], prefix ? `${prefix}[${i}]` : `[${i}]`));
+    }
+  } else {
+    for (const key of Object.keys(orig)) {
+      const fullKey = prefix ? `${prefix}.${key}` : key;
+      if (!(key in curr)) {
+        paths.push(fullKey);
+      } else if (typeof orig[key] === 'object' && orig[key] !== null && !Array.isArray(orig[key])) {
+        paths.push(...findRemovedPaths(orig[key], curr[key], fullKey));
+      }
+    }
+  }
+  return paths;
+}
+
 async function saveConfig() {
   collectCurrentSection();
+  const toSave = JSON.parse(JSON.stringify(state.data));
+  const removed = findRemovedPaths(state.original, toSave);
+  if (removed.length) {
+    $('removed-fields-list').innerHTML = removed.map(p => `<li>${esc(p)}</li>`).join('');
+    bootstrap.Modal.getOrCreateInstance($('removed-fields-modal')).show();
+    return;
+  }
+  await doSave();
+}
+
+// Sourced from RESTART_REQUIRED in config_watcher.py via the template context.
+const RESTART_FIELDS = {{ restart_required | tojson }}.map(([section, key]) => ({ section, key }));
+
+function findRestartChanges(oldData, newData) {
+  const changed = [];
+  for (const { section, key } of RESTART_FIELDS) {
+    const oldSec = oldData[section] ?? {};
+    const newSec = newData[section] ?? {};
+    if (key === null) {
+      if (JSON.stringify(oldSec) !== JSON.stringify(newSec)) changed.push(section);
+    } else {
+      const oldVal = typeof oldSec === 'object' ? oldSec[key] : undefined;
+      const newVal = typeof newSec === 'object' ? newSec[key] : undefined;
+      if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) changed.push(`${section}.${key}`);
+    }
+  }
+  return changed;
+}
+
+function orderedData() {
+  const ordered = {};
+  for (const s of SECTIONS) { if (s.id in state.data) ordered[s.id] = state.data[s.id]; }
+  return ordered;
+}
+
+async function doSave() {
   const btn = $('btn-save');
   btn.disabled = true;
   btn.textContent = 'Saving…';
+  const prevOriginal = clone(state.original);
   try {
     const resp = await fetch('{{ url_for("admin.config_api_post") }}', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
-      body: JSON.stringify(state.data),
+      body: JSON.stringify(orderedData()),
     });
     const result = await resp.json();
     if (!resp.ok) { showToast('Save failed: ' + (result.error || resp.statusText), 'danger'); return; }
     state.original = clone(state.data);
     showToast('Saved successfully', 'success');
+    const restartChanged = findRestartChanges(prevOriginal, state.data);
+    if (restartChanged.length) {
+      $('restart-fields').textContent = ' ' + restartChanged.join(', ');
+      $('restart-banner').classList.remove('d-none');
+    }
   } catch (e) {
     showToast('Save failed: ' + e.message, 'danger');
   } finally {
@@ -206,7 +295,7 @@ function collectCurrentSection() { (COLLECTORS[state.currentSection] || (() => {
 // ── App ────────────────────────────────────────────────────────────────────
 function renderApp() {
   const a = state.data.app || {};
-  const db = a.db_pool || {};
+  const db = a.database || {};
   const logs = a.logs || {};
   const themes = a.email_themes || {};
   const devUser = a.dev_user;
@@ -221,16 +310,20 @@ function renderApp() {
     ${card('General', `
       ${row2(field('a-name','App Name',ti('a-name',a.name,'Lumen')),field('a-tagline','Tagline',ti('a-tagline',a.tagline)))}
       ${row2(field('a-theme','Theme',si('a-theme',a.theme,['default','illinois','uic','uis'])),field('a-debug','',cbi('a-debug',!!a.debug,'Enable debug mode')))}
-      ${field('a-db-url','Database URL',ti('a-db-url',a.database_url,'postgresql://user:pass@host/db'))}
       ${field('a-github','GitHub URL',ti('a-github',a.github_url))}
+    `)}
+    ${card('Content', `
+      ${field('a-ann','Announcement',tai('a-ann',a.announcement,3),'raw HTML shown to all users')}
+      ${field('a-gray','Graylist Default Notice',tai('a-gray',a.graylist_default_notice,2))}
     `)}
     ${card('Secrets', `
       ${field('a-secret','Secret Key',ti('a-secret',a.secret_key),'for session cookies')}
       ${field('a-enc','Encryption Key',ti('a-enc',a.encryption_key),'WARNING: rotating invalidates all API keys')}
     `)}
-    ${card('Content', `
-      ${field('a-ann','Announcement',tai('a-ann',a.announcement,3),'raw HTML shown to all users')}
-      ${field('a-gray','Graylist Default Notice',tai('a-gray',a.graylist_default_notice,2))}
+    ${card('Database', `
+      ${field('a-db-url','URL',ti('a-db-url',db.url,'postgresql://user:pass@host/db'))}
+      ${row3(field('db-size','Pool Size',ni('db-size',db.pool_size,'1')),field('db-overflow','Max Overflow',ni('db-overflow',db.max_overflow,'1')),field('db-timeout','Timeout (s)',ni('db-timeout',db.pool_timeout,'1')))}
+      ${row2(field('db-recycle','Recycle (s)',ni('db-recycle',db.pool_recycle,'1')),field('db-ping','',cbi('db-ping',!!db.pool_pre_ping,'Pool pre-ping')))}
     `)}
     ${card('Dev User <span class="text-muted fw-normal">(leave blank in production)</span>', `
       ${row2(field('a-dev-email','Email',ti('a-dev-email',devEmail,'dev@example.com')),field('a-dev-groups','Groups',ti('a-dev-groups',devGroups,'staff, admin'),'comma-separated'))}
@@ -239,10 +332,6 @@ function renderApp() {
       <p class="text-muted small mb-2">Map email domain suffix → theme name</p>
       <div id="email-themes">${themeRows}</div>
       <button type="button" class="btn btn-outline-secondary btn-sm" onclick="addKvRow('email-themes')">+ Add Row</button>
-    `)}
-    ${card('Database Pool', `
-      ${row3(field('db-size','Pool Size',ni('db-size',db.pool_size,'1')),field('db-overflow','Max Overflow',ni('db-overflow',db.max_overflow,'1')),field('db-timeout','Timeout (s)',ni('db-timeout',db.pool_timeout,'1')))}
-      ${row2(field('db-recycle','Recycle (s)',ni('db-recycle',db.pool_recycle,'1')),field('db-ping','',cbi('db-ping',!!db.pool_pre_ping,'Pool pre-ping')))}
     `)}
     ${card('Logging', `
       ${field('log-level','Level',si('log-level',(logs.level||'info').toLowerCase(),['debug','info','warning','error']))}
@@ -253,12 +342,11 @@ function renderApp() {
 }
 
 function collectApp() {
-  const a = state.data.app || {};
+  const a = {};
   a.name             = val('a-name')   || undefined;
   a.tagline          = val('a-tagline')|| undefined;
   a.theme            = val('a-theme')  || undefined;
   a.debug            = boolVal('a-debug') || undefined;
-  a.database_url     = val('a-db-url') || undefined;
   a.github_url       = val('a-github') || undefined;
   a.secret_key       = val('a-secret') || undefined;
   a.encryption_key   = val('a-enc')    || undefined;
@@ -267,9 +355,9 @@ function collectApp() {
 
   const devEmail  = val('a-dev-email').trim();
   const devGroups = arrFromCommas('a-dev-groups');
-  if (!devEmail) delete a.dev_user;
-  else if (devGroups.length) a.dev_user = { email: devEmail, groups: devGroups };
-  else a.dev_user = devEmail;
+  if (devEmail) {
+    a.dev_user = devGroups.length ? { email: devEmail, groups: devGroups } : devEmail;
+  }
 
   const themes = {};
   document.querySelectorAll('#email-themes .kv-row').forEach(row => {
@@ -279,13 +367,14 @@ function collectApp() {
   });
   a.email_themes = Object.keys(themes).length ? themes : undefined;
 
-  const dbPool = {};
-  const ps = numVal('db-size');     if (ps !== undefined) dbPool.pool_size    = ps;
-  const mo = numVal('db-overflow'); if (mo !== undefined) dbPool.max_overflow = mo;
-  const pt = numVal('db-timeout');  if (pt !== undefined) dbPool.pool_timeout = pt;
-  const pr = numVal('db-recycle');  if (pr !== undefined) dbPool.pool_recycle = pr;
-  if (boolVal('db-ping')) dbPool.pool_pre_ping = true;
-  a.db_pool = Object.keys(dbPool).length ? dbPool : undefined;
+  const dbCfg = {};
+  const dbUrl = val('a-db-url'); if (dbUrl) dbCfg.url = dbUrl;
+  const ps = numVal('db-size');     if (ps !== undefined) dbCfg.pool_size    = ps;
+  const mo = numVal('db-overflow'); if (mo !== undefined) dbCfg.max_overflow = mo;
+  const pt = numVal('db-timeout');  if (pt !== undefined) dbCfg.pool_timeout = pt;
+  const pr = numVal('db-recycle');  if (pr !== undefined) dbCfg.pool_recycle = pr;
+  if (boolVal('db-ping')) dbCfg.pool_pre_ping = true;
+  a.database = Object.keys(dbCfg).length ? dbCfg : undefined;
 
   const lvl = val('log-level');
   const acc = boolVal('log-access');
@@ -715,8 +804,8 @@ function collectCurrentModel() {
   const idx = state.selectedModelIdx;
   if (!state.data.models || !$('mdl-name')) return;
   if (idx >= state.data.models.length) return;
-  const m = state.data.models[idx] || {};
-  m.name                   = val('mdl-name')     || m.name;
+  const m = {};
+  m.name                   = val('mdl-name')     || undefined;
   m.active                 = boolVal('mdl-active');
   m.description            = val('mdl-desc')     || undefined;
   m.url                    = val('mdl-url')      || undefined;
@@ -859,6 +948,10 @@ const RENDERERS = {
     const top = el.getBoundingClientRect().top;
     document.documentElement.style.setProperty('--cfg-top', top + 'px');
   }
+  $('btn-confirm-save').addEventListener('click', async () => {
+    bootstrap.Modal.getInstance($('removed-fields-modal')).hide();
+    await doSave();
+  });
 })();
 loadConfig();
 </script>

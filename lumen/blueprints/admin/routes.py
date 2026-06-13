@@ -9,6 +9,7 @@ from sqlalchemy import func, case, select, text
 
 from lumen.blueprints.profile.routes import _build_model_access_list, _entity_groups, _get_profile_data, _gravatar_url
 from lumen.decorators import admin_required
+from lumen.services.config_watcher import RESTART_REQUIRED
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
@@ -235,7 +236,11 @@ def analytics():
 @admin_bp.route("/config")
 @admin_required
 def config_editor():
-    return render_template("admin/config.html", current_email=session.get("entity_email", ""))
+    return render_template(
+        "admin/config.html",
+        current_email=session.get("entity_email", ""),
+        restart_required=RESTART_REQUIRED,
+    )
 
 
 @admin_bp.route("/api/config")
@@ -270,8 +275,12 @@ def config_api_post():
     config_path = current_app.config["CONFIG_YAML"]
     tmp_path = config_path + ".tmp"
     try:
+        parts = [
+            yaml.dump({k: v}, Dumper=yaml.SafeDumper, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            for k, v in data.items()
+        ]
         with open(tmp_path, "w") as f:
-            yaml.dump(data, f, Dumper=yaml.SafeDumper, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            f.write("\n".join(parts))
         os.replace(tmp_path, config_path)
     except OSError as e:
         return jsonify({"error": str(e)}), HTTPStatus.INTERNAL_SERVER_ERROR

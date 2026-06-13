@@ -260,14 +260,23 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
         return err
 
     entity_id = g.entity.id
+    ak_id = g.api_key.id
 
+    # Extract all scalars from ORM objects before releasing the DB connection.
+    # The LLM call can take seconds (non-streaming) or minutes (streaming) — holding
+    # a pool connection for that entire duration exhausts the pool under load.
     remote_model = endpoint.model_name or model_name
+    ep_api_key   = endpoint.api_key
+    ep_url       = endpoint.url
+    ep_id        = endpoint.id
+    mc_id        = model_config.id
+    mc_in_cost   = float(model_config.input_cost_per_million)
+    mc_out_cost  = float(model_config.output_cost_per_million)
+    db.session.remove()  # return connection to pool before the LLM call
 
     if stream:
-        api_key = g.api_key
-
         def generate():
-            with openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url) as client:
+            with openai.OpenAI(api_key=ep_api_key, base_url=ep_url) as client:
                 try:
                     stream_options = {**kwargs.pop("stream_options", {}), "include_usage": True}
                     resp_stream = client.chat.completions.create(
@@ -283,11 +292,15 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                     yield "data: [DONE]\n\n"
 
                     if usage is not None:
-                        cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens, model_config)
-                        subtract_coins(entity_id, model_config.id, cost)
-                        update_stats(entity_id, model_config.id, "api", usage.prompt_tokens, usage.completion_tokens, cost,
-                                     endpoint_id=endpoint.id)
-                        _record_api_key_usage(api_key.id, usage.prompt_tokens, usage.completion_tokens, cost)
+                        cost = round(
+                            usage.prompt_tokens * mc_in_cost / 1_000_000
+                            + usage.completion_tokens * mc_out_cost / 1_000_000,
+                            6,
+                        )
+                        subtract_coins(entity_id, mc_id, cost)
+                        update_stats(entity_id, mc_id, "api", usage.prompt_tokens, usage.completion_tokens, cost,
+                                     endpoint_id=ep_id)
+                        _record_api_key_usage(ak_id, usage.prompt_tokens, usage.completion_tokens, cost)
                         db.session.commit()
                     else:
                         logger.warning(
@@ -295,7 +308,7 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                             "(model=%s, entity_id=%s) — tokens and cost not recorded.",
                             model_name, entity_id,
                         )
-                except Exception as e:
+                except Exception:
                     logger.exception(
                         "Error during streaming request (model=%s, entity_id=%s)", model_name, entity_id
                     )
@@ -305,7 +318,7 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
 
     try:
         t0 = _time.time()
-        with openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url) as client:
+        with openai.OpenAI(api_key=ep_api_key, base_url=ep_url) as client:
             response = client.chat.completions.create(model=remote_model, messages=messages, **kwargs)
         duration = _time.time() - t0
     except Exception:
@@ -319,12 +332,12 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
     else:
         usage_prompt, usage_completion = usage.prompt_tokens, usage.completion_tokens
 
-    cost = calculate_cost(usage_prompt, usage_completion, model_config)
-    subtract_coins(entity_id, model_config.id, cost)
-    update_stats(entity_id, model_config.id, "api", usage_prompt, usage_completion, cost,
-                 endpoint_id=endpoint.id, duration=duration)
+    cost = round(usage_prompt * mc_in_cost / 1_000_000 + usage_completion * mc_out_cost / 1_000_000, 6)
+    subtract_coins(entity_id, mc_id, cost)
+    update_stats(entity_id, mc_id, "api", usage_prompt, usage_completion, cost,
+                 endpoint_id=ep_id, duration=duration)
 
-    _record_api_key_usage(g.api_key.id, usage_prompt, usage_completion, cost)
+    _record_api_key_usage(ak_id, usage_prompt, usage_completion, cost)
     db.session.commit()
 
     return jsonify(response.model_dump())
@@ -372,11 +385,20 @@ def completions():
     if err:
         return err
 
-    entity_id = g.entity.id
+    entity_id    = g.entity.id
+    ak_id        = g.api_key.id
     remote_model = endpoint.model_name or model_name
+    ep_api_key   = endpoint.api_key
+    ep_url       = endpoint.url
+    ep_id        = endpoint.id
+    mc_id        = model_config.id
+    mc_in_cost   = float(model_config.input_cost_per_million)
+    mc_out_cost  = float(model_config.output_cost_per_million)
+    db.session.remove()
+
     try:
         t0 = _time.time()
-        with openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url) as client:
+        with openai.OpenAI(api_key=ep_api_key, base_url=ep_url) as client:
             response = client.chat.completions.create(model=remote_model, messages=messages)
         duration = _time.time() - t0
     except Exception:
@@ -394,12 +416,12 @@ def completions():
         usage_prompt, usage_completion = usage.prompt_tokens, usage.completion_tokens
         usage_total = usage.total_tokens
 
-    cost = calculate_cost(usage_prompt, usage_completion, model_config)
-    subtract_coins(entity_id, model_config.id, cost)
-    update_stats(entity_id, model_config.id, "api", usage_prompt, usage_completion, cost,
-                 endpoint_id=endpoint.id, duration=duration)
+    cost = round(usage_prompt * mc_in_cost / 1_000_000 + usage_completion * mc_out_cost / 1_000_000, 6)
+    subtract_coins(entity_id, mc_id, cost)
+    update_stats(entity_id, mc_id, "api", usage_prompt, usage_completion, cost,
+                 endpoint_id=ep_id, duration=duration)
 
-    _record_api_key_usage(g.api_key.id, usage_prompt, usage_completion, cost)
+    _record_api_key_usage(ak_id, usage_prompt, usage_completion, cost)
     db.session.commit()
 
     return jsonify(
