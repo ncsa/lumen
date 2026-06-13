@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.15.1] - 2026-06-13
+
 ### Fixed
 - `_RESTART_REQUIRED` alias added to `config_watcher.py` so tests can import the private name alongside the public `RESTART_REQUIRED` used by the admin config editor.
 - `test_database_url_change_warns` updated to use the `app.database` block (replacing the removed `app.database_url` key); `test_restart_keys_covered` updated to assert `("app", "database")` instead of `("app", "database_url")`.
