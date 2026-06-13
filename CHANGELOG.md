@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Admin config editor at `/admin/config`: a browser-based YAML editor accessible only to admins. Supports all config sections (app, OAuth2, groups, clients, models, etc.) with live forms, save/reset, and atomic file writes. Linked in the navbar after Analytics for all themes.
+
 ### Fixed
 - Announcement banner dismiss key now uses a hash of the full HTML content instead of stripped text, so changing only a URL inside a link correctly shows the updated announcement.
 
