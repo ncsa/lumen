@@ -21,13 +21,13 @@ def test_secret_key_change_warns(caplog):
     assert "restart" in messages
 
 
-def test_database_url_change_warns(caplog):
+def test_database_change_warns(caplog):
     _check(
-        {"app": {"database_url": "sqlite:///a.db"}},
-        {"app": {"database_url": "sqlite:///b.db"}},
+        {"app": {"database": {"url": "sqlite:///a.db"}}},
+        {"app": {"database": {"url": "sqlite:///b.db"}}},
         caplog,
     )
-    assert any("database_url" in r.message for r in caplog.records)
+    assert any("database" in r.message for r in caplog.records)
 
 
 def test_debug_change_warns(caplog):
@@ -72,7 +72,7 @@ def test_restart_keys_covered():
     from lumen.services.config_watcher import _RESTART_REQUIRED
     keys = {(s, k) for s, k in _RESTART_REQUIRED}
     assert ("app", "secret_key") in keys
-    assert ("app", "database_url") in keys
+    assert ("app", "database") in keys
     assert ("prometheus", "enabled") in keys
 
 

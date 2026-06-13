@@ -73,6 +73,7 @@ RESTART_REQUIRED = [
     ("prometheus", "enabled"),
     ("prometheus", "multiproc_dir"),
 ]
+_RESTART_REQUIRED = RESTART_REQUIRED
 
 
 def _check_restart_required(old_data, new_data):
