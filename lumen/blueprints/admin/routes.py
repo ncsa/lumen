@@ -287,13 +287,9 @@ def config_api_post():
         try:
             with os.fdopen(fd, "w") as f:
                 f.write("\n".join(parts))
-            shutil.move(tmp_path, config_path)
-        except Exception:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+            shutil.copyfile(tmp_path, config_path)
+        finally:
+            os.unlink(tmp_path)
     except OSError as e:
         return jsonify({"error": str(e)}), HTTPStatus.INTERNAL_SERVER_ERROR
     return jsonify({"ok": True})

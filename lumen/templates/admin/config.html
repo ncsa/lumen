@@ -166,27 +166,9 @@ async function loadConfig() {
   }
 }
 
-function findRemovedPaths(orig, curr, prefix = '') {
-  if (orig === null || typeof orig !== 'object') return [];
-  if (curr === null || typeof curr !== 'object') return [];
-  const paths = [];
-  if (Array.isArray(orig)) {
-    if (!Array.isArray(curr)) return [];
-    const len = Math.min(orig.length, curr.length);
-    for (let i = 0; i < len; i++) {
-      paths.push(...findRemovedPaths(orig[i], curr[i], prefix ? `${prefix}[${i}]` : `[${i}]`));
-    }
-  } else {
-    for (const key of Object.keys(orig)) {
-      const fullKey = prefix ? `${prefix}.${key}` : key;
-      if (!(key in curr)) {
-        paths.push(fullKey);
-      } else if (typeof orig[key] === 'object' && orig[key] !== null && !Array.isArray(orig[key])) {
-        paths.push(...findRemovedPaths(orig[key], curr[key], fullKey));
-      }
-    }
-  }
-  return paths;
+function findRemovedPaths(orig, curr) {
+  const knownSections = new Set(SECTIONS.map(s => s.id));
+  return Object.keys(orig).filter(key => !(key in curr) && !knownSections.has(key));
 }
 
 async function saveConfig() {

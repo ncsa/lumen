@@ -4,6 +4,10 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Config editor no longer warns about "unrecognized fields" when clearing a known field (e.g. `announcement`); the dialog now only fires for top-level keys the editor has no UI for.
+- Config editor uses `shutil.copyfile` instead of `shutil.move` to avoid `Operation not permitted` errors when `/tmp` and the config file are on different filesystems.
+
 ## [1.15.2] - 2026-06-13
 
 ### Fixed
