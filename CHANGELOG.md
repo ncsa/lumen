@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-06-13
+
 ### ⚠ Migration Required
 
 - **`app.database_url` and `app.db_pool` have been replaced by a single `app.database` block.** The app will not start without this change. Update your `config.yaml`:
