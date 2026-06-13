@@ -1,4 +1,6 @@
 import os
+import shutil
+import tempfile
 
 import yaml
 from datetime import datetime, timedelta, timezone
@@ -236,10 +238,13 @@ def analytics():
 @admin_bp.route("/config")
 @admin_required
 def config_editor():
+    config_path = current_app.config["CONFIG_YAML"]
+    config_readonly = not os.access(config_path, os.W_OK)
     return render_template(
         "admin/config.html",
         current_email=session.get("entity_email", ""),
         restart_required=RESTART_REQUIRED,
+        config_readonly=config_readonly,
     )
 
 
@@ -273,15 +278,22 @@ def config_api_post():
     if not isinstance(data, dict):
         return jsonify({"error": "Invalid payload — expected a JSON object"}), HTTPStatus.BAD_REQUEST
     config_path = current_app.config["CONFIG_YAML"]
-    tmp_path = config_path + ".tmp"
     try:
         parts = [
             yaml.dump({k: v}, Dumper=yaml.SafeDumper, default_flow_style=False, allow_unicode=True, sort_keys=False)
             for k, v in data.items()
         ]
-        with open(tmp_path, "w") as f:
-            f.write("\n".join(parts))
-        os.replace(tmp_path, config_path)
+        fd, tmp_path = tempfile.mkstemp(suffix=".yaml")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write("\n".join(parts))
+            shutil.move(tmp_path, config_path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
     except OSError as e:
         return jsonify({"error": str(e)}), HTTPStatus.INTERNAL_SERVER_ERROR
     return jsonify({"ok": True})

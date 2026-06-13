@@ -40,7 +40,7 @@
   <nav class="cfg-nav" aria-label="Config sections">
     <div class="cfg-nav-items" id="cfg-section-nav"></div>
     <div class="cfg-nav-footer">
-      <button id="btn-save" class="btn btn-primary btn-sm" onclick="saveConfig()">Save</button>
+      <button id="btn-save" class="btn btn-primary btn-sm" onclick="saveConfig()"{% if config_readonly %} disabled title="Config file is read-only"{% endif %}>Save</button>
       <button id="btn-reset" class="btn btn-outline-secondary btn-sm" onclick="resetConfig()">Reset</button>
     </div>
   </nav>
@@ -50,6 +50,11 @@
       <h5 id="cfg-section-title" class="mb-0">Loading…</h5>
       <span id="cfg-section-desc" class="text-muted small"></span>
     </div>
+    {% if config_readonly %}
+    <div class="mx-3 mt-2 alert alert-info py-2 small" role="alert">
+      <strong>Read-only:</strong> The config file is mounted read-only. Changes cannot be saved from the UI.
+    </div>
+    {% endif %}
     <div id="restart-banner" class="d-none mx-3 mt-2 alert alert-warning alert-dismissible py-2 small" role="alert">
       <strong>Restart required</strong> — the following settings take effect only after restarting the server:
       <span id="restart-fields" class="font-monospace"></span>
@@ -67,6 +72,7 @@
 'use strict';
 const CSRF = document.querySelector('meta[name="csrf-token"]').content;
 const CURRENT_EMAIL = {{ current_email | tojson }};
+const CONFIG_READONLY = {{ config_readonly | tojson }};
 
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
@@ -184,6 +190,7 @@ function findRemovedPaths(orig, curr, prefix = '') {
 }
 
 async function saveConfig() {
+  if (CONFIG_READONLY) { showToast('Config is read-only and cannot be saved.', 'warning'); return; }
   collectCurrentSection();
   const toSave = JSON.parse(JSON.stringify(state.data));
   const removed = findRemovedPaths(state.original, toSave);
