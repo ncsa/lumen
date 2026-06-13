@@ -4,6 +4,10 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Config editor now uses `/tmp` for the temp file during save instead of writing `.tmp` next to the config, fixing `Permission denied` errors when the config directory is root-owned.
+- Config editor detects when the config file is not writable and shows a read-only banner with the Save button disabled, instead of failing with a cryptic error after editing.
+
 ## [1.15.1] - 2026-06-13
 
 ### Fixed
