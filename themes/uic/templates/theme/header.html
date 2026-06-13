@@ -17,6 +17,7 @@
         {% if is_admin %}
         <a href="{{ url_for('admin.users') }}" class="uic-nav-link">Users</a>
         <a href="{{ url_for('admin.analytics') }}" class="uic-nav-link">Analytics</a>
+        <a href="{{ url_for('admin.config_editor') }}" class="uic-nav-link">Config</a>
         {% endif %}
         {% else %}
         <a href="/" class="uic-nav-link-brand">{{ app_name }}</a>

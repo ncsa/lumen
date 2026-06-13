@@ -1,0 +1,761 @@
+{% extends "base.html" %}
+{% block title %}Config Editor{% endblock %}
+
+{% block content %}
+<style>
+  .cfg-layout { display:flex; height:calc(100vh - var(--cfg-top, 200px)); margin:0 -1.5rem 0; overflow:hidden; }
+  .cfg-nav { width:155px; min-width:155px; background:#f8f9fa; border-right:1px solid #dee2e6; display:flex; flex-direction:column; flex-shrink:0; }
+  .cfg-nav-items { flex:1; overflow-y:auto; padding:4px 0; }
+  .cfg-nav-btn { display:block; width:100%; text-align:left; padding:5px 12px; background:none; border:none; border-left:3px solid transparent; font-size:12px; cursor:pointer; color:#495057; }
+  .cfg-nav-btn:hover { background:#e9ecef; }
+  .cfg-nav-btn.active { background:#e2e8f3; border-left-color:#13294B; color:#13294B; font-weight:600; }
+  .cfg-nav-footer { padding:10px; border-top:1px solid #dee2e6; display:flex; flex-direction:column; gap:6px; }
+  .cfg-main { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; }
+  .cfg-header { padding:12px 20px; background:#fff; border-bottom:1px solid #dee2e6; flex-shrink:0; }
+  .cfg-body { flex:1; overflow-y:auto; padding:1.25rem 1.5rem; background:#f5f5f5; }
+  .entity-bar { display:flex; align-items:center; gap:8px; padding:10px 14px; background:#fff; border:1px solid #dee2e6; border-radius:6px; margin-bottom:1rem; }
+  .entity-bar select { flex:1; }
+</style>
+
+<div class="cfg-layout">
+  <nav class="cfg-nav" aria-label="Config sections">
+    <div class="cfg-nav-items" id="cfg-section-nav"></div>
+    <div class="cfg-nav-footer">
+      <button id="btn-save" class="btn btn-primary btn-sm" onclick="saveConfig()">Save</button>
+      <button id="btn-reset" class="btn btn-outline-secondary btn-sm" onclick="resetConfig()">Reset</button>
+    </div>
+  </nav>
+
+  <div class="cfg-main">
+    <div class="cfg-header d-flex align-items-baseline gap-3">
+      <h5 id="cfg-section-title" class="mb-0">Loading…</h5>
+      <span id="cfg-section-desc" class="text-muted small"></span>
+    </div>
+    <div id="cfg-body" class="cfg-body">
+      <div class="text-center text-muted py-5">Loading configuration…</div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+'use strict';
+const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+
+// ── State ──────────────────────────────────────────────────────────────────
+const state = {
+  data: {},
+  original: null,
+  currentSection: null,
+  selectedModelIdx: 0,
+  selectedGroupKey: null,
+  selectedClientKey: null,
+};
+
+const SECTIONS = [
+  { id:'app',           label:'App',           desc:'Application settings' },
+  { id:'oauth2',        label:'OAuth2',         desc:'Authentication configuration' },
+  { id:'api',           label:'API',            desc:'API behavior flags' },
+  { id:'chat',          label:'Chat',           desc:'Chat interface settings' },
+  { id:'rate_limiting', label:'Rate Limiting',  desc:'Request rate limits' },
+  { id:'prometheus',    label:'Prometheus',     desc:'Metrics endpoint' },
+  { id:'monitoring',    label:'Monitoring',     desc:'Uptime monitoring token' },
+  { id:'admins',        label:'Admins',         desc:'Administrator email addresses' },
+  { id:'groups',        label:'Groups',         desc:'User groups and access control' },
+  { id:'clients',       label:'Clients',        desc:'API client configurations' },
+  { id:'models',        label:'Models',         desc:'AI model configurations' },
+];
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+const $  = id => document.getElementById(id);
+const esc  = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const escJs = s => String(s ?? '').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+const val    = id => ($(`${id}`)?.value ?? '');
+const numVal = id => { const v = val(id); return v === '' ? undefined : Number(v); };
+const boolVal = id => !!($(`${id}`)?.checked);
+const clone   = o  => JSON.parse(JSON.stringify(o));
+const arrFromLines  = id => val(id).split('\n').map(s => s.trim()).filter(Boolean);
+const linesToStr    = arr => (arr || []).join('\n');
+const arrFromCommas = id => val(id).split(',').map(s => s.trim()).filter(Boolean);
+
+function field(id, label, inputHtml, hint = '') {
+  return `<div class="mb-3">
+    <label for="${esc(id)}" class="form-label fw-semibold small mb-1">${esc(label)}${hint ? `<span class="text-muted fw-normal ms-1 fst-italic">${esc(hint)}</span>` : ''}</label>
+    ${inputHtml}
+  </div>`;
+}
+function ti(id, v, ph = '') {
+  return `<input type="text" class="form-control form-control-sm" id="${esc(id)}" value="${esc(String(v ?? ''))}" placeholder="${esc(ph)}">`;
+}
+function ni(id, v, step = 'any') {
+  return `<input type="number" class="form-control form-control-sm" id="${esc(id)}" value="${v ?? ''}" step="${step}">`;
+}
+function si(id, v, opts) {
+  const html = opts.map(o => {
+    const ov = typeof o === 'string' ? o : o.value;
+    const ol = typeof o === 'string' ? o : (o.label || o.value);
+    return `<option value="${esc(ov)}"${ov === v ? ' selected' : ''}>${esc(ol)}</option>`;
+  }).join('');
+  return `<select class="form-select form-select-sm" id="${esc(id)}">${html}</select>`;
+}
+function tai(id, v, rows = 4) {
+  return `<textarea class="form-control form-control-sm" id="${esc(id)}" rows="${rows}">${esc(String(v ?? ''))}</textarea>`;
+}
+function cbi(id, checked, label) {
+  return `<div class="form-check"><input class="form-check-input" type="checkbox" id="${esc(id)}"${checked ? ' checked' : ''}><label class="form-check-label" for="${esc(id)}">${esc(label)}</label></div>`;
+}
+function card(title, body) {
+  return `<div class="card mb-3"><div class="card-header py-2 small fw-bold">${esc(title)}</div><div class="card-body">${body}</div></div>`;
+}
+function row2(...cols) { return `<div class="row g-3">${cols.map(c => `<div class="col-md-6">${c}</div>`).join('')}</div>`; }
+function row3(...cols) { return `<div class="row g-3">${cols.map(c => `<div class="col-md-4">${c}</div>`).join('')}</div>`; }
+function kvRow(k, v) {
+  return `<div class="kv-row d-flex gap-2 mb-2 align-items-center">
+    <input type="text" class="form-control form-control-sm kv-key" value="${esc(k)}" placeholder="key">
+    <span class="text-muted small">→</span>
+    <input type="text" class="form-control form-control-sm kv-val" value="${esc(v)}" placeholder="value">
+    <button type="button" class="btn btn-outline-secondary btn-sm px-2" onclick="this.closest('.kv-row').remove()" aria-label="Remove">✕</button>
+  </div>`;
+}
+function addKvRow(containerId) { $(containerId).insertAdjacentHTML('beforeend', kvRow('', '')); }
+
+// ── API ────────────────────────────────────────────────────────────────────
+async function loadConfig() {
+  try {
+    const resp = await fetch('{{ url_for("admin.config_api_get") }}');
+    if (!resp.ok) throw new Error(resp.statusText);
+    const data = await resp.json();
+    state.data = data;
+    state.original = clone(data);
+    buildNav();
+    navigateTo('app');
+  } catch (e) {
+    $('cfg-body').innerHTML = `<div class="alert alert-danger">Failed to load config: ${esc(e.message)}</div>`;
+  }
+}
+
+async function saveConfig() {
+  collectCurrentSection();
+  const btn = $('btn-save');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    const resp = await fetch('{{ url_for("admin.config_api_post") }}', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify(state.data),
+    });
+    const result = await resp.json();
+    if (!resp.ok) { showToast('Save failed: ' + (result.error || resp.statusText), 'danger'); return; }
+    state.original = clone(state.data);
+    showToast('Saved successfully', 'success');
+  } catch (e) {
+    showToast('Save failed: ' + e.message, 'danger');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save';
+  }
+}
+
+function resetConfig() {
+  if (!state.original) return;
+  state.data = clone(state.original);
+  state.selectedModelIdx = 0;
+  state.selectedGroupKey = null;
+  state.selectedClientKey = null;
+  renderSection(state.currentSection);
+}
+
+function showToast(msg, type = 'success') {
+  let t = document.getElementById('cfg-toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'cfg-toast';
+    Object.assign(t.style, { position: 'fixed', bottom: '20px', right: '20px', zIndex: '9999', minWidth: '220px' });
+    document.body.appendChild(t);
+  }
+  t.innerHTML = `<div class="alert alert-${type} alert-dismissible shadow-sm mb-0">${esc(msg)}<button type="button" class="btn-close" onclick="this.closest('.alert').remove()" aria-label="Close"></button></div>`;
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.innerHTML = ''; }, 3500);
+}
+
+// ── Nav ────────────────────────────────────────────────────────────────────
+function buildNav() {
+  $('cfg-section-nav').innerHTML = SECTIONS.map(s =>
+    `<button id="nav-${s.id}" class="cfg-nav-btn" onclick="navigateTo('${s.id}')">${s.label}</button>`
+  ).join('');
+}
+
+function navigateTo(id) {
+  collectCurrentSection();
+  state.currentSection = id;
+  document.querySelectorAll('.cfg-nav-btn').forEach(b => b.classList.remove('active'));
+  const btn = $('nav-' + id);
+  if (btn) btn.classList.add('active');
+  const sec = SECTIONS.find(s => s.id === id);
+  $('cfg-section-title').textContent = sec?.label ?? id;
+  $('cfg-section-desc').textContent = sec?.desc ?? '';
+  renderSection(id);
+}
+
+function renderSection(id) { (RENDERERS[id] || (() => {}))(); }
+function collectCurrentSection() { (COLLECTORS[state.currentSection] || (() => {}))(); }
+
+// ── App ────────────────────────────────────────────────────────────────────
+function renderApp() {
+  const a = state.data.app || {};
+  const db = a.db_pool || {};
+  const logs = a.logs || {};
+  const themes = a.email_themes || {};
+  const devUser = a.dev_user;
+  const devEmail  = typeof devUser === 'object' ? (devUser?.email ?? '') : (devUser ?? '');
+  const devGroups = typeof devUser === 'object' ? (devUser?.groups || []).join(', ') : '';
+  const themeRows = Object.entries(themes).length
+    ? Object.entries(themes).map(([k, v]) => kvRow(k, v)).join('')
+    : kvRow('', '');
+
+  $('cfg-body').innerHTML = `
+    <div class="alert alert-warning py-2 small mb-3" role="alert">Comments in the original file will be removed on save.</div>
+    ${card('General', `
+      ${row2(field('a-name','App Name',ti('a-name',a.name,'Lumen')),field('a-tagline','Tagline',ti('a-tagline',a.tagline)))}
+      ${row2(field('a-theme','Theme',si('a-theme',a.theme,['default','illinois','uic','uis'])),field('a-debug','',cbi('a-debug',!!a.debug,'Enable debug mode')))}
+      ${field('a-db-url','Database URL',ti('a-db-url',a.database_url,'postgresql://user:pass@host/db'))}
+      ${field('a-github','GitHub URL',ti('a-github',a.github_url))}
+    `)}
+    ${card('Secrets', `
+      ${field('a-secret','Secret Key',ti('a-secret',a.secret_key),'for session cookies')}
+      ${field('a-enc','Encryption Key',ti('a-enc',a.encryption_key),'WARNING: rotating invalidates all API keys')}
+    `)}
+    ${card('Content', `
+      ${field('a-ann','Announcement',tai('a-ann',a.announcement,3),'raw HTML shown to all users')}
+      ${field('a-gray','Graylist Default Notice',tai('a-gray',a.graylist_default_notice,2))}
+    `)}
+    ${card('Dev User <span class="text-muted fw-normal">(leave blank in production)</span>', `
+      ${row2(field('a-dev-email','Email',ti('a-dev-email',devEmail,'dev@example.com')),field('a-dev-groups','Groups',ti('a-dev-groups',devGroups,'staff, admin'),'comma-separated'))}
+    `)}
+    ${card('Email Themes', `
+      <p class="text-muted small mb-2">Map email domain suffix → theme name</p>
+      <div id="email-themes">${themeRows}</div>
+      <button type="button" class="btn btn-outline-secondary btn-sm" onclick="addKvRow('email-themes')">+ Add Row</button>
+    `)}
+    ${card('Database Pool', `
+      ${row3(field('db-size','Pool Size',ni('db-size',db.pool_size,'1')),field('db-overflow','Max Overflow',ni('db-overflow',db.max_overflow,'1')),field('db-timeout','Timeout (s)',ni('db-timeout',db.pool_timeout,'1')))}
+      ${row2(field('db-recycle','Recycle (s)',ni('db-recycle',db.pool_recycle,'1')),field('db-ping','',cbi('db-ping',!!db.pool_pre_ping,'Pool pre-ping')))}
+    `)}
+    ${card('Logging', `
+      ${field('log-level','Level',si('log-level',(logs.level||'info').toLowerCase(),['debug','info','warning','error']))}
+      ${cbi('log-access',!!logs.access,'Log werkzeug access requests')}
+      <div class="mt-2">${cbi('log-model',!!logs.model,'Log per-endpoint health check results')}</div>
+    `)}
+  `;
+}
+
+function collectApp() {
+  const a = state.data.app || {};
+  a.name             = val('a-name')   || undefined;
+  a.tagline          = val('a-tagline')|| undefined;
+  a.theme            = val('a-theme')  || undefined;
+  a.debug            = boolVal('a-debug') || undefined;
+  a.database_url     = val('a-db-url') || undefined;
+  a.github_url       = val('a-github') || undefined;
+  a.secret_key       = val('a-secret') || undefined;
+  a.encryption_key   = val('a-enc')    || undefined;
+  a.announcement     = val('a-ann')    || undefined;
+  a.graylist_default_notice = val('a-gray') || undefined;
+
+  const devEmail  = val('a-dev-email').trim();
+  const devGroups = arrFromCommas('a-dev-groups');
+  if (!devEmail) delete a.dev_user;
+  else if (devGroups.length) a.dev_user = { email: devEmail, groups: devGroups };
+  else a.dev_user = devEmail;
+
+  const themes = {};
+  document.querySelectorAll('#email-themes .kv-row').forEach(row => {
+    const k = row.querySelector('.kv-key').value.trim();
+    const v = row.querySelector('.kv-val').value.trim();
+    if (k && v) themes[k] = v;
+  });
+  a.email_themes = Object.keys(themes).length ? themes : undefined;
+
+  const dbPool = {};
+  const ps = numVal('db-size');     if (ps !== undefined) dbPool.pool_size    = ps;
+  const mo = numVal('db-overflow'); if (mo !== undefined) dbPool.max_overflow = mo;
+  const pt = numVal('db-timeout');  if (pt !== undefined) dbPool.pool_timeout = pt;
+  const pr = numVal('db-recycle');  if (pr !== undefined) dbPool.pool_recycle = pr;
+  if (boolVal('db-ping')) dbPool.pool_pre_ping = true;
+  a.db_pool = Object.keys(dbPool).length ? dbPool : undefined;
+
+  const lvl = val('log-level');
+  const acc = boolVal('log-access');
+  const mod = boolVal('log-model');
+  a.logs = (lvl || acc || mod) ? { level: lvl || undefined, access: acc || undefined, model: mod || undefined } : undefined;
+
+  state.data.app = a;
+}
+
+// ── OAuth2 ─────────────────────────────────────────────────────────────────
+function renderOauth2() {
+  const o = state.data.oauth2 || {};
+  const params = o.params || {};
+  const paramRows = Object.entries(params).length
+    ? Object.entries(params).map(([k, v]) => kvRow(k, v)).join('')
+    : kvRow('', '');
+  $('cfg-body').innerHTML = `
+    ${card('OIDC Client', `
+      ${field('oa-cid',  'Client ID',          ti('oa-cid',  o.client_id))}
+      ${field('oa-sec',  'Client Secret',       ti('oa-sec',  o.client_secret))}
+      ${field('oa-meta', 'Server Metadata URL', ti('oa-meta', o.server_metadata_url))}
+      ${field('oa-redir','Redirect URI',        ti('oa-redir',o.redirect_uri))}
+      ${field('oa-scope','Scopes',              ti('oa-scope',o.scopes))}
+    `)}
+    ${card('Extra Params', `
+      <div id="oauth-params">${paramRows}</div>
+      <button type="button" class="btn btn-outline-secondary btn-sm mt-1" onclick="addKvRow('oauth-params')">+ Add Param</button>
+    `)}
+  `;
+}
+function collectOauth2() {
+  const o = {};
+  o.client_id          = val('oa-cid')  || undefined;
+  o.client_secret      = val('oa-sec')  || undefined;
+  o.server_metadata_url= val('oa-meta') || undefined;
+  o.redirect_uri       = val('oa-redir')|| undefined;
+  o.scopes             = val('oa-scope')|| undefined;
+  const params = {};
+  document.querySelectorAll('#oauth-params .kv-row').forEach(row => {
+    const k = row.querySelector('.kv-key').value.trim();
+    const v = row.querySelector('.kv-val').value.trim();
+    if (k && v) params[k] = v;
+  });
+  if (Object.keys(params).length) o.params = params;
+  state.data.oauth2 = o;
+}
+
+// ── API ────────────────────────────────────────────────────────────────────
+function renderApi() {
+  const a = state.data.api || {};
+  $('cfg-body').innerHTML = card('API Flags',
+    cbi('api-consent', !!a.consent, 'Require graylist consent for API requests (/v1/*)')
+  );
+}
+function collectApi() {
+  state.data.api = { consent: boolVal('api-consent') || undefined };
+}
+
+// ── Chat ───────────────────────────────────────────────────────────────────
+const DEFAULT_EXTENSIONS = ['txt','md','csv','json','py','js','ts','html','css','xml','yaml','yml','pdf','png','jpg','jpeg','gif'];
+function renderChat() {
+  const c  = state.data.chat || {};
+  const up = c.upload        || {};
+  const exts = up.allowed_extensions || DEFAULT_EXTENSIONS;
+  $('cfg-body').innerHTML = card('Upload Settings', `
+    ${row2(field('chat-sz','Max File Size (MB)',ni('chat-sz',up.max_size_mb,'1')),field('chat-chars','Max Text Chars',ni('chat-chars',up.max_text_chars,'1')))}
+    ${field('chat-exts','Allowed Extensions',tai('chat-exts',exts.join('\n'),6),'one per line')}
+  `);
+}
+function collectChat() {
+  const exts = arrFromLines('chat-exts');
+  state.data.chat = {
+    upload: { max_size_mb: numVal('chat-sz'), max_text_chars: numVal('chat-chars'), allowed_extensions: exts.length ? exts : undefined },
+  };
+}
+
+// ── Rate Limiting ──────────────────────────────────────────────────────────
+function renderRateLimiting() {
+  const r = state.data.rate_limiting || {};
+  $('cfg-body').innerHTML = card('Rate Limiting', `
+    ${field('rl-limit','Limit',ti('rl-limit',r.limit,'30 per minute'),'Flask-limiter format')}
+    ${field('rl-store','Redis Storage URL',ti('rl-store',r.storage_url,'redis://localhost:6379/0'),'blank = in-memory (dev only)')}
+  `);
+}
+function collectRateLimiting() {
+  state.data.rate_limiting = { limit: val('rl-limit') || undefined, storage_url: val('rl-store') || undefined };
+}
+
+// ── Prometheus ─────────────────────────────────────────────────────────────
+function renderPrometheus() {
+  const p = state.data.prometheus || {};
+  $('cfg-body').innerHTML = card('Prometheus Metrics', `
+    ${cbi('prom-on', !!p.enabled, 'Enable /metrics endpoint')}
+    <div class="mt-2">${field('prom-tok','Auth Token',ti('prom-tok',p.token),'blank = no authentication')}</div>
+    ${field('prom-dir','Multiproc Dir',ti('prom-dir',p.multiproc_dir,'/tmp/prometheus_multiproc'),'required for multi-worker')}
+  `);
+}
+function collectPrometheus() {
+  state.data.prometheus = { enabled: boolVal('prom-on') || undefined, token: val('prom-tok') || undefined, multiproc_dir: val('prom-dir') || undefined };
+}
+
+// ── Monitoring ─────────────────────────────────────────────────────────────
+function renderMonitoring() {
+  const m = state.data.monitoring || {};
+  $('cfg-body').innerHTML = card('Monitoring',
+    field('mon-tok', 'Bearer Token', ti('mon-tok', m.token), 'for GET /v1/models health checks')
+  );
+}
+function collectMonitoring() {
+  const t = val('mon-tok');
+  state.data.monitoring = t ? { token: t } : undefined;
+}
+
+// ── Admins ─────────────────────────────────────────────────────────────────
+function renderAdmins() {
+  const admins = state.data.admins || [];
+  const rows = admins.length ? admins.map((e, i) => adminRow(e, i)).join('') : adminRow('', 0);
+  $('cfg-body').innerHTML = card('Admins', `
+    <p class="text-muted small mb-2">Users with full admin panel access</p>
+    <div id="admins-list">${rows}</div>
+    <button type="button" class="btn btn-outline-secondary btn-sm mt-1" onclick="addAdminRow()">+ Add Admin</button>
+  `);
+}
+function adminRow(email, idx) {
+  return `<div class="admin-row d-flex gap-2 mb-2">
+    <input type="email" class="form-control form-control-sm" value="${esc(email)}" placeholder="user@example.com" aria-label="Admin email ${idx + 1}">
+    <button type="button" class="btn btn-outline-secondary btn-sm px-2" onclick="this.closest('.admin-row').remove()" aria-label="Remove">✕</button>
+  </div>`;
+}
+function addAdminRow() {
+  const list = $('admins-list');
+  list.insertAdjacentHTML('beforeend', adminRow('', list.querySelectorAll('.admin-row').length));
+}
+function collectAdmins() {
+  const emails = [];
+  document.querySelectorAll('#admins-list .admin-row input').forEach(inp => { const e = inp.value.trim(); if (e) emails.push(e); });
+  state.data.admins = emails.length ? emails : undefined;
+}
+
+// ── Groups ─────────────────────────────────────────────────────────────────
+function renderGroups() {
+  const groups = state.data.groups || {};
+  const keys = Object.keys(groups);
+  if (!state.selectedGroupKey || !groups[state.selectedGroupKey]) state.selectedGroupKey = keys[0] || null;
+  const opts = keys.map(k => `<option value="${esc(k)}"${k === state.selectedGroupKey ? ' selected' : ''}>${esc(k)}</option>`).join('');
+  $('cfg-body').innerHTML = `
+    <div class="entity-bar">
+      <label for="grp-sel" class="fw-semibold small mb-0 text-nowrap">Group:</label>
+      <select id="grp-sel" class="form-select form-select-sm" onchange="switchGroup(this.value)">${opts}</select>
+      <button class="btn btn-primary btn-sm text-nowrap" onclick="addGroup()">+ New</button>
+      <button class="btn btn-outline-danger btn-sm" onclick="deleteGroup()">Delete</button>
+    </div>
+    <div id="grp-form">${state.selectedGroupKey ? renderGroupForm(state.selectedGroupKey, groups[state.selectedGroupKey]) : ''}</div>
+  `;
+}
+
+function renderGroupForm(key, g) {
+  if (!g) return '';
+  const ma = g.model_access || {};
+  const rules = g.rules || [];
+  return `
+    ${card(`Group: ${esc(key)}`, row3(
+      field('grp-max',  'Max Coins',       ni('grp-max',   g.max),     '-2=unlimited, 0=blocked'),
+      field('grp-ref',  'Refresh (coins/hr)', ni('grp-ref', g.refresh)),
+      field('grp-start','Starting Coins',  ni('grp-start', g.starting))
+    ))}
+    ${card('Model Access', `
+      ${field('grp-ma-def','Default Policy',si('grp-ma-def',ma.default||'whitelist',['whitelist','blacklist','graylist']))}
+      ${row3(
+        field('grp-wl','Whitelist',tai('grp-wl',linesToStr(ma.whitelist),3),'one per line'),
+        field('grp-bl','Blacklist',tai('grp-bl',linesToStr(ma.blacklist),3),'one per line'),
+        field('grp-gl','Graylist', tai('grp-gl',linesToStr(ma.graylist), 3),'one per line')
+      )}
+    `)}
+    ${card('Auto-Assignment Rules', `
+      <p class="text-muted small mb-2">Users matching any rule are automatically added to this group</p>
+      <div id="rules-list">${rules.map((r, i) => ruleRow(r, i)).join('')}</div>
+      <button type="button" class="btn btn-outline-secondary btn-sm mt-1" onclick="addRuleRow()">+ Add Rule</button>
+    `)}
+  `;
+}
+
+function ruleRow(r, idx) {
+  const fv = r.field || 'affiliation';
+  const op = r.contains !== undefined ? 'contains' : 'equals';
+  const vs = r.contains ?? r.equals ?? '';
+  return `<div class="rule-row d-flex gap-2 mb-2 align-items-center">
+    <select class="form-select form-select-sm rule-field flex-shrink-0" style="width:140px" aria-label="Rule field ${idx + 1}">
+      ${['affiliation','member_of','idp','ou'].map(f => `<option${f === fv ? ' selected' : ''}>${f}</option>`).join('')}
+    </select>
+    <select class="form-select form-select-sm rule-op flex-shrink-0" style="width:110px" aria-label="Rule operator ${idx + 1}">
+      <option${op === 'contains' ? ' selected' : ''}>contains</option>
+      <option${op === 'equals'   ? ' selected' : ''}>equals</option>
+    </select>
+    <input class="form-control form-control-sm rule-val" type="text" value="${esc(vs)}" placeholder="value" aria-label="Rule value ${idx + 1}">
+    <button type="button" class="btn btn-outline-secondary btn-sm px-2" onclick="this.closest('.rule-row').remove()" aria-label="Remove rule">✕</button>
+  </div>`;
+}
+function addRuleRow() {
+  $('rules-list').insertAdjacentHTML('beforeend', ruleRow({}, $('rules-list').children.length));
+}
+function switchGroup(key) {
+  collectCurrentGroup();
+  state.selectedGroupKey = key;
+  $('grp-form').innerHTML = renderGroupForm(key, state.data.groups?.[key] || {});
+}
+function addGroup() {
+  const name = prompt('New group name:');
+  if (!name?.trim()) return;
+  const key = name.trim();
+  if (state.data.groups?.[key]) { alert('Group already exists.'); return; }
+  if (!state.data.groups) state.data.groups = {};
+  collectCurrentGroup();
+  state.data.groups[key] = { max: 0, refresh: 0, starting: 0, model_access: { default: 'whitelist' } };
+  state.selectedGroupKey = key;
+  renderGroups();
+}
+function deleteGroup() {
+  if (!state.selectedGroupKey) return;
+  if (!confirm(`Delete group "${state.selectedGroupKey}"?`)) return;
+  delete state.data.groups[state.selectedGroupKey];
+  state.selectedGroupKey = null;
+  renderGroups();
+}
+function collectCurrentGroup() {
+  const key = state.selectedGroupKey;
+  if (!key || !$('grp-max')) return;
+  const g = {};
+  const mx = numVal('grp-max');   if (mx !== undefined) g.max     = mx;
+  const rf = numVal('grp-ref');   if (rf !== undefined) g.refresh = rf;
+  const st = numVal('grp-start'); if (st !== undefined) g.starting= st;
+  const wl = arrFromLines('grp-wl'), bl = arrFromLines('grp-bl'), gl = arrFromLines('grp-gl');
+  g.model_access = {
+    default:   val('grp-ma-def') || undefined,
+    whitelist: wl.length ? wl : undefined,
+    blacklist: bl.length ? bl : undefined,
+    graylist:  gl.length ? gl : undefined,
+  };
+  const rules = [];
+  document.querySelectorAll('#rules-list .rule-row').forEach(row => {
+    const f = row.querySelector('.rule-field').value;
+    const op= row.querySelector('.rule-op').value;
+    const v = row.querySelector('.rule-val').value.trim();
+    if (f && v) { const r = { field: f }; r[op] = v; rules.push(r); }
+  });
+  if (rules.length) g.rules = rules;
+  if (!state.data.groups) state.data.groups = {};
+  state.data.groups[key] = g;
+}
+function collectGroups() { collectCurrentGroup(); }
+
+// ── Clients ────────────────────────────────────────────────────────────────
+function renderClients() {
+  const clients = state.data.clients || {};
+  const keys = Object.keys(clients);
+  if (!state.selectedClientKey || !clients[state.selectedClientKey]) state.selectedClientKey = keys[0] || null;
+  const opts = keys.map(k => `<option value="${esc(k)}"${k === state.selectedClientKey ? ' selected' : ''}>${esc(k)}</option>`).join('');
+  $('cfg-body').innerHTML = `
+    <div class="entity-bar">
+      <label for="cli-sel" class="fw-semibold small mb-0 text-nowrap">Client:</label>
+      <select id="cli-sel" class="form-select form-select-sm" onchange="switchClient(this.value)">${opts}</select>
+      <button class="btn btn-primary btn-sm text-nowrap" onclick="addClient()">+ New</button>
+      <button class="btn btn-outline-danger btn-sm" onclick="deleteClient()">Delete</button>
+    </div>
+    <div id="cli-form">${state.selectedClientKey ? renderClientForm(state.selectedClientKey, clients[state.selectedClientKey]) : ''}</div>
+  `;
+}
+function renderClientForm(key, c) {
+  if (!c) return '';
+  const ma = c.model_access || {};
+  return `
+    ${card(`Client: ${esc(key)}`, row3(
+      field('cli-max',  'Max Coins',          ni('cli-max',   c.max),     '-2=unlimited, 0=blocked'),
+      field('cli-ref',  'Refresh (coins/hr)', ni('cli-ref',   c.refresh)),
+      field('cli-start','Starting Coins',     ni('cli-start', c.starting))
+    ))}
+    ${card('Model Access', `
+      ${field('cli-ma-def','Default Policy',si('cli-ma-def',ma.default||'whitelist',['whitelist','blacklist','graylist']))}
+      ${row3(
+        field('cli-wl','Whitelist',tai('cli-wl',linesToStr(ma.whitelist),3),'one per line'),
+        field('cli-bl','Blacklist',tai('cli-bl',linesToStr(ma.blacklist),3),'one per line'),
+        field('cli-gl','Graylist', tai('cli-gl',linesToStr(ma.graylist), 3),'one per line')
+      )}
+    `)}
+  `;
+}
+function switchClient(key) {
+  collectCurrentClient();
+  state.selectedClientKey = key;
+  $('cli-form').innerHTML = renderClientForm(key, state.data.clients?.[key] || {});
+}
+function addClient() {
+  const name = prompt('New client name:');
+  if (!name?.trim()) return;
+  const key = name.trim();
+  if (state.data.clients?.[key]) { alert('Client already exists.'); return; }
+  if (!state.data.clients) state.data.clients = {};
+  collectCurrentClient();
+  state.data.clients[key] = { max: 50, refresh: 0.1, starting: 50, model_access: { default: 'whitelist' } };
+  state.selectedClientKey = key;
+  renderClients();
+}
+function deleteClient() {
+  if (!state.selectedClientKey) return;
+  if (!confirm(`Delete client "${state.selectedClientKey}"?`)) return;
+  delete state.data.clients[state.selectedClientKey];
+  state.selectedClientKey = null;
+  renderClients();
+}
+function collectCurrentClient() {
+  const key = state.selectedClientKey;
+  if (!key || !$('cli-max')) return;
+  const c = {};
+  const mx = numVal('cli-max');   if (mx !== undefined) c.max      = mx;
+  const rf = numVal('cli-ref');   if (rf !== undefined) c.refresh  = rf;
+  const st = numVal('cli-start'); if (st !== undefined) c.starting = st;
+  const wl = arrFromLines('cli-wl'), bl = arrFromLines('cli-bl'), gl = arrFromLines('cli-gl');
+  c.model_access = {
+    default:   val('cli-ma-def') || undefined,
+    whitelist: wl.length ? wl : undefined,
+    blacklist: bl.length ? bl : undefined,
+    graylist:  gl.length ? gl : undefined,
+  };
+  if (!state.data.clients) state.data.clients = {};
+  state.data.clients[key] = c;
+}
+function collectClients() { collectCurrentClient(); }
+
+// ── Models ─────────────────────────────────────────────────────────────────
+function renderModels() {
+  const models = state.data.models || [];
+  if (state.selectedModelIdx >= models.length) state.selectedModelIdx = 0;
+  const opts = models.map((m, i) =>
+    `<option value="${i}"${i === state.selectedModelIdx ? ' selected' : ''}>${esc(m.name || `Model ${i}`)}${m.active === false ? ' (inactive)' : ''}</option>`
+  ).join('');
+  $('cfg-body').innerHTML = `
+    <div class="entity-bar">
+      <label for="mdl-sel" class="fw-semibold small mb-0 text-nowrap">Model:</label>
+      <select id="mdl-sel" class="form-select form-select-sm" onchange="switchModel(parseInt(this.value))">${opts}</select>
+      <button class="btn btn-primary btn-sm text-nowrap" onclick="addModel()">+ New</button>
+      <button class="btn btn-outline-danger btn-sm" onclick="deleteModel()">Delete</button>
+    </div>
+    <div id="mdl-form">${models.length ? renderModelForm(models[state.selectedModelIdx], state.selectedModelIdx) : ''}</div>
+  `;
+}
+
+function renderModelForm(m, idx) {
+  if (!m) return '';
+  const inMod  = m.input_modalities  || [];
+  const outMod = m.output_modalities || [];
+  const eps    = m.endpoints         || [];
+  const modChecks = (prefix, modList, available) => available.map(mod =>
+    `<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" id="${prefix}-${mod}"${modList.includes(mod) ? ' checked' : ''}><label class="form-check-label small" for="${prefix}-${mod}">${mod}</label></div>`
+  ).join('');
+  return `
+    ${card('Identity', `
+      ${row2(field('mdl-name','Name',ti('mdl-name',m.name),'internal identifier'),field('mdl-active','',cbi('mdl-active',m.active !== false,'Active (visible and usable)')))}
+      ${field('mdl-desc',  'Description',      ti('mdl-desc',   m.description))}
+      ${field('mdl-url',   'Documentation URL', ti('mdl-url',    m.url))}
+      ${field('mdl-notice','Admin Notice',      ti('mdl-notice', m.notice),'shown in UI for this model')}
+    `)}
+    ${card('Pricing & Limits', `
+      ${row2(field('mdl-in-cost', 'Input Cost / 1M tokens ($)',  ni('mdl-in-cost',  m.input_cost_per_million)),
+             field('mdl-out-cost','Output Cost / 1M tokens ($)', ni('mdl-out-cost', m.output_cost_per_million)))}
+      ${row3(field('mdl-ctx',    'Context Window (tokens)', ni('mdl-ctx',    m.context_window,  '1')),
+             field('mdl-maxout', 'Max Output Tokens',       ni('mdl-maxout', m.max_output_tokens,'1')),
+             field('mdl-cutoff', 'Knowledge Cutoff',        ti('mdl-cutoff', m.knowledge_cutoff, 'YYYY-MM')))}
+    `)}
+    ${card('Capabilities', `
+      ${cbi('mdl-reason', !!m.supports_reasoning,       'Supports reasoning / chain-of-thought')}
+      <div class="mt-2">${cbi('mdl-fn', !!m.supports_function_calling, 'Supports function calling')}</div>
+      <div class="mt-3"><span class="fw-semibold small">Input Modalities: </span>${modChecks('mdl-in',  inMod,  ['text','image','video','audio'])}</div>
+      <div class="mt-1"><span class="fw-semibold small">Output Modalities: </span>${modChecks('mdl-out', outMod, ['text','audio'])}</div>
+    `)}
+    ${card('Endpoints', `
+      <p class="text-muted small mb-2">Multiple endpoints enable load-balancing and failover</p>
+      <table class="table table-sm table-bordered align-middle mb-2">
+        <thead class="table-light">
+          <tr><th>URL</th><th>API Key</th><th style="width:190px">Model at Endpoint</th><th style="width:44px"></th></tr>
+        </thead>
+        <tbody id="ep-body">${eps.map((ep, i) => endpointRow(ep, i)).join('')}</tbody>
+      </table>
+      <button type="button" class="btn btn-outline-secondary btn-sm" onclick="addEndpoint()">+ Add Endpoint</button>
+    `)}
+  `;
+}
+
+function endpointRow(ep, idx) {
+  return `<tr class="ep-row">
+    <td class="p-1"><input class="form-control form-control-sm ep-url"   type="text" value="${esc(ep.url     || '')}" placeholder="https://api.example.com/v1" aria-label="Endpoint URL ${idx + 1}"></td>
+    <td class="p-1"><input class="form-control form-control-sm ep-key"   type="text" value="${esc(ep.api_key || '')}" placeholder="sk-…"                       aria-label="API Key ${idx + 1}"></td>
+    <td class="p-1"><input class="form-control form-control-sm ep-model" type="text" value="${esc(ep.model   || '')}" placeholder="(same as model name)"        aria-label="Model at endpoint ${idx + 1}"></td>
+    <td class="p-1 text-center"><button class="btn btn-outline-danger btn-sm px-2" onclick="this.closest('tr').remove()" aria-label="Remove endpoint">✕</button></td>
+  </tr>`;
+}
+function addEndpoint() {
+  $('ep-body').insertAdjacentHTML('beforeend', endpointRow({}, $('ep-body').children.length));
+}
+function switchModel(idx) {
+  collectCurrentModel();
+  state.selectedModelIdx = idx;
+  $('mdl-form').innerHTML = renderModelForm(state.data.models?.[idx] || {}, idx);
+}
+function addModel() {
+  collectCurrentModel();
+  if (!state.data.models) state.data.models = [];
+  state.data.models.push({ name: 'new-model', active: true, input_cost_per_million: 0, output_cost_per_million: 0, endpoints: [{ url: '', api_key: '' }] });
+  state.selectedModelIdx = state.data.models.length - 1;
+  renderModels();
+}
+function deleteModel() {
+  const idx = state.selectedModelIdx;
+  if (!state.data.models?.[idx]) return;
+  if (!confirm(`Delete model "${state.data.models[idx].name || `Model ${idx}`}"?`)) return;
+  state.data.models.splice(idx, 1);
+  state.selectedModelIdx = Math.max(0, idx - 1);
+  renderModels();
+}
+function collectCurrentModel() {
+  const idx = state.selectedModelIdx;
+  if (!state.data.models || !$('mdl-name')) return;
+  if (idx >= state.data.models.length) return;
+  const m = state.data.models[idx] || {};
+  m.name                   = val('mdl-name')     || m.name;
+  m.active                 = boolVal('mdl-active');
+  m.description            = val('mdl-desc')     || undefined;
+  m.url                    = val('mdl-url')      || undefined;
+  m.notice                 = val('mdl-notice')   || undefined;
+  m.input_cost_per_million = numVal('mdl-in-cost');
+  m.output_cost_per_million= numVal('mdl-out-cost');
+  m.context_window         = numVal('mdl-ctx');
+  m.max_output_tokens      = numVal('mdl-maxout');
+  m.knowledge_cutoff       = val('mdl-cutoff')   || undefined;
+  m.supports_reasoning     = boolVal('mdl-reason')|| undefined;
+  m.supports_function_calling = boolVal('mdl-fn')|| undefined;
+  const inMod  = ['text','image','video','audio'].filter(mod => $(`mdl-in-${mod}`)?.checked);
+  m.input_modalities  = inMod.length  ? inMod  : undefined;
+  const outMod = ['text','audio'].filter(mod => $(`mdl-out-${mod}`)?.checked);
+  m.output_modalities = outMod.length ? outMod : undefined;
+  const endpoints = [];
+  document.querySelectorAll('#ep-body .ep-row').forEach(row => {
+    const url   = row.querySelector('.ep-url').value.trim();
+    const apiKey= row.querySelector('.ep-key').value.trim();
+    const model = row.querySelector('.ep-model').value.trim();
+    if (url) { const ep = { url, api_key: apiKey }; if (model) ep.model = model; endpoints.push(ep); }
+  });
+  m.endpoints = endpoints;
+  state.data.models[idx] = m;
+}
+function collectModels() { collectCurrentModel(); }
+
+// ── Maps ───────────────────────────────────────────────────────────────────
+const COLLECTORS = {
+  app: collectApp, oauth2: collectOauth2, api: collectApi, chat: collectChat,
+  rate_limiting: collectRateLimiting, prometheus: collectPrometheus, monitoring: collectMonitoring,
+  admins: collectAdmins, groups: collectGroups, clients: collectClients, models: collectModels,
+};
+const RENDERERS = {
+  app: renderApp, oauth2: renderOauth2, api: renderApi, chat: renderChat,
+  rate_limiting: renderRateLimiting, prometheus: renderPrometheus, monitoring: renderMonitoring,
+  admins: renderAdmins, groups: renderGroups, clients: renderClients, models: renderModels,
+};
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+(function () {
+  const el = document.querySelector('.cfg-layout');
+  if (el) {
+    const top = el.getBoundingClientRect().top;
+    document.documentElement.style.setProperty('--cfg-top', top + 'px');
+  }
+})();
+loadConfig();
+</script>
+{% endblock %}

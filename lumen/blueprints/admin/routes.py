@@ -1,7 +1,10 @@
+import os
+
+import yaml
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 
-from flask import Blueprint, render_template, request, redirect, url_for, abort, jsonify
+from flask import Blueprint, current_app, render_template, request, redirect, url_for, abort, jsonify
 from sqlalchemy import func, case, select, text
 
 from lumen.blueprints.profile.routes import _build_model_access_list, _entity_groups, _get_profile_data, _gravatar_url
@@ -227,6 +230,41 @@ def _period_bucket(period_str):
 @admin_required
 def analytics():
     return render_template("admin/analytics.html")
+
+
+@admin_bp.route("/config")
+@admin_required
+def config_editor():
+    return render_template("admin/config.html")
+
+
+@admin_bp.route("/api/config")
+@admin_required
+def config_api_get():
+    config_path = current_app.config["CONFIG_YAML"]
+    try:
+        with open(config_path) as f:
+            data = yaml.safe_load(f) or {}
+    except OSError as e:
+        return jsonify({"error": str(e)}), HTTPStatus.INTERNAL_SERVER_ERROR
+    return jsonify(data)
+
+
+@admin_bp.route("/api/config", methods=["POST"])
+@admin_required
+def config_api_post():
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Invalid payload — expected a JSON object"}), HTTPStatus.BAD_REQUEST
+    config_path = current_app.config["CONFIG_YAML"]
+    tmp_path = config_path + ".tmp"
+    try:
+        with open(tmp_path, "w") as f:
+            yaml.dump(data, f, Dumper=yaml.SafeDumper, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        os.replace(tmp_path, config_path)
+    except OSError as e:
+        return jsonify({"error": str(e)}), HTTPStatus.INTERNAL_SERVER_ERROR
+    return jsonify({"ok": True})
 
 
 @admin_bp.route("/api/analytics/summary")
