@@ -42,6 +42,7 @@
 <script>
 'use strict';
 const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+const CURRENT_EMAIL = {{ current_email | tojson }};
 
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
@@ -183,7 +184,7 @@ function showToast(msg, type = 'success') {
 // ── Nav ────────────────────────────────────────────────────────────────────
 function buildNav() {
   $('cfg-section-nav').innerHTML = SECTIONS.map(s =>
-    `<button id="nav-${s.id}" class="cfg-nav-btn" onclick="navigateTo('${s.id}')">${s.label}</button>`
+    `<button id="nav-${s.id}" class="cfg-nav-btn${state.currentSection === s.id ? ' active' : ''}" onclick="navigateTo('${s.id}')">${s.label}</button>`
   ).join('');
 }
 
@@ -195,7 +196,7 @@ function navigateTo(id) {
   if (btn) btn.classList.add('active');
   const sec = SECTIONS.find(s => s.id === id);
   $('cfg-section-title').textContent = sec?.label ?? id;
-  $('cfg-section-desc').textContent = sec?.desc ?? '';
+  $('cfg-section-desc').textContent  = sec?.desc  ?? '';
   renderSection(id);
 }
 
@@ -351,11 +352,11 @@ function renderChat() {
   const exts = up.allowed_extensions || DEFAULT_EXTENSIONS;
   $('cfg-body').innerHTML = card('Upload Settings', `
     ${row2(field('chat-sz','Max File Size (MB)',ni('chat-sz',up.max_size_mb,'1')),field('chat-chars','Max Text Chars',ni('chat-chars',up.max_text_chars,'1')))}
-    ${field('chat-exts','Allowed Extensions',tai('chat-exts',exts.join('\n'),6),'one per line')}
+    ${field('chat-exts','Allowed Extensions',tai('chat-exts',exts.join(' '),4),'whitespace-separated')}
   `);
 }
 function collectChat() {
-  const exts = arrFromLines('chat-exts');
+  const exts = val('chat-exts').split(/\s+/).map(s => s.trim()).filter(Boolean);
   state.data.chat = {
     upload: { max_size_mb: numVal('chat-sz'), max_text_chars: numVal('chat-chars'), allowed_extensions: exts.length ? exts : undefined },
   };
@@ -407,11 +408,16 @@ function renderAdmins() {
     <div id="admins-list">${rows}</div>
     <button type="button" class="btn btn-outline-secondary btn-sm mt-1" onclick="addAdminRow()">+ Add Admin</button>
   `);
+  document.querySelectorAll('#admins-list [data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
 }
 function adminRow(email, idx) {
+  const isSelf = email && email.toLowerCase() === CURRENT_EMAIL.toLowerCase();
+  const removeBtn = isSelf
+    ? `<span tabindex="0" data-bs-toggle="tooltip" title="You cannot remove yourself from the admin list"><button type="button" class="btn btn-outline-secondary btn-sm px-2" disabled aria-label="Cannot remove yourself">✕</button></span>`
+    : `<button type="button" class="btn btn-outline-secondary btn-sm px-2" onclick="this.closest('.admin-row').remove()" aria-label="Remove">✕</button>`;
   return `<div class="admin-row d-flex gap-2 mb-2">
     <input type="email" class="form-control form-control-sm" value="${esc(email)}" placeholder="user@example.com" aria-label="Admin email ${idx + 1}">
-    <button type="button" class="btn btn-outline-secondary btn-sm px-2" onclick="this.closest('.admin-row').remove()" aria-label="Remove">✕</button>
+    ${removeBtn}
   </div>`;
 }
 function addAdminRow() {
@@ -626,6 +632,8 @@ function renderModels() {
       <select id="mdl-sel" class="form-select form-select-sm" onchange="switchModel(parseInt(this.value))">${opts}</select>
       <button class="btn btn-primary btn-sm text-nowrap" onclick="addModel()">+ New</button>
       <button class="btn btn-outline-danger btn-sm" onclick="deleteModel()">Delete</button>
+      <button id="btn-sync-model" class="btn btn-outline-secondary btn-sm text-nowrap" onclick="syncModel()">Update</button>
+      <button id="btn-sync-all" class="btn btn-outline-secondary btn-sm text-nowrap" onclick="syncAllModels()">Update All</button>
     </div>
     <div id="mdl-form">${models.length ? renderModelForm(models[state.selectedModelIdx], state.selectedModelIdx) : ''}</div>
   `;
@@ -735,6 +743,102 @@ function collectCurrentModel() {
   state.data.models[idx] = m;
 }
 function collectModels() { collectCurrentModel(); }
+
+async function syncModel() {
+  collectCurrentModel();
+  const idx = state.selectedModelIdx;
+  const model = state.data.models?.[idx];
+  if (!model) return;
+  const btn = $('btn-sync-model');
+  btn.disabled = true;
+  btn.textContent = 'Updating…';
+  try {
+    const resp = await fetch('{{ url_for("admin.sync_model_api") }}', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify(model),
+    });
+    const result = await resp.json();
+    if (!resp.ok) { showToast('Update failed: ' + (result.error || resp.statusText), 'danger'); return; }
+    const { updates, removals, matched, endpoint_ok } = result;
+    if (!Object.keys(updates).length && !removals.length) {
+      const info = matched ? ` (models.dev: ${matched})` : (endpoint_ok ? '' : ', endpoint unreachable');
+      showToast('No changes' + info, 'secondary');
+      return;
+    }
+    const m = state.data.models[idx];
+    for (const [field, newVal] of Object.entries(updates)) m[field] = newVal;
+    for (const field of removals) delete m[field];
+    $('mdl-form').innerHTML = renderModelForm(m, idx);
+    const FIELD_LABELS = {
+      context_window: 'context size',
+      max_output_tokens: 'max output',
+      input_cost_per_million: 'input price',
+      output_cost_per_million: 'output price',
+      knowledge_cutoff: 'cutoff',
+      supports_reasoning: 'reasoning',
+      input_modalities: 'input modalities',
+      output_modalities: 'output modalities',
+    };
+    const label = f => FIELD_LABELS[f] || f;
+    const changed = [
+      ...Object.keys(updates).map(label),
+      ...removals.map(f => `${label(f)} removed`),
+    ];
+    const suffix = matched ? ` [${matched}]` : '';
+    showToast('Updated: ' + changed.join(', ') + suffix, 'success');
+  } catch (e) {
+    showToast('Update failed: ' + e.message, 'danger');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Update';
+  }
+}
+
+async function syncAllModels() {
+  collectCurrentModel();
+  const models = state.data.models;
+  if (!models?.length) return;
+  const btnAll = $('btn-sync-all');
+  const btnOne = $('btn-sync-model');
+  btnAll.disabled = true;
+  btnOne.disabled = true;
+  const FIELD_LABELS = {
+    context_window: 'context size', max_output_tokens: 'max output',
+    input_cost_per_million: 'input price', output_cost_per_million: 'output price',
+    knowledge_cutoff: 'cutoff', supports_reasoning: 'reasoning',
+    input_modalities: 'input modalities', output_modalities: 'output modalities',
+  };
+  const label = f => FIELD_LABELS[f] || f;
+  let updatedCount = 0, skippedCount = 0;
+  for (let i = 0; i < models.length; i++) {
+    const m = models[i];
+    btnAll.textContent = `Updating ${i + 1}/${models.length}…`;
+    try {
+      const resp = await fetch('{{ url_for("admin.sync_model_api") }}', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+        body: JSON.stringify(m),
+      });
+      if (!resp.ok) { skippedCount++; continue; }
+      const { updates, removals } = await resp.json();
+      if (!Object.keys(updates).length && !removals.length) { skippedCount++; continue; }
+      for (const [field, newVal] of Object.entries(updates)) m[field] = newVal;
+      for (const field of removals) delete m[field];
+      updatedCount++;
+    } catch (_) {
+      skippedCount++;
+    }
+  }
+  renderModels();
+  const parts = [];
+  if (updatedCount) parts.push(`${updatedCount} updated`);
+  if (skippedCount) parts.push(`${skippedCount} unchanged`);
+  showToast('Update All: ' + parts.join(', '), updatedCount ? 'success' : 'secondary');
+  btnAll.disabled = false;
+  btnAll.textContent = 'Update All';
+  btnOne.disabled = false;
+}
 
 // ── Maps ───────────────────────────────────────────────────────────────────
 const COLLECTORS = {

@@ -6,6 +6,12 @@ All notable changes to Lumen will be documented in this file.
 
 ### Added
 - Admin config editor at `/admin/config`: a browser-based YAML editor accessible only to admins. Supports all config sections (app, OAuth2, groups, clients, models, etc.) with live forms, save/reset, and atomic file writes. Linked in the navbar after Analytics for all themes.
+- Config editor Models section: "Update" button fetches live metadata from the model's endpoints (context window, max output tokens) and models.dev (knowledge cutoff, reasoning support, modalities) and applies the changes to the form without saving. Toast shows friendly field names (e.g. "context size", "cutoff"). models.dev is cached in-process for 10 minutes so repeated clicks don't re-fetch it.
+- Config editor Models section: "Update All" button runs the same sync across every model sequentially, showing a progress counter and a summary toast when done.
+
+### Changed
+- Config editor Admins section: the current user's own email row has its remove button disabled with a Bootstrap tooltip explaining why, preventing self-removal from the admin list.
+- Config editor Chat section: Allowed Extensions field now accepts whitespace-separated values (spaces, tabs, or newlines), so extensions can be grouped on one line or many.
 
 ### Fixed
 - Announcement banner dismiss key now uses a hash of the full HTML content instead of stripped text, so changing only a URL inside a link correctly shows the updated announcement.

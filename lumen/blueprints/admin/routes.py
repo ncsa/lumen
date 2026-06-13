@@ -4,7 +4,7 @@ import yaml
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 
-from flask import Blueprint, current_app, render_template, request, redirect, url_for, abort, jsonify
+from flask import Blueprint, current_app, render_template, request, redirect, url_for, abort, jsonify, session
 from sqlalchemy import func, case, select, text
 
 from lumen.blueprints.profile.routes import _build_model_access_list, _entity_groups, _get_profile_data, _gravatar_url
@@ -235,7 +235,7 @@ def analytics():
 @admin_bp.route("/config")
 @admin_required
 def config_editor():
-    return render_template("admin/config.html")
+    return render_template("admin/config.html", current_email=session.get("entity_email", ""))
 
 
 @admin_bp.route("/api/config")
@@ -248,6 +248,17 @@ def config_api_get():
     except OSError as e:
         return jsonify({"error": str(e)}), HTTPStatus.INTERNAL_SERVER_ERROR
     return jsonify(data)
+
+
+@admin_bp.route("/api/sync_model", methods=["POST"])
+@admin_required
+def sync_model_api():
+    from lumen.services.model_sync import sync_model
+    model_def = request.get_json(force=True, silent=True)
+    if not isinstance(model_def, dict):
+        return jsonify({"error": "Expected a JSON object"}), HTTPStatus.BAD_REQUEST
+    result = sync_model(model_def)
+    return jsonify(result)
 
 
 @admin_bp.route("/api/config", methods=["POST"])
