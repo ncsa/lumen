@@ -6,7 +6,13 @@ app:
   # WARNING: rotating this value invalidates ALL existing user API keys.
   # Can be overridden at runtime with the LUMEN_ENCRYPTION_KEY environment variable.
   encryption_key: ""
-  database_url: postgresql://lumen:lumen@localhost:5678/lumen  # TimescaleDB (started by dev.sh)
+  database:
+    url: postgresql://lumen:lumen@localhost:5678/lumen  # TimescaleDB (started by dev.sh)
+    pool_size: 20        # persistent connections kept open (default: 5)
+    max_overflow: 60     # extra connections allowed above pool_size (default: 10)
+    pool_timeout: 10     # seconds to wait for a connection before error (default: 30)
+    pool_recycle: 1800   # recycle connections after N seconds to avoid stale-connection errors
+    pool_pre_ping: true  # test each connection before use; silently replaces stale ones
   debug: true   # set to false in production
   # announcement: ""  # WARNING: rendered as raw HTML — trusted operator input only; never accept user content here.
   # graylist_default_notice: "..."  # fallback notice shown for any graylisted model with no per-model notice set
@@ -16,12 +22,6 @@ app:
   #   email: dev@example.com
   #   groups:
   #     - staff
-  db_pool:
-    pool_size: 20        # persistent connections kept open (default: 5)
-    max_overflow: 30     # extra connections allowed above pool_size (default: 10)
-    pool_timeout: 10     # seconds to wait for a connection before error (default: 30)
-    pool_recycle: 1800   # recycle connections after N seconds to avoid stale-connection errors
-    pool_pre_ping: true  # test each connection before use; silently replaces stale ones
 
 oauth2:
   # Register at https://cilogon.org/oauth2/register to get client_id and client_secret
@@ -36,6 +36,12 @@ oauth2:
   # Uncomment to restrict login to the University of Illinois IdP only:
   # params:
   #   idphint: urn:mace:incommon:uiuc.edu
+
+admins:
+  - admin@example.com
+
+api:
+  consent: true  # set to false to exempt API requests from the graylist model-consent requirement
 
 chat:
   upload:
@@ -65,12 +71,14 @@ rate_limiting:
   # storage_url: redis://localhost:6379/0  # omit for in-memory (single-process); requires restart to change
   limit: "30 per minute"  # applies to every endpoint, keyed by authenticated user identity
 
-users:
-  coins:
-    maximum: 20   # default max coin budget per user (0 = no access until admin grants, -2 = unlimited)
-    refresh: 0.05 # coins replenished per hour (0 = no auto-refresh)
-  admins:
-    - admin@example.com
+prometheus:
+  enabled: false
+  token: ""          # Optional. Set to a long random string to require Bearer token auth. Leave empty for no auth.
+  multiproc_dir: ""  # Optional. Path for multi-worker aggregation (e.g. /tmp/prometheus_multiproc).
+                     # For multiple containers, mount a shared volume at this path.
+
+monitoring:
+  token: ""   # Set to a long random string; leave empty to disable
 
 groups:
   # Groups are created/managed via the admin UI. Rules here auto-assign users at login
@@ -124,7 +132,6 @@ groups:
 #    model_access:
 #      default: blacklist   # deny everything not in whitelist
 #      whitelist: [gpt-4o, llama3]
-
 
 models:
   # The top-level "name" is Lumen's internal model identifier — what callers use in API requests.
@@ -195,18 +202,3 @@ models:
       - url: http://gpu-server.internal/v1
         api_key: internal-key
         model: phi-3-mini-128k-instruct   # different name at the internal endpoint
-
-# API behaviour
-api:
-  consent: true  # set to false to exempt API requests from the graylist model-consent requirement
-
-# Monitoring — read-only token for /v1/models (no user account required)
-monitoring:
-  token: ""   # Set to a long random string; leave empty to disable
-
-# Prometheus metrics endpoint (/metrics)
-prometheus:
-  enabled: false
-  token: ""          # Optional. Set to a long random string to require Bearer token auth. Leave empty for no auth.
-  multiproc_dir: ""  # Optional. Path for multi-worker aggregation (e.g. /tmp/prometheus_multiproc).
-                     # For multiple containers, mount a shared volume at this path.

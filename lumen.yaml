@@ -1,0 +1,269 @@
+app:
+  name: Lumen
+  tagline: Illuminating AI
+  graylist_default_notice: "This model was trained outside the U.S. and may contain biases — use with awareness."
+  announcement: |
+    On Thursday June 11, I will start to request for you to acknowledge certain models.
+    This is a one time action for each model, until you acknowledge the model, you will
+    not be able to use it.
+  secret_key: lie3ahpheidi0Eacid2jeekai6eCai7thooh
+  # Dedicated secret for hashing API keys stored in the database.
+  # WARNING: rotating this value invalidates ALL existing user API keys.
+  # Can be overridden at runtime with the LUMEN_ENCRYPTION_KEY environment variable.
+  encryption_key: heiros4keeChei1uwa0ax8hi7laiwaepegohlahr
+  database:
+    url: postgresql://lumen:lumen@postgres/lumen
+    pool_size: 20
+    max_overflow: 60
+    pool_timeout: 10
+    pool_recycle: 1800
+    pool_pre_ping: true
+  theme: illinois
+  email_themes:
+    "@uic.edu": uic
+    "@uis.edu": uis
+    "@illinois.edu": illinois
+  debug: false
+  logs:
+    level: info          # DEBUG, INFO, WARNING, ERROR
+    access: false        # suppress werkzeug request logs
+    model: false         # log per-endpoint health check results
+
+api:
+  consent: false
+
+oauth2:
+  client_id: cilogon:/client_id/48496968d6e67c017987de8f72d89583
+  client_secret: i8SSCrV0JeDDA3toaiq0cIFL0Mw5XARhgbgHvb4Sy800G8UCHfVkMYoX60U5Ie22I0v52uVsWQGlWzJMT4qu0w
+  server_metadata_url: https://cilogon.org/.well-known/openid-configuration
+  redirect_uri: https://lumen.ncsa.illinois.edu/callback
+  scopes: openid email profile org.cilogon.userinfo
+  params:
+    idphint: urn:mace:incommon:uiuc.edu,https://shibboleth.uic.edu/shibboleth
+    skin: illinois01
+
+chat:
+  remove: hide   # "hide" = soft-delete | "delete" = hard delete
+  upload:
+    max_size_mb: 10            # maximum upload file size
+    max_text_chars: 100000     # maximum characters for text content
+    # allowed_extensions:      # uncomment to override defaults
+    #   - txt
+    #   - md
+    #   - csv
+    #   - json
+    #   - py
+    #   - js
+    #   - ts
+    #   - html
+    #   - css
+    #   - xml
+    #   - yaml
+    #   - yml
+    #   - pdf
+    #   - png
+    #   - jpg
+    #   - jpeg
+    #   - gif
+
+rate_limiting:
+  # storage_url: redis://localhost:6379/0  # omit for in-memory (dev); requires restart to change
+  limit: "30 per minute"  # applies to every endpoint, keyed by authenticated user identity
+
+# Prometheus metrics endpoint (/metrics)
+prometheus:
+  enabled: false
+  token: ""          # set to a long random string to require Bearer token auth
+  multiproc_dir: ""  # path for multi-worker aggregation (e.g. /tmp/prometheus_multiproc)
+
+# Monitoring endpoint for uptime kuma
+monitoring:
+  token: "kuma"
+
+admins:
+  - kooper@illinois.edu
+  - cheller@illinois.edu
+  - angrave@illinois.edu
+  - lmarini@illinois.edu
+  - jhaney@illinois.edu
+
+groups:
+  default:
+    max: 0
+    refresh: 0
+    starting: 0
+    model_access:
+      default: blacklist
+      graylist:
+        - qwen3-coder-next
+        - qwen3.6-35b-a3b
+
+  uiuc-student:
+    rules:
+      - field: affiliation
+        contains: student@illinois.edu
+      - field: idp
+        equals: urn:mace:incommon:uiuc.edu
+    max: 10.0
+    refresh: 0.05
+    starting: 10.0
+    model_access:
+      default: whitelist
+  uiuc-staff:
+    rules:
+      - field: affiliation
+        contains: staff@illinois.edu
+      - field: idp
+        equals: urn:mace:incommon:uiuc.edu
+    max: 20.0
+    refresh: 0.05
+    starting: 20.0
+    model_access:
+      default: whitelist
+
+  uic-student:
+    rules:
+      - field: affiliation
+        contains: student@uic.edu
+      - field: idp
+        equals: https://shibboleth.uic.edu/shibboleth
+    max: 10.0
+    refresh: 0.05
+    starting: 10.0
+    model_access:
+      default: whitelist
+  uic-staff:
+    rules:
+      - field: affiliation
+        contains: staff@uic.edu
+      - field: idp
+        equals: https://shibboleth.uic.edu/shibboleth
+    max: 20.0
+    refresh: 0.05
+    starting: 20.0
+    model_access:
+      default: whitelist
+
+#users:
+#  default:
+#    groups: []
+
+clients:
+  default:
+    max: 50.0 # coin budget (-2 = unlimited, 0 = blocked)
+    refresh: 0.10 # coins added per hour
+    starting: 50.0 # coins when pool is first created
+    model_access:
+      default: whitelist
+      blacklist: []
+      graylist: []
+      whitelist: []
+
+models:
+  - name: nemotron-cascade-2
+    hardware: DGX Spark
+    active: false
+    input_cost_per_million: 0.15
+    output_cost_per_million: 0.50
+    endpoints:
+      - url: http://172.28.11.122:8000/v1
+        api_key: sung5Eeb9teegaoF
+        model: nvidia/Nemotron-Cascade-2-30B-A3B
+  - name: qwen3-coder-next
+    hardware: DGX Spark
+    active: true
+    input_cost_per_million: 0.15
+    output_cost_per_million: 0.80
+    context_window: 131072
+    max_output_tokens: 131072
+    supports_reasoning: false
+    input_modalities: ["text"]
+    output_modalities: ["text"]
+    endpoints:
+      - url: http://172.28.11.120:8000/v1
+        api_key: Uog7uSoh
+        model: Qwen/Qwen3-Coder-Next-FP8
+  - name: qwen3.5-9b-q5
+    description: This is for testing purposes
+    active: false
+    hardware: V100
+    url: https://huggingface.co/unsloth/Qwen3.5-9B-GGUF
+    input_cost_per_million: 0.05
+    output_cost_per_million: 0.10
+    knowledge_cutoff: "2025-04"
+    supports_reasoning: true
+    input_modalities: ["text", "image", "video"]
+    output_modalities: ["text"]
+    endpoints:
+      #- url: http://141.142.227.110:8000/v1
+      #  api_key: le4Iexu5meigoBooxeuvoo0veigeexoh
+      #  model: unsloth/Qwen3.5-9B-GGUF:Q5_K_M
+      - url: http://141.142.227.110:8001/v1
+        api_key: le4Iexu5meigoBooxeuvoo0veigeexoh
+        model: unsloth/Qwen3.5-9B-GGUF:Q5_K_M
+  - name: qwen3.6-35b-a3b
+    description: This is for testing purposes
+    hardware: DGX Spark
+    url: https://huggingface.co/Qwen/Qwen3.6-35B-A3B-FP8
+    active: true
+    input_cost_per_million: 0.05
+    output_cost_per_million: 0.10
+    context_window: 262144
+    max_output_tokens: 262144
+    supports_reasoning: true
+    input_modalities: ["text", "image", "video", "audio"]
+    output_modalities: ["text"]
+    endpoints:
+      - url: http://qwen-qwen-36-35b-a3b-fp8.icai.ncsa.illinois.edu/v1
+        api_key: ughae3eebei1hoquohJ1ogohdoobaeF5
+        model: Qwen/Qwen3.6-35B-A3B-FP8
+#      - url: http://172.28.11.122:8000/v1
+#        api_key: le4Iexu5meigoBooxeuvoo0veigeexoh
+#        model: Qwen/Qwen3.6-35B-A3B-FP8
+  - name: trinity-nano
+    active: false
+    description: Arcee Trinity Preview
+    hardware: V100
+    url: https://huggingface.co/arcee-ai/Trinity-Nano-Preview-GGUF
+    input_cost_per_million: 0.05
+    output_cost_per_million: 0.10
+    knowledge_cutoff: "2025-06"
+    supports_reasoning: false
+    input_modalities: ["text"]
+    output_modalities: ["text"]
+    endpoints:
+      - url: http://141.142.227.110:8000/v1
+        api_key: le4Iexu5meigoBooxeuvoo0veigeexoh
+        model: arcee-ai/Trinity-Nano-Preview-GGUF:BF16
+  - name: nemotron-3-super-120b-a12b
+    description: This is a temporary model, enjoy
+    url: https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
+    hardware: H100x4
+    active: true
+    input_cost_per_million: 0.12
+    output_cost_per_million: 0.55
+    context_window: 262144
+    max_output_tokens: 262144
+    knowledge_cutoff: "2026-02"
+    supports_reasoning: true
+    input_modalities: ["text"]
+    output_modalities: ["text"]
+    endpoints:
+      - url: http://nvidia-nemotron-3-super-120b-a12b-fp8.icai.ncsa.illinois.edu/v1
+        api_key: aKiiDa5sujoh4thohd2bailei0uY3uma
+        model: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8
+  - name: gemma-4-31b-it
+    url: https://huggingface.co/google/gemma-4-31B-it
+    active: true
+    input_cost_per_million: 0.05
+    output_cost_per_million: 0.10
+    context_window: 262144
+    max_output_tokens: 262144
+    supports_reasoning: true
+    input_modalities: ["text", "image", "video"]
+    output_modalities: ["text"]
+    knowledge_cutoff: "2025-01"
+    endpoints:
+      - url: http://google-gemma-4-31b-it-assistant.icai.ncsa.illinois.edu/v1
+        api_key: ja5Shahth2quo3ir0oo0ovaethei7loa
+        model: google/gemma-4-31B-it

@@ -63,31 +63,32 @@ def _apply_theme(app, yaml_data: dict):
     logger.info("config_watcher: theme switched to '%s'", theme_name)
 
 
-_RESTART_REQUIRED = [
+# Each entry is (section, key). key=None means any change to the whole section triggers a restart.
+# This list is also consumed by the admin config editor UI.
+RESTART_REQUIRED = [
     ("app", "secret_key"),
-    ("app", "database_url"),
+    ("app", "database"),
     ("app", "debug"),
+    ("oauth2", None),
     ("prometheus", "enabled"),
     ("prometheus", "multiproc_dir"),
 ]
 
 
 def _check_restart_required(old_data, new_data):
-    for section, key in _RESTART_REQUIRED:
-        old_val = old_data.get(section, {}).get(key)
-        new_val = new_data.get(section, {}).get(key)
-        if old_val != new_val:
-            logger.warning(
-                "config.yaml changed: '%s.%s' requires a restart to take effect",
-                section, key,
-            )
-    old_oauth2 = old_data.get("oauth2", {})
-    new_oauth2 = new_data.get("oauth2", {})
-    if old_oauth2 != new_oauth2:
-        for key in set(list(old_oauth2) + list(new_oauth2)):
-            if old_oauth2.get(key) != new_oauth2.get(key):
+    for section, key in RESTART_REQUIRED:
+        old_sec = old_data.get(section, {})
+        new_sec = new_data.get(section, {})
+        if key is None:
+            if old_sec != new_sec:
                 logger.warning(
-                    "config.yaml changed: 'oauth2.%s' requires a restart to take effect", key
+                    "config.yaml changed: '%s' requires a restart to take effect", section
+                )
+        else:
+            if old_sec.get(key) != new_sec.get(key):
+                logger.warning(
+                    "config.yaml changed: '%s.%s' requires a restart to take effect",
+                    section, key,
                 )
 
 

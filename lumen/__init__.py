@@ -120,16 +120,17 @@ def create_app():
         app.logger.error("app.encryption_key is not set in config.yaml (or LUMEN_ENCRYPTION_KEY env var). App cannot start.")
         sys.exit(1)
     app.config["ENCRYPTION_KEY"] = encryption_key
-    if "database_url" in app_cfg and not os.environ.get("DATABASE_URL"):
-        db_url = app_cfg["database_url"].replace("postgres://", "postgresql://", 1)
+    db_cfg = app_cfg.get("database", {})
+    if db_cfg.get("url") and not os.environ.get("DATABASE_URL"):
+        db_url = db_cfg["url"].replace("postgres://", "postgresql://", 1)
         app.config["SQLALCHEMY_DATABASE_URI"] = db_url
-    db_pool = app_cfg.get("db_pool", {})
+    db_pool = {
+        k: db_cfg[k]
+        for k in ("pool_size", "max_overflow", "pool_timeout", "pool_recycle", "pool_pre_ping")
+        if k in db_cfg
+    }
     if db_pool:
-        app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
-            k: db_pool[k]
-            for k in ("pool_size", "max_overflow", "pool_timeout", "pool_recycle", "pool_pre_ping")
-            if k in db_pool
-        }
+        app.config["SQLALCHEMY_ENGINE_OPTIONS"] = db_pool
     if "debug" in app_cfg:
         app.config["DEBUG"] = app_cfg["debug"]
     app.config["SESSION_COOKIE_SECURE"] = not app.debug
