@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import sys
@@ -299,6 +300,7 @@ def create_app():
             "app_name": app.config["APP_NAME"],
             "app_tagline": app.config["APP_TAGLINE"],
             "app_announcement": app.config.get("APP_ANNOUNCEMENT", Markup("")),
+            "app_announcement_key": hashlib.md5(str(app.config.get("APP_ANNOUNCEMENT", "")).encode()).hexdigest()[:16],
             "is_admin": False,
             "github_url": app.config.get("GITHUB_URL", ""),
             "app_version": app.config.get("APP_VERSION", "develop"),

@@ -19,7 +19,7 @@
   <div class="announcement-banner"
        style="background-color:{{ theme.banner_bg_color }};color:{{ theme.banner_text_color }};border-color:{{ theme.banner_border_color }}"
        role="region" aria-label="Site announcement"
-       data-announcement-key="{{ app_announcement | striptags | truncate(120, False, '') | trim }}">
+       data-announcement-key="{{ app_announcement_key }}">
     {{ app_announcement }}
     <button type="button" class="announcement-dismiss" aria-label="Dismiss announcement">&#x2715;</button>
   </div>

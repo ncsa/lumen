@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Announcement banner dismiss key now uses a hash of the full HTML content instead of stripped text, so changing only a URL inside a link correctly shows the updated announcement.
+
 ## [1.14.0] - 2026-06-11
 
 ### Added
