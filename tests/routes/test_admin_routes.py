@@ -6,8 +6,8 @@ from sqlalchemy import select
 
 
 def test_valid_buckets_matches_periods():
-    from lumen.blueprints.admin.routes import _PERIODS, _VALID_BUCKETS
-    assert _VALID_BUCKETS == {cfg["bucket"] for cfg in _PERIODS.values()}
+    from lumen.blueprints.profile.routes import _USAGE_PERIODS, _VALID_BUCKETS
+    assert _VALID_BUCKETS == {cfg["bucket"] for cfg in _USAGE_PERIODS.values()}
 
 
 def test_toggle_user_flips_active(app, admin_client, test_user):

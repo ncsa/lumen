@@ -4,48 +4,22 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
-### ⚠ Migration Required
-
-- **`prometheus` and `monitoring` top-level keys have been moved under `api`.** The app will not start correctly without this change. Update your `config.yaml`:
-
-  ```yaml
-  # Before
-  api:
-    consent: false
-
-  prometheus:
-    enabled: true
-    multiproc_dir: /tmp/prometheus
-    token: secret
-
-  monitoring:
-    token: kuma
-
-  # After
-  api:
-    consent: false
-    prometheus:
-      enabled: true
-      multiproc_dir: /tmp/prometheus
-      token: secret
-    monitoring:
-      token: kuma
-  ```
-
 ### Added
 - New **Usage** page (`/usage`) accessible to all logged-in users, showing their own requests, tokens, cost, model popularity, and heatmap. Admins see their own usage by default with a "Show all users" checkbox to view system-wide data, and a "Last Active" stat when viewing a specific user. User-growth charts (new users, cumulative) appear only in the all-users view.
 - Users page: added a bar-chart button per user that opens the Usage page filtered to that user.
 - Renamed the admin "Analytics" nav entry to "Usage" and moved it to the main nav for all users.
 
 ### Changed
-- Config editor: `prometheus` and `monitoring` sections merged into the `API` section as sub-cards; sidebar no longer shows them as separate entries.
+- Config editor: `prometheus` and `monitoring` sections shown as sub-cards of the `API` section; sidebar no longer shows them as separate entries.
 - Config editor Models: inactive models are sorted to the bottom of the model dropdown.
+- `prometheus` and `monitoring` config keys live at the **top level** of `config.yaml` (not nested under `api`). This was always the intended structure; code now correctly reads them from the top level.
 
 ### Fixed
 - Config editor no longer warns about "unrecognized fields" when clearing a known field (e.g. `announcement`); the dialog now only fires for top-level keys the editor has no UI for.
 - Config editor uses `shutil.copyfile` instead of `shutil.move` to avoid `Operation not permitted` errors when `/tmp` and the config file are on different filesystems.
 - Group membership rules now require **all** conditions to match (AND), not just any one (OR); previously a user could be placed in a group by matching only the IdP rule without matching the required affiliation.
 - Web chat streaming (`send_message_stream`) now releases its database connection before the LLM call, matching the API path. Previously it held a connection with an open transaction for the entire stream, leaking connections (`idle in transaction`) and exhausting the pool under load.
+- Prometheus `/metrics` endpoint and monitor-token API auth now correctly read config from the top-level `prometheus`/`monitoring` keys instead of the non-existent `api.prometheus`/`api.monitoring` path.
 
 ## [1.15.2] - 2026-06-13
 

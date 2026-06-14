@@ -15,7 +15,7 @@ def _metrics_auth_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         yaml_data = current_app.config.get("YAML_DATA", {})
-        prom_cfg = yaml_data.get("api", {}).get("prometheus", {})
+        prom_cfg = yaml_data.get("prometheus", {})
         if not prom_cfg.get("enabled", False):
             return Response("Not found", status=HTTPStatus.NOT_FOUND)
         token = prom_cfg.get("token", "")

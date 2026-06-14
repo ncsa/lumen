@@ -63,5 +63,5 @@ def test_admin_users_loads_for_admin(admin_client):
 
 
 def test_admin_analytics_loads_for_admin(admin_client):
-    resp = admin_client.get("/admin/analytics")
+    resp = admin_client.get("/admin/analytics", follow_redirects=True)
     assert resp.status_code == HTTPStatus.OK
