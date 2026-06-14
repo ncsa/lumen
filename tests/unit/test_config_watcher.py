@@ -36,12 +36,16 @@ def test_debug_change_warns(caplog):
 
 
 def test_prometheus_enabled_change_warns(caplog):
-    _check({"prometheus": {"enabled": False}}, {"prometheus": {"enabled": True}}, caplog)
+    _check({"api": {"prometheus": {"enabled": False}}}, {"api": {"prometheus": {"enabled": True}}}, caplog)
     assert any("prometheus" in r.message for r in caplog.records)
 
 
 def test_prometheus_multiproc_dir_change_warns(caplog):
-    _check({"prometheus": {"multiproc_dir": "/a"}}, {"prometheus": {"multiproc_dir": "/b"}}, caplog)
+    _check(
+        {"api": {"prometheus": {"multiproc_dir": "/a"}}},
+        {"api": {"prometheus": {"multiproc_dir": "/b"}}},
+        caplog,
+    )
     assert any("multiproc_dir" in r.message for r in caplog.records)
 
 
@@ -70,10 +74,10 @@ def test_chat_config_change_no_warning(caplog):
 def test_restart_keys_covered():
     """Smoke-check that the known restart-required keys are present in _RESTART_REQUIRED."""
     from lumen.services.config_watcher import _RESTART_REQUIRED
-    keys = {(s, k) for s, k in _RESTART_REQUIRED}
+    keys = {tuple(p) for p in _RESTART_REQUIRED}
     assert ("app", "secret_key") in keys
     assert ("app", "database") in keys
-    assert ("prometheus", "enabled") in keys
+    assert ("api", "prometheus", "enabled") in keys
 
 
 def test_start_config_watcher_creates_daemon_thread(app, tmp_path):

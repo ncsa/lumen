@@ -183,20 +183,24 @@ async function saveConfig() {
 }
 
 // Sourced from RESTART_REQUIRED in config_watcher.py via the template context.
-const RESTART_FIELDS = {{ restart_required | tojson }}.map(([section, key]) => ({ section, key }));
+// Each entry is a dotted path (array of keys) into the config.
+const RESTART_FIELDS = {{ restart_required | tojson }};
+
+function resolvePath(data, path) {
+  let cur = data;
+  for (const part of path) {
+    if (cur === null || typeof cur !== 'object') return undefined;
+    cur = cur[part];
+  }
+  return cur;
+}
 
 function findRestartChanges(oldData, newData) {
   const changed = [];
-  for (const { section, key } of RESTART_FIELDS) {
-    const oldSec = oldData[section] ?? {};
-    const newSec = newData[section] ?? {};
-    if (key === null) {
-      if (JSON.stringify(oldSec) !== JSON.stringify(newSec)) changed.push(section);
-    } else {
-      const oldVal = typeof oldSec === 'object' ? oldSec[key] : undefined;
-      const newVal = typeof newSec === 'object' ? newSec[key] : undefined;
-      if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) changed.push(`${section}.${key}`);
-    }
+  for (const path of RESTART_FIELDS) {
+    const oldVal = resolvePath(oldData, path);
+    const newVal = resolvePath(newData, path);
+    if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) changed.push(path.join('.'));
   }
   return changed;
 }

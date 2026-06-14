@@ -196,7 +196,7 @@ def test_get_model_unknown_returns_404(client, api_key):
 def test_monitor_token_can_list_models(app, client, test_model):
     monitor = "monitor-secret-token"
     app.config["YAML_DATA"] = {**app.config.get("YAML_DATA", {}),
-                                "monitoring": {"token": monitor}}
+                                "api": {"monitoring": {"token": monitor}}}
     try:
         resp = client.get("/v1/models", headers={"Authorization": f"Bearer {monitor}"})
         assert resp.status_code == HTTPStatus.OK
@@ -204,13 +204,13 @@ def test_monitor_token_can_list_models(app, client, test_model):
         ids = [m["id"] for m in resp.get_json()["data"]]
         assert test_model["model_name"] in ids
     finally:
-        app.config["YAML_DATA"].pop("monitoring", None)
+        app.config["YAML_DATA"].pop("api", None)
 
 
 def test_monitor_token_can_get_model(app, client, test_model):
     monitor = "monitor-secret-token-2"
     app.config["YAML_DATA"] = {**app.config.get("YAML_DATA", {}),
-                                "monitoring": {"token": monitor}}
+                                "api": {"monitoring": {"token": monitor}}}
     try:
         resp = client.get(
             f"/v1/models/{test_model['model_name']}",
@@ -219,13 +219,13 @@ def test_monitor_token_can_get_model(app, client, test_model):
         assert resp.status_code == HTTPStatus.OK
         assert resp.get_json()["id"] == test_model["model_name"]
     finally:
-        app.config["YAML_DATA"].pop("monitoring", None)
+        app.config["YAML_DATA"].pop("api", None)
 
 
 def test_monitor_token_blocked_from_chat_completions(app, client):
     monitor = "monitor-secret-token-3"
     app.config["YAML_DATA"] = {**app.config.get("YAML_DATA", {}),
-                                "monitoring": {"token": monitor}}
+                                "api": {"monitoring": {"token": monitor}}}
     try:
         resp = client.post(
             "/v1/chat/completions",
@@ -235,7 +235,7 @@ def test_monitor_token_blocked_from_chat_completions(app, client):
         assert resp.status_code == HTTPStatus.FORBIDDEN
         assert resp.get_json()["error"]["type"] == "authentication_error"
     finally:
-        app.config["YAML_DATA"].pop("monitoring", None)
+        app.config["YAML_DATA"].pop("api", None)
 
 
 # ---------------------------------------------------------------------------

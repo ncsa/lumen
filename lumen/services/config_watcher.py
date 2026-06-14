@@ -64,34 +64,36 @@ def _apply_theme(app, yaml_data: dict):
     logger.info("config_watcher: theme switched to '%s'", theme_name)
 
 
-# Each entry is (section, key). key=None means any change to the whole section triggers a restart.
+# Each entry is a dotted path into the config. A single-element path means any
+# change to the whole section triggers a restart.
 # This list is also consumed by the admin config editor UI.
 RESTART_REQUIRED = [
     ("app", "secret_key"),
     ("app", "database"),
     ("app", "debug"),
-    ("oauth2", None),
-    ("prometheus", "enabled"),
-    ("prometheus", "multiproc_dir"),
+    ("oauth2",),
+    ("api", "prometheus", "enabled"),
+    ("api", "prometheus", "multiproc_dir"),
 ]
 _RESTART_REQUIRED = RESTART_REQUIRED
 
 
+def _resolve_path(data, path):
+    cur = data
+    for part in path:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+    return cur
+
+
 def _check_restart_required(old_data, new_data):
-    for section, key in RESTART_REQUIRED:
-        old_sec = old_data.get(section, {})
-        new_sec = new_data.get(section, {})
-        if key is None:
-            if old_sec != new_sec:
-                logger.warning(
-                    "config.yaml changed: '%s' requires a restart to take effect", section
-                )
-        else:
-            if old_sec.get(key) != new_sec.get(key):
-                logger.warning(
-                    "config.yaml changed: '%s.%s' requires a restart to take effect",
-                    section, key,
-                )
+    for path in RESTART_REQUIRED:
+        if _resolve_path(old_data, path) != _resolve_path(new_data, path):
+            logger.warning(
+                "config.yaml changed: '%s' requires a restart to take effect",
+                ".".join(path),
+            )
 
 
 def _watcher(app, config_path):

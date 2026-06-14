@@ -4,7 +4,7 @@ from http import HTTPStatus
 
 def _set_prometheus(app, config):
     original = app.config.get("YAML_DATA", {})
-    app.config["YAML_DATA"] = {**original, "prometheus": config}
+    app.config["YAML_DATA"] = {**original, "api": {**original.get("api", {}), "prometheus": config}}
     return original
 
 
