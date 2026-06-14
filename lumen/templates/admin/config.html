@@ -88,11 +88,9 @@ const SECTIONS = [
   { id:'app',           label:'App',           desc:'Application settings' },
   { id:'oauth2',        label:'OAuth2',         desc:'Authentication configuration' },
   { id:'admins',        label:'Admins',         desc:'Administrator email addresses' },
-  { id:'api',           label:'API',            desc:'API behavior flags' },
+  { id:'api',           label:'API',            desc:'API flags, Prometheus metrics, and monitoring' },
   { id:'chat',          label:'Chat',           desc:'Chat interface settings' },
   { id:'rate_limiting', label:'Rate Limiting',  desc:'Request rate limits' },
-  { id:'prometheus',    label:'Prometheus',     desc:'Metrics endpoint' },
-  { id:'monitoring',    label:'Monitoring',     desc:'Uptime monitoring token' },
   { id:'groups',        label:'Groups',         desc:'User groups and access control' },
   { id:'clients',       label:'Clients',        desc:'API client configurations' },
   { id:'models',        label:'Models',         desc:'AI model configurations' },
@@ -415,12 +413,29 @@ function collectOauth2() {
 // ── API ────────────────────────────────────────────────────────────────────
 function renderApi() {
   const a = state.data.api || {};
-  $('cfg-body').innerHTML = card('API Flags',
-    cbi('api-consent', !!a.consent, 'Require graylist consent for API requests (/v1/*)')
-  );
+  const p = a.prometheus || {};
+  const m = a.monitoring || {};
+  $('cfg-body').innerHTML =
+    card('API Flags', `
+      ${cbi('api-consent', !!a.consent, 'Require graylist consent for API requests (/v1/*)')}
+    `) +
+    card('Prometheus Metrics', `
+      ${cbi('prom-on', !!p.enabled, 'Enable /metrics endpoint')}
+      <div class="mt-2">${field('prom-tok','Auth Token',ti('prom-tok',p.token),'blank = no authentication')}</div>
+      ${field('prom-dir','Multiproc Dir',ti('prom-dir',p.multiproc_dir,'/tmp/prometheus_multiproc'),'required for multi-worker')}
+    `) +
+    card('Monitoring', `
+      ${field('mon-tok', 'Bearer Token', ti('mon-tok', m.token), 'for GET /v1/models health checks')}
+    `);
 }
 function collectApi() {
-  state.data.api = { consent: boolVal('api-consent') || undefined };
+  const prom = { enabled: boolVal('prom-on') || undefined, token: val('prom-tok') || undefined, multiproc_dir: val('prom-dir') || undefined };
+  const mon  = val('mon-tok') ? { token: val('mon-tok') } : undefined;
+  state.data.api = {
+    consent:    boolVal('api-consent') || undefined,
+    prometheus: Object.values(prom).some(v => v !== undefined) ? prom : undefined,
+    monitoring: mon,
+  };
 }
 
 // ── Chat ───────────────────────────────────────────────────────────────────
@@ -451,31 +466,6 @@ function renderRateLimiting() {
 }
 function collectRateLimiting() {
   state.data.rate_limiting = { limit: val('rl-limit') || undefined, storage_url: val('rl-store') || undefined };
-}
-
-// ── Prometheus ─────────────────────────────────────────────────────────────
-function renderPrometheus() {
-  const p = state.data.prometheus || {};
-  $('cfg-body').innerHTML = card('Prometheus Metrics', `
-    ${cbi('prom-on', !!p.enabled, 'Enable /metrics endpoint')}
-    <div class="mt-2">${field('prom-tok','Auth Token',ti('prom-tok',p.token),'blank = no authentication')}</div>
-    ${field('prom-dir','Multiproc Dir',ti('prom-dir',p.multiproc_dir,'/tmp/prometheus_multiproc'),'required for multi-worker')}
-  `);
-}
-function collectPrometheus() {
-  state.data.prometheus = { enabled: boolVal('prom-on') || undefined, token: val('prom-tok') || undefined, multiproc_dir: val('prom-dir') || undefined };
-}
-
-// ── Monitoring ─────────────────────────────────────────────────────────────
-function renderMonitoring() {
-  const m = state.data.monitoring || {};
-  $('cfg-body').innerHTML = card('Monitoring',
-    field('mon-tok', 'Bearer Token', ti('mon-tok', m.token), 'for GET /v1/models health checks')
-  );
-}
-function collectMonitoring() {
-  const t = val('mon-tok');
-  state.data.monitoring = t ? { token: t } : undefined;
 }
 
 // ── Admins ─────────────────────────────────────────────────────────────────
@@ -922,12 +912,12 @@ async function syncAllModels() {
 // ── Maps ───────────────────────────────────────────────────────────────────
 const COLLECTORS = {
   app: collectApp, oauth2: collectOauth2, api: collectApi, chat: collectChat,
-  rate_limiting: collectRateLimiting, prometheus: collectPrometheus, monitoring: collectMonitoring,
+  rate_limiting: collectRateLimiting,
   admins: collectAdmins, groups: collectGroups, clients: collectClients, models: collectModels,
 };
 const RENDERERS = {
   app: renderApp, oauth2: renderOauth2, api: renderApi, chat: renderChat,
-  rate_limiting: renderRateLimiting, prometheus: renderPrometheus, monitoring: renderMonitoring,
+  rate_limiting: renderRateLimiting,
   admins: renderAdmins, groups: renderGroups, clients: renderClients, models: renderModels,
 };
 

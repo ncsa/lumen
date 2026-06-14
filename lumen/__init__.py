@@ -83,13 +83,14 @@ def create_app():
     # Wrap wsgi_app with HTTP metrics middleware if prometheus is enabled.
     # PROMETHEUS_MULTIPROC_DIR must be set before prometheus_client metric objects
     # are created (imported), so we set it here before importing the middleware.
-    prom_cfg = yaml_data.get("prometheus", {})
+    prom_cfg = yaml_data.get("api", {}).get("prometheus", {})
     if prom_cfg.get("enabled", False) and not prom_cfg.get("token", ""):
         app.logger.error(
-            "prometheus is enabled but prometheus.token is not set; disabling Prometheus."
+            "prometheus is enabled but api.prometheus.token is not set; disabling Prometheus."
         )
         prom_cfg = {**prom_cfg, "enabled": False}
-        yaml_data = {**yaml_data, "prometheus": prom_cfg}
+        api_cfg_updated = {**yaml_data.get("api", {}), "prometheus": prom_cfg}
+        yaml_data = {**yaml_data, "api": api_cfg_updated}
         app.config["YAML_DATA"] = yaml_data
     if prom_cfg.get("enabled", False):
         multiproc_dir = prom_cfg.get("multiproc_dir", "")

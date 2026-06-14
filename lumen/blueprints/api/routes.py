@@ -162,7 +162,7 @@ def api_key_required(f):
             return _err("Empty token", status=HTTPStatus.BAD_REQUEST)
 
         yaml_data = current_app.config.get("YAML_DATA", {})
-        monitor_token = yaml_data.get("monitoring", {}).get("token", "")
+        monitor_token = yaml_data.get("api", {}).get("monitoring", {}).get("token", "")
         if monitor_token and hmac.compare_digest(token, monitor_token):
             if request.endpoint not in ("api.list_models", "api.get_model"):
                 return _err("Monitor token can only access /v1/models", "authentication_error", HTTPStatus.FORBIDDEN)

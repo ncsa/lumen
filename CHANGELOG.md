@@ -4,6 +4,37 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### ⚠ Migration Required
+
+- **`prometheus` and `monitoring` top-level keys have been moved under `api`.** The app will not start correctly without this change. Update your `config.yaml`:
+
+  ```yaml
+  # Before
+  api:
+    consent: false
+
+  prometheus:
+    enabled: true
+    multiproc_dir: /tmp/prometheus
+    token: secret
+
+  monitoring:
+    token: kuma
+
+  # After
+  api:
+    consent: false
+    prometheus:
+      enabled: true
+      multiproc_dir: /tmp/prometheus
+      token: secret
+    monitoring:
+      token: kuma
+  ```
+
+### Changed
+- Config editor: `prometheus` and `monitoring` sections merged into the `API` section as sub-cards; sidebar no longer shows them as separate entries.
+
 ### Fixed
 - Config editor no longer warns about "unrecognized fields" when clearing a known field (e.g. `announcement`); the dialog now only fires for top-level keys the editor has no UI for.
 - Config editor uses `shutil.copyfile` instead of `shutil.move` to avoid `Operation not permitted` errors when `/tmp` and the config file are on different filesystems.
