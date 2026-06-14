@@ -43,6 +43,15 @@ admins:
 api:
   consent: true  # set to false to exempt API requests from the graylist model-consent requirement
 
+  prometheus:
+    enabled: false
+    token: ""          # Optional. Set to a long random string to require Bearer token auth. Leave empty for no auth.
+    multiproc_dir: ""  # Optional. Path for multi-worker aggregation (e.g. /tmp/prometheus_multiproc).
+                       # For multiple containers, mount a shared volume at this path.
+
+  monitoring:
+    token: ""   # Set to a long random string; leave empty to disable
+
 chat:
   upload:
     max_size_mb: 10          # maximum file size for document uploads (MB)
@@ -70,15 +79,6 @@ chat:
 rate_limiting:
   # storage_url: redis://localhost:6379/0  # omit for in-memory (single-process); requires restart to change
   limit: "30 per minute"  # applies to every endpoint, keyed by authenticated user identity
-
-prometheus:
-  enabled: false
-  token: ""          # Optional. Set to a long random string to require Bearer token auth. Leave empty for no auth.
-  multiproc_dir: ""  # Optional. Path for multi-worker aggregation (e.g. /tmp/prometheus_multiproc).
-                     # For multiple containers, mount a shared volume at this path.
-
-monitoring:
-  token: ""   # Set to a long random string; leave empty to disable
 
 groups:
   # Groups are created/managed via the admin UI. Rules here auto-assign users at login

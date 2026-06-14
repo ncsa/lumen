@@ -4,6 +4,13 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Documentation: consolidated the load-testing guide into `loadtesting/README.md` and removed the duplicate, out-of-sync `LOADTESTING.md` (root) and `docs/loadtesting.md`. Added a **Usage** guide page (`docs/guides/usage.md`) for the `/usage` feature and a nav entry for it. Moved the `prometheus` and `monitoring` config documentation under the `api:` section (README, admin config docs, and `config.yaml.example`) to match where the code reads them.
+
+### Fixed
+- Documentation: corrected the client API-key prefix in the README (`sk_`, not `lmk-`); removed the nonexistent `max_input_tokens` model field from the model config doc; fixed the "Daily coin budget" wording (it is an hourly-refilled cap, not a daily reset); documented the `api.consent`, `app.theme`, and `app.graylist_default_notice` config keys; clarified that `database_url` accepts SQLite as well as PostgreSQL; and added the `GET /v1/models/<id>` and `POST /v1/completions` endpoints to the API reference.
+- `loadtesting/run_loadtest.sh` now reads the monitor token from `api.monitoring.token` instead of the removed top-level `monitoring.token`, matching the 1.16.1 config change; previously its Lumen health-check probe sent no auth header when a monitor token was configured.
+
 ## [1.16.1] - 2026-06-14
 
 ### Fixed

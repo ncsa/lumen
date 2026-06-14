@@ -43,7 +43,6 @@ These fields tell the UI what the model can do and help users pick the right one
 | `description` | Short text shown next to the model name in the UI |
 | `url` | Link to the model's documentation page (e.g. HuggingFace) |
 | `context_window` | Maximum total tokens for input + output in one request |
-| `max_input_tokens` | Maximum tokens accepted in a single request (if the backend enforces a tighter limit than `context_window`) |
 | `max_output_tokens` | Maximum tokens the model can generate in a single reply |
 | `knowledge_cutoff` | Month the model's training data extends to, e.g. `"2025-04"` |
 | `supports_reasoning` | Whether the model can show step-by-step thinking |

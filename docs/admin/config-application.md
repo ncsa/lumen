@@ -10,9 +10,11 @@ These are the core settings that make Lumen work: database, authentication, and 
 | `tagline` | Subtitle shown next to the name |
 | `secret_key` | Flask session encryption key (see Security Notes below) |
 | `encryption_key` | Used to hash API keys stored in the database. See **Security Notes** |
-| `database_url` | PostgreSQL connection string |
+| `database_url` | SQLAlchemy connection URL — PostgreSQL (`postgresql://...`) in production, or SQLite (`sqlite:///lumen.db`) for local development |
 | `debug` | Enable debug mode (set to `false` in production) |
+| `theme` | Institutional theme. Themes live in `themes/<name>/`. Built-in: `default`, `illinois`, `uic`, `uis`. Falls back to `default` if not found. |
 | `github_url` | Optional — overrides the default GitHub link in the navbar |
+| `graylist_default_notice` | Optional — fallback notice shown for any graylisted model that has no per-model `notice` set |
 
 ### Database Pool
 
@@ -150,16 +152,32 @@ rate_limiting:
 
 > **Restart required:** Changing `storage_url` requires a restart because the Redis client is initialized at startup.
 
-## monitoring
+## api
 
-A read-only token for uptime monitoring tools (e.g. Uptime Kuma):
+Settings for the OpenAI-compatible API and operational endpoints. **Note:** monitoring and Prometheus
+config live **under `api:`** (e.g. `api.monitoring.token`, `api.prometheus.enabled`).
 
 ```yaml
-monitoring:
-  token: "my-secret-token"
+api:
+  consent: true        # set to false to exempt API requests from the graylist model-consent requirement
+
+  monitoring:
+    token: "my-secret-token"
+
+  prometheus:
+    enabled: false
+    token: ""          # set to a long random string to require Bearer token auth
+    multiproc_dir: ""  # path for multi-worker aggregation (e.g. /tmp/prometheus_multiproc)
 ```
 
-Pass it as a Bearer token in the `Authorization` header:
+| Field | Description |
+|-------|-------------|
+| `consent` | When `true` (default), API requests to graylisted models require recorded consent, just like the web UI. Set to `false` to exempt API requests from the consent requirement. |
+
+### api.monitoring
+
+A read-only token for uptime monitoring tools (e.g. Uptime Kuma). Pass it as a Bearer token in the
+`Authorization` header:
 
 ```
 Authorization: Bearer my-secret-token
@@ -167,16 +185,9 @@ Authorization: Bearer my-secret-token
 
 The monitoring token can only access `GET /v1/models` and `GET /v1/models/<id>` — it cannot be used to send chat requests or access any other endpoint. Leave `token` empty to disable monitoring access.
 
-## prometheus
+### api.prometheus
 
 Optional Prometheus metrics endpoint at `/metrics`:
-
-```yaml
-prometheus:
-  enabled: false
-  token: ""          # set to a long random string to require Bearer token auth
-  multiproc_dir: ""  # path for multi-worker aggregation (e.g. /tmp/prometheus_multiproc)
-```
 
 | Field | Description |
 |-------|-------------|
@@ -184,7 +195,7 @@ prometheus:
 | `token` | Bearer token for auth; empty = no auth required |
 | `multiproc_dir` | Shared directory for multi-worker aggregation; mount a shared volume here in container deployments |
 
-> **Restart required:** Changing `prometheus.enabled` or `prometheus.multiproc_dir` requires a restart. `prometheus.token` is read on each request and takes effect immediately.
+> **Restart required:** Changing `api.prometheus.enabled` or `api.prometheus.multiproc_dir` requires a restart. `api.prometheus.token` is read on each request and takes effect immediately.
 
 ## Environment Variables
 

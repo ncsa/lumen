@@ -57,8 +57,8 @@ groups:
 | Field | Description |
 |-------|-------------|
 | `rules` | Conditions that trigger group membership at login |
-| `max` | Daily coin budget (0 = denied, -2 = unlimited) |
-| `refresh` | Coins added per hour (0 = no refresh) |
+| `max` | Coin budget cap (0 = denied, -2 = unlimited) |
+| `refresh` | Coins added per hour, up to the `max` cap (0 = no refresh) |
 | `starting` | Initial coin pool when a user is first created |
 | `model_access` | Per-group model access rules |
 
