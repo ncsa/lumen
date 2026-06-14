@@ -10,6 +10,7 @@ build/
 *.env
 models.yaml
 config.yaml
+lumen.yaml
 
 *.db
 *.sqlite
