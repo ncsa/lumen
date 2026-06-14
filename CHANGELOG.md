@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.16.2] - 2026-06-14
+
 ### Changed
 - Documentation: consolidated the load-testing guide into `loadtesting/README.md` and removed the duplicate, out-of-sync `LOADTESTING.md` (root) and `docs/loadtesting.md`. Added a **Usage** guide page (`docs/guides/usage.md`) for the `/usage` feature and a nav entry for it. Moved the `prometheus` and `monitoring` config documentation under the `api:` section (README, admin config docs, and `config.yaml.example`) to match where the code reads them.
 

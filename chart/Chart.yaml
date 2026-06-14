@@ -2,8 +2,8 @@ apiVersion: v2
 name: lumen
 description: Lumen — OpenAI-compatible LLM proxy and management platform
 type: application
-version: 1.16.1
-appVersion: "1.16.1"
+version: 1.16.2
+appVersion: "1.16.2"
 keywords:
   - llm
   - ai
