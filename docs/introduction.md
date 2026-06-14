@@ -54,6 +54,7 @@ You'd need over 1,000 similar questions to spend 1 coin.
 |---------|-------|
 | Chat with AI models in a browser | [Chat](guides/chat.md) |
 | Track your token and coin usage | [Profile](guides/profile.md) |
+| See your requests, tokens, and activity over time | [Usage](guides/usage.md) |
 | Create API keys for programmatic access | [Profile → API Keys](guides/profile.md#api-keys) |
 | Use Lumen from your own code or tools | [API Reference](guides/api-reference.md) |
 | Browse available models and their capabilities | [Models](models/models.md) |

@@ -370,7 +370,7 @@ Point any OpenAI-compatible tool at Lumen and use the client's API key as the `A
 
 ```
 base_url: https://your-lumen-domain/v1
-api_key:  lmk-...
+api_key:  sk_...
 ```
 
 **Coin pools**
@@ -407,19 +407,23 @@ Clients follow the same whitelist / blacklist / graylist rules as users. Clients
 
 ### Monitoring
 
-A read-only token for `GET /v1/models` — useful for uptime checkers that don't have a user account:
+A read-only token for `GET /v1/models` — useful for uptime checkers that don't have a user account. It lives under the `api:` section:
 
 ```yaml
-monitoring:
-  token: "a-long-random-string"   # leave empty to disable
+api:
+  monitoring:
+    token: "a-long-random-string"   # leave empty to disable
 ```
 
 ### Prometheus metrics
 
+Configured under the `api:` section:
+
 ```yaml
-prometheus:
-  enabled: true
-  token: "a-long-random-string"   # optional; Bearer token auth for /metrics
-  multiproc_dir: "/tmp/prom"      # required for multi-worker aggregation (mount as shared volume)
+api:
+  prometheus:
+    enabled: true
+    token: "a-long-random-string"   # optional; Bearer token auth for /metrics
+    multiproc_dir: "/tmp/prom"      # required for multi-worker aggregation (mount as shared volume)
 ```
 

@@ -40,8 +40,8 @@ Some settings are read only at startup and cannot be hot-reloaded. Lumen logs a 
 | `app.database_url` | Database connections are established at startup |
 | `app.debug` | Debug flag affects core application initialization |
 | `oauth2.*` | OAuth client ID, secret, and server metadata are used during session setup |
-| `prometheus.enabled` | Metrics collector is initialized at startup |
-| `prometheus.multiproc_dir` | Multi-process aggregation directory |
+| `api.prometheus.enabled` | Metrics collector is initialized at startup |
+| `api.prometheus.multiproc_dir` | Multi-process aggregation directory |
 | `rate_limiting.storage_url` | Redis connection is established at startup; no runtime warning is emitted if this changes |
 
 > **`app.encryption_key`** is not enforced by the watcher but is equally dangerous to rotate at runtime — changing it immediately invalidates all stored API key hashes. See [Security Notes](#security-notes).

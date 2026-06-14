@@ -19,7 +19,9 @@ See [Profile → API Keys](../guides/profile.md#api-keys) to create a key.
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/v1/models` | List available models |
+| `GET` | `/v1/models/<id>` | Retrieve details for a single model |
 | `POST` | `/v1/chat/completions` | Send a chat message and receive a reply |
+| `POST` | `/v1/completions` | Legacy text-completion endpoint (prefer `/v1/chat/completions`) |
 
 ---
 

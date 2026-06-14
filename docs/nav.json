@@ -11,6 +11,7 @@
     "items": [
       {"slug": "chat",  "title": "Chat",             "filename": "chat.md"},
       {"slug": "profile", "title": "Profile & API Keys",  "filename": "profile.md"},
+      {"slug": "usage", "title": "Usage",            "filename": "usage.md"},
       {"slug": "api",   "title": "API Reference",     "filename": "api-reference.md"}
     ]
   },

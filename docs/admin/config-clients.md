@@ -29,8 +29,8 @@ clients:
 
 | Field | Description |
 |-------|-------------|
-| `max` | Daily coin budget (0 = blocked, -2 = unlimited) |
-| `refresh` | Coins replenished per hour (0 = no auto-refresh) |
+| `max` | Coin budget cap (0 = blocked, -2 = unlimited) |
+| `refresh` | Coins replenished per hour, up to the `max` cap (0 = no auto-refresh) |
 | `starting` | Initial coins when a client's pool is created |
 | `model_access.default` | Default behavior for unlisted models: `whitelist`, `blacklist`, or `graylist` |
 | `model_access.whitelist` | Models always accessible to this client |
