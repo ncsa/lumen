@@ -3,6 +3,8 @@
 The **Usage** page (`/usage`) shows how much you've used Lumen — your requests, tokens, coins, and
 activity patterns over time. It's available to every logged-in user from the main navigation.
 
+![Usage page](../img/usage.png)
+
 ## Time Period
 
 A **Period** selector at the top right controls the window for every stat and chart on the page:
