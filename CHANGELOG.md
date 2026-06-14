@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.16.1] - 2026-06-14
+
 ### Fixed
 - Monitor-token API auth (`GET /v1/models`) and the Prometheus `/metrics` endpoint now read their config from `api.monitoring` / `api.prometheus`, matching where the config editor writes them and where `config.yaml` nests them. Previously these two read sites still looked at the removed top-level `monitoring` / `prometheus` keys, so the monitor token (e.g. `kuma`) was rejected with 401 and `/metrics` auth was misread. `config_watcher` restart-detection was also updated to the `api.prometheus.*` paths.
 
