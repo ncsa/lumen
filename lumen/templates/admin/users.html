@@ -73,7 +73,7 @@
     </tr>
   </thead>
   <tbody id="userTableBody">
-    <tr><td colspan="9" class="text-center text-muted py-3">Loading…</td></tr>
+    <tr><td colspan="10" class="text-center text-muted py-3">Loading…</td></tr>
   </tbody>
 </table>
 </div>
@@ -168,7 +168,7 @@
     const qs = new URLSearchParams({ page, per_page: perPage, sort, order });
     if (search) qs.set('search', search);
 
-    tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-3">Loading…</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-3">Loading…</td></tr>';
 
     fetch('/admin/api/users?' + qs.toString())
       .then(r => r.json())
@@ -180,7 +180,7 @@
           : 'No entries found';
 
         if (!data.users.length) {
-          tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-3">No users found.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-3">No users found.</td></tr>';
           paginationEl.innerHTML = '';
           return;
         }
@@ -204,6 +204,7 @@
             <td class="text-end">${coinsAvail}</td>
             <td class="text-end">${fmtCoins(u.cost)}</td>
             <td class="text-nowrap">
+              <a href="/usage?entity_id=${u.id}&user_name=${encodeURIComponent(u.name)}" class="btn btn-sm btn-outline-primary" title="View usage" aria-label="View usage for ${u.name}"><i class="bi bi-bar-chart" aria-hidden="true"></i></a>
               <button class="btn btn-sm btn-outline-secondary reset-btn" data-id="${u.id}" data-unlimited="${u.coins_available === -2}" title="Reset coins" aria-label="Reset coins for ${u.name}"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i></button>
               <button class="btn btn-sm ${toggleClass} toggle-btn" data-id="${u.id}" data-active="${u.active}" title="${toggleLabel}" aria-label="${toggleLabel} ${u.name}"><i class="bi ${u.active ? 'bi-pause-circle' : 'bi-play-circle'}" aria-hidden="true"></i></button>
             </td>
@@ -220,7 +221,7 @@
         renderPagination(data.total, data.page, data.per_page);
       })
       .catch(() => {
-        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-danger py-3">Failed to load users.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center text-danger py-3">Failed to load users.</td></tr>';
       });
   }
 

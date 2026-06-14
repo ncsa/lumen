@@ -1,15 +1,17 @@
 {% extends "base.html" %}
-{% block title %}Analytics{% endblock %}
+{% block title %}Usage{% endblock %}
 {% block content %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 
 <div class="d-flex align-items-center justify-content-between mb-3">
-  <h1 class="mb-0">Analytics</h1>
+  <h1 class="mb-0">Usage</h1>
   <div class="d-flex align-items-center gap-3">
-    <div class="form-check mb-0" id="mine-check-wrap">
-      <input class="form-check-input" type="checkbox" id="mine-check">
-      <label class="form-check-label fw-semibold" for="mine-check">My usage only</label>
+    {% if is_admin %}
+    <div class="form-check mb-0" id="all-users-wrap">
+      <input class="form-check-input" type="checkbox" id="all-users-check">
+      <label class="form-check-label fw-semibold" for="all-users-check">Show all users</label>
     </div>
+    {% endif %}
     <div class="d-flex align-items-center gap-2">
       <label for="period-select" class="form-label mb-0 fw-semibold">Period:</label>
       <select id="period-select" class="form-select form-select-sm" style="width:auto">
@@ -24,7 +26,7 @@
 
 <div id="user-filter-banner" class="alert alert-info d-flex align-items-center justify-content-between mb-3 d-none" role="status">
   <span>Showing usage for: <strong id="user-filter-name"></strong></span>
-  <a href="/admin/analytics" class="btn btn-sm btn-outline-secondary ms-3">Clear filter</a>
+  <a href="/usage" class="btn btn-sm btn-outline-secondary ms-3">Clear filter</a>
 </div>
 
 <!-- Stat cards -->
@@ -61,9 +63,17 @@
       </div>
     </div>
   </div>
+  <div class="col-sm-6 col-xl-3 d-none" id="stat-last-active-col">
+    <div class="card text-center">
+      <div class="card-body">
+        <div class="fs-2 fw-bold" id="stat-last-active">—</div>
+        <div class="text-muted small">Last Active</div>
+      </div>
+    </div>
+  </div>
 </div>
 
-<!-- Row 2: User growth charts (hidden in "my usage" mode) -->
+<!-- Row 2: User growth charts (hidden when filtered to a single user) -->
 <div class="row g-3 mb-4" id="user-growth-row">
   <div class="col-md-6">
     <div class="card">
@@ -124,12 +134,9 @@
             <thead>
               <tr>
                 <th scope="col" style="min-width:2.5rem"><span class="visually-hidden">Day</span></th>
-                <!-- hour headers filled by JS -->
               </tr>
             </thead>
-            <tbody id="heatmap-body">
-              <!-- rows filled by JS -->
-            </tbody>
+            <tbody id="heatmap-body"></tbody>
           </table>
         </div>
       </div>
@@ -138,12 +145,25 @@
 </div>
 
 <script>
-const ILLINOIS_BLUE   = [0,   60,  125]; // #003C7D
-const ILLINOIS_ORANGE = [255, 95,  5];   // #FF5F05
+const IS_ADMIN = {{ is_admin | tojson }};
+const ILLINOIS_BLUE   = [0,   60,  125];
+const ILLINOIS_ORANGE = [255, 95,  5];
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const CHART_COLOR = '#13294b'; // dark blue for lines/bars
+const CHART_COLOR = '#13294b';
 
 const charts = {};
+
+// Detect ?entity_id and ?user_name in URL
+const _urlParams = new URLSearchParams(location.search);
+const FILTER_ENTITY_ID = _urlParams.get('entity_id') ? parseInt(_urlParams.get('entity_id')) : null;
+const FILTER_USER_NAME = _urlParams.get('user_name') || '';
+
+if (FILTER_ENTITY_ID) {
+  const wrap = document.getElementById('all-users-wrap');
+  if (wrap) wrap.classList.add('d-none');
+  document.getElementById('user-filter-banner').classList.remove('d-none');
+  document.getElementById('user-filter-name').textContent = FILTER_USER_NAME || `User #${FILTER_ENTITY_ID}`;
+}
 
 function heatmapColor(t) {
   const r = Math.round(ILLINOIS_BLUE[0] + t * (ILLINOIS_ORANGE[0] - ILLINOIS_BLUE[0]));
@@ -156,26 +176,8 @@ function makeLineChart(id, label) {
   const ctx = document.getElementById(id).getContext('2d');
   return new Chart(ctx, {
     type: 'line',
-    data: {
-      labels: [],
-      datasets: [{
-        label,
-        data: [],
-        borderColor: CHART_COLOR,
-        backgroundColor: CHART_COLOR + '22',
-        fill: true,
-        tension: 0,
-        pointRadius: 3,
-      }]
-    },
-    options: {
-      responsive: true,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { ticks: { maxRotation: 45 } },
-        y: { beginAtZero: true }
-      }
-    }
+    data: { labels: [], datasets: [{ label, data: [], borderColor: CHART_COLOR, backgroundColor: CHART_COLOR + '22', fill: true, tension: 0, pointRadius: 3 }] },
+    options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { maxRotation: 45 } }, y: { beginAtZero: true } } }
   });
 }
 
@@ -183,20 +185,8 @@ function makeBarChart(id, label, horizontal) {
   const ctx = document.getElementById(id).getContext('2d');
   return new Chart(ctx, {
     type: 'bar',
-    data: {
-      labels: [],
-      datasets: [{
-        label,
-        data: [],
-        backgroundColor: CHART_COLOR,
-      }]
-    },
-    options: {
-      indexAxis: horizontal ? 'y' : 'x',
-      responsive: true,
-      plugins: { legend: { display: false } },
-      scales: { x: { beginAtZero: true } }
-    }
+    data: { labels: [], datasets: [{ label, data: [], backgroundColor: CHART_COLOR }] },
+    options: { indexAxis: horizontal ? 'y' : 'x', responsive: true, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } }
   });
 }
 
@@ -206,14 +196,15 @@ function updateLineChart(chart, rows, valueKey) {
   chart.update();
 }
 
-function renderHeatmap(rows) {
-  // Convert UTC (dow, hour) to local time before building the grid.
-  // getTimezoneOffset() returns (UTC - local) in minutes, e.g. 360 for UTC-6.
-  const offsetHours = Math.round(new Date().getTimezoneOffset() / 60);
+// Floating tooltip for heatmap cells
+const _hmTip = document.createElement('div');
+_hmTip.style.cssText = 'position:fixed;background:#333;color:#fff;padding:3px 8px;border-radius:4px;font-size:0.75rem;pointer-events:none;z-index:9999;display:none;white-space:nowrap';
+document.body.appendChild(_hmTip);
 
-  // Build 7×24 grid
+function renderHeatmap(rows) {
+  const offsetHours = Math.round(new Date().getTimezoneOffset() / 60);
   const grid = Array.from({length: 7}, () => new Array(24).fill(0));
-  let minVal = Infinity, maxVal = 0;
+  let maxVal = 0, minVal = Infinity;
   for (const r of rows) {
     let localHour = r.hour - offsetHours;
     let localDow = r.dow;
@@ -226,98 +217,87 @@ function renderHeatmap(rows) {
   if (minVal === Infinity) minVal = 0;
   const range = maxVal - minVal || 1;
 
-  // Build header row
   const thead = document.querySelector('#heatmap-table thead tr');
   thead.innerHTML = '<th scope="col" style="min-width:2.5rem"><span class="visually-hidden">Day</span></th>';
   for (let h = 0; h < 24; h++) {
     const th = document.createElement('th');
-    th.scope = 'col';
-    th.textContent = h;
+    th.scope = 'col'; th.textContent = h;
     th.style.cssText = 'width:1.5rem;text-align:center;padding:1px';
     thead.appendChild(th);
   }
 
-  // Build body rows (Mon=1 first, then Tue..Sat..Sun=0 last)
   const tbody = document.getElementById('heatmap-body');
   tbody.innerHTML = '';
-  const dayOrder = [1, 2, 3, 4, 5, 6, 0]; // Mon-Sun
-  for (const dow of dayOrder) {
+  for (const dow of [1, 2, 3, 4, 5, 6, 0]) {
     const tr = document.createElement('tr');
     const th = document.createElement('th');
-    th.scope = 'row';
-    th.textContent = DAY_NAMES[dow];
+    th.scope = 'row'; th.textContent = DAY_NAMES[dow];
     th.style.cssText = 'font-weight:normal;padding:1px 4px';
     tr.appendChild(th);
     for (let h = 0; h < 24; h++) {
       const count = grid[dow][h];
       const td = document.createElement('td');
       const t = count > 0 ? (count - minVal) / range : null;
-      const bg = t === null ? '#e0e0e0' : heatmapColor(t);
-      td.style.cssText = `background:${bg};width:1.5rem;height:1.5rem;padding:0`;
+      td.style.cssText = `background:${t === null ? '#e0e0e0' : heatmapColor(t)};width:1.5rem;height:1.5rem;padding:0;cursor:default`;
       td.setAttribute('aria-label', `${DAY_NAMES[dow]} ${h}:00 — ${count} requests`);
-      td.title = `${DAY_NAMES[dow]} ${h}:00: ${count}`;
+      const label = `${DAY_NAMES[dow]} ${h}:00 — ${count.toLocaleString()} request${count !== 1 ? 's' : ''}`;
+      td.addEventListener('mouseover', () => { if (count > 0) { _hmTip.textContent = label; _hmTip.style.display = 'block'; } });
+      td.addEventListener('mousemove', e => { _hmTip.style.left = (e.clientX + 14) + 'px'; _hmTip.style.top = (e.clientY - 10) + 'px'; });
+      td.addEventListener('mouseleave', () => { _hmTip.style.display = 'none'; });
       tr.appendChild(td);
     }
     tbody.appendChild(tr);
   }
 }
 
-// entity_id from URL overrides the mine checkbox (admin viewing a specific user)
-const _urlParams = new URLSearchParams(location.search);
-const FILTER_ENTITY_ID = _urlParams.get('entity_id') ? parseInt(_urlParams.get('entity_id')) : null;
-const FILTER_USER_NAME = _urlParams.get('user_name') || '';
-
-if (FILTER_ENTITY_ID) {
-  document.getElementById('mine-check-wrap').classList.add('d-none');
-  document.getElementById('user-filter-banner').classList.remove('d-none');
-  document.getElementById('user-filter-name').textContent = FILTER_USER_NAME || `User #${FILTER_ENTITY_ID}`;
-}
-
-async function fetchJSON(endpoint, period, mine) {
+async function fetchJSON(endpoint, period, showAll) {
   const params = new URLSearchParams({period});
   if (FILTER_ENTITY_ID) {
     params.set('entity_id', FILTER_ENTITY_ID);
-  } else if (mine) {
+  } else if (!showAll) {
     params.set('mine', '1');
   }
-  const resp = await fetch(`/admin/api/analytics/${endpoint}?${params}`);
+  const resp = await fetch(`/api/usage/${endpoint}?${params}`);
   return resp.json();
 }
 
-async function refresh(period, mine) {
-  // Show/hide user-growth sections
-  const hideUserRows = !!(FILTER_ENTITY_ID || mine);
-  document.getElementById('user-growth-row').classList.toggle('d-none', hideUserRows);
-  document.getElementById('stat-users-col').classList.toggle('d-none', hideUserRows);
+async function refresh(period, showAll) {
+  const isFiltered = !!(FILTER_ENTITY_ID || !showAll);
+  document.getElementById('user-growth-row').classList.toggle('d-none', isFiltered);
+  document.getElementById('stat-users-col').classList.toggle('d-none', isFiltered);
+  document.getElementById('stat-last-active-col').classList.toggle('d-none', !isFiltered);
 
-  // Clear stat cards
-  ['stat-requests', 'stat-tokens', 'stat-cost', 'stat-users'].forEach(id => {
+  ['stat-requests', 'stat-tokens', 'stat-cost', 'stat-users', 'stat-last-active'].forEach(id => {
     document.getElementById(id).textContent = '…';
   });
 
   const [summary, usersNew, usersCumul, reqs, tokens, models, heatmap] = await Promise.all([
-    fetchJSON('summary', period, mine),
-    fetchJSON('users/new', period),
-    fetchJSON('users/cumulative', period),
-    fetchJSON('requests', period, mine),
-    fetchJSON('tokens', period, mine),
-    fetchJSON('models', period, mine),
-    fetchJSON('heatmap', period, mine),
+    fetchJSON('summary', period, showAll),
+    fetchJSON('users/new', period, showAll),
+    fetchJSON('users/cumulative', period, showAll),
+    fetchJSON('requests', period, showAll),
+    fetchJSON('tokens', period, showAll),
+    fetchJSON('models', period, showAll),
+    fetchJSON('heatmap', period, showAll),
   ]);
 
-  // Update stat cards
   document.getElementById('stat-requests').textContent = summary.requests.toLocaleString();
   document.getElementById('stat-tokens').textContent = summary.tokens.toLocaleString();
   document.getElementById('stat-cost').textContent = summary.cost.toFixed(2);
-  document.getElementById('stat-users').textContent = summary.new_users.toLocaleString();
+  if (!isFiltered) {
+    document.getElementById('stat-users').textContent = summary.new_users.toLocaleString();
+  }
+  if (isFiltered) {
+    const d = summary.last_active ? new Date(summary.last_active) : null;
+    document.getElementById('stat-last-active').textContent =
+      d && !isNaN(d) ? d.toLocaleDateString([], {month: 'short', day: 'numeric', year: 'numeric'}) : '—';
+  }
 
-  // Update charts
   updateLineChart(charts.usersNew, usersNew, 'count');
   updateLineChart(charts.usersCumul, usersCumul, 'count');
   updateLineChart(charts.requests, reqs, 'count');
   updateLineChart(charts.tokens, tokens, 'count');
 
-  // Model bar chart
   charts.models.data.labels = models.map(m => m.model);
   charts.models.data.datasets[0].data = models.map(m => m.requests);
   charts.models.update();
@@ -325,7 +305,6 @@ async function refresh(period, mine) {
   renderHeatmap(heatmap);
 }
 
-// Initialize charts
 charts.usersNew   = makeLineChart('chart-users-new',  'New Users');
 charts.usersCumul = makeLineChart('chart-users-cumul', 'Total Users');
 charts.requests   = makeLineChart('chart-requests',   'Requests');
@@ -334,13 +313,16 @@ charts.models     = makeBarChart('chart-models',      'Requests', true);
 
 function triggerRefresh() {
   const period = document.getElementById('period-select').value;
-  const mine = document.getElementById('mine-check').checked;
-  refresh(period, mine);
+  const allCheck = document.getElementById('all-users-check');
+  const showAll = allCheck ? allCheck.checked : false;
+  refresh(period, showAll);
 }
 
 document.getElementById('period-select').addEventListener('change', triggerRefresh);
-document.getElementById('mine-check').addEventListener('change', triggerRefresh);
+const _allCheck = document.getElementById('all-users-check');
+if (_allCheck) _allCheck.addEventListener('change', triggerRefresh);
 
+// Default: everyone starts in "my usage" mode (showAll=false)
 refresh('week', false);
 </script>
 {% endblock %}

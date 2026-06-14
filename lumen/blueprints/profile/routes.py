@@ -3,10 +3,12 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 
-from flask import Blueprint, current_app, redirect, render_template, request, jsonify, session, url_for
-from sqlalchemy import func, select
+from datetime import timedelta, timezone
 
-from lumen.decorators import login_required
+from flask import Blueprint, current_app, redirect, render_template, request, jsonify, session, url_for, abort
+from sqlalchemy import func, select, text
+
+from lumen.decorators import login_required, is_admin as _is_admin
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
 from lumen.models.conversation import Conversation
@@ -18,6 +20,7 @@ from lumen.models.group_member import GroupMember
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
+from lumen.models.entity_stat import EntityStat
 from lumen.services.crypto import hash_api_key
 from lumen.services.llm import bulk_model_access_info, get_pool_limit, get_model_access_status, has_model_consent
 
@@ -295,3 +298,363 @@ def user_consent(model_name):
         db.session.commit()
 
     return jsonify({"ok": True}), HTTPStatus.OK
+
+
+# ---------------------------------------------------------------------------
+# Usage / Analytics
+# ---------------------------------------------------------------------------
+
+_USAGE_PERIODS = {
+    "week":  {"offset": timedelta(days=7),   "bucket": "1 day",   "trunc": "day"},
+    "month": {"offset": timedelta(days=30),  "bucket": "1 day",   "trunc": "day"},
+    "year":  {"offset": timedelta(days=365), "bucket": "1 week",  "trunc": "week"},
+    "all":   {"offset": None,                "bucket": "1 month", "trunc": "month"},
+}
+_VALID_BUCKETS = frozenset(cfg["bucket"] for cfg in _USAGE_PERIODS.values())
+_VALID_TRUNC   = frozenset(cfg["trunc"]  for cfg in _USAGE_PERIODS.values())
+
+
+def _usage_period_start(period_str):
+    cfg = _USAGE_PERIODS.get(period_str, _USAGE_PERIODS["week"])
+    if cfg["offset"] is None:
+        return None
+    return datetime.now(timezone.utc) - cfg["offset"]
+
+
+def _usage_period_bucket(period_str):
+    cfg = _USAGE_PERIODS.get(period_str, _USAGE_PERIODS["week"])
+    return cfg["bucket"], cfg["trunc"]
+
+
+def _usage_entity_id():
+    """Return entity_id to filter by.
+
+    Non-admins always see their own data (backend enforcement).
+    Admins: entity_id param > mine=1 param > None (all users).
+    """
+    entity = db.session.get(Entity, session["entity_id"])
+    if not _is_admin(entity):
+        return session["entity_id"]
+    eid = request.args.get("entity_id", type=int)
+    if eid:
+        return eid
+    if request.args.get("mine") == "1":
+        return session.get("entity_id")
+    return None
+
+
+@profile_bp.route("/usage")
+@login_required
+def usage():
+    return render_template("usage.html")
+
+
+@profile_bp.route("/api/usage/summary")
+@login_required
+def usage_summary():
+    if db.engine.dialect.name != "postgresql":
+        return jsonify({"requests": 0, "tokens": 0, "cost": 0.0, "new_users": 0, "last_active": None})
+    period = request.args.get("period", "week")
+    start = _usage_period_start(period)
+    eid = _usage_entity_id()
+
+    if eid:
+        params = {"eid": eid}
+        where = "WHERE entity_id = :eid"
+        if start is not None:
+            params["start"] = start
+            where += " AND time >= :start"
+        row = db.session.execute(text(f"""
+            SELECT
+                COALESCE(COUNT(*), 0),
+                COALESCE(SUM(input_tokens + output_tokens), 0),
+                COALESCE(SUM(cost), 0.0)
+            FROM request_logs
+            {where}
+        """), params).one()
+        stat = db.session.execute(
+            select(EntityStat).filter_by(entity_id=eid)
+        ).scalar_one_or_none()
+        last_active = (
+            stat.last_used_at.isoformat() + "Z" if stat and stat.last_used_at else None
+        )
+        new_users = 0
+    elif start is not None:
+        row = db.session.execute(text("""
+            SELECT
+                COALESCE(SUM(requests), 0),
+                COALESCE(SUM(input_tokens + output_tokens), 0),
+                COALESCE(SUM(cost), 0.0)
+            FROM request_counts_hourly
+            WHERE bucket >= :start
+        """), {"start": start}).one()
+        new_users = db.session.scalar(
+            select(func.count(Entity.id)).where(
+                Entity.entity_type == "user",
+                Entity.created_at >= start,
+            )
+        )
+        last_active = None
+    else:
+        row = db.session.execute(text("""
+            SELECT
+                COALESCE(SUM(requests), 0),
+                COALESCE(SUM(input_tokens + output_tokens), 0),
+                COALESCE(SUM(cost), 0.0)
+            FROM request_counts_hourly
+        """)).one()
+        new_users = db.session.scalar(
+            select(func.count(Entity.id)).where(Entity.entity_type == "user")
+        )
+        last_active = None
+
+    return jsonify({
+        "requests": int(row[0]),
+        "tokens": int(row[1]),
+        "cost": float(row[2]),
+        "new_users": int(new_users),
+        "last_active": last_active,
+    })
+
+
+@profile_bp.route("/api/usage/users/new")
+@login_required
+def usage_users_new():
+    if db.engine.dialect.name != "postgresql":
+        return jsonify([])
+    period = request.args.get("period", "week")
+    if period not in _USAGE_PERIODS:
+        abort(HTTPStatus.BAD_REQUEST)
+    start = _usage_period_start(period)
+    _, trunc = _usage_period_bucket(period)
+    if trunc not in _VALID_TRUNC:
+        abort(HTTPStatus.BAD_REQUEST)
+
+    if start is not None:
+        rows = db.session.execute(text("""
+            SELECT date_trunc(:trunc, created_at) AS period, COUNT(*) AS count
+            FROM entities
+            WHERE entity_type = 'user' AND created_at >= :start
+            GROUP BY 1 ORDER BY 1
+        """), {"trunc": trunc, "start": start}).all()
+    else:
+        rows = db.session.execute(text("""
+            SELECT date_trunc(:trunc, created_at) AS period, COUNT(*) AS count
+            FROM entities
+            WHERE entity_type = 'user'
+            GROUP BY 1 ORDER BY 1
+        """), {"trunc": trunc}).all()
+
+    return jsonify([{"period": r[0].isoformat(), "count": int(r[1])} for r in rows])
+
+
+@profile_bp.route("/api/usage/users/cumulative")
+@login_required
+def usage_users_cumulative():
+    if db.engine.dialect.name != "postgresql":
+        return jsonify([])
+    period = request.args.get("period", "week")
+    if period not in _USAGE_PERIODS:
+        abort(HTTPStatus.BAD_REQUEST)
+    start = _usage_period_start(period)
+    _, trunc = _usage_period_bucket(period)
+    if trunc not in _VALID_TRUNC:
+        abort(HTTPStatus.BAD_REQUEST)
+
+    if start is not None:
+        rows = db.session.execute(text("""
+            WITH buckets AS (
+                SELECT date_trunc(:trunc, created_at) AS period, COUNT(*) AS new_count
+                FROM entities
+                WHERE entity_type = 'user' AND created_at >= :start
+                GROUP BY 1
+            )
+            SELECT period, SUM(new_count) OVER (ORDER BY period) AS cumulative
+            FROM buckets ORDER BY period
+        """), {"trunc": trunc, "start": start}).all()
+    else:
+        rows = db.session.execute(text("""
+            WITH buckets AS (
+                SELECT date_trunc(:trunc, created_at) AS period, COUNT(*) AS new_count
+                FROM entities
+                WHERE entity_type = 'user'
+                GROUP BY 1
+            )
+            SELECT period, SUM(new_count) OVER (ORDER BY period) AS cumulative
+            FROM buckets ORDER BY period
+        """), {"trunc": trunc}).all()
+
+    return jsonify([{"period": r[0].isoformat(), "count": int(r[1])} for r in rows])
+
+
+@profile_bp.route("/api/usage/requests")
+@login_required
+def usage_requests():
+    if db.engine.dialect.name != "postgresql":
+        return jsonify([])
+    period = request.args.get("period", "week")
+    start = _usage_period_start(period)
+    bucket, _ = _usage_period_bucket(period)
+    if bucket not in _VALID_BUCKETS:
+        abort(HTTPStatus.BAD_REQUEST)
+    eid = _usage_entity_id()
+
+    if eid:
+        params = {"bucket": bucket, "eid": eid}
+        where = "WHERE entity_id = :eid"
+        if start is not None:
+            params["start"] = start
+            where += " AND time >= :start"
+        rows = db.session.execute(text(f"""
+            SELECT time_bucket(CAST(:bucket AS INTERVAL), time) AS period, COUNT(*) AS count
+            FROM request_logs
+            {where}
+            GROUP BY 1 ORDER BY 1
+        """), params).all()
+    elif start is not None:
+        rows = db.session.execute(text("""
+            SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period, SUM(requests) AS count
+            FROM request_counts_hourly
+            WHERE bucket >= :start
+            GROUP BY 1 ORDER BY 1
+        """), {"bucket": bucket, "start": start}).all()
+    else:
+        rows = db.session.execute(text("""
+            SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period, SUM(requests) AS count
+            FROM request_counts_hourly
+            GROUP BY 1 ORDER BY 1
+        """), {"bucket": bucket}).all()
+
+    return jsonify([{"period": r[0].isoformat(), "count": int(r[1])} for r in rows])
+
+
+@profile_bp.route("/api/usage/tokens")
+@login_required
+def usage_tokens():
+    if db.engine.dialect.name != "postgresql":
+        return jsonify([])
+    period = request.args.get("period", "week")
+    start = _usage_period_start(period)
+    bucket, _ = _usage_period_bucket(period)
+    if bucket not in _VALID_BUCKETS:
+        abort(HTTPStatus.BAD_REQUEST)
+    eid = _usage_entity_id()
+
+    if eid:
+        params = {"bucket": bucket, "eid": eid}
+        where = "WHERE entity_id = :eid"
+        if start is not None:
+            params["start"] = start
+            where += " AND time >= :start"
+        rows = db.session.execute(text(f"""
+            SELECT time_bucket(CAST(:bucket AS INTERVAL), time) AS period,
+                   SUM(input_tokens + output_tokens) AS tokens
+            FROM request_logs
+            {where}
+            GROUP BY 1 ORDER BY 1
+        """), params).all()
+    elif start is not None:
+        rows = db.session.execute(text("""
+            SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period,
+                   SUM(input_tokens + output_tokens) AS tokens
+            FROM request_counts_hourly
+            WHERE bucket >= :start
+            GROUP BY 1 ORDER BY 1
+        """), {"bucket": bucket, "start": start}).all()
+    else:
+        rows = db.session.execute(text("""
+            SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period,
+                   SUM(input_tokens + output_tokens) AS tokens
+            FROM request_counts_hourly
+            GROUP BY 1 ORDER BY 1
+        """), {"bucket": bucket}).all()
+
+    return jsonify([{"period": r[0].isoformat(), "count": int(r[1])} for r in rows])
+
+
+@profile_bp.route("/api/usage/models")
+@login_required
+def usage_models():
+    if db.engine.dialect.name != "postgresql":
+        return jsonify([])
+    period = request.args.get("period", "week")
+    start = _usage_period_start(period)
+    eid = _usage_entity_id()
+
+    if eid:
+        params = {"eid": eid}
+        where = "WHERE rl.entity_id = :eid"
+        if start is not None:
+            params["start"] = start
+            where += " AND rl.time >= :start"
+        rows = db.session.execute(text(f"""
+            SELECT mc.model_name, COUNT(*) AS requests
+            FROM request_logs rl
+            JOIN model_configs mc ON rl.model_config_id = mc.id
+            {where}
+            GROUP BY mc.model_name ORDER BY requests DESC
+        """), params).all()
+    elif start is not None:
+        rows = db.session.execute(text("""
+            SELECT mc.model_name, SUM(rch.requests) AS requests
+            FROM request_counts_hourly rch
+            JOIN model_configs mc ON rch.model_config_id = mc.id
+            WHERE rch.bucket >= :start
+            GROUP BY mc.model_name ORDER BY requests DESC
+        """), {"start": start}).all()
+    else:
+        rows = db.session.execute(text("""
+            SELECT mc.model_name, SUM(rch.requests) AS requests
+            FROM request_counts_hourly rch
+            JOIN model_configs mc ON rch.model_config_id = mc.id
+            GROUP BY mc.model_name ORDER BY requests DESC
+        """)).all()
+
+    return jsonify([{"model": r[0], "requests": int(r[1])} for r in rows])
+
+
+@profile_bp.route("/api/usage/heatmap")
+@login_required
+def usage_heatmap():
+    if db.engine.dialect.name != "postgresql":
+        return jsonify([])
+    period = request.args.get("period", "week")
+    start = _usage_period_start(period)
+    eid = _usage_entity_id()
+
+    if eid:
+        params = {"eid": eid}
+        where = "WHERE entity_id = :eid"
+        if start is not None:
+            params["start"] = start
+            where += " AND time >= :start"
+        rows = db.session.execute(text(f"""
+            SELECT
+                EXTRACT(DOW FROM time)  AS dow,
+                EXTRACT(HOUR FROM time) AS hour,
+                COUNT(*) AS count
+            FROM request_logs
+            {where}
+            GROUP BY 1, 2
+        """), params).all()
+    elif start is not None:
+        rows = db.session.execute(text("""
+            SELECT
+                EXTRACT(DOW FROM bucket)  AS dow,
+                EXTRACT(HOUR FROM bucket) AS hour,
+                SUM(requests) AS count
+            FROM request_counts_hourly
+            WHERE bucket >= :start
+            GROUP BY 1, 2
+        """), {"start": start}).all()
+    else:
+        rows = db.session.execute(text("""
+            SELECT
+                EXTRACT(DOW FROM bucket)  AS dow,
+                EXTRACT(HOUR FROM bucket) AS hour,
+                SUM(requests) AS count
+            FROM request_counts_hourly
+            GROUP BY 1, 2
+        """)).all()
+
+    return jsonify([{"dow": int(r[0]), "hour": int(r[1]), "count": int(r[2])} for r in rows])

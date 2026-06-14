@@ -32,6 +32,11 @@ All notable changes to Lumen will be documented in this file.
       token: kuma
   ```
 
+### Added
+- New **Usage** page (`/usage`) accessible to all logged-in users, showing their own requests, tokens, cost, model popularity, and heatmap. Admins see their own usage by default with a "Show all users" checkbox to view system-wide data, and a "Last Active" stat when viewing a specific user. User-growth charts (new users, cumulative) appear only in the all-users view.
+- Users page: added a bar-chart button per user that opens the Usage page filtered to that user.
+- Renamed the admin "Analytics" nav entry to "Usage" and moved it to the main nav for all users.
+
 ### Changed
 - Config editor: `prometheus` and `monitoring` sections merged into the `API` section as sub-cards; sidebar no longer shows them as separate entries.
 - Config editor Models: inactive models are sorted to the bottom of the model dropdown.

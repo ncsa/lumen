@@ -11,12 +11,12 @@
         <a href="{{ url_for('chat.chat_page') }}" class="uis-nav-link">Chat</a>
         <a href="{{ url_for('profile.index') }}" class="uis-nav-link">Profile</a>
         <a href="{{ url_for('models_page.index') }}" class="uis-nav-link">Models</a>
+        <a href="{{ url_for('profile.usage') }}" class="uis-nav-link">Usage</a>
         {% if is_admin or nav_clients %}
         <a href="{{ url_for('clients.index') }}" class="uis-nav-link">Clients</a>
         {% endif %}
         {% if is_admin %}
         <a href="{{ url_for('admin.users') }}" class="uis-nav-link">Users</a>
-        <a href="{{ url_for('admin.analytics') }}" class="uis-nav-link">Analytics</a>
         <a href="{{ url_for('admin.config_editor') }}" class="uis-nav-link">Config</a>
         {% endif %}
         {% else %}
