@@ -45,6 +45,7 @@ All notable changes to Lumen will be documented in this file.
 - Config editor no longer warns about "unrecognized fields" when clearing a known field (e.g. `announcement`); the dialog now only fires for top-level keys the editor has no UI for.
 - Config editor uses `shutil.copyfile` instead of `shutil.move` to avoid `Operation not permitted` errors when `/tmp` and the config file are on different filesystems.
 - Group membership rules now require **all** conditions to match (AND), not just any one (OR); previously a user could be placed in a group by matching only the IdP rule without matching the required affiliation.
+- Web chat streaming (`send_message_stream`) now releases its database connection before the LLM call, matching the API path. Previously it held a connection with an open transaction for the entire stream, leaking connections (`idle in transaction`) and exhausting the pool under load.
 
 ## [1.15.2] - 2026-06-13
 

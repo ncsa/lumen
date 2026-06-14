@@ -27,7 +27,6 @@ from lumen.models.group_member import GroupMember
 from lumen.models.group_limit import GroupLimit
 from lumen.models.group_model_access import GroupModelAccess
 from lumen.models.entity import Entity
-from lumen.services.cost import calculate_cost
 
 # Priority order for access types when multiple apply (lower index = higher priority)
 _ACCESS_PRIORITY = {"blacklist": 0, "graylist": 1, "whitelist": 2}
@@ -457,13 +456,24 @@ def send_message_stream(
     if endpoint is None:
         raise RuntimeError(f"No healthy endpoints for model '{model}'")
 
+    # Extract all scalars from ORM objects before releasing the DB connection.
+    # The streaming LLM call can take minutes; holding a pool connection (and an
+    # open transaction) for that entire duration exhausts the pool under load.
     remote_model = endpoint.model_name or model
+    ep_api_key   = endpoint.api_key
+    ep_url       = endpoint.url
+    ep_id        = endpoint.id
+    mc_id        = config.id
+    mc_in_cost   = float(config.input_cost_per_million)
+    mc_out_cost  = float(config.output_cost_per_million)
+    db.session.remove()  # return connection to pool before the LLM call
+
     t0 = time.time()
     t_first = None
     parts = []
     usage = None
 
-    with openai.OpenAI(api_key=endpoint.api_key, base_url=endpoint.url) as client:
+    with openai.OpenAI(api_key=ep_api_key, base_url=ep_url) as client:
         stream = client.chat.completions.create(
             model=remote_model,
             messages=messages,
@@ -497,15 +507,15 @@ def send_message_stream(
         or getattr(usage, "reasoning_tokens", None)
     ) if usage else None
 
-    cost = calculate_cost(input_tokens, output_tokens, config)
+    cost = round(input_tokens * mc_in_cost / 1_000_000 + output_tokens * mc_out_cost / 1_000_000, 6)
     output_speed = output_tokens / duration if duration > 0 else 0.0
 
     if entity_id is not None:
-        subtract_coins(entity_id, config.id, cost)
+        subtract_coins(entity_id, mc_id, cost)
         update_stats(
-            entity_id, config.id, source,
+            entity_id, mc_id, source,
             input_tokens, output_tokens, cost,
-            endpoint_id=endpoint.id, duration=duration,
+            endpoint_id=ep_id, duration=duration,
         )
         db.session.commit()
 
