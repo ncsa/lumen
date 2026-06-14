@@ -50,20 +50,15 @@ def _groups_from_userinfo_rules(userinfo: dict, yaml_data: dict, existing: list[
     for group_name, group_def in yaml_data.get("groups", {}).items():
         if group_name in existing or group_name in added:
             continue
-        for rule in (group_def or {}).get("rules", []):
-            field = rule.get("field")
-            if not field:
-                continue
-            field_value = userinfo.get(field) or ""
-            if "contains" in rule:
-                matched = rule["contains"] in field_value
-            elif "equals" in rule:
-                matched = field_value == rule["equals"]
-            else:
-                matched = False
-            if matched:
-                added.append(group_name)
-                break
+        rules = (group_def or {}).get("rules", [])
+        if rules and all(
+            (rule.get("contains") or "") in (userinfo.get(rule.get("field")) or "")
+            if "contains" in rule
+            else (userinfo.get(rule.get("field")) or "") == rule.get("equals", "")
+            for rule in rules
+            if rule.get("field")
+        ):
+            added.append(group_name)
     return added
 
 
