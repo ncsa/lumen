@@ -34,6 +34,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Changed
 - Config editor: `prometheus` and `monitoring` sections merged into the `API` section as sub-cards; sidebar no longer shows them as separate entries.
+- Config editor Models: inactive models are sorted to the bottom of the model dropdown.
 
 ### Fixed
 - Config editor no longer warns about "unrecognized fields" when clearing a known field (e.g. `announcement`); the dialog now only fires for top-level keys the editor has no UI for.

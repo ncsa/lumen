@@ -692,9 +692,15 @@ function collectClients() { collectCurrentClient(); }
 function renderModels() {
   const models = state.data.models || [];
   if (state.selectedModelIdx >= models.length) state.selectedModelIdx = 0;
-  const opts = models.map((m, i) =>
-    `<option value="${i}"${i === state.selectedModelIdx ? ' selected' : ''}>${esc(m.name || `Model ${i}`)}${m.active === false ? ' (inactive)' : ''}</option>`
-  ).join('');
+  const sortedIdxs = models.map((_, i) => i).sort((a, b) => {
+    const aActive = models[a].active !== false;
+    const bActive = models[b].active !== false;
+    return aActive === bActive ? 0 : aActive ? -1 : 1;
+  });
+  const opts = sortedIdxs.map(i => {
+    const m = models[i];
+    return `<option value="${i}"${i === state.selectedModelIdx ? ' selected' : ''}>${esc(m.name || `Model ${i}`)}${m.active === false ? ' (inactive)' : ''}</option>`;
+  }).join('');
   $('cfg-body').innerHTML = `
     <div class="entity-bar">
       <label for="mdl-sel" class="fw-semibold small mb-0 text-nowrap">Model:</label>
