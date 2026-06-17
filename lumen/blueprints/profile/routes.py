@@ -170,7 +170,7 @@ def _build_model_usage(eid: int):
             "disabled": status == "disabled",
         })
 
-    total_tokens_used = sum(r[2] + r[3] for r in usage_rows)
+    total_tokens_used = sum((r[2] or 0) + (r[3] or 0) for r in usage_rows)
     total_cost = sum(float(r[4] or 0) for r in usage_rows)
     return model_usage, total_tokens_used, total_cost
 
