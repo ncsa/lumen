@@ -77,6 +77,7 @@ Following rules are here to help the AI avoid the same mistakes again:
 - SQLAlchemy: never use `Model.query` or `db.session.query()` — both are deprecated in SQLAlchemy 2.x and emit `LegacyAPIWarning`. Use `db.session.execute(select(Model)...)` for all queries, `.scalars().all()` / `.scalar_one_or_none()` for results, `db.first_or_404(stmt)` for 404 guards, `db.session.get(Model, pk)` for PK lookups, `db.get_or_404(Model, pk)` when a missing row should 404.
 - updates to the schema should be reflected in docs/dbschema.md and columns/tables should have comments.
 - Don't use bare integer HTTP codes, use `HTTPStatus` constants.
+- updates to config file should be reflected in the helm chart values.yaml and values.schema.json.
 
 ## 6. Accessibility (WCAG 2.1 AA)
 
@@ -103,7 +104,7 @@ When writing or modifying HTML/JS:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **lumen** (2612 symbols, 4234 relationships, 94 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **lumen** (2626 symbols, 4312 relationships, 99 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

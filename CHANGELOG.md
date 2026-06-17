@@ -5,6 +5,11 @@ All notable changes to Lumen will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `/v1/audio/transcriptions` and `/v1/audio/translations` endpoints (speech-to-text). Billed per minute of audio via `audio_cost_per_minute` on the model config when the upstream reports `usage.type=duration`; falls back to per-token billing otherwise. Adds `audio_seconds` tracking to request logs, model/entity stats, and API keys. Helm chart template, `values.schema.json`, and `config.yaml.example` updated to support `audioCostPerMinute` per model.
+
+## [1.16.3] - 2026-06-16
+
+### Added
 - Automatic database connection-pool sizing on PostgreSQL. The pool is sized from the server's `max_connections`, divided across all worker processes and Kubernetes replicas so combined usage cannot exhaust the server: 60% to `pool_size`, 20% to `max_overflow`, and 20% reserved for psql/migrations/monitoring. Worker count is detected from `WEB_CONCURRENCY` or the uvicorn `--workers` flag; replica count comes from the new `LUMEN_REPLICAS` env var (set by the Helm chart from `replicaCount`). Explicit `app.database.pool_size`/`max_overflow` are still honored when they fit within 80% of `max_connections` across all workers × replicas, otherwise the auto-sized values are used. Added `app.database.max_connections` to override the detected value. Pre-ping is now always enabled (the `pool_pre_ping` config option was removed). SQLite skips pool sizing entirely. If `max_connections` cannot be queried (e.g. the database is briefly unreachable at startup), the app falls back to the configured pool settings instead of failing to boot.
 
 ### Fixed
