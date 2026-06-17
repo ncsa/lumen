@@ -38,12 +38,24 @@ config:
   admins: []
   # -- SQLAlchemy connection pool tuning. The database URL itself is supplied
   # via the DATABASE_URL env var (see postgresql.* / existingSecret).
+  # By default the pool is auto-sized from the server's max_connections, split
+  # across workers x replicas (LUMEN_REPLICAS is set from replicaCount). Leave
+  # poolSize/maxOverflow empty to auto-size; set them only to override (honoured
+  # only if they fit within 80% of max_connections across all workers/replicas).
+  # NOTE: auto-sizing assumes a fixed replicaCount. If you autoscale the pods
+  # (HPA/KEDA), LUMEN_REPLICAS stays at the configured replicaCount, so scaling
+  # beyond it would let combined connections exceed max_connections. When
+  # autoscaling, set poolSize/maxOverflow (or maxConnections) explicitly, sized
+  # for your maximum replica count.
   database:
-    poolSize: 20
-    maxOverflow: 60
+    # -- Override persistent pool connections per process (empty = auto-size)
+    poolSize: ""
+    # -- Override burst connections above poolSize per process (empty = auto-size)
+    maxOverflow: ""
+    # -- Override the detected Postgres max_connections (empty = query the server)
+    maxConnections: ""
     poolTimeout: 10
     poolRecycle: 1800
-    poolPrePing: true
   # -- UI theme. Built-in options: default, illinois, uic, uis.
   # Set to a custom name to use a theme mounted via config.themes.
   theme: "default"

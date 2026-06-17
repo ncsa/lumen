@@ -80,7 +80,8 @@ Edit `config.yaml` with at minimum:
 app:
   secret_key: "any-random-string"
   encryption_key: "another-random-string"
-  database_url: sqlite:///lumen_dev.db
+  database:
+    url: sqlite:///lumen_dev.db
   debug: true
   dev_user:                    # bypasses OAuth — logs in as this email automatically
     email: dev@example.com
@@ -142,7 +143,8 @@ app:
   tagline: Illuminating AI access
   secret_key: change-me-to-something-random   # any long random string; used for session cookies
   encryption_key: change-me-to-something-different  # separate secret used to hash user API keys
-  database_url: sqlite:///lumen.db            # or a postgres:// URL
+  database:
+    url: sqlite:///lumen.db                   # or a postgres:// URL
   debug: false
   theme: illinois   # built-in themes: default, illinois, uic, uis
 ```
@@ -336,19 +338,23 @@ By default, limits are tracked in-memory (per-process). For multi-worker deploym
 
 ### Database connection pool
 
-Controls how SQLAlchemy manages database connections. The defaults (pool size 5, overflow 10) are fine for light use; increase them for production or high-concurrency workloads. Changes require a restart.
+On PostgreSQL the pool is **auto-sized** from the server's `max_connections`, divided across all worker processes and Kubernetes replicas so combined usage cannot exhaust the server: 60% to `pool_size`, 20% to `max_overflow`, and 20% reserved for psql/migrations/monitoring. Worker count is detected from `WEB_CONCURRENCY` or the uvicorn `--workers` flag; replica count comes from the `LUMEN_REPLICAS` env var (set by the Helm chart from `replicaCount`). Pre-ping is always enabled. SQLite has no connection limit, so sizing is skipped. Changes require a restart.
+
+You can override the auto-sizing under `app.database`:
 
 ```yaml
 app:
-  db_pool:
-    pool_size: 20        # persistent connections kept open
-    max_overflow: 30     # burst connections allowed above pool_size
+  database:
+    url: postgresql://lumen:lumen@localhost:5432/lumen
+    # pool_size / max_overflow omitted → auto-sized
+    pool_size: 20        # override persistent connections kept open
+    max_overflow: 30     # override burst connections allowed above pool_size
+    max_connections: 200 # override the detected Postgres max_connections
     pool_timeout: 10     # seconds to wait for a free connection before returning an error
     pool_recycle: 1800   # recycle connections after 30 min to avoid stale-connection errors
-    pool_pre_ping: true  # test each connection before use; silently replaces stale ones
 ```
 
-`pool_size + max_overflow` is the maximum number of simultaneous DB connections. For 50 concurrent requests, set these to at least 50 combined.
+Explicit `pool_size` / `max_overflow` are honored only if they fit within 80% of `max_connections` across all workers × replicas; otherwise the auto-sized values are used and a warning is logged.
 
 ### Clients
 

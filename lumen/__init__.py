@@ -125,13 +125,15 @@ def create_app():
     if db_cfg.get("url") and not os.environ.get("DATABASE_URL"):
         db_url = db_cfg["url"].replace("postgres://", "postgresql://", 1)
         app.config["SQLALCHEMY_DATABASE_URI"] = db_url
-    db_pool = {
-        k: db_cfg[k]
-        for k in ("pool_size", "max_overflow", "pool_timeout", "pool_recycle", "pool_pre_ping")
-        if k in db_cfg
-    }
-    if db_pool:
-        app.config["SQLALCHEMY_ENGINE_OPTIONS"] = db_pool
+    from lumen.services.db_pool import build_engine_options, detect_replicas, detect_workers
+    engine_options = build_engine_options(
+        app.config["SQLALCHEMY_DATABASE_URI"],
+        db_cfg,
+        workers=detect_workers(),
+        replicas=detect_replicas(),
+    )
+    if engine_options:
+        app.config["SQLALCHEMY_ENGINE_OPTIONS"] = engine_options
     if "debug" in app_cfg:
         app.config["DEBUG"] = app_cfg["debug"]
     app.config["SESSION_COOKIE_SECURE"] = not app.debug

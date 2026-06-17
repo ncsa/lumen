@@ -37,7 +37,7 @@ Some settings are read only at startup and cannot be hot-reloaded. Lumen logs a 
 | Setting | Why |
 |---------|-----|
 | `app.secret_key` | Flask session signing key — changing it invalidates all active sessions |
-| `app.database_url` | Database connections are established at startup |
+| `app.database` | Database connection URL and pool settings are established at startup |
 | `app.debug` | Debug flag affects core application initialization |
 | `oauth2.*` | OAuth client ID, secret, and server metadata are used during session setup |
 | `api.prometheus.enabled` | Metrics collector is initialized at startup |

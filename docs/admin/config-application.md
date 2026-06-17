@@ -10,7 +10,7 @@ These are the core settings that make Lumen work: database, authentication, and 
 | `tagline` | Subtitle shown next to the name |
 | `secret_key` | Flask session encryption key (see Security Notes below) |
 | `encryption_key` | Used to hash API keys stored in the database. See **Security Notes** |
-| `database_url` | SQLAlchemy connection URL — PostgreSQL (`postgresql://...`) in production, or SQLite (`sqlite:///lumen.db`) for local development |
+| `database.url` | SQLAlchemy connection URL — PostgreSQL (`postgresql://...`) in production, or SQLite (`sqlite:///lumen.db`) for local development |
 | `debug` | Enable debug mode (set to `false` in production) |
 | `theme` | Institutional theme. Themes live in `themes/<name>/`. Built-in: `default`, `illinois`, `uic`, `uis`. Falls back to `default` if not found. |
 | `github_url` | Optional — overrides the default GitHub link in the navbar |
@@ -18,26 +18,40 @@ These are the core settings that make Lumen work: database, authentication, and 
 
 ### Database Pool
 
-Optional settings under `app.db_pool`:
+On PostgreSQL the connection pool is **auto-sized** from the server's
+`max_connections`, divided across all worker processes and Kubernetes replicas so
+the combined usage cannot exhaust the server:
+
+- `pool_size` per process = 60% of `max_connections` ÷ (workers × replicas)
+- `max_overflow` per process = 20% of `max_connections` ÷ (workers × replicas)
+- the remaining 20% is reserved for psql, migrations, monitoring, etc.
+
+Worker count is detected from `WEB_CONCURRENCY` or the uvicorn `--workers` flag;
+replica count comes from the `LUMEN_REPLICAS` env var (set automatically by the Helm
+chart from `replicaCount`). Pre-ping is always enabled to silently replace stale
+connections. SQLite has no connection limit, so pool sizing is skipped for it.
+
+Optional overrides under `app.database`:
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| `pool_size` | Persistent connections kept open | 5 |
-| `max_overflow` | Extra connections allowed above `pool_size` | 10 |
+| `pool_size` | Override persistent connections per process | auto-sized |
+| `max_overflow` | Override burst connections above `pool_size` per process | auto-sized |
+| `max_connections` | Override the detected Postgres `max_connections` (skips the `SHOW max_connections` query) | queried at startup |
 | `pool_timeout` | Seconds to wait before raising a timeout error | 30 |
 | `pool_recycle` | Recycle connections after N seconds to avoid stale-connection errors | N/A (no recycling) |
-| `pool_pre_ping` | Test each connection before use; silently replace stale ones | `false` |
 
-Example with custom values:
+Explicit `pool_size` / `max_overflow` are honored only if they fit within 80% of
+`max_connections` across all workers × replicas; otherwise they are ignored and the
+auto-sized values are used (a warning is logged).
 
 ```yaml
 app:
-  db_pool:
-    pool_size: 500
-    max_overflow: 50
+  database:
+    url: postgresql://lumen:lumen@localhost:5432/lumen
+    # pool_size / max_overflow omitted → auto-sized
     pool_timeout: 30
     pool_recycle: 1800
-    pool_pre_ping: true
 ```
 
 ### Development User
@@ -206,7 +220,7 @@ All of the following environment variables take precedence over the correspondin
 | Environment Variable | Overrides |
 |---------------------|-----------|
 | `CONFIG_YAML` | Path to the config file (default: `./config.yaml`) |
-| `DATABASE_URL` | `app.database_url` |
+| `DATABASE_URL` | `app.database.url` |
 | `LUMEN_SECRET_KEY` | `app.secret_key` |
 | `LUMEN_ENCRYPTION_KEY` | `app.encryption_key` |
 | `OAUTH2_CLIENT_ID` | `oauth2.client_id` |

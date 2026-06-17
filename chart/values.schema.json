@@ -43,11 +43,11 @@
         "database": {
           "type": "object",
           "properties": {
-            "poolSize": { "type": "integer", "minimum": 1 },
-            "maxOverflow": { "type": "integer", "minimum": 0 },
+            "poolSize": { "anyOf": [{ "type": "integer", "minimum": 1 }, { "type": "string", "enum": [""] }] },
+            "maxOverflow": { "anyOf": [{ "type": "integer", "minimum": 0 }, { "type": "string", "enum": [""] }] },
+            "maxConnections": { "anyOf": [{ "type": "integer", "minimum": 1 }, { "type": "string", "enum": [""] }] },
             "poolTimeout": { "type": "integer", "minimum": 1 },
-            "poolRecycle": { "type": "integer", "minimum": 1 },
-            "poolPrePing": { "type": "boolean" }
+            "poolRecycle": { "type": "integer", "minimum": 1 }
           }
         },
         "name": { "type": "string" },

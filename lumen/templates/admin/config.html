@@ -313,8 +313,9 @@ function renderApp() {
     `)}
     ${card('Database', `
       ${field('a-db-url','URL',ti('a-db-url',db.url,'postgresql://user:pass@host/db'))}
-      ${row3(field('db-size','Pool Size',ni('db-size',db.pool_size,'1')),field('db-overflow','Max Overflow',ni('db-overflow',db.max_overflow,'1')),field('db-timeout','Timeout (s)',ni('db-timeout',db.pool_timeout,'1')))}
-      ${row2(field('db-recycle','Recycle (s)',ni('db-recycle',db.pool_recycle,'1')),field('db-ping','',cbi('db-ping',!!db.pool_pre_ping,'Pool pre-ping')))}
+      <p class="text-muted small mb-2">Pool Size and Max Overflow are auto-sized from the server's max_connections (split across workers × replicas) when left blank. Pre-ping is always enabled.</p>
+      ${row3(field('db-size','Pool Size',ni('db-size',db.pool_size,'1'),'blank = auto'),field('db-overflow','Max Overflow',ni('db-overflow',db.max_overflow,'1'),'blank = auto'),field('db-maxconn','Max Connections',ni('db-maxconn',db.max_connections,'1'),'blank = query server'))}
+      ${row2(field('db-timeout','Timeout (s)',ni('db-timeout',db.pool_timeout,'1')),field('db-recycle','Recycle (s)',ni('db-recycle',db.pool_recycle,'1')))}
     `)}
     ${card('Dev User', `
       <p class="text-muted small mb-2">Leave blank in production. Bypasses OAuth and uses this email as the logged-in user.</p>
@@ -361,11 +362,11 @@ function collectApp() {
 
   const dbCfg = {};
   const dbUrl = val('a-db-url'); if (dbUrl) dbCfg.url = dbUrl;
-  const ps = numVal('db-size');     if (ps !== undefined) dbCfg.pool_size    = ps;
-  const mo = numVal('db-overflow'); if (mo !== undefined) dbCfg.max_overflow = mo;
-  const pt = numVal('db-timeout');  if (pt !== undefined) dbCfg.pool_timeout = pt;
-  const pr = numVal('db-recycle');  if (pr !== undefined) dbCfg.pool_recycle = pr;
-  if (boolVal('db-ping')) dbCfg.pool_pre_ping = true;
+  const ps = numVal('db-size');     if (ps !== undefined) dbCfg.pool_size      = ps;
+  const mo = numVal('db-overflow'); if (mo !== undefined) dbCfg.max_overflow   = mo;
+  const mc = numVal('db-maxconn');  if (mc !== undefined) dbCfg.max_connections = mc;
+  const pt = numVal('db-timeout');  if (pt !== undefined) dbCfg.pool_timeout   = pt;
+  const pr = numVal('db-recycle');  if (pr !== undefined) dbCfg.pool_recycle   = pr;
   a.database = Object.keys(dbCfg).length ? dbCfg : undefined;
 
   const lvl = val('log-level');

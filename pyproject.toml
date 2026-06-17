@@ -21,6 +21,7 @@ dependencies = [
     "markdown>=3.6",
     "flask-wtf>=1.2",
     "bleach>=6.0",
+    "psutil>=5.9",
 ]
 
 [project.scripts]
