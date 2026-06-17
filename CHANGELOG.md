@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Helm chart: synced `chart/templates/config-secret.yaml` with the current `config.yaml` schema. Renamed the rendered `app.db_pool` block to `app.database` (and the `config.dbPool` values key to `config.database`) so connection-pool settings take effect again — the app reads pool tuning from `app.database.*` since 1.16.x, so the chart's pool values were being silently ignored. Bumped the chart `maxOverflow` default to 60 to match `config.yaml.example`. Removed the obsolete top-level `model_access:` block (and its `modelAccess` values/schema entries); that section was dropped from the app and is now ignored. Added first-class `api:` values for `api.consent`, `api.prometheus`, and `api.monitoring` (previously only settable via `extraConfig`).
+
 ## [1.16.2] - 2026-06-14
 
 ### Changed

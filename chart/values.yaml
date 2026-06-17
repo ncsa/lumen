@@ -36,9 +36,11 @@ config:
   announcement: ""
   # -- List of admin email addresses
   admins: []
-  dbPool:
+  # -- SQLAlchemy connection pool tuning. The database URL itself is supplied
+  # via the DATABASE_URL env var (see postgresql.* / existingSecret).
+  database:
     poolSize: 20
-    maxOverflow: 30
+    maxOverflow: 60
     poolTimeout: 10
     poolRecycle: 1800
     poolPrePing: true
@@ -68,14 +70,20 @@ config:
   # -- Raw YAML appended verbatim to config.yaml (for settings not covered by chart values)
   extraConfig: ""
 
-## Model access defaults ------------------------------------------------------------
-# Controls which models users can access before per-group rules are applied.
-# default: whitelist (all allowed), blacklist (all denied), graylist (group rules decide)
-modelAccess:
-  default: whitelist
-  blacklist: []
-  graylist: []
-  whitelist: []
+## API ------------------------------------------------------------------------------
+api:
+  # -- Require graylist model-consent for API requests. Set false to exempt the API.
+  consent: true
+  prometheus:
+    # -- Expose /metrics in Prometheus format
+    enabled: false
+    # -- Bearer token required to scrape /metrics. Empty disables Prometheus (token is mandatory when enabled).
+    token: ""
+    # -- Path for multi-worker metric aggregation (mount a shared volume here for multiple replicas)
+    multiprocDir: ""
+  monitoring:
+    # -- Bearer token for the monitoring endpoint. Empty disables it.
+    token: ""
 
 ## Groups ---------------------------------------------------------------------------
 # Each key is the group name. Groups are matched in order; the first match wins.

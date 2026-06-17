@@ -40,7 +40,7 @@
           "type": "array",
           "items": { "type": "string" }
         },
-        "dbPool": {
+        "database": {
           "type": "object",
           "properties": {
             "poolSize": { "type": "integer", "minimum": 1 },
@@ -190,13 +190,27 @@
     "podAnnotations": { "type": "object" },
     "podSecurityContext": { "type": "object" },
     "securityContext": { "type": "object" },
-    "modelAccess": {
+    "api": {
       "type": "object",
+      "additionalProperties": false,
       "properties": {
-        "default": { "type": "string", "enum": ["whitelist", "blacklist", "graylist"] },
-        "blacklist": { "type": "array", "items": { "type": "string" } },
-        "graylist": { "type": "array", "items": { "type": "string" } },
-        "whitelist": { "type": "array", "items": { "type": "string" } }
+        "consent": { "type": "boolean" },
+        "prometheus": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "token": { "type": "string" },
+            "multiprocDir": { "type": "string" }
+          }
+        },
+        "monitoring": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "token": { "type": "string" }
+          }
+        }
       }
     },
     "groups": {
