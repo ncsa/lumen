@@ -14,6 +14,24 @@ import openai
 from flask import current_app
 from sqlalchemy import select, update as sa_update
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.expression import FunctionElement
+
+
+class _greatest(FunctionElement):
+    """SQL GREATEST(...); compiles to scalar max(...) on SQLite, which has no GREATEST."""
+    name = "greatest"
+    inherit_cache = True
+
+
+@compiles(_greatest)
+def _greatest_default(element, compiler, **kw):
+    return "greatest(%s)" % compiler.process(element.clauses, **kw)
+
+
+@compiles(_greatest, "sqlite")
+def _greatest_sqlite(element, compiler, **kw):
+    return "max(%s)" % compiler.process(element.clauses, **kw)
 
 from lumen.extensions import db
 from lumen.timeutils import utcnow
@@ -335,21 +353,14 @@ def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float, effec
     except IntegrityError:
         pass
 
-    result = db.session.execute(
+    # Single atomic deduction, floored at 0: deduct when affordable, otherwise zero
+    # (the budget is a soft limit — see check_coin_budget). One statement so a
+    # concurrent refill/credit can never be clobbered back to 0 by a separate zeroing.
+    db.session.execute(
         sa_update(EntityBalance)
-        .where(EntityBalance.entity_id == entity_id, EntityBalance.coins_left >= coin_cost)
-        .values(coins_left=EntityBalance.coins_left - coin_cost)
+        .where(EntityBalance.entity_id == entity_id)
+        .values(coins_left=_greatest(0, EntityBalance.coins_left - coin_cost))
     )
-    if result.rowcount == 0:
-        logger.warning(
-            "subtract_coins: balance exhausted for entity_id=%s (coin_cost=%.4f) — zeroing balance",
-            entity_id, coin_cost,
-        )
-        db.session.execute(
-            sa_update(EntityBalance)
-            .where(EntityBalance.entity_id == entity_id)
-            .values(coins_left=0)
-        )
     db.session.flush()
 
 

@@ -11,6 +11,7 @@ All notable changes to Lumen will be documented in this file.
 - Profile/clients/admin usage pages no longer raise a 500 (`TypeError`) when a model has `ModelStat` rows with null input/output token totals; the per-model token total now coalesces null sums to 0.
 - When a client disconnects mid-stream (both the chat and `/v1/chat/completions` streaming paths), Lumen now records a zero-cost `request_logs` entry instead of silently dropping the request. Since every hosted model has a coin cost, these aborted requests are findable by `cost = 0`, making disconnect frequency monitorable.
 - `/v1/chat/completions` and `/v1/completions` now return the JSON `invalid_request_error` for a missing/wrong `Content-Type` or malformed JSON body, instead of a Werkzeug HTML 415/400 page (`request.get_json(silent=True)`).
+- `subtract_coins` now deducts in a single atomic UPDATE floored at 0 (`GREATEST(0, coins_left - cost)`, compiled to `max(...)` on SQLite) instead of a conditional deduct followed by a separate zeroing. This removes a race where a concurrent coin refill/credit landing between the two statements could be clobbered back to 0 (or the request left uncharged).
 
 ### Changed
 - Minor cleanup: removed a duplicate `datetime` import and an unused `calculate_cost` import, and dropped the unreachable empty-string fallback for `ENCRYPTION_KEY` (the app already refuses to start without it).

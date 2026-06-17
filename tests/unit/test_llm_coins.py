@@ -59,6 +59,41 @@ def test_subtract_coins_deducts_correct_amount(app, test_user, test_model):
         assert float(bal.coins_left) == 95.0
 
 
+def test_subtract_coins_zeroes_when_insufficient(app, test_user, test_model):
+    """A request costing more than the remaining balance zeroes it (soft limit)."""
+    entity_id, model_id = test_user["id"], test_model["id"]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.services.llm import subtract_coins
+        db.session.add(EntityLimit(entity_id=entity_id, max_coins=100, refresh_coins=0, starting_coins=100))
+        db.session.add(EntityBalance(entity_id=entity_id, coins_left=3))
+        db.session.commit()
+        subtract_coins(entity_id, model_id, 10.0)
+        db.session.commit()
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one()
+        assert float(bal.coins_left) == 0.0
+
+
+def test_subtract_coins_deducts_when_affordable_not_zeroes(app, test_user, test_model):
+    """With ample balance the cost is deducted (charged), not zeroed — the atomic
+    GREATEST update only floors at 0 when the cost exceeds the balance."""
+    entity_id, model_id = test_user["id"], test_model["id"]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.services.llm import subtract_coins
+        db.session.add(EntityLimit(entity_id=entity_id, max_coins=100, refresh_coins=0, starting_coins=100))
+        db.session.add(EntityBalance(entity_id=entity_id, coins_left=100))
+        db.session.commit()
+        subtract_coins(entity_id, model_id, 10.0)
+        db.session.commit()
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one()
+        assert float(bal.coins_left) == 90.0
+
+
 def test_subtract_coins_uses_passed_effective_without_reresolving(app, test_user, test_model):
     """When the caller passes the preflight-resolved limit, subtract_coins must not
     re-resolve model access / the pool limit (the per-request redundancy we removed)."""
