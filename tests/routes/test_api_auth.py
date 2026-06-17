@@ -252,6 +252,30 @@ def test_chat_completions_missing_body_400(client, api_key):
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
+def test_chat_completions_wrong_content_type_json_error(client, api_key):
+    """A body sent with a non-JSON Content-Type returns the JSON error, not a 415 HTML page."""
+    token, _ = api_key
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "text/plain"},
+        data="model=test-model",
+    )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json()["error"]["type"] == "invalid_request_error"
+
+
+def test_chat_completions_malformed_json_error(client, api_key):
+    """Malformed JSON returns the JSON error, not a 400 HTML page from Werkzeug."""
+    token, _ = api_key
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        data="{not valid json",
+    )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json()["error"]["type"] == "invalid_request_error"
+
+
 def test_chat_completions_missing_model_400(client, api_key):
     token, _ = api_key
     resp = client.post(

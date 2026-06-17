@@ -468,7 +468,7 @@ def audio_translations():
 @api_key_required
 @limiter.limit(_api_limit, key_func=_api_key_id)
 def chat_completions():
-    data = request.get_json()
+    data = request.get_json(silent=True)
     if not data:
         return _err("Invalid request body")
 
@@ -487,7 +487,7 @@ def chat_completions():
 @api_key_required
 @limiter.limit(_api_limit, key_func=_api_key_id)
 def completions():
-    data = request.get_json()
+    data = request.get_json(silent=True)
     if not data:
         return _err("Invalid request body")
 
