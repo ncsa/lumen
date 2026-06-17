@@ -103,6 +103,11 @@ def sync_groups_from_yaml(yaml_data):
     groups_cfg = yaml_data.get("groups", {})
     yaml_group_names = set(groups_cfg.keys())
 
+    # Preload all models once to avoid an N+1 lookup per model_access entry
+    models_by_name = {
+        mc.model_name: mc for mc in db.session.execute(select(ModelConfig)).scalars().all()
+    }
+
     for group_name, group_def in groups_cfg.items():
         group = db.session.execute(select(Group).filter_by(name=group_name)).scalar_one_or_none()
         if not group:
@@ -148,7 +153,7 @@ def sync_groups_from_yaml(yaml_data):
                 if model_name == "*":
                     group_default = access_type
                     continue
-                mc = db.session.execute(select(ModelConfig).filter_by(model_name=model_name)).scalar_one_or_none()
+                mc = models_by_name.get(model_name)
                 if mc is None:
                     current_app.logger.warning(
                         "sync_groups_from_yaml: model '%s' not found in group '%s' %s, skipping",
@@ -199,6 +204,11 @@ def sync_clients_from_yaml(yaml_data):
 
     client_entities = db.session.execute(select(Entity).filter_by(entity_type="client")).scalars().all()
 
+    # Preload all models once to avoid an N+1 lookup per model_access entry
+    models_by_name = {
+        mc.model_name: mc for mc in db.session.execute(select(ModelConfig)).scalars().all()
+    }
+
     for entity in client_entities:
         cfg = named_cfg.get(entity.name, default_cfg)
         if not cfg:
@@ -233,7 +243,7 @@ def sync_clients_from_yaml(yaml_data):
         db.session.execute(delete(EntityModelAccess).where(EntityModelAccess.entity_id == entity.id))
         for access_type in ("whitelist", "blacklist", "graylist"):
             for model_name in access_cfg.get(access_type, []):
-                mc = db.session.execute(select(ModelConfig).filter_by(model_name=model_name)).scalar_one_or_none()
+                mc = models_by_name.get(model_name)
                 if mc is None:
                     current_app.logger.warning(
                         "sync_clients_from_yaml: model '%s' not found for client '%s' %s, skipping",
