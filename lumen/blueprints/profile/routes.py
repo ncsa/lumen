@@ -8,6 +8,7 @@ from sqlalchemy import func, select, text
 
 from lumen.decorators import login_required, is_admin as _is_admin
 from lumen.extensions import db
+from lumen.timeutils import utcnow
 from lumen.models.api_key import APIKey
 from lumen.models.conversation import Conversation
 from lumen.models.entity import Entity
@@ -291,7 +292,7 @@ def user_consent(model_name):
         db.session.add(EntityModelConsent(
             entity_id=entity_id,
             model_config_id=config.id,
-            consented_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            consented_at=utcnow(),
         ))
         db.session.commit()
 

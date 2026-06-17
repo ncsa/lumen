@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from lumen.timeutils import utcnow
 from ..extensions import db
 
 
@@ -22,7 +22,7 @@ class ModelStat(db.Model):
     output_tokens = db.Column(db.BigInteger, default=0, nullable=False, comment="Total output tokens produced")
     audio_seconds = db.Column(db.BigInteger, default=0, nullable=False, comment="Total seconds of audio transcribed/translated")
     cost = db.Column(db.Numeric(12, 6), default=0, nullable=False, comment="Total cost in USD")
-    last_used_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), comment="UTC timestamp of the most recent counted request")
+    last_used_at = db.Column(db.DateTime, default=utcnow, comment="UTC timestamp of the most recent counted request")
 
     __table_args__ = (
         db.UniqueConstraint("entity_id", "model_config_id", "source"),

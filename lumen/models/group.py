@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from lumen.timeutils import utcnow
 from ..extensions import db
 
 
@@ -22,7 +22,7 @@ class Group(db.Model):
     # Default access policy for models not listed in group_model_access
     # 'whitelist' | 'blacklist' | 'graylist'
     model_access_default = db.Column(db.String(20), nullable=True, comment="Default model access policy for this group: whitelist, blacklist, or graylist")
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), comment="UTC creation timestamp")
+    created_at = db.Column(db.DateTime, default=utcnow, comment="UTC creation timestamp")
 
     members = db.relationship("GroupMember", backref="group", lazy="dynamic", cascade="all, delete-orphan", passive_deletes=True)
     limit = db.relationship("GroupLimit", backref="group", uselist=False, cascade="all, delete-orphan", passive_deletes=True)

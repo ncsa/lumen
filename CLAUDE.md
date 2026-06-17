@@ -64,7 +64,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 Following rules are here to help the AI avoid the same mistakes again:
 - Sortable table columns: date and numeric columns default to descending order on first click; text columns default to ascending.
-- All times shown to the user must be in their local timezone. All times stored in the DB are UTC. In templates, emit `<span class="local-datetime" data-utc="{{ dt.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>` and let the JS in app.js convert it to local time. Never hardcode "UTC" in displayed timestamps.
+- All times are UTC everywhere in the app and the DB; only convert to the user's local timezone when displaying to them. DB timestamp columns are stored as **naive UTC** (no tzinfo) so values behave identically on SQLite and PostgreSQL. Always get "now" from `lumen.timeutils.utcnow()` (returns naive UTC) — never use `datetime.now(timezone.utc).replace(tzinfo=None)` or `datetime.utcnow()` directly, and use `default=utcnow` on `db.DateTime` columns. (Exception: `request_logs.time` is `timestamptz`/aware because it is a TimescaleDB hypertable partition key.) In templates, emit `<span class="local-datetime" data-utc="{{ dt.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>` and let the JS in app.js convert it to local time. Never hardcode "UTC" in displayed timestamps.
 - Dependencies are managed with uv, code is run with uv
 - Imports at top of file only; except inside Flask app factory (`create_app`) where deferred imports are required to avoid circular imports.
 - Styles and colors match University of Illinois, see https://builder3.toolkit.illinois.edu/getting_started/index.html
@@ -104,7 +104,7 @@ When writing or modifying HTML/JS:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **lumen** (2626 symbols, 4312 relationships, 99 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **lumen** (2762 symbols, 4689 relationships, 111 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from lumen.timeutils import utcnow
 from ..extensions import db
 
 
@@ -40,7 +40,7 @@ class ModelConfig(db.Model):
     knowledge_cutoff = db.Column(db.String(7), nullable=True, comment="Training data cutoff in YYYY-MM format")
     # Optional admin notice displayed to users on the model detail page
     notice = db.Column(db.Text, nullable=True, comment="Optional admin notice displayed to users on the model detail page")
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), comment="UTC creation timestamp")
+    created_at = db.Column(db.DateTime, default=utcnow, comment="UTC creation timestamp")
 
     endpoints = db.relationship("ModelEndpoint", backref="model_config", lazy="select", cascade="all, delete-orphan", passive_deletes=True)
     stats = db.relationship("ModelStat", backref="model_config", lazy="select", passive_deletes=True)

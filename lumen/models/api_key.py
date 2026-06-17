@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from lumen.timeutils import utcnow
 from ..extensions import db
 
 
@@ -30,4 +30,4 @@ class APIKey(db.Model):
     cost = db.Column(db.Numeric(12, 6), default=0, nullable=False, comment="Cumulative cost in USD charged through this key")
     # Null if the key has never been used
     last_used_at = db.Column(db.DateTime, nullable=True, comment="UTC timestamp of the most recent request; null if never used")
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), comment="UTC creation timestamp")
+    created_at = db.Column(db.DateTime, default=utcnow, comment="UTC creation timestamp")

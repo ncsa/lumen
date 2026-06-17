@@ -1,11 +1,12 @@
 import logging
 import time
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
 from lumen.extensions import db
+from lumen.timeutils import utcnow
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
 from lumen.models.group import Group
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 def refill_coin_balances(now: datetime = None) -> int:
     """Run one refill pass; return the number of balances updated. Caller owns the app context."""
     if now is None:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = utcnow()
     elif now.tzinfo is not None:
         now = now.replace(tzinfo=None)
     one_hour_ago = now - timedelta(hours=1)

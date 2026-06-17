@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from lumen.timeutils import utcnow
 from ..extensions import db
 
 
@@ -23,7 +23,7 @@ class Entity(db.Model):
     gravatar_hash = db.Column(db.String(64), nullable=True, comment="MD5 hash of email for Gravatar lookups; users only")
     # Inactive entities are blocked from making any requests
     active = db.Column(db.Boolean, default=True, nullable=False, comment="Inactive entities are blocked from making requests")
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), comment="UTC creation timestamp")
+    created_at = db.Column(db.DateTime, default=utcnow, comment="UTC creation timestamp")
     # Default access policy for models not explicitly listed in entity_model_access.
     # 'whitelist' | 'blacklist' | 'graylist'; primarily used for client entities.
     model_access_default = db.Column(db.String(16), nullable=True, comment="Default model access policy: whitelist, blacklist, or graylist; client entities only")

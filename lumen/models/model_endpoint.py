@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from lumen.timeutils import utcnow
 from ..extensions import db
 
 
@@ -29,4 +29,4 @@ class ModelEndpoint(db.Model):
     healthy = db.Column(db.Boolean, default=False, nullable=False, comment="Last known health status, updated by the health-check background task")
     # Null if the endpoint has never been health-checked
     last_checked_at = db.Column(db.DateTime, nullable=True, comment="UTC timestamp of the most recent health check; null if never checked")
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), comment="UTC creation timestamp")
+    created_at = db.Column(db.DateTime, default=utcnow, comment="UTC creation timestamp")

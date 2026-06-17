@@ -1,7 +1,6 @@
 import logging
 import time
 import threading
-from datetime import datetime, timezone
 
 import openai
 from flask import current_app
@@ -9,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm.exc import StaleDataError
 
 from lumen.extensions import db
+from lumen.timeutils import utcnow
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 
@@ -46,7 +46,7 @@ def check_all_endpoints() -> int:
                 current_app.logger.info(
                     "health check %s → endpoint DOWN (%r)", ep.url, cause
                 )
-        ep.last_checked_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        ep.last_checked_at = utcnow()
     try:
         db.session.commit()
     except StaleDataError:

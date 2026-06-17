@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from http import HTTPStatus
 
 from flask import Blueprint, abort, jsonify, render_template, request, session
@@ -6,6 +5,7 @@ from sqlalchemy import func, select
 
 from lumen.decorators import admin_required, is_admin, login_required
 from lumen.extensions import db
+from lumen.timeutils import utcnow
 from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_manager import EntityManager
@@ -304,7 +304,7 @@ def client_consent(sid, model_name):
         db.session.add(EntityModelConsent(
             entity_id=sid,
             model_config_id=config.id,
-            consented_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            consented_at=utcnow(),
         ))
         db.session.commit()
 

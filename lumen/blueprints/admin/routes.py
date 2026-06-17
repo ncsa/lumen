@@ -3,7 +3,6 @@ import shutil
 import tempfile
 
 import yaml
-from datetime import datetime, timezone
 from http import HTTPStatus
 
 from flask import Blueprint, current_app, render_template, request, redirect, url_for, jsonify, session
@@ -13,6 +12,7 @@ from lumen.blueprints.profile.routes import _build_model_access_list, _entity_gr
 from lumen.decorators import admin_required
 from lumen.services.config_watcher import RESTART_REQUIRED
 from lumen.extensions import db
+from lumen.timeutils import utcnow
 from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
@@ -82,10 +82,10 @@ def reset_user_tokens(eid):
     balance = db.session.execute(select(EntityBalance).filter_by(entity_id=eid)).scalar_one_or_none()
     if balance:
         balance.coins_left = new_balance
-        balance.last_refill_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        balance.last_refill_at = utcnow()
     else:
         balance = EntityBalance(
-            entity_id=eid, coins_left=new_balance, last_refill_at=datetime.now(timezone.utc).replace(tzinfo=None)
+            entity_id=eid, coins_left=new_balance, last_refill_at=utcnow()
         )
         db.session.add(balance)
     db.session.commit()

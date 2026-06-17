@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from lumen.timeutils import utcnow
 
 from lumen.extensions import db
 
@@ -20,8 +20,8 @@ class Conversation(db.Model):
     entity_id = db.Column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), nullable=False, comment="The owning user entity")
     title = db.Column(db.String(40), nullable=False, default="", comment="Short auto-generated or user-edited title")
     model = db.Column(db.String(128), nullable=False, default="", comment="Snapshot of the model name at conversation creation time")
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), comment="UTC creation timestamp")
-    updated_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), comment="UTC timestamp of the most recent message or edit")
+    created_at = db.Column(db.DateTime, default=utcnow, comment="UTC creation timestamp")
+    updated_at = db.Column(db.DateTime, default=utcnow, comment="UTC timestamp of the most recent message or edit")
 
     messages = db.relationship(
         "Message", backref="conversation", lazy=True, cascade="all, delete-orphan", passive_deletes=True

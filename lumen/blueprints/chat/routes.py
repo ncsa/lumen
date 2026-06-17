@@ -2,7 +2,6 @@ import base64
 import io
 import json
 import logging
-from datetime import datetime, timezone
 from http import HTTPStatus
 
 import filetype
@@ -16,6 +15,7 @@ from sqlalchemy import and_, func, or_, select
 
 from lumen.decorators import login_required
 from lumen.extensions import db, limiter
+from lumen.timeutils import utcnow
 from lumen.models.conversation import Conversation
 from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
@@ -240,7 +240,7 @@ def chat_stream():
                 output_speed=result.get("output_speed"),
             ))
 
-            conv.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            conv.updated_at = utcnow()
             db.session.commit()
 
             result["conversation_id"] = conv.id

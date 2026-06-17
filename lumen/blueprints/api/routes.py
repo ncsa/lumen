@@ -15,6 +15,7 @@ from sqlalchemy import case, func, select, update as sa_update
 logger = logging.getLogger(__name__)
 
 from lumen.extensions import db, limiter
+from lumen.timeutils import utcnow
 from lumen.models.api_key import APIKey
 from lumen.services.crypto import hash_api_key
 from lumen.models.entity import Entity
@@ -52,7 +53,7 @@ def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int
             output_tokens=APIKey.output_tokens + output_tokens,
             audio_seconds=APIKey.audio_seconds + audio_seconds,
             cost=APIKey.cost + Decimal(str(cost)),
-            last_used_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            last_used_at=utcnow(),
         )
     )
 

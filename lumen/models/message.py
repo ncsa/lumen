@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from lumen.timeutils import utcnow
 
 from lumen.extensions import db
 
@@ -25,7 +25,7 @@ class Message(db.Model):
     # 'user', 'assistant', or 'system'
     role = db.Column(db.String(16), nullable=False, comment="Speaker role: user, assistant, or system")
     content = db.Column(db.Text, nullable=False, comment="Full message text")
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), comment="UTC creation timestamp")
+    created_at = db.Column(db.DateTime, default=utcnow, comment="UTC creation timestamp")
 
     # Assistant-message metadata — null for user/system messages
     input_tokens = db.Column(db.Integer, nullable=True, comment="Input tokens reported by the model; assistant messages only")

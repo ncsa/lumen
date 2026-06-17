@@ -13,6 +13,7 @@ from sqlalchemy import select, update as sa_update
 from sqlalchemy.exc import IntegrityError
 
 from lumen.extensions import db
+from lumen.timeutils import utcnow
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
 from lumen.models.entity_model_access import EntityModelAccess
@@ -320,7 +321,7 @@ def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float):
             db.session.add(EntityBalance(
                 entity_id=entity_id,
                 coins_left=starting,
-                last_refill_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                last_refill_at=utcnow(),
             ))
     except IntegrityError:
         pass
@@ -376,7 +377,7 @@ def update_stats(
     audio_seconds: int = 0,
 ):
     """Update or create ModelStat/EntityStat running totals and append a RequestLog row."""
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = utcnow()
 
     # Ensure ModelStat row exists before the atomic increment.
     # Use try/except to handle the race where two concurrent first-requests both
