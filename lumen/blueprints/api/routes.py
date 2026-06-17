@@ -23,7 +23,7 @@ from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.request_log import RequestLog
 from lumen.services.cost import calculate_audio_cost
-from lumen.services.llm import bulk_model_access_info, check_coin_budget, subtract_coins, get_effective_limit, get_next_endpoint, get_pool_limit, update_stats
+from lumen.services.llm import bulk_model_access_info, check_coin_budget, subtract_coins, get_effective_limit, get_next_endpoint, get_pool_limit, update_stats, record_aborted_request
 
 api_bp = Blueprint("api", __name__, url_prefix="/v1")
 
@@ -278,6 +278,7 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
 
     if stream:
         def generate():
+            billed = False
             with openai.OpenAI(api_key=ep_api_key, base_url=ep_url) as client:
                 try:
                     stream_options = {**kwargs.pop("stream_options", {}), "include_usage": True}
@@ -304,12 +305,19 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                                      endpoint_id=ep_id)
                         _record_api_key_usage(ak_id, usage.prompt_tokens, usage.completion_tokens, cost)
                         db.session.commit()
+                        billed = True
                     else:
                         logger.warning(
                             "Upstream did not return usage data for streaming request "
                             "(model=%s, entity_id=%s) — tokens and cost not recorded.",
                             model_name, entity_id,
                         )
+                except GeneratorExit:
+                    # Client disconnected mid-stream before billing — log a zero-cost
+                    # request so we can monitor how often this happens, then re-raise.
+                    if not billed:
+                        record_aborted_request(entity_id, mc_id, "api", endpoint_id=ep_id)
+                    raise
                 except Exception:
                     logger.exception(
                         "Error during streaming request (model=%s, entity_id=%s)", model_name, entity_id

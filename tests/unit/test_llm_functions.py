@@ -627,6 +627,41 @@ def test_stream_with_entity_deducts_coins(app, test_user, test_model_endpoint):
         assert float(balance.coins_left) < 10.0
 
 
+def test_stream_client_disconnect_records_zero_cost_log(app, test_user, test_model_endpoint):
+    """A client disconnecting mid-stream logs a zero-cost request (for monitoring)
+    without running normal billing/stats."""
+    entity_id = test_user["id"]
+    chunks = [
+        _Chunk(content="partial"),
+        _Chunk(content=" more"),
+        _Chunk(usage=_Usage(prompt_tokens=10, completion_tokens=5)),
+    ]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.models.model_stat import ModelStat
+        from lumen.models.request_log import RequestLog
+        from lumen.services.llm import send_message_stream
+        db.session.add(EntityLimit(entity_id=entity_id, max_coins=-2, refresh_coins=0, starting_coins=0))
+        db.session.commit()
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)):
+            gen = send_message_stream([], "test-model", entity_id=entity_id)
+            assert next(gen) == ("partial", None, None)  # mid-stream
+            gen.close()  # simulate client disconnect -> GeneratorExit
+        logs = db.session.execute(select(RequestLog).filter_by(entity_id=entity_id)).scalars().all()
+        assert len(logs) == 1
+        assert float(logs[0].cost) == 0.0
+        assert logs[0].input_tokens == 0
+        assert logs[0].output_tokens == 0
+        # the aborted request is findable by its zero cost (how we monitor disconnects)
+        zero_cost_rows = db.session.scalar(
+            select(func.count()).select_from(RequestLog).filter_by(cost=0)
+        )
+        assert zero_cost_rows == 1
+        # normal billing/stats did not run (no ModelStat row)
+        assert db.session.scalar(select(func.count()).select_from(ModelStat)) == 0
+
+
 # ---------------------------------------------------------------------------
 # Helper stubs for send_message_stream mocking (kept at end so the static
 # analyser does not treat all test functions above as methods of _Chunk)

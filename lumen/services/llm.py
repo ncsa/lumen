@@ -446,6 +446,32 @@ def update_stats(
     db.session.flush()
 
 
+def record_aborted_request(entity_id, model_config_id, source, endpoint_id=None, duration=0.0):
+    """Log a zero-cost request_logs row for a stream the client abandoned mid-response.
+
+    Lets us monitor how often clients disconnect mid-stream. Tokens and cost are 0
+    because the upstream usage totals only arrive in the final chunk, which we never
+    received; since every hosted model has a coin cost, ``cost = 0`` identifies these
+    aborted requests. Best-effort: never raise into the (already closing) generator.
+    """
+    try:
+        db.session.add(RequestLog(
+            time=datetime.now(timezone.utc),
+            entity_id=entity_id,
+            model_config_id=model_config_id,
+            model_endpoint_id=endpoint_id,
+            source=source,
+            input_tokens=0,
+            output_tokens=0,
+            cost=0,
+            duration=duration,
+        ))
+        db.session.commit()
+    except Exception:
+        logger.exception("failed to record aborted request (entity_id=%s, model=%s)", entity_id, model_config_id)
+        db.session.rollback()
+
+
 def send_message_stream(
     messages: list,
     model: str,
@@ -477,52 +503,61 @@ def send_message_stream(
     t_first = None
     parts = []
     usage = None
+    billed = False
 
-    with openai.OpenAI(api_key=ep_api_key, base_url=ep_url) as client:
-        stream = client.chat.completions.create(
-            model=remote_model,
-            messages=messages,
-            stream=True,
-            stream_options={"include_usage": True},
-        )
+    try:
+        with openai.OpenAI(api_key=ep_api_key, base_url=ep_url) as client:
+            stream = client.chat.completions.create(
+                model=remote_model,
+                messages=messages,
+                stream=True,
+                stream_options={"include_usage": True},
+            )
 
-        thinking_parts = []
-        for chunk in stream:
-            if chunk.usage:
-                usage = chunk.usage
-            if chunk.choices:
-                delta = chunk.choices[0].delta
-                reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
-                if reasoning:
-                    thinking_parts.append(reasoning)
-                    yield None, reasoning, None
-                if delta.content:
-                    text = delta.content
-                    if t_first is None:
-                        t_first = time.time() - t0
-                    parts.append(text)
-                    yield text, None, None
+            thinking_parts = []
+            for chunk in stream:
+                if chunk.usage:
+                    usage = chunk.usage
+                if chunk.choices:
+                    delta = chunk.choices[0].delta
+                    reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                    if reasoning:
+                        thinking_parts.append(reasoning)
+                        yield None, reasoning, None
+                    if delta.content:
+                        text = delta.content
+                        if t_first is None:
+                            t_first = time.time() - t0
+                        parts.append(text)
+                        yield text, None, None
 
-    duration = time.time() - t0
-    reply = "".join(parts)
-    input_tokens = usage.prompt_tokens if usage else 0
-    output_tokens = usage.completion_tokens if usage else 0
-    reasoning_tokens = (
-        getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None)
-        or getattr(usage, "reasoning_tokens", None)
-    ) if usage else None
+        duration = time.time() - t0
+        reply = "".join(parts)
+        input_tokens = usage.prompt_tokens if usage else 0
+        output_tokens = usage.completion_tokens if usage else 0
+        reasoning_tokens = (
+            getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None)
+            or getattr(usage, "reasoning_tokens", None)
+        ) if usage else None
 
-    cost = round(input_tokens * mc_in_cost / 1_000_000 + output_tokens * mc_out_cost / 1_000_000, 6)
-    output_speed = output_tokens / duration if duration > 0 else 0.0
+        cost = round(input_tokens * mc_in_cost / 1_000_000 + output_tokens * mc_out_cost / 1_000_000, 6)
+        output_speed = output_tokens / duration if duration > 0 else 0.0
 
-    if entity_id is not None:
-        subtract_coins(entity_id, mc_id, cost)
-        update_stats(
-            entity_id, mc_id, source,
-            input_tokens, output_tokens, cost,
-            endpoint_id=ep_id, duration=duration,
-        )
-        db.session.commit()
+        if entity_id is not None:
+            subtract_coins(entity_id, mc_id, cost)
+            update_stats(
+                entity_id, mc_id, source,
+                input_tokens, output_tokens, cost,
+                endpoint_id=ep_id, duration=duration,
+            )
+            db.session.commit()
+            billed = True
+    except GeneratorExit:
+        # Client disconnected mid-stream before billing — log a zero-cost request
+        # so we can monitor how often this happens, then re-raise to close cleanly.
+        if entity_id is not None and not billed:
+            record_aborted_request(entity_id, mc_id, source, endpoint_id=ep_id, duration=time.time() - t0)
+        raise
 
     yield None, None, {
         "reply": reply,
