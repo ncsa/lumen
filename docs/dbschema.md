@@ -28,6 +28,7 @@ erDiagram
         int requests
         bigint input_tokens
         bigint output_tokens
+        bigint audio_seconds
         numeric cost
         datetime last_used_at
         datetime created_at
@@ -38,6 +39,7 @@ erDiagram
         string model_name
         numeric input_cost_per_million
         numeric output_cost_per_million
+        numeric audio_cost_per_minute
         bool active
         text description
         string url
@@ -139,6 +141,7 @@ erDiagram
         int requests
         bigint input_tokens
         bigint output_tokens
+        bigint audio_seconds
         numeric cost
         datetime last_used_at
     }
@@ -148,6 +151,7 @@ erDiagram
         int requests
         bigint input_tokens
         bigint output_tokens
+        bigint audio_seconds
         numeric cost
         datetime last_used_at
     }
@@ -185,6 +189,7 @@ erDiagram
         string source
         int input_tokens
         int output_tokens
+        int audio_seconds
         numeric cost
         float duration
     }
@@ -278,6 +283,7 @@ API keys that entities (users or clients) use to authenticate against the proxy 
 | `requests` | Integer | NO | Cumulative request count made with this key |
 | `input_tokens` | BigInteger | NO | Cumulative input tokens consumed via this key |
 | `output_tokens` | BigInteger | NO | Cumulative output tokens produced via this key |
+| `audio_seconds` | BigInteger | NO | Cumulative seconds of audio transcribed/translated via this key |
 | `cost` | Numeric(12,6) | NO | Cumulative cost in USD charged through this key |
 | `last_used_at` | DateTime | YES | UTC timestamp of the most recent request; null if never used |
 | `created_at` | DateTime | NO | UTC timestamp when the key was created |
@@ -294,6 +300,7 @@ Configuration and metadata for each AI model that Lumen can proxy. One row per l
 | `model_name` | String(128) | NO | Canonical model identifier sent to clients (e.g., `gpt-4o`). Unique. |
 | `input_cost_per_million` | Numeric(12,6) | NO | USD cost per one million input tokens |
 | `output_cost_per_million` | Numeric(12,6) | NO | USD cost per one million output tokens |
+| `audio_cost_per_minute` | Numeric(12,6) | YES | USD cost per minute of audio; only set for speech-to-text (ASR) models |
 | `active` | Boolean | NO | Whether the model is available for use. Inactive models are hidden from clients. |
 | `description` | Text | YES | Human-readable description shown in the UI |
 | `url` | String(512) | YES | Link to the model's documentation or provider page |
@@ -476,6 +483,7 @@ Running aggregated usage counters per entity per model per source. Updated after
 | `requests` | Integer | NO | Total number of requests |
 | `input_tokens` | BigInteger | NO | Total input tokens consumed |
 | `output_tokens` | BigInteger | NO | Total output tokens produced |
+| `audio_seconds` | BigInteger | NO | Total seconds of audio transcribed/translated |
 | `cost` | Numeric(12,6) | NO | Total cost in USD |
 | `last_used_at` | DateTime | NO | UTC timestamp of the most recent request counted in this row |
 
@@ -493,6 +501,7 @@ Pre-aggregated usage totals per entity across all models and sources. One row pe
 | `requests` | Integer | NO | Total request count across all models and sources |
 | `input_tokens` | BigInteger | NO | Total input tokens consumed across all models and sources |
 | `output_tokens` | BigInteger | NO | Total output tokens produced across all models and sources |
+| `audio_seconds` | BigInteger | NO | Total seconds of audio transcribed/translated across all models and sources |
 | `cost` | Numeric(12,6) | NO | Total cost in USD across all models and sources |
 | `last_used_at` | DateTime | YES | UTC timestamp of the most recent request by this entity; null if never used |
 
@@ -552,6 +561,7 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 | `source` | String(8) | NO | Origin of the request: `'chat'` or `'api'` |
 | `input_tokens` | Integer | NO | Input token count for this request |
 | `output_tokens` | Integer | NO | Output token count for this request |
+| `audio_seconds` | Integer | NO | Seconds of audio transcribed/translated; 0 for text requests |
 | `cost` | Numeric(12,6) | NO | Cost in USD for this request |
 | `duration` | Float | NO | Total proxy response time in seconds |
 

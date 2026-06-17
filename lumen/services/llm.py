@@ -373,6 +373,7 @@ def update_stats(
     cost: float,
     endpoint_id: int = None,
     duration: float = 0.0,
+    audio_seconds: int = 0,
 ):
     """Update or create ModelStat/EntityStat running totals and append a RequestLog row."""
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -400,6 +401,7 @@ def update_stats(
             requests=ModelStat.requests + 1,
             input_tokens=ModelStat.input_tokens + input_tokens,
             output_tokens=ModelStat.output_tokens + output_tokens,
+            audio_seconds=ModelStat.audio_seconds + audio_seconds,
             cost=ModelStat.cost + cost,
             last_used_at=now,
         )
@@ -421,6 +423,7 @@ def update_stats(
             requests=EntityStat.requests + 1,
             input_tokens=EntityStat.input_tokens + input_tokens,
             output_tokens=EntityStat.output_tokens + output_tokens,
+            audio_seconds=EntityStat.audio_seconds + audio_seconds,
             cost=EntityStat.cost + cost,
             last_used_at=now,
         )
@@ -434,6 +437,7 @@ def update_stats(
         source=source,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        audio_seconds=audio_seconds,
         cost=cost,
         duration=duration,
     )

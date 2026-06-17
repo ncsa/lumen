@@ -20,6 +20,7 @@ class ModelStat(db.Model):
     requests = db.Column(db.Integer, default=0, nullable=False, comment="Total request count")
     input_tokens = db.Column(db.BigInteger, default=0, nullable=False, comment="Total input tokens consumed")
     output_tokens = db.Column(db.BigInteger, default=0, nullable=False, comment="Total output tokens produced")
+    audio_seconds = db.Column(db.BigInteger, default=0, nullable=False, comment="Total seconds of audio transcribed/translated")
     cost = db.Column(db.Numeric(12, 6), default=0, nullable=False, comment="Total cost in USD")
     last_used_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), comment="UTC timestamp of the most recent counted request")
 

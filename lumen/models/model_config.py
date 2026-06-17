@@ -20,6 +20,8 @@ class ModelConfig(db.Model):
     # USD cost per one million input/output tokens; used to compute coins
     input_cost_per_million = db.Column(db.Numeric(12, 6), nullable=False, comment="USD cost per one million input tokens")
     output_cost_per_million = db.Column(db.Numeric(12, 6), nullable=False, comment="USD cost per one million output tokens")
+    # USD cost per minute of audio; only set for speech-to-text (ASR) models
+    audio_cost_per_minute = db.Column(db.Numeric(12, 6), nullable=True, comment="USD cost per minute of audio; only set for speech-to-text models")
     # Inactive models are hidden from clients and cannot be used
     active = db.Column(db.Boolean, default=True, nullable=False, comment="Inactive models are hidden and cannot be used")
     description = db.Column(db.Text, nullable=True, comment="Human-readable description shown in the UI")

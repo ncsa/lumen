@@ -20,6 +20,7 @@ class EntityStat(db.Model):
     requests = db.Column(db.Integer, default=0, nullable=False, comment="Total request count across all models and sources")
     input_tokens = db.Column(db.BigInteger, default=0, nullable=False, comment="Total input tokens consumed across all models and sources")
     output_tokens = db.Column(db.BigInteger, default=0, nullable=False, comment="Total output tokens produced across all models and sources")
+    audio_seconds = db.Column(db.BigInteger, default=0, nullable=False, comment="Total seconds of audio transcribed/translated across all models and sources")
     cost = db.Column(db.Numeric(12, 6), default=0, nullable=False, comment="Total cost in USD across all models and sources")
     last_used_at = db.Column(db.DateTime, nullable=True, comment="UTC timestamp of the most recent request by this entity")
 

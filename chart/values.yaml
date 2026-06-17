@@ -274,6 +274,7 @@ models: []
 #     active: true
 #     inputCostPerMillion: 0.05
 #     outputCostPerMillion: 0.10
+#     audioCostPerMinute: 0.6   # optional; only for speech-to-text (ASR) models
 #     contextWindow: 262144
 #     maxOutputTokens: 262144
 #     supportsReasoning: true

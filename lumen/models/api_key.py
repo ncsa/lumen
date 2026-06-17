@@ -26,6 +26,7 @@ class APIKey(db.Model):
     requests = db.Column(db.Integer, default=0, nullable=False, comment="Cumulative request count made with this key")
     input_tokens = db.Column(db.BigInteger, default=0, nullable=False, comment="Cumulative input tokens consumed via this key")
     output_tokens = db.Column(db.BigInteger, default=0, nullable=False, comment="Cumulative output tokens produced via this key")
+    audio_seconds = db.Column(db.BigInteger, default=0, nullable=False, comment="Cumulative seconds of audio transcribed/translated via this key")
     cost = db.Column(db.Numeric(12, 6), default=0, nullable=False, comment="Cumulative cost in USD charged through this key")
     # Null if the key has never been used
     last_used_at = db.Column(db.DateTime, nullable=True, comment="UTC timestamp of the most recent request; null if never used")

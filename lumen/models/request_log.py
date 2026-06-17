@@ -56,5 +56,7 @@ class RequestLog(db.Model):
     input_tokens = db.Column(db.Integer, nullable=False, default=0, comment="Input token count for this request")
     output_tokens = db.Column(db.Integer, nullable=False, default=0, comment="Output token count for this request")
     cost = db.Column(db.Numeric(12, 6), nullable=False, default=0, comment="Cost in USD for this request")
+    # Seconds of audio transcribed/translated for speech-to-text requests; 0 for text requests
+    audio_seconds = db.Column(db.Integer, nullable=False, default=0, comment="Seconds of audio transcribed/translated; 0 for text requests")
     # Total proxy response time in seconds
     duration = db.Column(db.Float, nullable=False, default=0.0, comment="Total proxy response time in seconds")

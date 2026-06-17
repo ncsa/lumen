@@ -21,7 +21,7 @@ from lumen.models.entity import Entity
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.request_log import RequestLog
-from lumen.services.cost import calculate_cost
+from lumen.services.cost import calculate_cost, calculate_audio_cost
 from lumen.services.llm import bulk_model_access_info, check_coin_budget, subtract_coins, get_effective_limit, get_next_endpoint, get_pool_limit, update_stats
 
 api_bp = Blueprint("api", __name__, url_prefix="/v1")
@@ -42,7 +42,7 @@ def _api_limit():
     return cfg.get("rate_limiting", {}).get("limit", "30 per minute")
 
 
-def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int, cost: float):
+def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int, cost: float, audio_seconds: int = 0):
     db.session.execute(
         sa_update(APIKey)
         .where(APIKey.id == api_key_id)
@@ -50,6 +50,7 @@ def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int
             requests=APIKey.requests + 1,
             input_tokens=APIKey.input_tokens + input_tokens,
             output_tokens=APIKey.output_tokens + output_tokens,
+            audio_seconds=APIKey.audio_seconds + audio_seconds,
             cost=APIKey.cost + Decimal(str(cost)),
             last_used_at=datetime.now(timezone.utc).replace(tzinfo=None),
         )
@@ -341,6 +342,112 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
     db.session.commit()
 
     return jsonify(response.model_dump())
+
+
+def _do_audio(kind: str):
+    """Shared logic for /audio/transcriptions and /audio/translations.
+
+    These endpoints are multipart/form-data (an audio file upload), not JSON.
+    Billing branches on the upstream ``usage`` object: ASR backends report
+    ``{type: "duration", seconds: N}`` and are billed per minute of audio, while
+    gpt-4o-transcribe-style models report token usage and are billed per token.
+    """
+    model_name = request.form.get("model")
+    upload = request.files.get("file")
+    if not upload:
+        return _err("file is required")
+    if not model_name:
+        return _err("model is required")
+
+    # Read the upload into memory now, before we release the DB connection and
+    # call upstream — the request stream is not available after db.session.remove().
+    file_name = upload.filename or "audio"
+    file_data = upload.read()
+    file_type = upload.content_type or "application/octet-stream"
+
+    # Optional pass-through params (multipart form values are strings).
+    extra: dict = {}
+    if kind == "transcriptions" and request.form.get("language"):
+        extra["language"] = request.form["language"]
+    if request.form.get("prompt"):
+        extra["prompt"] = request.form["prompt"]
+    if request.form.get("response_format"):
+        extra["response_format"] = request.form["response_format"]
+    if request.form.get("temperature"):
+        try:
+            extra["temperature"] = float(request.form["temperature"])
+        except ValueError:
+            return _err("temperature must be a number")
+
+    model_config, endpoint, err = _preflight(model_name)
+    if err:
+        return err
+
+    entity_id = g.entity.id
+    ak_id = g.api_key.id
+
+    remote_model     = endpoint.model_name or model_name
+    ep_api_key       = endpoint.api_key
+    ep_url           = endpoint.url
+    ep_id            = endpoint.id
+    mc_id            = model_config.id
+    mc_in_cost       = float(model_config.input_cost_per_million)
+    mc_out_cost      = float(model_config.output_cost_per_million)
+    mc_audio_per_min = float(model_config.audio_cost_per_minute or 0)
+    db.session.remove()
+
+    try:
+        t0 = _time.time()
+        with openai.OpenAI(api_key=ep_api_key, base_url=ep_url) as client:
+            create = getattr(client.audio, kind).create
+            response = create(model=remote_model, file=(file_name, file_data, file_type), **extra)
+        duration = _time.time() - t0
+    except Exception:
+        logger.exception("upstream audio error")
+        return _err("Upstream error. Please try again.", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    # response is a pydantic model for json/verbose_json, or a plain string for
+    # text/srt/vtt response formats (which carry no usage object).
+    payload = response.model_dump() if hasattr(response, "model_dump") else {"text": str(response)}
+    usage = payload.get("usage") if isinstance(payload, dict) else None
+
+    in_tok, out_tok, seconds, cost = 0, 0, 0, 0.0
+    if isinstance(usage, dict) and usage.get("type") == "duration":
+        seconds = int(usage.get("seconds") or 0)
+        cost = calculate_audio_cost(seconds, mc_audio_per_min)
+        if mc_audio_per_min == 0:
+            logger.warning(
+                "Audio model has no audio_cost_per_minute set (model=%s, entity_id=%s) — billed as zero cost.",
+                model_name, entity_id,
+            )
+    elif isinstance(usage, dict) and (usage.get("type") == "tokens" or "prompt_tokens" in usage):
+        in_tok = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+        out_tok = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+        cost = round(in_tok * mc_in_cost / 1_000_000 + out_tok * mc_out_cost / 1_000_000, 6)
+    else:
+        logger.warning("Upstream did not return usage data (model=%s, entity_id=%s)", model_name, entity_id)
+
+    subtract_coins(entity_id, mc_id, cost)
+    update_stats(entity_id, mc_id, "api", in_tok, out_tok, cost,
+                 endpoint_id=ep_id, duration=duration, audio_seconds=seconds)
+    _record_api_key_usage(ak_id, in_tok, out_tok, cost, audio_seconds=seconds)
+    db.session.commit()
+
+    return jsonify(payload)
+
+
+@api_bp.route("/audio/transcriptions", methods=["POST"])
+@api_key_required
+@limiter.limit(_api_limit, key_func=_api_key_id)
+def audio_transcriptions():
+    return _do_audio("transcriptions")
+
+
+@api_bp.route("/audio/translations", methods=["POST"])
+@api_key_required
+@limiter.limit(_api_limit, key_func=_api_key_id)
+def audio_translations():
+    return _do_audio("translations")
 
 
 @api_bp.route("/chat/completions", methods=["POST"])

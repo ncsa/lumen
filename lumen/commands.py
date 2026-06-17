@@ -19,6 +19,7 @@ _VALID_ACCESS_TYPES = {"whitelist", "blacklist", "graylist"}
 def _apply_model_fields(config, model_def):
     config.input_cost_per_million = model_def["input_cost_per_million"]
     config.output_cost_per_million = model_def["output_cost_per_million"]
+    config.audio_cost_per_minute = model_def.get("audio_cost_per_minute")
     config.active = model_def.get("active", True)
     config.description = model_def.get("description") or None
     config.url = model_def.get("url") or None

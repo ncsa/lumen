@@ -339,6 +339,7 @@
               "active": { "type": "boolean" },
               "inputCostPerMillion": { "type": "number", "minimum": 0 },
               "outputCostPerMillion": { "type": "number", "minimum": 0 },
+              "audioCostPerMinute": { "type": "number", "minimum": 0 },
               "contextWindow": { "type": "integer", "minimum": 1 },
               "maxOutputTokens": { "type": "integer", "minimum": 1 },
               "description": { "type": "string" },

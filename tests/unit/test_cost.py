@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from lumen.services.cost import calculate_cost
+from lumen.services.cost import calculate_cost, calculate_audio_cost
 
 
 def make_config(input_cost, output_cost):
@@ -41,3 +41,19 @@ def test_cost_rounded_to_six_decimals():
     cfg = make_config(1.0, 1.0)
     result = calculate_cost(7, 7, cfg)
     assert len(str(result).split(".")[-1]) <= 6
+
+
+def test_audio_cost_one_minute():
+    assert calculate_audio_cost(60, 0.6) == 0.6
+
+
+def test_audio_cost_partial_minute():
+    assert calculate_audio_cost(11, 0.6) == round(11 / 60 * 0.6, 6)
+
+
+def test_audio_cost_zero_rate():
+    assert calculate_audio_cost(120, 0) == 0.0
+
+
+def test_audio_cost_zero_seconds():
+    assert calculate_audio_cost(0, 1.5) == 0.0

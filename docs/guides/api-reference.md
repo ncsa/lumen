@@ -22,6 +22,8 @@ See [Profile → API Keys](../guides/profile.md#api-keys) to create a key.
 | `GET` | `/v1/models/<id>` | Retrieve details for a single model |
 | `POST` | `/v1/chat/completions` | Send a chat message and receive a reply |
 | `POST` | `/v1/completions` | Legacy text-completion endpoint (prefer `/v1/chat/completions`) |
+| `POST` | `/v1/audio/transcriptions` | Transcribe audio to text (speech-to-text) |
+| `POST` | `/v1/audio/translations` | Translate audio into English text |
 
 ---
 
@@ -191,6 +193,51 @@ client = OpenAI(
 ```
 
 Everything else — model names, message format, streaming, tool calls — works identically as long as the model you request is available in your Lumen instance.
+
+---
+
+## Audio Transcriptions and Translations
+
+Lumen proxies OpenAI-compatible **speech-to-text** endpoints for backends that support them (e.g. Qwen3-ASR). `transcriptions` returns text in the spoken language; `translations` returns English text. Both accept a `multipart/form-data` upload, not JSON.
+
+| Form field | Required | Applies to | Description |
+|------------|----------|------------|-------------|
+| `file` | yes | both | The audio file to transcribe/translate |
+| `model` | yes | both | A Lumen model name backed by a speech-to-text endpoint |
+| `language` | no | transcriptions | ISO-639-1 code of the input language (improves accuracy) |
+| `prompt` | no | both | Optional text to guide the model's style or continue prior audio |
+| `response_format` | no | both | `json` (default), `verbose_json`, `text`, `srt`, or `vtt` |
+| `temperature` | no | both | Sampling temperature |
+
+### curl
+
+```bash
+curl https://your-lumen-instance/v1/audio/transcriptions \
+  -H "Authorization: Bearer sk_your_api_key_here" \
+  -F file=@speech.flac \
+  -F model=qwen3-asr \
+  -F response_format=verbose_json
+```
+
+### Python (openai SDK)
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="https://your-lumen-instance/v1", api_key="sk_your_api_key_here")
+
+with open("speech.flac", "rb") as f:
+    result = client.audio.transcriptions.create(model="qwen3-asr", file=f)
+print(result.text)
+```
+
+### Billing
+
+Speech-to-text models are billed **per minute of audio**. Lumen reads the upstream `usage` object:
+
+- `{"type": "duration", "seconds": N}` → cost = `N / 60 × audio_cost_per_minute` (configured per model).
+- `{"type": "tokens", ...}` (e.g. gpt-4o-transcribe-style models) → billed via the usual per-token pricing.
+- No usage reported → the request succeeds at zero cost and a warning is logged.
 
 ---
 
