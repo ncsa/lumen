@@ -21,7 +21,7 @@ from lumen.models.entity import Entity
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.request_log import RequestLog
-from lumen.services.cost import calculate_cost, calculate_audio_cost
+from lumen.services.cost import calculate_audio_cost
 from lumen.services.llm import bulk_model_access_info, check_coin_budget, subtract_coins, get_effective_limit, get_next_endpoint, get_pool_limit, update_stats
 
 api_bp = Blueprint("api", __name__, url_prefix="/v1")

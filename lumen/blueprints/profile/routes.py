@@ -3,8 +3,6 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 
-from datetime import timedelta, timezone
-
 from flask import Blueprint, current_app, redirect, render_template, request, jsonify, session, url_for, abort
 from sqlalchemy import func, select, text
 

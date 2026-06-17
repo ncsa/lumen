@@ -10,6 +10,9 @@ All notable changes to Lumen will be documented in this file.
 ### Fixed
 - Profile/clients/admin usage pages no longer raise a 500 (`TypeError`) when a model has `ModelStat` rows with null input/output token totals; the per-model token total now coalesces null sums to 0.
 
+### Changed
+- Minor cleanup: removed a duplicate `datetime` import and an unused `calculate_cost` import, and dropped the unreachable empty-string fallback for `ENCRYPTION_KEY` (the app already refuses to start without it).
+
 ## [1.16.3] - 2026-06-16
 
 ### Added
