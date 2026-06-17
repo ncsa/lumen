@@ -187,14 +187,14 @@ def chat_stream():
     if not model_config:
         return jsonify({"error": f"Unknown model: {model}"}), HTTPStatus.BAD_REQUEST
 
-    ok, code, msg = check_coin_budget(entity_id, model_config.id)
+    ok, code, msg, effective = check_coin_budget(entity_id, model_config.id)
     if not ok:
         return jsonify({"error": msg}), code
 
     def generate():
         try:
             result = None
-            for chunk, thinking, final in send_message_stream(messages, model, entity_id=entity_id, source="chat"):
+            for chunk, thinking, final in send_message_stream(messages, model, entity_id=entity_id, source="chat", effective=effective):
                 if thinking is not None:
                     yield f"data: {json.dumps({'thinking_chunk': thinking})}\n\n"
                 elif chunk is not None:

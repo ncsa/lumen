@@ -7,6 +7,9 @@ from typing import NamedTuple
 
 logger = logging.getLogger(__name__)
 
+# Sentinel for "argument not supplied" so callers can pass an explicit None.
+_UNSET = object()
+
 import openai
 from flask import current_app
 from sqlalchemy import select, update as sa_update
@@ -306,9 +309,15 @@ def get_coin_balance(entity_id: int, model_config_id: int):
     return float(balance.coins_left)
 
 
-def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float):
-    """Deduct coin_cost from the entity's pool balance (no-op for unlimited or blocked)."""
-    effective = get_effective_limit(entity_id, model_config_id)
+def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float, effective=_UNSET):
+    """Deduct coin_cost from the entity's pool balance (no-op for unlimited or blocked).
+
+    Pass ``effective`` (the limit already resolved by check_coin_budget/get_effective_limit
+    during preflight) to skip re-resolving model access and the coin pool in the hot
+    billing path. When omitted it is resolved here.
+    """
+    if effective is _UNSET:
+        effective = get_effective_limit(entity_id, model_config_id)
     if effective is None:
         return
     max_coins, _refresh, starting = effective
@@ -345,7 +354,10 @@ def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float):
 
 
 def check_coin_budget(entity_id: int, model_config_id: int, require_consent: bool = True):
-    """Check coin budget. Returns (ok, http_code, error_message).
+    """Check coin budget. Returns (ok, http_code, error_message, effective).
+
+    ``effective`` is the resolved coin pool limit (or None); pass it to subtract_coins
+    afterward to avoid re-resolving model access and the pool limit per request.
 
     This is an optimistic gate: it checks that the balance is > 0 before the LLM
     call, but the actual cost is unknown until the call completes. A user with a tiny
@@ -355,14 +367,14 @@ def check_coin_budget(entity_id: int, model_config_id: int, require_consent: boo
     """
     effective = get_effective_limit(entity_id, model_config_id, require_consent=require_consent)
     if effective is None:
-        return False, HTTPStatus.FORBIDDEN, "No access to this model"
+        return False, HTTPStatus.FORBIDDEN, "No access to this model", None
     max_coins, _, _starting = effective
     if max_coins == -2:
-        return True, None, None
+        return True, None, None, effective
     balance = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()
     if balance is not None and float(balance.coins_left) <= 0:
-        return False, HTTPStatus.TOO_MANY_REQUESTS, "Coin budget exhausted"
-    return True, None, None
+        return False, HTTPStatus.TOO_MANY_REQUESTS, "Coin budget exhausted", None
+    return True, None, None, effective
 
 
 def update_stats(
@@ -477,8 +489,13 @@ def send_message_stream(
     model: str,
     entity_id: int = None,
     source: str = "chat",
+    effective=_UNSET,
 ):
-    """Stream messages to LLM. Yields (chunk_text, None) for each token, then (None, result_dict)."""
+    """Stream messages to LLM. Yields (chunk_text, None) for each token, then (None, result_dict).
+
+    ``effective`` is the coin pool limit already resolved during preflight; it is
+    threaded to subtract_coins to avoid re-resolving it after the stream completes.
+    """
     config = db.session.execute(select(ModelConfig).filter_by(model_name=model, active=True)).scalar_one_or_none()
     if config is None:
         raise ValueError(f"Unknown or inactive model: {model}")
@@ -544,7 +561,7 @@ def send_message_stream(
         output_speed = output_tokens / duration if duration > 0 else 0.0
 
         if entity_id is not None:
-            subtract_coins(entity_id, mc_id, cost)
+            subtract_coins(entity_id, mc_id, cost, effective=effective)
             update_stats(
                 entity_id, mc_id, source,
                 input_tokens, output_tokens, cost,

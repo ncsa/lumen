@@ -284,7 +284,7 @@ def test_check_coin_budget_no_access(app, test_user, test_model):
         from lumen.services.llm import check_coin_budget
         db.session.add(EntityModelAccess(entity_id=entity_id, model_config_id=model_id, access_type="blacklist"))
         db.session.commit()
-        ok, code, msg = check_coin_budget(entity_id, model_id)
+        ok, code, msg, _eff = check_coin_budget(entity_id, model_id)
         assert not ok
         assert code == HTTPStatus.FORBIDDEN
 
@@ -297,7 +297,7 @@ def test_check_coin_budget_unlimited(app, test_user, test_model):
         from lumen.services.llm import check_coin_budget
         db.session.add(EntityLimit(entity_id=entity_id, max_coins=-2, refresh_coins=0, starting_coins=0))
         db.session.commit()
-        ok, code, _ = check_coin_budget(entity_id, model_id)
+        ok, code, _, _eff = check_coin_budget(entity_id, model_id)
         assert ok
         assert code is None
 
@@ -312,7 +312,7 @@ def test_check_coin_budget_exhausted(app, test_user, test_model):
         db.session.add(EntityLimit(entity_id=entity_id, max_coins=_COIN_LIMIT, refresh_coins=0, starting_coins=_COIN_LIMIT))
         db.session.add(EntityBalance(entity_id=entity_id, coins_left=0))
         db.session.commit()
-        ok, code, _ = check_coin_budget(entity_id, model_id)
+        ok, code, _, _eff = check_coin_budget(entity_id, model_id)
         assert not ok
         assert code == HTTPStatus.TOO_MANY_REQUESTS
 
@@ -327,7 +327,7 @@ def test_check_coin_budget_ok(app, test_user, test_model):
         db.session.add(EntityLimit(entity_id=entity_id, max_coins=_COIN_LIMIT, refresh_coins=0, starting_coins=_COIN_LIMIT))
         db.session.add(EntityBalance(entity_id=entity_id, coins_left=50))
         db.session.commit()
-        ok, code, _ = check_coin_budget(entity_id, model_id)
+        ok, code, _, _eff = check_coin_budget(entity_id, model_id)
         assert ok
         assert code is None
 

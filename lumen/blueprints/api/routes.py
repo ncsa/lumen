@@ -241,23 +241,28 @@ def get_model(model_id):
 
 
 def _preflight(model_name: str):
-    """Look up model, check coin budget, select endpoint. Returns (model_config, endpoint, None) or (None, None, error_response)."""
+    """Look up model, check coin budget, select endpoint.
+
+    Returns (model_config, endpoint, effective, None) or (None, None, None, error_response).
+    ``effective`` is the resolved coin pool limit, threaded to subtract_coins so the
+    billing path does not re-resolve model access and the pool limit.
+    """
     model_config = db.session.execute(select(ModelConfig).filter_by(model_name=model_name, active=True)).scalar_one_or_none()
     if not model_config:
-        return None, None, _err(f"Model '{model_name}' not found", status=HTTPStatus.NOT_FOUND)
+        return None, None, None, _err(f"Model '{model_name}' not found", status=HTTPStatus.NOT_FOUND)
     consent_required = current_app.config.get("API_REQUIRE_MODEL_CONSENT", True)
-    ok, code, msg = check_coin_budget(g.entity.id, model_config.id, require_consent=consent_required)
+    ok, code, msg, effective = check_coin_budget(g.entity.id, model_config.id, require_consent=consent_required)
     if not ok:
-        return None, None, _err(msg, status=code)
+        return None, None, None, _err(msg, status=code)
     endpoint = get_next_endpoint(model_config.id)
     if endpoint is None:
-        return None, None, _err(f"No healthy endpoints for model '{model_name}'", "server_error", HTTPStatus.SERVICE_UNAVAILABLE)
-    return model_config, endpoint, None
+        return None, None, None, _err(f"No healthy endpoints for model '{model_name}'", "server_error", HTTPStatus.SERVICE_UNAVAILABLE)
+    return model_config, endpoint, effective, None
 
 
 def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
     """Shared logic for chat completions (used by both endpoints)."""
-    model_config, endpoint, err = _preflight(model_name)
+    model_config, endpoint, effective, err = _preflight(model_name)
     if err:
         return err
 
@@ -300,7 +305,7 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                             + usage.completion_tokens * mc_out_cost / 1_000_000,
                             6,
                         )
-                        subtract_coins(entity_id, mc_id, cost)
+                        subtract_coins(entity_id, mc_id, cost, effective=effective)
                         update_stats(entity_id, mc_id, "api", usage.prompt_tokens, usage.completion_tokens, cost,
                                      endpoint_id=ep_id)
                         _record_api_key_usage(ak_id, usage.prompt_tokens, usage.completion_tokens, cost)
@@ -343,7 +348,7 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
         usage_prompt, usage_completion = usage.prompt_tokens, usage.completion_tokens
 
     cost = round(usage_prompt * mc_in_cost / 1_000_000 + usage_completion * mc_out_cost / 1_000_000, 6)
-    subtract_coins(entity_id, mc_id, cost)
+    subtract_coins(entity_id, mc_id, cost, effective=effective)
     update_stats(entity_id, mc_id, "api", usage_prompt, usage_completion, cost,
                  endpoint_id=ep_id, duration=duration)
 
@@ -388,7 +393,7 @@ def _do_audio(kind: str):
         except ValueError:
             return _err("temperature must be a number")
 
-    model_config, endpoint, err = _preflight(model_name)
+    model_config, endpoint, effective, err = _preflight(model_name)
     if err:
         return err
 
@@ -436,7 +441,7 @@ def _do_audio(kind: str):
     else:
         logger.warning("Upstream did not return usage data (model=%s, entity_id=%s)", model_name, entity_id)
 
-    subtract_coins(entity_id, mc_id, cost)
+    subtract_coins(entity_id, mc_id, cost, effective=effective)
     update_stats(entity_id, mc_id, "api", in_tok, out_tok, cost,
                  endpoint_id=ep_id, duration=duration, audio_seconds=seconds)
     _record_api_key_usage(ak_id, in_tok, out_tok, cost, audio_seconds=seconds)
@@ -497,7 +502,7 @@ def completions():
 
     messages = [{"role": "user", "content": prompt}]
 
-    model_config, endpoint, err = _preflight(model_name)
+    model_config, endpoint, effective, err = _preflight(model_name)
     if err:
         return err
 
@@ -533,7 +538,7 @@ def completions():
         usage_total = usage.total_tokens
 
     cost = round(usage_prompt * mc_in_cost / 1_000_000 + usage_completion * mc_out_cost / 1_000_000, 6)
-    subtract_coins(entity_id, mc_id, cost)
+    subtract_coins(entity_id, mc_id, cost, effective=effective)
     update_stats(entity_id, mc_id, "api", usage_prompt, usage_completion, cost,
                  endpoint_id=ep_id, duration=duration)
 

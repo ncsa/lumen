@@ -59,6 +59,27 @@ def test_subtract_coins_deducts_correct_amount(app, test_user, test_model):
         assert float(bal.coins_left) == 95.0
 
 
+def test_subtract_coins_uses_passed_effective_without_reresolving(app, test_user, test_model):
+    """When the caller passes the preflight-resolved limit, subtract_coins must not
+    re-resolve model access / the pool limit (the per-request redundancy we removed)."""
+    from unittest.mock import patch
+    entity_id, model_id = test_user["id"], test_model["id"]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.services import llm as llm_mod
+        from lumen.services.llm import subtract_coins, PoolLimit
+        db.session.add(EntityLimit(entity_id=entity_id, max_coins=100, refresh_coins=0, starting_coins=100))
+        db.session.add(EntityBalance(entity_id=entity_id, coins_left=100))
+        db.session.commit()
+        with patch.object(llm_mod, "get_effective_limit", side_effect=AssertionError("must not re-resolve")):
+            subtract_coins(entity_id, model_id, 5.0, effective=PoolLimit(100.0, 0.0, 100.0))
+            db.session.commit()
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()
+        assert float(bal.coins_left) == 95.0
+
+
 def test_get_model_access_graylist_without_consent(app, test_user, test_model):
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():

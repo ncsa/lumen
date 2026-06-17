@@ -15,6 +15,7 @@ All notable changes to Lumen will be documented in this file.
 - Minor cleanup: removed a duplicate `datetime` import and an unused `calculate_cost` import, and dropped the unreachable empty-string fallback for `ENCRYPTION_KEY` (the app already refuses to start without it).
 - Centralized UTC time handling: added `lumen.timeutils.utcnow()` (naive UTC) and replaced the scattered `datetime.now(timezone.utc).replace(tzinfo=None)` idiom across all models and call sites. No behavior or schema change.
 - Config sync now preloads models once per pass instead of issuing a per-model-name lookup for every group/client `model_access` entry (removes an N+1 during `init-db` and config reloads).
+- Per-request billing no longer re-resolves model access and the coin pool limit a second time: `check_coin_budget` returns the resolved limit and it is threaded through to `subtract_coins`, halving the access/pool queries on every API and chat request. As a side effect, a graylisted model used via the API when consent is not required is now billed correctly (previously the post-call deduction silently no-op'd).
 
 ## [1.16.3] - 2026-06-16
 
