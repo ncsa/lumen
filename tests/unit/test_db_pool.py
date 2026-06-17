@@ -72,6 +72,47 @@ def test_partial_explicit_override_fills_other_from_auto():
     assert opts["max_overflow"] == 5
 
 
+def test_query_failure_falls_back_to_configured(monkeypatch, caplog):
+    def _fail(uri):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(db_pool, "query_max_connections", _fail)
+    with caplog.at_level(logging.WARNING):
+        opts = db_pool.build_engine_options(
+            "postgresql://u:p@localhost/db",
+            {"pool_size": 500, "max_overflow": 50, "pool_recycle": 1800},
+            workers=1,
+            replicas=1,
+        )
+    assert opts["pool_size"] == 500
+    assert opts["max_overflow"] == 50
+    assert opts["pool_recycle"] == 1800
+    assert opts["pool_pre_ping"] is True
+    assert "max_connections" in caplog.text
+
+
+def test_query_failure_no_config_uses_sqlalchemy_defaults(monkeypatch):
+    def _fail(uri):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(db_pool, "query_max_connections", _fail)
+    opts = db_pool.build_engine_options(
+        "postgresql://u:p@localhost/db", {}, workers=1, replicas=1
+    )
+    # No auto-sizing possible: omit pool_size/max_overflow so SQLAlchemy defaults apply.
+    assert opts == {"pool_pre_ping": True}
+
+
+def test_max_connections_override_skips_query(monkeypatch):
+    def _boom(uri):
+        raise AssertionError("query_max_connections should not be called")
+
+    monkeypatch.setattr(db_pool, "query_max_connections", _boom)
+    opts = _build({"max_connections": 100})
+    assert opts["pool_size"] == 60
+    assert opts["max_overflow"] == 20
+
+
 def test_detect_workers_from_web_concurrency(monkeypatch):
     monkeypatch.setenv("WEB_CONCURRENCY", "7")
     assert db_pool.detect_workers() == 7

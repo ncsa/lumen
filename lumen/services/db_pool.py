@@ -87,12 +87,25 @@ def query_max_connections(uri: str) -> int:
         engine.dispose()
 
 
+def _passthrough_options(db_cfg: dict) -> dict:
+    """Engine options without auto-sizing: any explicit pool settings the admin
+    configured plus the always-on pre-ping. Used for SQLite and as the fallback
+    when ``max_connections`` cannot be determined."""
+    opts = {"pool_pre_ping": True}
+    for key in ("pool_size", "max_overflow", *_PASSTHROUGH_KEYS):
+        if key in db_cfg:
+            opts[key] = db_cfg[key]
+    return opts
+
+
 def build_engine_options(uri: str, db_cfg: dict, *, workers: int, replicas: int) -> dict:
     """Build SQLALCHEMY_ENGINE_OPTIONS with auto-sized pool settings.
 
     Returns ``{}`` for SQLite. For Postgres, returns pool_size/max_overflow split
     across ``workers x replicas`` (with ``pool_pre_ping`` always on), honouring an
-    explicit pool_size/max_overflow override only when it fits the 80% budget.
+    explicit pool_size/max_overflow override only when it fits the 80% budget. If
+    ``max_connections`` cannot be queried (e.g. the DB is briefly unreachable at
+    startup), falls back to the configured pool settings rather than failing boot.
     """
     if _is_sqlite(uri):
         return {}
@@ -101,7 +114,15 @@ def build_engine_options(uri: str, db_cfg: dict, *, workers: int, replicas: int)
 
     max_conn = db_cfg.get("max_connections")
     if max_conn is None:
-        max_conn = query_max_connections(uri)
+        try:
+            max_conn = query_max_connections(uri)
+        except Exception:
+            logger.warning(
+                "Could not query Postgres max_connections; using configured pool "
+                "settings without auto-sizing",
+                exc_info=True,
+            )
+            return _passthrough_options(db_cfg)
     max_conn = int(max_conn)
 
     auto_pool = max(1, int(max_conn * POOL_FRACTION) // divisor)
