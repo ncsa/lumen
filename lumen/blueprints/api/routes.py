@@ -152,6 +152,38 @@ def _err(msg: str, err_type: str = "invalid_request_error", status: HTTPStatus =
     return jsonify({"error": {"message": msg, "type": err_type}}), status
 
 
+def _upstream_error_detail(exc):
+    """Pull (message, type) from an upstream error body.
+
+    Handles both the OpenAI shape ``{"error": {"message", "type"}}`` and the
+    flat vLLM shape ``{"message", "type"}``.
+    """
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            return err.get("message") or str(exc), err.get("type")
+        if body.get("message"):
+            return body["message"], body.get("type")
+    return str(exc), None
+
+
+def _classify_upstream_error(exc, context: str):
+    """Log an upstream exception and map it to (message, type, HTTPStatus).
+
+    A 4xx from the upstream is the caller's mistake (e.g. context length
+    exceeded): pass the real status and message through so the caller can fix
+    the request, and log it as a warning rather than an error. Everything else
+    is a genuine upstream/transport failure and becomes a generic 500.
+    """
+    if isinstance(exc, openai.APIStatusError) and 400 <= exc.status_code < 500:
+        msg, err_type = _upstream_error_detail(exc)
+        logger.warning("%s (upstream %s): %s", context, exc.status_code, msg)
+        return msg, err_type or "invalid_request_error", HTTPStatus(exc.status_code)
+    logger.exception(context)
+    return "Upstream error. Please try again.", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR
+
+
 def api_key_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -323,11 +355,13 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                     if not billed:
                         record_aborted_request(entity_id, mc_id, "api", endpoint_id=ep_id)
                     raise
-                except Exception:
-                    logger.exception(
-                        "Error during streaming request (model=%s, entity_id=%s)", model_name, entity_id
+                except Exception as exc:
+                    msg, err_type, _ = _classify_upstream_error(
+                        exc,
+                        f"Error during streaming request "
+                        f"(endpoint={ep_id} {ep_url} model={remote_model}, entity_id={entity_id})",
                     )
-                    yield f"data: {json.dumps({'error': 'Upstream error. Please try again.'})}\n\n"
+                    yield f"data: {json.dumps({'error': {'message': msg, 'type': err_type}})}\n\n"
 
         return Response(stream_with_context(generate()), content_type="text/event-stream")
 
@@ -336,9 +370,9 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
         with openai.OpenAI(api_key=ep_api_key, base_url=ep_url) as client:
             response = client.chat.completions.create(model=remote_model, messages=messages, **kwargs)
         duration = _time.time() - t0
-    except Exception:
-        logger.exception("upstream LLM error")
-        return _err("Upstream error. Please try again.", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
+    except Exception as exc:
+        return _err(*_classify_upstream_error(
+            exc, f"upstream LLM error (endpoint={ep_id} {ep_url} model={remote_model})"))
 
     usage = response.usage
     if usage is None:
@@ -416,9 +450,9 @@ def _do_audio(kind: str):
             create = getattr(client.audio, kind).create
             response = create(model=remote_model, file=(file_name, file_data, file_type), **extra)
         duration = _time.time() - t0
-    except Exception:
-        logger.exception("upstream audio error")
-        return _err("Upstream error. Please try again.", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
+    except Exception as exc:
+        return _err(*_classify_upstream_error(
+            exc, f"upstream audio error (endpoint={ep_id} {ep_url} model={remote_model})"))
 
     # response is a pydantic model for json/verbose_json, or a plain string for
     # text/srt/vtt response formats (which carry no usage object).
@@ -522,9 +556,9 @@ def completions():
         with openai.OpenAI(api_key=ep_api_key, base_url=ep_url) as client:
             response = client.chat.completions.create(model=remote_model, messages=messages)
         duration = _time.time() - t0
-    except Exception:
-        logger.exception("upstream LLM error")
-        return _err("Upstream error. Please try again.", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
+    except Exception as exc:
+        return _err(*_classify_upstream_error(
+            exc, f"upstream LLM error (endpoint={ep_id} {ep_url} model={remote_model})"))
 
     if not response.choices:
         return _err("No response from model", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)

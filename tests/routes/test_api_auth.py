@@ -604,3 +604,111 @@ def test_list_models_response_includes_required_openai_fields(
         assert m.get("object") == "model"
         assert isinstance(m.get("created"), int)
         assert isinstance(m.get("owned_by"), str)
+
+
+# ---------------------------------------------------------------------------
+# Upstream error pass-through
+# ---------------------------------------------------------------------------
+def _make_openai_error(error_cls, status, body):
+    import httpx
+    req = httpx.Request("POST", "http://upstream/v1/chat/completions")
+    return error_cls(body.get("message", "error"),
+                     response=httpx.Response(status, request=req), body=body)
+
+
+@pytest.mark.parametrize("body, expected_msg, expected_type", [
+    # vLLM flat shape (the prod context-length error).
+    ({"object": "error",
+      "message": "Input length (48874 tokens) exceeds the maximum allowed length (48712 tokens).",
+      "type": "BadRequestError", "code": 400},
+     "Input length (48874 tokens) exceeds the maximum allowed length (48712 tokens).",
+     "BadRequestError"),
+    # OpenAI nested shape.
+    ({"error": {"message": "too long", "type": "invalid_request_error"}},
+     "too long", "invalid_request_error"),
+])
+def test_chat_completions_upstream_4xx_passes_through(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+    body, expected_msg, expected_type,
+):
+    """A 4xx from the upstream (e.g. context-length exceeded) is the caller's
+    mistake: surface the real status and message, not a generic 500 retry."""
+    import openai
+    from lumen.blueprints.api import routes
+    token, _ = api_key
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_model_access import EntityModelAccess
+        _grant_unlimited_pool(app, test_user["id"])
+        db.session.add(EntityModelAccess(
+            entity_id=test_user["id"], model_config_id=test_model["id"],
+            access_type="whitelist",
+        ))
+        db.session.commit()
+
+    exc = _make_openai_error(openai.BadRequestError, 400, body)
+
+    class _FakeClient:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        @property
+        def chat(self):
+            def _create(**kwargs):
+                raise exc
+            return type("C", (), {"completions": type("X", (), {"create": staticmethod(_create)})()})()
+
+    monkeypatch.setattr(routes.openai, "OpenAI", lambda *a, **k: _FakeClient())
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"],
+              "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    err = resp.get_json()["error"]
+    assert err["message"] == expected_msg
+    assert err["type"] == expected_type
+
+
+def test_chat_completions_upstream_5xx_is_generic_500(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+):
+    """A genuine upstream/transport failure stays a generic 500 retry message."""
+    import openai
+    from lumen.blueprints.api import routes
+    token, _ = api_key
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_model_access import EntityModelAccess
+        _grant_unlimited_pool(app, test_user["id"])
+        db.session.add(EntityModelAccess(
+            entity_id=test_user["id"], model_config_id=test_model["id"],
+            access_type="whitelist",
+        ))
+        db.session.commit()
+
+    exc = _make_openai_error(
+        openai.InternalServerError, 500, {"message": "backend exploded"})
+
+    class _FakeClient:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        @property
+        def chat(self):
+            def _create(**kwargs):
+                raise exc
+            return type("C", (), {"completions": type("X", (), {"create": staticmethod(_create)})()})()
+
+    monkeypatch.setattr(routes.openai, "OpenAI", lambda *a, **k: _FakeClient())
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"],
+              "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert resp.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    err = resp.get_json()["error"]
+    assert err["message"] == "Upstream error. Please try again."
+    assert "backend exploded" not in err["message"]

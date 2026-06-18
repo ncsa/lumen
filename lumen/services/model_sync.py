@@ -153,13 +153,22 @@ def sync_model(model_def: dict) -> dict:
         dev_match = find_in_modelsdev(ep_id, dev_models, config_name=model_def.get("name"))
 
     updates: dict = {}
+    dev_limit = (dev_match.get("limit") or {}) if dev_match else {}
 
-    if ep_model:
-        max_len = ep_model.get("max_model_len")
-        if max_len is not None:
-            for field in ("context_window", "max_output_tokens"):
-                if model_def.get(field) != max_len:
-                    updates[field] = max_len
+    # context_window is the total input+output budget. The endpoint's
+    # max_model_len is authoritative — an operator can configure it below the
+    # model's theoretical max — so prefer it and fall back to models.dev.
+    ep_ctx = ep_model.get("max_model_len") if ep_model else None
+    context_window = ep_ctx if ep_ctx is not None else dev_limit.get("context")
+    if context_window is not None and model_def.get("context_window") != context_window:
+        updates["context_window"] = context_window
+
+    # max_output_tokens is a separate cap on generation only. A vLLM/SGLang
+    # endpoint shares one budget and has no such cap, so only models.dev can
+    # supply it; leave the field untouched when there is no match.
+    out_tokens = dev_limit.get("output")
+    if out_tokens is not None and model_def.get("max_output_tokens") != out_tokens:
+        updates["max_output_tokens"] = out_tokens
 
     if dev_match:
         for field, new_val in [
