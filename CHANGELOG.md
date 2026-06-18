@@ -5,6 +5,7 @@ All notable changes to Lumen will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `lumen_db_pool_connections` Prometheus gauge (labels `state=size|checked_in|checked_out|overflow|limit`) exported from the `/metrics` endpoint, plus a warning log when the connection pool exceeds 80% of capacity. Surfaces slow connection leaks: a `checked_out` value that climbs and never falls back points to a code path that checks out a pool connection and never returns it.
 - `/v1/audio/transcriptions` and `/v1/audio/translations` endpoints (speech-to-text). Billed per minute of audio via `audio_cost_per_minute` on the model config when the upstream reports `usage.type=duration`; falls back to per-token billing otherwise. Adds `audio_seconds` tracking to request logs, model/entity stats, and API keys. Helm chart template, `values.schema.json`, and `config.yaml.example` updated to support `audioCostPerMinute` per model.
 
 ### Fixed
@@ -18,6 +19,8 @@ All notable changes to Lumen will be documented in this file.
 - Centralized UTC time handling: added `lumen.timeutils.utcnow()` (naive UTC) and replaced the scattered `datetime.now(timezone.utc).replace(tzinfo=None)` idiom across all models and call sites. No behavior or schema change.
 - Config sync now preloads models once per pass instead of issuing a per-model-name lookup for every group/client `model_access` entry (removes an N+1 during `init-db` and config reloads).
 - Per-request billing no longer re-resolves model access and the coin pool limit a second time: `check_coin_budget` returns the resolved limit and it is threaded through to `subtract_coins`, halving the access/pool queries on every API and chat request. As a side effect, a graylisted model used via the API when consent is not required is now billed correctly (previously the post-call deduction silently no-op'd).
+- The cumulative `/metrics` totals (`lumen_model_requests_total`, `lumen_model_input_tokens_total`, `lumen_model_output_tokens_total`, and the cost total) are now exported as Prometheus counters instead of gauges, matching the `_total` naming convention. Only the `# TYPE` line changes (gauge → counter); existing queries keep working.
+- Renamed the `/metrics` cost total from `lumen_model_cost_usd_total` to `lumen_model_cost_coins_total` to match Lumen's coin-based accounting (the value has always been the coin amount). **Breaking for dashboards/alerts** referencing the old name — update them to `lumen_model_cost_coins_total`.
 
 ## [1.16.3] - 2026-06-16
 

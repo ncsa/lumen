@@ -5,7 +5,7 @@ from http import HTTPStatus
 
 from flask import Blueprint, Response, current_app, request
 from prometheus_client import CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
-from prometheus_client.core import GaugeMetricFamily
+from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 
 logger = logging.getLogger(__name__)
 metrics_bp = Blueprint("metrics", __name__)
@@ -54,24 +54,27 @@ class LumenDBCollector:
             .group_by(ModelConfig.model_name, ModelStat.source)
         ).all()
 
-        reqs_m = GaugeMetricFamily(
-            "lumen_model_requests_total",
+        # Cumulative per-(model, source) usage totals summed from ModelStat.
+        # CounterMetricFamily appends "_total" to each name, so the exposed
+        # samples are lumen_model_requests_total, lumen_model_cost_coins_total, etc.
+        reqs_m = CounterMetricFamily(
+            "lumen_model_requests",
             "Cumulative LLM requests per model and source",
             labels=["model", "source"],
         )
-        inp_m = GaugeMetricFamily(
-            "lumen_model_input_tokens_total",
+        inp_m = CounterMetricFamily(
+            "lumen_model_input_tokens",
             "Cumulative input tokens per model and source",
             labels=["model", "source"],
         )
-        out_m = GaugeMetricFamily(
-            "lumen_model_output_tokens_total",
+        out_m = CounterMetricFamily(
+            "lumen_model_output_tokens",
             "Cumulative output tokens per model and source",
             labels=["model", "source"],
         )
-        cost_m = GaugeMetricFamily(
-            "lumen_model_cost_usd_total",
-            "Cumulative cost in USD per model and source",
+        cost_m = CounterMetricFamily(
+            "lumen_model_cost_coins",
+            "Cumulative cost in coins per model and source",
             labels=["model", "source"],
         )
 
@@ -115,6 +118,35 @@ class LumenDBCollector:
         users_m.add_metric(["active"], float(active_count))
         users_m.add_metric(["total"], float(total_count))
         yield users_m
+
+        # Connection-pool gauges. A slow leak (connections checked out and never
+        # returned) shows up here as checked_out climbing and never falling back;
+        # correlate the climb with the access log to find the leaking endpoint.
+        pool = db.engine.pool
+        pool_m = GaugeMetricFamily(
+            "lumen_db_pool_connections",
+            "SQLAlchemy connection-pool state",
+            labels=["state"],
+        )
+        try:
+            size = pool.size()
+            checked_out = pool.checkedout()
+            limit = size + pool._max_overflow if pool._max_overflow >= 0 else None
+            pool_m.add_metric(["size"], float(size))
+            pool_m.add_metric(["checked_in"], float(pool.checkedin()))
+            pool_m.add_metric(["checked_out"], float(checked_out))
+            pool_m.add_metric(["overflow"], float(pool.overflow()))
+            if limit:
+                pool_m.add_metric(["limit"], float(limit))
+                if checked_out >= 0.8 * limit:
+                    logger.warning(
+                        "DB pool near capacity: %d/%d connections checked out",
+                        checked_out, limit,
+                    )
+        except AttributeError:
+            # Pools without queue semantics (SQLite StaticPool/NullPool) lack these.
+            pass
+        yield pool_m
 
 
 @metrics_bp.route("/metrics")

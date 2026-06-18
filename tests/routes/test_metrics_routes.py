@@ -50,3 +50,21 @@ def test_metrics_enabled_missing_auth_returns_401(app, client):
         assert resp.status_code == HTTPStatus.UNAUTHORIZED
     finally:
         app.config["YAML_DATA"] = original
+
+
+def test_metrics_cumulative_totals_are_counters(app, client):
+    # The cumulative model totals must keep their _total names but be typed as
+    # counters (not gauges), so dashboards keep working after the type change.
+    original = _set_prometheus(app, {"enabled": True, "token": "secret"})
+    try:
+        body = client.get("/metrics", headers={"Authorization": "Bearer secret"}).get_data(as_text=True)
+    finally:
+        app.config["YAML_DATA"] = original
+
+    for name in (
+        "lumen_model_requests_total",
+        "lumen_model_input_tokens_total",
+        "lumen_model_output_tokens_total",
+        "lumen_model_cost_coins_total",
+    ):
+        assert f"# TYPE {name} counter" in body
