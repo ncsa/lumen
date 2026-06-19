@@ -20,6 +20,7 @@ All notable changes to Lumen will be documented in this file.
 - The admin config editor now backs up `config.yaml` to `config.yaml.bak` before overwriting, so a partial or malformed save can be recovered.
 - Register `EntityStat` in `lumen.models.__init__` so Flask-Migrate autogenerate always sees the table regardless of import order.
 - `subtract_coins` now deducts in a single atomic UPDATE floored at 0 (`GREATEST(0, coins_left - cost)`, compiled to `max(...)` on SQLite) instead of a conditional deduct followed by a separate zeroing. This removes a race where a concurrent coin refill/credit landing between the two statements could be clobbered back to 0 (or the request left uncharged).
+- The announcement cache-busting `hashlib.md5` call now passes `usedforsecurity=False` so it works on FIPS-restricted builds (the digest is a cache key, not a security hash).
 
 ### Changed
 - The "best group coin limit" selection (skip 0, unlimited wins, else highest) is now a shared `best_group_pool_limit` helper used by both `get_pool_limit` and the token refiller, instead of duplicated in each.
