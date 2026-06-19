@@ -712,3 +712,50 @@ def test_chat_completions_upstream_5xx_is_generic_500(
     err = resp.get_json()["error"]
     assert err["message"] == "Upstream error. Please try again."
     assert "backend exploded" not in err["message"]
+
+
+def test_chat_completions_streaming_error_emits_done(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+):
+    """A mid-stream upstream error still terminates the SSE stream with [DONE]."""
+    from lumen.blueprints.api import routes
+    token, _ = api_key
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_model_access import EntityModelAccess
+        _grant_unlimited_pool(app, test_user["id"])
+        db.session.add(EntityModelAccess(
+            entity_id=test_user["id"], model_config_id=test_model["id"],
+            access_type="whitelist",
+        ))
+        db.session.commit()
+
+    class _Chunk:
+        usage = None
+        def model_dump(self):
+            return {"choices": [{"delta": {"content": "hi"}}]}
+
+    def _stream():
+        yield _Chunk()
+        raise RuntimeError("upstream blew up mid-stream")
+
+    class _FakeClient:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        @property
+        def chat(self):
+            def _create(**kwargs):
+                return _stream()
+            return type("C", (), {"completions": type("X", (), {"create": staticmethod(_create)})()})()
+
+    monkeypatch.setattr(routes.openai, "OpenAI", lambda *a, **k: _FakeClient())
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"],
+              "messages": [{"role": "user", "content": "hi"}], "stream": True},
+    )
+    body = resp.get_data(as_text=True)
+    assert '"error"' in body
+    assert "data: [DONE]" in body

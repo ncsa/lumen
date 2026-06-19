@@ -362,6 +362,7 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                         f"(endpoint={ep_id} {ep_url} model={remote_model}, entity_id={entity_id})",
                     )
                     yield f"data: {json.dumps({'error': {'message': msg, 'type': err_type}})}\n\n"
+                    yield "data: [DONE]\n\n"
 
         return Response(stream_with_context(generate()), content_type="text/event-stream")
 
