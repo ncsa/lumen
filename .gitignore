@@ -66,5 +66,5 @@ lumen.sql
 restore.sh
 
 # model setup
-models/
+/models/
 chart/phoenix.yaml
