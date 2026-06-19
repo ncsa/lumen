@@ -15,6 +15,7 @@ All notable changes to Lumen will be documented in this file.
 - Profile/clients/admin usage pages no longer raise a 500 (`TypeError`) when a model has `ModelStat` rows with null input/output token totals; the per-model token total now coalesces null sums to 0.
 - When a client disconnects mid-stream (both the chat and `/v1/chat/completions` streaming paths), Lumen now records a zero-cost `request_logs` entry instead of silently dropping the request. Since every hosted model has a coin cost, these aborted requests are findable by `cost = 0`, making disconnect frequency monitorable.
 - `/v1/chat/completions` and `/v1/completions` now return the JSON `invalid_request_error` for a missing/wrong `Content-Type` or malformed JSON body, instead of a Werkzeug HTML 415/400 page (`request.get_json(silent=True)`).
+- Dev login (`/devlogin`, OAuth bypass) is now gated on debug mode instead of `request.remote_addr`, which a co-located reverse proxy could mask as localhost. It returns 404 when `app.debug` is false even if `dev_user` is set, and a loud warning is logged at startup whenever `dev_user` is configured.
 - Streaming `/v1/chat/completions` now sends a terminating `data: [DONE]` after a mid-stream upstream error, so SSE clients don't hang waiting for it.
 - The admin config editor now backs up `config.yaml` to `config.yaml.bak` before overwriting, so a partial or malformed save can be recovered.
 - Register `EntityStat` in `lumen.models.__init__` so Flask-Migrate autogenerate always sees the table regardless of import order.

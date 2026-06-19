@@ -105,6 +105,16 @@ def test_devlogin_returns_403_when_not_configured(app, client):
             app.config["DEV_USER"] = original
 
 
+def test_devlogin_returns_404_when_not_debug(app, client):
+    """Dev login is restricted to debug mode even when DEV_USER is set."""
+    app.config["DEBUG"] = False
+    try:
+        resp = client.get("/devlogin")
+        assert resp.status_code == HTTPStatus.NOT_FOUND
+    finally:
+        app.config["DEBUG"] = True
+
+
 # ---------------------------------------------------------------------------
 # OAuth callback — email_verified gate
 # ---------------------------------------------------------------------------

@@ -31,6 +31,12 @@ def apply_hot_config(app, yaml_data: dict):
     else:
         app.config["DEV_USER"] = _dev_raw or ""
         app.config["DEV_USER_GROUPS"] = []
+    if app.config["DEV_USER"]:
+        logger.warning(
+            "DEV LOGIN ENABLED — /devlogin bypasses OAuth and logs in as '%s'. "
+            "Never set app.dev_user in production. (Active only while app.debug is true.)",
+            app.config["DEV_USER"],
+        )
     app.config["GITHUB_URL"] = app_cfg.get("github_url", "https://github.com/ncsa/lumen")
 
     logs_cfg = app_cfg.get("logs", {})

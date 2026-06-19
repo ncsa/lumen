@@ -2,7 +2,7 @@ import hashlib
 from datetime import datetime, timezone
 from http import HTTPStatus
 
-from flask import Blueprint, abort, redirect, url_for, session, render_template, request, current_app
+from flask import Blueprint, abort, redirect, url_for, session, render_template, current_app
 from sqlalchemy import select
 
 from lumen.extensions import db, oauth
@@ -176,7 +176,10 @@ def devlogin():
     email = current_app.config.get("DEV_USER")
     if not email:
         return "Dev login not configured.", HTTPStatus.FORBIDDEN
-    if not current_app.debug and request.remote_addr not in ("127.0.0.1", "::1"):
+    # Dev login bypasses OAuth, so restrict it to debug mode (local development).
+    # We gate on the server-controlled debug flag rather than request.remote_addr,
+    # which a co-located reverse proxy can mask as localhost.
+    if not current_app.debug:
         abort(HTTPStatus.NOT_FOUND)
     yaml_data = current_app.config.get("YAML_DATA", {})
     dev_groups = current_app.config.get("DEV_USER_GROUPS", [])

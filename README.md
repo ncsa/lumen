@@ -129,7 +129,7 @@ uv run lumen
 
 Visit `http://localhost:5001`, click **Login**, and you'll be auto-logged in as `dev@example.com`.
 
-> **Note:** The `dev_user` option skips OAuth entirely. Remove it (or leave it empty) to use normal CILogon authentication.
+> **Note:** The `dev_user` option skips OAuth entirely and only works when `app.debug` is `true` (it returns 404 otherwise), so it is safe to leave configured but inert in non-debug deployments. Remove it (or leave it empty) to use normal CILogon authentication.
 
 ---
 

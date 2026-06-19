@@ -191,3 +191,22 @@ def test_watcher_handles_read_error_gracefully(app, tmp_path):
                     _watcher(app, str(config_file))
                 except SystemExit:
                     pass
+
+
+def test_dev_user_set_logs_warning(app, caplog):
+    """A configured dev_user emits a loud warning so an accidental prod setting is visible."""
+    import logging
+    from lumen.services.config_watcher import apply_hot_config
+    with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
+        with app.app_context():
+            apply_hot_config(app, {"app": {"dev_user": "dev@example.com"}})
+    assert any("DEV LOGIN ENABLED" in r.message for r in caplog.records)
+
+
+def test_no_dev_user_no_warning(app, caplog):
+    import logging
+    from lumen.services.config_watcher import apply_hot_config
+    with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
+        with app.app_context():
+            apply_hot_config(app, {"app": {}})
+    assert not any("DEV LOGIN ENABLED" in r.message for r in caplog.records)
