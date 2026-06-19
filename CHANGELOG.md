@@ -2,7 +2,7 @@
 
 All notable changes to Lumen will be documented in this file.
 
-## [Unreleased]
+## [1.17.0] - 2026-06-20
 
 ### Added
 - Reject OAuth logins where the provider marks the email unverified (`email_verified: false`); a missing claim is still accepted. New `oauth2.allow_unverified_email` flag (default `false`, hot-reloaded, in the Helm chart and config editor) overrides this.

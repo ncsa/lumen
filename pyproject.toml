@@ -1,6 +1,6 @@
 [project]
 name = "lumen"
-version = "1.16.3"
+version = "1.17.0"
 requires-python = ">=3.11"
 dependencies = [
     "flask>=3.0",
