@@ -12,7 +12,7 @@ from lumen.models.entity_limit import EntityLimit
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
 from lumen.models.group_limit import GroupLimit
-from lumen.services.llm import PoolLimit
+from lumen.services.llm import PoolLimit, best_group_pool_limit
 
 logger = logging.getLogger(__name__)
 
@@ -73,20 +73,10 @@ def refill_coin_balances(now: datetime = None) -> int:
             pool = PoolLimit(float(el.max_coins), float(el.refresh_coins), float(el.starting_coins))
         else:
             gids = group_ids_by_entity.get(eid, [])
-            if not gids:
+            group_limits = [gl for gid in gids for gl in group_limits_by_group.get(gid, [])]
+            pool = best_group_pool_limit(group_limits)
+            if pool is None:
                 continue
-            candidates = [
-                PoolLimit(float(gl.max_coins), float(gl.refresh_coins), float(gl.starting_coins))
-                for gid in gids
-                for gl in group_limits_by_group.get(gid, [])
-                if float(gl.max_coins) != 0
-            ]
-            if not candidates:
-                continue
-            if any(c.max_coins == -2 for c in candidates):
-                pool = PoolLimit(-2, 0, 0)
-            else:
-                pool = max(candidates, key=lambda x: x.max_coins)
 
         max_coins, refresh_coins, _starting = pool
         if max_coins == -2 or refresh_coins <= 0:

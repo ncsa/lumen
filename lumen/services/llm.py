@@ -91,6 +91,24 @@ class PoolLimit(NamedTuple):
     starting_coins: float
 
 
+def best_group_pool_limit(group_limits):
+    """Pick the best coin pool from a set of GroupLimit rows, or None if none usable.
+
+    Skips limits with max_coins == 0 (blocking); an unlimited limit (-2) wins;
+    otherwise the highest max_coins wins.
+    """
+    candidates = [
+        PoolLimit(float(gl.max_coins), float(gl.refresh_coins), float(gl.starting_coins))
+        for gl in group_limits if float(gl.max_coins) != 0
+    ]
+    if not candidates:
+        return None
+    for c in candidates:
+        if c.max_coins == -2:
+            return PoolLimit(-2, 0, 0)
+    return max(candidates, key=lambda x: x.max_coins)
+
+
 def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
     """
     Bulk-resolve model access status and consents for one entity across many models.
@@ -287,16 +305,7 @@ def get_pool_limit(entity_id: int):
     group_limits = db.session.execute(
         select(GroupLimit).where(GroupLimit.group_id.in_(group_ids))
     ).scalars().all()
-    candidates = [
-        PoolLimit(float(gl.max_coins), float(gl.refresh_coins), float(gl.starting_coins))
-        for gl in group_limits if float(gl.max_coins) != 0
-    ]
-    if not candidates:
-        return None
-    for c in candidates:
-        if c.max_coins == -2:
-            return PoolLimit(-2, 0, 0)
-    return max(candidates, key=lambda x: x.max_coins)
+    return best_group_pool_limit(group_limits)
 
 
 def get_effective_limit(entity_id: int, model_config_id: int, require_consent: bool = True):
