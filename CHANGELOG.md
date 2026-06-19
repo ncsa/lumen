@@ -23,6 +23,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Changed
 - The "best group coin limit" selection (skip 0, unlimited wins, else highest) is now a shared `best_group_pool_limit` helper used by both `get_pool_limit` and the token refiller, instead of duplicated in each.
+- `get_model_access_status` now delegates to `bulk_model_access_info` with a single-element list instead of duplicating the full access-resolution pipeline.
 - `/v1/completions` and the non-streaming `/v1/chat/completions` now share one `_complete_and_bill` helper (upstream call + billing) instead of duplicating it; each endpoint only shapes its own response.
 - Profile/clients/admin pages now resolve model access, endpoints, and the model list once per request instead of twice (the access list and usage list shared the same lookups).
 - Minor cleanup: removed a duplicate `datetime` import and an unused `calculate_cost` import, and dropped the unreachable empty-string fallback for `ENCRYPTION_KEY` (the app already refuses to start without it).

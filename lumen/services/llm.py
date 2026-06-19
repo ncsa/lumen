@@ -226,36 +226,8 @@ def get_model_access_status(entity_id: int, model_config_id: int) -> str:
 
     Resolution order: entity model access → group model rules → group defaults → entity default.
     """
-    user_access = db.session.execute(
-        select(EntityModelAccess).filter_by(entity_id=entity_id, model_config_id=model_config_id)
-    ).scalar_one_or_none()
-    ema_type = user_access.access_type if user_access is not None else None
-
-    group_ids = _get_active_group_ids(entity_id)
-
-    gma_types: list = []
-    if group_ids:
-        gma_types = [
-            r.access_type for r in db.session.execute(
-                select(GroupModelAccess).where(
-                    GroupModelAccess.group_id.in_(group_ids),
-                    GroupModelAccess.model_config_id == model_config_id,
-                )
-            ).scalars().all()
-        ]
-
-    group_defaults: list = []
-    if group_ids:
-        group_defaults = [
-            g.model_access_default for g in db.session.execute(
-                select(Group).where(Group.id.in_(group_ids), Group.model_access_default.isnot(None))
-            ).scalars().all()
-        ]
-
-    entity = db.session.get(Entity, entity_id)
-    entity_default = entity.model_access_default if entity else None
-
-    return _resolve_single_access(ema_type, gma_types, group_defaults, entity_default)
+    access_statuses, _ = bulk_model_access_info(entity_id, [model_config_id])
+    return access_statuses[model_config_id]
 
 
 def has_model_consent(entity_id: int, model_config_id: int) -> bool:
