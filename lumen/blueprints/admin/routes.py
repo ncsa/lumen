@@ -260,6 +260,10 @@ def config_api_post():
         try:
             with os.fdopen(fd, "w") as f:
                 f.write("\n".join(parts))
+            # Back up the current config before overwriting so a partial or
+            # malformed save can be recovered from <config>.bak.
+            if os.path.exists(config_path):
+                shutil.copy2(config_path, config_path + ".bak")
             shutil.copyfile(tmp_path, config_path)
         finally:
             os.unlink(tmp_path)

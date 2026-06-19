@@ -109,3 +109,20 @@ def test_api_users_sort_by_requests(app, admin_client, test_user, admin_user, te
     assert resp.status_code == HTTPStatus.OK
     ids = [u["id"] for u in resp.get_json()["users"]]
     assert ids.index(test_user["id"]) < ids.index(admin_user["id"])
+
+
+def test_config_post_backs_up_previous_config(app, admin_client, tmp_path):
+    """Saving config writes the prior content to <config>.bak so a bad save is recoverable."""
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("app:\n  name: Original\n")
+    original = app.config["CONFIG_YAML"]
+    app.config["CONFIG_YAML"] = str(cfg)
+    try:
+        resp = admin_client.post("/admin/api/config", json={"app": {"name": "Updated"}})
+        assert resp.status_code == HTTPStatus.OK
+        bak = tmp_path / "config.yaml.bak"
+        assert bak.exists()
+        assert "Original" in bak.read_text()
+        assert "Updated" in cfg.read_text()
+    finally:
+        app.config["CONFIG_YAML"] = original
