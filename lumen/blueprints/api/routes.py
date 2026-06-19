@@ -292,18 +292,19 @@ def _preflight(model_name: str):
     return model_config, endpoint, effective, None
 
 
-def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
-    """Shared logic for chat completions (used by both endpoints)."""
+def _complete_and_bill(model_name: str, messages: list, **kwargs):
+    """Run a non-streaming upstream chat call and bill it.
+
+    Shared by /v1/chat/completions (non-streaming) and /v1/completions. Returns
+    (response, None) with the raw OpenAI response on success, or (None, error_response)
+    on a preflight or upstream failure; the caller shapes the client-facing payload.
+    """
     model_config, endpoint, effective, err = _preflight(model_name)
     if err:
-        return err
+        return None, err
 
     entity_id = g.entity.id
     ak_id = g.api_key.id
-
-    # Extract all scalars from ORM objects before releasing the DB connection.
-    # The LLM call can take seconds (non-streaming) or minutes (streaming) — holding
-    # a pool connection for that entire duration exhausts the pool under load.
     remote_model = endpoint.model_name or model_name
     ep_api_key   = endpoint.api_key
     ep_url       = endpoint.url
@@ -313,66 +314,13 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
     mc_out_cost  = float(model_config.output_cost_per_million)
     db.session.remove()  # return connection to pool before the LLM call
 
-    if stream:
-        def generate():
-            billed = False
-            with openai.OpenAI(api_key=ep_api_key, base_url=ep_url) as client:
-                try:
-                    stream_options = {**kwargs.pop("stream_options", {}), "include_usage": True}
-                    resp_stream = client.chat.completions.create(
-                        model=remote_model, messages=messages, stream=True,
-                        stream_options=stream_options,
-                        **kwargs,
-                    )
-                    usage = None
-                    for chunk in resp_stream:
-                        if chunk.usage is not None:
-                            usage = chunk.usage
-                        yield f"data: {json.dumps(chunk.model_dump())}\n\n"
-                    yield "data: [DONE]\n\n"
-
-                    if usage is not None:
-                        cost = round(
-                            usage.prompt_tokens * mc_in_cost / 1_000_000
-                            + usage.completion_tokens * mc_out_cost / 1_000_000,
-                            6,
-                        )
-                        subtract_coins(entity_id, mc_id, cost, effective=effective)
-                        update_stats(entity_id, mc_id, "api", usage.prompt_tokens, usage.completion_tokens, cost,
-                                     endpoint_id=ep_id)
-                        _record_api_key_usage(ak_id, usage.prompt_tokens, usage.completion_tokens, cost)
-                        db.session.commit()
-                        billed = True
-                    else:
-                        logger.warning(
-                            "Upstream did not return usage data for streaming request "
-                            "(model=%s, entity_id=%s) — tokens and cost not recorded.",
-                            model_name, entity_id,
-                        )
-                except GeneratorExit:
-                    # Client disconnected mid-stream before billing — log a zero-cost
-                    # request so we can monitor how often this happens, then re-raise.
-                    if not billed:
-                        record_aborted_request(entity_id, mc_id, "api", endpoint_id=ep_id)
-                    raise
-                except Exception as exc:
-                    msg, err_type, _ = _classify_upstream_error(
-                        exc,
-                        f"Error during streaming request "
-                        f"(endpoint={ep_id} {ep_url} model={remote_model}, entity_id={entity_id})",
-                    )
-                    yield f"data: {json.dumps({'error': {'message': msg, 'type': err_type}})}\n\n"
-                    yield "data: [DONE]\n\n"
-
-        return Response(stream_with_context(generate()), content_type="text/event-stream")
-
     try:
         t0 = _time.time()
         with openai.OpenAI(api_key=ep_api_key, base_url=ep_url) as client:
             response = client.chat.completions.create(model=remote_model, messages=messages, **kwargs)
         duration = _time.time() - t0
     except Exception as exc:
-        return _err(*_classify_upstream_error(
+        return None, _err(*_classify_upstream_error(
             exc, f"upstream LLM error (endpoint={ep_id} {ep_url} model={remote_model})"))
 
     usage = response.usage
@@ -386,11 +334,89 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
     subtract_coins(entity_id, mc_id, cost, effective=effective)
     update_stats(entity_id, mc_id, "api", usage_prompt, usage_completion, cost,
                  endpoint_id=ep_id, duration=duration)
-
     _record_api_key_usage(ak_id, usage_prompt, usage_completion, cost)
     db.session.commit()
+    return response, None
 
-    return jsonify(response.model_dump())
+
+def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
+    """Shared logic for chat completions (used by both endpoints)."""
+    if not stream:
+        response, err = _complete_and_bill(model_name, messages, **kwargs)
+        if err:
+            return err
+        return jsonify(response.model_dump())
+
+    model_config, endpoint, effective, err = _preflight(model_name)
+    if err:
+        return err
+
+    entity_id = g.entity.id
+    ak_id = g.api_key.id
+
+    # Extract all scalars from ORM objects before releasing the DB connection.
+    # The streaming LLM call can take minutes — holding a pool connection for that
+    # entire duration exhausts the pool under load.
+    remote_model = endpoint.model_name or model_name
+    ep_api_key   = endpoint.api_key
+    ep_url       = endpoint.url
+    ep_id        = endpoint.id
+    mc_id        = model_config.id
+    mc_in_cost   = float(model_config.input_cost_per_million)
+    mc_out_cost  = float(model_config.output_cost_per_million)
+    db.session.remove()  # return connection to pool before the LLM call
+
+    def generate():
+        billed = False
+        with openai.OpenAI(api_key=ep_api_key, base_url=ep_url) as client:
+            try:
+                stream_options = {**kwargs.pop("stream_options", {}), "include_usage": True}
+                resp_stream = client.chat.completions.create(
+                    model=remote_model, messages=messages, stream=True,
+                    stream_options=stream_options,
+                    **kwargs,
+                )
+                usage = None
+                for chunk in resp_stream:
+                    if chunk.usage is not None:
+                        usage = chunk.usage
+                    yield f"data: {json.dumps(chunk.model_dump())}\n\n"
+                yield "data: [DONE]\n\n"
+
+                if usage is not None:
+                    cost = round(
+                        usage.prompt_tokens * mc_in_cost / 1_000_000
+                        + usage.completion_tokens * mc_out_cost / 1_000_000,
+                        6,
+                    )
+                    subtract_coins(entity_id, mc_id, cost, effective=effective)
+                    update_stats(entity_id, mc_id, "api", usage.prompt_tokens, usage.completion_tokens, cost,
+                                 endpoint_id=ep_id)
+                    _record_api_key_usage(ak_id, usage.prompt_tokens, usage.completion_tokens, cost)
+                    db.session.commit()
+                    billed = True
+                else:
+                    logger.warning(
+                        "Upstream did not return usage data for streaming request "
+                        "(model=%s, entity_id=%s) — tokens and cost not recorded.",
+                        model_name, entity_id,
+                    )
+            except GeneratorExit:
+                # Client disconnected mid-stream before billing — log a zero-cost
+                # request so we can monitor how often this happens, then re-raise.
+                if not billed:
+                    record_aborted_request(entity_id, mc_id, "api", endpoint_id=ep_id)
+                raise
+            except Exception as exc:
+                msg, err_type, _ = _classify_upstream_error(
+                    exc,
+                    f"Error during streaming request "
+                    f"(endpoint={ep_id} {ep_url} model={remote_model}, entity_id={entity_id})",
+                )
+                yield f"data: {json.dumps({'error': {'message': msg, 'type': err_type}})}\n\n"
+                yield "data: [DONE]\n\n"
+
+    return Response(stream_with_context(generate()), content_type="text/event-stream")
 
 
 def _do_audio(kind: str):
@@ -535,51 +561,13 @@ def completions():
     if data.get("stream", False):
         return _err("Streaming is not supported on /v1/completions; use /v1/chat/completions")
 
-    messages = [{"role": "user", "content": prompt}]
-
-    model_config, endpoint, effective, err = _preflight(model_name)
+    response, err = _complete_and_bill(model_name, [{"role": "user", "content": prompt}])
     if err:
         return err
-
-    entity_id    = g.entity.id
-    ak_id        = g.api_key.id
-    remote_model = endpoint.model_name or model_name
-    ep_api_key   = endpoint.api_key
-    ep_url       = endpoint.url
-    ep_id        = endpoint.id
-    mc_id        = model_config.id
-    mc_in_cost   = float(model_config.input_cost_per_million)
-    mc_out_cost  = float(model_config.output_cost_per_million)
-    db.session.remove()
-
-    try:
-        t0 = _time.time()
-        with openai.OpenAI(api_key=ep_api_key, base_url=ep_url) as client:
-            response = client.chat.completions.create(model=remote_model, messages=messages)
-        duration = _time.time() - t0
-    except Exception as exc:
-        return _err(*_classify_upstream_error(
-            exc, f"upstream LLM error (endpoint={ep_id} {ep_url} model={remote_model})"))
-
     if not response.choices:
         return _err("No response from model", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
 
     usage = response.usage
-    if usage is None:
-        logger.warning("Upstream did not return usage data (model=%s, entity_id=%s)", model_name, entity_id)
-        usage_prompt, usage_completion, usage_total = 0, 0, 0
-    else:
-        usage_prompt, usage_completion = usage.prompt_tokens, usage.completion_tokens
-        usage_total = usage.total_tokens
-
-    cost = round(usage_prompt * mc_in_cost / 1_000_000 + usage_completion * mc_out_cost / 1_000_000, 6)
-    subtract_coins(entity_id, mc_id, cost, effective=effective)
-    update_stats(entity_id, mc_id, "api", usage_prompt, usage_completion, cost,
-                 endpoint_id=ep_id, duration=duration)
-
-    _record_api_key_usage(ak_id, usage_prompt, usage_completion, cost)
-    db.session.commit()
-
     return jsonify(
         {
             "id": response.id,
@@ -594,9 +582,9 @@ def completions():
                 }
             ],
             "usage": {
-                "prompt_tokens": usage_prompt,
-                "completion_tokens": usage_completion,
-                "total_tokens": usage_total,
+                "prompt_tokens": usage.prompt_tokens if usage else 0,
+                "completion_tokens": usage.completion_tokens if usage else 0,
+                "total_tokens": usage.total_tokens if usage else 0,
             },
         }
     )
