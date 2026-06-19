@@ -70,7 +70,6 @@
 {% block scripts %}
 <script>
 'use strict';
-const CSRF = document.querySelector('meta[name="csrf-token"]').content;
 const CURRENT_EMAIL = {{ current_email | tojson }};
 const CONFIG_READONLY = {{ config_readonly | tojson }};
 
@@ -219,7 +218,7 @@ async function doSave() {
   try {
     const resp = await fetch('{{ url_for("admin.config_api_post") }}', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
       body: JSON.stringify(orderedData()),
     });
     const result = await resp.json();
@@ -837,7 +836,7 @@ async function syncModel() {
   try {
     const resp = await fetch('{{ url_for("admin.sync_model_api") }}', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
       body: JSON.stringify(model),
     });
     const result = await resp.json();
@@ -899,7 +898,7 @@ async function syncAllModels() {
     try {
       const resp = await fetch('{{ url_for("admin.sync_model_api") }}', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
         body: JSON.stringify(m),
       });
       if (!resp.ok) { skippedCount++; continue; }

@@ -1,7 +1,31 @@
 // app.js — global utilities for Lumen
 // Page-specific logic lives inline in each template's {% block scripts %}.
 
-const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+let csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+// The CSRF token baked into the page at load expires after WTF_CSRF_TIME_LIMIT
+// (1h). Refresh it periodically and when the tab regains focus so long-lived
+// pages (e.g. an open chat) keep working. Existing fetch calls read the global
+// csrfToken at send time, so updating it here keeps them valid with no changes.
+async function refreshCsrfToken() {
+  try {
+    const resp = await fetch("/csrf-token", { headers: { "Accept": "application/json" }, cache: "no-store" });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data.token) {
+      csrfToken = data.token;
+      const meta = document.querySelector('meta[name="csrf-token"]');
+      if (meta) meta.content = data.token;
+    }
+  } catch (e) {
+    /* network hiccup — keep the existing token and retry on the next tick */
+  }
+}
+
+setInterval(refreshCsrfToken, 30 * 60 * 1000);
+document.addEventListener("visibilitychange", function () {
+  if (document.visibilityState === "visible") refreshCsrfToken();
+});
 
 document.addEventListener("DOMContentLoaded", function () {
   // Auto-dismiss alerts after 20s; pause timer on hover/focus (WCAG 2.2.1)

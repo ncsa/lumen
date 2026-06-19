@@ -2,7 +2,8 @@ import hashlib
 from datetime import datetime, timezone
 from http import HTTPStatus
 
-from flask import Blueprint, abort, redirect, url_for, session, render_template, current_app
+from flask import Blueprint, abort, redirect, url_for, session, render_template, current_app, jsonify
+from flask_wtf.csrf import generate_csrf
 from sqlalchemy import select
 
 from lumen.extensions import db, oauth
@@ -266,6 +267,13 @@ def callback():
     session["gravatar_hash"] = entity.gravatar_hash or ""
     session["entity_email"] = email
     return redirect(url_for("chat.chat_page"))
+
+
+@auth_bp.route("/csrf-token")
+def csrf_token():
+    # Issue a freshly-timestamped CSRF token so long-lived pages can refresh
+    # before the WTF_CSRF_TIME_LIMIT (1h) expires.
+    return jsonify({"token": generate_csrf()})
 
 
 @auth_bp.route("/logout")
