@@ -39,41 +39,43 @@ def _entity_groups(eid: int) -> list:
     ).scalars().all()
 
 
-def _build_model_access_list(entity_id: int, usage_by_model: dict) -> list:
-    """Build model access list for an entity, merging access status with usage stats."""
+def _endpoint_status(eps: list) -> str:
+    """Map a model's endpoints to a health status: down / degraded / ok."""
+    healthy = sum(1 for e in eps if e.healthy)
+    if not eps or healthy == 0:
+        return "down"
+    if healthy < len(eps):
+        return "degraded"
+    return "ok"
+
+
+def _fetch_model_context(eid: int):
+    """Fetch all models, their endpoints, and bulk access/consent info once.
+
+    Shared by _build_model_usage and _build_model_access_list so a profile page
+    resolves model access and endpoints a single time instead of twice.
+    """
     all_models = db.session.execute(select(ModelConfig).order_by(ModelConfig.model_name)).scalars().all()
     model_ids = [mc.id for mc in all_models]
-
-    # Bulk-fetch endpoints to avoid one lazy SELECT per model in get_model_status
     eps_by_model: dict = {}
     if model_ids:
         for ep in db.session.execute(
             select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(model_ids))
         ).scalars().all():
             eps_by_model.setdefault(ep.model_config_id, []).append(ep)
+    access_statuses, consent_map = bulk_model_access_info(eid, model_ids)
+    return all_models, eps_by_model, access_statuses, consent_map
 
-    # Bulk-resolve access and consents to avoid N+1 per-model queries
-    access_statuses, consent_map = bulk_model_access_info(entity_id, model_ids)
+
+def _build_model_access_list(usage_by_model, all_models, eps_by_model, access_statuses, consent_map) -> list:
+    """Merge access status, model health, and usage stats for every model."""
     default_notice = current_app.config.get("GRAYLIST_DEFAULT_NOTICE")
-
     result = []
     for mc in all_models:
         access_status = access_statuses.get(mc.id, "allowed")
         consented = (mc.id in consent_map) if access_status == "graylist" else None
         u = usage_by_model.get(mc.model_name, {})
-        if not mc.active:
-            model_status = "disabled"
-        else:
-            eps = eps_by_model.get(mc.id, [])
-            healthy = sum(1 for e in eps if e.healthy)
-            if not eps:
-                model_status = "down"
-            elif healthy == 0:
-                model_status = "down"
-            elif healthy < len(eps):
-                model_status = "degraded"
-            else:
-                model_status = "ok"
+        model_status = "disabled" if not mc.active else _endpoint_status(eps_by_model.get(mc.id, []))
         result.append({
             "model_name": mc.model_name,
             "model_url": url_for("models_page.detail", model_name=mc.model_name),
@@ -107,20 +109,9 @@ def _fetch_chat_stats(eid: int):
     return chat_agg, conversation_count
 
 
-def _build_model_usage(eid: int):
-    all_active_models = db.session.execute(
-        select(ModelConfig).filter_by(active=True).order_by(ModelConfig.model_name)
-    ).scalars().all()
-    all_ids = [mc.id for mc in all_active_models]
-    access_statuses, _ = bulk_model_access_info(eid, all_ids)
-    accessible_model_ids = {mid for mid, status in access_statuses.items() if status != "blocked"}
-
-    eps_by_model: dict = {}
-    if all_ids:
-        for ep in db.session.execute(
-            select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(all_ids))
-        ).scalars().all():
-            eps_by_model.setdefault(ep.model_config_id, []).append(ep)
+def _build_model_usage(eid: int, all_models, eps_by_model, access_statuses):
+    active_ids = {mc.id for mc in all_models if mc.active}
+    accessible_model_ids = {mid for mid in active_ids if access_statuses.get(mid) != "blocked"}
 
     usage_rows = db.session.execute(
         select(
@@ -136,28 +127,16 @@ def _build_model_usage(eid: int):
     ).all()
     usage_by_id = {r[0]: r for r in usage_rows}
 
-    models_to_show_ids = {mc.id for mc in all_active_models if mc.id in accessible_model_ids} | set(usage_by_id)
-    all_relevant_models = (
-        db.session.execute(
-            select(ModelConfig).where(ModelConfig.id.in_(models_to_show_ids)).order_by(ModelConfig.model_name)
-        ).scalars().all()
-    ) if models_to_show_ids else []
+    # all_models is already ordered by name; keep accessible-active models and any
+    # model the entity has usage on (which may now be inactive).
+    models_to_show_ids = accessible_model_ids | set(usage_by_id)
+    all_relevant_models = [mc for mc in all_models if mc.id in models_to_show_ids]
 
     model_usage = []
     for mc in all_relevant_models:
         u = usage_by_id.get(mc.id)
         has_access = mc.id in accessible_model_ids
-        if not has_access:
-            status = "disabled"
-        else:
-            eps = eps_by_model.get(mc.id, [])
-            healthy = sum(1 for e in eps if e.healthy)
-            if not eps or healthy == 0:
-                status = "down"
-            elif healthy < len(eps):
-                status = "degraded"
-            else:
-                status = "ok"
+        status = "disabled" if not has_access else _endpoint_status(eps_by_model.get(mc.id, []))
         model_usage.append({
             "model_name": mc.model_name,
             "requests": int(u[1] or 0) if u else 0,
@@ -193,13 +172,18 @@ def _build_coin_pool(eid: int):
 def _get_profile_data(eid: int) -> dict:
     chat_agg, conversation_count = _fetch_chat_stats(eid)
     api_keys = db.session.execute(select(APIKey).filter_by(entity_id=eid).order_by(APIKey.created_at)).scalars().all()
-    model_usage, total_tokens_used, total_cost = _build_model_usage(eid)
+    # Fetch model context once and build both the usage list and the access list from it.
+    all_models, eps_by_model, access_statuses, consent_map = _fetch_model_context(eid)
+    model_usage, total_tokens_used, total_cost = _build_model_usage(eid, all_models, eps_by_model, access_statuses)
+    usage_by_model = {u["model_name"]: u for u in model_usage}
+    model_access_list = _build_model_access_list(usage_by_model, all_models, eps_by_model, access_statuses, consent_map)
     coin_pool = _build_coin_pool(eid)
     return {
         "chat_agg": chat_agg,
         "conversation_count": conversation_count,
         "api_keys": api_keys,
         "model_usage": model_usage,
+        "model_access_list": model_access_list,
         "coin_pool": coin_pool,
         "status": {"total_tokens_used": total_tokens_used, "total_cost": total_cost},
     }
@@ -211,13 +195,9 @@ def index():
     entity_id = session["entity_id"]
     data = _get_profile_data(entity_id)
 
-    usage_by_model = {u["model_name"]: u for u in data.get("model_usage", [])}
-    model_access_list = _build_model_access_list(entity_id, usage_by_model)
-
     profile_entity = db.session.get(Entity, entity_id)
     return render_template(
         "profile.html", **data,
-        model_access_list=model_access_list,
         profile_entity=profile_entity,
         gravatar_url=_gravatar_url(profile_entity.email if profile_entity else "", size=230),
         profile_groups=_entity_groups(entity_id),

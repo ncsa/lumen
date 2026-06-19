@@ -8,7 +8,7 @@ from http import HTTPStatus
 from flask import Blueprint, current_app, render_template, request, redirect, url_for, jsonify, session
 from sqlalchemy import func, case, select
 
-from lumen.blueprints.profile.routes import _build_model_access_list, _entity_groups, _get_profile_data, _gravatar_url
+from lumen.blueprints.profile.routes import _entity_groups, _get_profile_data, _gravatar_url
 from lumen.decorators import admin_required
 from lumen.services.config_watcher import RESTART_REQUIRED
 from lumen.extensions import db
@@ -97,12 +97,9 @@ def reset_user_tokens(eid):
 def user_profile(eid):
     entity = db.get_or_404(Entity, eid)
     data = _get_profile_data(eid)
-    usage_by_model = {u["model_name"]: u for u in data.get("model_usage", [])}
-    model_access_list = _build_model_access_list(eid, usage_by_model)
     return render_template(
         "profile.html",
         **data,
-        model_access_list=model_access_list,
         viewing_user=entity,
         profile_entity=entity,
         gravatar_url=_gravatar_url(entity.email, size=230),

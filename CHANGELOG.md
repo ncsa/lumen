@@ -22,6 +22,7 @@ All notable changes to Lumen will be documented in this file.
 - `subtract_coins` now deducts in a single atomic UPDATE floored at 0 (`GREATEST(0, coins_left - cost)`, compiled to `max(...)` on SQLite) instead of a conditional deduct followed by a separate zeroing. This removes a race where a concurrent coin refill/credit landing between the two statements could be clobbered back to 0 (or the request left uncharged).
 
 ### Changed
+- Profile/clients/admin pages now resolve model access, endpoints, and the model list once per request instead of twice (the access list and usage list shared the same lookups).
 - Minor cleanup: removed a duplicate `datetime` import and an unused `calculate_cost` import, and dropped the unreachable empty-string fallback for `ENCRYPTION_KEY` (the app already refuses to start without it).
 - Centralized UTC time handling: added `lumen.timeutils.utcnow()` (naive UTC) and replaced the scattered `datetime.now(timezone.utc).replace(tzinfo=None)` idiom across all models and call sites. No behavior or schema change.
 - Config sync now preloads models once per pass instead of issuing a per-model-name lookup for every group/client `model_access` entry (removes an N+1 during `init-db` and config reloads).

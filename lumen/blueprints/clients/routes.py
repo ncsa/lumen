@@ -14,7 +14,7 @@ from lumen.models.model_config import ModelConfig
 from lumen.models.entity_stat import EntityStat
 from lumen.services.crypto import hash_api_key
 from lumen.services.llm import get_model_access_status, has_model_consent
-from lumen.blueprints.profile.routes import _build_model_access_list, _get_profile_data
+from lumen.blueprints.profile.routes import _get_profile_data
 
 clients_bp = Blueprint("clients", __name__)
 
@@ -118,14 +118,10 @@ def detail(sid):
         .order_by(Entity.name)
     ).scalars().all()
 
-    usage_by_model = {u["model_name"]: u for u in data.get("model_usage", [])}
-    model_access_list = _build_model_access_list(sid, usage_by_model)
-
     return render_template(
         "client_detail.html",
         client=client,
         managers=managers,
-        model_access_list=model_access_list,
         **data,
     )
 
