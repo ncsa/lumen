@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.17.1] - 2026-06-19
+
 ### Fixed
 - Write actions on long-lived pages (e.g. deleting a conversation after chatting for over an hour) no longer fail with `400 Bad Request`. The CSRF token baked into the page at load expires after `WTF_CSRF_TIME_LIMIT` (1h); the client now refreshes it from a new `GET /csrf-token` endpoint on a 30-minute timer and whenever the tab regains focus. The admin config editor, which kept its own copy of the page-load token, now uses the shared refreshed token too.
 
