@@ -136,6 +136,8 @@ oauth2:
   scopes: "openid email profile org.cilogon.userinfo"
   # -- Extra parameters passed to the authorization redirect (e.g. idphint, skin)
   params: {}
+  # -- Accept logins whose provider reports the email as unverified (email_verified=false). Off by default.
+  allowUnverifiedEmail: false
 
 # -- Name of a pre-existing Secret containing app credentials.
 # Must have keys: secret-key, encryption-key, oauth2-client-id, oauth2-client-secret.

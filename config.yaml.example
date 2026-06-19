@@ -37,6 +37,9 @@ oauth2:
   server_metadata_url:
   redirect_uri: http://localhost:5000/callback
   scopes: openid email profile org.cilogon.userinfo  # org.cilogon.userinfo enables affiliation, member_of, idp, ou for group rules
+  # Accept logins whose provider reports the email as unverified (email_verified=false).
+  # Off by default; a missing email_verified claim is always accepted.
+  # allow_unverified_email: false
   # Optional CILogon parameters passed to the authorization endpoint.
   # See https://www.cilogon.org/oidc for the full list.
   # Uncomment to restrict login to the University of Illinois IdP only:

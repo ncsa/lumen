@@ -39,7 +39,9 @@ def apply_hot_config(app, yaml_data: dict):
     logging.getLogger("uvicorn.access").setLevel(werkzeug_level)
     app.config["LOG_MODEL_HEALTH"] = logs_cfg.get("model", False)
 
-    app.config["OAUTH2_PARAMS"] = yaml_data.get("oauth2", {}).get("params") or {}
+    oauth2_cfg = yaml_data.get("oauth2", {})
+    app.config["OAUTH2_PARAMS"] = oauth2_cfg.get("params") or {}
+    app.config["OAUTH2_ALLOW_UNVERIFIED_EMAIL"] = bool(oauth2_cfg.get("allow_unverified_email", False))
     app.config["EMAIL_THEMES"] = app_cfg.get("email_themes") or {}
     api_cfg = yaml_data.get("api", {})
     app.config["API_REQUIRE_MODEL_CONSENT"] = api_cfg.get("consent", True)

@@ -91,7 +91,8 @@
         "serverMetadataUrl": { "type": "string", "format": "uri" },
         "redirectUri": { "type": "string" },
         "scopes": { "type": "string" },
-        "params": { "type": "object" }
+        "params": { "type": "object" },
+        "allowUnverifiedEmail": { "type": "boolean" }
       }
     },
     "existingSecret": { "type": "string" },

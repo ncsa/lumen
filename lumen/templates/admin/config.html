@@ -391,6 +391,7 @@ function renderOauth2() {
       ${field('oa-meta', 'Server Metadata URL', ti('oa-meta', o.server_metadata_url))}
       ${field('oa-redir','Redirect URI',        ti('oa-redir',o.redirect_uri))}
       ${field('oa-scope','Scopes',              ti('oa-scope',o.scopes))}
+      ${cbi('oa-unverified', !!o.allow_unverified_email, 'Accept logins with an unverified email (email_verified: false)')}
     `)}
     ${card('Extra Params', `
       <div id="oauth-params">${paramRows}</div>
@@ -400,11 +401,12 @@ function renderOauth2() {
 }
 function collectOauth2() {
   const o = {};
-  o.client_id          = val('oa-cid')  || undefined;
-  o.client_secret      = val('oa-sec')  || undefined;
-  o.server_metadata_url= val('oa-meta') || undefined;
-  o.redirect_uri       = val('oa-redir')|| undefined;
-  o.scopes             = val('oa-scope')|| undefined;
+  o.client_id             = val('oa-cid')            || undefined;
+  o.client_secret         = val('oa-sec')            || undefined;
+  o.server_metadata_url   = val('oa-meta')           || undefined;
+  o.redirect_uri          = val('oa-redir')          || undefined;
+  o.scopes                = val('oa-scope')          || undefined;
+  o.allow_unverified_email= boolVal('oa-unverified') || undefined;
   const params = {};
   document.querySelectorAll('#oauth-params .kv-row').forEach(row => {
     const k = row.querySelector('.kv-key').value.trim();

@@ -5,6 +5,7 @@ All notable changes to Lumen will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Reject OAuth logins where the provider marks the email unverified (`email_verified: false`); a missing claim is still accepted. New `oauth2.allow_unverified_email` flag (default `false`, hot-reloaded, in the Helm chart and config editor) overrides this.
 - `lumen_db_pool_connections` Prometheus gauge (labels `state=size|checked_in|checked_out|overflow|limit`) exported from the `/metrics` endpoint, plus a warning log when the connection pool exceeds 80% of capacity. Surfaces slow connection leaks: a `checked_out` value that climbs and never falls back points to a code path that checks out a pool connection and never returns it.
 - `/v1/audio/transcriptions` and `/v1/audio/translations` endpoints (speech-to-text). Billed per minute of audio via `audio_cost_per_minute` on the model config when the upstream reports `usage.type=duration`; falls back to per-token billing otherwise. Adds `audio_seconds` tracking to request logs, model/entity stats, and API keys. Helm chart template, `values.schema.json`, and `config.yaml.example` updated to support `audioCostPerMinute` per model.
 

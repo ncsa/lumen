@@ -225,6 +225,13 @@ def callback():
     if not email:
         return "OAuth2 provider did not return an email address.", HTTPStatus.BAD_REQUEST
 
+    # Reject an email the provider explicitly marks unverified (account-takeover guard).
+    # A missing email_verified claim is allowed; oauth2.allow_unverified_email accepts even false.
+    ev = userinfo.get("email_verified")
+    email_unverified = ev is False or (isinstance(ev, str) and ev.strip().lower() == "false")
+    if email_unverified and not current_app.config.get("OAUTH2_ALLOW_UNVERIFIED_EMAIL", False):
+        return "Your identity provider reports this email address as unverified.", HTTPStatus.FORBIDDEN
+
     name = userinfo.get("name") or userinfo.get("given_name") or email.split("@")[0]
 
     yaml_data = current_app.config.get("YAML_DATA", {})

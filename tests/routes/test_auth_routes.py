@@ -103,3 +103,43 @@ def test_devlogin_returns_403_when_not_configured(app, client):
     finally:
         if original is not None:
             app.config["DEV_USER"] = original
+
+
+# ---------------------------------------------------------------------------
+# OAuth callback — email_verified gate
+# ---------------------------------------------------------------------------
+
+def _callback_with_userinfo(client, userinfo):
+    from unittest.mock import MagicMock, patch
+    from lumen.blueprints.auth import routes as auth_routes
+    provider = MagicMock()
+    provider.authorize_access_token.return_value = {"userinfo": userinfo}
+    with patch.object(auth_routes.oauth, "provider", provider, create=True):
+        return client.get("/callback", follow_redirects=False)
+
+
+def test_callback_rejects_explicitly_unverified_email(client):
+    resp = _callback_with_userinfo(client, {"email": "unv@example.com", "email_verified": False, "name": "U"})
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_callback_allows_unverified_email_when_configured(app, client):
+    app.config["OAUTH2_ALLOW_UNVERIFIED_EMAIL"] = True
+    try:
+        resp = _callback_with_userinfo(client, {"email": "unv2@example.com", "email_verified": False, "name": "U"})
+        assert resp.status_code == HTTPStatus.FOUND
+        assert "/chat" in resp.headers["Location"]
+    finally:
+        app.config["OAUTH2_ALLOW_UNVERIFIED_EMAIL"] = False
+
+
+def test_callback_allows_missing_email_verified_claim(client):
+    resp = _callback_with_userinfo(client, {"email": "miss@example.com", "name": "U"})
+    assert resp.status_code == HTTPStatus.FOUND
+    assert "/chat" in resp.headers["Location"]
+
+
+def test_callback_allows_verified_email(client):
+    resp = _callback_with_userinfo(client, {"email": "ver@example.com", "email_verified": True, "name": "U"})
+    assert resp.status_code == HTTPStatus.FOUND
+    assert "/chat" in resp.headers["Location"]
