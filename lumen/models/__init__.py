@@ -7,6 +7,7 @@ from .entity_limit import EntityLimit
 from .entity_balance import EntityBalance
 from .entity_model_access import EntityModelAccess
 from .entity_model_consent import EntityModelConsent
+from .entity_stat import EntityStat
 from .model_stat import ModelStat
 from .conversation import Conversation
 from .message import Message
@@ -26,6 +27,7 @@ __all__ = [
     "EntityBalance",
     "EntityModelAccess",
     "EntityModelConsent",
+    "EntityStat",
     "ModelStat",
     "Conversation",
     "Message",
