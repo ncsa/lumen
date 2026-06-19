@@ -1,3 +1,8 @@
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy.orm import Mapped, mapped_column
+
 from lumen.timeutils import utcnow
 
 from lumen.extensions import db
@@ -17,24 +22,24 @@ class Message(db.Model):
         {"comment": "Individual turns within a conversation; performance metadata columns are assistant-only"},
     )
 
-    id = db.Column(db.Integer, primary_key=True, comment="Primary key")
-    conversation_id = db.Column(
-        db.Integer, db.ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False,
+    id: Mapped[int] = mapped_column(db.Integer, primary_key=True, comment="Primary key")
+    conversation_id: Mapped[int] = mapped_column(
+        db.Integer, db.ForeignKey("conversations.id", ondelete="CASCADE"),
         comment="The parent conversation"
     )
     # 'user', 'assistant', or 'system'
-    role = db.Column(db.String(16), nullable=False, comment="Speaker role: user, assistant, or system")
-    content = db.Column(db.Text, nullable=False, comment="Full message text")
-    created_at = db.Column(db.DateTime, default=utcnow, comment="UTC creation timestamp")
+    role: Mapped[str] = mapped_column(db.String(16), comment="Speaker role: user, assistant, or system")
+    content: Mapped[str] = mapped_column(db.Text, comment="Full message text")
+    created_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, default=utcnow, comment="UTC creation timestamp")
 
     # Assistant-message metadata — null for user/system messages
-    input_tokens = db.Column(db.Integer, nullable=True, comment="Input tokens reported by the model; assistant messages only")
-    output_tokens = db.Column(db.Integer, nullable=True, comment="Output tokens reported by the model; assistant messages only")
+    input_tokens: Mapped[Optional[int]] = mapped_column(db.Integer, comment="Input tokens reported by the model; assistant messages only")
+    output_tokens: Mapped[Optional[int]] = mapped_column(db.Integer, comment="Output tokens reported by the model; assistant messages only")
     # Seconds from request send to first token received
-    time_to_first_token = db.Column(db.Float, nullable=True, comment="Seconds from request send to first token received; assistant messages only")
+    time_to_first_token: Mapped[Optional[float]] = mapped_column(db.Float, comment="Seconds from request send to first token received; assistant messages only")
     # Total response time in seconds
-    duration = db.Column(db.Float, nullable=True, comment="Total response time in seconds; assistant messages only")
+    duration: Mapped[Optional[float]] = mapped_column(db.Float, comment="Total response time in seconds; assistant messages only")
     # Output tokens per second
-    output_speed = db.Column(db.Float, nullable=True, comment="Output tokens per second; assistant messages only")
-    thinking = db.Column(db.Text, nullable=True, comment="Reasoning/thinking content from the model; assistant messages only")
-    thinking_tokens = db.Column(db.Integer, nullable=True, comment="Thinking/reasoning token count reported by the model; assistant messages only")
+    output_speed: Mapped[Optional[float]] = mapped_column(db.Float, comment="Output tokens per second; assistant messages only")
+    thinking: Mapped[Optional[str]] = mapped_column(db.Text, comment="Reasoning/thinking content from the model; assistant messages only")
+    thinking_tokens: Mapped[Optional[int]] = mapped_column(db.Integer, comment="Thinking/reasoning token count reported by the model; assistant messages only")

@@ -1,3 +1,8 @@
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from lumen.timeutils import utcnow
 
 from lumen.extensions import db
@@ -16,13 +21,13 @@ class Conversation(db.Model):
         {"comment": "Chat sessions created through the Lumen web UI"},
     )
 
-    id = db.Column(db.Integer, primary_key=True, comment="Primary key")
-    entity_id = db.Column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), nullable=False, comment="The owning user entity")
-    title = db.Column(db.String(40), nullable=False, default="", comment="Short auto-generated or user-edited title")
-    model = db.Column(db.String(128), nullable=False, default="", comment="Snapshot of the model name at conversation creation time")
-    created_at = db.Column(db.DateTime, default=utcnow, comment="UTC creation timestamp")
-    updated_at = db.Column(db.DateTime, default=utcnow, comment="UTC timestamp of the most recent message or edit")
+    id: Mapped[int] = mapped_column(db.Integer, primary_key=True, comment="Primary key")
+    entity_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), comment="The owning user entity")
+    title: Mapped[str] = mapped_column(db.String(40), default="", comment="Short auto-generated or user-edited title")
+    model: Mapped[str] = mapped_column(db.String(128), default="", comment="Snapshot of the model name at conversation creation time")
+    created_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, default=utcnow, comment="UTC creation timestamp")
+    updated_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, default=utcnow, comment="UTC timestamp of the most recent message or edit")
 
-    messages = db.relationship(
-        "Message", backref="conversation", lazy=True, cascade="all, delete-orphan", passive_deletes=True
+    messages: Mapped[list["Message"]] = relationship(
+        backref="conversation", lazy=True, cascade="all, delete-orphan", passive_deletes=True
     )

@@ -1,3 +1,5 @@
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from ..extensions import db
 
 
@@ -10,13 +12,13 @@ class GroupMember(db.Model):
 
     __tablename__ = "group_members"
 
-    id = db.Column(db.Integer, primary_key=True, comment="Primary key")
-    group_id = db.Column(db.Integer, db.ForeignKey("groups.id", ondelete="CASCADE"), nullable=False, comment="The group")
-    entity_id = db.Column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), nullable=False, comment="The member entity")
+    id: Mapped[int] = mapped_column(db.Integer, primary_key=True, comment="Primary key")
+    group_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("groups.id", ondelete="CASCADE"), comment="The group")
+    entity_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), comment="The member entity")
     # When true, this membership was created by config.yaml and must not be removed via the UI
-    config_managed = db.Column(db.Boolean, default=False, nullable=False, comment="When true, created by config.yaml and must not be removed via the UI")
+    config_managed: Mapped[bool] = mapped_column(db.Boolean, default=False, comment="When true, created by config.yaml and must not be removed via the UI")
 
-    entity = db.relationship("Entity", backref="group_memberships")
+    entity: Mapped["Entity"] = relationship(backref="group_memberships")
 
     __table_args__ = (
         db.UniqueConstraint("group_id", "entity_id"),

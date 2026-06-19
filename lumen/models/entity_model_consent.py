@@ -1,3 +1,7 @@
+from datetime import datetime
+
+from sqlalchemy.orm import Mapped, mapped_column
+
 from lumen.timeutils import utcnow
 
 from ..extensions import db
@@ -13,10 +17,10 @@ class EntityModelConsent(db.Model):
 
     __tablename__ = "entity_model_consents"
 
-    id = db.Column(db.Integer, primary_key=True, comment="Primary key")
-    entity_id = db.Column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), nullable=False, comment="The consenting entity")
-    model_config_id = db.Column(db.Integer, db.ForeignKey("model_configs.id", ondelete="CASCADE"), nullable=False, comment="The model for which consent was given")
-    consented_at = db.Column(db.DateTime, nullable=False, default=utcnow, comment="UTC timestamp when the entity accepted the model notice")
+    id: Mapped[int] = mapped_column(db.Integer, primary_key=True, comment="Primary key")
+    entity_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), comment="The consenting entity")
+    model_config_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("model_configs.id", ondelete="CASCADE"), comment="The model for which consent was given")
+    consented_at: Mapped[datetime] = mapped_column(db.DateTime, default=utcnow, comment="UTC timestamp when the entity accepted the model notice")
 
     __table_args__ = (
         db.UniqueConstraint("entity_id", "model_config_id", name="uq_emc_entity_model"),

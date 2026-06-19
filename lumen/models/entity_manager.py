@@ -1,3 +1,5 @@
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from ..extensions import db
 
 
@@ -11,12 +13,12 @@ class EntityManager(db.Model):
 
     __tablename__ = "entity_managers"
 
-    id = db.Column(db.Integer, primary_key=True, comment="Primary key")
-    user_entity_id = db.Column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), nullable=False, comment="The user who has management rights over the client")
-    client_entity_id = db.Column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), nullable=False, comment="The client entity being managed")
+    id: Mapped[int] = mapped_column(db.Integer, primary_key=True, comment="Primary key")
+    user_entity_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), comment="The user who has management rights over the client")
+    client_entity_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), comment="The client entity being managed")
 
-    user = db.relationship("Entity", foreign_keys=[user_entity_id], backref="managed_clients_assoc")
-    client = db.relationship("Entity", foreign_keys=[client_entity_id], backref="manager_assoc")
+    user: Mapped["Entity"] = relationship(foreign_keys=[user_entity_id], backref="managed_clients_assoc")
+    client: Mapped["Entity"] = relationship(foreign_keys=[client_entity_id], backref="manager_assoc")
 
     __table_args__ = (
         db.UniqueConstraint("user_entity_id", "client_entity_id"),

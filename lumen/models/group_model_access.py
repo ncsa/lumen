@@ -1,3 +1,5 @@
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from ..extensions import db
 
 
@@ -11,13 +13,13 @@ class GroupModelAccess(db.Model):
 
     __tablename__ = "group_model_access"
 
-    id = db.Column(db.Integer, primary_key=True, comment="Primary key")
-    group_id = db.Column(db.Integer, db.ForeignKey("groups.id", ondelete="CASCADE"), nullable=False, comment="The group the override applies to")
-    model_config_id = db.Column(db.Integer, db.ForeignKey("model_configs.id", ondelete="CASCADE"), nullable=False, comment="The model being overridden")
+    id: Mapped[int] = mapped_column(db.Integer, primary_key=True, comment="Primary key")
+    group_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("groups.id", ondelete="CASCADE"), comment="The group the override applies to")
+    model_config_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("model_configs.id", ondelete="CASCADE"), comment="The model being overridden")
     # 'whitelist' | 'blacklist' | 'graylist'
-    access_type = db.Column(db.String(20), nullable=False, comment="whitelist (always allowed), blacklist (always denied), or graylist (requires consent)")
+    access_type: Mapped[str] = mapped_column(db.String(20), comment="whitelist (always allowed), blacklist (always denied), or graylist (requires consent)")
 
-    model_config = db.relationship("ModelConfig")
+    model_config: Mapped["ModelConfig"] = relationship()
 
     __table_args__ = (
         db.UniqueConstraint("group_id", "model_config_id", name="uq_gma_group_model"),

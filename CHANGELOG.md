@@ -27,6 +27,7 @@ All notable changes to Lumen will be documented in this file.
 - `get_model_access_status` now delegates to `bulk_model_access_info` with a single-element list instead of duplicating the full access-resolution pipeline.
 - `/v1/completions` and the non-streaming `/v1/chat/completions` now share one `_complete_and_bill` helper (upstream call + billing) instead of duplicating it; each endpoint only shapes its own response.
 - Profile/clients/admin pages now resolve model access, endpoints, and the model list once per request instead of twice (the access list and usage list shared the same lookups).
+- All models migrated from the legacy `db.Column`/`db.relationship` style to SQLAlchemy 2.x `Mapped[...]`/`mapped_column`/typed `relationship`. Verified schema-identical (no DB migration needed) via DDL diff on both dialects and Alembic `compare_metadata` against a baseline database.
 - Minor cleanup: removed a duplicate `datetime` import and an unused `calculate_cost` import, and dropped the unreachable empty-string fallback for `ENCRYPTION_KEY` (the app already refuses to start without it).
 - Centralized UTC time handling: added `lumen.timeutils.utcnow()` (naive UTC) and replaced the scattered `datetime.now(timezone.utc).replace(tzinfo=None)` idiom across all models and call sites. No behavior or schema change.
 - Config sync now preloads models once per pass instead of issuing a per-model-name lookup for every group/client `model_access` entry (removes an N+1 during `init-db` and config reloads).

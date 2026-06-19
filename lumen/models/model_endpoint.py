@@ -1,3 +1,8 @@
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy.orm import Mapped, mapped_column
+
 from lumen.timeutils import utcnow
 from ..extensions import db
 
@@ -16,17 +21,17 @@ class ModelEndpoint(db.Model):
         {"comment": "Backend endpoints for model_configs; multiple endpoints enable load distribution and failover"},
     )
 
-    id = db.Column(db.Integer, primary_key=True, comment="Primary key")
-    model_config_id = db.Column(db.Integer, db.ForeignKey("model_configs.id", ondelete="CASCADE"), nullable=False, comment="Parent model configuration")
+    id: Mapped[int] = mapped_column(db.Integer, primary_key=True, comment="Primary key")
+    model_config_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("model_configs.id", ondelete="CASCADE"), comment="Parent model configuration")
     # Base URL of the upstream API (e.g. https://api.openai.com/v1)
-    url = db.Column(db.String(256), nullable=False, comment="Base URL of the upstream API")
+    url: Mapped[str] = mapped_column(db.String(256), comment="Base URL of the upstream API")
     # Credential forwarded to the upstream API
-    api_key = db.Column(db.String(256), nullable=False, comment="Credential forwarded to the upstream API")
+    api_key: Mapped[str] = mapped_column(db.String(256), comment="Credential forwarded to the upstream API")
     # When set, this name is sent to the endpoint instead of model_config.model_name,
     # allowing one Lumen model to fan out to endpoints that use different identifiers.
-    model_name = db.Column(db.String(128), nullable=True, comment="Override model name sent upstream; null means use model_config.model_name")
+    model_name: Mapped[Optional[str]] = mapped_column(db.String(128), comment="Override model name sent upstream; null means use model_config.model_name")
     # Updated by the health-check background task
-    healthy = db.Column(db.Boolean, default=False, nullable=False, comment="Last known health status, updated by the health-check background task")
+    healthy: Mapped[bool] = mapped_column(db.Boolean, default=False, comment="Last known health status, updated by the health-check background task")
     # Null if the endpoint has never been health-checked
-    last_checked_at = db.Column(db.DateTime, nullable=True, comment="UTC timestamp of the most recent health check; null if never checked")
-    created_at = db.Column(db.DateTime, default=utcnow, comment="UTC creation timestamp")
+    last_checked_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, comment="UTC timestamp of the most recent health check; null if never checked")
+    created_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, default=utcnow, comment="UTC creation timestamp")
