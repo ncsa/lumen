@@ -126,3 +126,21 @@ def test_config_post_backs_up_previous_config(app, admin_client, tmp_path):
         assert "Updated" in cfg.read_text()
     finally:
         app.config["CONFIG_YAML"] = original
+
+
+def test_config_post_forbidden_when_editor_disabled(app, admin_client, tmp_path):
+    """POST /admin/api/config returns 403 when CONFIG_EDITOR is False (git-managed config)."""
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("app:\n  name: Original\n")
+    original_path = app.config["CONFIG_YAML"]
+    original_editor = app.config.get("CONFIG_EDITOR", True)
+    app.config["CONFIG_YAML"] = str(cfg)
+    app.config["CONFIG_EDITOR"] = False
+    try:
+        resp = admin_client.post("/admin/api/config", json={"app": {"name": "Updated"}})
+        assert resp.status_code == HTTPStatus.FORBIDDEN
+        # The file must be untouched when the editor is disabled.
+        assert "Original" in cfg.read_text()
+    finally:
+        app.config["CONFIG_YAML"] = original_path
+        app.config["CONFIG_EDITOR"] = original_editor

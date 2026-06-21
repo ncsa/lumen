@@ -14,7 +14,9 @@ These are the core settings that make Lumen work: database, authentication, and 
 | `debug` | Enable debug mode (set to `false` in production) |
 | `theme` | Institutional theme. Themes live in `themes/<name>/`. Built-in: `default`, `illinois`, `uic`, `uis`. Falls back to `default` if not found. |
 | `github_url` | Optional — overrides the default GitHub link in the navbar |
-| `graylist_default_notice` | Optional — fallback notice shown for any graylisted model that has no per-model `notice` set |
+| `config_editor` | Optional (default: `true`) — when `false`, the `/admin/config` editor is read-only. Set this for git-managed configs that should only change through version control. The Helm chart sets it to `false`. |
+
+> The global acknowledgement message has moved to `defaults.models.ack_message` (see [Admin Configuration](config.md#global-defaults)). The legacy `app.graylist_default_notice` is still accepted as input and feeds `defaults.models.ack_message`.
 
 ### Database Pool
 
@@ -66,7 +68,7 @@ app:
       - staff
 ```
 
-The specified email logs in directly without using CILogon OAuth. It also assigns the listed groups to that user. Should not be used in production.
+The specified email logs in directly without going through the OAuth identity provider. It also assigns the listed groups to that user. Should not be used in production.
 
 ### Logging
 
@@ -175,7 +177,7 @@ config live **under `api:`** (e.g. `api.monitoring.token`, `api.prometheus.enabl
 
 ```yaml
 api:
-  consent: true        # set to false to exempt API requests from the graylist model-consent requirement
+  consent: true        # set to false to exempt API requests from the model acknowledgement requirement
 
   monitoring:
     token: "my-secret-token"
@@ -188,7 +190,7 @@ api:
 
 | Field | Description |
 |-------|-------------|
-| `consent` | When `true` (default), API requests to graylisted models require recorded consent, just like the web UI. Set to `false` to exempt API requests from the consent requirement. |
+| `consent` | When `true` (default), API requests to models with `needs_ack: true` require recorded acknowledgement, just like the web UI. Set to `false` to exempt API requests from the acknowledgement requirement. |
 
 ### api.monitoring
 

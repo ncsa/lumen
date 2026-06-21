@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_user_search_modal.html" import user_search_modal %}
 {% block title %}Config Editor{% endblock %}
 
 {% block content %}
@@ -20,6 +21,9 @@
     </div>
   </div>
 </div>
+
+{{ user_search_modal('add-user-modal', 'Add User', 'add-user-email', 'user-suggestions', 'add-user-confirm', 'Add User',
+   'Search for an existing user by name or email, or type a new email address.') }}
 
 <style>
   .cfg-layout { display:flex; height:calc(100vh - var(--cfg-top, 200px)); margin:0 -1.5rem 0; overflow:hidden; }
@@ -50,7 +54,11 @@
       <h5 id="cfg-section-title" class="mb-0">Loading…</h5>
       <span id="cfg-section-desc" class="text-muted small"></span>
     </div>
-    {% if config_readonly %}
+    {% if editor_disabled %}
+    <div class="mx-3 mt-2 alert alert-info py-2 small" role="alert">
+      <strong>Read-only:</strong> The config editor is disabled (<code>app.config_editor: false</code>). The config is managed in git; changes cannot be saved from the UI.
+    </div>
+    {% elif config_readonly %}
     <div class="mx-3 mt-2 alert alert-info py-2 small" role="alert">
       <strong>Read-only:</strong> The config file is mounted read-only. Changes cannot be saved from the UI.
     </div>
@@ -68,6 +76,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/user-search.js') }}"></script>
 <script>
 'use strict';
 const CURRENT_EMAIL = {{ current_email | tojson }};
@@ -81,6 +90,7 @@ const state = {
   selectedModelIdx: 0,
   selectedGroupKey: null,
   selectedClientKey: null,
+  selectedUserKey: null,
 };
 
 const SECTIONS = [
@@ -90,7 +100,9 @@ const SECTIONS = [
   { id:'api',           label:'API',            desc:'API flags, Prometheus metrics, and monitoring' },
   { id:'chat',          label:'Chat',           desc:'Chat interface settings' },
   { id:'rate_limiting', label:'Rate Limiting',  desc:'Request rate limits' },
+  { id:'defaults',      label:'Defaults',       desc:'Global model & token defaults' },
   { id:'groups',        label:'Groups',         desc:'User groups and access control' },
+  { id:'users',         label:'Users',          desc:'Per-user overrides (tokens & model access)' },
   { id:'clients',       label:'Clients',        desc:'API client configurations' },
   { id:'models',        label:'Models',         desc:'AI model configurations' },
 ];
@@ -103,8 +115,6 @@ const val    = id => ($(`${id}`)?.value ?? '');
 const numVal = id => { const v = val(id); return v === '' ? undefined : Number(v); };
 const boolVal = id => !!($(`${id}`)?.checked);
 const clone   = o  => JSON.parse(JSON.stringify(o));
-const arrFromLines  = id => val(id).split('\n').map(s => s.trim()).filter(Boolean);
-const linesToStr    = arr => (arr || []).join('\n');
 const arrFromCommas = id => val(id).split(',').map(s => s.trim()).filter(Boolean);
 
 function field(id, label, inputHtml, hint = '') {
@@ -148,12 +158,42 @@ function kvRow(k, v) {
 }
 function addKvRow(containerId) { $(containerId).insertAdjacentHTML('beforeend', kvRow('', '')); }
 
+// Migrate legacy (v1) config forms to v2 in place, mirroring the backend's input
+// normalization, so the editor displays — and on save writes — the current vocabulary.
+function normalizeLegacyConfig(data) {
+  // Models: legacy `active: false` -> `disabled: true`; `active` is dropped either way.
+  for (const m of data.models || []) {
+    if (!m) continue;
+    if (m.active === false && m.disabled === undefined) m.disabled = true;
+    delete m.active;
+    // Legacy per-minute audio pricing -> per-hour (×60).
+    if (m.audio_cost_per_minute != null && m.audio_cost_per_hour == null) {
+      m.audio_cost_per_hour = m.audio_cost_per_minute * 60;
+    }
+    delete m.audio_cost_per_minute;
+  }
+  // Scope model_access: legacy whitelist/blacklist/graylist -> allowed/blocked
+  // (graylist's per-scope ack is dropped — acknowledgement is now a model property).
+  const fixMA = ma => {
+    if (!ma || typeof ma !== 'object') return;
+    const add = (dst, src) => { if (Array.isArray(src) && src.length) ma[dst] = [...new Set([...(ma[dst] || []), ...src])]; };
+    add('allowed', ma.whitelist); add('allowed', ma.graylist); add('blocked', ma.blacklist);
+    delete ma.whitelist; delete ma.blacklist; delete ma.graylist;
+    const DEF = { whitelist: 'allowed', blacklist: 'blocked', graylist: 'allowed' };
+    if (ma.default in DEF) ma.default = DEF[ma.default];
+  };
+  for (const g of Object.values(data.groups || {})) fixMA(g && g.model_access);
+  for (const c of Object.values(data.clients || {})) fixMA(c && c.model_access);
+  for (const u of Object.values(data.users || {})) fixMA(u && u.model_access);
+}
+
 // ── API ────────────────────────────────────────────────────────────────────
 async function loadConfig() {
   try {
     const resp = await fetch('{{ url_for("admin.config_api_get") }}');
     if (!resp.ok) throw new Error(resp.statusText);
     const data = await resp.json();
+    normalizeLegacyConfig(data);   // migrate v1 forms so the editor (and save) use v2
     state.data = data;
     state.original = clone(data);
     buildNav();
@@ -205,8 +245,10 @@ function findRestartChanges(oldData, newData) {
 }
 
 function orderedData() {
-  const ordered = {};
+  const ordered = { version: 2 };
   for (const s of SECTIONS) { if (s.id in state.data) ordered[s.id] = state.data[s.id]; }
+  // Preserve any top-level keys not owned by a section.
+  for (const k of Object.keys(state.data)) { if (!(k in ordered)) ordered[k] = state.data[k]; }
   return ordered;
 }
 
@@ -244,6 +286,7 @@ function resetConfig() {
   state.selectedModelIdx = 0;
   state.selectedGroupKey = null;
   state.selectedClientKey = null;
+  state.selectedUserKey = null;
   renderSection(state.currentSection);
 }
 
@@ -304,7 +347,9 @@ function renderApp() {
     `)}
     ${card('Content', `
       ${field('a-ann','Announcement',tai('a-ann',a.announcement,3),'raw HTML shown to all users')}
-      ${field('a-gray','Graylist Default Notice',tai('a-gray',a.graylist_default_notice,2))}
+    `)}
+    ${card('Editor', `
+      ${cbi('a-config-editor', a.config_editor !== false, 'Allow editing the config from this page (Helm sets this false for git-managed configs)')}
     `)}
     ${card('Secrets', `
       ${field('a-secret','Secret Key',ti('a-secret',a.secret_key),'for session cookies')}
@@ -343,7 +388,7 @@ function collectApp() {
   a.secret_key       = val('a-secret') || undefined;
   a.encryption_key   = val('a-enc')    || undefined;
   a.announcement     = val('a-ann')    || undefined;
-  a.graylist_default_notice = val('a-gray') || undefined;
+  a.config_editor    = boolVal('a-config-editor') ? undefined : false;
 
   const devEmail  = val('a-dev-email').trim();
   const devGroups = arrFromCommas('a-dev-groups');
@@ -423,7 +468,7 @@ function renderApi() {
   const m = a.monitoring || {};
   $('cfg-body').innerHTML =
     card('API Flags', `
-      ${cbi('api-consent', !!a.consent, 'Require graylist consent for API requests (/v1/*)')}
+      ${cbi('api-consent', !!a.consent, 'Require acknowledgement consent for API requests (/v1/*)')}
     `) +
     card('Prometheus Metrics', `
       ${cbi('prom-on', !!p.enabled, 'Enable /metrics endpoint')}
@@ -505,12 +550,185 @@ function collectAdmins() {
   state.data.admins = emails.length ? emails : undefined;
 }
 
+// ── Model Access widget (search-driven; shared by groups / clients / users) ──
+// One scope's form is shown at a time, so fixed element ids are safe.
+let maCtx = null;
+
+function cleanModelAccess(ma) {
+  if (!ma) return undefined;
+  const out = {};
+  if (ma.default) out.default = ma.default;
+  if (ma.allowed && ma.allowed.length) out.allowed = ma.allowed.slice();
+  if (ma.blocked && ma.blocked.length) out.blocked = ma.blocked.slice();
+  return Object.keys(out).length ? out : undefined;
+}
+
+function modelAccessCard(kind) {
+  const enabledCount = (state.data.models || []).filter(m => m && m.name && !m.disabled).length;
+  return card('Model Access', `
+    ${field('ma-default', 'Default policy', si('ma-default', 'blocked', ['allowed', 'blocked']), 'applies to every model left at Inherit')}
+    <label for="ma-search" class="form-label fw-semibold small mb-1">Set access for a model</label>
+    <div class="position-relative mb-2">
+      <input type="text" id="ma-search" class="form-control form-control-sm" placeholder="Search ${enabledCount} enabled models…"
+             role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="ma-suggest" autocomplete="off">
+      <ul id="ma-suggest" role="listbox" aria-label="Matching models" class="dropdown-menu w-100 mb-0 p-0"></ul>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-1">
+        <caption class="visually-hidden">Per-model access overrides for this ${esc(kind)}</caption>
+        <thead class="table-light"><tr>
+          <th scope="col">Model</th>
+          <th scope="col">Access for this ${esc(kind)}</th>
+          <th scope="col">Effective</th>
+        </tr></thead>
+        <tbody id="ma-rows"></tbody>
+      </table>
+    </div>
+    <p id="ma-empty" class="text-muted small mb-0" hidden>No per-model overrides — every model follows the default policy above. Use the search box to override a specific model.</p>
+  `);
+}
+
+function initModelAccess(kind, scope) {
+  // Fold a legacy user `models:` allowed list into model_access on first edit.
+  if (kind === 'user' && Array.isArray(scope.models) && !scope.model_access) {
+    scope.model_access = { allowed: scope.models.slice() };
+    delete scope.models;
+  }
+  scope.model_access = scope.model_access || {};
+  const ma = scope.model_access;
+  const enabled = (state.data.models || []).filter(m => m && m.name && !m.disabled);
+  const byName = new Map(enabled.map(m => [m.name, m]));
+  const shown = [], seen = new Set();
+  for (const n of [...(ma.allowed || []), ...(ma.blocked || [])]) {
+    if (byName.has(n) && !seen.has(n)) { seen.add(n); shown.push(n); }
+  }
+  maCtx = { kind, scope, ma, byName, enabled, shown };
+  const def = $('ma-default');
+  if (def) { def.value = ma.default || 'blocked'; def.addEventListener('change', e => { ma.default = e.target.value; renderMaRows(); }); }
+  const rows = $('ma-rows');
+  if (rows) rows.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-mode]');
+    if (btn) setMaAccess(btn.closest('tr').dataset.name, btn.dataset.mode);
+  });
+  initMaSearch();
+  renderMaRows();
+}
+
+function maMode(name) {
+  if ((maCtx.ma.allowed || []).includes(name)) return 'allowed';
+  if ((maCtx.ma.blocked || []).includes(name)) return 'blocked';
+  return 'inherit';
+}
+function setMaAccess(name, mode) {
+  const ma = maCtx.ma;
+  ma.allowed = (ma.allowed || []).filter(n => n !== name);
+  ma.blocked = (ma.blocked || []).filter(n => n !== name);
+  if (mode === 'allowed') ma.allowed.push(name);
+  else if (mode === 'blocked') ma.blocked.push(name);
+  if (!maCtx.shown.includes(name)) maCtx.shown.push(name);
+  renderMaRows();
+}
+function maSeg(name) {
+  const mode = maMode(name);
+  const b = (m, label) => `<button type="button" class="btn btn-sm ${mode === m ? 'btn-primary' : 'btn-outline-secondary'}" data-mode="${m}" aria-pressed="${mode === m}">${label}</button>`;
+  return `<div class="btn-group btn-group-sm" role="group" aria-label="Access for ${esc(name)}">${b('inherit', 'Inherit')}${b('allowed', 'Allow')}${b('blocked', 'Block')}</div>`;
+}
+function maBadge(name) {
+  const m = maCtx.byName.get(name);
+  if (!m) return '<span class="text-muted small">unknown model</span>';
+  const { status, source } = effectiveAccess(maCtx.kind, maCtx.scope, m);
+  const badge = status === 'blocked'
+    ? `<span class="badge bg-danger">Blocked</span>`
+    : status === 'needs_ack'
+    ? `<span class="badge bg-warning text-dark"><span role="img" aria-label="warning">⚠</span> Allowed · needs ack</span>`
+    : `<span class="badge bg-success"><span role="img" aria-label="check">✓</span> Allowed</span>`;
+  return `${badge} <span class="text-muted small ms-1">${esc(source)}</span>`;
+}
+function renderMaRows() {
+  const tbody = $('ma-rows'); if (!tbody) return;
+  const names = maCtx.shown.filter(n => maCtx.byName.has(n));
+  $('ma-empty').hidden = names.length > 0;
+  tbody.innerHTML = names.map(n => `<tr data-name="${esc(n)}">
+    <td>${esc(n)}</td>
+    <td>${maSeg(n)}</td>
+    <td>${maBadge(n)}</td>
+  </tr>`).join('');
+}
+function initMaSearch() {
+  const input = $('ma-search'), list = $('ma-suggest'); if (!input) return;
+  const hide = () => { list.classList.remove('show'); input.setAttribute('aria-expanded', 'false'); };
+  const pick = name => { if (!maCtx.shown.includes(name)) maCtx.shown.push(name); input.value = ''; hide(); renderMaRows(); };
+  input.addEventListener('input', function () {
+    const q = this.value.trim().toLowerCase();
+    if (q.length < 1) { hide(); return; }
+    const matches = maCtx.enabled.filter(m => m.name.toLowerCase().includes(q)).slice(0, 20);
+    if (!matches.length) { hide(); return; }
+    list.innerHTML = matches.map((m, i) => `<li role="option" id="ma-opt-${i}" class="dropdown-item py-1" style="cursor:pointer" tabindex="-1" data-name="${esc(m.name)}">${esc(m.name)}</li>`).join('');
+    list.classList.add('show'); input.setAttribute('aria-expanded', 'true');
+    list.querySelectorAll('li').forEach(li => li.addEventListener('mousedown', e => { e.preventDefault(); pick(li.dataset.name); }));
+  });
+  input.addEventListener('blur', () => setTimeout(hide, 150));
+  input.addEventListener('keydown', e => {
+    const first = list.querySelector('li');
+    if (e.key === 'ArrowDown' && first) { e.preventDefault(); first.focus(); }
+    else if (e.key === 'Escape') hide();
+  });
+  list.addEventListener('keydown', e => {
+    const f = document.activeElement;
+    if (e.key === 'ArrowDown') { e.preventDefault(); f.nextElementSibling?.focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); f.previousElementSibling ? f.previousElementSibling.focus() : input.focus(); }
+    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(f.dataset.name); }
+    else if (e.key === 'Escape') { hide(); input.focus(); }
+  });
+}
+
+// Mirrors lumen/services/llm.py:_resolve_allow_block precedence. Keep in sync.
+function effectiveAccess(kind, scope, model) {
+  if (model.disabled) return { status: 'blocked', source: 'model disabled' };
+  const globalDef = ((state.data.defaults || {}).models || {}).access || 'blocked';
+  const ma = scope.model_access || {};
+  const name = model.name;
+  const has = l => (l || []).includes(name);
+  let status, source;
+  if (kind === 'user') {
+    if (has(ma.allowed)) { status = 'allowed'; source = 'set on this user'; }
+    else if (has(ma.blocked)) { status = 'blocked'; source = 'set on this user'; }
+    else {
+      const groups = (scope.groups || []).map(gn => [gn, (state.data.groups || {})[gn]]).filter(([, g]) => g);
+      let gBlock = null, gAllow = null;
+      for (const [gn, g] of groups) { const gm = g.model_access || {}; if ((gm.blocked || []).includes(name)) gBlock = gn; else if ((gm.allowed || []).includes(name)) gAllow = gn; }
+      if (gBlock) { status = 'blocked'; source = `via group ${gBlock}`; }
+      else if (gAllow) { status = 'allowed'; source = `via group ${gAllow}`; }
+      else if (model.access) { status = model.access; source = 'model default'; }
+      else {
+        let defAllow = null, defBlock = null;
+        for (const [gn, g] of groups) { const d = (g.model_access || {}).default; if (d === 'allowed') defAllow = gn; else if (d === 'blocked') defBlock = gn; }
+        if (defAllow) { status = 'allowed'; source = `group ${defAllow} default`; }
+        else if (defBlock) { status = 'blocked'; source = `group ${defBlock} default`; }
+        else if (ma.default) { status = ma.default; source = 'user default'; }
+        else { status = globalDef; source = 'global default'; }
+      }
+    }
+  } else {
+    if (has(ma.allowed)) { status = 'allowed'; source = 'set here'; }
+    else if (has(ma.blocked)) { status = 'blocked'; source = 'set here'; }
+    else if (model.access) { status = model.access; source = 'model default'; }
+    else if (ma.default) { status = ma.default; source = `${kind} default`; }
+    else { status = globalDef; source = 'global default'; }
+  }
+  if (status === 'allowed' && model.needs_ack) return { status: 'needs_ack', source };
+  return { status, source };
+}
+
 // ── Groups ─────────────────────────────────────────────────────────────────
 function renderGroups() {
   const groups = state.data.groups || {};
   const keys = Object.keys(groups);
   if (!state.selectedGroupKey || !groups[state.selectedGroupKey]) state.selectedGroupKey = keys[0] || null;
-  const opts = keys.map(k => `<option value="${esc(k)}"${k === state.selectedGroupKey ? ' selected' : ''}>${esc(k)}</option>`).join('');
+  const opts = keys.map(k => {
+    const mapped = (groups[k]?.rules || []).length ? ' [OAuth-mapped]' : '';
+    return `<option value="${esc(k)}"${k === state.selectedGroupKey ? ' selected' : ''}>${esc(k)}${mapped}</option>`;
+  }).join('');
   $('cfg-body').innerHTML = `
     <div class="entity-bar">
       <label for="grp-sel" class="fw-semibold small mb-0 text-nowrap">Group:</label>
@@ -520,6 +738,7 @@ function renderGroups() {
     </div>
     <div id="grp-form">${state.selectedGroupKey ? renderGroupForm(state.selectedGroupKey, groups[state.selectedGroupKey]) : ''}</div>
   `;
+  if (state.selectedGroupKey) initModelAccess('group', groups[state.selectedGroupKey]);
 }
 
 function renderGroupForm(key, g) {
@@ -527,21 +746,15 @@ function renderGroupForm(key, g) {
   const ma = g.model_access || {};
   const rules = g.rules || [];
   return `
+    ${(rules.length ? `<div class="alert alert-secondary py-2 small mb-3" role="status"><strong>OAuth-mapped:</strong> membership is auto-assigned from OAuth identity-provider profiles via the rules below.</div>` : '')}
     ${card(`Group: ${esc(key)}`, row3(
       field('grp-max',  'Max Coins',       ni('grp-max',   g.max),     '-2=unlimited, 0=blocked'),
       field('grp-ref',  'Refresh (coins/hr)', ni('grp-ref', g.refresh)),
       field('grp-start','Starting Coins',  ni('grp-start', g.starting))
     ))}
-    ${card('Model Access', `
-      ${field('grp-ma-def','Default Policy',si('grp-ma-def',ma.default||'whitelist',['whitelist','blacklist','graylist']))}
-      ${row3(
-        field('grp-wl','Whitelist',tai('grp-wl',linesToStr(ma.whitelist),3),'one per line'),
-        field('grp-bl','Blacklist',tai('grp-bl',linesToStr(ma.blacklist),3),'one per line'),
-        field('grp-gl','Graylist', tai('grp-gl',linesToStr(ma.graylist), 3),'one per line')
-      )}
-    `)}
+    ${modelAccessCard('group')}
     ${card('Auto-Assignment Rules', `
-      <p class="text-muted small mb-2">Users matching any rule are automatically added to this group</p>
+      <p class="text-muted small mb-2">Users are auto-added to this group only when they match <strong>all</strong> rules below (AND)</p>
       <div id="rules-list">${rules.map((r, i) => ruleRow(r, i)).join('')}</div>
       <button type="button" class="btn btn-outline-secondary btn-sm mt-1" onclick="addRuleRow()">+ Add Rule</button>
     `)}
@@ -570,7 +783,9 @@ function addRuleRow() {
 function switchGroup(key) {
   collectCurrentGroup();
   state.selectedGroupKey = key;
-  $('grp-form').innerHTML = renderGroupForm(key, state.data.groups?.[key] || {});
+  const g = state.data.groups?.[key] || {};
+  $('grp-form').innerHTML = renderGroupForm(key, g);
+  initModelAccess('group', g);
 }
 function addGroup() {
   const name = prompt('New group name:');
@@ -579,7 +794,7 @@ function addGroup() {
   if (state.data.groups?.[key]) { alert('Group already exists.'); return; }
   if (!state.data.groups) state.data.groups = {};
   collectCurrentGroup();
-  state.data.groups[key] = { max: 0, refresh: 0, starting: 0, model_access: { default: 'whitelist' } };
+  state.data.groups[key] = { max: 0, refresh: 0, starting: 0, model_access: { default: 'blocked' } };
   state.selectedGroupKey = key;
   renderGroups();
 }
@@ -593,17 +808,12 @@ function deleteGroup() {
 function collectCurrentGroup() {
   const key = state.selectedGroupKey;
   if (!key || !$('grp-max')) return;
+  const prev = state.data.groups?.[key] || {};
   const g = {};
   const mx = numVal('grp-max');   if (mx !== undefined) g.max     = mx;
   const rf = numVal('grp-ref');   if (rf !== undefined) g.refresh = rf;
   const st = numVal('grp-start'); if (st !== undefined) g.starting= st;
-  const wl = arrFromLines('grp-wl'), bl = arrFromLines('grp-bl'), gl = arrFromLines('grp-gl');
-  g.model_access = {
-    default:   val('grp-ma-def') || undefined,
-    whitelist: wl.length ? wl : undefined,
-    blacklist: bl.length ? bl : undefined,
-    graylist:  gl.length ? gl : undefined,
-  };
+  g.model_access = cleanModelAccess(prev.model_access);  // widget-managed, mutated in place
   const rules = [];
   document.querySelectorAll('#rules-list .rule-row').forEach(row => {
     const f = row.querySelector('.rule-field').value;
@@ -632,30 +842,25 @@ function renderClients() {
     </div>
     <div id="cli-form">${state.selectedClientKey ? renderClientForm(state.selectedClientKey, clients[state.selectedClientKey]) : ''}</div>
   `;
+  if (state.selectedClientKey) initModelAccess('client', clients[state.selectedClientKey]);
 }
 function renderClientForm(key, c) {
   if (!c) return '';
-  const ma = c.model_access || {};
   return `
     ${card(`Client: ${esc(key)}`, row3(
       field('cli-max',  'Max Coins',          ni('cli-max',   c.max),     '-2=unlimited, 0=blocked'),
       field('cli-ref',  'Refresh (coins/hr)', ni('cli-ref',   c.refresh)),
       field('cli-start','Starting Coins',     ni('cli-start', c.starting))
     ))}
-    ${card('Model Access', `
-      ${field('cli-ma-def','Default Policy',si('cli-ma-def',ma.default||'whitelist',['whitelist','blacklist','graylist']))}
-      ${row3(
-        field('cli-wl','Whitelist',tai('cli-wl',linesToStr(ma.whitelist),3),'one per line'),
-        field('cli-bl','Blacklist',tai('cli-bl',linesToStr(ma.blacklist),3),'one per line'),
-        field('cli-gl','Graylist', tai('cli-gl',linesToStr(ma.graylist), 3),'one per line')
-      )}
-    `)}
+    ${modelAccessCard('client')}
   `;
 }
 function switchClient(key) {
   collectCurrentClient();
   state.selectedClientKey = key;
-  $('cli-form').innerHTML = renderClientForm(key, state.data.clients?.[key] || {});
+  const c = state.data.clients?.[key] || {};
+  $('cli-form').innerHTML = renderClientForm(key, c);
+  initModelAccess('client', c);
 }
 function addClient() {
   const name = prompt('New client name:');
@@ -664,7 +869,7 @@ function addClient() {
   if (state.data.clients?.[key]) { alert('Client already exists.'); return; }
   if (!state.data.clients) state.data.clients = {};
   collectCurrentClient();
-  state.data.clients[key] = { max: 50, refresh: 0.1, starting: 50, model_access: { default: 'whitelist' } };
+  state.data.clients[key] = { max: 50, refresh: 0.1, starting: 50, model_access: { default: 'blocked' } };
   state.selectedClientKey = key;
   renderClients();
 }
@@ -678,17 +883,12 @@ function deleteClient() {
 function collectCurrentClient() {
   const key = state.selectedClientKey;
   if (!key || !$('cli-max')) return;
+  const prev = state.data.clients?.[key] || {};
   const c = {};
   const mx = numVal('cli-max');   if (mx !== undefined) c.max      = mx;
   const rf = numVal('cli-ref');   if (rf !== undefined) c.refresh  = rf;
   const st = numVal('cli-start'); if (st !== undefined) c.starting = st;
-  const wl = arrFromLines('cli-wl'), bl = arrFromLines('cli-bl'), gl = arrFromLines('cli-gl');
-  c.model_access = {
-    default:   val('cli-ma-def') || undefined,
-    whitelist: wl.length ? wl : undefined,
-    blacklist: bl.length ? bl : undefined,
-    graylist:  gl.length ? gl : undefined,
-  };
+  c.model_access = cleanModelAccess(prev.model_access);  // widget-managed, mutated in place
   if (!state.data.clients) state.data.clients = {};
   state.data.clients[key] = c;
 }
@@ -699,13 +899,13 @@ function renderModels() {
   const models = state.data.models || [];
   if (state.selectedModelIdx >= models.length) state.selectedModelIdx = 0;
   const sortedIdxs = models.map((_, i) => i).sort((a, b) => {
-    const aActive = models[a].active !== false;
-    const bActive = models[b].active !== false;
-    return aActive === bActive ? 0 : aActive ? -1 : 1;
+    const aOn = !models[a].disabled;
+    const bOn = !models[b].disabled;
+    return aOn === bOn ? 0 : aOn ? -1 : 1;
   });
   const opts = sortedIdxs.map(i => {
     const m = models[i];
-    return `<option value="${i}"${i === state.selectedModelIdx ? ' selected' : ''}>${esc(m.name || `Model ${i}`)}${m.active === false ? ' (inactive)' : ''}</option>`;
+    return `<option value="${i}"${i === state.selectedModelIdx ? ' selected' : ''}>${esc(m.name || `Model ${i}`)}${m.disabled ? ' (disabled)' : ''}</option>`;
   }).join('');
   $('cfg-body').innerHTML = `
     <div class="entity-bar">
@@ -718,6 +918,16 @@ function renderModels() {
     </div>
     <div id="mdl-form">${models.length ? renderModelForm(models[state.selectedModelIdx], state.selectedModelIdx) : ''}</div>
   `;
+  syncAudioCostField();
+}
+
+// Audio Cost / minute only applies to speech-to-text models; gate it on the audio input modality.
+function syncAudioCostField() {
+  const audio = $('mdl-in-audio'), cost = $('mdl-audio-cost');
+  if (!cost) return;
+  const on = !!(audio && audio.checked);
+  cost.disabled = !on;
+  if (!on) cost.value = '';
 }
 
 function renderModelForm(m, idx) {
@@ -725,19 +935,30 @@ function renderModelForm(m, idx) {
   const inMod  = m.input_modalities  || [];
   const outMod = m.output_modalities || [];
   const eps    = m.endpoints         || [];
-  const modChecks = (prefix, modList, available) => available.map(mod =>
-    `<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" id="${prefix}-${mod}"${modList.includes(mod) ? ' checked' : ''}><label class="form-check-label small" for="${prefix}-${mod}">${mod}</label></div>`
-  ).join('');
+  const modChecks = (prefix, modList, available) => available.map(mod => {
+    // Audio input toggles the speech-to-text Audio Cost field.
+    const oc = (prefix === 'mdl-in' && mod === 'audio') ? ' onchange="syncAudioCostField()"' : '';
+    return `<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" id="${prefix}-${mod}"${modList.includes(mod) ? ' checked' : ''}${oc}><label class="form-check-label small" for="${prefix}-${mod}">${mod}</label></div>`;
+  }).join('');
   return `
     ${card('Identity', `
-      ${row2(field('mdl-name','Name',ti('mdl-name',m.name),'internal identifier'),field('mdl-active','',cbi('mdl-active',m.active !== false,'Active (visible and usable)')))}
+      ${field('mdl-name','Name',ti('mdl-name',m.name),'internal identifier')}
       ${field('mdl-desc',  'Description',      ti('mdl-desc',   m.description))}
       ${field('mdl-url',   'Documentation URL', ti('mdl-url',    m.url))}
       ${field('mdl-notice','Admin Notice',      ti('mdl-notice', m.notice),'shown in UI for this model')}
     `)}
+    ${card('Access', `
+      ${row2(
+        field('mdl-access','Default Access',si('mdl-access',m.access||'',[{value:'',label:'(inherit)'},'allowed','blocked']),'scopes can still override'),
+        field('mdl-disabled','',cbi('mdl-disabled',!!m.disabled,'Disabled (hard off; hidden everywhere, not overridable)'))
+      )}
+      ${cbi('mdl-needsack', !!m.needs_ack, 'Requires acknowledgement before use (sticky; cannot be overridden)')}
+      ${field('mdl-ackmsg','Acknowledgement Message', tai('mdl-ackmsg', m.ack_message, 2),'overrides the global defaults.models.ack_message')}
+    `)}
     ${card('Pricing & Limits', `
-      ${row2(field('mdl-in-cost', 'Input Cost / 1M tokens ($)',  ni('mdl-in-cost',  m.input_cost_per_million)),
-             field('mdl-out-cost','Output Cost / 1M tokens ($)', ni('mdl-out-cost', m.output_cost_per_million)))}
+      ${row3(field('mdl-in-cost', 'Input Cost / 1M tokens ($)',  ni('mdl-in-cost',  m.input_cost_per_million)),
+             field('mdl-out-cost','Output Cost / 1M tokens ($)', ni('mdl-out-cost', m.output_cost_per_million)),
+             field('mdl-audio-cost','Audio Cost / hour ($)', ni('mdl-audio-cost', m.audio_cost_per_hour), 'speech-to-text only'))}
       ${row3(field('mdl-ctx',    'Context Window (tokens)', ni('mdl-ctx',    m.context_window,  '1')),
              field('mdl-maxout', 'Max Output Tokens',       ni('mdl-maxout', m.max_output_tokens,'1')),
              field('mdl-cutoff', 'Knowledge Cutoff',        ti('mdl-cutoff', m.knowledge_cutoff, 'YYYY-MM')))}
@@ -776,11 +997,12 @@ function switchModel(idx) {
   collectCurrentModel();
   state.selectedModelIdx = idx;
   $('mdl-form').innerHTML = renderModelForm(state.data.models?.[idx] || {}, idx);
+  syncAudioCostField();
 }
 function addModel() {
   collectCurrentModel();
   if (!state.data.models) state.data.models = [];
-  state.data.models.push({ name: 'new-model', active: true, input_cost_per_million: 0, output_cost_per_million: 0, endpoints: [{ url: '', api_key: '' }] });
+  state.data.models.push({ name: 'new-model', input_cost_per_million: 0, output_cost_per_million: 0, endpoints: [{ url: '', api_key: '' }] });
   state.selectedModelIdx = state.data.models.length - 1;
   renderModels();
 }
@@ -798,12 +1020,16 @@ function collectCurrentModel() {
   if (idx >= state.data.models.length) return;
   const m = {};
   m.name                   = val('mdl-name')     || undefined;
-  m.active                 = boolVal('mdl-active');
+  m.access                 = val('mdl-access')   || undefined;
+  m.needs_ack              = boolVal('mdl-needsack') || undefined;
+  m.disabled               = boolVal('mdl-disabled') || undefined;
   m.description            = val('mdl-desc')     || undefined;
   m.url                    = val('mdl-url')      || undefined;
   m.notice                 = val('mdl-notice')   || undefined;
+  m.ack_message            = val('mdl-ackmsg')   || undefined;
   m.input_cost_per_million = numVal('mdl-in-cost');
   m.output_cost_per_million= numVal('mdl-out-cost');
+  m.audio_cost_per_hour    = $('mdl-in-audio')?.checked ? numVal('mdl-audio-cost') : undefined;
   m.context_window         = numVal('mdl-ctx');
   m.max_output_tokens      = numVal('mdl-maxout');
   m.knowledge_cutoff       = val('mdl-cutoff')   || undefined;
@@ -851,6 +1077,7 @@ async function syncModel() {
     for (const [field, newVal] of Object.entries(updates)) m[field] = newVal;
     for (const field of removals) delete m[field];
     $('mdl-form').innerHTML = renderModelForm(m, idx);
+    syncAudioCostField();
     const FIELD_LABELS = {
       context_window: 'context size',
       max_output_tokens: 'max output',
@@ -880,6 +1107,10 @@ async function syncAllModels() {
   collectCurrentModel();
   const models = state.data.models;
   if (!models?.length) return;
+  // Only refresh enabled models — disabled ones aren't served, so skip them for speed.
+  const targets = models.filter(m => !m.disabled);
+  const disabledCount = models.length - targets.length;
+  if (!targets.length) { showToast('Update All: no enabled models', 'secondary'); return; }
   const btnAll = $('btn-sync-all');
   const btnOne = $('btn-sync-model');
   btnAll.disabled = true;
@@ -892,9 +1123,9 @@ async function syncAllModels() {
   };
   const label = f => FIELD_LABELS[f] || f;
   let updatedCount = 0, skippedCount = 0;
-  for (let i = 0; i < models.length; i++) {
-    const m = models[i];
-    btnAll.textContent = `Updating ${i + 1}/${models.length}…`;
+  for (let i = 0; i < targets.length; i++) {
+    const m = targets[i];
+    btnAll.textContent = `Updating ${i + 1}/${targets.length}…`;
     try {
       const resp = await fetch('{{ url_for("admin.sync_model_api") }}', {
         method: 'POST',
@@ -915,22 +1146,154 @@ async function syncAllModels() {
   const parts = [];
   if (updatedCount) parts.push(`${updatedCount} updated`);
   if (skippedCount) parts.push(`${skippedCount} unchanged`);
+  if (disabledCount) parts.push(`${disabledCount} disabled skipped`);
   showToast('Update All: ' + parts.join(', '), updatedCount ? 'success' : 'secondary');
   btnAll.disabled = false;
   btnAll.textContent = 'Update All';
   btnOne.disabled = false;
 }
 
+// ── Defaults ─────────────────────────────────────────────────────────────────
+function renderDefaults() {
+  const d = state.data.defaults || {};
+  const m = d.models || {};
+  const t = d.tokens || {};
+  $('cfg-body').innerHTML = `
+    ${card('Model Defaults', `
+      ${field('def-access','Default Access',si('def-access',m.access||'blocked',['allowed','blocked']),'baseline for models that omit access:')}
+      ${field('def-ackmsg','Default Acknowledgement Message',tai('def-ackmsg',m.ack_message,2),'shown for models with needs_ack unless overridden per model')}
+    `)}
+    ${card('Token Defaults', `
+      <p class="text-muted small mb-2">Fallback coin pool when a user/group/client specifies no limit. Scopes override only the fields they set.</p>
+      ${row3(
+        field('def-tok-max','Max Coins',ni('def-tok-max',t.max),'-2=unlimited, 0=blocked'),
+        field('def-tok-ref','Refresh (coins/hr)',ni('def-tok-ref',t.refresh)),
+        field('def-tok-start','Starting Coins',ni('def-tok-start',t.starting))
+      )}
+    `)}
+  `;
+}
+function collectDefaults() {
+  if (!$('def-access')) return;
+  const models = { access: val('def-access') || undefined, ack_message: val('def-ackmsg') || undefined };
+  const mx = numVal('def-tok-max'), rf = numVal('def-tok-ref'), st = numVal('def-tok-start');
+  const tokens = {};
+  if (mx !== undefined) tokens.max = mx;
+  if (rf !== undefined) tokens.refresh = rf;
+  if (st !== undefined) tokens.starting = st;
+  const d = {};
+  if (models.access || models.ack_message) d.models = models;
+  if (Object.keys(tokens).length) d.tokens = tokens;
+  if (Object.keys(d).length) state.data.defaults = d; else delete state.data.defaults;
+}
+
+// ── Users ────────────────────────────────────────────────────────────────────
+function renderUsers() {
+  const users = state.data.users || {};
+  const keys = Object.keys(users);
+  if (state.selectedUserKey == null && keys.length) state.selectedUserKey = keys[0];
+  const opts = keys.map(k => `<option value="${esc(k)}"${k === state.selectedUserKey ? ' selected' : ''}>${esc(k)}</option>`).join('');
+  $('cfg-body').innerHTML = `
+    <p class="text-muted small mb-2">Per-user overrides. A user's allowed list can grant access to a model whose default is <code>blocked</code>, but never to a <code>disabled</code> model.</p>
+    <div class="entity-bar">
+      <label for="usr-sel" class="fw-semibold small mb-0 text-nowrap">User:</label>
+      <select id="usr-sel" class="form-select form-select-sm" onchange="switchUser(this.value)">${opts}</select>
+      <button class="btn btn-primary btn-sm text-nowrap" onclick="addUser()">+ New</button>
+      <button class="btn btn-outline-danger btn-sm" onclick="deleteUser()">Delete</button>
+    </div>
+    <div id="usr-form">${state.selectedUserKey ? renderUserForm(state.selectedUserKey, users[state.selectedUserKey]) : ''}</div>
+  `;
+  if (state.selectedUserKey) initModelAccess('user', users[state.selectedUserKey]);
+}
+function renderUserForm(key, u) {
+  if (!u) return '';
+  const mapped = Object.entries(state.data.groups || {}).filter(([, g]) => (g?.rules || []).length).map(([k]) => k);
+  const hint = mapped.length ? `comma-separated — OAuth-mapped (auto-assigned): ${mapped.join(', ')}` : 'comma-separated';
+  return `
+    ${card(`User: ${esc(key)}`, `
+      ${field('usr-groups','Groups',ti('usr-groups',(u.groups||[]).join(', ')),hint)}
+    `)}
+    ${card('Token Pool', row3(
+      field('usr-max','Max Coins',ni('usr-max',u.max),'-2=unlimited, 0=blocked'),
+      field('usr-ref','Refresh (coins/hr)',ni('usr-ref',u.refresh)),
+      field('usr-start','Starting Coins',ni('usr-start',u.starting))
+    ))}
+    ${modelAccessCard('user')}
+  `;
+}
+function switchUser(key) {
+  collectCurrentUser();
+  state.selectedUserKey = key;
+  const u = state.data.users?.[key] || {};
+  $('usr-form').innerHTML = renderUserForm(key, u);
+  initModelAccess('user', u);
+}
+let userSearch = null;
+function addUser() {
+  if (userSearch) userSearch.clear();
+  $('add-user-email-result').innerHTML = '';
+  bootstrap.Modal.getOrCreateInstance($('add-user-modal')).show();
+}
+function commitNewUser(email) {
+  const key = (email || '').trim();
+  if (!key) return;
+  if (state.data.users?.[key]) {
+    $('add-user-email-result').innerHTML = `<div class="alert alert-warning py-1 mb-0">User already exists.</div>`;
+    return;
+  }
+  if (!state.data.users) state.data.users = {};
+  collectCurrentUser();
+  state.data.users[key] = {};
+  state.selectedUserKey = key;
+  bootstrap.Modal.getInstance($('add-user-modal'))?.hide();
+  renderUsers();
+}
+function deleteUser() {
+  if (!state.selectedUserKey) return;
+  if (!confirm(`Delete user "${state.selectedUserKey}"?`)) return;
+  delete state.data.users[state.selectedUserKey];
+  state.selectedUserKey = null;
+  renderUsers();
+}
+function collectCurrentUser() {
+  const key = state.selectedUserKey;
+  if (!key || !$('usr-groups')) return;
+  const prev = state.data.users?.[key] || {};
+  const u = {};
+  const groups = arrFromCommas('usr-groups'); if (groups.length) u.groups = groups;
+  const mx = numVal('usr-max');   if (mx !== undefined) u.max      = mx;
+  const rf = numVal('usr-ref');   if (rf !== undefined) u.refresh  = rf;
+  const st = numVal('usr-start'); if (st !== undefined) u.starting = st;
+  const ma = cleanModelAccess(prev.model_access);  // widget-managed (legacy `models:` folded in on load)
+  if (ma) u.model_access = ma;
+  if (!state.data.users) state.data.users = {};
+  state.data.users[key] = u;
+}
+function collectUsers() { collectCurrentUser(); }
+
+// ── Add-User search dialog (shared typeahead; same UX as adding a client manager) ──
+function initAddUserDialog() {
+  userSearch = initUserSearch({
+    inputId: 'add-user-email',
+    listId: 'user-suggestions',
+    searchUrl: '{{ url_for("admin.users_search_api") }}?q=',
+    onEnter: (v) => commitNewUser(v),
+  });
+  $('add-user-confirm').addEventListener('click', () => commitNewUser($('add-user-email').value));
+  // Focus the search box whenever the dialog opens.
+  $('add-user-modal').addEventListener('shown.bs.modal', () => userSearch && userSearch.focus());
+}
+
 // ── Maps ───────────────────────────────────────────────────────────────────
 const COLLECTORS = {
   app: collectApp, oauth2: collectOauth2, api: collectApi, chat: collectChat,
-  rate_limiting: collectRateLimiting,
-  admins: collectAdmins, groups: collectGroups, clients: collectClients, models: collectModels,
+  rate_limiting: collectRateLimiting, defaults: collectDefaults,
+  admins: collectAdmins, groups: collectGroups, clients: collectClients, users: collectUsers, models: collectModels,
 };
 const RENDERERS = {
   app: renderApp, oauth2: renderOauth2, api: renderApi, chat: renderChat,
-  rate_limiting: renderRateLimiting,
-  admins: renderAdmins, groups: renderGroups, clients: renderClients, models: renderModels,
+  rate_limiting: renderRateLimiting, defaults: renderDefaults,
+  admins: renderAdmins, groups: renderGroups, clients: renderClients, users: renderUsers, models: renderModels,
 };
 
 // ── Boot ───────────────────────────────────────────────────────────────────
@@ -944,6 +1307,7 @@ const RENDERERS = {
     bootstrap.Modal.getInstance($('removed-fields-modal')).hide();
     await doSave();
   });
+  initAddUserDialog();
 })();
 loadConfig();
 </script>

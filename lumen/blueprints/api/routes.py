@@ -225,7 +225,7 @@ def api_key_required(f):
 @api_key_required
 @limiter.limit(_api_limit, key_func=_api_key_id)
 def list_models():
-    configs = db.session.execute(select(ModelConfig).filter_by(active=True)).scalars().all()
+    configs = db.session.execute(select(ModelConfig).where(ModelConfig.active)).scalars().all()
     eps_by_model: dict = {}
     for ep in db.session.execute(
         select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_([c.id for c in configs]))
@@ -247,7 +247,7 @@ def list_models():
             and access_statuses.get(c.id, "allowed") != "blocked"
             and (
                 not consent_required
-                or access_statuses.get(c.id, "allowed") != "graylist"
+                or access_statuses.get(c.id, "allowed") != "needs_ack"
                 or c.id in consent_map
             )
         ]
@@ -258,7 +258,7 @@ def list_models():
 @api_key_required
 @limiter.limit(_api_limit, key_func=_api_key_id)
 def get_model(model_id):
-    config = db.session.execute(select(ModelConfig).filter_by(model_name=model_id, active=True)).scalar_one_or_none()
+    config = db.session.execute(select(ModelConfig).where(ModelConfig.model_name == model_id, ModelConfig.active)).scalar_one_or_none()
     if not config:
         return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
     if not g.monitor:
@@ -279,7 +279,7 @@ def _preflight(model_name: str):
     ``effective`` is the resolved coin pool limit, threaded to subtract_coins so the
     billing path does not re-resolve model access and the pool limit.
     """
-    model_config = db.session.execute(select(ModelConfig).filter_by(model_name=model_name, active=True)).scalar_one_or_none()
+    model_config = db.session.execute(select(ModelConfig).where(ModelConfig.model_name == model_name, ModelConfig.active)).scalar_one_or_none()
     if not model_config:
         return None, None, None, _err(f"Model '{model_name}' not found", status=HTTPStatus.NOT_FOUND)
     consent_required = current_app.config.get("API_REQUIRE_MODEL_CONSENT", True)
@@ -424,7 +424,7 @@ def _do_audio(kind: str):
 
     These endpoints are multipart/form-data (an audio file upload), not JSON.
     Billing branches on the upstream ``usage`` object: ASR backends report
-    ``{type: "duration", seconds: N}`` and are billed per minute of audio, while
+    ``{type: "duration", seconds: N}`` and are billed per hour of audio, while
     gpt-4o-transcribe-style models report token usage and are billed per token.
     """
     model_name = request.form.get("model")
@@ -468,7 +468,7 @@ def _do_audio(kind: str):
     mc_id            = model_config.id
     mc_in_cost       = float(model_config.input_cost_per_million)
     mc_out_cost      = float(model_config.output_cost_per_million)
-    mc_audio_per_min = float(model_config.audio_cost_per_minute or 0)
+    mc_audio_per_hour = float(model_config.audio_cost_per_hour or 0)
     db.session.remove()
 
     try:
@@ -489,10 +489,10 @@ def _do_audio(kind: str):
     in_tok, out_tok, seconds, cost = 0, 0, 0, 0.0
     if isinstance(usage, dict) and usage.get("type") == "duration":
         seconds = int(usage.get("seconds") or 0)
-        cost = calculate_audio_cost(seconds, mc_audio_per_min)
-        if mc_audio_per_min == 0:
+        cost = calculate_audio_cost(seconds, mc_audio_per_hour)
+        if mc_audio_per_hour == 0:
             logger.warning(
-                "Audio model has no audio_cost_per_minute set (model=%s, entity_id=%s) — billed as zero cost.",
+                "Audio model has no audio_cost_per_hour set (model=%s, entity_id=%s) — billed as zero cost.",
                 model_name, entity_id,
             )
     elif isinstance(usage, dict) and (usage.get("type") == "tokens" or "prompt_tokens" in usage):

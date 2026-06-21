@@ -13,14 +13,128 @@ from lumen.models.group_model_access import GroupModelAccess
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 
-_VALID_ACCESS_TYPES = {"whitelist", "blacklist", "graylist"}
+# Maps config-input access vocabulary (new + legacy) to the stored value.
+# Acknowledgement (graylist) is a model-level property now, so legacy 'graylist'
+# at a scope only sets access to 'allowed'.
+_ACCESS_INPUT = {
+    "allowed": "allowed",
+    "blocked": "blocked",
+    "whitelist": "allowed",
+    "blacklist": "blocked",
+    "graylist": "allowed",
+}
+_LEGACY_ACCESS_TERMS = {"whitelist", "blacklist", "graylist"}
+# Recognized model_access list keys at a scope (group/client), new + legacy.
+_SCOPE_ACCESS_KEYS = ("allowed", "blocked", "whitelist", "blacklist", "graylist")
+
+# Deduplicate deprecation warnings; the config watcher re-runs sync every 5s.
+_warned: set = set()
+
+
+def _warn_once(key, msg, *args):
+    if key not in _warned:
+        _warned.add(key)
+        current_app.logger.warning(msg, *args)
+
+
+def _normalize_access(value, *, context=""):
+    """Map config access vocabulary to a stored value ('allowed' or 'blocked').
+
+    Accepts the new allowed/blocked terms and the legacy whitelist/blacklist/graylist
+    (with a deprecation warning). Returns None for unknown values.
+    """
+    if value is None:
+        return None
+    v = str(value).strip().lower()
+    if v in _LEGACY_ACCESS_TERMS:
+        if v == "graylist":
+            _warn_once(("graylist", context),
+                       "deprecated access term 'graylist'%s; acknowledgement is now a model "
+                       "property — set 'needs_ack: true' on the model instead", _ctx(context))
+        else:
+            _warn_once((v, context), "deprecated access term '%s'%s; use allowed/blocked", v, _ctx(context))
+    out = _ACCESS_INPUT.get(v)
+    if out is None:
+        _warn_once(("unknown", v, context), "unknown access value '%s'%s; ignoring", v, _ctx(context))
+    return out
+
+
+def _ctx(context):
+    return f" in {context}" if context else ""
+
+
+def _token_fields(cfg):
+    """Return (max, refresh, starting) filled from cfg + global TOKEN_DEFAULTS.
+
+    Returns None when the config block specifies no token fields at all, so the
+    caller drops the limit row and the entity falls through to the global pool.
+    """
+    if not ({"max", "refresh", "starting"} & cfg.keys()):
+        return None
+    td = current_app.config.get("TOKEN_DEFAULTS", {"max": 0, "refresh": 0, "starting": 0})
+    max_coins = cfg.get("max", td["max"])
+    refresh_coins = cfg.get("refresh", td["refresh"])
+    starting_coins = cfg.get("starting", cfg.get("max", td["starting"]))
+    return max_coins, refresh_coins, starting_coins
+
+
+def _parse_scope_access(access_cfg, context):
+    """Parse a model_access block.
+
+    Returns (pairs, default, ack_models):
+      pairs       – [(model_name, 'allowed'|'blocked'), ...]
+      default     – scope default ('allowed'/'blocked') from a 'default:' key or '*' shorthand
+      ack_models  – model names listed under a legacy 'graylist:' key. Acknowledgement is now a
+                    model property, so callers set needs_ack=True on these to preserve the old
+                    "graylisted model requires consent" behavior when loading a v1 config.
+    """
+    default = None
+    pairs = []
+    ack_models = []
+    for key in _SCOPE_ACCESS_KEYS:
+        if key not in access_cfg:
+            continue  # don't warn about a legacy key the config doesn't actually use
+        stored = _normalize_access(key, context=context)
+        if stored is None:
+            continue
+        for model_name in access_cfg.get(key, []) or []:
+            if model_name == "*":
+                default = stored
+                continue
+            pairs.append((model_name, stored))
+            if key == "graylist":
+                ack_models.append(model_name)
+    if "default" in access_cfg:
+        default = _normalize_access(access_cfg["default"], context=context)
+    return pairs, default, ack_models
+
+
+def _apply_legacy_ack(ack_models, models_by_name):
+    """Set needs_ack=True on models that a legacy scope 'graylist:' list referenced.
+
+    Acknowledgement moved from a per-scope concept to a model property, so a v1 config's
+    graylist list must keep its models requiring consent. Only ever turns needs_ack ON
+    (a v2 config has no graylist key, so this is a no-op there)."""
+    for name in ack_models:
+        mc = models_by_name.get(name)
+        if mc is not None and not mc.needs_ack:
+            mc.needs_ack = True
 
 
 def _apply_model_fields(config, model_def):
     config.input_cost_per_million = model_def["input_cost_per_million"]
     config.output_cost_per_million = model_def["output_cost_per_million"]
-    config.audio_cost_per_minute = model_def.get("audio_cost_per_minute")
-    config.active = model_def.get("active", True)
+    if "audio_cost_per_hour" in model_def:
+        config.audio_cost_per_hour = model_def["audio_cost_per_hour"]
+    elif "audio_cost_per_minute" in model_def:
+        # Legacy per-minute pricing -> per-hour (×60).
+        legacy = model_def.get("audio_cost_per_minute")
+        _warn_once(("audio-cost", model_def.get("name")),
+                   "deprecated 'audio_cost_per_minute' on model '%s'; use 'audio_cost_per_hour' instead", model_def.get("name"))
+        config.audio_cost_per_hour = (legacy * 60) if legacy is not None else None
+    else:
+        config.audio_cost_per_hour = None
+    _apply_model_access(config, model_def)
     config.description = model_def.get("description") or None
     config.url = model_def.get("url") or None
     config.supports_function_calling = model_def.get("supports_function_calling")
@@ -31,6 +145,34 @@ def _apply_model_fields(config, model_def):
     config.supports_reasoning = model_def.get("supports_reasoning")
     config.knowledge_cutoff = model_def.get("knowledge_cutoff") or None
     config.notice = model_def.get("notice") or None
+    config.ack_message = model_def.get("ack_message") or None
+
+
+def _apply_model_access(config, model_def):
+    """Set config.access / needs_ack / disabled from a model definition.
+
+    Honors the new orthogonal fields and bridges the legacy `active:` boolean
+    (active: false -> disabled) with a deprecation warning.
+    """
+    config.needs_ack = bool(model_def.get("needs_ack", False))
+
+    disabled = model_def.get("disabled")
+    access = model_def.get("access")
+    if disabled is None and access is None and model_def.get("active") is False:
+        _warn_once(("active", model_def.get("name")),
+                   "deprecated 'active: false' on model '%s'; use 'disabled: true' instead", model_def.get("name"))
+        disabled = True
+    config.disabled = bool(disabled)
+
+    if access is None:
+        config.access = None  # inherit group/global defaults
+    else:
+        a = str(access).strip().lower()
+        if a not in ("allowed", "blocked"):
+            _warn_once(("model-access", a, model_def.get("name")),
+                       "invalid model access '%s' on model '%s'; ignoring (will inherit defaults)", a, model_def.get("name"))
+            a = None
+        config.access = a
 
 
 def _reconcile_endpoints(config, model_def):
@@ -68,7 +210,7 @@ def _deactivate_removed_models(yaml_model_names):
         delete(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(deactivated_ids))
     )
     db.session.execute(
-        update(ModelConfig).where(ModelConfig.id.in_(deactivated_ids)).values(active=False)
+        update(ModelConfig).where(ModelConfig.id.in_(deactivated_ids)).values(disabled=True)
     )
     db.session.expire_all()
 
@@ -92,12 +234,11 @@ def sync_groups_from_yaml(yaml_data):
     """Upsert Group, GroupLimit, and GroupModelAccess rows from yaml_data['groups'].
 
     Config format per group:
-      max, refresh, starting    -> GroupLimit (token pool)
+      max, refresh, starting    -> GroupLimit (token pool); missing fields fall back to defaults.tokens
       model_access:             -> GroupModelAccess + model_access_default
-        default: whitelist      -> group default for unlisted models
-        whitelist: [name, ...]
-        blacklist: [name, ...]
-        graylist:  [name, ...]
+        default: allowed        -> group default for unlisted models
+        allowed: [name, ...]
+        blocked: [name, ...]
       rules: [...]              -> auto-membership rules (handled at login, not here)
     """
     groups_cfg = yaml_data.get("groups", {})
@@ -120,15 +261,14 @@ def sync_groups_from_yaml(yaml_data):
         if "models" in group_def:
             current_app.logger.warning(
                 "sync_groups_from_yaml: group '%s' uses deprecated 'models:' key; "
-                "use 'model_access.whitelist:' instead. The key is ignored.",
+                "use 'model_access.allowed:' instead. The key is ignored.",
                 group_name,
             )
 
         # Upsert GroupLimit (coin pool)
-        if "max" in group_def:
-            max_coins = group_def["max"]
-            refresh_coins = group_def.get("refresh", 0)
-            starting_coins = group_def.get("starting", max_coins)
+        pool = _token_fields(group_def)
+        if pool is not None:
+            max_coins, refresh_coins, starting_coins = pool
             limit = db.session.execute(select(GroupLimit).filter_by(group_id=group.id)).scalar_one_or_none()
             if limit:
                 limit.max_coins = max_coins
@@ -147,27 +287,21 @@ def sync_groups_from_yaml(yaml_data):
         # Upsert GroupModelAccess from model_access: section
         db.session.execute(delete(GroupModelAccess).where(GroupModelAccess.group_id == group.id))
         access_cfg = group_def.get("model_access", {})
-        group_default = None
-        for access_type in _VALID_ACCESS_TYPES:
-            for model_name in access_cfg.get(access_type, []):
-                if model_name == "*":
-                    group_default = access_type
-                    continue
-                mc = models_by_name.get(model_name)
-                if mc is None:
-                    current_app.logger.warning(
-                        "sync_groups_from_yaml: model '%s' not found in group '%s' %s, skipping",
-                        model_name, group_name, access_type,
-                    )
-                    continue
-                db.session.add(GroupModelAccess(
-                    group_id=group.id,
-                    model_config_id=mc.id,
-                    access_type=access_type,
-                ))
-        # Explicit default key overrides * shorthand
-        if "default" in access_cfg:
-            group_default = access_cfg["default"]
+        pairs, group_default, ack_models = _parse_scope_access(access_cfg, context=f"group '{group_name}'")
+        _apply_legacy_ack(ack_models, models_by_name)
+        for model_name, access_type in pairs:
+            mc = models_by_name.get(model_name)
+            if mc is None:
+                current_app.logger.warning(
+                    "sync_groups_from_yaml: model '%s' not found in group '%s', skipping",
+                    model_name, group_name,
+                )
+                continue
+            db.session.add(GroupModelAccess(
+                group_id=group.id,
+                model_config_id=mc.id,
+                access_type=access_type,
+            ))
         group.model_access_default = group_default
 
     # Remove config_managed groups no longer in yaml
@@ -189,9 +323,9 @@ def sync_clients_from_yaml(yaml_data):
           refresh: 0
           starting: 100
           model_access:
-            default: whitelist      <- entity-level default for unlisted models
-            whitelist: [name, ...]
-            blacklist: [name, ...]
+            default: allowed        <- entity-level default for unlisted models
+            allowed: [name, ...]
+            blocked: [name, ...]
         my-client-name:             <- overrides for a specific client
           max: 500
     """
@@ -215,10 +349,9 @@ def sync_clients_from_yaml(yaml_data):
             continue
 
         # Upsert EntityLimit
-        if "max" in cfg:
-            max_coins = cfg["max"]
-            refresh_coins = cfg.get("refresh", 0)
-            starting_coins = cfg.get("starting", max_coins)
+        pool = _token_fields(cfg)
+        if pool is not None:
+            max_coins, refresh_coins, starting_coins = pool
             limit = db.session.execute(select(EntityLimit).filter_by(entity_id=entity.id)).scalar_one_or_none()
             if limit:
                 limit.max_coins = max_coins
@@ -238,23 +371,24 @@ def sync_clients_from_yaml(yaml_data):
 
         # Sync model_access
         access_cfg = cfg.get("model_access", {})
-        entity.model_access_default = access_cfg.get("default") or None
+        pairs, entity_default, ack_models = _parse_scope_access(access_cfg, context=f"client '{entity.name}'")
+        _apply_legacy_ack(ack_models, models_by_name)
+        entity.model_access_default = entity_default
 
         db.session.execute(delete(EntityModelAccess).where(EntityModelAccess.entity_id == entity.id))
-        for access_type in ("whitelist", "blacklist", "graylist"):
-            for model_name in access_cfg.get(access_type, []):
-                mc = models_by_name.get(model_name)
-                if mc is None:
-                    current_app.logger.warning(
-                        "sync_clients_from_yaml: model '%s' not found for client '%s' %s, skipping",
-                        model_name, entity.name, access_type,
-                    )
-                    continue
-                db.session.add(EntityModelAccess(
-                    entity_id=entity.id,
-                    model_config_id=mc.id,
-                    access_type=access_type,
-                ))
+        for model_name, access_type in pairs:
+            mc = models_by_name.get(model_name)
+            if mc is None:
+                current_app.logger.warning(
+                    "sync_clients_from_yaml: model '%s' not found for client '%s', skipping",
+                    model_name, entity.name,
+                )
+                continue
+            db.session.add(EntityModelAccess(
+                entity_id=entity.id,
+                model_config_id=mc.id,
+                access_type=access_type,
+            ))
 
     db.session.commit()
 

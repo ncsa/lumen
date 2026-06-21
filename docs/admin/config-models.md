@@ -9,7 +9,7 @@ Every model starts with a name and an `endpoints` list:
 ```yaml
 models:
   - name: my-model
-    active: true
+    access: allowed
     input_cost_per_million: 0.5
     output_cost_per_million: 1.0
     endpoints:
@@ -21,7 +21,41 @@ models:
 |-------|----------|-------------|
 | `name` | Yes | Lumen's internal identifier for the model. This is what appears in the chat UI and must be unique within your config. |
 | `endpoints` | Yes | One or more back-end servers that provide this model |
-| `active` | No (default: true) | Whether the model is available. Set to `false` to disable without deleting. |
+| `access` | No (default: inherit) | The model's own default: `allowed` or `blocked`. Leave it **unset** to inherit each scope's `model_access.default` (then `defaults.models.access`). When set, it beats group/user *defaults* but is still overridden by an explicit per-scope `allowed`/`blocked` rule. |
+
+## Access Control
+
+Model access is **orthogonal**: three independent per-model fields control it, instead of a single status. Each axis answers a different question.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `access` | inherit | The model's own allow/block default. Leave unset to inherit scope defaults (`model_access.default`, then `defaults.models.access`). When set, it ranks above group/user *defaults* but below an explicit per-scope `allowed`/`blocked` rule — so a model can be blocked-by-default yet enabled for a specific group/user (see [User Groups](config-users.md) and [Clients](config-clients.md)). |
+| `needs_ack` | `false` | When `true`, a user must acknowledge the model before using it. This is a **sticky, model-level property** — no group, client, or user scope can add or remove it. It only triggers the consent gate; it does not by itself grant or deny access. |
+| `disabled` | `false` | **Hard off.** The model is hidden everywhere and cannot be used. This is **not overridable** by any scope — it always wins. Use it to take a model offline without deleting it. |
+| `ack_message` | unset | Optional acknowledgement message shown when `needs_ack` is `true`. Overrides the global `defaults.models.ack_message`. |
+
+```yaml
+models:
+  - name: my-model
+    access: allowed       # baseline; overridable per group/client/user
+    needs_ack: true       # require acknowledgement (model-level, sticky)
+    ack_message: "This model was trained outside the U.S. — use with awareness."
+    input_cost_per_million: 0.5
+    output_cost_per_million: 1.0
+    endpoints:
+      - url: https://example.com/v1
+        api_key: sk-your-key
+```
+
+### `disabled` is a hard off
+
+Setting `disabled: true` short-circuits all access resolution to blocked — the model disappears from the chat UI, the API, and every scope's allow list. No group, client, or user override can bring it back. This replaces the old `active: false`. To **permanently** remove a model, delete its entry from `config.yaml` entirely.
+
+> The legacy `active:` key is still accepted as input (with a deprecation warning): `active: false` maps to `disabled: true`. Prefer `disabled` in new configs.
+
+### `needs_ack` lives on the model
+
+Acknowledgement is a property of the model, not of any group or scope. There is no per-scope graylist anymore — set `needs_ack: true` on the model and every user who is allowed the model must acknowledge it once before using it.
 
 ## Pricing
 
@@ -73,7 +107,7 @@ You can configure multiple endpoints for one model to distribute load:
 
 ```yaml
   - name: phi3
-    active: true
+    access: allowed
     input_cost_per_million: 0.0
     output_cost_per_million: 0.0
     endpoints:
@@ -96,7 +130,7 @@ Ollama runs on your own hardware. It uses an OpenAI-compatible API at `http://lo
 
 ```yaml
   - name: llama3.2
-    active: true
+    access: allowed
     input_cost_per_million: 0.0
     output_cost_per_million: 0.0
     supports_reasoning: true

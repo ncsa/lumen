@@ -233,9 +233,9 @@ print(result.text)
 
 ### Billing
 
-Speech-to-text models are billed **per minute of audio**. Lumen reads the upstream `usage` object:
+Speech-to-text models are billed **per hour of audio**. Lumen reads the upstream `usage` object:
 
-- `{"type": "duration", "seconds": N}` → cost = `N / 60 × audio_cost_per_minute` (configured per model).
+- `{"type": "duration", "seconds": N}` → cost = `N / 3600 × audio_cost_per_hour` (configured per model).
 - `{"type": "tokens", ...}` (e.g. gpt-4o-transcribe-style models) → billed via the usual per-token pricing.
 - No usage reported → the request succeeds at zero cost and a warning is logged.
 

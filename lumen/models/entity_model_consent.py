@@ -8,11 +8,11 @@ from ..extensions import db
 
 
 class EntityModelConsent(db.Model):
-    """Records that an entity has accepted the notice for a graylisted model.
+    """Records that an entity has acknowledged a model that requires consent.
 
-    A row here is required before a model with access_type='graylist' can be
-    used. Consent is per-entity per-model and is recorded once; it is not
-    revoked automatically when the model notice changes.
+    A row here is required before a model with needs_ack=true can be used.
+    Consent is per-entity per-model and is recorded once; it is not revoked
+    automatically when the model's acknowledgement message changes.
     """
 
     __tablename__ = "entity_model_consents"
@@ -24,5 +24,5 @@ class EntityModelConsent(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint("entity_id", "model_config_id", name="uq_emc_entity_model"),
-        {"comment": "Records entity acceptance of a graylisted model notice; a row is required before use"},
+        {"comment": "Records entity acknowledgement of a model that requires consent; a row is required before use"},
     )

@@ -34,8 +34,8 @@
       <select id="model-picker" class="form-select form-select-sm" style="max-width:280px">
         {% for item in available_models %}
         <option value="{{ item.model.model_name }}"
-                {% if item.status == 'graylist' %}{% if not item.consented %}data-graylist="true"{% else %}data-consented-graylist="true" data-consented-at="{{ item.consent_at.strftime('%Y-%m-%dT%H:%M:%SZ') if item.consent_at else '' }}"{% endif %} data-notice="{{ item.notice or '' }}"{% endif %}>
-          {% if item.status == 'graylist' and not item.consented %}⚠ {% endif %}{{ item.model.model_name }}
+                {% if item.status == 'needs_ack' %}{% if not item.consented %}data-graylist="true"{% else %}data-consented-graylist="true" data-consented-at="{{ item.consent_at.strftime('%Y-%m-%dT%H:%M:%SZ') if item.consent_at else '' }}"{% endif %} data-notice="{{ item.notice or '' }}"{% endif %}>
+          {% if item.status == 'needs_ack' and not item.consented %}⚠ {% endif %}{{ item.model.model_name }}
         </option>
         {% endfor %}
       </select>

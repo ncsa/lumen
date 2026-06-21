@@ -1,6 +1,21 @@
 """Tests for config_watcher._check_restart_required, _watcher, and start_config_watcher."""
 import logging
 
+import pytest
+
+
+@pytest.fixture
+def restore_config(app):
+    """Snapshot app.config and restore it afterward.
+
+    apply_hot_config mutates the shared session-scoped app.config; restoring
+    prevents leakage into later tests (e.g. CONFIG_EDITOR / DEV_USER).
+    """
+    saved = dict(app.config)
+    yield
+    app.config.clear()
+    app.config.update(saved)
+
 
 def _check(old, new, caplog):
     from lumen.services.config_watcher import _check_restart_required
@@ -95,7 +110,7 @@ def test_start_config_watcher_creates_daemon_thread(app, tmp_path):
     mock_thread.start.assert_called_once()
 
 
-def test_watcher_reloads_config_on_mtime_change(app, tmp_path):
+def test_watcher_reloads_config_on_mtime_change(app, tmp_path, restore_config):
     import yaml
     from unittest.mock import patch
     from lumen.services.config_watcher import _watcher
@@ -131,7 +146,7 @@ def test_watcher_reloads_config_on_mtime_change(app, tmp_path):
         assert app.config.get("APP_NAME") == "Reloaded"
 
 
-def test_watcher_skips_when_mtime_unchanged(app, tmp_path):
+def test_watcher_skips_when_mtime_unchanged(app, tmp_path, restore_config):
     import yaml
     from unittest.mock import patch
     from lumen.services.config_watcher import _watcher
@@ -160,7 +175,7 @@ def test_watcher_skips_when_mtime_unchanged(app, tmp_path):
         assert app.config.get("APP_NAME") == "Original"
 
 
-def test_watcher_handles_read_error_gracefully(app, tmp_path):
+def test_watcher_handles_read_error_gracefully(app, tmp_path, restore_config):
     from unittest.mock import patch
     from lumen.services.config_watcher import _watcher
 
@@ -193,7 +208,7 @@ def test_watcher_handles_read_error_gracefully(app, tmp_path):
                     pass
 
 
-def test_dev_user_set_logs_warning(app, caplog):
+def test_dev_user_set_logs_warning(app, caplog, restore_config):
     """A configured dev_user emits a loud warning so an accidental prod setting is visible."""
     import logging
     from lumen.services.config_watcher import apply_hot_config
@@ -203,10 +218,95 @@ def test_dev_user_set_logs_warning(app, caplog):
     assert any("DEV LOGIN ENABLED" in r.message for r in caplog.records)
 
 
-def test_no_dev_user_no_warning(app, caplog):
+def test_no_dev_user_no_warning(app, caplog, restore_config):
     import logging
     from lumen.services.config_watcher import apply_hot_config
     with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
         with app.app_context():
             apply_hot_config(app, {"app": {}})
     assert not any("DEV LOGIN ENABLED" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# apply_hot_config: global defaults and config-editor flag (orthogonal access)
+# ---------------------------------------------------------------------------
+
+def test_apply_hot_config_model_and_token_defaults(app, restore_config):
+    from lumen.services.config_watcher import apply_hot_config
+    yaml_data = {
+        "version": 2,
+        "defaults": {
+            "models": {"access": "allowed", "ack_message": "please ack"},
+            "tokens": {"max": 500, "refresh": 50, "starting": 250},
+        },
+    }
+    with app.app_context():
+        apply_hot_config(app, yaml_data)
+        assert app.config["MODEL_DEFAULTS"] == {"access": "allowed", "ack_message": "please ack"}
+        assert app.config["TOKEN_DEFAULTS"] == {"max": 500, "refresh": 50, "starting": 250}
+
+
+def test_apply_hot_config_defaults_when_absent(app, restore_config):
+    """With no defaults block, access defaults to blocked and token pool to zeros."""
+    from lumen.services.config_watcher import apply_hot_config
+    with app.app_context():
+        apply_hot_config(app, {"version": 2})
+        assert app.config["MODEL_DEFAULTS"]["access"] == "blocked"
+        assert app.config["MODEL_DEFAULTS"]["ack_message"] is None
+        assert app.config["TOKEN_DEFAULTS"] == {"max": 0, "refresh": 0, "starting": 0}
+
+
+def test_apply_hot_config_token_starting_defaults_to_max(app, restore_config):
+    """When 'starting' is omitted it falls back to 'max'."""
+    from lumen.services.config_watcher import apply_hot_config
+    with app.app_context():
+        apply_hot_config(app, {"version": 2, "defaults": {"tokens": {"max": 300, "refresh": 30}}})
+        assert app.config["TOKEN_DEFAULTS"] == {"max": 300, "refresh": 30, "starting": 300}
+
+
+def test_apply_hot_config_legacy_graylist_notice_feeds_ack_message(app, restore_config):
+    """Legacy app.graylist_default_notice maps to defaults.models.ack_message when unset."""
+    from lumen.services.config_watcher import apply_hot_config
+    with app.app_context():
+        apply_hot_config(app, {"version": 2, "app": {"graylist_default_notice": "legacy notice"}})
+        assert app.config["MODEL_DEFAULTS"]["ack_message"] == "legacy notice"
+
+
+def test_apply_hot_config_config_editor_default_true(app, restore_config):
+    from lumen.services.config_watcher import apply_hot_config
+    with app.app_context():
+        apply_hot_config(app, {"version": 2, "app": {}})
+        assert app.config["CONFIG_EDITOR"] is True
+
+
+def test_apply_hot_config_config_editor_disabled(app, restore_config):
+    from lumen.services.config_watcher import apply_hot_config
+    with app.app_context():
+        apply_hot_config(app, {"version": 2, "app": {"config_editor": False}})
+        assert app.config["CONFIG_EDITOR"] is False
+
+
+def test_apply_hot_config_v1_emits_version_deprecation_warning(app, caplog, restore_config):
+    import logging
+    import lumen.services.config_watcher as cw
+    cw._version_warned = False
+    try:
+        with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
+            with app.app_context():
+                cw.apply_hot_config(app, {"app": {}})  # no 'version' key -> treated as v1
+        assert any("version: 2" in r.message for r in caplog.records)
+    finally:
+        cw._version_warned = False
+
+
+def test_apply_hot_config_v2_no_version_warning(app, caplog, restore_config):
+    import logging
+    import lumen.services.config_watcher as cw
+    cw._version_warned = False
+    try:
+        with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
+            with app.app_context():
+                cw.apply_hot_config(app, {"version": 2, "app": {}})
+        assert not any("version: 2" in r.message for r in caplog.records)
+    finally:
+        cw._version_warned = False

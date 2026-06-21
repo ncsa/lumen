@@ -50,7 +50,7 @@ def test_update_stats_entity_stat_aggregates_across_models(app, test_user, test_
         from lumen.services.llm import update_stats
 
         m2 = ModelConfig(model_name="other-model", input_cost_per_million=1.0,
-                         output_cost_per_million=2.0, active=True)
+                         output_cost_per_million=2.0, access="allowed")
         db.session.add(m2)
         db.session.commit()
 

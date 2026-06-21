@@ -48,6 +48,59 @@ def test_context_window_falls_back_to_dev_without_endpoint(monkeypatch):
     assert result["updates"]["max_output_tokens"] == 64000
 
 
+def test_find_skips_cross_kind_match():
+    """A speech model must not fuzzy-match a text model that merely shares family+version."""
+    models = [
+        {"id": "ibm-granite/granite-4.0-tiny", "name": "Granite 4.0 Tiny", "modalities": {"input": ["text"]}},
+    ]
+    assert model_sync.find_in_modelsdev("ibm-granite/granite-speech-4.1-2b-plus", models,
+                                        config_name="granite-speech-4.1-2b-plus") is None
+
+
+def test_find_allows_same_kind_match():
+    """Same task/modality token still matches."""
+    models = [
+        {"id": "qwen/qwen2-audio-instruct", "name": "Qwen2 Audio", "modalities": {"input": ["text", "audio"]}},
+    ]
+    assert model_sync.find_in_modelsdev("qwen2-audio", models, config_name="qwen2-audio") is not None
+
+
+def test_modalities_overridden_on_match(monkeypatch):
+    """A trusted models.dev match corrects modalities (e.g. text -> text+image)."""
+    _patch(monkeypatch,
+           ep_model=None,
+           dev_match={"modalities": {"input": ["text", "image"], "output": ["text"]}})
+    result = model_sync.sync_model({
+        "name": "m",
+        "input_modalities": ["text"],
+        "endpoints": [{"url": "http://x"}],
+    })
+    assert result["updates"]["input_modalities"] == ["text", "image"]
+    assert result["updates"]["output_modalities"] == ["text"]
+
+
+def test_modalities_filled_when_missing(monkeypatch):
+    """When modalities are unset, models.dev still populates them."""
+    _patch(monkeypatch,
+           ep_model=None,
+           dev_match={"modalities": {"input": ["text", "image"], "output": ["text"]}})
+    result = model_sync.sync_model({"name": "m", "endpoints": [{"url": "http://x"}]})
+    assert result["updates"]["input_modalities"] == ["text", "image"]
+    assert result["updates"]["output_modalities"] == ["text"]
+
+
+def test_modalities_untouched_without_match(monkeypatch):
+    """No models.dev match (e.g. granite-speech) → operator-set modalities are preserved."""
+    _patch(monkeypatch, ep_model={"id": "m", "max_model_len": 4096}, dev_match=None)
+    result = model_sync.sync_model({
+        "name": "granite-speech",
+        "input_modalities": ["text", "audio"],
+        "endpoints": [{"url": "http://x"}],
+    })
+    assert "input_modalities" not in result["updates"]
+    assert "output_modalities" not in result["updates"]
+
+
 def test_no_change_when_values_already_match(monkeypatch):
     _patch(monkeypatch,
            ep_model={"id": "m", "max_model_len": 48712},

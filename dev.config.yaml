@@ -1,0 +1,156 @@
+# Local development config (v2) — no OAuth, no Postgres, no real LLM.
+#
+#   uv run dummy                              # echo backend on :9999 (separate terminal)
+#   CONFIG_YAML=./dev.config.yaml uv run flask db upgrade
+#   CONFIG_YAML=./dev.config.yaml uv run lumen
+#
+# Then open http://localhost:5001 — you're auto-logged in as the dev_user (an admin),
+# so /admin/config is reachable to exercise the model-access editor.
+
+version: 2
+
+app:
+  name: Lumen (dev)
+  debug: true
+  secret_key: dev-secret-not-for-production
+  encryption_key: dev-encryption-not-for-production
+  database:
+    url: sqlite:///lumen_dev.db
+  logs:
+    level: info
+  # Bypasses OAuth: every visit logs in as this user. Added to `admins` below so the
+  # config editor is reachable. dev_user groups are merged with the `users:` entry.
+  dev_user:
+    email: dev@example.com
+    groups:
+    - staff
+
+admins:
+- dev@example.com
+
+rate_limiting:
+  limit: 200 per minute
+
+# Global fallbacks. A model with no `access` and a user in no group resolves to blocked;
+# token pool falls back here when no group/user sets one.
+defaults:
+  models:
+    access: blocked
+    ack_message: This model was trained outside the U.S. and may contain biases — use with awareness.
+  tokens:
+    max: 50
+    refresh: 0.1
+    starting: 50
+
+groups:
+  # Auto-assigned at login for the dev_user (and via the rule below, were OAuth real).
+  staff:
+    max: 50
+    refresh: 0.1
+    starting: 50
+    model_access:
+      default: allowed          # staff get everything except models blocked at the model level
+    rules:
+    - field: affiliation
+      contains: staff@example.edu
+  students:
+    max: 10
+    refresh: 0.02
+    starting: 10
+    model_access:
+      default: blocked          # students only get explicitly-allowed models
+      allowed:
+      - dummy
+    rules:
+    - field: affiliation
+      contains: student@example.edu
+  # A small group used to grant a blocked-by-default model to test users.
+  granite-testers:
+    model_access:
+      allowed:
+      - granite-speech
+
+clients:
+  default:
+    max: 100
+    refresh: 0.05
+    starting: 100
+    model_access:
+      default: blocked
+      allowed:
+      - dummy
+
+# Per-user overrides. The dev user is added to granite-testers so they can use the
+# blocked-by-default `granite-speech` model — exercising the per-user editor + resolution.
+users:
+  dev@example.com:
+    groups:
+    - granite-testers
+
+models:
+# The only model with a live backend (uv run dummy). access unset -> inherits group defaults.
+- name: dummy
+  description: Local echo backend for development.
+  input_cost_per_million: 0
+  output_cost_per_million: 0
+  endpoints:
+  - url: http://localhost:9999/v1
+    api_key: dummy
+    model: dummy
+
+# Also wired to the echo backend so it works in chat; requires acknowledgement.
+- name: vision-beta
+  description: Demo model that requires acknowledgement before use.
+  needs_ack: true
+  input_cost_per_million: 0.1
+  output_cost_per_million: 0.2
+  input_modalities: [text, image]
+  output_modalities: [text]
+  endpoints:
+  - url: http://localhost:9999/v1
+    api_key: dummy
+    model: dummy
+
+# Blocked by default at the model level; granted only via the granite-testers group.
+- name: granite-speech
+  description: Blocked by default; enabled for granite-testers.
+  access: blocked
+  input_cost_per_million: 0.1
+  output_cost_per_million: 0.2
+  endpoints:
+  - url: http://localhost:9999/v1
+    api_key: dummy
+    model: dummy
+
+# Disabled — hidden everywhere and excluded from the access editor's model list.
+- name: retired-model
+  disabled: true
+  input_cost_per_million: 0
+  output_cost_per_million: 0
+  endpoints:
+  - url: http://localhost:9999/v1
+    api_key: dummy
+    model: dummy
+
+# A handful of extra (offline) models so the editor's search box has something to find.
+- name: model-a
+  input_cost_per_million: 0.1
+  output_cost_per_million: 0.2
+  endpoints:
+  - url: http://localhost:8101/v1
+    api_key: x
+    model: model-a
+- name: model-b
+  input_cost_per_million: 0.1
+  output_cost_per_million: 0.2
+  endpoints:
+  - url: http://localhost:8102/v1
+    api_key: x
+    model: model-b
+- name: model-c
+  input_cost_per_million: 0.1
+  output_cost_per_million: 0.2
+  endpoints:
+  - url: http://localhost:8103/v1
+    api_key: x
+    model: model-c

@@ -209,12 +209,15 @@ def analytics():
 @admin_required
 def config_editor():
     config_path = current_app.config["CONFIG_YAML"]
-    config_readonly = not os.access(config_path, os.W_OK)
+    editor_enabled = current_app.config.get("CONFIG_EDITOR", True)
+    # Read-only when the editor is disabled by config, or the file is not writable.
+    config_readonly = (not editor_enabled) or (not os.access(config_path, os.W_OK))
     return render_template(
         "admin/config.html",
         current_email=session.get("entity_email", ""),
         restart_required=RESTART_REQUIRED,
         config_readonly=config_readonly,
+        editor_disabled=not editor_enabled,
     )
 
 
@@ -228,6 +231,26 @@ def config_api_get():
     except OSError as e:
         return jsonify({"error": str(e)}), HTTPStatus.INTERNAL_SERVER_ERROR
     return jsonify(data)
+
+
+@admin_bp.route("/api/users/search")
+@admin_required
+def users_search_api():
+    """Typeahead search over existing user entities by name or email (config editor)."""
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify({"users": []})
+    stmt = (
+        select(Entity)
+        .where(
+            Entity.entity_type == "user",
+            db.or_(Entity.email.ilike(f"%{q}%"), Entity.name.ilike(f"%{q}%")),
+        )
+        .order_by(Entity.name)
+        .limit(10)
+    )
+    users = db.session.execute(stmt).scalars().all()
+    return jsonify({"users": [{"name": u.name, "email": u.email} for u in users if u.email]})
 
 
 @admin_bp.route("/api/sync_model", methods=["POST"])
@@ -244,6 +267,8 @@ def sync_model_api():
 @admin_bp.route("/api/config", methods=["POST"])
 @admin_required
 def config_api_post():
+    if not current_app.config.get("CONFIG_EDITOR", True):
+        return jsonify({"error": "Config editor is disabled"}), HTTPStatus.FORBIDDEN
     data = request.get_json(force=True, silent=True)
     if not isinstance(data, dict):
         return jsonify({"error": "Invalid payload — expected a JSON object"}), HTTPStatus.BAD_REQUEST

@@ -39,8 +39,11 @@ erDiagram
         string model_name
         numeric input_cost_per_million
         numeric output_cost_per_million
-        numeric audio_cost_per_minute
-        bool active
+        numeric audio_cost_per_hour
+        string access
+        bool needs_ack
+        text ack_message
+        bool disabled
         text description
         string url
         int context_window
@@ -260,11 +263,11 @@ Unified table for both human users (authenticated via OAuth) and programmatic cl
 | `gravatar_hash` | String(64) | YES | MD5 hash of the user's email for Gravatar lookups; users only |
 | `active` | Boolean | NO | Whether the entity can make requests. Inactive entities are blocked. |
 | `created_at` | DateTime | NO | UTC timestamp when the entity was created |
-| `model_access_default` | String(16) | YES | Default access policy for models not explicitly listed: `'whitelist'`, `'blacklist'`, or `'graylist'`. Used for client entities; users inherit from group membership. |
+| `model_access_default` | String(16) | YES | Default model access policy for models not explicitly listed: `'allowed'` or `'blocked'`. Used for client entities; users inherit from group membership. |
 
 **Notes:**
 - All foreign keys that reference `entities.id` cascade on delete.
-- `model_access_default` combined with `entity_model_access` rows implements per-entity model allow/deny/consent lists.
+- `model_access_default` combined with `entity_model_access` rows implements per-entity model allow/block lists. Acknowledgement (`needs_ack`) is a property of the model, not of the entity.
 
 ---
 
@@ -300,8 +303,11 @@ Configuration and metadata for each AI model that Lumen can proxy. One row per l
 | `model_name` | String(128) | NO | Canonical model identifier sent to clients (e.g., `gpt-4o`). Unique. |
 | `input_cost_per_million` | Numeric(12,6) | NO | USD cost per one million input tokens |
 | `output_cost_per_million` | Numeric(12,6) | NO | USD cost per one million output tokens |
-| `audio_cost_per_minute` | Numeric(12,6) | YES | USD cost per minute of audio; only set for speech-to-text (ASR) models |
-| `active` | Boolean | NO | Whether the model is available for use. Inactive models are hidden from clients. |
+| `audio_cost_per_hour` | Numeric(12,6) | YES | USD cost per hour of audio; only set for speech-to-text (ASR) models |
+| `access` | String(8) | YES | The model's own default access: `'allowed'`, `'blocked'`, or NULL to inherit scope/global defaults. When set it ranks above group/entity *defaults* but below an explicit per-scope rule. |
+| `needs_ack` | Boolean | NO | Requires user acknowledgement before use; a sticky model-level property that no scope can add or remove. Default `false`. |
+| `ack_message` | Text | YES | Per-model acknowledgement message; overrides the global `defaults.models.ack_message`. |
+| `disabled` | Boolean | NO | Hard off: the model is hidden everywhere and not overridable by any scope. Default `false`. |
 | `description` | Text | YES | Human-readable description shown in the UI |
 | `url` | String(512) | YES | Link to the model's documentation or provider page |
 | `supports_function_calling` | Boolean | YES | Whether the model supports tool/function-calling |
@@ -313,6 +319,9 @@ Configuration and metadata for each AI model that Lumen can proxy. One row per l
 | `knowledge_cutoff` | String(7) | YES | Training data cutoff in `YYYY-MM` format |
 | `notice` | Text | YES | Optional admin notice displayed to users on the model detail page |
 | `created_at` | DateTime | NO | UTC timestamp when the model was registered |
+
+**Notes:**
+- `active` is a derived, read-only property (`active = not disabled`), not a stored column. It replaces the old `active` column.
 
 ---
 
@@ -363,27 +372,28 @@ Current coin balance for each entity. Updated on every request and on each refil
 
 ## entity_model_access
 
-Per-entity model access overrides. Each row designates a specific model as whitelisted, blacklisted, or graylisted for the entity. The entity's `model_access_default` handles models not listed here.
+Per-entity model access overrides. Each row designates a specific model as `allowed` or `blocked` for the entity. The entity's `model_access_default` handles models not listed here.
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `id` | Integer | NO | Primary key |
 | `entity_id` | Integer (FK → entities) | NO | The entity the override applies to. Cascades on delete. |
 | `model_config_id` | Integer (FK → model_configs) | NO | The model being overridden. Cascades on delete. |
-| `access_type` | String(20) | NO | `'whitelist'` (always allowed), `'blacklist'` (always denied), or `'graylist'` (allowed after explicit user consent) |
+| `access_type` | String(20) | NO | `'allowed'` (always allowed) or `'blocked'` (always denied) for this entity. Acknowledgement (`needs_ack`) lives on the model, not here. |
 
 **Constraints:** `UNIQUE(entity_id, model_config_id)`
 
 **Access type semantics:**
-- `whitelist` — entity may use this model regardless of group or default policy.
-- `blacklist` — entity is blocked from this model regardless of group or default policy.
-- `graylist` — entity must consent (via `entity_model_consents`) before using the model.
+- `allowed` — entity may use this model regardless of group or default policy.
+- `blocked` — entity is denied this model regardless of group or default policy.
+
+If the model has `needs_ack: true`, the entity must still record acknowledgement (via `entity_model_consents`) before using an allowed model.
 
 ---
 
 ## entity_model_consents
 
-Records that an entity has explicitly accepted the terms or notice for a graylisted model. A row here is required before a graylisted model can be used.
+Records that an entity has explicitly accepted the terms or notice for a model with `needs_ack: true`. A row here is required before such a model can be used.
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
@@ -407,7 +417,7 @@ Named collections of entities used for bulk policy assignment. Groups can be man
 | `description` | Text | YES | Optional human-readable description shown in the admin UI |
 | `active` | Boolean | NO | Whether the group is currently in effect |
 | `config_managed` | Boolean | NO | When `true`, group membership and settings are controlled by `config.yaml` |
-| `model_access_default` | String(20) | YES | Default access policy for models not explicitly listed in `group_model_access`: `'whitelist'`, `'blacklist'`, or `'graylist'` |
+| `model_access_default` | String(20) | YES | Default model access policy for models not explicitly listed in `group_model_access`: `'allowed'` or `'blocked'` |
 | `created_at` | DateTime | NO | UTC timestamp when the group was created |
 
 ---
@@ -450,7 +460,7 @@ Per-group model access overrides. Mirrors `entity_model_access` but applies to a
 | `id` | Integer | NO | Primary key |
 | `group_id` | Integer (FK → groups) | NO | The group the override applies to. Cascades on delete. |
 | `model_config_id` | Integer (FK → model_configs) | NO | The model being overridden. Cascades on delete. |
-| `access_type` | String(20) | NO | `'whitelist'`, `'blacklist'`, or `'graylist'` — same semantics as `entity_model_access.access_type` |
+| `access_type` | String(20) | NO | `'allowed'` or `'blocked'` — same semantics as `entity_model_access.access_type` |
 
 **Constraints:** `UNIQUE(group_id, model_config_id)`
 
@@ -591,13 +601,14 @@ model_configs ──< model_endpoints├──< entity_managers (user→client)
 
 When determining whether an entity may use a model, Lumen evaluates in this priority order:
 
-1. **Entity-level** `entity_model_access` row for the model → if present, use its `access_type`.
-2. **Group-level** `group_model_access` row for any group the entity belongs to → if found, use the most restrictive `access_type` across matching groups.
-3. **Group default** `groups.model_access_default` → if the entity belongs to groups with a default set, the most permissive group default wins (whitelist > graylist > blacklist).
-4. **Entity default** `entities.model_access_default` → if set, use it (applied only when no group default matched).
-5. **Allow** — if no rule matches, access is granted.
+1. **Entity-level** `entity_model_access` row for the model → if present, use its `access_type` (`allowed`/`blocked`).
+2. **Group-level** `group_model_access` row for any group the entity belongs to → if found, `blocked` in any group beats `allowed`.
+3. **Model `access`** `model_configs.access` → if set (`allowed`/`blocked`), it wins over scope *defaults* (lets a model be blocked-by-default yet grant-able via tiers 1–2).
+4. **Group default** `groups.model_access_default` → if the entity belongs to groups with a default set.
+5. **Entity default** `entities.model_access_default` → if set, use it (applied only when no group default matched).
+6. **Global default** `defaults.models.access` → final fallback when the model leaves `access` unset and no scope default applies.
 
-For `graylist` access, the entity must also have a row in `entity_model_consents` for the model.
+`disabled = true` short-circuits the whole chain to blocked and is not overridable by any scope. Independently, if the model has `needs_ack = true`, the entity must also have a row in `entity_model_consents` before using an allowed model.
 
 ## Coin Budget Resolution Order
 

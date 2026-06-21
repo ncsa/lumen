@@ -8,7 +8,7 @@ class GroupModelAccess(db.Model):
 
     Mirrors entity_model_access but applies to all members of the group.
     Entity-level overrides take precedence over these rows.
-    access_type values: 'whitelist', 'blacklist', 'graylist'.
+    access_type values: 'allowed', 'blocked'.
     """
 
     __tablename__ = "group_model_access"
@@ -16,8 +16,8 @@ class GroupModelAccess(db.Model):
     id: Mapped[int] = mapped_column(db.Integer, primary_key=True, comment="Primary key")
     group_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("groups.id", ondelete="CASCADE"), comment="The group the override applies to")
     model_config_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("model_configs.id", ondelete="CASCADE"), comment="The model being overridden")
-    # 'whitelist' | 'blacklist' | 'graylist'
-    access_type: Mapped[str] = mapped_column(db.String(20), comment="whitelist (always allowed), blacklist (always denied), or graylist (requires consent)")
+    # 'allowed' | 'blocked'
+    access_type: Mapped[str] = mapped_column(db.String(20), comment="'allowed' or 'blocked' for this group; acknowledgement requirement lives on the model")
 
     model_config: Mapped["ModelConfig"] = relationship()
 

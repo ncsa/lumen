@@ -14,9 +14,20 @@ from lumen.commands import sync_clients_from_yaml, sync_groups_from_yaml, sync_m
 
 logger = logging.getLogger(__name__)
 
+# Log the config-version deprecation warning at most once per process.
+_version_warned = False
+
 
 def apply_hot_config(app, yaml_data: dict):
     """Apply hot-reloadable yaml settings to app.config. Called at startup and on config reload."""
+    global _version_warned
+    if int(yaml_data.get("version", 1) or 1) < 2 and not _version_warned:
+        logger.warning(
+            "config.yaml is missing 'version: 2'; the legacy (v1) format is deprecated and will be "
+            "migrated to v2 on the next save via the editor or Helm redeploy"
+        )
+        _version_warned = True
+
     app_cfg = yaml_data.get("app", {})
     app.config["APP_NAME"] = app_cfg.get("name", "Lumen")
     app.config["APP_TAGLINE"] = app_cfg.get("tagline", "")
@@ -51,7 +62,26 @@ def apply_hot_config(app, yaml_data: dict):
     app.config["EMAIL_THEMES"] = app_cfg.get("email_themes") or {}
     api_cfg = yaml_data.get("api", {})
     app.config["API_REQUIRE_MODEL_CONSENT"] = api_cfg.get("consent", True)
-    app.config["GRAYLIST_DEFAULT_NOTICE"] = app_cfg.get("graylist_default_notice") or None
+
+    # The in-app config editor is on by default; Helm sets it false for git-managed configs.
+    app.config["CONFIG_EDITOR"] = bool(app_cfg.get("config_editor", True))
+
+    # Global defaults for models and token (coin) pools, overridable per scope.
+    defaults_cfg = yaml_data.get("defaults") or {}
+    models_defaults = defaults_cfg.get("models") or {}
+    # Legacy app.graylist_default_notice feeds the global ack_message when not set under defaults.models.
+    ack_message = models_defaults.get("ack_message") or app_cfg.get("graylist_default_notice") or None
+    app.config["MODEL_DEFAULTS"] = {
+        "access": models_defaults.get("access", "blocked"),
+        "ack_message": ack_message,
+    }
+    tokens_defaults = defaults_cfg.get("tokens") or {}
+    _td_max = tokens_defaults.get("max", 0)
+    app.config["TOKEN_DEFAULTS"] = {
+        "max": _td_max,
+        "refresh": tokens_defaults.get("refresh", 0),
+        "starting": tokens_defaults.get("starting", _td_max),
+    }
 
 def _apply_theme(app, yaml_data: dict):
     """Switch the active theme from yaml_data. No-op if unchanged or theme dir not found."""

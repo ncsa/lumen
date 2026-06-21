@@ -47,7 +47,7 @@
       </div>
       {% endif %}
 
-      {% if access_status == 'graylist' %}
+      {% if access_status == 'needs_ack' %}
       <div class="card border-warning" aria-labelledby="graylist-card-title">
         <div class="card-header bg-warning bg-opacity-25 fw-semibold" id="graylist-card-title">
           <span role="img" aria-label="Warning">⚠</span> Access Acknowledgment Required
@@ -207,7 +207,7 @@
     </div>{# end sidebar #}
   </div>{# end row #}
 </ilw-content>
-{% if access_status == 'graylist' and not consent %}{% include '_graylist_modal.html' %}{% endif %}
+{% if access_status == 'needs_ack' and not consent %}{% include '_graylist_modal.html' %}{% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -249,7 +249,7 @@
   {% endif %}
 })();
 
-{% if access_status == 'graylist' and not consent %}
+{% if access_status == 'needs_ack' and not consent %}
 const openGraylistModal = initGraylistConsent(() => location.reload());
 document.getElementById('graylist-open-btn').addEventListener('click', () => {
   openGraylistModal({{ config.model_name | tojson }}, {{ effective_notice | tojson if effective_notice else 'null' }});

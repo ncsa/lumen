@@ -69,18 +69,18 @@ def _fetch_model_context(eid: int):
 
 def _build_model_access_list(usage_by_model, all_models, eps_by_model, access_statuses, consent_map) -> list:
     """Merge access status, model health, and usage stats for every model."""
-    default_notice = current_app.config.get("GRAYLIST_DEFAULT_NOTICE")
+    default_ack = current_app.config.get("MODEL_DEFAULTS", {}).get("ack_message")
     result = []
     for mc in all_models:
         access_status = access_statuses.get(mc.id, "allowed")
-        consented = (mc.id in consent_map) if access_status == "graylist" else None
+        consented = (mc.id in consent_map) if access_status == "needs_ack" else None
         u = usage_by_model.get(mc.model_name, {})
         model_status = "disabled" if not mc.active else _endpoint_status(eps_by_model.get(mc.id, []))
         result.append({
             "model_name": mc.model_name,
             "model_url": url_for("models_page.detail", model_name=mc.model_name),
-            "notice": mc.notice or (default_notice if access_status == "graylist" else None),
-            "consent_at": consent_map.get(mc.id) if access_status == "graylist" else None,
+            "notice": (mc.ack_message or default_ack) if access_status == "needs_ack" else None,
+            "consent_at": consent_map.get(mc.id) if access_status == "needs_ack" else None,
             "access_status": access_status,
             "consented": consented,
             "model_status": model_status,
@@ -263,10 +263,10 @@ def delete_key(kid):
 @login_required
 def user_consent(model_name):
     entity_id = session["entity_id"]
-    config = db.first_or_404(select(ModelConfig).filter_by(model_name=model_name, active=True))
+    config = db.first_or_404(select(ModelConfig).where(ModelConfig.model_name == model_name, ModelConfig.active))
 
-    if get_model_access_status(entity_id, config.id) != "graylist":
-        return jsonify({"error": "Model is not graylisted for this user"}), HTTPStatus.BAD_REQUEST
+    if get_model_access_status(entity_id, config.id) != "needs_ack":
+        return jsonify({"error": "Model does not require acknowledgement for this user"}), HTTPStatus.BAD_REQUEST
 
     if not has_model_consent(entity_id, config.id):
         db.session.add(EntityModelConsent(

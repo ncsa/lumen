@@ -171,7 +171,7 @@ models:
       inputCostPerMillion: 2.5
       outputCostPerMillion: 10.0
       contextWindow: 128000
-      active: true
+      access: allowed
 ```
 
 #### In-cluster vLLM deployment
@@ -223,7 +223,7 @@ models:
       inputCostPerMillion: 0.1
       outputCostPerMillion: 0.3
       contextWindow: 8192
-      active: true
+      access: allowed
 ```
 
 #### In-cluster SGLang deployment
@@ -263,7 +263,7 @@ models:
       inputCostPerMillion: 0.05
       outputCostPerMillion: 0.10
       contextWindow: 32768
-      active: true
+      access: allowed
 ```
 
 ## Values Reference
@@ -278,6 +278,10 @@ models:
 | `config.encryptionKey` | `""` | API key hashing secret |
 | `config.debug` | `false` | Flask debug mode |
 | `config.admins` | `[]` | Admin email addresses |
+| `config.configEditor` | `false` | Allow editing config.yaml from the `/admin/config` UI (read-only by default since the chart manages the config) |
+| `config.defaults.models.access` | `blocked` | Baseline access for models that omit `lumen.access` (`allowed`/`blocked`) |
+| `config.defaults.models.ackMessage` | `""` | Global acknowledgement message for `needsAck` models without their own |
+| `config.defaults.tokens.max` / `refresh` / `starting` | `0` | Fallback coin pool for groups/clients that omit these fields |
 | `config.rateLimiting.limit` | `"30 per minute"` | Rate limit per user |
 | `oauth2.serverMetadataUrl` | CILogon OIDC URL | OIDC provider metadata URL |
 | `oauth2.redirectUri` | `""` | Auto-computed from ingress/gateway if empty |

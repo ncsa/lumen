@@ -30,8 +30,8 @@ class Entity(db.Model):
     active: Mapped[bool] = mapped_column(db.Boolean, default=True, comment="Inactive entities are blocked from making requests")
     created_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, default=utcnow, comment="UTC creation timestamp")
     # Default access policy for models not explicitly listed in entity_model_access.
-    # 'whitelist' | 'blacklist' | 'graylist'; primarily used for client entities.
-    model_access_default: Mapped[Optional[str]] = mapped_column(db.String(16), comment="Default model access policy: whitelist, blacklist, or graylist; client entities only")
+    # 'allowed' | 'blocked'; primarily used for client entities.
+    model_access_default: Mapped[Optional[str]] = mapped_column(db.String(16), comment="Default model access policy: 'allowed' or 'blocked'; client entities only")
 
     api_keys: Mapped[list["APIKey"]] = relationship(backref="entity", lazy="select", cascade="all, delete-orphan", passive_deletes=True)
     entity_limit: Mapped[Optional["EntityLimit"]] = relationship(backref="entity", uselist=False, cascade="all, delete-orphan", passive_deletes=True)

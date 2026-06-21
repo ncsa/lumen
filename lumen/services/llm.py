@@ -50,8 +50,36 @@ from lumen.models.group_limit import GroupLimit
 from lumen.models.group_model_access import GroupModelAccess
 from lumen.models.entity import Entity
 
-# Priority order for access types when multiple apply (lower index = higher priority)
-_ACCESS_PRIORITY = {"blacklist": 0, "graylist": 1, "whitelist": 2}
+def _resolve_allow_block(
+    ema_type: str,
+    gma_types: list,
+    model_access: str,
+    group_defaults: list,
+    entity_default: str,
+    global_default: str,
+) -> str:
+    """Resolve the allow/block axis to 'allowed' or 'blocked' from pre-fetched data.
+
+    Precedence (highest to lowest) — explicit rules beat defaults, and a model's own
+    default beats group/entity defaults but is overridden by explicit per-scope rules:
+    1. Entity per-model rule (ema_type)
+    2. Group per-model rule (gma_types) — blocked beats allowed
+    3. Per-model default (model_access), when set
+    4. Group default (group_defaults) — most permissive (allowed) wins
+    5. Entity-level default (entity_default)
+    6. Global default (defaults.models.access)
+    """
+    if ema_type is not None:
+        return "allowed" if ema_type == "allowed" else "blocked"
+    if gma_types:
+        return "blocked" if "blocked" in gma_types else "allowed"
+    if model_access:
+        return "allowed" if model_access == "allowed" else "blocked"
+    if group_defaults:
+        return "allowed" if "allowed" in group_defaults else "blocked"
+    if entity_default:
+        return "allowed" if entity_default == "allowed" else "blocked"
+    return "allowed" if global_default == "allowed" else "blocked"
 
 
 def _resolve_single_access(
@@ -59,30 +87,23 @@ def _resolve_single_access(
     gma_types: list,
     group_defaults: list,
     entity_default: str,
+    model_access: str = None,
+    model_needs_ack: bool = False,
+    model_disabled: bool = False,
+    global_default: str = "blocked",
 ) -> str:
-    """Resolve 'allowed', 'graylist', or 'blocked' from pre-fetched per-model access data.
+    """Resolve 'allowed', 'needs_ack', or 'blocked' from pre-fetched per-model access data.
 
-    Precedence (highest to lowest):
-    1. Entity model access (ema_type) — whitelist/graylist/blacklist
-    2. Group per-model rules (gma_types) — blacklist beats whitelist beats graylist
-    3. Group defaults (group_defaults) — most permissive wins
-    4. Entity-level default (entity_default)
-    5. Allow by default
+    - 'disabled' models short-circuit to 'blocked' and cannot be overridden.
+    - The allow/block axis follows the precedence in _resolve_allow_block.
+    - 'needs_ack' is a model-level property; scopes can neither add nor remove it.
     """
-    if ema_type is not None:
-        return "allowed" if ema_type == "whitelist" else ("graylist" if ema_type == "graylist" else "blocked")
-    if gma_types:
-        best = min(gma_types, key=lambda t: _ACCESS_PRIORITY.get(t, 99))
-        return "blocked" if best == "blacklist" else ("allowed" if best == "whitelist" else "graylist")
-    if group_defaults:
-        if "whitelist" in group_defaults:
-            return "allowed"
-        if "graylist" in group_defaults:
-            return "graylist"
+    if model_disabled:
         return "blocked"
-    if entity_default:
-        return "blocked" if entity_default == "blacklist" else ("graylist" if entity_default == "graylist" else "allowed")
-    return "allowed"
+    access = _resolve_allow_block(ema_type, gma_types, model_access, group_defaults, entity_default, global_default)
+    if access == "blocked":
+        return "blocked"
+    return "needs_ack" if model_needs_ack else "allowed"
 
 
 class PoolLimit(NamedTuple):
@@ -114,14 +135,22 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
     Bulk-resolve model access status and consents for one entity across many models.
 
     Returns (access_statuses, consent_map) where access_statuses is a dict
-    {model_config_id: "allowed"|"blocked"|"graylist"} and consent_map is a dict
-    {model_config_id: consented_at} for models where the entity has accepted the graylist notice.
+    {model_config_id: "allowed"|"blocked"|"needs_ack"} and consent_map is a dict
+    {model_config_id: consented_at} for models where the entity has acknowledged the model.
 
     Issues a fixed set of queries regardless of the number of models — replaces N+1
     per-model calls to get_model_access_status / has_model_consent.
     """
     if not model_config_ids:
         return {}, set()
+
+    baseline = {
+        r.id: r
+        for r in db.session.execute(
+            select(ModelConfig.id, ModelConfig.access, ModelConfig.needs_ack, ModelConfig.disabled)
+            .where(ModelConfig.id.in_(model_config_ids))
+        ).all()
+    }
 
     ema_by_model = {
         r.model_config_id: r.access_type
@@ -166,13 +195,19 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
         ).scalars().all()
     }
 
+    global_default = current_app.config.get("MODEL_DEFAULTS", {}).get("access", "blocked")
     access_statuses: dict = {}
     for mc_id in model_config_ids:
+        mc = baseline.get(mc_id)
         access_statuses[mc_id] = _resolve_single_access(
             ema_by_model.get(mc_id),
             gma_by_model.get(mc_id, []) if group_ids else [],
             group_defaults if group_ids else [],
             entity_default,
+            model_access=(mc.access if mc else None),
+            model_needs_ack=(mc.needs_ack if mc else False),
+            model_disabled=(mc.disabled if mc else False),
+            global_default=global_default,
         )
 
     return access_statuses, consent_map
@@ -222,16 +257,16 @@ def _get_active_group_ids(entity_id: int) -> list:
 
 def get_model_access_status(entity_id: int, model_config_id: int) -> str:
     """
-    Return 'allowed', 'blocked', or 'graylist' for the given entity + model.
+    Return 'allowed', 'blocked', or 'needs_ack' for the given entity + model.
 
-    Resolution order: entity model access → group model rules → group defaults → entity default.
+    Resolution order: entity model access → group model rules → group defaults → entity default → per-model baseline.
     """
     access_statuses, _ = bulk_model_access_info(entity_id, [model_config_id])
     return access_statuses[model_config_id]
 
 
 def has_model_consent(entity_id: int, model_config_id: int) -> bool:
-    """Return True if the entity has consented to use a graylisted model."""
+    """Return True if the entity has acknowledged a model that requires consent."""
     return db.session.execute(
         select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=model_config_id)
     ).scalar_one_or_none() is not None
@@ -241,13 +276,13 @@ def get_model_access(entity_id: int, model_config_id: int, require_consent: bool
     """
     Return True if entity can access the given model, False otherwise.
 
-    For graylisted models, requires prior consent (EntityModelConsent) unless
-    require_consent is False (used to exempt API requests from the consent gate).
+    For models that require acknowledgement, requires prior consent (EntityModelConsent)
+    unless require_consent is False (used to exempt API requests from the consent gate).
     """
     status = get_model_access_status(entity_id, model_config_id)
     if status == "blocked":
         return False
-    if status == "graylist":
+    if status == "needs_ack":
         if not require_consent:
             return True
         return has_model_consent(entity_id, model_config_id)
@@ -261,8 +296,9 @@ def get_pool_limit(entity_id: int):
     max_coins == -2 means unlimited.
 
     Resolution: user's EntityLimit always wins over group limits (consistent with model access).
-    If no EntityLimit exists, fall back to the best GroupLimit (-2 beats any positive value).
-    EntityLimit with max_coins == 0 blocks the entity regardless of groups.
+    If no EntityLimit exists, fall back to the best GroupLimit (-2 beats any positive value),
+    then to the global defaults.tokens pool. EntityLimit with max_coins == 0 blocks the entity
+    regardless of groups.
     """
     user_limit = db.session.execute(select(EntityLimit).filter_by(entity_id=entity_id)).scalar_one_or_none()
     if user_limit is not None:
@@ -270,14 +306,20 @@ def get_pool_limit(entity_id: int):
             return None  # explicitly blocked
         return PoolLimit(float(user_limit.max_coins), float(user_limit.refresh_coins), float(user_limit.starting_coins))
 
-    # No user-level limit — fall back to best group limit.
+    # No user-level limit — fall back to best group limit, then the global default pool.
     group_ids = _get_active_group_ids(entity_id)
-    if not group_ids:
-        return None
-    group_limits = db.session.execute(
-        select(GroupLimit).where(GroupLimit.group_id.in_(group_ids))
-    ).scalars().all()
-    return best_group_pool_limit(group_limits)
+    if group_ids:
+        group_limits = db.session.execute(
+            select(GroupLimit).where(GroupLimit.group_id.in_(group_ids))
+        ).scalars().all()
+        best = best_group_pool_limit(group_limits)
+        if best is not None:
+            return best
+
+    td = current_app.config.get("TOKEN_DEFAULTS")
+    if td and float(td["max"]) != 0:
+        return PoolLimit(float(td["max"]), float(td["refresh"]), float(td["starting"]))
+    return None
 
 
 def get_effective_limit(entity_id: int, model_config_id: int, require_consent: bool = True):
@@ -488,7 +530,7 @@ def send_message_stream(
     ``effective`` is the coin pool limit already resolved during preflight; it is
     threaded to subtract_coins to avoid re-resolving it after the stream completes.
     """
-    config = db.session.execute(select(ModelConfig).filter_by(model_name=model, active=True)).scalar_one_or_none()
+    config = db.session.execute(select(ModelConfig).where(ModelConfig.model_name == model, ModelConfig.active)).scalar_one_or_none()
     if config is None:
         raise ValueError(f"Unknown or inactive model: {model}")
 

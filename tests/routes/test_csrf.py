@@ -27,13 +27,16 @@ def _extract_csrf_token(resp):
 
 
 def _setup_graylist(app, entity_id, model_config_id):
+    """Mark the model needs_ack and grant the entity allowed access."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_model_access import EntityModelAccess
+        from lumen.models.model_config import ModelConfig
+        db.session.get(ModelConfig, model_config_id).needs_ack = True
         db.session.add(EntityModelAccess(
             entity_id=entity_id,
             model_config_id=model_config_id,
-            access_type="graylist",
+            access_type="allowed",
         ))
         db.session.commit()
 
