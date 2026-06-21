@@ -36,6 +36,30 @@
         "secretKey": { "type": "string" },
         "encryptionKey": { "type": "string" },
         "debug": { "type": "boolean" },
+        "configEditor": { "type": "boolean" },
+        "defaults": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "models": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "access": { "type": "string", "enum": ["allowed", "blocked"] },
+                "ackMessage": { "type": "string" }
+              }
+            },
+            "tokens": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "max": { "type": "number" },
+                "refresh": { "type": "number", "minimum": 0 },
+                "starting": { "type": "number", "minimum": 0 }
+              }
+            }
+          }
+        },
         "admins": {
           "type": "array",
           "items": { "type": "string" }
@@ -237,7 +261,9 @@
           "modelAccess": {
             "type": "object",
             "properties": {
-              "default": { "type": "string", "enum": ["whitelist", "blacklist", "graylist"] },
+              "default": { "type": "string", "enum": ["allowed", "blocked", "whitelist", "blacklist", "graylist"] },
+              "allowed": { "type": "array", "items": { "type": "string" } },
+              "blocked": { "type": "array", "items": { "type": "string" } },
               "blacklist": { "type": "array", "items": { "type": "string" } },
               "graylist": { "type": "array", "items": { "type": "string" } },
               "whitelist": { "type": "array", "items": { "type": "string" } }
@@ -338,9 +364,13 @@
             "type": "object",
             "properties": {
               "active": { "type": "boolean" },
+              "access": { "type": "string", "enum": ["allowed", "blocked"] },
+              "needsAck": { "type": "boolean" },
+              "disabled": { "type": "boolean" },
+              "ackMessage": { "type": "string" },
               "inputCostPerMillion": { "type": "number", "minimum": 0 },
               "outputCostPerMillion": { "type": "number", "minimum": 0 },
-              "audioCostPerMinute": { "type": "number", "minimum": 0 },
+              "audioCostPerHour": { "type": "number", "minimum": 0 },
               "contextWindow": { "type": "integer", "minimum": 1 },
               "maxOutputTokens": { "type": "integer", "minimum": 1 },
               "description": { "type": "string" },

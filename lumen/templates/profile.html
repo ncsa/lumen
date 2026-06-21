@@ -413,8 +413,8 @@ const modelTbody = document.getElementById('model-tbody');
 const modelEmpty = document.getElementById('model-empty');
 
 function accessSortKey(row) {
-  if (row.access_status === 'graylist' && !row.consented) return 0;
-  if (row.access_status === 'graylist' && row.consented) return 1;
+  if (row.access_status === 'needs_ack' && !row.consented) return 0;
+  if (row.access_status === 'needs_ack' && row.consented) return 1;
   return 2;
 }
 function statusSortKey(s) {
@@ -450,7 +450,7 @@ function renderModels() {
         accessCell = `<span class="badge bg-danger">Blocked</span>`;
       } else if (r.access_status === 'allowed') {
         accessCell = `<span class="badge bg-success"><span role="img" aria-label="check">✓</span> Allowed</span>`;
-      } else if (r.access_status === 'graylist' && r.consented) {
+      } else if (r.access_status === 'needs_ack' && r.consented) {
         accessCell = `<button class="badge bg-success border-0 consent-info-btn" data-name="${escHtml(r.model_name)}" data-notice="${escHtml(r.notice || '')}" data-consented-at="${escHtml(r.consented_at || '')}" aria-label="Acknowledged – click for details" title="Acknowledged – click for details"><span role="img" aria-label="check">✓</span> Consented</button>`;
       } else {
         accessCell = IS_ADMIN_VIEW

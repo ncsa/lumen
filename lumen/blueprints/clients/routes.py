@@ -291,10 +291,10 @@ def client_consent(sid, model_name):
     db.first_or_404(select(Entity).filter_by(id=sid, entity_type="client"))
     _require_client_access(entity_id, sid)
 
-    config = db.first_or_404(select(ModelConfig).filter_by(model_name=model_name, active=True))
+    config = db.first_or_404(select(ModelConfig).where(ModelConfig.model_name == model_name, ModelConfig.active))
 
-    if get_model_access_status(sid, config.id) != "graylist":
-        return jsonify({"error": "Model is not graylisted for this client"}), HTTPStatus.BAD_REQUEST
+    if get_model_access_status(sid, config.id) != "needs_ack":
+        return jsonify({"error": "Model does not require acknowledgement for this client"}), HTTPStatus.BAD_REQUEST
 
     if not has_model_consent(sid, config.id):
         db.session.add(EntityModelConsent(

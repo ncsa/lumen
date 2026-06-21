@@ -213,7 +213,7 @@ def test_delete_key_requires_login(client):
 # ---------------------------------------------------------------------------
 
 def _make_graylist_model(app, entity_id, model_name="graylist-model"):
-    """Create a model graylisted for the given entity via EntityModelAccess."""
+    """Create a needs_ack model the given entity is allowed to access."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.model_config import ModelConfig
@@ -222,14 +222,15 @@ def _make_graylist_model(app, entity_id, model_name="graylist-model"):
             model_name=model_name,
             input_cost_per_million=1.0,
             output_cost_per_million=2.0,
-            active=True,
+            access="allowed",
+            needs_ack=True,
         )
         db.session.add(mc)
         db.session.flush()
         db.session.add(EntityModelAccess(
             entity_id=entity_id,
             model_config_id=mc.id,
-            access_type="graylist",
+            access_type="allowed",
         ))
         db.session.commit()
         db.session.refresh(mc)
@@ -286,7 +287,7 @@ def test_profile_page_shows_inactive_model(app, auth_client):
             model_name="inactive-model",
             input_cost_per_million=1.0,
             output_cost_per_million=2.0,
-            active=False,
+            disabled=True,
         )
         db.session.add(mc)
         db.session.commit()
@@ -338,7 +339,7 @@ def test_profile_page_shows_model_with_past_usage(app, auth_client, test_user):
             model_name="retired-model",
             input_cost_per_million=1.0,
             output_cost_per_million=2.0,
-            active=False,
+            disabled=True,
         )
         db.session.add(mc)
         db.session.flush()

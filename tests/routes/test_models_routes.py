@@ -20,7 +20,7 @@ def test_models_blocked_model_not_listed(app, auth_client, test_model, test_user
         db.session.add(EntityModelAccess(
             entity_id=test_user["id"],
             model_config_id=test_model["id"],
-            access_type="blacklist",
+            access_type="blocked",
         ))
         db.session.commit()
 
@@ -39,7 +39,7 @@ def test_models_group_blacklisted_not_listed(app, auth_client, test_model, test_
         db.session.add(group)
         db.session.flush()
         db.session.add(GroupMember(entity_id=test_user["id"], group_id=group.id))
-        db.session.add(GroupModelAccess(group_id=group.id, model_config_id=test_model["id"], access_type="blacklist"))
+        db.session.add(GroupModelAccess(group_id=group.id, model_config_id=test_model["id"], access_type="blocked"))
         db.session.commit()
 
     resp = auth_client.get("/models")
@@ -51,7 +51,7 @@ def test_models_inactive_model_not_listed(app, auth_client):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.model_config import ModelConfig
-        m = ModelConfig(model_name="inactive-model", input_cost_per_million=1.0, output_cost_per_million=1.0, active=False)
+        m = ModelConfig(model_name="inactive-model", input_cost_per_million=1.0, output_cost_per_million=1.0, disabled=True)
         db.session.add(m)
         db.session.commit()
 
@@ -83,7 +83,7 @@ def test_model_detail_blocked_returns_404(app, auth_client, test_model, test_use
         db.session.add(EntityModelAccess(
             entity_id=test_user["id"],
             model_config_id=test_model["id"],
-            access_type="blacklist",
+            access_type="blocked",
         ))
         db.session.commit()
 

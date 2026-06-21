@@ -71,7 +71,7 @@ def _chat_limit():
 @limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def chat_page():
     entity_id = session["entity_id"]
-    all_models = db.session.execute(select(ModelConfig).filter_by(active=True).order_by(ModelConfig.model_name)).scalars().all()
+    all_models = db.session.execute(select(ModelConfig).where(ModelConfig.active).order_by(ModelConfig.model_name)).scalars().all()
     healthy_counts = dict(
         db.session.execute(
             select(ModelEndpoint.model_config_id, func.count())
@@ -83,13 +83,13 @@ def chat_page():
     model_ids = [m.id for m in all_models]
     # Bulk-resolve access and consents to avoid N+1 per-model DB queries
     access_statuses, consent_map = bulk_model_access_info(entity_id, model_ids)
-    default_notice = current_app.config.get("GRAYLIST_DEFAULT_NOTICE")
+    default_ack = current_app.config.get("MODEL_DEFAULTS", {}).get("ack_message")
     # Pool limit is entity-level; fetch once rather than once per model via get_effective_limit
     pool = get_pool_limit(entity_id)
 
     # Include models that are accessible (not blocked) and have healthy endpoints.
-    # Graylisted models without consent are shown with a warning so the user can navigate
-    # to the model detail page to acknowledge them.
+    # Models that require acknowledgement without consent are shown with a warning so the
+    # user can navigate to the model detail page to acknowledge them.
     available_models = []
     for m in all_models:
         if healthy_counts.get(m.id, 0) == 0:
@@ -97,11 +97,11 @@ def chat_page():
         status = access_statuses.get(m.id, "allowed")
         if status == "blocked":
             continue
-        if pool is None and status != "graylist":
+        if pool is None and status != "needs_ack":
             continue
-        consented = (m.id in consent_map) if status == "graylist" else True
-        consent_at = consent_map.get(m.id) if status == "graylist" else None
-        notice = (m.notice or default_notice) if status == "graylist" else None
+        consented = (m.id in consent_map) if status == "needs_ack" else True
+        consent_at = consent_map.get(m.id) if status == "needs_ack" else None
+        notice = (m.ack_message or default_ack) if status == "needs_ack" else None
         available_models.append({"model": m, "status": status, "consented": consented, "consent_at": consent_at, "notice": notice})
 
     return render_template("chat.html", available_models=available_models)
@@ -183,7 +183,7 @@ def chat_stream():
 
     entity_id = session["entity_id"]
 
-    model_config = db.session.execute(select(ModelConfig).filter_by(model_name=model, active=True)).scalar_one_or_none()
+    model_config = db.session.execute(select(ModelConfig).where(ModelConfig.model_name == model, ModelConfig.active)).scalar_one_or_none()
     if not model_config:
         return jsonify({"error": f"Unknown model: {model}"}), HTTPStatus.BAD_REQUEST
 

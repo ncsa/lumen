@@ -101,6 +101,15 @@ def _normalize_id(s: str) -> str:
     return re.sub(r"[-_.]", "", s).lower()
 
 
+# Distinctive task/modality tokens. A model carrying one of these must not be
+# fuzzy-matched to a candidate that lacks it (e.g. a speech model to a text one).
+_KIND_TOKENS = {
+    "speech", "audio", "voice", "tts", "stt", "asr", "whisper",
+    "vision", "embed", "embedding", "rerank", "reranker", "ocr",
+    "moderation", "guard",
+}
+
+
 def find_in_modelsdev(model_id: str, models: list[dict], config_name: str | None = None) -> dict | None:
     if config_name:
         needle = _normalize_id(config_name)
@@ -113,12 +122,17 @@ def find_in_modelsdev(model_id: str, models: list[dict], config_name: str | None
     if not needle:
         return None
     needle_versions = {t for t in needle if t.isdigit()}
+    needle_kind = needle & _KIND_TOKENS
 
     best, best_score = None, 0
     for m in models:
         hay = _tokens(m.get("id", "") + " " + m.get("name", ""))
         hay_versions = {t for t in hay if t.isdigit()}
         if needle_versions and hay_versions and not (needle_versions & hay_versions):
+            continue
+        # A distinctive task/modality token must agree (don't match speech↔text, etc.).
+        hay_kind = hay & _KIND_TOKENS
+        if (needle_kind or hay_kind) and not (needle_kind & hay_kind):
             continue
         score = len(needle & hay)
         if score > best_score and score >= 2:
@@ -170,6 +184,9 @@ def sync_model(model_def: dict) -> dict:
     if out_tokens is not None and model_def.get("max_output_tokens") != out_tokens:
         updates["max_output_tokens"] = out_tokens
 
+    # A models.dev match is trusted to correct these fields (the matcher guards against
+    # cross-version and cross-kind mis-matches, so a match means the same model). When there
+    # is no match, nothing here is touched, so operator-set values are preserved.
     if dev_match:
         for field, new_val in [
             ("knowledge_cutoff",   dev_match.get("knowledge")),

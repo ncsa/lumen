@@ -63,7 +63,11 @@ def create_app():
     with open(config_yaml_path) as f:
         yaml_data = yaml.safe_load(f)
 
-    active_models = [m for m in yaml_data.get("models", []) if m.get("active", True)]
+    # A model is active unless explicitly disabled (or the legacy active: false).
+    active_models = [
+        m for m in yaml_data.get("models", [])
+        if not m.get("disabled", False) and m.get("active", True)
+    ]
     if not active_models:
         print(
             "ERROR: config.yaml contains no active models. App cannot start.",

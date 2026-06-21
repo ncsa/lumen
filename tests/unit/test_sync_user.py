@@ -215,7 +215,7 @@ def test_sync_user_model_whitelist(app, user):
         from lumen.models.entity import Entity
         from lumen.models.entity_model_access import EntityModelAccess
         from lumen.models.model_config import ModelConfig
-        mc = ModelConfig(model_name="allowed-model", input_cost_per_million=1.0, output_cost_per_million=1.0, active=True)
+        mc = ModelConfig(model_name="allowed-model", input_cost_per_million=1.0, output_cost_per_million=1.0, access="allowed")
         db.session.add(mc)
         db.session.commit()
 
@@ -230,4 +230,52 @@ def test_sync_user_model_whitelist(app, user):
             select(EntityModelAccess).filter_by(entity_id=user, model_config_id=mc.id)
         ).scalar_one_or_none()
         assert rule is not None
-        assert rule.access_type == "whitelist"
+        assert rule.access_type == "allowed"
+
+
+def test_sync_user_model_access_allowed_blocked_default(app, user):
+    """users.<email>.model_access sets allowed/blocked rows and the entity default."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.entity_model_access import EntityModelAccess
+        from lumen.models.model_config import ModelConfig
+        a = ModelConfig(model_name="a-model", input_cost_per_million=1.0, output_cost_per_million=1.0)
+        b = ModelConfig(model_name="b-model", input_cost_per_million=1.0, output_cost_per_million=1.0)
+        db.session.add_all([a, b])
+        db.session.commit()
+
+        entity = db.session.get(Entity, user)
+        yaml_data = {"users": {"sync@example.com": {"model_access": {
+            "default": "blocked", "allowed": ["a-model"], "blocked": ["b-model"],
+        }}}}
+        sync_user_from_yaml(entity, "sync@example.com", yaml_data)
+        db.session.commit()
+
+        entity = db.session.get(Entity, user)
+        assert entity.model_access_default == "blocked"
+        rows = {
+            r.model_config_id: r.access_type
+            for r in db.session.execute(select(EntityModelAccess).filter_by(entity_id=user)).scalars().all()
+        }
+        assert rows == {a.id: "allowed", b.id: "blocked"}
+
+
+def test_sync_user_model_access_replaces_previous(app, user):
+    """Re-syncing with a different model_access removes stale per-user rows."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.entity_model_access import EntityModelAccess
+        from lumen.models.model_config import ModelConfig
+        a = ModelConfig(model_name="a-model", input_cost_per_million=1.0, output_cost_per_million=1.0)
+        db.session.add(a)
+        db.session.commit()
+        entity = db.session.get(Entity, user)
+
+        sync_user_from_yaml(entity, "sync@example.com", {"users": {"sync@example.com": {"model_access": {"blocked": ["a-model"]}}}})
+        db.session.commit()
+        # Now drop the rule entirely.
+        sync_user_from_yaml(entity, "sync@example.com", {"users": {"sync@example.com": {}}})
+        db.session.commit()
+        assert db.session.execute(select(EntityModelAccess).filter_by(entity_id=user)).scalars().all() == []

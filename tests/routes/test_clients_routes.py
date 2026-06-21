@@ -64,15 +64,17 @@ def make_api_key(app):
 
 @pytest.fixture
 def make_graylist_access(app):
-    """Factory: grant graylist EntityModelAccess for any (entity_id, model_config_id)."""
+    """Factory: mark the model needs_ack and grant allowed access (resolves to needs_ack)."""
     def _make(entity_id, model_config_id):
         with app.app_context():
             from lumen.extensions import db
             from lumen.models.entity_model_access import EntityModelAccess
+            from lumen.models.model_config import ModelConfig
+            db.session.get(ModelConfig, model_config_id).needs_ack = True
             db.session.add(EntityModelAccess(
                 entity_id=entity_id,
                 model_config_id=model_config_id,
-                access_type="graylist",
+                access_type="allowed",
             ))
             db.session.commit()
     return _make

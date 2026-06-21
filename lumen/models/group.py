@@ -25,8 +25,8 @@ class Group(db.Model):
     # When true, membership and settings are controlled by config.yaml
     config_managed: Mapped[bool] = mapped_column(db.Boolean, default=False, comment="When true, group and membership are controlled by config.yaml")
     # Default access policy for models not listed in group_model_access
-    # 'whitelist' | 'blacklist' | 'graylist'
-    model_access_default: Mapped[Optional[str]] = mapped_column(db.String(20), comment="Default model access policy for this group: whitelist, blacklist, or graylist")
+    # 'allowed' | 'blocked'
+    model_access_default: Mapped[Optional[str]] = mapped_column(db.String(20), comment="Default model access policy for this group: 'allowed' or 'blocked'")
     created_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, default=utcnow, comment="UTC creation timestamp")
 
     members: DynamicMapped["GroupMember"] = relationship(backref="group", lazy="dynamic", cascade="all, delete-orphan", passive_deletes=True)

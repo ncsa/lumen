@@ -7,6 +7,6 @@ def calculate_cost(input_tokens: int, output_tokens: int, model_config) -> float
     )
 
 
-def calculate_audio_cost(seconds: float, cost_per_minute) -> float:
+def calculate_audio_cost(seconds: float, cost_per_hour) -> float:
     """Calculate cost in USD for a given duration of audio (speech-to-text)."""
-    return round(seconds / 60 * float(cost_per_minute), 6)
+    return round(seconds / 3600 * float(cost_per_hour), 6)

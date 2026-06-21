@@ -4,7 +4,7 @@ from http import HTTPStatus
 
 from flask import Blueprint, abort, redirect, url_for, session, render_template, current_app, jsonify
 from flask_wtf.csrf import generate_csrf
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from lumen.extensions import db, oauth
 from lumen.models.entity import Entity
@@ -15,6 +15,7 @@ from lumen.models.model_config import ModelConfig
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
 from lumen.services.llm import get_pool_limit
+from lumen.commands import _token_fields, _parse_scope_access
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -76,18 +77,14 @@ def _reconcile_group_memberships(entity: Entity, desired_ids: set) -> None:
 
 
 def _apply_user_model_overrides(entity: Entity, email: str, yaml_data: dict) -> None:
-    """Reconcile per-user coin pool limits and model access whitelists from yaml. Does not commit."""
+    """Reconcile per-user coin pool limits and per-user allowed-model lists from yaml. Does not commit."""
     user_cfg = yaml_data.get("users", {}).get(email, {})
 
-    # Coin pool
-    pool_cfg = user_cfg.get("pool") or (
-        {"max": user_cfg["max"], "refresh": user_cfg.get("refresh", 0), "starting": user_cfg.get("starting", user_cfg["max"])}
-        if "max" in user_cfg else None
-    )
-    if pool_cfg:
-        max_coins = pool_cfg.get("max", 0)
-        refresh_coins = pool_cfg.get("refresh", 0)
-        starting_coins = pool_cfg.get("starting", max_coins)
+    # Coin pool — missing fields fall back to defaults.tokens via _token_fields.
+    pool_src = user_cfg.get("pool") or user_cfg
+    pool = _token_fields(pool_src) if isinstance(pool_src, dict) else None
+    if pool:
+        max_coins, refresh_coins, starting_coins = pool
         limit = db.session.execute(select(EntityLimit).filter_by(entity_id=entity.id)).scalar_one_or_none()
         if limit and limit.config_managed:
             limit.max_coins = max_coins
@@ -106,24 +103,27 @@ def _apply_user_model_overrides(entity: Entity, email: str, yaml_data: dict) -> 
         if limit:
             db.session.delete(limit)
 
-    # Model access whitelist
-    allowed_models = user_cfg.get("models", [])
-    existing_access = {
-        a.model_config_id: a
-        for a in db.session.execute(select(EntityModelAccess).filter_by(entity_id=entity.id)).scalars().all()
-        if a.access_type == "whitelist"
-    }
-    desired_model_ids: set = set()
-    for model_name in allowed_models:
+    # Per-user model access: `model_access` {allowed/blocked/default}, or the legacy
+    # allowed-only `models:` list. Config is the only source of a user's EntityModelAccess
+    # rows, so we delete-and-recreate (consistent with sync_clients_from_yaml).
+    ma_cfg = user_cfg.get("model_access")
+    if ma_cfg is not None:
+        pairs, user_default, ack_models = _parse_scope_access(ma_cfg, context=f"user '{email}'")
+    else:
+        pairs = [(name, "allowed") for name in user_cfg.get("models", [])]
+        user_default = None
+        ack_models = []
+    entity.model_access_default = user_default
+
+    db.session.execute(delete(EntityModelAccess).where(EntityModelAccess.entity_id == entity.id))
+    for model_name, access_type in pairs:
         mc = db.session.execute(select(ModelConfig).filter_by(model_name=model_name)).scalar_one_or_none()
         if mc is None:
             continue
-        desired_model_ids.add(mc.id)
-        if mc.id not in existing_access:
-            db.session.add(EntityModelAccess(entity_id=entity.id, model_config_id=mc.id, access_type="whitelist"))
-    for model_config_id, acc in existing_access.items():
-        if model_config_id not in desired_model_ids:
-            db.session.delete(acc)
+        # Legacy per-user graylist keeps the model requiring acknowledgement (model property now).
+        if model_name in ack_models and not mc.needs_ack:
+            mc.needs_ack = True
+        db.session.add(EntityModelAccess(entity_id=entity.id, model_config_id=mc.id, access_type=access_type))
 
 
 def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=None):

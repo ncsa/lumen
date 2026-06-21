@@ -43,12 +43,12 @@ def test_cost_rounded_to_six_decimals():
     assert len(str(result).split(".")[-1]) <= 6
 
 
-def test_audio_cost_one_minute():
-    assert calculate_audio_cost(60, 0.6) == 0.6
+def test_audio_cost_one_hour():
+    assert calculate_audio_cost(3600, 0.10) == 0.10
 
 
-def test_audio_cost_partial_minute():
-    assert calculate_audio_cost(11, 0.6) == round(11 / 60 * 0.6, 6)
+def test_audio_cost_partial_hour():
+    assert calculate_audio_cost(11, 0.6) == round(11 / 3600 * 0.6, 6)
 
 
 def test_audio_cost_zero_rate():

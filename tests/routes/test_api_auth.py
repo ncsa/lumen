@@ -146,7 +146,7 @@ def test_valid_key_filters_blocked_model(
         db.session.add(EntityModelAccess(
             entity_id=test_user["id"],
             model_config_id=test_model["id"],
-            access_type="blacklist",
+            access_type="blocked",
         ))
         db.session.commit()
 
@@ -169,7 +169,7 @@ def test_get_model_blocked_returns_404(
         db.session.add(EntityModelAccess(
             entity_id=test_user["id"],
             model_config_id=test_model["id"],
-            access_type="blacklist",
+            access_type="blocked",
         ))
         db.session.commit()
 
@@ -329,7 +329,7 @@ def test_chat_completions_no_access_403(
         db.session.add(EntityModelAccess(
             entity_id=test_user["id"],
             model_config_id=test_model["id"],
-            access_type="blacklist",
+            access_type="blocked",
         ))
         db.session.commit()
 
@@ -349,11 +349,13 @@ def test_chat_completions_graylist_no_consent_403(
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_model_access import EntityModelAccess
+        from lumen.models.model_config import ModelConfig
         _grant_unlimited_pool(app, test_user["id"])
+        db.session.get(ModelConfig, test_model["id"]).needs_ack = True
         db.session.add(EntityModelAccess(
             entity_id=test_user["id"],
             model_config_id=test_model["id"],
-            access_type="graylist",
+            access_type="allowed",
         ))
         db.session.commit()
 
@@ -376,11 +378,13 @@ def test_chat_completions_graylist_with_consent_passes_access(
         from lumen.extensions import db
         from lumen.models.entity_model_access import EntityModelAccess
         from lumen.models.entity_model_consent import EntityModelConsent
+        from lumen.models.model_config import ModelConfig
         _grant_unlimited_pool(app, test_user["id"])
+        db.session.get(ModelConfig, test_model["id"]).needs_ack = True
         db.session.add(EntityModelAccess(
             entity_id=test_user["id"],
             model_config_id=test_model["id"],
-            access_type="graylist",
+            access_type="allowed",
         ))
         db.session.add(EntityModelConsent(
             entity_id=test_user["id"],
@@ -410,7 +414,7 @@ def test_chat_completions_whitelist_passes_access(
         db.session.add(EntityModelAccess(
             entity_id=test_user["id"],
             model_config_id=test_model["id"],
-            access_type="whitelist",
+            access_type="allowed",
         ))
         db.session.commit()
 
@@ -456,11 +460,13 @@ def test_consent_false_graylist_chat_completions_passes_access(
         with app.app_context():
             from lumen.extensions import db
             from lumen.models.entity_model_access import EntityModelAccess
+            from lumen.models.model_config import ModelConfig
             _grant_unlimited_pool(app, test_user["id"])
+            db.session.get(ModelConfig, test_model["id"]).needs_ack = True
             db.session.add(EntityModelAccess(
                 entity_id=test_user["id"],
                 model_config_id=test_model["id"],
-                access_type="graylist",
+                access_type="allowed",
             ))
             db.session.commit()
 
@@ -485,11 +491,13 @@ def test_consent_false_graylist_list_models_includes_model(
         with app.app_context():
             from lumen.extensions import db
             from lumen.models.entity_model_access import EntityModelAccess
+            from lumen.models.model_config import ModelConfig
             _grant_unlimited_pool(app, test_user["id"])
+            db.session.get(ModelConfig, test_model["id"]).needs_ack = True
             db.session.add(EntityModelAccess(
                 entity_id=test_user["id"],
                 model_config_id=test_model["id"],
-                access_type="graylist",
+                access_type="allowed",
             ))
             db.session.commit()
 
@@ -511,11 +519,13 @@ def test_consent_false_graylist_get_model_returns_model(
         with app.app_context():
             from lumen.extensions import db
             from lumen.models.entity_model_access import EntityModelAccess
+            from lumen.models.model_config import ModelConfig
             _grant_unlimited_pool(app, test_user["id"])
+            db.session.get(ModelConfig, test_model["id"]).needs_ack = True
             db.session.add(EntityModelAccess(
                 entity_id=test_user["id"],
                 model_config_id=test_model["id"],
-                access_type="graylist",
+                access_type="allowed",
             ))
             db.session.commit()
 
@@ -538,11 +548,13 @@ def test_consent_true_graylist_chat_completions_403(
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_model_access import EntityModelAccess
+        from lumen.models.model_config import ModelConfig
         _grant_unlimited_pool(app, test_user["id"])
+        db.session.get(ModelConfig, test_model["id"]).needs_ack = True
         db.session.add(EntityModelAccess(
             entity_id=test_user["id"],
             model_config_id=test_model["id"],
-            access_type="graylist",
+            access_type="allowed",
         ))
         db.session.commit()
 
@@ -569,7 +581,7 @@ def test_consent_false_blacklist_still_blocked(
             db.session.add(EntityModelAccess(
                 entity_id=test_user["id"],
                 model_config_id=test_model["id"],
-                access_type="blacklist",
+                access_type="blocked",
             ))
             db.session.commit()
 
@@ -642,7 +654,7 @@ def test_chat_completions_upstream_4xx_passes_through(
         _grant_unlimited_pool(app, test_user["id"])
         db.session.add(EntityModelAccess(
             entity_id=test_user["id"], model_config_id=test_model["id"],
-            access_type="whitelist",
+            access_type="allowed",
         ))
         db.session.commit()
 
@@ -684,7 +696,7 @@ def test_chat_completions_upstream_5xx_is_generic_500(
         _grant_unlimited_pool(app, test_user["id"])
         db.session.add(EntityModelAccess(
             entity_id=test_user["id"], model_config_id=test_model["id"],
-            access_type="whitelist",
+            access_type="allowed",
         ))
         db.session.commit()
 
@@ -726,7 +738,7 @@ def test_chat_completions_streaming_error_emits_done(
         _grant_unlimited_pool(app, test_user["id"])
         db.session.add(EntityModelAccess(
             entity_id=test_user["id"], model_config_id=test_model["id"],
-            access_type="whitelist",
+            access_type="allowed",
         ))
         db.session.commit()
 

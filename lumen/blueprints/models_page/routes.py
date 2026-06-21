@@ -21,7 +21,7 @@ models_page_bp = Blueprint("models_page", __name__)
 @login_required
 def index():
     entity_id = session.get("entity_id")
-    all_configs = db.session.execute(select(ModelConfig).filter_by(active=True).order_by(ModelConfig.model_name)).scalars().all()
+    all_configs = db.session.execute(select(ModelConfig).where(ModelConfig.active).order_by(ModelConfig.model_name)).scalars().all()
     access_statuses, _ = bulk_model_access_info(entity_id, [c.id for c in all_configs])
     configs = [c for c in all_configs if access_statuses.get(c.id, "allowed") != "blocked"]
     model_ids = [c.id for c in configs]
@@ -34,7 +34,7 @@ def index():
 @models_page_bp.route("/models/<path:model_name>")
 @login_required
 def detail(model_name):
-    config = db.first_or_404(select(ModelConfig).filter_by(model_name=model_name, active=True))
+    config = db.first_or_404(select(ModelConfig).where(ModelConfig.model_name == model_name, ModelConfig.active))
     endpoints = list(config.endpoints)
 
     healthy_count = sum(1 for e in endpoints if e.healthy)
@@ -67,12 +67,12 @@ def detail(model_name):
         db.session.execute(
             select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=config.id)
         ).scalar_one_or_none()
-        if access_status == "graylist" and entity_id
+        if access_status == "needs_ack" and entity_id
         else None
     )
 
-    default_notice = current_app.config.get("GRAYLIST_DEFAULT_NOTICE")
-    effective_notice = config.notice or default_notice if access_status == "graylist" else config.notice
+    default_ack = current_app.config.get("MODEL_DEFAULTS", {}).get("ack_message")
+    effective_notice = (config.ack_message or default_ack) if access_status == "needs_ack" else config.notice
     return render_template(
         "model_detail.html",
         config=config,
@@ -91,7 +91,7 @@ def detail(model_name):
 @models_page_bp.route("/models/<path:model_name>/readme")
 @login_required
 def model_readme(model_name):
-    config = db.first_or_404(select(ModelConfig).filter_by(model_name=model_name, active=True))
+    config = db.first_or_404(select(ModelConfig).where(ModelConfig.model_name == model_name, ModelConfig.active))
     parsed = urlparse(config.url or "")
     if parsed.netloc != "huggingface.co":
         return "", HTTPStatus.NOT_FOUND

@@ -36,6 +36,22 @@ config:
   announcement: ""
   # -- List of admin email addresses
   admins: []
+  # -- Allow editing config.yaml from the /admin/config UI. The chart manages
+  # config.yaml from these values, so it defaults to false (read-only editor).
+  configEditor: false
+  # -- Global fallbacks for models and token pools.
+  defaults:
+    models:
+      # -- Baseline access for models that omit lumen.access: allowed|blocked
+      access: blocked
+      # -- Global acknowledgement message for needs_ack models without their own
+      # ackMessage (replaces the old graylist default notice). Empty = none.
+      ackMessage: ""
+    tokens:
+      # -- Fallback coin pool. Groups/clients override only the fields that differ.
+      max: 0
+      refresh: 0
+      starting: 0
   # -- SQLAlchemy connection pool tuning. The database URL itself is supplied
   # via the DATABASE_URL env var (see postgresql.* / existingSecret).
   # By default the pool is auto-sized from the server's max_connections, split
@@ -84,7 +100,7 @@ config:
 
 ## API ------------------------------------------------------------------------------
 api:
-  # -- Require graylist model-consent for API requests. Set false to exempt the API.
+  # -- Require model acknowledgement (needs_ack) for API requests. Set false to exempt the API.
   consent: true
   prometheus:
     # -- Expose /metrics in Prometheus format
@@ -100,7 +116,10 @@ api:
 ## Groups ---------------------------------------------------------------------------
 # Each key is the group name. Groups are matched in order; the first match wins.
 # Rules are ANDed together. Supported fields: affiliation, idp, email.
-# model_access.default: whitelist|blacklist|graylist
+# modelAccess sets only the allow/block axis. default: allowed|blocked, plus
+# optional allowed: / blocked: model-name lists. Acknowledgement is a model
+# property (see models[].lumen.needsAck), not a group setting.
+# max/refresh/starting fall back to config.defaults.tokens when omitted.
 # Example:
 # groups:
 #   default:
@@ -108,7 +127,8 @@ api:
 #     refresh: 0
 #     starting: 0
 #     modelAccess:
-#       default: blacklist
+#       default: blocked
+#       allowed: [dummy]
 #   uiuc-staff:
 #     rules:
 #       - field: affiliation
@@ -119,7 +139,8 @@ api:
 #     refresh: 0.05
 #     starting: 20.0
 #     modelAccess:
-#       default: whitelist
+#       default: allowed
+#       blocked: [deprecated-model]
 groups: {}
 
 ## OAuth2 / OIDC --------------------------------------------------------------------
@@ -273,10 +294,13 @@ models: []
 #   lumen:
 #     description: "This is for testing purposes"
 #     url: "https://huggingface.co/google/gemma-4-31B-it"
-#     active: true
+#     access: allowed           # allowed|blocked baseline (overridable per group/client/user)
+#     needsAck: false           # true = require one-time user acknowledgement (model-level, sticky)
+#     disabled: false           # true = hard off: hidden everywhere, not overridable by any scope
+#     ackMessage: ""            # optional; overrides config.defaults.models.ackMessage when needsAck
 #     inputCostPerMillion: 0.05
 #     outputCostPerMillion: 0.10
-#     audioCostPerMinute: 0.6   # optional; only for speech-to-text (ASR) models
+#     audioCostPerHour: 0.10    # optional; only for speech-to-text (ASR) models
 #     contextWindow: 262144
 #     maxOutputTokens: 262144
 #     supportsReasoning: true
@@ -294,7 +318,7 @@ models: []
 #     inputCostPerMillion: 2.5
 #     outputCostPerMillion: 10.0
 #     contextWindow: 128000
-#     active: true
+#     access: allowed
 #
 # Example — in-cluster vLLM deployment (replicas>0):
 # - name: llama3-8b
@@ -347,7 +371,7 @@ models: []
 #     inputCostPerMillion: 0.1
 #     outputCostPerMillion: 0.3
 #     contextWindow: 8192
-#     active: true
+#     access: allowed
 #
 # Example — in-cluster SGLang deployment:
 # - name: qwen3-8b
@@ -378,4 +402,4 @@ models: []
 #     inputCostPerMillion: 0.05
 #     outputCostPerMillion: 0.10
 #     contextWindow: 32768
-#     active: true
+#     access: allowed

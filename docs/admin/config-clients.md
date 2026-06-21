@@ -22,9 +22,9 @@ clients:
     refresh: 0.05         # coins added per hour
     starting: 100.0       # coins when pool is first created
     model_access:
-      default: blacklist   # deny everything not explicitly listed
-      blacklist: []        # always-deny list
-      whitelist: [dummy]   # always-allow list
+      default: blocked     # deny everything not explicitly listed
+      blocked: []          # always-deny list
+      allowed: [dummy]     # always-allow list
 ```
 
 | Field | Description |
@@ -32,10 +32,15 @@ clients:
 | `max` | Coin budget cap (0 = blocked, -2 = unlimited) |
 | `refresh` | Coins replenished per hour, up to the `max` cap (0 = no auto-refresh) |
 | `starting` | Initial coins when a client's pool is created |
-| `model_access.default` | Default behavior for unlisted models: `whitelist`, `blacklist`, or `graylist` |
-| `model_access.whitelist` | Models always accessible to this client |
-| `model_access.blacklist` | Models always denied to this client |
-| `model_access.graylist` | Models the client can access after consent is recorded via the UI |
+| `model_access.default` | Default behavior for unlisted models: `allowed` or `blocked` |
+| `model_access.allowed` | Models always accessible to this client |
+| `model_access.blocked` | Models always denied to this client |
+
+The `max`, `refresh`, and `starting` fields fall back to the top-level `defaults.tokens` block when omitted from a named client; only the fields that differ from the defaults need to be set. See [Admin Configuration](config.md) for the `defaults` block.
+
+Like groups, a client's `model_access` controls only the **allow/block axis**. Acknowledgement is a model-level property (`needs_ack` — see [Configuring Models](config-models.md#access-control)); there is no per-client graylist. Managers grant acknowledgement on a client's behalf through the UI.
+
+> **Deprecated keys:** legacy `whitelist`/`blacklist`/`graylist` are still accepted as input (with a deprecation warning) — `whitelist`→`allowed`, `blacklist`→`blocked`, `graylist`→`allowed` plus a reminder to set `needs_ack` on the model. Prefer `allowed`/`blocked`.
 
 ## Per-Client Overrides
 
@@ -48,15 +53,15 @@ clients:
     refresh: 0.05
     starting: 100.0
     model_access:
-      default: blacklist
+      default: blocked
 
   research-bot:
     max: 500.0
     refresh: 1.0
     starting: 500.0
     model_access:
-      default: whitelist
-      whitelist: [gpt-4o, llama3, qwen3.5-9b-q5]
+      default: allowed
+      allowed: [gpt-4o, llama3, qwen3.5-9b-q5]
 ```
 
 A named entry **completely replaces** the defaults for that client — there is no partial inheritance. Any field omitted from a named entry is not inherited from `default`; the client will have no budget or model access for that field until it is explicitly set.

@@ -81,7 +81,7 @@ def test_model(app):
             model_name="test-model",
             input_cost_per_million=1.0,
             output_cost_per_million=2.0,
-            active=True,
+            access="allowed",
         )
         db.session.add(m)
         db.session.commit()

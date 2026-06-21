@@ -29,7 +29,7 @@ def _set_audio_rate(app, model_id, rate):
     from lumen.extensions import db
     from lumen.models.model_config import ModelConfig
     mc = db.session.get(ModelConfig, model_id)
-    mc.audio_cost_per_minute = rate
+    mc.audio_cost_per_hour = rate
     db.session.commit()
 
 
@@ -143,7 +143,7 @@ def test_transcription_duration_billing(
     assert resp.status_code == HTTPStatus.OK
     assert resp.get_json()["text"] == "hello world"
 
-    expected_cost = round(11 / 60 * 0.6, 6)
+    expected_cost = round(11 / 3600 * 0.6, 6)
     with app.app_context():
         from lumen.extensions import db
         from sqlalchemy import select
@@ -229,7 +229,7 @@ def test_translation_duration_billing(
     assert resp.status_code == HTTPStatus.OK
     assert resp.get_json()["text"] == "translated"
 
-    expected_cost = round(30 / 60 * 1.2, 6)
+    expected_cost = round(30 / 3600 * 1.2, 6)
     with app.app_context():
         from lumen.extensions import db
         from sqlalchemy import select

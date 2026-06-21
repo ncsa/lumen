@@ -2,6 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional
 
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from lumen.timeutils import utcnow
@@ -26,10 +27,17 @@ class ModelConfig(db.Model):
     # USD cost per one million input/output tokens; used to compute coins
     input_cost_per_million: Mapped[Decimal] = mapped_column(db.Numeric(12, 6), comment="USD cost per one million input tokens")
     output_cost_per_million: Mapped[Decimal] = mapped_column(db.Numeric(12, 6), comment="USD cost per one million output tokens")
-    # USD cost per minute of audio; only set for speech-to-text (ASR) models
-    audio_cost_per_minute: Mapped[Optional[Decimal]] = mapped_column(db.Numeric(12, 6), comment="USD cost per minute of audio; only set for speech-to-text models")
-    # Inactive models are hidden from clients and cannot be used
-    active: Mapped[bool] = mapped_column(db.Boolean, default=True, comment="Inactive models are hidden and cannot be used")
+    # USD cost per hour of audio; only set for speech-to-text (ASR) models
+    audio_cost_per_hour: Mapped[Optional[Decimal]] = mapped_column(db.Numeric(12, 6), comment="USD cost per hour of audio; only set for speech-to-text models")
+    # Per-model default access ('allowed'/'blocked'); NULL means inherit group/global defaults.
+    # Ranks above group/user *defaults* but below explicit per-model allow/block rules.
+    access: Mapped[Optional[str]] = mapped_column(db.String(8), comment="Per-model default access: 'allowed', 'blocked', or NULL to inherit group/global defaults; overridden only by explicit per-scope rules")
+    # Requires user acknowledgement before use; model-level only, not overridable by scopes
+    needs_ack: Mapped[bool] = mapped_column(db.Boolean, nullable=False, default=False, server_default=db.false(), comment="Requires user acknowledgement before use; sticky model-level property, not overridable by scopes")
+    # Per-model acknowledgement message; overrides the global defaults.models.ack_message
+    ack_message: Mapped[Optional[str]] = mapped_column(db.Text, comment="Per-model acknowledgement message; overrides the global defaults.models.ack_message")
+    # Hard off: hidden everywhere and cannot be overridden by any scope
+    disabled: Mapped[bool] = mapped_column(db.Boolean, nullable=False, default=False, server_default=db.false(), comment="Hard off: hidden everywhere and not overridable by any scope")
     description: Mapped[Optional[str]] = mapped_column(db.Text, comment="Human-readable description shown in the UI")
     # Link to provider documentation shown in the UI
     url: Mapped[Optional[str]] = mapped_column(db.String(512), comment="Link to provider documentation")
@@ -50,3 +58,12 @@ class ModelConfig(db.Model):
 
     endpoints: Mapped[list["ModelEndpoint"]] = relationship(backref="model_config", lazy="select", cascade="all, delete-orphan", passive_deletes=True)
     stats: Mapped[list["ModelStat"]] = relationship(backref="model_config", lazy="select", passive_deletes=True)
+
+    @hybrid_property
+    def active(self) -> bool:
+        """A model is active (visible and usable) unless it is disabled."""
+        return not self.disabled
+
+    @active.expression
+    def active(cls):
+        return cls.disabled == False  # noqa: E712
