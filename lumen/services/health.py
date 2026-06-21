@@ -26,34 +26,43 @@ def check_all_endpoints() -> int:
         select(ModelEndpoint, ModelConfig.model_name.label("config_model_name"))
         .join(ModelConfig, ModelEndpoint.model_config_id == ModelConfig.id)
     ).all()
-    endpoints = [ep for ep, _ in rows]
-    for ep, config_model_name in rows:
+    # Capture every scalar needed for probing/logging before releasing the read
+    # transaction. Each probe is a network call (up to 5s + retries per endpoint),
+    # so holding the transaction open across the loop would leave the connection
+    # idle-in-transaction and trip Postgres's idle_in_transaction_session_timeout.
+    probes = [
+        (ep, ep.url, ep.api_key, ep.model_name or config_model_name)
+        for ep, config_model_name in rows
+    ]
+    db.session.rollback()  # end the read transaction before the slow network probes
+
+    now = utcnow()
+    for ep, url, api_key, expected in probes:
         try:
-            with openai.OpenAI(api_key=ep.api_key, base_url=ep.url, timeout=5.0) as client:
+            with openai.OpenAI(api_key=api_key, base_url=url, timeout=5.0) as client:
                 models = client.models.list()
             model_ids = {m.id for m in models.data}
-            expected = ep.model_name or config_model_name
             ep.healthy = expected in model_ids
             if log_enabled:
                 found = "found" if ep.healthy else "NOT FOUND"
                 current_app.logger.info(
-                    "health check %s → endpoint UP, model '%s' %s", ep.url, expected, found
+                    "health check %s → endpoint UP, model '%s' %s", url, expected, found
                 )
         except Exception as e:
             ep.healthy = False
             if log_enabled:
                 cause = e.__cause__ or e
                 current_app.logger.info(
-                    "health check %s → endpoint DOWN (%r)", ep.url, cause
+                    "health check %s → endpoint DOWN (%r)", url, cause
                 )
-        ep.last_checked_at = utcnow()
+        ep.last_checked_at = now
     try:
         db.session.commit()
     except StaleDataError:
         # An endpoint was deleted between the SELECT and the commit; discard stale updates.
         db.session.rollback()
         logger.warning("health check: endpoint deleted mid-pass, changes discarded")
-    return len(endpoints)
+    return len(probes)
 
 
 def start_health_checker(app):

@@ -197,6 +197,31 @@ def test_logging_exception_endpoint(app, test_model, test_model_endpoint):
             app.config["LOG_MODEL_HEALTH"] = False
 
 
+def test_no_open_transaction_during_probe(app, test_model, test_model_endpoint):
+    """The read transaction must be released before the network probe so the
+    connection is never left idle-in-transaction during the (slow) HTTP call."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.services.health import check_all_endpoints
+
+        in_txn_during_probe = []
+
+        def record_then_list():
+            in_txn_during_probe.append(db.session().in_transaction())
+            return MagicMock(data=[])
+
+        client = MagicMock()
+        client.models.list.side_effect = record_then_list
+        cm = MagicMock()
+        cm.__enter__ = MagicMock(return_value=client)
+        cm.__exit__ = MagicMock(return_value=False)
+
+        with patch("lumen.services.health.openai.OpenAI", return_value=cm):
+            check_all_endpoints()
+
+        assert in_txn_during_probe == [False]
+
+
 def test_start_health_checker_starts_daemon_thread(app):
     """start_health_checker must start exactly one daemon thread (covers lines 45-55)."""
     import threading

@@ -19,6 +19,9 @@ All notable changes to Lumen will be documented in this file.
 - DB: `model_configs.active` replaced by `access`/`needs_ack`/`ack_message`/`disabled` columns (`active` remains as a derived read-only property); `group_model_access`/`entity_model_access`/scope defaults migrated from `whitelist`/`blacklist`/`graylist` to `allowed`/`blocked`. The internal access status `graylist` is renamed `needs_ack`.
 - **Acknowledgement (formerly graylist) is preserved on upgrade.** Acknowledgement is now a per-model property (`needs_ack`) rather than a per-scope `graylist` rule. Any model that was graylisted by a specific scope rule is **automatically migrated to `needs_ack: true`** — both by the DB migration (from existing `graylist` access rows) and by the config loader (from a legacy `graylist:` list in a v1 `config.yaml`). The one case that can't be reconstructed is a scope **default** of `graylist` (e.g. a group `model_access.default: graylist`), which named no models; **after upgrading, review groups/clients that used `default: graylist` and set `needs_ack: true` on the models that should still require consent.**
 
+### Fixed
+- The background endpoint health checker no longer holds a DB transaction open across its per-endpoint network probes, which left the Postgres connection `idle in transaction` and could trip `idle_in_transaction_session_timeout`.
+
 ## [1.17.1] - 2026-06-19
 
 ### Fixed
