@@ -15,7 +15,7 @@ from lumen.models.model_config import ModelConfig
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
 from lumen.services.llm import get_pool_limit
-from lumen.commands import _token_fields, _parse_scope_access
+from lumen.commands import _token_fields, _parse_scope_access, _desired_groups_from_config
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -31,19 +31,6 @@ def make_initials(name: str) -> str:
     if len(parts) == 1 and parts[0]:
         return parts[0][:2].upper()
     return "??"
-
-
-def _desired_groups_from_config(email: str, yaml_data: dict) -> list[str]:
-    """Return group names from users.default.groups and users.<email>.groups."""
-    users_cfg = yaml_data.get("users", {})
-    names: list[str] = ["default"]
-    for name in users_cfg.get("default", {}).get("groups", []):
-        if name not in names:
-            names.append(name)
-    for name in users_cfg.get(email, {}).get("groups", []):
-        if name not in names:
-            names.append(name)
-    return names
 
 
 def _groups_from_userinfo_rules(userinfo: dict, yaml_data: dict, existing: list[str]) -> list[str]:

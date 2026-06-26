@@ -9,6 +9,7 @@ from lumen.models.entity_limit import EntityLimit
 from lumen.models.entity_model_access import EntityModelAccess
 from lumen.models.group import Group
 from lumen.models.group_limit import GroupLimit
+from lumen.models.group_member import GroupMember
 from lumen.models.group_model_access import GroupModelAccess
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
@@ -311,6 +312,59 @@ def sync_groups_from_yaml(yaml_data):
 
     db.session.commit()
 
+
+def _desired_groups_from_config(email, yaml_data):
+    """Return group names from users.default.groups and users.<email>.groups."""
+    users_cfg = yaml_data.get("users", {})
+    names = ["default"]
+    for name in users_cfg.get("default", {}).get("groups", []):
+        if name not in names:
+            names.append(name)
+    for name in users_cfg.get(email, {}).get("groups", []):
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def sync_user_groups_from_yaml(yaml_data):
+    """Reconcile user memberships in non-auto (explicitly assigned) groups from yaml.
+
+    Non-auto groups are those without a `rules:` key — they are assigned via
+    users.default.groups / users.<email>.groups and need no CILogon userinfo, so they can
+    be reconciled at config-reload time. Rule-based ("auto") group memberships depend on
+    login-time userinfo and are left untouched: this function only adds/removes memberships
+    whose group is in the non-auto set, so auto memberships are never deleted here.
+    """
+    groups_cfg = yaml_data.get("groups", {})
+    non_auto_names = {name for name, gdef in groups_cfg.items() if not (gdef or {}).get("rules")}
+    non_auto_names.add("default")
+
+    groups_by_name = {
+        g.name: g
+        for g in db.session.execute(select(Group).where(Group.name.in_(non_auto_names))).scalars().all()
+    }
+    non_auto_ids = {g.id for g in groups_by_name.values()}
+
+    for entity in db.session.execute(
+        select(Entity).filter_by(entity_type="user").where(Entity.email.isnot(None))
+    ).scalars().all():
+        desired_ids = {
+            groups_by_name[name].id
+            for name in _desired_groups_from_config(entity.email, yaml_data)
+            if name in groups_by_name
+        }
+        existing_by_group = {
+            m.group_id: m
+            for m in db.session.execute(select(GroupMember).filter_by(entity_id=entity.id)).scalars().all()
+        }
+        for group_id, member in existing_by_group.items():
+            if group_id in non_auto_ids and member.config_managed and group_id not in desired_ids:
+                db.session.delete(member)
+        for group_id in desired_ids:
+            if group_id not in existing_by_group:
+                db.session.add(GroupMember(group_id=group_id, entity_id=entity.id, config_managed=True))
+
+    db.session.commit()
 
 
 def sync_clients_from_yaml(yaml_data):

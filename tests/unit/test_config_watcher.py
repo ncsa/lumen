@@ -146,6 +146,45 @@ def test_watcher_reloads_config_on_mtime_change(app, tmp_path, restore_config):
         assert app.config.get("APP_NAME") == "Reloaded"
 
 
+def test_watcher_reconciles_user_groups_on_reload(app, tmp_path, restore_config):
+    import yaml
+    from unittest.mock import patch
+    from lumen.services.config_watcher import _watcher
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.dump({"app": {"name": "Reloaded"}}))
+
+    sleep_count = 0
+
+    def fake_sleep(n):
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count >= 3:
+            raise SystemExit("stop")
+
+    mtime_values = [1.0, 2.0]
+    mtime_idx = 0
+
+    def fake_getmtime(path):
+        nonlocal mtime_idx
+        v = mtime_values[mtime_idx] if mtime_idx < len(mtime_values) else 2.0
+        mtime_idx += 1
+        return v
+
+    with patch("lumen.services.config_watcher.time.sleep", side_effect=fake_sleep), \
+         patch("lumen.services.config_watcher.sync_models_from_yaml"), \
+         patch("lumen.services.config_watcher.sync_groups_from_yaml"), \
+         patch("lumen.services.config_watcher.sync_clients_from_yaml"), \
+         patch("lumen.services.config_watcher.sync_user_groups_from_yaml") as mock_sync_user_groups, \
+         patch("lumen.services.config_watcher.os.path.getmtime", side_effect=fake_getmtime):
+        try:
+            _watcher(app, str(config_file))
+        except SystemExit:
+            pass
+
+    mock_sync_user_groups.assert_called_once()
+
+
 def test_watcher_skips_when_mtime_unchanged(app, tmp_path, restore_config):
     import yaml
     from unittest.mock import patch

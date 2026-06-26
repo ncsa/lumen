@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Explicitly-assigned group memberships (`users.default.groups` and `users.<email>.groups`) now refresh on config reload (and at startup) instead of waiting for the user to log in again. Editing a user's groups in `config.yaml` takes effect immediately. Rule-based ("auto") group memberships still update at login, since they depend on CILogon attributes only available then.
+
 ## [1.18.1] - 2026-06-26
 
 ### Fixed

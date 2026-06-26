@@ -1,7 +1,7 @@
 """Tests for YAML sync functions in lumen/commands.py."""
 from sqlalchemy import select
 
-from lumen.commands import sync_clients_from_yaml, sync_groups_from_yaml, sync_models_from_yaml
+from lumen.commands import sync_clients_from_yaml, sync_groups_from_yaml, sync_models_from_yaml, sync_user_groups_from_yaml
 
 
 def test_sync_models_creates_model_config(app):
@@ -374,5 +374,116 @@ def test_sync_clients_skips_entity_with_no_matching_config(app):
         sync_clients_from_yaml(yaml_data)
         limit = db.session.execute(select(EntityLimit).filter_by(entity_id=client.id)).scalar_one_or_none()
         assert limit is None
+
+
+def _make_user(db, email):
+    from lumen.models.entity import Entity
+    e = Entity(entity_type="user", email=email, name=email, initials="U", active=True)
+    db.session.add(e)
+    db.session.commit()
+    return e.id
+
+
+def test_sync_user_groups_adds_explicit_group(app):
+    """A user listed in users.<email>.groups gets the membership on reload, no login needed."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        db.session.add_all([
+            Group(name="default", active=True, config_managed=True),
+            Group(name="dev", active=True, config_managed=True),
+        ])
+        db.session.commit()
+        uid = _make_user(db, "alice@example.com")
+
+        yaml_data = {
+            "users": {"alice@example.com": {"groups": ["dev"]}},
+            "groups": {"default": {}, "dev": {}},
+        }
+        sync_user_groups_from_yaml(yaml_data)
+
+        dev = db.session.execute(select(Group).filter_by(name="dev")).scalar_one()
+        member = db.session.execute(
+            select(GroupMember).filter_by(entity_id=uid, group_id=dev.id)
+        ).scalar_one_or_none()
+        assert member is not None
+        assert member.config_managed is True
+
+
+def test_sync_user_groups_removes_dropped_group(app):
+    """Dropping a user from an explicit group removes the membership on reload."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        default = Group(name="default", active=True, config_managed=True)
+        dev = Group(name="dev", active=True, config_managed=True)
+        db.session.add_all([default, dev])
+        db.session.commit()
+        uid = _make_user(db, "bob@example.com")
+        db.session.add(GroupMember(group_id=dev.id, entity_id=uid, config_managed=True))
+        db.session.commit()
+
+        # dev still defined as a group, but bob is no longer assigned to it.
+        sync_user_groups_from_yaml({"users": {"bob@example.com": {}}, "groups": {"default": {}, "dev": {}}})
+
+        member = db.session.execute(
+            select(GroupMember).filter_by(entity_id=uid, group_id=dev.id)
+        ).scalar_one_or_none()
+        assert member is None
+
+
+def test_sync_user_groups_leaves_auto_membership_untouched(app):
+    """A rule-based (auto) group membership must survive a userinfo-less reload reconcile."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        default = Group(name="default", active=True, config_managed=True)
+        auto = Group(name="uiuc", active=True, config_managed=True)
+        db.session.add_all([default, auto])
+        db.session.commit()
+        uid = _make_user(db, "carol@example.com")
+        # Membership added at a prior login by the rule-based path.
+        db.session.add(GroupMember(group_id=auto.id, entity_id=uid, config_managed=True))
+        db.session.commit()
+
+        yaml_data = {
+            "users": {"carol@example.com": {}},
+            "groups": {"default": {}, "uiuc": {"rules": [{"field": "eppn", "contains": "@illinois.edu"}]}},
+        }
+        sync_user_groups_from_yaml(yaml_data)
+
+        member = db.session.execute(
+            select(GroupMember).filter_by(entity_id=uid, group_id=auto.id)
+        ).scalar_one_or_none()
+        assert member is not None
+
+
+def test_sync_user_groups_default_groups_apply_to_all(app):
+    """users.default.groups is applied to every user."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        db.session.add_all([
+            Group(name="default", active=True, config_managed=True),
+            Group(name="everyone", active=True, config_managed=True),
+        ])
+        db.session.commit()
+        uid = _make_user(db, "dave@example.com")
+
+        yaml_data = {
+            "users": {"default": {"groups": ["everyone"]}},
+            "groups": {"default": {}, "everyone": {}},
+        }
+        sync_user_groups_from_yaml(yaml_data)
+
+        everyone = db.session.execute(select(Group).filter_by(name="everyone")).scalar_one()
+        member = db.session.execute(
+            select(GroupMember).filter_by(entity_id=uid, group_id=everyone.id)
+        ).scalar_one_or_none()
+        assert member is not None
 
 
