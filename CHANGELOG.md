@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- The "Total Users (Cumulative)" usage graph now shows the actual total user count instead of only the users created within the selected period. For non-"all" periods (week/month/year) the cumulative line restarted from zero at the start of the window, so an installation with 105 users would show 1–5 over the week. The query now seeds the running total with the count of users that existed before the window.
+
 ### Changed
 - Explicitly-assigned group memberships (`users.default.groups` and `users.<email>.groups`) now refresh on config reload (and at startup) instead of waiting for the user to log in again. Editing a user's groups in `config.yaml` takes effect immediately. Rule-based ("auto") group memberships still update at login, since they depend on CILogon attributes only available then.
 

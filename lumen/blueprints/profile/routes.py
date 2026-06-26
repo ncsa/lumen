@@ -442,13 +442,19 @@ def usage_users_cumulative():
 
     if start is not None:
         rows = db.session.execute(text("""
-            WITH buckets AS (
+            WITH baseline AS (
+                SELECT COUNT(*) AS prior
+                FROM entities
+                WHERE entity_type = 'user' AND created_at < :start
+            ),
+            buckets AS (
                 SELECT date_trunc(:trunc, created_at) AS period, COUNT(*) AS new_count
                 FROM entities
                 WHERE entity_type = 'user' AND created_at >= :start
                 GROUP BY 1
             )
-            SELECT period, SUM(new_count) OVER (ORDER BY period) AS cumulative
+            SELECT period,
+                   (SELECT prior FROM baseline) + SUM(new_count) OVER (ORDER BY period) AS cumulative
             FROM buckets ORDER BY period
         """), {"trunc": trunc, "start": start}).all()
     else:
