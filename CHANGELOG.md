@@ -4,11 +4,14 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-06-26
+
 ### Fixed
 - The model detail page (`/models/<name>`) no longer returns a 404 for blocked or disabled models. Blocked models now render the page with the existing "Access denied" notice (the template already had the branch, but the route aborted before reaching it); disabled models render instead of 404ing. Links to these models (e.g. from the profile "Models & Access" table) now resolve.
 - Added themed `404` and `500` error pages so a mistyped or stale URL shows a branded "page not found" with a link home instead of the bare default error page. API routes (`/v1/*`) still receive a JSON error body.
 - Clients created through the Clients page (or `POST /clients`) now immediately receive their configured coin pool and model-access defaults (`clients.default` / a named `clients.<name>` entry). Previously a new client was created with no pool, so it fell back to the global token defaults and saw every model as blocked until the next config reload.
 - The `input_modalities` schema migration no longer fails on SQLite (it used PostgreSQL-only `::json`/`::text` casts), so a fresh local dev database can run `flask db upgrade` again. PostgreSQL behavior is unchanged.
+- The background endpoint health checker no longer holds a DB transaction open across its per-endpoint network probes, which left the Postgres connection `idle in transaction` and could trip `idle_in_transaction_session_timeout`.
 
 ### Changed
 - Audio (speech-to-text) pricing is now expressed **per hour** (`audio_cost_per_hour`) instead of per minute — cheap ASR rates like `$0.10/hour` no longer need many leading zeros. The DB column is renamed and existing per-minute values are migrated ×60; the legacy `audio_cost_per_minute` config/Helm key is still accepted (converted, with a deprecation warning) and the config editor migrates it on load/save.
@@ -24,9 +27,6 @@ All notable changes to Lumen will be documented in this file.
 - The config editor's per-scope **model access** is now set with a **search-driven widget** instead of free-form Allowed/Blocked textareas: search the enabled models, set each to Inherit / Allow / Block, and see the **effective access and where it's decided** (set here, model default, a group, or the global default). Scales to large model counts (only overrides + searched models render). Users now support the full `model_access` (`allowed`/`blocked`/`default`) like groups/clients; the legacy allowed-only `users.<email>.models:` list still parses.
 - DB: `model_configs.active` replaced by `access`/`needs_ack`/`ack_message`/`disabled` columns (`active` remains as a derived read-only property); `group_model_access`/`entity_model_access`/scope defaults migrated from `whitelist`/`blacklist`/`graylist` to `allowed`/`blocked`. The internal access status `graylist` is renamed `needs_ack`.
 - **Acknowledgement (formerly graylist) is preserved on upgrade.** Acknowledgement is now a per-model property (`needs_ack`) rather than a per-scope `graylist` rule. Any model that was graylisted by a specific scope rule is **automatically migrated to `needs_ack: true`** — both by the DB migration (from existing `graylist` access rows) and by the config loader (from a legacy `graylist:` list in a v1 `config.yaml`). The one case that can't be reconstructed is a scope **default** of `graylist` (e.g. a group `model_access.default: graylist`), which named no models; **after upgrading, review groups/clients that used `default: graylist` and set `needs_ack: true` on the models that should still require consent.**
-
-### Fixed
-- The background endpoint health checker no longer holds a DB transaction open across its per-endpoint network probes, which left the Postgres connection `idle in transaction` and could trip `idle_in_transaction_session_timeout`.
 
 ## [1.17.1] - 2026-06-19
 
