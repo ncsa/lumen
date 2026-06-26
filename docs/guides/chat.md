@@ -7,7 +7,7 @@ The **Chat** page (`/chat`) is the main interface for interacting with AI models
 ## Page Layout
 
 - **Left sidebar** — Lists your conversations. Click any conversation to reload its message history.
-- **Model selector** — At the top of the chat area. Choose which model to send your message to. Graylisted models show a warning (⚠) if you haven't acknowledged them yet.
+- **Model selector** — At the top of the chat area. Choose which model to send your message to. Models that require acknowledgment show a warning (⚠) if you haven't acknowledged them yet.
 - **Chat area** — Displays message bubbles. Your messages appear on the right; assistant replies appear on the left.
 - **Message detail** — Each assistant message has an info icon (ⓘ). Click it to see the token counts, response duration, and output speed for that reply.
 

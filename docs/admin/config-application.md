@@ -1,5 +1,7 @@
 # Application Settings
 
+> 🔒 **Admin only.** This page documents administrator features. Configuration lives in `config.yaml` and the in-app Config editor (`/admin/config`), which are only available to administrators.
+
 These are the core settings that make Lumen work: database, authentication, and general behavior.
 
 ## app

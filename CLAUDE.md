@@ -96,7 +96,7 @@ When writing or modifying HTML/JS:
 - **Headings:** Maintain proper hierarchy (h1 → h2 → h3). Never skip from h1 to h5.
 - **Tables:** Data tables need `<caption>` (use `class="visually-hidden"` if needed). Empty `<th>` cells for action columns need `<span class="visually-hidden">Actions</span>`.
 - **Emoji as content:** Wrap meaningful emoji in `<span role="img" aria-label="description">`.
-- **Skip navigation:** SkipTo.js is loaded in `base.html` and `landing.html` from `lumen/static/vendor/skipto/`. Do not remove it.
+- **Skip navigation:** SkipTo.js is loaded in `base.html` and `landing.html` from its CDN (`skipto-landmarks-headings.github.io/page-script-5`). Do not remove it.
 - **Timed content:** Auto-dismiss timers must be at least 20 seconds and pause on hover/focus (WCAG 2.2.1).
 - **Overflow:** Never use `overflow:hidden` on scrollable content containers — use `overflow:auto` to prevent clipping at zoom.
 - **Focus management:** After JS changes page content (loading data, deleting items), move focus to a logical target (e.g., input field, action button).

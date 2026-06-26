@@ -1,5 +1,7 @@
 # Configuring Models
 
+> 🔒 **Admin only.** This page documents administrator features. Configuration lives in `config.yaml` and the in-app Config editor (`/admin/config`), which are only available to administrators.
+
 Models are the core of Lumen. Each entry tells Lumen how to reach an AI model, what it costs, and what it can do.
 
 ## Basic Model Entry

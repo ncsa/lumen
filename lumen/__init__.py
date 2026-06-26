@@ -5,7 +5,7 @@ import sys
 from http import HTTPStatus
 
 import yaml
-from flask import Flask, g, jsonify, request, session
+from flask import Flask, g, jsonify, render_template, request, session
 from sqlalchemy import text
 from jinja2 import BaseLoader, ChoiceLoader, TemplateNotFound
 from markupsafe import Markup
@@ -295,6 +295,21 @@ def create_app():
             return jsonify({"error": {"message": "Rate limit exceeded. Please slow down.",
                                        "type": "rate_limit_error", "code": "rate_limit_exceeded"}}), HTTPStatus.TOO_MANY_REQUESTS
         return jsonify({"error": "Rate limit exceeded. Please slow down."}), HTTPStatus.TOO_MANY_REQUESTS
+
+    # Friendly themed pages for not-found and server errors (JSON for API clients).
+    @app.errorhandler(HTTPStatus.NOT_FOUND)
+    def not_found_handler(e):
+        if request.path.startswith("/v1/"):
+            return jsonify({"error": {"message": "Not found", "type": "invalid_request_error",
+                                       "code": "not_found"}}), HTTPStatus.NOT_FOUND
+        return render_template("errors/404.html"), HTTPStatus.NOT_FOUND
+
+    @app.errorhandler(HTTPStatus.INTERNAL_SERVER_ERROR)
+    def server_error_handler(e):
+        if request.path.startswith("/v1/"):
+            return jsonify({"error": {"message": "Internal server error", "type": "api_error",
+                                       "code": "internal_error"}}), HTTPStatus.INTERNAL_SERVER_ERROR
+        return render_template("errors/500.html"), HTTPStatus.INTERNAL_SERVER_ERROR
 
     # Register CLI commands
     from lumen.commands import init_db_cmd, reassign_model_cmd

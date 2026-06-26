@@ -1,8 +1,9 @@
 from http import HTTPStatus
 
-from flask import Blueprint, abort, jsonify, render_template, request, session
+from flask import Blueprint, abort, current_app, jsonify, render_template, request, session
 from sqlalchemy import func, select
 
+from lumen.commands import sync_clients_from_yaml
 from lumen.decorators import admin_required, is_admin, login_required
 from lumen.extensions import db
 from lumen.timeutils import utcnow
@@ -151,6 +152,11 @@ def create_client():
     )
     db.session.add(client)
     db.session.commit()
+
+    # Apply the configured coin pool and model access defaults (clients.default or a
+    # named override) immediately, so a new client starts with the right defaults
+    # instead of waiting for the next config reload.
+    sync_clients_from_yaml(current_app.config["YAML_DATA"])
 
     return jsonify({"id": client.id, "name": client.name}), HTTPStatus.CREATED
 

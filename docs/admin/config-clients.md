@@ -1,5 +1,7 @@
 # Configuring Clients
 
+> 🔒 **Admin only.** This page documents administrator features. Configuration lives in `config.yaml` and the in-app Config editor (`/admin/config`), which are only available to administrators.
+
 Clients are named identities for automated tools or apps that need their own API access, separate from personal user accounts.
 
 ## When to Use Clients

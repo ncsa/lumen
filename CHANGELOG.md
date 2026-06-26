@@ -6,6 +6,9 @@ All notable changes to Lumen will be documented in this file.
 
 ### Fixed
 - The model detail page (`/models/<name>`) no longer returns a 404 for blocked or disabled models. Blocked models now render the page with the existing "Access denied" notice (the template already had the branch, but the route aborted before reaching it); disabled models render instead of 404ing. Links to these models (e.g. from the profile "Models & Access" table) now resolve.
+- Added themed `404` and `500` error pages so a mistyped or stale URL shows a branded "page not found" with a link home instead of the bare default error page. API routes (`/v1/*`) still receive a JSON error body.
+- Clients created through the Clients page (or `POST /clients`) now immediately receive their configured coin pool and model-access defaults (`clients.default` / a named `clients.<name>` entry). Previously a new client was created with no pool, so it fell back to the global token defaults and saw every model as blocked until the next config reload.
+- The `input_modalities` schema migration no longer fails on SQLite (it used PostgreSQL-only `::json`/`::text` casts), so a fresh local dev database can run `flask db upgrade` again. PostgreSQL behavior is unchanged.
 
 ### Changed
 - Audio (speech-to-text) pricing is now expressed **per hour** (`audio_cost_per_hour`) instead of per minute — cheap ASR rates like `$0.10/hour` no longer need many leading zeros. The DB column is renamed and existing per-minute values are migrated ×60; the legacy `audio_cost_per_minute` config/Helm key is still accepted (converted, with a deprecation warning) and the config editor migrates it on load/save.

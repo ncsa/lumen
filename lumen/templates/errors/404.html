@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Not Found — {{ app_name }}{% endblock %}
+{% block content %}
+<div class="container py-5 text-center">
+  <h1>404 Not Found</h1>
+  <p class="lead">The page you are looking for does not exist or may have been moved.</p>
+  <a href="{{ url_for('auth.landing') }}" class="btn btn-primary">Go home</a>
+</div>
+{% endblock %}

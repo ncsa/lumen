@@ -1,5 +1,7 @@
 # User Groups and Access Control
 
+> 🔒 **Admin only.** This page documents administrator features. Configuration lives in `config.yaml` and the in-app Config editor (`/admin/config`), which are only available to administrators.
+
 Lumen uses a group-based system to assign coin budgets and model access controls. Groups are matched to users at login using OAuth identity-provider profiles.
 
 ## Admins

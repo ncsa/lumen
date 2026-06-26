@@ -430,9 +430,10 @@ Protected by an optional Bearer token. Aggregates across workers via `prometheus
 
 Every proxied request is written to `request_logs` (TimescaleDB hypertable partitioned by `time`). Foreign keys use `SET NULL ON DELETE` to preserve historical data after users, models, or endpoints are removed.
 
-### Analytics Dashboard (`/admin/analytics`)
+### Analytics Dashboard (`/usage`)
 
-Built on `request_logs` aggregations:
+The `/admin/analytics` route redirects to the Usage page (`/usage`); admins see org-wide
+data there while regular users are scoped to their own. Built on `request_logs` aggregations:
 
 - New users / cumulative users over time
 - Requests and cost by model
