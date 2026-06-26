@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- The model detail page (`/models/<name>`) no longer returns a 404 for blocked or disabled models. Blocked models now render the page with the existing "Access denied" notice (the template already had the branch, but the route aborted before reaching it); disabled models render instead of 404ing. Links to these models (e.g. from the profile "Models & Access" table) now resolve.
+
 ### Changed
 - Audio (speech-to-text) pricing is now expressed **per hour** (`audio_cost_per_hour`) instead of per minute — cheap ASR rates like `$0.10/hour` no longer need many leading zeros. The DB column is renamed and existing per-minute values are migrated ×60; the legacy `audio_cost_per_minute` config/Helm key is still accepted (converted, with a deprecation warning) and the config editor migrates it on load/save.
 - **Simplified model access, token limits, and model status in `config.yaml` (new `version: 2` format).** Model access is now expressed with three orthogonal per-model fields instead of the old per-scope `whitelist`/`blacklist`/`graylist` lists:

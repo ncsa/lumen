@@ -76,7 +76,7 @@ def test_model_detail_ok(auth_client, test_model):
     assert test_model["model_name"].encode() in resp.data
 
 
-def test_model_detail_blocked_returns_404(app, auth_client, test_model, test_user):
+def test_model_detail_blocked_renders_access_denied(app, auth_client, test_model, test_user):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_model_access import EntityModelAccess
@@ -88,4 +88,18 @@ def test_model_detail_blocked_returns_404(app, auth_client, test_model, test_use
         db.session.commit()
 
     resp = auth_client.get(f"/models/{test_model['model_name']}")
-    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.status_code == HTTPStatus.OK
+    assert b"Access denied" in resp.data
+
+
+def test_model_detail_inactive_renders(app, auth_client):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        m = ModelConfig(model_name="inactive-detail", input_cost_per_million=1.0, output_cost_per_million=1.0, disabled=True)
+        db.session.add(m)
+        db.session.commit()
+
+    resp = auth_client.get("/models/inactive-detail")
+    assert resp.status_code == HTTPStatus.OK
+    assert b"inactive-detail" in resp.data

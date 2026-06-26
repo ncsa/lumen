@@ -3,7 +3,7 @@ from http import HTTPStatus
 from urllib.parse import urlparse
 
 import requests as http_requests
-from flask import Blueprint, abort, current_app, render_template, session
+from flask import Blueprint, current_app, render_template, session
 from sqlalchemy import func, select
 
 from lumen.decorators import login_required
@@ -34,7 +34,7 @@ def index():
 @models_page_bp.route("/models/<path:model_name>")
 @login_required
 def detail(model_name):
-    config = db.first_or_404(select(ModelConfig).where(ModelConfig.model_name == model_name, ModelConfig.active))
+    config = db.first_or_404(select(ModelConfig).where(ModelConfig.model_name == model_name))
     endpoints = list(config.endpoints)
 
     healthy_count = sum(1 for e in endpoints if e.healthy)
@@ -61,8 +61,6 @@ def detail(model_name):
 
     entity_id = session.get("entity_id")
     access_status = get_model_access_status(entity_id, config.id) if entity_id else "blocked"
-    if access_status == "blocked":
-        abort(HTTPStatus.NOT_FOUND)
     consent = (
         db.session.execute(
             select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=config.id)
