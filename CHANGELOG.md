@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- The admin config editor's "Require acknowledgement consent for API requests (/v1/*)" toggle can now be turned off. Unchecking it previously dropped the `api.consent` key from the saved config, which the reader defaults back to `true`, so consent stayed required no matter what. The editor now writes `consent: false` explicitly.
+
 ## [1.18.0] - 2026-06-26
 
 ### Fixed
