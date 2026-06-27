@@ -63,6 +63,8 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ## 5. Application Specific Rules
 
 Following rules are here to help the AI avoid the same mistakes again:
+- Always edit files in the active worktree (`.claude/worktrees/<name>/`), never the main repo root. The Docker dev stack syncs from the worktree, so main-repo edits won't show up when testing. Translate any main-repo paths reported by subagents/tools to the worktree path before editing.
+- Run the dev stack with `docker compose up --build --watch` so source changes rebuild/sync into the container.
 - Sortable table columns: date and numeric columns default to descending order on first click; text columns default to ascending.
 - All times are UTC everywhere in the app and the DB; only convert to the user's local timezone when displaying to them. DB timestamp columns are stored as **naive UTC** (no tzinfo) so values behave identically on SQLite and PostgreSQL. Always get "now" from `lumen.timeutils.utcnow()` (returns naive UTC) — never use `datetime.now(timezone.utc).replace(tzinfo=None)` or `datetime.utcnow()` directly, and use `default=utcnow` on `db.DateTime` columns. (Exception: `request_logs.time` is `timestamptz`/aware because it is a TimescaleDB hypertable partition key.) In templates, emit `<span class="local-datetime" data-utc="{{ dt.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>` and let the JS in app.js convert it to local time. Never hardcode "UTC" in displayed timestamps.
 - Dependencies are managed with uv, code is run with uv
