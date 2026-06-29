@@ -259,6 +259,7 @@ def create_app():
     from lumen.blueprints.admin.routes import admin_bp
     from lumen.blueprints.metrics.routes import metrics_bp
     from lumen.blueprints.help.routes import help_bp
+    from lumen.blueprints.connect.routes import connect_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(chat_bp)
@@ -270,6 +271,7 @@ def create_app():
     app.register_blueprint(admin_bp)
     app.register_blueprint(metrics_bp)
     app.register_blueprint(help_bp)
+    app.register_blueprint(connect_bp)
 
     @app.route("/healthz")
     def healthz():

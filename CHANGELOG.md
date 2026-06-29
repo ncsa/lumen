@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- A **Connect your tools** page (`/connect`) that generates ready-to-use client configuration: a downloadable OpenCode (`opencode.ai`) `opencode.json` pre-filled with every model your account can access (keyed off the `LUMEN_API_KEY` environment variable), plus copy-paste **curl** and **Python** examples. Picking a specific model tailors the curl/Python snippets, including vision (`image_url`) examples for image-capable models and chat + `/v1/audio/transcriptions` examples for audio-capable models. The page is linked from the Models dashboard, each model detail page (pre-selecting that model), and the API-key sections of the profile and client pages, and is documented in a new "Connect Your Tools" help guide. Thanks to Josh Henry for the idea.
+
 ### Fixed
 - The "Total Users (Cumulative)" usage graph now shows the actual total user count instead of only the users created within the selected period. For non-"all" periods (week/month/year) the cumulative line restarted from zero at the start of the window, so an installation with 105 users would show 1–5 over the week. The query now seeds the running total with the count of users that existed before the window.
 

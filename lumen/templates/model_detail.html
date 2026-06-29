@@ -40,6 +40,10 @@
     {# ── Right sidebar ── #}
     <div class="col-12 col-lg-4 d-flex flex-column gap-3">
 
+      {% if access_status != 'blocked' %}
+      <a class="btn btn-primary" href="{{ url_for('connect.index', model=config.model_name) }}">Use this model</a>
+      {% endif %}
+
       {% if effective_notice %}
       <div class="alert alert-warning mb-0" role="alert" aria-live="polite">
         <strong>Notice</strong>

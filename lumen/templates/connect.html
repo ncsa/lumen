@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Connect your tools — {{ app_name }}{% endblock %}
+
+{% block content %}
+<ilw-content>
+  <h1>Connect your tools to {{ app_name }}</h1>
+
+  <p>
+    {{ app_name }} exposes an OpenAI-compatible API at
+    <code>{{ base_url }}</code>. Create an API key on your
+    <a href="{{ url_for('profile.index') }}">profile</a>, then make it available to your tools as the
+    <code>LUMEN_API_KEY</code> environment variable:
+  </p>
+  <pre class="border rounded p-2 bg-light"><code>export LUMEN_API_KEY="sk_…"      # macOS / Linux
+setx LUMEN_API_KEY "sk_…"        # Windows (new terminals)</code></pre>
+
+  {% if not models %}
+  <div class="alert alert-info" role="alert">
+    The examples below use a generic <code>MODEL</code> placeholder.
+    <a href="{{ url_for('auth.login') }}">Log in</a> to fill them in with the models you can access.
+  </div>
+  {% endif %}
+
+  <div class="row g-2 align-items-end mb-3" style="max-width:32rem">
+    <div class="col">
+      <label class="form-label mb-1" for="connect-model">Model (for the curl &amp; Python examples)</label>
+      <select id="connect-model" class="form-select">
+        <option value="">All models</option>
+        {% for m in models %}
+        <option value="{{ m.id }}" {% if m.id == selected_model %}selected{% endif %}>{{ m.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <ul class="nav nav-tabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" id="tab-opencode" data-bs-toggle="tab" data-bs-target="#pane-opencode"
+              type="button" role="tab" aria-controls="pane-opencode" aria-selected="true">OpenCode</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-curl" data-bs-toggle="tab" data-bs-target="#pane-curl"
+              type="button" role="tab" aria-controls="pane-curl" aria-selected="false">curl</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-python" data-bs-toggle="tab" data-bs-target="#pane-python"
+              type="button" role="tab" aria-controls="pane-python" aria-selected="false">Python</button>
+    </li>
+  </ul>
+
+  <div class="tab-content border border-top-0 rounded-bottom p-3">
+
+    <div class="tab-pane fade show active" id="pane-opencode" role="tabpanel" aria-labelledby="tab-opencode">
+      <p class="text-muted small mb-2">
+        Configured with every model you can access. Uses <code>{env:LUMEN_API_KEY}</code> for the key.
+      </p>
+      <div id="examples-opencode"></div>
+      <div class="alert alert-secondary small mt-2 mb-0" role="note">
+        <strong>Where to put this file:</strong>
+        <ul class="mb-0">
+          <li><strong>macOS / Linux:</strong> <code>~/.config/opencode/opencode.json</code></li>
+          <li><strong>Windows:</strong> <code>%USERPROFILE%\.config\opencode\opencode.json</code></li>
+          <li>Or save <code>opencode.json</code> in a project's root directory for per-project settings.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="tab-pane fade" id="pane-curl" role="tabpanel" aria-labelledby="tab-curl">
+      <div id="examples-curl"></div>
+    </div>
+
+    <div class="tab-pane fade" id="pane-python" role="tabpanel" aria-labelledby="tab-python">
+      <div id="examples-python"></div>
+    </div>
+
+  </div>
+
+  <p class="mt-3"><a href="{{ url_for('help_bp.page', slug='connect') }}">Read the Connect guide</a> for more detail.</p>
+
+  <script type="application/json" id="connect-data">
+    {{ {"base_url": base_url, "provider": provider, "provider_name": provider_name,
+        "models": models, "selected": selected_model} | tojson }}
+  </script>
+</ilw-content>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/connect.js') }}"></script>
+{% endblock %}

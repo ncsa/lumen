@@ -137,6 +137,18 @@ def test_models_page(auth_client):
     _run_all_checks(resp.data, "/models")
 
 
+def test_connect_page_logged_out(client):
+    resp = client.get("/connect")
+    assert resp.status_code == HTTPStatus.OK
+    _run_all_checks(resp.data, "/connect")
+
+
+def test_connect_page_logged_in(auth_client, test_model):
+    resp = auth_client.get("/connect")
+    assert resp.status_code == HTTPStatus.OK
+    _run_all_checks(resp.data, "/connect")
+
+
 def test_admin_users_page(admin_client):
     resp = admin_client.get("/admin/users")
     assert resp.status_code == HTTPStatus.OK

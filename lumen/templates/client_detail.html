@@ -137,8 +137,11 @@
 <!-- API Keys -->
 <div class="d-flex justify-content-between align-items-center mt-4 mb-0">
   <h2 class="mb-0">API Keys</h2>
-  <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#apiKeyModal"
-          aria-haspopup="dialog">+ New API Key</button>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('connect.index') }}">Usage examples</a>
+    <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#apiKeyModal"
+            aria-haspopup="dialog">+ New API Key</button>
+  </div>
 </div>
 <div class="d-flex justify-content-between align-items-center mt-2 mb-1">
   <div class="d-flex align-items-center gap-1">
