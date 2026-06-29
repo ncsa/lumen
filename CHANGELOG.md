@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-06-29
+
 ### Added
 - A **Connect your tools** page (`/connect`) that generates ready-to-use client configuration: a downloadable OpenCode (`opencode.ai`) `opencode.json` pre-filled with every model your account can access (keyed off the `LUMEN_API_KEY` environment variable), plus copy-paste **curl** and **Python** examples. Picking a specific model tailors the curl/Python snippets, including vision (`image_url`) examples for image-capable models and chat + `/v1/audio/transcriptions` examples for audio-capable models. The page is linked from the Models dashboard, each model detail page (pre-selecting that model), and the API-key sections of the profile and client pages, and is documented in a new "Connect Your Tools" help guide. Thanks to Josh Henry for the idea.
 
