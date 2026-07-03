@@ -9,7 +9,12 @@ from sqlalchemy import func, case, select
 from lumen.blueprints.profile.routes import _entity_groups, _get_profile_data, _gravatar_url
 from lumen.commands import write_config_yaml
 from lumen.decorators import admin_required
-from lumen.services.config_watcher import RESTART_REQUIRED
+from lumen.services.config_watcher import (
+    RESTART_REQUIRED,
+    _find_unrestorable_masks,
+    mask_config_secrets,
+    restore_config_secrets,
+)
 from lumen.extensions import db
 from lumen.timeutils import utcnow
 from lumen.models.api_key import APIKey
@@ -229,6 +234,7 @@ def config_api_get():
             data = yaml.safe_load(f) or {}
     except OSError as e:
         return jsonify({"error": str(e)}), HTTPStatus.INTERNAL_SERVER_ERROR
+    mask_config_secrets(data)
     return jsonify(data)
 
 
@@ -272,6 +278,22 @@ def config_api_post():
     if not isinstance(data, dict):
         return jsonify({"error": "Invalid payload — expected a JSON object"}), HTTPStatus.BAD_REQUEST
     config_path = current_app.config["CONFIG_YAML"]
+    # Re-read on-disk config so sentinel-masked secrets are preserved on save.
+    # Missing file (fresh install / briefly absent path) → nothing to restore from.
+    try:
+        with open(config_path) as f:
+            on_disk = yaml.safe_load(f) or {}
+    except OSError:
+        on_disk = {}
+    restore_config_secrets(data, on_disk)
+    # Reject any MASK that could not be restored (e.g. model/url changed) so the
+    # literal "********" never reaches config.yaml.  Names the offending field(s).
+    unrestorable = _find_unrestorable_masks(data)
+    if unrestorable:
+        return jsonify({
+            "error": "Could not restore masked secret(s) — the model/url may have "
+                     "changed. Re-enter: " + ", ".join(unrestorable),
+        }), HTTPStatus.BAD_REQUEST
     try:
         write_config_yaml(config_path, data)
     except OSError as e:

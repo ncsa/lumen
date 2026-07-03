@@ -116,6 +116,29 @@ RESTART_REQUIRED = [
 _RESTART_REQUIRED = RESTART_REQUIRED
 
 
+# Sentinel substituted for secret values before the config is sent to the admin
+# browser.  On save, any field still equal to MASK is replaced with the on-disk
+# value (see restore_config_secrets) so the real secret is preserved.
+# NOTE: assumes no real secret's literal value equals MASK; astronomically
+# unlikely for secret_key/tokens, but documented here for the next reader.
+MASK = "********"
+
+# Secret-bearing dotted paths masked before the config is sent to the admin
+# browser.  Only truthy values are masked — a blank stays blank so the UI can
+# distinguish "no secret configured" from "secret hidden".
+# *** If you add a new secret to config.yaml, add its dotted path here too. ***
+# (models[].endpoints[].api_key is handled separately — see mask_config_secrets.)
+SENSITIVE_KEYS = [
+    ("app", "secret_key"),
+    ("app", "encryption_key"),
+    ("app", "database", "url"),
+    ("oauth2", "client_secret"),
+    ("api", "prometheus", "token"),
+    ("api", "monitoring", "token"),
+    ("rate_limiting", "storage_url"),
+]
+
+
 def _resolve_path(data, path):
     cur = data
     for part in path:
@@ -123,6 +146,132 @@ def _resolve_path(data, path):
             return None
         cur = cur.get(part)
     return cur
+
+
+def _set_path(data, path, value):
+    """Walk ``path`` into nested dicts and set the leaf to ``value``.
+
+    No-op if any intermediate key is missing or not a dict — never synthesizes
+    intermediate keys, so masking/restoring an absent path leaves structure
+    unchanged.
+    """
+    cur = data
+    for part in path[:-1]:
+        if not isinstance(cur, dict) or part not in cur:
+            return
+        cur = cur[part]
+    if isinstance(cur, dict) and path[-1] in cur:
+        cur[path[-1]] = value
+
+
+def mask_config_secrets(data):
+    """Replace every sensitive value in ``data`` with ``MASK`` (in place).
+
+    Walks the dotted paths in :data:`SENSITIVE_KEYS` and the nested
+    ``models[].endpoints[].api_key`` list-of-lists.  Only truthy values are
+    masked; blanks are left blank.  Shape-guarded so a hand-edited or partial
+    config won't raise mid-mask.
+    """
+    for path in SENSITIVE_KEYS:
+        if _resolve_path(data, path):
+            _set_path(data, path, MASK)
+
+    models = data.get("models") if isinstance(data, dict) else None
+    if not isinstance(models, list):
+        return
+    for model in models:
+        if not isinstance(model, dict):
+            continue
+        endpoints = model.get("endpoints")
+        if not isinstance(endpoints, list):
+            continue
+        for ep in endpoints:
+            if isinstance(ep, dict) and ep.get("api_key"):
+                ep["api_key"] = MASK
+
+
+def restore_config_secrets(data, on_disk):
+    """Substitute the on-disk value for any field in ``data`` still == MASK.
+
+    For dotted paths, the on-disk value at the same path is used.  For
+    ``models[].endpoints[].api_key``, models are matched by ``name`` and
+    endpoints by ``url``; an ambiguous url (zero or multiple on-disk matches)
+    is left as MASK so the caller's safety check can reject it rather than
+    silently cross-assigning keys.  Mutates ``data`` in place.
+    """
+    for path in SENSITIVE_KEYS:
+        if _resolve_path(data, path) == MASK:
+            disk_value = _resolve_path(on_disk, path)
+            if disk_value:
+                _set_path(data, path, disk_value)
+
+    incoming_models = data.get("models") if isinstance(data, dict) else None
+    disk_models = on_disk.get("models") if isinstance(on_disk, dict) else None
+    if not isinstance(incoming_models, list) or not isinstance(disk_models, list):
+        return
+
+    # on-disk endpoint lookup keyed by model name → {url → [api_key, ...]}
+    disk_by_name: dict[str, dict[str, list]] = {}
+    for dm in disk_models:
+        if not isinstance(dm, dict):
+            continue
+        name = dm.get("name")
+        eps = dm.get("endpoints")
+        if not isinstance(name, str) or not isinstance(eps, list):
+            continue
+        url_keys: dict[str, list] = {}
+        for dep in eps:
+            if not isinstance(dep, dict):
+                continue
+            url = dep.get("url")
+            if isinstance(url, str):
+                url_keys.setdefault(url, []).append(dep.get("api_key"))
+        disk_by_name[name] = url_keys
+
+    for im in incoming_models:
+        if not isinstance(im, dict):
+            continue
+        eps = im.get("endpoints")
+        if not isinstance(eps, list):
+            continue
+        url_keys = disk_by_name.get(im.get("name", ""))
+        if not url_keys:
+            continue
+        for iep in eps:
+            if not isinstance(iep, dict) or iep.get("api_key") != MASK:
+                continue
+            candidates = url_keys.get(iep.get("url", ""), [])
+            # Restore only on an unambiguous match; otherwise leave MASK so the
+            # safety check (_find_unrestorable_masks) rejects the save.
+            if len(candidates) == 1 and candidates[0]:
+                iep["api_key"] = candidates[0]
+
+
+def _find_unrestorable_masks(data) -> list[str]:
+    """Return dotted-path strings for secrets still == MASK after restore.
+
+    Used to build a precise 400 message naming the field(s) the admin must
+    re-enter.  Empty list means every masked secret was restored (or none were
+    present).
+    """
+    still_masked: list[str] = []
+    for path in SENSITIVE_KEYS:
+        if _resolve_path(data, path) == MASK:
+            still_masked.append(".".join(path))
+
+    models = data.get("models") if isinstance(data, dict) else None
+    if isinstance(models, list):
+        for model in models:
+            if not isinstance(model, dict):
+                continue
+            name = model.get("name", "?")
+            eps = model.get("endpoints")
+            if not isinstance(eps, list):
+                continue
+            for ep in eps:
+                if isinstance(ep, dict) and ep.get("api_key") == MASK:
+                    still_masked.append(f"models[{name}].endpoints[{ep.get('url', '?')}].api_key")
+    return still_masked
 
 
 def _check_restart_required(old_data, new_data):
