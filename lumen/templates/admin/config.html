@@ -148,6 +148,10 @@ function card(title, body) {
 }
 function row2(...cols) { return `<div class="row g-3">${cols.map(c => `<div class="col-md-6">${c}</div>`).join('')}</div>`; }
 function row3(...cols) { return `<div class="row g-3">${cols.map(c => `<div class="col-md-4">${c}</div>`).join('')}</div>`; }
+// Entity selector order: "default" pinned to the top, the rest alphabetical.
+function orderedKeys(obj) {
+  return Object.keys(obj || {}).sort((a, b) => a === 'default' ? -1 : b === 'default' ? 1 : a.localeCompare(b));
+}
 function kvRow(k, v) {
   return `<div class="kv-row d-flex gap-2 mb-2 align-items-center">
     <input type="text" class="form-control form-control-sm kv-key" value="${esc(k)}" placeholder="key">
@@ -269,8 +273,12 @@ async function doSave() {
     showToast('Saved successfully', 'success');
     const restartChanged = findRestartChanges(prevOriginal, state.data);
     if (restartChanged.length) {
-      $('restart-fields').textContent = ' ' + restartChanged.join(', ');
-      $('restart-banner').classList.remove('d-none');
+      // The restart banner is a non-critical notice; never let a missing element
+      // turn an otherwise-successful save into a "Save failed" error.
+      const fields = $('restart-fields');
+      const banner = $('restart-banner');
+      if (fields) fields.textContent = ' ' + restartChanged.join(', ');
+      if (banner) banner.classList.remove('d-none');
     }
   } catch (e) {
     showToast('Save failed: ' + e.message, 'danger');
@@ -723,7 +731,7 @@ function effectiveAccess(kind, scope, model) {
 // ── Groups ─────────────────────────────────────────────────────────────────
 function renderGroups() {
   const groups = state.data.groups || {};
-  const keys = Object.keys(groups);
+  const keys = orderedKeys(groups);
   if (!state.selectedGroupKey || !groups[state.selectedGroupKey]) state.selectedGroupKey = keys[0] || null;
   const opts = keys.map(k => {
     const mapped = (groups[k]?.rules || []).length ? ' [OAuth-mapped]' : '';
@@ -830,7 +838,7 @@ function collectGroups() { collectCurrentGroup(); }
 // ── Clients ────────────────────────────────────────────────────────────────
 function renderClients() {
   const clients = state.data.clients || {};
-  const keys = Object.keys(clients);
+  const keys = orderedKeys(clients);
   if (!state.selectedClientKey || !clients[state.selectedClientKey]) state.selectedClientKey = keys[0] || null;
   const opts = keys.map(k => `<option value="${esc(k)}"${k === state.selectedClientKey ? ' selected' : ''}>${esc(k)}</option>`).join('');
   $('cfg-body').innerHTML = `
@@ -847,7 +855,10 @@ function renderClients() {
 function renderClientForm(key, c) {
   if (!c) return '';
   return `
-    ${card(`Client: ${esc(key)}`, row3(
+    ${card(`Client: ${esc(key)}`, `
+      ${field('cli-groups','Groups',ti('cli-groups',(c.groups||[]).join(', ')),'comma-separated — grants access to group models')}
+    `)}
+    ${card('Token Pool', row3(
       field('cli-max',  'Max Coins',          ni('cli-max',   c.max),     '-2=unlimited, 0=blocked'),
       field('cli-ref',  'Refresh (coins/hr)', ni('cli-ref',   c.refresh)),
       field('cli-start','Starting Coins',     ni('cli-start', c.starting))
@@ -884,11 +895,12 @@ function collectCurrentClient() {
   const key = state.selectedClientKey;
   if (!key || !$('cli-max')) return;
   const prev = state.data.clients?.[key] || {};
-  const c = {};
-  const mx = numVal('cli-max');   if (mx !== undefined) c.max      = mx;
-  const rf = numVal('cli-ref');   if (rf !== undefined) c.refresh  = rf;
-  const st = numVal('cli-start'); if (st !== undefined) c.starting = st;
+  const c = { ...prev };  // preserve any keys this form doesn't render
+  const mx = numVal('cli-max');   if (mx !== undefined) c.max      = mx; else delete c.max;
+  const rf = numVal('cli-ref');   if (rf !== undefined) c.refresh  = rf; else delete c.refresh;
+  const st = numVal('cli-start'); if (st !== undefined) c.starting = st; else delete c.starting;
   c.model_access = cleanModelAccess(prev.model_access);  // widget-managed, mutated in place
+  const groups = arrFromCommas('cli-groups'); if (groups.length) c.groups = groups; else delete c.groups;
   if (!state.data.clients) state.data.clients = {};
   state.data.clients[key] = c;
 }
@@ -1190,7 +1202,7 @@ function collectDefaults() {
 // ── Users ────────────────────────────────────────────────────────────────────
 function renderUsers() {
   const users = state.data.users || {};
-  const keys = Object.keys(users);
+  const keys = orderedKeys(users);
   if (state.selectedUserKey == null && keys.length) state.selectedUserKey = keys[0];
   const opts = keys.map(k => `<option value="${esc(k)}"${k === state.selectedUserKey ? ' selected' : ''}>${esc(k)}</option>`).join('');
   $('cfg-body').innerHTML = `

@@ -81,6 +81,21 @@ def make_graylist_access(app):
 
 
 @pytest.fixture
+def writable_config(app, tmp_path):
+    """Point CONFIG_YAML at a writable temp copy so create_client's write-back
+    doesn't mutate the shared committed fixture. Restores afterwards."""
+    import shutil
+    cfg = tmp_path / "config.yaml"
+    shutil.copy(app.config["CONFIG_YAML"], cfg)
+    original_path = app.config["CONFIG_YAML"]
+    original_data = app.config.get("YAML_DATA")
+    app.config["CONFIG_YAML"] = str(cfg)
+    yield cfg
+    app.config["CONFIG_YAML"] = original_path
+    app.config["YAML_DATA"] = original_data
+
+
+@pytest.fixture
 def unlimited_pool(app, managed_client):
     """Grant managed_client an unlimited coin pool."""
     with app.app_context():
@@ -109,13 +124,16 @@ def test_clients_list_empty_for_non_manager(auth_client):
 def test_clients_list_shows_managed_client(managed_auth_client, managed_client):
     resp = managed_auth_client.get("/clients")
     assert resp.status_code == HTTPStatus.OK
-    assert managed_client["name"].encode() in resp.data
+    # Rows are loaded via the /clients/data API, not embedded in the page.
+    data = managed_auth_client.get("/clients/data").get_json()
+    assert managed_client["name"] in [c["name"] for c in data["clients"]]
 
 
 def test_clients_list_admin_sees_all(app, admin_client, service_client):
     resp = admin_client.get("/clients")
     assert resp.status_code == HTTPStatus.OK
-    assert service_client["name"].encode() in resp.data
+    data = admin_client.get("/clients/data").get_json()
+    assert service_client["name"] in [c["name"] for c in data["clients"]]
 
 
 def test_clients_list_shows_entity_stats(app, admin_client, service_client, test_model):
@@ -180,7 +198,7 @@ def test_create_client_requires_admin(auth_client):
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_create_client_succeeds(app, admin_client):
+def test_create_client_succeeds(app, admin_client, writable_config):
     resp = admin_client.post("/clients", json={"name": "created-svc"})
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.get_json()
@@ -191,6 +209,16 @@ def test_create_client_succeeds(app, admin_client):
         c = db.session.execute(select(Entity).filter_by(name="created-svc", entity_type="client")).scalar_one_or_none()
         assert c is not None
         assert c.active is True
+
+
+def test_create_client_writes_empty_config_entry(admin_client, writable_config):
+    """Creating a client records an empty entry in config.yaml so the file reflects it."""
+    import yaml
+    resp = admin_client.post("/clients", json={"name": "cfg-svc"})
+    assert resp.status_code == HTTPStatus.CREATED
+    saved = yaml.safe_load(writable_config.read_text()) or {}
+    assert "cfg-svc" in saved.get("clients", {})
+    assert saved["clients"]["cfg-svc"] == {}
 
 
 def test_create_client_empty_name_returns_400(admin_client):
@@ -222,6 +250,44 @@ def test_toggle_reactivates_inactive_client(app, admin_client, service_client):
     admin_client.post(f"/clients/{service_client['id']}/toggle")  # deactivate
     resp = admin_client.post(f"/clients/{service_client['id']}/toggle")  # reactivate
     assert resp.get_json()["active"] is True
+
+
+# ---------------------------------------------------------------------------
+# Client data API (pagination + show disabled)
+# ---------------------------------------------------------------------------
+
+def test_clients_data_requires_login(client):
+    resp = client.get("/clients/data", follow_redirects=False)
+    assert resp.status_code == HTTPStatus.FOUND
+
+
+def test_clients_data_lists_active_client(admin_client, service_client):
+    resp = admin_client.get("/clients/data")
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.get_json()
+    assert data["page"] == 1
+    assert data["per_page"] == 25
+    names = [c["name"] for c in data["clients"]]
+    assert service_client["name"] in names
+
+
+def test_clients_data_hides_disabled_by_default(admin_client, service_client):
+    admin_client.post(f"/clients/{service_client['id']}/toggle")  # deactivate
+    resp = admin_client.get("/clients/data")
+    names = [c["name"] for c in resp.get_json()["clients"]]
+    assert service_client["name"] not in names
+
+
+def test_clients_data_show_disabled_reveals(admin_client, service_client):
+    admin_client.post(f"/clients/{service_client['id']}/toggle")  # deactivate
+    resp = admin_client.get("/clients/data?show_disabled=1")
+    names = [c["name"] for c in resp.get_json()["clients"]]
+    assert service_client["name"] in names
+
+
+def test_clients_data_invalid_per_page_falls_back(admin_client, service_client):
+    resp = admin_client.get("/clients/data?per_page=7")
+    assert resp.get_json()["per_page"] == 25
 
 
 # ---------------------------------------------------------------------------

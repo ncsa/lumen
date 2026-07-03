@@ -1,4 +1,9 @@
+import os
+import shutil
+import tempfile
+
 import click
+import yaml
 from flask import current_app
 from flask.cli import with_appcontext
 from sqlalchemy import delete, select, update
@@ -36,6 +41,53 @@ def _warn_once(key, msg, *args):
     if key not in _warned:
         _warned.add(key)
         current_app.logger.warning(msg, *args)
+
+
+def write_config_yaml(config_path, data):
+    """Write ``data`` (a top-level config dict) to config_path as YAML.
+
+    Each top-level key is dumped as its own document fragment (preserving key order
+    and keeping blocks visually separated), the previous file is backed up to
+    ``<config>.bak``, and the new content is written atomically via a temp file.
+    Shared by the admin config editor and client creation.
+    """
+    parts = [
+        yaml.dump({k: v}, Dumper=yaml.SafeDumper, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        for k, v in data.items()
+    ]
+    fd, tmp_path = tempfile.mkstemp(suffix=".yaml")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write("\n".join(parts))
+        # Back up the current config before overwriting so a partial or
+        # malformed save can be recovered from <config>.bak.
+        if os.path.exists(config_path):
+            shutil.copy2(config_path, config_path + ".bak")
+        shutil.copyfile(tmp_path, config_path)
+    finally:
+        os.unlink(tmp_path)
+
+
+def backfill_clients_to_config(yaml_data, config_path):
+    """Ensure every client entity in the DB has an entry in config.yaml.
+
+    Existing installs have clients that live only in the DB (created before client
+    creation wrote them to config); add an empty entry for each one missing from the
+    file so it reflects which clients exist. Mutates yaml_data in place and writes the
+    file only when something was added. Returns True if the file was written.
+    """
+    names = db.session.execute(
+        select(Entity.name).where(Entity.entity_type == "client")
+    ).scalars().all()
+    clients_cfg = yaml_data.setdefault("clients", {})
+    added = False
+    for name in names:
+        if name not in clients_cfg:
+            clients_cfg[name] = {}
+            added = True
+    if added:
+        write_config_yaml(config_path, yaml_data)
+    return added
 
 
 def _normalize_access(value, *, context=""):
@@ -382,6 +434,7 @@ def sync_clients_from_yaml(yaml_data):
             blocked: [name, ...]
         my-client-name:             <- overrides for a specific client
           max: 500
+          groups: [research]        <- group memberships granting extra model access
     """
     clients_cfg = yaml_data.get("clients", {})
     if not clients_cfg:
@@ -396,9 +449,16 @@ def sync_clients_from_yaml(yaml_data):
     models_by_name = {
         mc.model_name: mc for mc in db.session.execute(select(ModelConfig)).scalars().all()
     }
+    # Preload groups by name for membership reconciliation.
+    groups_by_name = {
+        g.name: g for g in db.session.execute(select(Group)).scalars().all()
+    }
 
     for entity in client_entities:
-        cfg = named_cfg.get(entity.name, default_cfg)
+        # An empty named entry (e.g. `my-client: {}`, written on client creation so the
+        # file records that the client exists) carries no settings, so fall back to the
+        # shared `default` block just as a client with no entry at all would.
+        cfg = named_cfg.get(entity.name) or default_cfg
         if not cfg:
             continue
 
@@ -443,6 +503,30 @@ def sync_clients_from_yaml(yaml_data):
                 model_config_id=mc.id,
                 access_type=access_type,
             ))
+
+        # Sync config-managed group memberships. Membership can grant model access the
+        # client's own rules would otherwise block (resolved in services/llm.py).
+        desired_group_ids = set()
+        for gname in cfg.get("groups", []) or []:
+            group = groups_by_name.get(gname)
+            if group is None:
+                current_app.logger.warning(
+                    "sync_clients_from_yaml: group '%s' not found for client '%s', skipping",
+                    gname, entity.name,
+                )
+                continue
+            desired_group_ids.add(group.id)
+
+        existing_by_group = {
+            m.group_id: m
+            for m in db.session.execute(select(GroupMember).filter_by(entity_id=entity.id)).scalars().all()
+        }
+        for group_id, member in existing_by_group.items():
+            if member.config_managed and group_id not in desired_group_ids:
+                db.session.delete(member)
+        for group_id in desired_group_ids:
+            if group_id not in existing_by_group:
+                db.session.add(GroupMember(group_id=group_id, entity_id=entity.id, config_managed=True))
 
     db.session.commit()
 

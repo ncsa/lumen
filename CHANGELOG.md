@@ -4,6 +4,16 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Clients can be added to **groups** via a `groups:` list in their `config.yaml` entry (and via checkboxes in the Config editor's Clients tab). Group membership grants the client access to models its own rules would otherwise block, using the same group model-access resolution as users. Memberships are config-managed — added on reload and removed when dropped from the list.
+
+### Fixed
+- Clients created through the `/clients` UI are now recorded in `config.yaml` with an empty entry (`<name>: {}`) so the file always reflects which clients exist. Previously a UI-created client lived only in the database and was invisible to the Config editor, so the next config save could silently drop it. An empty entry falls back to `clients.default`, so newly created clients keep the default budget and access. On startup, any pre-existing clients that were only in the database are backfilled into `config.yaml` the same way (when the file is writable and the Config editor is enabled).
+- Chat completions now merge consecutive leading system messages into a single system message before calling the upstream model, for providers that reject or ignore more than one system message. Applies to both streaming and non-streaming requests.
+
+### Changed
+- The Clients list is now server-side paginated (matching the Users list) with a per-page selector and search. Disabled clients are hidden by default; admins get a **Show disabled** toggle to reveal them.
+
 ## [1.19.0] - 2026-06-29
 
 ### Added

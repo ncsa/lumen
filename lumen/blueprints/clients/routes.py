@@ -1,9 +1,11 @@
+import os
 from http import HTTPStatus
 
-from flask import Blueprint, abort, current_app, jsonify, render_template, request, session
+import yaml
+from flask import Blueprint, abort, current_app, jsonify, render_template, request, session, url_for
 from sqlalchemy import func, select
 
-from lumen.commands import sync_clients_from_yaml
+from lumen.commands import sync_clients_from_yaml, write_config_yaml
 from lumen.decorators import admin_required, is_admin, login_required
 from lumen.extensions import db
 from lumen.timeutils import utcnow
@@ -18,6 +20,9 @@ from lumen.services.llm import get_model_access_status, has_model_consent
 from lumen.blueprints.profile.routes import _get_profile_data
 
 clients_bp = Blueprint("clients", __name__)
+
+# Must match the options rendered by the frontend per-page selector.
+_VALID_PER_PAGE = {25, 50, 100, 200}
 
 
 def _require_client_access(entity_id: int, sid: int):
@@ -48,59 +53,132 @@ def _get_user_clients(entity_id: int):
 
 
 
+def _scoped_client_ids(entity_id, entity):
+    """Full set of client ids visible to this caller (admins: all; others: managed)."""
+    if is_admin(entity):
+        return db.session.execute(
+            select(Entity.id).where(Entity.entity_type == "client")
+        ).scalars().all()
+    return [c.id for c in _get_user_clients(entity_id)]
+
+
 @clients_bp.route("/clients", methods=["GET"])
 @login_required
 def index():
     entity_id = session["entity_id"]
     entity = db.session.get(Entity, entity_id)
 
-    if is_admin(entity):
-        clients = db.session.execute(
-            select(Entity).filter_by(entity_type="client").order_by(Entity.name)
-        ).scalars().all()
-    else:
-        clients = _get_user_clients(entity_id)
-
-    client_ids = [c.id for c in clients]
+    # Summary cards reflect the full visible set, independent of the paginated table.
+    client_ids = _scoped_client_ids(entity_id, entity)
     if client_ids:
-        manager_counts = {
-            row[0]: row[1]
-            for row in db.session.execute(
-                select(
-                    EntityManager.client_entity_id,
-                    func.count(EntityManager.id),
-                )
-                .where(EntityManager.client_entity_id.in_(client_ids))
-                .group_by(EntityManager.client_entity_id)
-            ).all()
-        }
-        client_stats = {
-            row.entity_id: {
-                "requests": int(row.requests or 0),
-                "tokens": int((row.input_tokens or 0) + (row.output_tokens or 0)),
-                "cost": float(row.cost or 0),
-            }
-            for row in db.session.execute(select(EntityStat).where(EntityStat.entity_id.in_(client_ids))).scalars().all()
-        }
-        total_requests = sum(s["requests"] for s in client_stats.values())
-        total_tokens = sum(s["tokens"] for s in client_stats.values())
-        total_cost = sum(s["cost"] for s in client_stats.values())
+        agg = db.session.execute(
+            select(
+                func.coalesce(func.sum(EntityStat.requests), 0),
+                func.coalesce(func.sum(EntityStat.input_tokens + EntityStat.output_tokens), 0),
+                func.coalesce(func.sum(EntityStat.cost), 0),
+            ).where(EntityStat.entity_id.in_(client_ids))
+        ).one()
+        total_requests, total_tokens, total_cost = int(agg[0]), int(agg[1]), float(agg[2])
     else:
-        manager_counts = {}
-        client_stats = {}
-        total_requests = 0
-        total_tokens = 0
+        total_requests = total_tokens = 0
         total_cost = 0.0
 
     return render_template(
         "clients.html",
-        clients=clients,
-        manager_counts=manager_counts,
-        client_stats=client_stats,
+        total_clients=len(client_ids),
         total_requests=total_requests,
         total_tokens=total_tokens,
         total_cost=total_cost,
     )
+
+
+@clients_bp.route("/clients/data", methods=["GET"])
+@login_required
+def data():
+    """Paginated client rows for the clients table (mirrors the admin users API)."""
+    entity_id = session["entity_id"]
+    entity = db.session.get(Entity, entity_id)
+    admin = is_admin(entity)
+
+    page = max(1, request.args.get("page", 1, type=int))
+    per_page = request.args.get("per_page", 25, type=int)
+    if per_page not in _VALID_PER_PAGE:
+        per_page = 25
+    sort = request.args.get("sort", "name")
+    order = request.args.get("order", "asc")
+    search = (request.args.get("search") or "").strip()
+    show_disabled = request.args.get("show_disabled") in ("1", "true")
+
+    mgr_sq = (
+        select(
+            EntityManager.client_entity_id.label("client_id"),
+            func.count(EntityManager.id).label("mgr_count"),
+        )
+        .group_by(EntityManager.client_entity_id)
+        .subquery()
+    )
+
+    stmt = (
+        select(
+            Entity,
+            func.coalesce(EntityStat.requests, 0).label("requests"),
+            func.coalesce(EntityStat.input_tokens + EntityStat.output_tokens, 0).label("tokens"),
+            func.coalesce(EntityStat.cost, 0).label("cost"),
+            func.coalesce(mgr_sq.c.mgr_count, 0).label("managers"),
+        )
+        .where(Entity.entity_type == "client")
+        .outerjoin(EntityStat, Entity.id == EntityStat.entity_id)
+        .outerjoin(mgr_sq, Entity.id == mgr_sq.c.client_id)
+    )
+
+    if admin:
+        # Admins see all clients; disabled ones only when explicitly requested.
+        if not show_disabled:
+            stmt = stmt.where(Entity.active == True)
+    else:
+        # Non-admins only ever see the active clients they manage.
+        managed_ids = [c.id for c in _get_user_clients(entity_id)]
+        if not managed_ids:
+            return jsonify({"clients": [], "total": 0, "page": page, "per_page": per_page})
+        stmt = stmt.where(Entity.id.in_(managed_ids))
+
+    if search:
+        stmt = stmt.where(Entity.name.ilike(f"%{search}%"))
+
+    sort_col = {
+        "name": Entity.name,
+        "managers": func.coalesce(mgr_sq.c.mgr_count, 0),
+        "active": Entity.active,
+        "requests": func.coalesce(EntityStat.requests, 0),
+        "tokens": func.coalesce(EntityStat.input_tokens + EntityStat.output_tokens, 0),
+        "cost": func.coalesce(EntityStat.cost, 0),
+        "created": Entity.created_at,
+    }.get(sort, Entity.name)
+    direction = sort_col.desc().nullslast() if order == "desc" else sort_col.asc().nullslast()
+    stmt = stmt.order_by(direction)
+
+    total = db.session.scalar(select(func.count()).select_from(stmt.subquery()))
+    rows = db.session.execute(stmt.offset((page - 1) * per_page).limit(per_page)).all()
+
+    return jsonify({
+        "clients": [
+            {
+                "id": c.id,
+                "name": c.name,
+                "managers": int(managers),
+                "active": c.active,
+                "requests": int(requests),
+                "tokens": int(tokens),
+                "cost": float(cost),
+                "created": c.created_at.strftime("%Y-%m-%dT%H:%M:%SZ") if c.created_at else None,
+                "detail_url": url_for("clients.detail", sid=c.id),
+            }
+            for c, requests, tokens, cost, managers in rows
+        ],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+    })
 
 
 @clients_bp.route("/clients/<int:sid>")
@@ -152,6 +230,22 @@ def create_client():
     )
     db.session.add(client)
     db.session.commit()
+
+    # Record the client in config.yaml with an empty entry so the file always reflects
+    # which clients exist (they otherwise live only in the DB). Skip when the editor is
+    # disabled or the file is not writable — the client still exists in the DB.
+    config_path = current_app.config["CONFIG_YAML"]
+    if current_app.config.get("CONFIG_EDITOR", True) and os.access(config_path, os.W_OK):
+        try:
+            with open(config_path) as f:
+                cfg_data = yaml.safe_load(f) or {}
+            clients_cfg = cfg_data.setdefault("clients", {})
+            if name not in clients_cfg:
+                clients_cfg[name] = {}
+                write_config_yaml(config_path, cfg_data)
+                current_app.config["YAML_DATA"] = cfg_data
+        except OSError as e:
+            current_app.logger.warning("create_client: could not write config.yaml: %s", e)
 
     # Apply the configured coin pool and model access defaults (clients.default or a
     # named override) immediately, so a new client starts with the right defaults

@@ -1,6 +1,4 @@
 import os
-import shutil
-import tempfile
 
 import yaml
 from http import HTTPStatus
@@ -9,6 +7,7 @@ from flask import Blueprint, current_app, render_template, request, redirect, ur
 from sqlalchemy import func, case, select
 
 from lumen.blueprints.profile.routes import _entity_groups, _get_profile_data, _gravatar_url
+from lumen.commands import write_config_yaml
 from lumen.decorators import admin_required
 from lumen.services.config_watcher import RESTART_REQUIRED
 from lumen.extensions import db
@@ -274,21 +273,7 @@ def config_api_post():
         return jsonify({"error": "Invalid payload — expected a JSON object"}), HTTPStatus.BAD_REQUEST
     config_path = current_app.config["CONFIG_YAML"]
     try:
-        parts = [
-            yaml.dump({k: v}, Dumper=yaml.SafeDumper, default_flow_style=False, allow_unicode=True, sort_keys=False)
-            for k, v in data.items()
-        ]
-        fd, tmp_path = tempfile.mkstemp(suffix=".yaml")
-        try:
-            with os.fdopen(fd, "w") as f:
-                f.write("\n".join(parts))
-            # Back up the current config before overwriting so a partial or
-            # malformed save can be recovered from <config>.bak.
-            if os.path.exists(config_path):
-                shutil.copy2(config_path, config_path + ".bak")
-            shutil.copyfile(tmp_path, config_path)
-        finally:
-            os.unlink(tmp_path)
+        write_config_yaml(config_path, data)
     except OSError as e:
         return jsonify({"error": str(e)}), HTTPStatus.INTERNAL_SERVER_ERROR
     return jsonify({"ok": True})

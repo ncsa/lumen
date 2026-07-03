@@ -18,7 +18,7 @@
     <div class="card h-100">
       <div class="card-body">
         <div class="text-muted small mb-1">{% if is_admin %}Total Clients{% else %}Clients{% endif %}</div>
-        <div class="fs-4 fw-semibold">{{ "{:,}".format(clients | length) }}</div>
+        <div class="fs-4 fw-semibold">{{ "{:,}".format(total_clients) }}</div>
         <div class="text-muted small">{% if is_admin %}all{% else %}managed by you{% endif %}</div>
       </div>
     </div>
@@ -52,10 +52,28 @@
   </div>
 </div>
 
-<div class="d-flex justify-content-end mb-2">
-  <label for="client-search" class="text-muted small mb-0 me-2 align-self-center">Search:</label>
-  <input id="client-search" type="search" class="form-control form-control-sm" style="width:220px"
-         placeholder="Filter by name…" aria-label="Filter clients by name">
+<div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+  <div class="d-flex align-items-center gap-2">
+    <label for="client-per-page" class="text-muted small mb-0">Display</label>
+    <select id="client-per-page" class="form-select form-select-sm" style="width:auto">
+      <option value="25">25</option>
+      <option value="50">50</option>
+      <option value="100">100</option>
+      <option value="200">200</option>
+    </select>
+    <span class="text-muted small mb-0">results</span>
+    {% if is_admin %}
+    <div class="form-check ms-2 mb-0">
+      <input class="form-check-input" type="checkbox" id="client-show-disabled">
+      <label class="form-check-label text-muted small" for="client-show-disabled">Show disabled</label>
+    </div>
+    {% endif %}
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <label for="client-search" class="text-muted small mb-0">Search:</label>
+    <input id="client-search" type="search" class="form-control form-control-sm" style="width:220px"
+           placeholder="Filter by name…" aria-label="Filter clients by name">
+  </div>
 </div>
 
 <div class="table-responsive">
@@ -78,7 +96,11 @@
     </tbody>
   </table>
 </div>
-<p id="client-empty" class="text-muted" hidden>No clients match your filter.</p>
+
+<div class="d-flex justify-content-between align-items-center mt-2 flex-wrap gap-2">
+  <span id="client-range" class="text-muted small"></span>
+  <div id="client-pagination" class="d-flex gap-1 flex-wrap"></div>
+</div>
 
 {% if is_admin %}
 <!-- Create Client Modal -->
@@ -115,32 +137,27 @@
 {% block scripts %}
 <script>
 (function () {
-  const ROWS = [
-    {% for c in clients %}
-    {% set stats = client_stats.get(c.id, {}) %}
-    {
-      id: {{ c.id }},
-      name: {{ c.name | tojson }},
-      managers: {{ manager_counts.get(c.id, 0) }},
-      active: {{ c.active | tojson }},
-      requests: {{ stats.get("requests", 0) }},
-      tokens: {{ stats.get("tokens", 0) }},
-      cost: {{ "%.6f"|format(stats.get("cost", 0.0)) }},
-      created: {{ c.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') | tojson if c.created_at else 'null' }},
-      detailUrl: {{ url_for('clients.detail', sid=c.id) | tojson }},
-    },
-    {% endfor %}
-  ];
-
   const IS_ADMIN = {{ is_admin | tojson }};
 
-  let sortCol = 'name';
-  let sortDir = 'asc';
-  let filterText = '';
+  const params = new URLSearchParams(location.search);
+  let page = parseInt(params.get('page') || '1');
+  let perPage = parseInt(params.get('per_page') || '25');
+  let sort = params.get('sort') || 'name';
+  let order = params.get('order') || 'asc';
+  let search = params.get('search') || '';
+  let showDisabled = params.get('show_disabled') === '1';
+  let debounceTimer;
 
   const tbody = document.getElementById('client-tbody');
-  const emptyMsg = document.getElementById('client-empty');
+  const paginationEl = document.getElementById('client-pagination');
+  const rangeLabel = document.getElementById('client-range');
   const searchInput = document.getElementById('client-search');
+  const perPageSel = document.getElementById('client-per-page');
+  const showDisabledChk = document.getElementById('client-show-disabled');
+
+  searchInput.value = search;
+  perPageSel.value = String(perPage);
+  if (showDisabledChk) showDisabledChk.checked = showDisabled;
 
   function escHtml(s) {
     return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -148,74 +165,108 @@
 
   function fmtDate(iso) {
     if (!iso) return '—';
-    return new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    const d = new Date(iso);
+    return isNaN(d) ? '—' : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
   }
 
-  function renderRow(c) {
-    const activeIcon = c.active
-      ? '<span role="img" aria-label="Active">✓</span>'
-      : '<span role="img" aria-label="Inactive" class="text-danger">✗</span>';
-    let actions = `<a href="${escHtml(c.detailUrl)}" class="btn btn-sm btn-outline-primary" title="Details" aria-label="Details for ${escHtml(c.name)}"><i class="bi bi-sliders" aria-hidden="true"></i></a>`;
-    if (IS_ADMIN) {
-      const toggleIcon = c.active ? 'bi-pause-circle' : 'bi-play-circle';
-      const toggleClass = c.active ? 'btn-outline-danger' : 'btn-outline-success';
-      const toggleLabel = c.active ? 'Deactivate' : 'Activate';
-      actions += ` <button class="btn btn-sm ${toggleClass} toggle-btn" data-id="${c.id}" title="${toggleLabel}" aria-label="${toggleLabel} ${escHtml(c.name)}"><i class="bi ${toggleIcon}" aria-hidden="true"></i></button>`;
-    }
-    return `<tr id="client-row-${c.id}">
-      <td><a href="${escHtml(c.detailUrl)}">${escHtml(c.name)}</a></td>
-      <td class="text-center">${c.managers}</td>
-      <td class="text-center">${activeIcon}</td>
-      <td class="text-end">${c.requests.toLocaleString()}</td>
-      <td class="text-end">${c.tokens.toLocaleString()}</td>
-      <td class="text-end">${parseFloat(c.cost).toFixed(2)}</td>
-      <td>${fmtDate(c.created)}</td>
-      <td class="text-nowrap">${actions}</td>
-    </tr>`;
-  }
-
-  function getSortVal(c, col) {
-    if (col === 'name') return c.name.toLowerCase();
-    if (col === 'managers') return c.managers;
-    if (col === 'active') return c.active ? 1 : 0;
-    if (col === 'requests') return c.requests;
-    if (col === 'tokens') return c.tokens;
-    if (col === 'cost') return parseFloat(c.cost);
-    if (col === 'created') return c.created || '';
-    return '';
-  }
-
-  function render() {
-    const filter = filterText.toLowerCase();
-    let rows = ROWS.filter(c => !filter || c.name.toLowerCase().includes(filter));
-    rows.sort((a, b) => {
-      const av = getSortVal(a, sortCol), bv = getSortVal(b, sortCol);
-      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-
+  function updateSortHeaders() {
     document.querySelectorAll('.sort-header').forEach(th => {
       th.classList.remove('sort-asc', 'sort-desc');
-      if (th.dataset.col === sortCol) {
-        th.classList.add(sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
-        th.setAttribute('aria-sort', sortDir === 'asc' ? 'ascending' : 'descending');
+      if (th.dataset.col === sort) {
+        th.classList.add(order === 'asc' ? 'sort-asc' : 'sort-desc');
+        th.setAttribute('aria-sort', order === 'asc' ? 'ascending' : 'descending');
       } else {
         th.removeAttribute('aria-sort');
       }
     });
+  }
 
-    if (!rows.length) {
-      tbody.innerHTML = '';
-      emptyMsg.hidden = false;
-    } else {
-      tbody.innerHTML = rows.map(renderRow).join('');
-      emptyMsg.hidden = true;
-      if (IS_ADMIN) {
-        tbody.querySelectorAll('.toggle-btn').forEach(btn => {
-          btn.addEventListener('click', () => toggleClient(btn));
-        });
-      }
-    }
+  function syncUrl() {
+    const p = new URLSearchParams({ page, per_page: perPage, sort, order });
+    if (search) p.set('search', search);
+    if (showDisabled) p.set('show_disabled', '1');
+    history.replaceState(null, '', '?' + p.toString());
+  }
+
+  function renderPagination(total, currentPage, pp) {
+    const pages = Math.ceil(total / pp);
+    if (pages <= 1) { paginationEl.innerHTML = ''; return; }
+
+    const btn = (p, label, disabled, active) =>
+      `<button class="btn btn-sm ${active ? 'btn-primary' : 'btn-outline-secondary'}" ${disabled ? 'disabled' : ''} data-page="${p}" aria-label="Page ${label}">${label}</button>`;
+
+    let html = `<button class="btn btn-sm btn-outline-secondary" ${currentPage === 1 ? 'disabled' : ''} data-page="${currentPage - 1}" aria-label="Previous page">&laquo;</button>`;
+    let start = Math.max(1, currentPage - 3);
+    let end = Math.min(pages, currentPage + 3);
+    if (start > 1) { html += btn(1, '1', false, false); if (start > 2) html += '<span class="px-1 text-muted">…</span>'; }
+    for (let p = start; p <= end; p++) html += btn(p, p, false, p === currentPage);
+    if (end < pages) { if (end < pages - 1) html += '<span class="px-1 text-muted">…</span>'; html += btn(pages, pages, false, false); }
+    html += `<button class="btn btn-sm btn-outline-secondary" ${currentPage === pages ? 'disabled' : ''} data-page="${currentPage + 1}" aria-label="Next page">&raquo;</button>`;
+
+    paginationEl.innerHTML = html;
+    paginationEl.querySelectorAll('button[data-page]').forEach(b => {
+      b.addEventListener('click', () => { page = parseInt(b.dataset.page); fetchClients(); });
+    });
+  }
+
+  function fetchClients() {
+    updateSortHeaders();
+    syncUrl();
+    const qs = new URLSearchParams({ page, per_page: perPage, sort, order });
+    if (search) qs.set('search', search);
+    if (showDisabled) qs.set('show_disabled', '1');
+
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">Loading…</td></tr>';
+
+    fetch('/clients/data?' + qs.toString())
+      .then(r => r.json())
+      .then(data => {
+        const start = (data.page - 1) * data.per_page + 1;
+        const end = Math.min(data.page * data.per_page, data.total);
+        rangeLabel.textContent = data.total
+          ? `Showing ${start.toLocaleString()} to ${end.toLocaleString()} of ${data.total.toLocaleString()} entries`
+          : 'No entries found';
+
+        if (!data.clients.length) {
+          tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No clients found.</td></tr>';
+          paginationEl.innerHTML = '';
+          return;
+        }
+
+        tbody.innerHTML = data.clients.map(c => {
+          const activeIcon = c.active
+            ? '<span role="img" aria-label="Active">✓</span>'
+            : '<span role="img" aria-label="Inactive" class="text-danger">✗</span>';
+          let actions = `<a href="${escHtml(c.detail_url)}" class="btn btn-sm btn-outline-primary" title="Details" aria-label="Details for ${escHtml(c.name)}"><i class="bi bi-sliders" aria-hidden="true"></i></a>`;
+          if (IS_ADMIN) {
+            const toggleIcon = c.active ? 'bi-pause-circle' : 'bi-play-circle';
+            const toggleClass = c.active ? 'btn-outline-danger' : 'btn-outline-success';
+            const toggleLabel = c.active ? 'Deactivate' : 'Activate';
+            actions += ` <button class="btn btn-sm ${toggleClass} toggle-btn" data-id="${c.id}" title="${toggleLabel}" aria-label="${toggleLabel} ${escHtml(c.name)}"><i class="bi ${toggleIcon}" aria-hidden="true"></i></button>`;
+          }
+          return `<tr id="client-row-${c.id}">
+            <td><a href="${escHtml(c.detail_url)}">${escHtml(c.name)}</a></td>
+            <td class="text-center">${c.managers}</td>
+            <td class="text-center">${activeIcon}</td>
+            <td class="text-end">${c.requests.toLocaleString()}</td>
+            <td class="text-end">${c.tokens.toLocaleString()}</td>
+            <td class="text-end">${parseFloat(c.cost).toFixed(2)}</td>
+            <td>${fmtDate(c.created)}</td>
+            <td class="text-nowrap">${actions}</td>
+          </tr>`;
+        }).join('');
+
+        if (IS_ADMIN) {
+          tbody.querySelectorAll('.toggle-btn').forEach(btn => {
+            btn.addEventListener('click', () => toggleClient(btn));
+          });
+        }
+
+        renderPagination(data.total, data.page, data.per_page);
+      })
+      .catch(() => {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-3">Failed to load clients.</td></tr>';
+      });
   }
 
   function toggleClient(btn) {
@@ -223,34 +274,49 @@
     btn.disabled = true;
     fetch(`/clients/${id}/toggle`, { method: 'POST', headers: { "X-CSRFToken": csrfToken } })
       .then(r => r.json())
-      .then(data => {
-        const idx = ROWS.findIndex(c => c.id === parseInt(id));
-        if (idx !== -1) ROWS[idx].active = data.active;
-        render();
-      })
+      // Re-fetch so a client that was just disabled drops out unless "Show disabled" is on.
+      .then(() => fetchClients())
       .catch(() => { btn.disabled = false; });
   }
 
-  const NUM_COLS = new Set(['managers', 'requests', 'tokens', 'cost', 'created']);
+  const DESC_COLS = new Set(['managers', 'requests', 'tokens', 'cost', 'created']);
   document.querySelectorAll('.sort-header').forEach(th => {
     th.setAttribute('tabindex', '0');
     const activate = () => {
       const col = th.dataset.col;
-      if (sortCol === col) { sortDir = sortDir === 'asc' ? 'desc' : 'asc'; }
-      else { sortCol = col; sortDir = NUM_COLS.has(col) ? 'desc' : 'asc'; }
-      render();
+      if (sort === col) { order = order === 'asc' ? 'desc' : 'asc'; }
+      else { sort = col; order = DESC_COLS.has(col) ? 'desc' : 'asc'; }
+      page = 1;
+      fetchClients();
     };
     th.addEventListener('click', activate);
     th.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
   });
 
-  let debounce;
   searchInput.addEventListener('input', () => {
-    clearTimeout(debounce);
-    debounce = setTimeout(() => { filterText = searchInput.value.trim(); render(); }, 200);
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      search = searchInput.value.trim();
+      page = 1;
+      fetchClients();
+    }, 300);
   });
 
-  render();
+  perPageSel.addEventListener('change', () => {
+    perPage = parseInt(perPageSel.value);
+    page = 1;
+    fetchClients();
+  });
+
+  if (showDisabledChk) {
+    showDisabledChk.addEventListener('change', () => {
+      showDisabled = showDisabledChk.checked;
+      page = 1;
+      fetchClients();
+    });
+  }
+
+  fetchClients();
 })();
 
 {% if is_admin %}

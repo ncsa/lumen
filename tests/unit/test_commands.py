@@ -174,6 +174,101 @@ def test_sync_clients_model_access(app):
         assert rule.access_type == "allowed"
 
 
+def test_sync_clients_empty_entry_uses_default(app):
+    """An empty named entry (written when a client is created via the UI) falls back to default."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.entity_limit import EntityLimit
+        client = Entity(entity_type="client", name="empty-svc", initials="ES", active=True)
+        db.session.add(client)
+        db.session.commit()
+        sync_clients_from_yaml({"clients": {"default": {"max": 77.0, "starting": 77.0}, "empty-svc": {}}})
+        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=client.id)).scalar_one_or_none()
+        assert limit is not None
+        assert float(limit.max_coins) == 77.0
+
+
+def test_sync_clients_adds_group_membership(app):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        client = Entity(entity_type="client", name="grp-svc", initials="GS", active=True)
+        grp = Group(name="research", active=True, config_managed=True)
+        db.session.add_all([client, grp])
+        db.session.commit()
+        sync_clients_from_yaml({"clients": {"grp-svc": {"groups": ["research"]}}})
+        member = db.session.execute(
+            select(GroupMember).filter_by(entity_id=client.id, group_id=grp.id)
+        ).scalar_one_or_none()
+        assert member is not None
+        assert member.config_managed is True
+
+
+def test_sync_clients_removes_dropped_group_membership(app):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        client = Entity(entity_type="client", name="drop-svc", initials="DS", active=True)
+        grp = Group(name="research", active=True, config_managed=True)
+        db.session.add_all([client, grp])
+        db.session.commit()
+        db.session.add(GroupMember(group_id=grp.id, entity_id=client.id, config_managed=True))
+        db.session.commit()
+        sync_clients_from_yaml({"clients": {"drop-svc": {"max": 10.0}}})
+        member = db.session.execute(
+            select(GroupMember).filter_by(entity_id=client.id, group_id=grp.id)
+        ).scalar_one_or_none()
+        assert member is None
+
+
+def test_sync_clients_skips_unknown_group(app):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.group_member import GroupMember
+        client = Entity(entity_type="client", name="unk-svc", initials="US", active=True)
+        db.session.add(client)
+        db.session.commit()
+        sync_clients_from_yaml({"clients": {"unk-svc": {"groups": ["nonexistent"]}}})
+        members = db.session.execute(select(GroupMember).filter_by(entity_id=client.id)).scalars().all()
+        assert members == []
+
+
+def test_backfill_clients_to_config_adds_missing(app, tmp_path):
+    import yaml
+    from lumen.commands import backfill_clients_to_config
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        db.session.add(Entity(entity_type="client", name="bf-svc", initials="BF", active=True))
+        db.session.commit()
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("clients: {}\n")
+        data = {"clients": {}}
+        wrote = backfill_clients_to_config(data, str(cfg))
+        assert wrote is True
+        saved = yaml.safe_load(cfg.read_text())
+        assert saved["clients"]["bf-svc"] == {}
+
+
+def test_backfill_clients_to_config_noop_when_present(app, tmp_path):
+    from lumen.commands import backfill_clients_to_config
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        db.session.add(Entity(entity_type="client", name="present-svc", initials="PS", active=True))
+        db.session.commit()
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("clients:\n  present-svc:\n    max: 5\n")
+        wrote = backfill_clients_to_config({"clients": {"present-svc": {"max": 5}}}, str(cfg))
+        assert wrote is False
+
+
 def test_sync_groups_removes_limit_when_max_removed(app):
     """sync_groups_from_yaml deletes an existing GroupLimit when 'max' key is absent (else branch)."""
     with app.app_context():

@@ -339,8 +339,25 @@ def _complete_and_bill(model_name: str, messages: list, **kwargs):
     return response, None
 
 
+def _merge_leading_system_messages(messages):
+    """Collapse consecutive leading system messages into one.
+
+    Some upstreams reject or ignore requests with more than one system message, so
+    join any run of system messages at the start of the list into a single message.
+    """
+    if not messages or messages[0]["role"] != "system":
+        return messages
+    i = 0
+    merged = []
+    while i < len(messages) and messages[i]["role"] == "system":
+        merged.append(messages[i]["content"])
+        i += 1
+    return [{"role": "system", "content": "\n\n".join(merged)}] + messages[i:]
+
+
 def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
     """Shared logic for chat completions (used by both endpoints)."""
+    messages = _merge_leading_system_messages(messages)
     if not stream:
         response, err = _complete_and_bill(model_name, messages, **kwargs)
         if err:

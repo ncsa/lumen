@@ -389,7 +389,7 @@ def create_app():
     app.jinja_env.filters["markdown"] = _md_filter
 
     # Sync models, groups, and clients from yaml into DB on every startup
-    from lumen.commands import sync_clients_from_yaml, sync_groups_from_yaml, sync_models_from_yaml, sync_user_groups_from_yaml
+    from lumen.commands import backfill_clients_to_config, sync_clients_from_yaml, sync_groups_from_yaml, sync_models_from_yaml, sync_user_groups_from_yaml
     with app.app_context():
         try:
             sync_models_from_yaml(yaml_data)
@@ -406,6 +406,12 @@ def create_app():
         except Exception as e:
             print(f"WARNING: Could not sync user groups from yaml (run 'flask db upgrade' first): {e}",
                   file=sys.stderr)
+        try:
+            # Self-heal config.yaml for installs whose clients pre-date write-on-create.
+            if app.config.get("CONFIG_EDITOR", True) and os.access(config_yaml_path, os.W_OK):
+                backfill_clients_to_config(yaml_data, config_yaml_path)
+        except Exception as e:
+            print(f"WARNING: Could not backfill clients to config.yaml: {e}", file=sys.stderr)
         try:
             sync_clients_from_yaml(yaml_data)
         except Exception as e:
