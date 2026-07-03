@@ -153,29 +153,20 @@ def _set_path(data, path, value):
 
     No-op if any intermediate key is missing or not a dict — never synthesizes
     intermediate keys, so masking/restoring an absent path leaves structure
-    unchanged.
+    unchanged.  Reuses :func:`_resolve_path` for the parent walk.
     """
-    cur = data
-    for part in path[:-1]:
-        if not isinstance(cur, dict) or part not in cur:
-            return
-        cur = cur[part]
-    if isinstance(cur, dict) and path[-1] in cur:
-        cur[path[-1]] = value
+    parent = _resolve_path(data, path[:-1])
+    if isinstance(parent, dict) and path[-1] in parent:
+        parent[path[-1]] = value
 
 
-def mask_config_secrets(data):
-    """Replace every sensitive value in ``data`` with ``MASK`` (in place).
+def _iter_endpoints(data):
+    """Yield ``(model_name, endpoint_dict)`` for every endpoint in every model.
 
-    Walks the dotted paths in :data:`SENSITIVE_KEYS` and the nested
-    ``models[].endpoints[].api_key`` list-of-lists.  Only truthy values are
-    masked; blanks are left blank.  Shape-guarded so a hand-edited or partial
-    config won't raise mid-mask.
+    Shape-guarded: skips non-dict models/endpoints so a hand-edited or partial
+    config won't raise.  Used by :func:`mask_config_secrets` and
+    :func:`_find_unrestorable_masks`, which walk every endpoint uniformly.
     """
-    for path in SENSITIVE_KEYS:
-        if _resolve_path(data, path):
-            _set_path(data, path, MASK)
-
     models = data.get("models") if isinstance(data, dict) else None
     if not isinstance(models, list):
         return
@@ -186,8 +177,25 @@ def mask_config_secrets(data):
         if not isinstance(endpoints, list):
             continue
         for ep in endpoints:
-            if isinstance(ep, dict) and ep.get("api_key"):
-                ep["api_key"] = MASK
+            if isinstance(ep, dict):
+                yield model.get("name", "?"), ep
+
+
+def mask_config_secrets(data):
+    """Replace every sensitive value in ``data`` with ``MASK`` (in place).
+
+    Walks the dotted paths in :data:`SENSITIVE_KEYS` and the nested
+    ``models[].endpoints[].api_key`` list-of-lists via :func:`_iter_endpoints`.
+    Only truthy values are masked; blanks are left blank.  Shape-guarded so a
+    hand-edited or partial config won't raise mid-mask.
+    """
+    for path in SENSITIVE_KEYS:
+        if _resolve_path(data, path):
+            _set_path(data, path, MASK)
+
+    for _name, ep in _iter_endpoints(data):
+        if ep.get("api_key"):
+            ep["api_key"] = MASK
 
 
 def restore_config_secrets(data, on_disk):
@@ -195,9 +203,11 @@ def restore_config_secrets(data, on_disk):
 
     For dotted paths, the on-disk value at the same path is used.  For
     ``models[].endpoints[].api_key``, models are matched by ``name`` and
-    endpoints by ``url``; an ambiguous url (zero or multiple on-disk matches)
-    is left as MASK so the caller's safety check can reject it rather than
-    silently cross-assigning keys.  Mutates ``data`` in place.
+    endpoints **by position** within the model — this correctly handles the
+    documented round-robin pattern of multiple endpoints sharing one URL
+    (matched by index, not URL).  If a model name appears more than once on
+    disk the match is ambiguous, so endpoints for that name are left as MASK
+    and the caller's safety check rejects the save.  Mutates ``data`` in place.
     """
     for path in SENSITIVE_KEYS:
         if _resolve_path(data, path) == MASK:
@@ -210,41 +220,36 @@ def restore_config_secrets(data, on_disk):
     if not isinstance(incoming_models, list) or not isinstance(disk_models, list):
         return
 
-    # on-disk endpoint lookup keyed by model name → {url → [api_key, ...]}
-    disk_by_name: dict[str, dict[str, list]] = {}
+    # On-disk endpoints collected by model name.  If a name appears more than
+    # once on disk, all entries are kept so len(candidates) != 1 signals
+    # ambiguity → skip → leave MASK → _find_unrestorable_masks rejects.
+    disk_endpoints_by_name: dict[str, list[list]] = {}
     for dm in disk_models:
         if not isinstance(dm, dict):
             continue
         name = dm.get("name")
         eps = dm.get("endpoints")
-        if not isinstance(name, str) or not isinstance(eps, list):
-            continue
-        url_keys: dict[str, list] = {}
-        for dep in eps:
-            if not isinstance(dep, dict):
-                continue
-            url = dep.get("url")
-            if isinstance(url, str):
-                url_keys.setdefault(url, []).append(dep.get("api_key"))
-        disk_by_name[name] = url_keys
+        if isinstance(name, str) and isinstance(eps, list):
+            disk_endpoints_by_name.setdefault(name, []).append(eps)
 
     for im in incoming_models:
         if not isinstance(im, dict):
             continue
-        eps = im.get("endpoints")
-        if not isinstance(eps, list):
+        name = im.get("name")
+        ieps = im.get("endpoints")
+        if not isinstance(name, str) or not isinstance(ieps, list):
             continue
-        url_keys = disk_by_name.get(im.get("name", ""))
-        if not url_keys:
-            continue
-        for iep in eps:
+        candidates = disk_endpoints_by_name.get(name)
+        if not candidates or len(candidates) != 1:
+            continue  # no match or duplicate names → leave MASK → 400
+        deps = candidates[0]
+        for i, iep in enumerate(ieps):
             if not isinstance(iep, dict) or iep.get("api_key") != MASK:
                 continue
-            candidates = url_keys.get(iep.get("url", ""), [])
-            # Restore only on an unambiguous match; otherwise leave MASK so the
-            # safety check (_find_unrestorable_masks) rejects the save.
-            if len(candidates) == 1 and candidates[0]:
-                iep["api_key"] = candidates[0]
+            if i < len(deps) and isinstance(deps[i], dict):
+                disk_key = deps[i].get("api_key")
+                if disk_key:
+                    iep["api_key"] = disk_key
 
 
 def _find_unrestorable_masks(data) -> list[str]:
@@ -259,18 +264,9 @@ def _find_unrestorable_masks(data) -> list[str]:
         if _resolve_path(data, path) == MASK:
             still_masked.append(".".join(path))
 
-    models = data.get("models") if isinstance(data, dict) else None
-    if isinstance(models, list):
-        for model in models:
-            if not isinstance(model, dict):
-                continue
-            name = model.get("name", "?")
-            eps = model.get("endpoints")
-            if not isinstance(eps, list):
-                continue
-            for ep in eps:
-                if isinstance(ep, dict) and ep.get("api_key") == MASK:
-                    still_masked.append(f"models[{name}].endpoints[{ep.get('url', '?')}].api_key")
+    for name, ep in _iter_endpoints(data):
+        if ep.get("api_key") == MASK:
+            still_masked.append(f"models[{name}].endpoints[{ep.get('url', '?')}].api_key")
     return still_masked
 
 

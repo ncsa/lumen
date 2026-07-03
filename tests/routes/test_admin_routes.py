@@ -314,3 +314,62 @@ def test_config_post_preserves_endpoint_api_keys(app, admin_client, tmp_path):
         assert "********" not in on_disk
     finally:
         app.config["CONFIG_YAML"] = original
+
+
+def test_config_post_preserves_duplicate_url_endpoints(app, admin_client, tmp_path):
+    """Two endpoints sharing a URL (documented round-robin multi-key) round-trip by position."""
+    config = """\
+app:
+  name: Lumen
+  secret_key: real-secret
+models:
+  - name: gpt-4o
+    active: true
+    endpoints:
+      - url: https://api.openai.com/v1
+        api_key: sk-first
+      - url: https://api.openai.com/v1
+        api_key: sk-second
+"""
+    original, cfg = _use_config(app, tmp_path, config)
+    try:
+        masked = admin_client.get("/admin/api/config").get_json()
+        # Both keys masked on GET.
+        assert masked["models"][0]["endpoints"][0]["api_key"] == "********"
+        assert masked["models"][0]["endpoints"][1]["api_key"] == "********"
+        # POST the masked payload straight back — both keys restored by position.
+        resp = admin_client.post("/admin/api/config", json=masked)
+        assert resp.status_code == HTTPStatus.OK
+        on_disk = cfg.read_text()
+        assert "sk-first" in on_disk
+        assert "sk-second" in on_disk
+        assert "********" not in on_disk
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
+def test_config_post_rejects_duplicate_model_names(app, admin_client, tmp_path):
+    """Duplicate model names on disk → ambiguous restore → 400, no silent key swap."""
+    config = """\
+app:
+  name: Lumen
+  secret_key: real-secret
+models:
+  - name: gpt-4o
+    endpoints:
+      - url: https://api.openai.com/v1
+        api_key: sk-first
+  - name: gpt-4o
+    endpoints:
+      - url: https://api.openai.com/v1
+        api_key: sk-second
+"""
+    original, cfg = _use_config(app, tmp_path, config)
+    try:
+        masked = admin_client.get("/admin/api/config").get_json()
+        resp = admin_client.post("/admin/api/config", json=masked)
+        assert resp.status_code == HTTPStatus.BAD_REQUEST
+        # Disk untouched — no silent key swap.
+        assert "********" not in cfg.read_text()
+    finally:
+        app.config["CONFIG_YAML"] = original
