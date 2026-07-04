@@ -59,9 +59,10 @@ def upgrade():
     op.create_index("ix_entity_managers_project_entity_id", "entity_managers", ["project_entity_id"])
 
     # 3. Migrate the discriminator value and its CHECK constraint (PostgreSQL
-    #    raw SQL, matching b2c3d4e5f6g7).
-    op.execute("UPDATE entities SET entity_type = 'project' WHERE entity_type = 'client'")
+    #    raw SQL, matching b2c3d4e5f6g7). Drop the old CHECK before the UPDATE
+    #    so the new value is not rejected; re-add with the new value set.
     op.execute("ALTER TABLE entities DROP CONSTRAINT ck_entities_type")
+    op.execute("UPDATE entities SET entity_type = 'project' WHERE entity_type = 'client'")
     op.execute("ALTER TABLE entities ADD CONSTRAINT ck_entities_type CHECK (entity_type IN ('user', 'project'))")
 
     # 4. Refresh schema comments (PostgreSQL only), matching v2w3x4y5z6a7.
@@ -88,12 +89,13 @@ def downgrade():
     op.execute("DROP INDEX IF EXISTS ix_entity_managers_project_entity_id")
     op.create_index("ix_entity_managers_client_entity_id", "entity_managers", ["client_entity_id"])
 
-    # 3. Revert the discriminator value BEFORE re-adding the old CHECK constraint,
-    #    because PostgreSQL validates CHECK against existing rows at ADD time.
+    # 3. Drop the CHECK constraint before reverting the discriminator value:
+    #    the UPDATE is validated against the current constraint, and PostgreSQL
+    #    also validates CHECK against existing rows at ADD time.
+    op.execute("ALTER TABLE entities DROP CONSTRAINT ck_entities_type")
     op.execute("UPDATE entities SET entity_type = 'client' WHERE entity_type = 'project'")
 
     # 4. Swap the CHECK constraint back to ('user', 'client').
-    op.execute("ALTER TABLE entities DROP CONSTRAINT ck_entities_type")
     op.execute("ALTER TABLE entities ADD CONSTRAINT ck_entities_type CHECK (entity_type IN ('user', 'client'))")
 
     # 5. Restore the old schema comments (PostgreSQL only) — last, because the
