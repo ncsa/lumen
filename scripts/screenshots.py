@@ -109,21 +109,37 @@ def main():
         page.goto(BASE + "/devlogin", wait_until="networkidle")
 
         page.goto(BASE + "/chat", wait_until="networkidle")
-        if model:
-            try:
-                page.select_option("#model-picker", label=model)
-            except Exception:
-                pass
-        for msg in ["What is the capital of Illinois?",
-                    "In two sentences, what is an AI gateway?"]:
-            page.fill("#chat-input", msg)
-            page.click("#send-btn")
-            try:
-                page.wait_for_function(
-                    "!document.getElementById('send-btn').disabled", timeout=60000)
-            except Exception:
-                pass
-            time.sleep(1.5)
+        page.wait_for_timeout(800)  # let the conversation sidebar load
+        # Prefer opening a pre-seeded conversation so the shot shows a realistic
+        # exchange. Fall back to sending live messages (works against a real
+        # backend; the dev echo backend just mirrors the prompt).
+        conv = page.query_selector(".conv-item")
+        if conv:
+            conv.click()
+            page.wait_for_timeout(1500)  # let messages + MathJax render
+            # The picker isn't auto-synced to a conversation's model; select it so
+            # the header matches the messages in the shot.
+            if model:
+                try:
+                    page.select_option("#model-picker", value=model)
+                except Exception:
+                    pass
+        else:
+            if model:
+                try:
+                    page.select_option("#model-picker", label=model)
+                except Exception:
+                    pass
+            for msg in ["What is the capital of Illinois?",
+                        "In two sentences, what is an AI gateway?"]:
+                page.fill("#chat-input", msg)
+                page.click("#send-btn")
+                try:
+                    page.wait_for_function(
+                        "!document.getElementById('send-btn').disabled", timeout=60000)
+                except Exception:
+                    pass
+                time.sleep(1.5)
         hide_chrome(page)
         page.screenshot(path=f"{OUT}/chat.png")
         print("chat.png")
