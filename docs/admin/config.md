@@ -24,7 +24,7 @@ defaults:
     access: blocked            # baseline for models that omit `access:`
     ack_message: "This model was trained outside the U.S. — use with awareness."
   tokens:
-    max: 0                     # fallback coin pool for groups/clients
+    max: 0                     # fallback coin pool for groups/projects
     refresh: 0
     starting: 0
 ```
@@ -33,13 +33,13 @@ defaults:
 |-------|-------------|
 | `defaults.models.access` | Baseline allow/block state for any model that does not set its own `access`. |
 | `defaults.models.ack_message` | Global acknowledgement message shown for `needs_ack` models that don't set their own `ack_message`. (Replaces the old `app.graylist_default_notice`, which is still accepted as input.) |
-| `defaults.tokens.max` / `refresh` / `starting` | Fallback coin-pool values. A group or client only needs to set the fields that differ from these; omitted token fields are filled from `defaults.tokens`. |
+| `defaults.tokens.max` / `refresh` / `starting` | Fallback coin-pool values. A group or project only needs to set the fields that differ from these; omitted token fields are filled from `defaults.tokens`. |
 
 ## Model Access Resolution
 
 The allow/block decision for an entity and a model is resolved in this order — **explicit rules always beat defaults**, and a model's own `access` beats group/entity *defaults* but is itself overridden by an explicit per-scope rule:
 
-1. **Entity rule** — an `allowed`/`blocked` entry in the user's or client's own `model_access`.
+1. **Entity rule** — an `allowed`/`blocked` entry in the user's or project's own `model_access`.
 2. **Group rule** — an `allowed`/`blocked` entry in any of the user's groups (a `blocked` in any group beats an `allowed`).
 3. **Model `access`** — the model's own `access` field, when set (`allowed`/`blocked`). This lets a model be blocked-by-default even for groups whose `default` is `allowed`, while still being grant-able via an explicit group/user `allowed` rule (tiers 1–2).
 4. **Group default** — `model_access.default` of the user's groups.
@@ -89,8 +89,8 @@ When running, Lumen watches `config.yaml` for changes and automatically reloads 
 | `models[*].input_cost_per_million` / `output_cost_per_million` | Change pricing |
 | `groups[*]` | Add, edit, or remove user groups |
 | `groups[*].model_access` | Override model access rules per group |
-| `clients.default` | Change default coin pool for new clients |
-| `clients[*]` | Configure individual client budgets and access |
+| `projects.default` | Change default coin pool for new projects |
+| `projects[*]` | Configure individual project budgets and access |
 | `admins` | Update the list of administrator email addresses |
 | `chat.remove` | Change conversation soft-delete vs hard-delete mode |
 | `chat.upload` | Adjust upload file size limits and allowed file types |
@@ -116,7 +116,7 @@ Some settings are read only at startup and cannot be hot-reloaded. Lumen logs a 
 
 On startup, Lumen validates `config.yaml` and loads it into memory. While running, a background thread checks the file's modification time every 5 seconds. When a change is detected, it re-parses the YAML, applies the differences, and logs `config.yaml reloaded`. If a restart-required setting changed, it also emits a warning.
 
-The `init-db` command syncs config changes to the database (models, groups, model access, clients) without waiting for the watcher or restarting. It does not update in-memory settings like `APP_NAME` or `CHAT_CONVERSATION_REMOVE_MODE` — those only update when the watcher picks up the change or the app restarts.
+The `init-db` command syncs config changes to the database (models, groups, model access, projects) without waiting for the watcher or restarting. It does not update in-memory settings like `APP_NAME` or `CHAT_CONVERSATION_REMOVE_MODE` — those only update when the watcher picks up the change or the app restarts.
 
 ```bash
 uv run flask init-db

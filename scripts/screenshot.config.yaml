@@ -1,0 +1,118 @@
+# Config for capturing the help-doc screenshots (scripts/screenshots.py +
+# scripts/screenshot_seed.py). It looks like a real deployment — app name
+# "Lumen", the illinois theme, and real HuggingFace model names/cards — but every
+# model endpoint points at the local echo backend (uv run dummy on :9999) so chat
+# renders and all models read healthy without a GPU. The model-detail page still
+# fetches the real README from huggingface.co via each model's `url`.
+#
+# Secrets are NOT stored here. Provide them at capture time via environment:
+#   LUMEN_SECRET_KEY, LUMEN_ENCRYPTION_KEY (any non-empty dev value), and
+#   DATABASE_URL (a PostgreSQL/TimescaleDB URL — usage charts need Postgres).
+version: 2
+
+app:
+  name: Lumen
+  theme: illinois
+  debug: true
+  # This file is version-controlled, so keep the in-app editor from rewriting it
+  # (the startup backfill would otherwise strip these comments and add entries).
+  config_editor: false
+  # secret_key / encryption_key intentionally omitted — set LUMEN_SECRET_KEY and
+  # LUMEN_ENCRYPTION_KEY in the environment instead (see header).
+  database:
+    # Overridden by the DATABASE_URL env var at capture time; usage charts only
+    # render on PostgreSQL/TimescaleDB.
+    url: sqlite:///lumen_dev.db
+  logs:
+    level: info
+  # Bypasses OAuth so the capture can log in via /devlogin as an admin.
+  dev_user:
+    email: dev@example.com
+    groups:
+    - staff
+
+admins:
+- dev@example.com
+
+rate_limiting:
+  limit: 200 per minute
+
+defaults:
+  models:
+    access: blocked
+    ack_message: This model was trained outside the U.S. and may contain biases — use with awareness.
+  tokens:
+    max: 50
+    refresh: 0.1
+    starting: 50
+
+groups:
+  staff:
+    max: 50
+    refresh: 0.1
+    starting: 50
+    model_access:
+      default: allowed
+    rules:
+    - field: affiliation
+      contains: staff@example.edu
+
+projects:
+  default:
+    max: 100
+    refresh: 0.05
+    starting: 100
+    model_access:
+      default: allowed
+
+models:
+- name: qwen2.5-7b-instruct
+  description: Qwen2.5 7B instruction-tuned — general-purpose chat.
+  url: https://huggingface.co/Qwen/Qwen2.5-7B-Instruct
+  access: allowed
+  input_cost_per_million: 0.15
+  output_cost_per_million: 0.6
+  endpoints:
+  - url: http://localhost:9999/v1
+    api_key: dummy
+    model: dummy
+- name: qwen2.5-coder-7b
+  description: Qwen2.5 Coder 7B — optimized for code generation.
+  url: https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct
+  access: allowed
+  input_cost_per_million: 0.15
+  output_cost_per_million: 0.6
+  endpoints:
+  - url: http://localhost:9999/v1
+    api_key: dummy
+    model: dummy
+- name: mistral-7b-instruct
+  description: Mistral 7B Instruct v0.3.
+  url: https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3
+  access: allowed
+  input_cost_per_million: 0.2
+  output_cost_per_million: 0.6
+  endpoints:
+  - url: http://localhost:9999/v1
+    api_key: dummy
+    model: dummy
+- name: qwen2.5-14b-instruct
+  description: Qwen2.5 14B instruction-tuned — larger general model.
+  url: https://huggingface.co/Qwen/Qwen2.5-14B-Instruct
+  access: allowed
+  input_cost_per_million: 0.3
+  output_cost_per_million: 1.2
+  endpoints:
+  - url: http://localhost:9999/v1
+    api_key: dummy
+    model: dummy
+- name: phi-3.5-mini
+  description: Microsoft Phi-3.5-mini instruction-tuned — lightweight model.
+  url: https://huggingface.co/microsoft/Phi-3.5-mini-instruct
+  access: allowed
+  input_cost_per_million: 0.05
+  output_cost_per_million: 0.1
+  endpoints:
+  - url: http://localhost:9999/v1
+    api_key: dummy
+    model: dummy

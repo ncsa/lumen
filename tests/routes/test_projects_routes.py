@@ -1,4 +1,4 @@
-"""Tests for the clients blueprint (/clients/*)."""
+"""Tests for the projects blueprint (/projects/*)."""
 from http import HTTPStatus
 import pytest
 from sqlalchemy import func, select
@@ -9,12 +9,12 @@ from sqlalchemy import func, select
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def service_client(app):
-    """An active service (client) entity."""
+def service_project(app):
+    """An active service (project) entity."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
-        c = Entity(entity_type="client", name="test-svc", initials="TS", active=True)
+        c = Entity(entity_type="project", name="test-svc", initials="TS", active=True)
         db.session.add(c)
         db.session.commit()
         db.session.refresh(c)
@@ -22,22 +22,22 @@ def service_client(app):
 
 
 @pytest.fixture
-def managed_client(app, service_client, test_user):
-    """service_client with test_user as manager."""
+def managed_project(app, service_project, test_user):
+    """service_project with test_user as manager."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_manager import EntityManager
         db.session.add(EntityManager(
             user_entity_id=test_user["id"],
-            client_entity_id=service_client["id"],
+            project_entity_id=service_project["id"],
         ))
         db.session.commit()
-    return service_client
+    return service_project
 
 
 @pytest.fixture
-def managed_auth_client(auth_client, managed_client):
-    """auth_client fixture with test_user already managing managed_client."""
+def managed_auth_client(auth_client, managed_project):
+    """auth_client fixture with test_user already managing managed_project."""
     return auth_client
 
 
@@ -82,7 +82,7 @@ def make_graylist_access(app):
 
 @pytest.fixture
 def writable_config(app, tmp_path):
-    """Point CONFIG_YAML at a writable temp copy so create_client's write-back
+    """Point CONFIG_YAML at a writable temp copy so create_project's write-back
     doesn't mutate the shared committed fixture. Restores afterwards."""
     import shutil
     cfg = tmp_path / "config.yaml"
@@ -96,13 +96,13 @@ def writable_config(app, tmp_path):
 
 
 @pytest.fixture
-def unlimited_pool(app, managed_client):
-    """Grant managed_client an unlimited coin pool."""
+def unlimited_pool(app, managed_project):
+    """Grant managed_project an unlimited coin pool."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_limit import EntityLimit
         db.session.add(EntityLimit(
-            entity_id=managed_client["id"], max_coins=-2, refresh_coins=0, starting_coins=0,
+            entity_id=managed_project["id"], max_coins=-2, refresh_coins=0, starting_coins=0,
         ))
         db.session.commit()
 
@@ -111,51 +111,51 @@ def unlimited_pool(app, managed_client):
 # List page access
 # ---------------------------------------------------------------------------
 
-def test_clients_list_requires_login(client):
-    resp = client.get("/clients", follow_redirects=False)
+def test_projects_list_requires_login(client):
+    resp = client.get("/projects", follow_redirects=False)
     assert resp.status_code == HTTPStatus.FOUND
 
 
-def test_clients_list_empty_for_non_manager(auth_client):
-    resp = auth_client.get("/clients")
+def test_projects_list_empty_for_non_manager(auth_client):
+    resp = auth_client.get("/projects")
     assert resp.status_code == HTTPStatus.OK
 
 
-def test_clients_list_shows_managed_client(managed_auth_client, managed_client):
-    resp = managed_auth_client.get("/clients")
+def test_projects_list_shows_managed_project(managed_auth_client, managed_project):
+    resp = managed_auth_client.get("/projects")
     assert resp.status_code == HTTPStatus.OK
-    # Rows are loaded via the /clients/data API, not embedded in the page.
-    data = managed_auth_client.get("/clients/data").get_json()
-    assert managed_client["name"] in [c["name"] for c in data["clients"]]
+    # Rows are loaded via the /projects/data API, not embedded in the page.
+    data = managed_auth_client.get("/projects/data").get_json()
+    assert managed_project["name"] in [c["name"] for c in data["projects"]]
 
 
-def test_clients_list_admin_sees_all(app, admin_client, service_client):
-    resp = admin_client.get("/clients")
+def test_projects_list_admin_sees_all(app, admin_client, service_project):
+    resp = admin_client.get("/projects")
     assert resp.status_code == HTTPStatus.OK
-    data = admin_client.get("/clients/data").get_json()
-    assert service_client["name"] in [c["name"] for c in data["clients"]]
+    data = admin_client.get("/projects/data").get_json()
+    assert service_project["name"] in [c["name"] for c in data["projects"]]
 
 
-def test_clients_list_shows_entity_stats(app, admin_client, service_client, test_model):
-    """Client listing reads usage from entity_stats, not a live GROUP BY."""
+def test_projects_list_shows_entity_stats(app, admin_client, service_project, test_model):
+    """Project listing reads usage from entity_stats, not a live GROUP BY."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_stat import EntityStat
         db.session.add(EntityStat(
-            entity_id=service_client["id"],
+            entity_id=service_project["id"],
             requests=42, input_tokens=1000, output_tokens=500, cost="0.05",
         ))
         db.session.commit()
 
-    resp = admin_client.get("/clients")
+    resp = admin_client.get("/projects")
     assert resp.status_code == HTTPStatus.OK
     # The page should render without error; spot-check the values appear
     assert b"42" in resp.data
 
 
-def test_clients_list_zero_stats_without_entity_stat(admin_client, service_client):
-    """Clients with no entity_stats row show zero usage, not an error."""
-    resp = admin_client.get("/clients")
+def test_projects_list_zero_stats_without_entity_stat(admin_client, service_project):
+    """Projects with no entity_stats row show zero usage, not an error."""
+    resp = admin_client.get("/projects")
     assert resp.status_code == HTTPStatus.OK
 
 
@@ -163,149 +163,149 @@ def test_clients_list_zero_stats_without_entity_stat(admin_client, service_clien
 # Detail page access
 # ---------------------------------------------------------------------------
 
-def test_detail_requires_login(client, service_client):
-    resp = client.get(f"/clients/{service_client['id']}", follow_redirects=False)
+def test_detail_requires_login(client, service_project):
+    resp = client.get(f"/projects/{service_project['id']}", follow_redirects=False)
     assert resp.status_code == HTTPStatus.FOUND
 
 
-def test_detail_forbidden_for_non_manager(auth_client, service_client):
-    resp = auth_client.get(f"/clients/{service_client['id']}")
+def test_detail_forbidden_for_non_manager(auth_client, service_project):
+    resp = auth_client.get(f"/projects/{service_project['id']}")
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_detail_loads_for_manager(managed_auth_client, managed_client):
-    resp = managed_auth_client.get(f"/clients/{managed_client['id']}")
+def test_detail_loads_for_manager(managed_auth_client, managed_project):
+    resp = managed_auth_client.get(f"/projects/{managed_project['id']}")
     assert resp.status_code == HTTPStatus.OK
-    assert managed_client["name"].encode() in resp.data
+    assert managed_project["name"].encode() in resp.data
 
 
-def test_detail_loads_for_admin(admin_client, service_client):
-    resp = admin_client.get(f"/clients/{service_client['id']}")
+def test_detail_loads_for_admin(admin_client, service_project):
+    resp = admin_client.get(f"/projects/{service_project['id']}")
     assert resp.status_code == HTTPStatus.OK
 
 
 def test_detail_404_for_unknown(admin_client):
-    resp = admin_client.get("/clients/99999")
+    resp = admin_client.get("/projects/99999")
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 # ---------------------------------------------------------------------------
-# Create client
+# Create project
 # ---------------------------------------------------------------------------
 
-def test_create_client_requires_admin(auth_client):
-    resp = auth_client.post("/clients", json={"name": "new-svc"})
+def test_create_project_requires_admin(auth_client):
+    resp = auth_client.post("/projects", json={"name": "new-svc"})
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_create_client_succeeds(app, admin_client, writable_config):
-    resp = admin_client.post("/clients", json={"name": "created-svc"})
+def test_create_project_succeeds(app, admin_client, writable_config):
+    resp = admin_client.post("/projects", json={"name": "created-svc"})
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.get_json()
     assert data["name"] == "created-svc"
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
-        c = db.session.execute(select(Entity).filter_by(name="created-svc", entity_type="client")).scalar_one_or_none()
+        c = db.session.execute(select(Entity).filter_by(name="created-svc", entity_type="project")).scalar_one_or_none()
         assert c is not None
         assert c.active is True
 
 
-def test_create_client_writes_empty_config_entry(admin_client, writable_config):
-    """Creating a client records an empty entry in config.yaml so the file reflects it."""
+def test_create_project_writes_empty_config_entry(admin_client, writable_config):
+    """Creating a project records an empty entry in config.yaml so the file reflects it."""
     import yaml
-    resp = admin_client.post("/clients", json={"name": "cfg-svc"})
+    resp = admin_client.post("/projects", json={"name": "cfg-svc"})
     assert resp.status_code == HTTPStatus.CREATED
     saved = yaml.safe_load(writable_config.read_text()) or {}
-    assert "cfg-svc" in saved.get("clients", {})
-    assert saved["clients"]["cfg-svc"] == {}
+    assert "cfg-svc" in saved.get("projects", {})
+    assert saved["projects"]["cfg-svc"] == {}
 
 
-def test_create_client_empty_name_returns_400(admin_client):
-    resp = admin_client.post("/clients", json={"name": "  "})
+def test_create_project_empty_name_returns_400(admin_client):
+    resp = admin_client.post("/projects", json={"name": "  "})
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
 # ---------------------------------------------------------------------------
-# Toggle client
+# Toggle project
 # ---------------------------------------------------------------------------
 
-def test_toggle_requires_admin(managed_auth_client, managed_client):
-    resp = managed_auth_client.post(f"/clients/{managed_client['id']}/toggle")
+def test_toggle_requires_admin(managed_auth_client, managed_project):
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/toggle")
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_toggle_deactivates_active_client(app, admin_client, service_client):
-    resp = admin_client.post(f"/clients/{service_client['id']}/toggle")
+def test_toggle_deactivates_active_project(app, admin_client, service_project):
+    resp = admin_client.post(f"/projects/{service_project['id']}/toggle")
     assert resp.status_code == HTTPStatus.OK
     assert resp.get_json()["active"] is False
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
-        c = db.session.get(Entity, service_client["id"])
+        c = db.session.get(Entity, service_project["id"])
         assert c.active is False
 
 
-def test_toggle_reactivates_inactive_client(app, admin_client, service_client):
-    admin_client.post(f"/clients/{service_client['id']}/toggle")  # deactivate
-    resp = admin_client.post(f"/clients/{service_client['id']}/toggle")  # reactivate
+def test_toggle_reactivates_inactive_project(app, admin_client, service_project):
+    admin_client.post(f"/projects/{service_project['id']}/toggle")  # deactivate
+    resp = admin_client.post(f"/projects/{service_project['id']}/toggle")  # reactivate
     assert resp.get_json()["active"] is True
 
 
 # ---------------------------------------------------------------------------
-# Client data API (pagination + show disabled)
+# Project data API (pagination + show disabled)
 # ---------------------------------------------------------------------------
 
-def test_clients_data_requires_login(client):
-    resp = client.get("/clients/data", follow_redirects=False)
+def test_projects_data_requires_login(client):
+    resp = client.get("/projects/data", follow_redirects=False)
     assert resp.status_code == HTTPStatus.FOUND
 
 
-def test_clients_data_lists_active_client(admin_client, service_client):
-    resp = admin_client.get("/clients/data")
+def test_projects_data_lists_active_project(admin_client, service_project):
+    resp = admin_client.get("/projects/data")
     assert resp.status_code == HTTPStatus.OK
     data = resp.get_json()
     assert data["page"] == 1
     assert data["per_page"] == 25
-    names = [c["name"] for c in data["clients"]]
-    assert service_client["name"] in names
+    names = [c["name"] for c in data["projects"]]
+    assert service_project["name"] in names
 
 
-def test_clients_data_hides_disabled_by_default(admin_client, service_client):
-    admin_client.post(f"/clients/{service_client['id']}/toggle")  # deactivate
-    resp = admin_client.get("/clients/data")
-    names = [c["name"] for c in resp.get_json()["clients"]]
-    assert service_client["name"] not in names
+def test_projects_data_hides_disabled_by_default(admin_client, service_project):
+    admin_client.post(f"/projects/{service_project['id']}/toggle")  # deactivate
+    resp = admin_client.get("/projects/data")
+    names = [c["name"] for c in resp.get_json()["projects"]]
+    assert service_project["name"] not in names
 
 
-def test_clients_data_show_disabled_reveals(admin_client, service_client):
-    admin_client.post(f"/clients/{service_client['id']}/toggle")  # deactivate
-    resp = admin_client.get("/clients/data?show_disabled=1")
-    names = [c["name"] for c in resp.get_json()["clients"]]
-    assert service_client["name"] in names
+def test_projects_data_show_disabled_reveals(admin_client, service_project):
+    admin_client.post(f"/projects/{service_project['id']}/toggle")  # deactivate
+    resp = admin_client.get("/projects/data?show_disabled=1")
+    names = [c["name"] for c in resp.get_json()["projects"]]
+    assert service_project["name"] in names
 
 
-def test_clients_data_invalid_per_page_falls_back(admin_client, service_client):
-    resp = admin_client.get("/clients/data?per_page=7")
+def test_projects_data_invalid_per_page_falls_back(admin_client, service_project):
+    resp = admin_client.get("/projects/data?per_page=7")
     assert resp.get_json()["per_page"] == 25
 
 
 # ---------------------------------------------------------------------------
-# Delete (soft) client
+# Delete (soft) project
 # ---------------------------------------------------------------------------
 
-def test_delete_client_requires_admin(managed_auth_client, managed_client):
-    resp = managed_auth_client.delete(f"/clients/{managed_client['id']}")
+def test_delete_project_requires_admin(managed_auth_client, managed_project):
+    resp = managed_auth_client.delete(f"/projects/{managed_project['id']}")
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_delete_client_soft_deletes(app, admin_client, service_client):
-    resp = admin_client.delete(f"/clients/{service_client['id']}")
+def test_delete_project_soft_deletes(app, admin_client, service_project):
+    resp = admin_client.delete(f"/projects/{service_project['id']}")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
-        c = db.session.get(Entity, service_client["id"])
+        c = db.session.get(Entity, service_project["id"])
         assert c.active is False
 
 
@@ -313,17 +313,17 @@ def test_delete_client_soft_deletes(app, admin_client, service_client):
 # Manager management
 # ---------------------------------------------------------------------------
 
-def test_add_manager_requires_admin(managed_auth_client, managed_client):
+def test_add_manager_requires_admin(managed_auth_client, managed_project):
     resp = managed_auth_client.post(
-        f"/clients/{managed_client['id']}/users",
+        f"/projects/{managed_project['id']}/users",
         json={"email": "anyone@example.com"},
     )
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_add_manager_succeeds(app, admin_client, service_client, test_user):
+def test_add_manager_succeeds(app, admin_client, service_project, test_user):
     resp = admin_client.post(
-        f"/clients/{service_client['id']}/users",
+        f"/projects/{service_project['id']}/users",
         json={"email": "testuser@example.com"},
     )
     assert resp.status_code == HTTPStatus.CREATED
@@ -333,56 +333,56 @@ def test_add_manager_succeeds(app, admin_client, service_client, test_user):
         from lumen.extensions import db
         from lumen.models.entity_manager import EntityManager
         assoc = db.session.execute(
-            select(EntityManager).filter_by(user_entity_id=test_user["id"], client_entity_id=service_client["id"])
+            select(EntityManager).filter_by(user_entity_id=test_user["id"], project_entity_id=service_project["id"])
         ).scalar_one_or_none()
         assert assoc is not None
 
 
-def test_add_manager_unknown_email_returns_404(admin_client, service_client):
+def test_add_manager_unknown_email_returns_404(admin_client, service_project):
     resp = admin_client.post(
-        f"/clients/{service_client['id']}/users",
+        f"/projects/{service_project['id']}/users",
         json={"email": "nobody@example.com"},
     )
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
-def test_add_manager_duplicate_returns_409(admin_client, managed_client, test_user):
+def test_add_manager_duplicate_returns_409(admin_client, managed_project, test_user):
     resp = admin_client.post(
-        f"/clients/{managed_client['id']}/users",
+        f"/projects/{managed_project['id']}/users",
         json={"email": "testuser@example.com"},
     )
     assert resp.status_code == HTTPStatus.CONFLICT
 
 
-def test_add_manager_missing_email_returns_400(admin_client, service_client):
-    resp = admin_client.post(f"/clients/{service_client['id']}/users", json={})
+def test_add_manager_missing_email_returns_400(admin_client, service_project):
+    resp = admin_client.post(f"/projects/{service_project['id']}/users", json={})
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
-def test_remove_manager_requires_admin(managed_auth_client, managed_client, test_user):
+def test_remove_manager_requires_admin(managed_auth_client, managed_project, test_user):
     resp = managed_auth_client.delete(
-        f"/clients/{managed_client['id']}/users/{test_user['id']}"
+        f"/projects/{managed_project['id']}/users/{test_user['id']}"
     )
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_remove_manager_succeeds(app, admin_client, managed_client, test_user):
+def test_remove_manager_succeeds(app, admin_client, managed_project, test_user):
     resp = admin_client.delete(
-        f"/clients/{managed_client['id']}/users/{test_user['id']}"
+        f"/projects/{managed_project['id']}/users/{test_user['id']}"
     )
     assert resp.status_code == HTTPStatus.NO_CONTENT
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_manager import EntityManager
         assoc = db.session.execute(
-            select(EntityManager).filter_by(user_entity_id=test_user["id"], client_entity_id=managed_client["id"])
+            select(EntityManager).filter_by(user_entity_id=test_user["id"], project_entity_id=managed_project["id"])
         ).scalar_one_or_none()
         assert assoc is None
 
 
-def test_remove_manager_not_found_returns_404(admin_client, service_client, test_user):
+def test_remove_manager_not_found_returns_404(admin_client, service_project, test_user):
     resp = admin_client.delete(
-        f"/clients/{service_client['id']}/users/{test_user['id']}"
+        f"/projects/{service_project['id']}/users/{test_user['id']}"
     )
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
@@ -391,25 +391,25 @@ def test_remove_manager_not_found_returns_404(admin_client, service_client, test
 # API key management
 # ---------------------------------------------------------------------------
 
-def test_create_key_forbidden_for_non_manager(auth_client, service_client):
+def test_create_key_forbidden_for_non_manager(auth_client, service_project):
     resp = auth_client.post(
-        f"/clients/{service_client['id']}/keys",
+        f"/projects/{service_project['id']}/keys",
         json={"name": "prod", "key": "sk_test123"},
     )
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_create_key_invalid_prefix_returns_400(managed_auth_client, managed_client):
+def test_create_key_invalid_prefix_returns_400(managed_auth_client, managed_project):
     resp = managed_auth_client.post(
-        f"/clients/{managed_client['id']}/keys",
+        f"/projects/{managed_project['id']}/keys",
         json={"name": "prod", "key": "bad-key-no-prefix"},
     )
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
-def test_create_key_succeeds(app, managed_auth_client, managed_client):
+def test_create_key_succeeds(app, managed_auth_client, managed_project):
     resp = managed_auth_client.post(
-        f"/clients/{managed_client['id']}/keys",
+        f"/projects/{managed_project['id']}/keys",
         json={"name": "prod", "key": "sk_testkey12345678"},
     )
     assert resp.status_code == HTTPStatus.CREATED
@@ -418,40 +418,40 @@ def test_create_key_succeeds(app, managed_auth_client, managed_client):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.api_key import APIKey
-        key = db.session.execute(select(APIKey).filter_by(entity_id=managed_client["id"], name="prod")).scalar_one_or_none()
+        key = db.session.execute(select(APIKey).filter_by(entity_id=managed_project["id"], name="prod")).scalar_one_or_none()
         assert key is not None
         assert key.active is True
 
 
-def test_create_key_duplicate_returns_409(managed_auth_client, managed_client):
+def test_create_key_duplicate_returns_409(managed_auth_client, managed_project):
     managed_auth_client.post(
-        f"/clients/{managed_client['id']}/keys",
+        f"/projects/{managed_project['id']}/keys",
         json={"name": "key1", "key": "sk_dupekey123456789"},
     )
     resp = managed_auth_client.post(
-        f"/clients/{managed_client['id']}/keys",
+        f"/projects/{managed_project['id']}/keys",
         json={"name": "key2", "key": "sk_dupekey123456789"},
     )
     assert resp.status_code == HTTPStatus.CONFLICT
 
 
-def test_create_key_admin_succeeds(app, admin_client, service_client):
+def test_create_key_admin_succeeds(app, admin_client, service_project):
     resp = admin_client.post(
-        f"/clients/{service_client['id']}/keys",
+        f"/projects/{service_project['id']}/keys",
         json={"name": "admin-key", "key": "sk_adminkey123456"},
     )
     assert resp.status_code == HTTPStatus.CREATED
 
 
-def test_delete_key_forbidden_for_non_manager(auth_client, service_client, make_api_key):
-    key_id, _ = make_api_key(service_client["id"], raw_key="sk_delkey1234567890", name="k")
-    resp = auth_client.delete(f"/clients/{service_client['id']}/keys/{key_id}")
+def test_delete_key_forbidden_for_non_manager(auth_client, service_project, make_api_key):
+    key_id, _ = make_api_key(service_project["id"], raw_key="sk_delkey1234567890", name="k")
+    resp = auth_client.delete(f"/projects/{service_project['id']}/keys/{key_id}")
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_delete_key_soft_deletes(app, managed_auth_client, managed_client, make_api_key):
-    key_id, _ = make_api_key(managed_client["id"], raw_key="sk_todelete12345678", name="to-delete")
-    resp = managed_auth_client.delete(f"/clients/{managed_client['id']}/keys/{key_id}")
+def test_delete_key_soft_deletes(app, managed_auth_client, managed_project, make_api_key):
+    key_id, _ = make_api_key(managed_project["id"], raw_key="sk_todelete12345678", name="to-delete")
+    resp = managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     with app.app_context():
         from lumen.extensions import db
@@ -464,25 +464,25 @@ def test_delete_key_soft_deletes(app, managed_auth_client, managed_client, make_
 # Graylist consent
 # ---------------------------------------------------------------------------
 
-def test_consent_forbidden_for_non_manager(auth_client, service_client, test_model, make_graylist_access):
-    make_graylist_access(service_client["id"], test_model["id"])
+def test_consent_forbidden_for_non_manager(auth_client, service_project, test_model, make_graylist_access):
+    make_graylist_access(service_project["id"], test_model["id"])
     resp = auth_client.post(
-        f"/clients/{service_client['id']}/consent/{test_model['model_name']}"
+        f"/projects/{service_project['id']}/consent/{test_model['model_name']}"
     )
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_consent_non_graylist_model_returns_400(app, managed_auth_client, managed_client, test_model):
+def test_consent_non_graylist_model_returns_400(app, managed_auth_client, managed_project, test_model):
     resp = managed_auth_client.post(
-        f"/clients/{managed_client['id']}/consent/{test_model['model_name']}"
+        f"/projects/{managed_project['id']}/consent/{test_model['model_name']}"
     )
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
-def test_consent_graylist_model_succeeds(app, managed_auth_client, managed_client, test_model, make_graylist_access):
-    make_graylist_access(managed_client["id"], test_model["id"])
+def test_consent_graylist_model_succeeds(app, managed_auth_client, managed_project, test_model, make_graylist_access):
+    make_graylist_access(managed_project["id"], test_model["id"])
     resp = managed_auth_client.post(
-        f"/clients/{managed_client['id']}/consent/{test_model['model_name']}"
+        f"/projects/{managed_project['id']}/consent/{test_model['model_name']}"
     )
     assert resp.status_code == HTTPStatus.OK
     assert resp.get_json()["ok"] is True
@@ -490,19 +490,19 @@ def test_consent_graylist_model_succeeds(app, managed_auth_client, managed_clien
         from lumen.extensions import db
         from lumen.models.entity_model_consent import EntityModelConsent
         consent = db.session.execute(
-            select(EntityModelConsent).filter_by(entity_id=managed_client["id"], model_config_id=test_model["id"])
+            select(EntityModelConsent).filter_by(entity_id=managed_project["id"], model_config_id=test_model["id"])
         ).scalar_one_or_none()
         assert consent is not None
 
 
-def test_consent_idempotent(app, managed_auth_client, managed_client, test_model, make_graylist_access):
+def test_consent_idempotent(app, managed_auth_client, managed_project, test_model, make_graylist_access):
     """Consenting twice doesn't create duplicate rows."""
-    make_graylist_access(managed_client["id"], test_model["id"])
+    make_graylist_access(managed_project["id"], test_model["id"])
     managed_auth_client.post(
-        f"/clients/{managed_client['id']}/consent/{test_model['model_name']}"
+        f"/projects/{managed_project['id']}/consent/{test_model['model_name']}"
     )
     resp = managed_auth_client.post(
-        f"/clients/{managed_client['id']}/consent/{test_model['model_name']}"
+        f"/projects/{managed_project['id']}/consent/{test_model['model_name']}"
     )
     assert resp.status_code == HTTPStatus.OK
     with app.app_context():
@@ -510,23 +510,23 @@ def test_consent_idempotent(app, managed_auth_client, managed_client, test_model
         from lumen.models.entity_model_consent import EntityModelConsent
         count = db.session.scalar(
             select(func.count()).select_from(EntityModelConsent).filter_by(
-                entity_id=managed_client["id"], model_config_id=test_model["id"]
+                entity_id=managed_project["id"], model_config_id=test_model["id"]
             )
         )
         assert count == 1
 
 
 # ---------------------------------------------------------------------------
-# Client API key end-to-end: create via route then authenticate against /v1/
+# Project API key end-to-end: create via route then authenticate against /v1/
 # ---------------------------------------------------------------------------
 
-def test_client_key_created_via_route_can_authenticate(
-    client, managed_auth_client, managed_client, test_model, test_model_endpoint, unlimited_pool
+def test_project_key_created_via_route_can_authenticate(
+    client, managed_auth_client, managed_project, test_model, test_model_endpoint, unlimited_pool
 ):
-    """Key created through POST /clients/<sid>/keys works for /v1/ auth."""
-    # Create key via the clients route
+    """Key created through POST /projects/<sid>/keys works for /v1/ auth."""
+    # Create key via the projects route
     resp = managed_auth_client.post(
-        f"/clients/{managed_client['id']}/keys",
+        f"/projects/{managed_project['id']}/keys",
         json={"name": "e2e-key", "key": "sk_e2etest1234567890"},
     )
     assert resp.status_code == HTTPStatus.CREATED
@@ -538,12 +538,12 @@ def test_client_key_created_via_route_can_authenticate(
     assert resp.get_json()["object"] == "list"
 
 
-def test_client_key_lists_accessible_model(
-    client, managed_auth_client, managed_client, test_model, test_model_endpoint, unlimited_pool
+def test_project_key_lists_accessible_model(
+    client, managed_auth_client, managed_project, test_model, test_model_endpoint, unlimited_pool
 ):
-    """Client key sees models it has access to."""
+    """Project key sees models it has access to."""
     resp = managed_auth_client.post(
-        f"/clients/{managed_client['id']}/keys",
+        f"/projects/{managed_project['id']}/keys",
         json={"name": "model-key", "key": "sk_modelkey12345678"},
     )
     token = resp.get_json()["key"]
@@ -554,13 +554,13 @@ def test_client_key_lists_accessible_model(
     assert test_model["model_name"] in ids
 
 
-def test_client_key_blocked_after_soft_delete(
-    client, managed_auth_client, managed_client, test_model_endpoint, unlimited_pool
+def test_project_key_blocked_after_soft_delete(
+    client, managed_auth_client, managed_project, test_model_endpoint, unlimited_pool
 ):
-    """Key deactivated via DELETE /clients/<sid>/keys/<kid> returns 401."""
+    """Key deactivated via DELETE /projects/<sid>/keys/<kid> returns 401."""
     # Create key
     resp = managed_auth_client.post(
-        f"/clients/{managed_client['id']}/keys",
+        f"/projects/{managed_project['id']}/keys",
         json={"name": "del-key", "key": "sk_deletekey12345678"},
     )
     assert resp.status_code == HTTPStatus.CREATED
@@ -572,7 +572,7 @@ def test_client_key_blocked_after_soft_delete(
     assert resp.status_code == HTTPStatus.OK
 
     # Soft-delete the key
-    resp = managed_auth_client.delete(f"/clients/{managed_client['id']}/keys/{kid}")
+    resp = managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{kid}")
     assert resp.status_code == HTTPStatus.NO_CONTENT
 
     # Now it should be rejected
@@ -580,14 +580,14 @@ def test_client_key_blocked_after_soft_delete(
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
 
 
-def test_client_key_no_pool_returns_403(
-    client, managed_auth_client, managed_client, test_model, test_model_endpoint
+def test_project_key_no_pool_returns_403(
+    client, managed_auth_client, managed_project, test_model, test_model_endpoint
 ):
-    """Client key with no coin pool is denied on chat completions (no EntityLimit → 403)."""
+    """Project key with no coin pool is denied on chat completions (no EntityLimit → 403)."""
     # No pool granted — service entity has no EntityLimit
 
     resp = managed_auth_client.post(
-        f"/clients/{managed_client['id']}/keys",
+        f"/projects/{managed_project['id']}/keys",
         json={"name": "nopool-key", "key": "sk_nopoolkey12345678"},
     )
     token = resp.get_json()["key"]

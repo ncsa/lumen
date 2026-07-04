@@ -1,31 +1,31 @@
 {% extends "base.html" %}
 {% from "_user_search_modal.html" import user_search_modal %}
-{% block title %}{{ client.name }} — {{ app_name }}{% endblock %}
+{% block title %}{{ project.name }} — {{ app_name }}{% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-1">
-  <a href="{{ url_for('clients.index') }}" class="btn btn-sm btn-outline-secondary">← Clients</a>
+  <a href="{{ url_for('projects.index') }}" class="btn btn-sm btn-outline-secondary">← Projects</a>
   {% if is_admin %}
-  {% if client.active %}
+  {% if project.active %}
   <button class="btn btn-sm btn-outline-danger"
-          onclick="toggleClient({{ client.id }}, true)">
+          onclick="toggleProject({{ project.id }}, true)">
     <i class="bi bi-pause-circle" aria-hidden="true"></i> Deactivate
   </button>
   {% else %}
   <button class="btn btn-sm btn-outline-success"
-          onclick="toggleClient({{ client.id }}, false)">
+          onclick="toggleProject({{ project.id }}, false)">
     <i class="bi bi-play-circle" aria-hidden="true"></i> Activate
   </button>
   {% endif %}
   {% endif %}
 </div>
-<h1 class="mb-0">{{ client.name }}</h1>
+<h1 class="mb-0">{{ project.name }}</h1>
 <p class="text-muted small mb-3">
-  {% if client.active %}<span class="badge bg-success me-1">Active</span>
+  {% if project.active %}<span class="badge bg-success me-1">Active</span>
   {% else %}<span class="badge bg-secondary me-1">Inactive</span>{% endif %}
   Created:
-  {% if client.created_at %}
-  <span class="local-datetime" data-utc="{{ client.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
+  {% if project.created_at %}
+  <span class="local-datetime" data-utc="{{ project.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
   {% else %}—{% endif %}
 </p>
 <ilw-content>
@@ -105,7 +105,7 @@
 </div>
 <div class="table-responsive mt-2">
   <table class="table table-striped table-hover align-middle mb-0">
-    <caption class="visually-hidden">Users who manage this client</caption>
+    <caption class="visually-hidden">Users who manage this project</caption>
     <thead class="table-light">
       <tr>
         <th>Name</th>
@@ -121,7 +121,7 @@
         {% if is_admin %}
         <td>
           <button class="btn btn-sm btn-outline-danger"
-                  onclick="removeManager({{ client.id }}, {{ mgr.id }}, '{{ mgr.name | e }}')"
+                  onclick="removeManager({{ project.id }}, {{ mgr.id }}, '{{ mgr.name | e }}')"
                   aria-label="Remove {{ mgr.name }}">Remove</button>
         </td>
         {% endif %}
@@ -156,7 +156,7 @@
 </div>
 <div class="table-responsive">
   <table class="table table-striped table-hover align-middle mb-0" id="key-table">
-    <caption class="visually-hidden">API keys for this client</caption>
+    <caption class="visually-hidden">API keys for this project</caption>
     <thead class="table-light">
       <tr>
         <th scope="col" class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
@@ -192,7 +192,7 @@
 </div>
 <div class="table-responsive">
   <table class="table table-striped table-hover align-middle mb-0" id="model-table">
-    <caption class="visually-hidden">Models this client can access</caption>
+    <caption class="visually-hidden">Models this project can access</caption>
     <thead class="table-light">
       <tr>
         <th scope="col" class="sort-header" data-col="model_name">Model <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
@@ -269,7 +269,7 @@
         </div>
         <p class="mb-0 small">
           This model requires acknowledgment before use. By enabling access you confirm you have read
-          any notices above and accept responsibility for appropriate use of this client.
+          any notices above and accept responsibility for appropriate use of this project.
         </p>
       </div>
       <div class="modal-footer">
@@ -294,7 +294,7 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/user-search.js') }}"></script>
 <script>
-const CLIENT_ID = {{ client.id }};
+const PROJECT_ID = {{ project.id }};
 
 // Bootstrap tooltips
 document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
@@ -396,7 +396,7 @@ function renderKeys() {
     keyTbody.querySelectorAll('.delete-key-btn').forEach(btn => {
       btn.addEventListener('click', async function () {
         if (!confirm("Delete this API key? Usage history is kept.")) return;
-        const resp = await fetch("/clients/" + CLIENT_ID + "/keys/" + this.dataset.id, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } });
+        const resp = await fetch("/projects/" + PROJECT_ID + "/keys/" + this.dataset.id, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } });
         if (resp.ok) location.reload();
         else alert("Failed to delete key.");
       });
@@ -544,7 +544,7 @@ document.getElementById("save-key-btn").addEventListener("click", async function
   const key = document.getElementById("generated-key").value;
   if (!key) return;
 
-  const resp = await fetch("/clients/" + CLIENT_ID + "/keys", {
+  const resp = await fetch("/projects/" + PROJECT_ID + "/keys", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
     body: JSON.stringify({ name, key }),
@@ -565,7 +565,7 @@ const managerInput = document.getElementById("add-manager-email");
 const managerSearch = initUserSearch({
   inputId: "add-manager-email",
   listId: "manager-suggestions",
-  searchUrl: `/clients/${CLIENT_ID}/users/search?q=`,
+  searchUrl: `/projects/${PROJECT_ID}/users/search?q=`,
   onEnter: () => addManager(),
 });
 
@@ -578,7 +578,7 @@ document.getElementById("addManagerModal").addEventListener("shown.bs.modal", ()
 async function addManager() {
   const email = managerInput.value.trim();
   if (!email) return;
-  const resp = await fetch("/clients/" + CLIENT_ID + "/users", {
+  const resp = await fetch("/projects/" + PROJECT_ID + "/users", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
     body: JSON.stringify({ email }),
@@ -598,16 +598,16 @@ document.getElementById("add-manager-btn").addEventListener("click", addManager)
 // Remove manager
 function removeManager(sid, uid, name) {
   if (!confirm(`Remove ${name} as manager?`)) return;
-  fetch("/clients/" + sid + "/users/" + uid, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } })
+  fetch("/projects/" + sid + "/users/" + uid, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } })
     .then(r => { if (r.ok) location.reload(); else alert("Failed to remove manager."); });
 }
 
-// Toggle client active state
-function toggleClient(sid, currentActive) {
-  fetch("/clients/" + sid + "/toggle", { method: "POST", headers: { "X-CSRFToken": csrfToken } })
+// Toggle project active state
+function toggleProject(sid, currentActive) {
+  fetch("/projects/" + sid + "/toggle", { method: "POST", headers: { "X-CSRFToken": csrfToken } })
     .then(r => r.json())
     .then(() => location.reload())
-    .catch(() => alert("Failed to update client."));
+    .catch(() => alert("Failed to update project."));
 }
 {% endif %}
 
@@ -630,7 +630,7 @@ function openGraylistModal(modelName, notice) {
 
 document.getElementById("graylist-accept-btn").addEventListener("click", async function () {
   if (!graylistModelName) return;
-  const resp = await fetch("/clients/" + CLIENT_ID + "/consent/" + encodeURIComponent(graylistModelName), {
+  const resp = await fetch("/projects/" + PROJECT_ID + "/consent/" + encodeURIComponent(graylistModelName), {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
   });

@@ -3,7 +3,7 @@ from datetime import datetime
 
 from sqlalchemy import select
 
-from lumen.commands import sync_clients_from_yaml, sync_groups_from_yaml, sync_models_from_yaml, sync_user_groups_from_yaml, sync_user_limits_from_yaml
+from lumen.commands import sync_groups_from_yaml, sync_models_from_yaml, sync_projects_from_yaml, sync_user_groups_from_yaml, sync_user_limits_from_yaml
 
 
 def test_sync_models_creates_model_config(app):
@@ -111,163 +111,163 @@ def test_sync_groups_creates_group_with_limit(app):
         assert float(g.limit.max_coins) == 100.0
 
 
-def test_sync_clients_creates_entity_limit(app):
+def test_sync_projects_creates_entity_limit(app):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
         from lumen.models.entity_limit import EntityLimit
-        client = Entity(entity_type="client", name="test-svc", initials="TS", active=True)
-        db.session.add(client)
+        project = Entity(entity_type="project", name="test-svc", initials="TS", active=True)
+        db.session.add(project)
         db.session.commit()
         yaml_data = {
-            "clients": {
+            "projects": {
                 "default": {"max": 50.0, "refresh": 0.5, "starting": 50.0},
             }
         }
-        sync_clients_from_yaml(yaml_data)
-        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=client.id)).scalar_one_or_none()
+        sync_projects_from_yaml(yaml_data)
+        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=project.id)).scalar_one_or_none()
         assert limit is not None
         assert float(limit.max_coins) == 50.0
         assert float(limit.refresh_coins) == 0.5
         assert limit.config_managed is True
 
 
-def test_sync_clients_named_entry_overrides_default(app):
+def test_sync_projects_named_entry_overrides_default(app):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
         from lumen.models.entity_limit import EntityLimit
-        client = Entity(entity_type="client", name="named-svc", initials="NS", active=True)
-        db.session.add(client)
+        project = Entity(entity_type="project", name="named-svc", initials="NS", active=True)
+        db.session.add(project)
         db.session.commit()
         yaml_data = {
-            "clients": {
+            "projects": {
                 "default": {"max": 10.0, "starting": 10.0},
                 "named-svc": {"max": 999.0, "starting": 999.0},
             }
         }
-        sync_clients_from_yaml(yaml_data)
-        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=client.id)).scalar_one_or_none()
+        sync_projects_from_yaml(yaml_data)
+        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=project.id)).scalar_one_or_none()
         assert float(limit.max_coins) == 999.0
 
 
-def test_sync_clients_model_access(app):
+def test_sync_projects_model_access(app):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
         from lumen.models.entity_model_access import EntityModelAccess
         from lumen.models.model_config import ModelConfig
         mc = ModelConfig(model_name="svc-model", input_cost_per_million=1.0, output_cost_per_million=1.0, access="allowed")
-        client = Entity(entity_type="client", name="access-svc", initials="AS", active=True)
-        db.session.add_all([mc, client])
+        project = Entity(entity_type="project", name="access-svc", initials="AS", active=True)
+        db.session.add_all([mc, project])
         db.session.commit()
         yaml_data = {
-            "clients": {
+            "projects": {
                 "access-svc": {
                     "model_access": {"default": "blocked", "allowed": ["svc-model"]},
                 }
             }
         }
-        sync_clients_from_yaml(yaml_data)
-        db.session.refresh(client)
-        assert client.model_access_default == "blocked"
-        rule = db.session.execute(select(EntityModelAccess).filter_by(entity_id=client.id, model_config_id=mc.id)).scalar_one_or_none()
+        sync_projects_from_yaml(yaml_data)
+        db.session.refresh(project)
+        assert project.model_access_default == "blocked"
+        rule = db.session.execute(select(EntityModelAccess).filter_by(entity_id=project.id, model_config_id=mc.id)).scalar_one_or_none()
         assert rule is not None
         assert rule.access_type == "allowed"
 
 
-def test_sync_clients_empty_entry_uses_default(app):
-    """An empty named entry (written when a client is created via the UI) falls back to default."""
+def test_sync_projects_empty_entry_uses_default(app):
+    """An empty named entry (written when a project is created via the UI) falls back to default."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
         from lumen.models.entity_limit import EntityLimit
-        client = Entity(entity_type="client", name="empty-svc", initials="ES", active=True)
-        db.session.add(client)
+        project = Entity(entity_type="project", name="empty-svc", initials="ES", active=True)
+        db.session.add(project)
         db.session.commit()
-        sync_clients_from_yaml({"clients": {"default": {"max": 77.0, "starting": 77.0}, "empty-svc": {}}})
-        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=client.id)).scalar_one_or_none()
+        sync_projects_from_yaml({"projects": {"default": {"max": 77.0, "starting": 77.0}, "empty-svc": {}}})
+        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=project.id)).scalar_one_or_none()
         assert limit is not None
         assert float(limit.max_coins) == 77.0
 
 
-def test_sync_clients_adds_group_membership(app):
+def test_sync_projects_adds_group_membership(app):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
         from lumen.models.group import Group
         from lumen.models.group_member import GroupMember
-        client = Entity(entity_type="client", name="grp-svc", initials="GS", active=True)
+        project = Entity(entity_type="project", name="grp-svc", initials="GS", active=True)
         grp = Group(name="research", active=True, config_managed=True)
-        db.session.add_all([client, grp])
+        db.session.add_all([project, grp])
         db.session.commit()
-        sync_clients_from_yaml({"clients": {"grp-svc": {"groups": ["research"]}}})
+        sync_projects_from_yaml({"projects": {"grp-svc": {"groups": ["research"]}}})
         member = db.session.execute(
-            select(GroupMember).filter_by(entity_id=client.id, group_id=grp.id)
+            select(GroupMember).filter_by(entity_id=project.id, group_id=grp.id)
         ).scalar_one_or_none()
         assert member is not None
         assert member.config_managed is True
 
 
-def test_sync_clients_removes_dropped_group_membership(app):
+def test_sync_projects_removes_dropped_group_membership(app):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
         from lumen.models.group import Group
         from lumen.models.group_member import GroupMember
-        client = Entity(entity_type="client", name="drop-svc", initials="DS", active=True)
+        project = Entity(entity_type="project", name="drop-svc", initials="DS", active=True)
         grp = Group(name="research", active=True, config_managed=True)
-        db.session.add_all([client, grp])
+        db.session.add_all([project, grp])
         db.session.commit()
-        db.session.add(GroupMember(group_id=grp.id, entity_id=client.id, config_managed=True))
+        db.session.add(GroupMember(group_id=grp.id, entity_id=project.id, config_managed=True))
         db.session.commit()
-        sync_clients_from_yaml({"clients": {"drop-svc": {"max": 10.0}}})
+        sync_projects_from_yaml({"projects": {"drop-svc": {"max": 10.0}}})
         member = db.session.execute(
-            select(GroupMember).filter_by(entity_id=client.id, group_id=grp.id)
+            select(GroupMember).filter_by(entity_id=project.id, group_id=grp.id)
         ).scalar_one_or_none()
         assert member is None
 
 
-def test_sync_clients_skips_unknown_group(app):
+def test_sync_projects_skips_unknown_group(app):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
         from lumen.models.group_member import GroupMember
-        client = Entity(entity_type="client", name="unk-svc", initials="US", active=True)
-        db.session.add(client)
+        project = Entity(entity_type="project", name="unk-svc", initials="US", active=True)
+        db.session.add(project)
         db.session.commit()
-        sync_clients_from_yaml({"clients": {"unk-svc": {"groups": ["nonexistent"]}}})
-        members = db.session.execute(select(GroupMember).filter_by(entity_id=client.id)).scalars().all()
+        sync_projects_from_yaml({"projects": {"unk-svc": {"groups": ["nonexistent"]}}})
+        members = db.session.execute(select(GroupMember).filter_by(entity_id=project.id)).scalars().all()
         assert members == []
 
 
-def test_backfill_clients_to_config_adds_missing(app, tmp_path):
+def test_backfill_projects_to_config_adds_missing(app, tmp_path):
     import yaml
-    from lumen.commands import backfill_clients_to_config
+    from lumen.commands import backfill_projects_to_config
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
-        db.session.add(Entity(entity_type="client", name="bf-svc", initials="BF", active=True))
+        db.session.add(Entity(entity_type="project", name="bf-svc", initials="BF", active=True))
         db.session.commit()
         cfg = tmp_path / "config.yaml"
-        cfg.write_text("clients: {}\n")
-        data = {"clients": {}}
-        wrote = backfill_clients_to_config(data, str(cfg))
+        cfg.write_text("projects: {}\n")
+        data = {"projects": {}}
+        wrote = backfill_projects_to_config(data, str(cfg))
         assert wrote is True
         saved = yaml.safe_load(cfg.read_text())
-        assert saved["clients"]["bf-svc"] == {}
+        assert saved["projects"]["bf-svc"] == {}
 
 
-def test_backfill_clients_to_config_noop_when_present(app, tmp_path):
-    from lumen.commands import backfill_clients_to_config
+def test_backfill_projects_to_config_noop_when_present(app, tmp_path):
+    from lumen.commands import backfill_projects_to_config
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
-        db.session.add(Entity(entity_type="client", name="present-svc", initials="PS", active=True))
+        db.session.add(Entity(entity_type="project", name="present-svc", initials="PS", active=True))
         db.session.commit()
         cfg = tmp_path / "config.yaml"
-        cfg.write_text("clients:\n  present-svc:\n    max: 5\n")
-        wrote = backfill_clients_to_config({"clients": {"present-svc": {"max": 5}}}, str(cfg))
+        cfg.write_text("projects:\n  present-svc:\n    max: 5\n")
+        wrote = backfill_projects_to_config({"projects": {"present-svc": {"max": 5}}}, str(cfg))
         assert wrote is False
 
 
@@ -457,19 +457,19 @@ def test_apply_model_access_explicit_disabled(app):
         assert mc.access == "allowed"
 
 
-def test_sync_clients_skips_entity_with_no_matching_config(app):
-    """sync_clients_from_yaml skips a client entity that has no named entry and no default config."""
+def test_sync_projects_skips_entity_with_no_matching_config(app):
+    """sync_projects_from_yaml skips a project entity that has no named entry and no default config."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
         from lumen.models.entity_limit import EntityLimit
-        client = Entity(entity_type="client", name="orphan-svc", initials="OS", active=True)
-        db.session.add(client)
+        project = Entity(entity_type="project", name="orphan-svc", initials="OS", active=True)
+        db.session.add(project)
         db.session.commit()
-        # yaml has a named entry for a different client only — orphan-svc falls through to empty default.
-        yaml_data = {"clients": {"other-svc": {"max": 10.0, "starting": 10.0}}}
-        sync_clients_from_yaml(yaml_data)
-        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=client.id)).scalar_one_or_none()
+        # yaml has a named entry for a different project only — orphan-svc falls through to empty default.
+        yaml_data = {"projects": {"other-svc": {"max": 10.0, "starting": 10.0}}}
+        sync_projects_from_yaml(yaml_data)
+        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=project.id)).scalar_one_or_none()
         assert limit is None
 
 
@@ -585,7 +585,7 @@ def test_sync_user_groups_default_groups_apply_to_all(app):
 
 
 # --- sync_user_limits_from_yaml -------------------------------------------------
-# These mirror the sync_clients_from_yaml tests above. The profile reads coin
+# These mirror the sync_projects_from_yaml tests above. The profile reads coin
 # settings from EntityLimit/EntityBalance (profile/routes.py:156-169), so admin
 # edits to a user's max/refresh/starting must reach the DB on config reload, not
 # only at login. The live balance (EntityBalance.coins_left) is reset to the new

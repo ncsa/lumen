@@ -10,7 +10,7 @@ from markupsafe import Markup
 _ANNOUNCEMENT_ALLOWED_TAGS = {"a", "b", "br", "em", "i", "li", "ol", "p", "strong", "ul"}
 _ANNOUNCEMENT_ALLOWED_ATTRS = {"a": ["href", "title", "target"]}
 
-from lumen.commands import sync_clients_from_yaml, sync_groups_from_yaml, sync_models_from_yaml, sync_user_groups_from_yaml, sync_user_limits_from_yaml
+from lumen.commands import sync_groups_from_yaml, sync_models_from_yaml, sync_projects_from_yaml, sync_user_groups_from_yaml, sync_user_limits_from_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -340,9 +340,9 @@ def _watcher(app, config_path):
                 except Exception as e:
                     logger.warning("config_watcher: sync_user_limits_from_yaml failed: %s", e)
                 try:
-                    sync_clients_from_yaml(new_data)
+                    sync_projects_from_yaml(new_data)
                 except Exception as e:
-                    logger.warning("config_watcher: sync_clients_from_yaml failed: %s", e)
+                    logger.warning("config_watcher: sync_projects_from_yaml failed: %s", e)
 
             app.logger.info("config.yaml reloaded")
         except Exception:

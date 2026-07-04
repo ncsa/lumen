@@ -70,7 +70,7 @@ groups:
       allowed:
       - granite-speech
 
-clients:
+projects:
   default:
     max: 100
     refresh: 0.05

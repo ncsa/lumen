@@ -5,7 +5,7 @@ Lumen is a self-hosted AI gateway. It provides a web chat interface and an OpenA
 **Key features:**
 - Web chat interface for AI models (OpenAI-compatible endpoints, Ollama, vLLM, etc.)
 - OpenAI-compatible API proxy — use Lumen as a drop-in endpoint from any tool or script
-- Clients (machine-to-machine accounts) with their own coin pools and model access rules
+- Projects (machine-to-machine accounts) with their own coin pools and model access rules
 - File and document uploads in chat (text, PDF, images — configurable per deployment)
 - Login via your institution's identity provider through CILogon
 - Token budgets per user and group — with optional auto-refresh
@@ -356,23 +356,23 @@ app:
 
 Explicit `pool_size` / `max_overflow` are honored only if they fit within 80% of `max_connections` across all workers × replicas; otherwise the auto-sized values are used and a warning is logged.
 
-### Clients
+### Projects
 
-Clients are machine-to-machine accounts — scripts, applications, or automated pipelines — that talk to Lumen's OpenAI-compatible API using an API key instead of logging in via OAuth. They are distinct from human users: they have no email address, no web chat access, and no per-user coin budget. Instead, each client has its own coin pool and model access rules.
+Projects are machine-to-machine accounts — scripts, applications, or automated pipelines — that talk to Lumen's OpenAI-compatible API using an API key instead of logging in via OAuth. They are distinct from human users: they have no email address, no web chat access, and no per-user coin budget. Instead, each project has its own coin pool and model access rules.
 
-**Creating and managing clients**
+**Creating and managing projects**
 
-Admins create clients via the **Clients** page in the web UI (or via the API). Each client has:
+Admins create projects via the **Projects** page in the web UI (or via the API). Each project has:
 - One or more named API keys (generated in the UI, shown once, then hashed)
 - A coin pool (balance, cap, and optional hourly refill)
 - A model access policy (whitelist / blacklist / graylist)
-- One or more **managers** — regular users who can view and rotate that client's keys
+- One or more **managers** — regular users who can view and rotate that project's keys
 
-Managers can see the client's detail page and issue new keys but cannot change budgets or model access. Only admins can create clients, adjust budgets, or assign managers.
+Managers can see the project's detail page and issue new keys but cannot change budgets or model access. Only admins can create projects, adjust budgets, or assign managers.
 
-**Using a client API key**
+**Using a project API key**
 
-Point any OpenAI-compatible tool at Lumen and use the client's API key as the `Authorization: Bearer` token:
+Point any OpenAI-compatible tool at Lumen and use the project's API key as the `Authorization: Bearer` token:
 
 ```
 base_url: https://your-lumen-domain/v1
@@ -381,14 +381,14 @@ api_key:  sk_...
 
 **Coin pools**
 
-Client coin pools work the same as user coin pools — each request deducts coins based on tokens used at the model's configured rate. The pool recharges at `refresh` coins per hour up to the `max` cap.
+Project coin pools work the same as user coin pools — each request deducts coins based on tokens used at the model's configured rate. The pool recharges at `refresh` coins per hour up to the `max` cap.
 
 **Default coin pool from config**
 
-The `clients:` block in `config.yaml` sets the default pool parameters for all clients and optional named overrides:
+The `projects:` block in `config.yaml` sets the default pool parameters for all projects and optional named overrides:
 
 ```yaml
-clients:
+projects:
   default:
     max: 100.0        # coin budget (-2 = unlimited, 0 = blocked)
     refresh: 0.0      # coins added per hour
@@ -396,7 +396,7 @@ clients:
     model_access:
       default: whitelist   # allow all models unless explicitly listed
 
-  research-bot:            # named override for this specific client
+  research-bot:            # named override for this specific project
     max: 500.0
     refresh: 1.0
     starting: 500.0
@@ -405,11 +405,11 @@ clients:
       whitelist: [gpt-4o, llama3]
 ```
 
-Named entries match on the client's name as set in the UI. If a client has no named entry, `default` applies. Changes to `config.yaml` do **not** retroactively update existing coin pools — pool parameters are written to the database when the pool is first created.
+Named entries match on the project's name as set in the UI. If a project has no named entry, `default` applies. Changes to `config.yaml` do **not** retroactively update existing coin pools — pool parameters are written to the database when the pool is first created.
 
-**Model access for clients**
+**Model access for projects**
 
-Clients follow the same whitelist / blacklist / graylist rules as users. Clients cannot be assigned graylist directly; a manager must visit the client's detail page and click **Accept** on any graylisted model before the client can use it.
+Projects follow the same whitelist / blacklist / graylist rules as users. Projects cannot be assigned graylist directly; a manager must visit the project's detail page and click **Accept** on any graylisted model before the project can use it.
 
 ### Monitoring
 

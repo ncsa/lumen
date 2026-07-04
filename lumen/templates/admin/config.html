@@ -89,7 +89,7 @@ const state = {
   currentSection: null,
   selectedModelIdx: 0,
   selectedGroupKey: null,
-  selectedClientKey: null,
+  selectedProjectKey: null,
   selectedUserKey: null,
 };
 
@@ -103,7 +103,7 @@ const SECTIONS = [
   { id:'defaults',      label:'Defaults',       desc:'Global model & token defaults' },
   { id:'groups',        label:'Groups',         desc:'User groups and access control' },
   { id:'users',         label:'Users',          desc:'Per-user overrides (tokens & model access)' },
-  { id:'clients',       label:'Clients',        desc:'API client configurations' },
+  { id:'projects',      label:'Projects',       desc:'API project configurations' },
   { id:'models',        label:'Models',         desc:'AI model configurations' },
 ];
 
@@ -187,7 +187,7 @@ function normalizeLegacyConfig(data) {
     if (ma.default in DEF) ma.default = DEF[ma.default];
   };
   for (const g of Object.values(data.groups || {})) fixMA(g && g.model_access);
-  for (const c of Object.values(data.clients || {})) fixMA(c && c.model_access);
+  for (const c of Object.values(data.projects || {})) fixMA(c && c.model_access);
   for (const u of Object.values(data.users || {})) fixMA(u && u.model_access);
 }
 
@@ -293,7 +293,7 @@ function resetConfig() {
   state.data = clone(state.original);
   state.selectedModelIdx = 0;
   state.selectedGroupKey = null;
-  state.selectedClientKey = null;
+  state.selectedProjectKey = null;
   state.selectedUserKey = null;
   renderSection(state.currentSection);
 }
@@ -558,7 +558,7 @@ function collectAdmins() {
   state.data.admins = emails.length ? emails : undefined;
 }
 
-// ── Model Access widget (search-driven; shared by groups / clients / users) ──
+// ── Model Access widget (search-driven; shared by groups / projects / users) ──
 // One scope's form is shown at a time, so fixed element ids are safe.
 let maCtx = null;
 
@@ -835,27 +835,27 @@ function collectCurrentGroup() {
 }
 function collectGroups() { collectCurrentGroup(); }
 
-// ── Clients ────────────────────────────────────────────────────────────────
-function renderClients() {
-  const clients = state.data.clients || {};
-  const keys = orderedKeys(clients);
-  if (!state.selectedClientKey || !clients[state.selectedClientKey]) state.selectedClientKey = keys[0] || null;
-  const opts = keys.map(k => `<option value="${esc(k)}"${k === state.selectedClientKey ? ' selected' : ''}>${esc(k)}</option>`).join('');
+// ── Projects ───────────────────────────────────────────────────────────────
+function renderProjects() {
+  const projects = state.data.projects || {};
+  const keys = orderedKeys(projects);
+  if (!state.selectedProjectKey || !projects[state.selectedProjectKey]) state.selectedProjectKey = keys[0] || null;
+  const opts = keys.map(k => `<option value="${esc(k)}"${k === state.selectedProjectKey ? ' selected' : ''}>${esc(k)}</option>`).join('');
   $('cfg-body').innerHTML = `
     <div class="entity-bar">
-      <label for="cli-sel" class="fw-semibold small mb-0 text-nowrap">Client:</label>
-      <select id="cli-sel" class="form-select form-select-sm" onchange="switchClient(this.value)">${opts}</select>
-      <button class="btn btn-primary btn-sm text-nowrap" onclick="addClient()">+ New</button>
-      <button class="btn btn-outline-danger btn-sm" onclick="deleteClient()">Delete</button>
+      <label for="cli-sel" class="fw-semibold small mb-0 text-nowrap">Project:</label>
+      <select id="cli-sel" class="form-select form-select-sm" onchange="switchProject(this.value)">${opts}</select>
+      <button class="btn btn-primary btn-sm text-nowrap" onclick="addProject()">+ New</button>
+      <button class="btn btn-outline-danger btn-sm" onclick="deleteProject()">Delete</button>
     </div>
-    <div id="cli-form">${state.selectedClientKey ? renderClientForm(state.selectedClientKey, clients[state.selectedClientKey]) : ''}</div>
+    <div id="cli-form">${state.selectedProjectKey ? renderProjectForm(state.selectedProjectKey, projects[state.selectedProjectKey]) : ''}</div>
   `;
-  if (state.selectedClientKey) initModelAccess('client', clients[state.selectedClientKey]);
+  if (state.selectedProjectKey) initModelAccess('project', projects[state.selectedProjectKey]);
 }
-function renderClientForm(key, c) {
+function renderProjectForm(key, c) {
   if (!c) return '';
   return `
-    ${card(`Client: ${esc(key)}`, `
+    ${card(`Project: ${esc(key)}`, `
       ${field('cli-groups','Groups',ti('cli-groups',(c.groups||[]).join(', ')),'comma-separated — grants access to group models')}
     `)}
     ${card('Token Pool', row3(
@@ -863,48 +863,48 @@ function renderClientForm(key, c) {
       field('cli-ref',  'Refresh (coins/hr)', ni('cli-ref',   c.refresh)),
       field('cli-start','Starting Coins',     ni('cli-start', c.starting))
     ))}
-    ${modelAccessCard('client')}
+    ${modelAccessCard('project')}
   `;
 }
-function switchClient(key) {
-  collectCurrentClient();
-  state.selectedClientKey = key;
-  const c = state.data.clients?.[key] || {};
-  $('cli-form').innerHTML = renderClientForm(key, c);
-  initModelAccess('client', c);
+function switchProject(key) {
+  collectCurrentProject();
+  state.selectedProjectKey = key;
+  const c = state.data.projects?.[key] || {};
+  $('cli-form').innerHTML = renderProjectForm(key, c);
+  initModelAccess('project', c);
 }
-function addClient() {
-  const name = prompt('New client name:');
+function addProject() {
+  const name = prompt('New project name:');
   if (!name?.trim()) return;
   const key = name.trim();
-  if (state.data.clients?.[key]) { alert('Client already exists.'); return; }
-  if (!state.data.clients) state.data.clients = {};
-  collectCurrentClient();
-  state.data.clients[key] = { max: 50, refresh: 0.1, starting: 50, model_access: { default: 'blocked' } };
-  state.selectedClientKey = key;
-  renderClients();
+  if (state.data.projects?.[key]) { alert('Project already exists.'); return; }
+  if (!state.data.projects) state.data.projects = {};
+  collectCurrentProject();
+  state.data.projects[key] = { max: 50, refresh: 0.1, starting: 50, model_access: { default: 'blocked' } };
+  state.selectedProjectKey = key;
+  renderProjects();
 }
-function deleteClient() {
-  if (!state.selectedClientKey) return;
-  if (!confirm(`Delete client "${state.selectedClientKey}"?`)) return;
-  delete state.data.clients[state.selectedClientKey];
-  state.selectedClientKey = null;
-  renderClients();
+function deleteProject() {
+  if (!state.selectedProjectKey) return;
+  if (!confirm(`Delete project "${state.selectedProjectKey}"?`)) return;
+  delete state.data.projects[state.selectedProjectKey];
+  state.selectedProjectKey = null;
+  renderProjects();
 }
-function collectCurrentClient() {
-  const key = state.selectedClientKey;
+function collectCurrentProject() {
+  const key = state.selectedProjectKey;
   if (!key || !$('cli-max')) return;
-  const prev = state.data.clients?.[key] || {};
+  const prev = state.data.projects?.[key] || {};
   const c = { ...prev };  // preserve any keys this form doesn't render
   const mx = numVal('cli-max');   if (mx !== undefined) c.max      = mx; else delete c.max;
   const rf = numVal('cli-ref');   if (rf !== undefined) c.refresh  = rf; else delete c.refresh;
   const st = numVal('cli-start'); if (st !== undefined) c.starting = st; else delete c.starting;
   c.model_access = cleanModelAccess(prev.model_access);  // widget-managed, mutated in place
   const groups = arrFromCommas('cli-groups'); if (groups.length) c.groups = groups; else delete c.groups;
-  if (!state.data.clients) state.data.clients = {};
-  state.data.clients[key] = c;
+  if (!state.data.projects) state.data.projects = {};
+  state.data.projects[key] = c;
 }
-function collectClients() { collectCurrentClient(); }
+function collectProjects() { collectCurrentProject(); }
 
 // ── Models ─────────────────────────────────────────────────────────────────
 function renderModels() {
@@ -1176,7 +1176,7 @@ function renderDefaults() {
       ${field('def-ackmsg','Default Acknowledgement Message',tai('def-ackmsg',m.ack_message,2),'shown for models with needs_ack unless overridden per model')}
     `)}
     ${card('Token Defaults', `
-      <p class="text-muted small mb-2">Fallback coin pool when a user/group/client specifies no limit. Scopes override only the fields they set.</p>
+      <p class="text-muted small mb-2">Fallback coin pool when a user/group/project specifies no limit. Scopes override only the fields they set.</p>
       ${row3(
         field('def-tok-max','Max Coins',ni('def-tok-max',t.max),'-2=unlimited, 0=blocked'),
         field('def-tok-ref','Refresh (coins/hr)',ni('def-tok-ref',t.refresh)),
@@ -1283,7 +1283,7 @@ function collectCurrentUser() {
 }
 function collectUsers() { collectCurrentUser(); }
 
-// ── Add-User search dialog (shared typeahead; same UX as adding a client manager) ──
+// ── Add-User search dialog (shared typeahead; same UX as adding a project manager) ──
 function initAddUserDialog() {
   userSearch = initUserSearch({
     inputId: 'add-user-email',
@@ -1300,12 +1300,12 @@ function initAddUserDialog() {
 const COLLECTORS = {
   app: collectApp, oauth2: collectOauth2, api: collectApi, chat: collectChat,
   rate_limiting: collectRateLimiting, defaults: collectDefaults,
-  admins: collectAdmins, groups: collectGroups, clients: collectClients, users: collectUsers, models: collectModels,
+  admins: collectAdmins, groups: collectGroups, projects: collectProjects, users: collectUsers, models: collectModels,
 };
 const RENDERERS = {
   app: renderApp, oauth2: renderOauth2, api: renderApi, chat: renderChat,
   rate_limiting: renderRateLimiting, defaults: renderDefaults,
-  admins: renderAdmins, groups: renderGroups, clients: renderClients, users: renderUsers, models: renderModels,
+  admins: renderAdmins, groups: renderGroups, projects: renderProjects, users: renderUsers, models: renderModels,
 };
 
 // ── Boot ───────────────────────────────────────────────────────────────────

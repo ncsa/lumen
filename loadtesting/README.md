@@ -50,7 +50,7 @@ uv run dummy
 
 ### 3. Create load-test accounts
 
-`setup_users.py` provisions client accounts and API keys directly in the database:
+`setup_users.py` provisions project accounts and API keys directly in the database:
 
 ```bash
 # Create 10 accounts with 20 coins each for the "dummy" model

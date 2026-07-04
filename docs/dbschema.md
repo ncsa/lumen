@@ -133,7 +133,7 @@ erDiagram
     entity_managers {
         int id PK
         int user_entity_id FK
-        int client_entity_id FK
+        int project_entity_id FK
     }
 
     model_stats {
@@ -208,7 +208,7 @@ erDiagram
     entities ||--o{ group_members : "belongs to"
     entities ||--o{ request_logs : "logs"
     entities ||--o{ entity_managers : "manages (user)"
-    entities ||--o{ entity_managers : "managed by (client)"
+    entities ||--o{ entity_managers : "managed by (project)"
 
     groups ||--o{ group_members : "contains"
     groups ||--o| group_limits : "has"
@@ -251,19 +251,19 @@ erDiagram
 
 ## entities
 
-Unified table for both human users (authenticated via OAuth) and programmatic clients (authenticated via API keys). The `entity_type` column distinguishes them.
+Unified table for both human users (authenticated via OAuth) and programmatic projects (authenticated via API keys). The `entity_type` column distinguishes them.
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `id` | Integer | NO | Primary key |
-| `entity_type` | String(8) | NO | `'user'` for human users, `'client'` for API clients |
-| `email` | String(256) | YES | Email address; populated for users, null for clients. Unique across users. |
+| `entity_type` | String(8) | NO | `'user'` for human users, `'project'` for API projects |
+| `email` | String(256) | YES | Email address; populated for users, null for projects. Unique across users. |
 | `name` | String(256) | NO | Display name |
 | `initials` | String(4) | NO | Short initials used in UI avatars |
 | `gravatar_hash` | String(64) | YES | MD5 hash of the user's email for Gravatar lookups; users only |
 | `active` | Boolean | NO | Whether the entity can make requests. Inactive entities are blocked. |
 | `created_at` | DateTime | NO | UTC timestamp when the entity was created |
-| `model_access_default` | String(16) | YES | Default model access policy for models not explicitly listed: `'allowed'` or `'blocked'`. Used for client entities; users inherit from group membership. |
+| `model_access_default` | String(16) | YES | Default model access policy for models not explicitly listed: `'allowed'` or `'blocked'`. Used for project entities; users inherit from group membership. |
 
 **Notes:**
 - All foreign keys that reference `entities.id` cascade on delete.
@@ -273,7 +273,7 @@ Unified table for both human users (authenticated via OAuth) and programmatic cl
 
 ## api_keys
 
-API keys that entities (users or clients) use to authenticate against the proxy API. Keys are stored only as a bcrypt hash; the plaintext is shown once at creation.
+API keys that entities (users or projects) use to authenticate against the proxy API. Keys are stored only as a bcrypt hash; the plaintext is shown once at creation.
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
@@ -468,15 +468,15 @@ Per-group model access overrides. Mirrors `entity_model_access` but applies to a
 
 ## entity_managers
 
-Maps users to the client entities they are permitted to manage. A manager can view and administer a client's API keys and usage.
+Maps users to the project entities they are permitted to manage. A manager can view and administer a project's API keys and usage.
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `id` | Integer | NO | Primary key |
 | `user_entity_id` | Integer (FK → entities) | NO | The user (must be `entity_type = 'user'`) who has management rights. Cascades on delete. |
-| `client_entity_id` | Integer (FK → entities) | NO | The client entity being managed. Cascades on delete. |
+| `project_entity_id` | Integer (FK → entities) | NO | The project entity being managed. Cascades on delete. |
 
-**Constraints:** `UNIQUE(user_entity_id, client_entity_id)`
+**Constraints:** `UNIQUE(user_entity_id, project_entity_id)`
 
 ---
 
@@ -503,7 +503,7 @@ Running aggregated usage counters per entity per model per source. Updated after
 
 ## entity_stats
 
-Pre-aggregated usage totals per entity across all models and sources. One row per entity, maintained atomically alongside `model_stats` on every proxied request. Enables O(1) per-entity lookups in the admin users table and clients listing without scanning `model_stats`.
+Pre-aggregated usage totals per entity across all models and sources. One row per entity, maintained atomically alongside `model_stats` on every proxied request. Enables O(1) per-entity lookups in the admin users table and projects listing without scanning `model_stats`.
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
@@ -590,7 +590,7 @@ groups ──< group_members >── entities ──< api_keys
   │                              ├──< entity_balances
   └──< group_model_access        ├──< entity_model_access
                                  ├──< entity_model_consents
-model_configs ──< model_endpoints├──< entity_managers (user→client)
+model_configs ──< model_endpoints├──< entity_managers (user→project)
      │                           ├──< model_stats
      ├──< entity_model_access    ├──< conversations ──< messages
      ├──< group_model_access     └──< request_logs

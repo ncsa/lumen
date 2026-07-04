@@ -174,7 +174,7 @@ def test_watcher_reconciles_user_groups_on_reload(app, tmp_path, restore_config)
     with patch("lumen.services.config_watcher.time.sleep", side_effect=fake_sleep), \
          patch("lumen.services.config_watcher.sync_models_from_yaml"), \
          patch("lumen.services.config_watcher.sync_groups_from_yaml"), \
-         patch("lumen.services.config_watcher.sync_clients_from_yaml"), \
+         patch("lumen.services.config_watcher.sync_projects_from_yaml"), \
          patch("lumen.services.config_watcher.sync_user_groups_from_yaml") as mock_sync_user_groups, \
          patch("lumen.services.config_watcher.sync_user_limits_from_yaml") as mock_sync_user_limits, \
          patch("lumen.services.config_watcher.os.path.getmtime", side_effect=fake_getmtime):

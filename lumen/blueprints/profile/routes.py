@@ -204,10 +204,10 @@ def index():
     )
 
 
-@profile_bp.route("/profile/client/<int:sid>")
+@profile_bp.route("/profile/project/<int:sid>")
 @login_required
-def client_profile_page(sid):
-    return redirect(url_for("clients.detail", sid=sid), HTTPStatus.MOVED_PERMANENTLY)
+def project_profile_page(sid):
+    return redirect(url_for("projects.detail", sid=sid), HTTPStatus.MOVED_PERMANENTLY)
 
 
 @profile_bp.route("/profile/keys/generate")

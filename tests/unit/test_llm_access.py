@@ -238,7 +238,7 @@ def test_get_pool_limit_global_token_defaults_fallback(app, ids):
 
 
 # ---------------------------------------------------------------------------
-# Entity-level model_access_default (used for client/service entities via yaml)
+# Entity-level model_access_default (used for project/service entities via yaml)
 # Covers the fallthrough after no user or group rules.
 # ---------------------------------------------------------------------------
 

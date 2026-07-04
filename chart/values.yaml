@@ -48,7 +48,7 @@ config:
       # ackMessage (replaces the old graylist default notice). Empty = none.
       ackMessage: ""
     tokens:
-      # -- Fallback coin pool. Groups/clients override only the fields that differ.
+      # -- Fallback coin pool. Groups/projects override only the fields that differ.
       max: 0
       refresh: 0
       starting: 0
@@ -294,7 +294,7 @@ models: []
 #   lumen:
 #     description: "This is for testing purposes"
 #     url: "https://huggingface.co/google/gemma-4-31B-it"
-#     access: allowed           # allowed|blocked baseline (overridable per group/client/user)
+#     access: allowed           # allowed|blocked baseline (overridable per group/project/user)
 #     needsAck: false           # true = require one-time user acknowledgement (model-level, sticky)
 #     disabled: false           # true = hard off: hidden everywhere, not overridable by any scope
 #     ackMessage: ""            # optional; overrides config.defaults.models.ackMessage when needsAck

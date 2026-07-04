@@ -253,7 +253,7 @@ def create_app():
     from lumen.blueprints.auth.routes import auth_bp
     from lumen.blueprints.chat.routes import chat_bp
     from lumen.blueprints.models_page.routes import models_page_bp
-    from lumen.blueprints.clients.routes import clients_bp
+    from lumen.blueprints.projects.routes import projects_bp
     from lumen.blueprints.profile.routes import profile_bp
     from lumen.blueprints.api.routes import api_bp
     from lumen.blueprints.admin.routes import admin_bp
@@ -264,7 +264,7 @@ def create_app():
     app.register_blueprint(auth_bp)
     app.register_blueprint(chat_bp)
     app.register_blueprint(models_page_bp)
-    app.register_blueprint(clients_bp)
+    app.register_blueprint(projects_bp)
     app.register_blueprint(profile_bp)
     app.register_blueprint(api_bp)
     csrf.exempt(api_bp)
@@ -318,7 +318,7 @@ def create_app():
     app.cli.add_command(init_db_cmd)
     app.cli.add_command(reassign_model_cmd)
 
-    # Context processor: inject app_name and nav_clients into all templates
+    # Context processor: inject app_name and nav_projects into all templates
     @app.context_processor
     def inject_nav():
         result = {
@@ -334,15 +334,15 @@ def create_app():
             "theme": g.theme,
         }
         if not session.get("entity_id"):
-            result["nav_clients"] = []
+            result["nav_projects"] = []
             return result
 
-        # Cache is_admin and client membership in the session to avoid 3 DB queries per request.
+        # Cache is_admin and project membership in the session to avoid 3 DB queries per request.
         # Cache is populated on first request after login and cleared on logout.
         nav_cache = session.get("_nav")
         if nav_cache is not None:
             result["is_admin"] = nav_cache["is_admin"]
-            result["nav_clients"] = nav_cache["client_ids"]
+            result["nav_projects"] = nav_cache["project_ids"]
             return result
 
         from sqlalchemy import select
@@ -357,23 +357,23 @@ def create_app():
         assocs = db.session.execute(
             select(EntityManager).filter_by(user_entity_id=session["entity_id"])
         ).scalars().all()
-        client_ids = [a.client_entity_id for a in assocs]
-        if client_ids:
-            clients = db.session.execute(
+        project_ids = [a.project_entity_id for a in assocs]
+        if project_ids:
+            projects = db.session.execute(
                 select(Entity)
                 .where(
-                    Entity.id.in_(client_ids),
-                    Entity.entity_type == "client",
+                    Entity.id.in_(project_ids),
+                    Entity.entity_type == "project",
                     Entity.active == True,
                 )
                 .order_by(Entity.name)
             ).scalars().all()
-            active_client_ids = [c.id for c in clients]
+            active_project_ids = [c.id for c in projects]
         else:
-            active_client_ids = []
+            active_project_ids = []
 
-        session["_nav"] = {"is_admin": is_admin_val, "client_ids": active_client_ids}
-        result["nav_clients"] = active_client_ids
+        session["_nav"] = {"is_admin": is_admin_val, "project_ids": active_project_ids}
+        result["nav_projects"] = active_project_ids
         return result
 
     # Register markdown Jinja2 filter
@@ -388,8 +388,8 @@ def create_app():
 
     app.jinja_env.filters["markdown"] = _md_filter
 
-    # Sync models, groups, and clients from yaml into DB on every startup
-    from lumen.commands import backfill_clients_to_config, sync_clients_from_yaml, sync_groups_from_yaml, sync_models_from_yaml, sync_user_groups_from_yaml, sync_user_limits_from_yaml
+    # Sync models, groups, and projects from yaml into DB on every startup
+    from lumen.commands import backfill_projects_to_config, sync_groups_from_yaml, sync_models_from_yaml, sync_projects_from_yaml, sync_user_groups_from_yaml, sync_user_limits_from_yaml
     with app.app_context():
         try:
             sync_models_from_yaml(yaml_data)
@@ -412,15 +412,15 @@ def create_app():
             print(f"WARNING: Could not sync user limits from yaml (run 'flask db upgrade' first): {e}",
                   file=sys.stderr)
         try:
-            # Self-heal config.yaml for installs whose clients pre-date write-on-create.
+            # Self-heal config.yaml for installs whose projects pre-date write-on-create.
             if app.config.get("CONFIG_EDITOR", True) and os.access(config_yaml_path, os.W_OK):
-                backfill_clients_to_config(yaml_data, config_yaml_path)
+                backfill_projects_to_config(yaml_data, config_yaml_path)
         except Exception as e:
-            print(f"WARNING: Could not backfill clients to config.yaml: {e}", file=sys.stderr)
+            print(f"WARNING: Could not backfill projects to config.yaml: {e}", file=sys.stderr)
         try:
-            sync_clients_from_yaml(yaml_data)
+            sync_projects_from_yaml(yaml_data)
         except Exception as e:
-            print(f"WARNING: Could not sync clients from yaml (run 'flask db upgrade' first): {e}",
+            print(f"WARNING: Could not sync projects from yaml (run 'flask db upgrade' first): {e}",
                   file=sys.stderr)
 
     # Start background threads only in the main worker process.

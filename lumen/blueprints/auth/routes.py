@@ -92,7 +92,7 @@ def _apply_user_model_overrides(entity: Entity, email: str, yaml_data: dict) -> 
 
     # Per-user model access: `model_access` {allowed/blocked/default}, or the legacy
     # allowed-only `models:` list. Config is the only source of a user's EntityModelAccess
-    # rows, so we delete-and-recreate (consistent with sync_clients_from_yaml).
+    # rows, so we delete-and-recreate (consistent with sync_projects_from_yaml).
     ma_cfg = user_cfg.get("model_access")
     if ma_cfg is not None:
         pairs, user_default, ack_models = _parse_scope_access(ma_cfg, context=f"user '{email}'")
