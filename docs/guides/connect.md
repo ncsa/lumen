@@ -39,12 +39,18 @@ The base URL is your Lumen host with `/v1` appended, for example `https://lumen.
         "apiKey": "{env:LUMEN_API_KEY}"
       },
       "models": {
-        "MODEL": { "name": "MODEL via Lumen" }
+        "MODEL": {
+          "name": "MODEL via Lumen",
+          "limit": { "context": 131072, "output": 32768 },
+          "cost": { "input": 5.0, "output": 15.0 }
+        }
       }
     }
   }
 }
 ```
+
+Each model entry includes `limit` (the context window and max output, in tokens) and `cost` (USD per million input/output tokens), so OpenCode can size the context and track spending. The **Download config.json** button fills these in from the model's configured limits and pricing.
 
 ## curl
 

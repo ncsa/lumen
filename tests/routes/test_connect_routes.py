@@ -27,6 +27,28 @@ def test_connect_lists_accessible_model(auth_client, test_model):
     assert test_model["model_name"] in ids
 
 
+def test_connect_surfaces_model_limits_and_cost(app, auth_client):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        db.session.add(ModelConfig(
+            model_name="priced-model",
+            context_window=131072,
+            max_output_tokens=32768,
+            input_cost_per_million=5.0,
+            output_cost_per_million=15.0,
+            access="allowed",
+        ))
+        db.session.commit()
+
+    rows = {r["id"]: r for r in _connect_data(auth_client.get("/connect").data)["models"]}
+    priced = rows["priced-model"]
+    assert priced["context_window"] == 131072
+    assert priced["max_output_tokens"] == 32768
+    assert priced["input_cost_per_million"] == 5.0
+    assert priced["output_cost_per_million"] == 15.0
+
+
 def test_connect_excludes_blocked_model(app, auth_client, test_model, test_user):
     with app.app_context():
         from lumen.extensions import db
