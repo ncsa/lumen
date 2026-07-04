@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-07-03
+
 ### Added
 - Clients can be added to **groups** via a `groups:` list in their `config.yaml` entry (and via checkboxes in the Config editor's Clients tab). Group membership grants the client access to models its own rules would otherwise block, using the same group model-access resolution as users. Memberships are config-managed — added on reload and removed when dropped from the list.
 
