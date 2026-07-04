@@ -67,7 +67,18 @@
   function openCodeConfig() {
     const models = {};
     if (data.models.length) {
-      data.models.forEach((m) => { models[m.id] = { name: m.name + " via " + data.provider_name }; });
+      data.models.forEach((m) => {
+        const entry = { name: m.name + " via " + data.provider_name };
+        if (m.context_window) {
+          entry.limit = {
+            context: m.context_window,
+            output: m.max_output_tokens || m.context_window,
+          };
+        }
+        // Costs are USD per million tokens — OpenCode's models.dev cost unit.
+        entry.cost = { input: m.input_cost_per_million, output: m.output_cost_per_million };
+        models[m.id] = entry;
+      });
     } else {
       models[PLACEHOLDER] = { name: "Model via " + data.provider_name };
     }

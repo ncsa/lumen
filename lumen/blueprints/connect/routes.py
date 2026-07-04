@@ -28,6 +28,13 @@ def _accessible_models(entity_id):
             "name": c.model_name,
             "input_modalities": c.input_modalities or [],
             "output_modalities": c.output_modalities or [],
+            # Surfaced so the generated OpenCode config can set each model's
+            # token limits and pricing (issue #9421). Costs are USD per million
+            # tokens, matching OpenCode's models.dev cost units 1:1.
+            "context_window": c.context_window,
+            "max_output_tokens": c.max_output_tokens,
+            "input_cost_per_million": float(c.input_cost_per_million),
+            "output_cost_per_million": float(c.output_cost_per_million),
         }
         for c in configs
         if statuses.get(c.id, "allowed") != "blocked"
