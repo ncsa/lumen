@@ -116,6 +116,29 @@ RESTART_REQUIRED = [
 _RESTART_REQUIRED = RESTART_REQUIRED
 
 
+# Sentinel substituted for secret values before the config is sent to the admin
+# browser.  On save, any field still equal to MASK is replaced with the on-disk
+# value (see restore_config_secrets) so the real secret is preserved.
+# NOTE: assumes no real secret's literal value equals MASK; astronomically
+# unlikely for secret_key/tokens, but documented here for the next reader.
+MASK = "********"
+
+# Secret-bearing dotted paths masked before the config is sent to the admin
+# browser.  Only truthy values are masked — a blank stays blank so the UI can
+# distinguish "no secret configured" from "secret hidden".
+# *** If you add a new secret to config.yaml, add its dotted path here too. ***
+# (models[].endpoints[].api_key is handled separately — see mask_config_secrets.)
+SENSITIVE_KEYS = [
+    ("app", "secret_key"),
+    ("app", "encryption_key"),
+    ("app", "database", "url"),
+    ("oauth2", "client_secret"),
+    ("api", "prometheus", "token"),
+    ("api", "monitoring", "token"),
+    ("rate_limiting", "storage_url"),
+]
+
+
 def _resolve_path(data, path):
     cur = data
     for part in path:
@@ -123,6 +146,150 @@ def _resolve_path(data, path):
             return None
         cur = cur.get(part)
     return cur
+
+
+def _set_path(data, path, value):
+    """Walk ``path`` into nested dicts and set the leaf to ``value``.
+
+    No-op if any intermediate key is missing or not a dict — never synthesizes
+    intermediate keys, so masking/restoring an absent path leaves structure
+    unchanged.  Reuses :func:`_resolve_path` for the parent walk.
+    """
+    parent = _resolve_path(data, path[:-1])
+    if isinstance(parent, dict) and path[-1] in parent:
+        parent[path[-1]] = value
+
+
+def _iter_endpoints(data):
+    """Yield ``(model_name, endpoint_dict)`` for every endpoint in every model.
+
+    Shape-guarded: skips non-dict models/endpoints so a hand-edited or partial
+    config won't raise.  Used by :func:`mask_config_secrets` and
+    :func:`_find_unrestorable_masks`, which walk every endpoint uniformly.
+    """
+    models = data.get("models") if isinstance(data, dict) else None
+    if not isinstance(models, list):
+        return
+    for model in models:
+        if not isinstance(model, dict):
+            continue
+        endpoints = model.get("endpoints")
+        if not isinstance(endpoints, list):
+            continue
+        for ep in endpoints:
+            if isinstance(ep, dict):
+                yield model.get("name", "?"), ep
+
+
+def mask_config_secrets(data):
+    """Replace every sensitive value in ``data`` with ``MASK`` (in place).
+
+    Walks the dotted paths in :data:`SENSITIVE_KEYS` and the nested
+    ``models[].endpoints[].api_key`` list-of-lists via :func:`_iter_endpoints`.
+    Only truthy values are masked; blanks are left blank.  Shape-guarded so a
+    hand-edited or partial config won't raise mid-mask.
+    """
+    for path in SENSITIVE_KEYS:
+        if _resolve_path(data, path):
+            _set_path(data, path, MASK)
+
+    for _name, ep in _iter_endpoints(data):
+        if ep.get("api_key"):
+            ep["api_key"] = MASK
+
+
+def restore_config_secrets(data, on_disk):
+    """Substitute the on-disk value for any field in ``data`` still == MASK.
+
+    For dotted paths, the on-disk value at the same path is used.  For
+    ``models[].endpoints[].api_key``, models are matched by ``name`` and
+    endpoints **by URL** within the model.  This correctly handles remove,
+    reorder, and insert of unique-URL endpoints (each URL identifies its key).
+    For the documented round-robin pattern (multiple endpoints sharing one
+    URL), keys are restored positionally within the URL group — but only when
+    the group's endpoint count is unchanged; an added/removed duplicate-URL
+    endpoint is ambiguous and left as MASK so the caller's safety check
+    rejects the save.  If a model name appears more than once on disk the
+    match is also ambiguous, so endpoints for that name are left as MASK.
+    Mutates ``data`` in place.
+    """
+    for path in SENSITIVE_KEYS:
+        if _resolve_path(data, path) == MASK:
+            disk_value = _resolve_path(on_disk, path)
+            if disk_value:
+                _set_path(data, path, disk_value)
+
+    incoming_models = data.get("models") if isinstance(data, dict) else None
+    disk_models = on_disk.get("models") if isinstance(on_disk, dict) else None
+    if not isinstance(incoming_models, list) or not isinstance(disk_models, list):
+        return
+
+    # On-disk endpoints collected by model name.  If a name appears more than
+    # once on disk, all entries are kept so len(candidates) != 1 signals
+    # ambiguity → skip → leave MASK → _find_unrestorable_masks rejects.
+    disk_endpoints_by_name: dict[str, list[list]] = {}
+    for dm in disk_models:
+        if not isinstance(dm, dict):
+            continue
+        name = dm.get("name")
+        eps = dm.get("endpoints")
+        if isinstance(name, str) and isinstance(eps, list):
+            disk_endpoints_by_name.setdefault(name, []).append(eps)
+
+    for im in incoming_models:
+        if not isinstance(im, dict):
+            continue
+        name = im.get("name")
+        ieps = im.get("endpoints")
+        if not isinstance(name, str) or not isinstance(ieps, list):
+            continue
+        candidates = disk_endpoints_by_name.get(name)
+        if not candidates or len(candidates) != 1:
+            continue  # no match or duplicate names → leave MASK → 400
+        deps = candidates[0]
+
+        # Group disk endpoints by URL: url → [api_key, ...] (in order).
+        disk_keys_by_url: dict[str, list] = {}
+        for dep in deps:
+            if isinstance(dep, dict) and isinstance(dep.get("url"), str):
+                disk_keys_by_url.setdefault(dep["url"], []).append(dep.get("api_key"))
+
+        # Group incoming endpoints by URL the same way.
+        incoming_by_url: dict[str, list] = {}
+        for iep in ieps:
+            if isinstance(iep, dict) and isinstance(iep.get("url"), str):
+                incoming_by_url.setdefault(iep["url"], []).append(iep)
+
+        # Restore: match by URL.  For a unique URL (one disk, one incoming) this
+        # is unambiguous regardless of position.  For duplicate URLs (round-
+        # robin), restore positionally within the group — but only when the
+        # count matches; a changed count (add/remove within the group) is
+        # ambiguous → leave MASK → 400.
+        for url, ieps_at_url in incoming_by_url.items():
+            disk_keys = disk_keys_by_url.get(url)
+            if not disk_keys or len(disk_keys) != len(ieps_at_url):
+                continue  # no disk match or count mismatch → leave MASK → 400
+            for i, iep in enumerate(ieps_at_url):
+                if iep.get("api_key") == MASK and disk_keys[i]:
+                    iep["api_key"] = disk_keys[i]
+
+
+def _find_unrestorable_masks(data) -> list[str]:
+    """Return dotted-path strings for secrets still == MASK after restore.
+
+    Used to build a precise 400 message naming the field(s) the admin must
+    re-enter.  Empty list means every masked secret was restored (or none were
+    present).
+    """
+    still_masked: list[str] = []
+    for path in SENSITIVE_KEYS:
+        if _resolve_path(data, path) == MASK:
+            still_masked.append(".".join(path))
+
+    for name, ep in _iter_endpoints(data):
+        if ep.get("api_key") == MASK:
+            still_masked.append(f"models[{name}].endpoints[{ep.get('url', '?')}].api_key")
+    return still_masked
 
 
 def _check_restart_required(old_data, new_data):
