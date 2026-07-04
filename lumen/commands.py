@@ -10,6 +10,7 @@ from sqlalchemy import delete, select, update
 
 from .extensions import db
 from lumen.models.entity import Entity
+from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
 from lumen.models.entity_model_access import EntityModelAccess
 from lumen.models.group import Group
@@ -18,6 +19,7 @@ from lumen.models.group_member import GroupMember
 from lumen.models.group_model_access import GroupModelAccess
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
+from lumen.timeutils import utcnow
 
 # Maps config-input access vocabulary (new + legacy) to the stored value.
 # Acknowledgement (graylist) is a model-level property now, so legacy 'graylist'
@@ -531,6 +533,91 @@ def sync_clients_from_yaml(yaml_data):
         for group_id in desired_group_ids:
             if group_id not in existing_by_group:
                 db.session.add(GroupMember(group_id=group_id, entity_id=entity.id, config_managed=True))
+
+    db.session.commit()
+
+
+def sync_user_limits_from_yaml(yaml_data):
+    """Sync per-user EntityLimit (coin pool) rows from yaml_data['users'].
+
+    Mirrors the EntityLimit upsert in sync_clients_from_yaml, but for user entities.
+    Unlike the login path (_apply_user_model_overrides in auth/routes.py), this runs on
+    every config reload so admin edits to a user's max/refresh/starting take effect
+    immediately instead of waiting for the user to log in again.
+
+    The live coin balance (EntityBalance.coins_left) is reset to the new starting value
+    only when an EXISTING per-user limit row's starting_coins actually changes. Adding a
+    first per-user block for a user on the global pool preserves their accrued balance;
+    changing only max/refresh leaves the balance untouched.
+
+    The upsert overwrites unconditionally and forces config_managed=True, diverging from
+    the login path's `if limit and limit.config_managed` guard (auth/routes.py:76). No
+    endpoint creates non-config-managed user EntityLimit rows today; a future manual-limit
+    feature would need to reconcile this.
+    """
+    users_cfg = yaml_data.get("users", {}) or {}
+    for email, cfg in users_cfg.items():
+        # A null/non-dict entry behaves like an empty block (no pool → fall through to
+        # the global pool), matching the login path where user_cfg defaults to {}.
+        if not isinstance(cfg, dict):
+            cfg = {}
+        entity = db.session.execute(
+            select(Entity).filter_by(entity_type="user", email=email)
+        ).scalar_one_or_none()
+        if entity is None:
+            # The literal "default" key and any not-yet-logged-in users resolve to no
+            # Entity; their limit row is created at login. Skip.
+            continue
+
+        # Unwrap the pool exactly as the login path does (auth/routes.py:71-72): a nested
+        # `pool:` block and the flat top-level form are both valid.
+        pool_src = cfg.get("pool") or cfg
+        pool = _token_fields(pool_src) if isinstance(pool_src, dict) else None
+
+        limit = db.session.execute(
+            select(EntityLimit).filter_by(entity_id=entity.id)
+        ).scalar_one_or_none()
+
+        if pool is None:
+            # No token fields in this user's block: drop any config-managed limit so the
+            # entity falls through to the group/global pool.
+            if limit is not None and limit.config_managed:
+                db.session.delete(limit)
+            continue
+
+        max_coins, refresh_coins, starting_coins = pool
+
+        # Capture the prior starting value BEFORE the in-place mutation below — the
+        # client-sync pattern mutates the row in place, so reading it after would always
+        # yield the new value and the balance-reset check would never fire.
+        old_starting = float(limit.starting_coins) if limit is not None else None
+
+        if limit is not None:
+            limit.max_coins = max_coins
+            limit.refresh_coins = refresh_coins
+            limit.starting_coins = starting_coins
+            limit.config_managed = True
+        else:
+            db.session.add(EntityLimit(
+                entity_id=entity.id,
+                max_coins=max_coins,
+                refresh_coins=refresh_coins,
+                starting_coins=starting_coins,
+                config_managed=True,
+            ))
+
+        # Reset the live balance only on a genuine starting change of an existing
+        # per-user limit. old_starting is None exactly when there was no prior limit row
+        # (first per-user block) — preserve the accrued balance in that case.
+        # -2 == unlimited; skip the reset (matches reset_user_tokens, admin/routes.py:78).
+        starting_changed = (old_starting is not None) and (old_starting != float(starting_coins))
+        if starting_changed and max_coins != -2:
+            balance = db.session.execute(
+                select(EntityBalance).filter_by(entity_id=entity.id)
+            ).scalar_one_or_none()
+            if balance is not None:
+                balance.coins_left = starting_coins
+                balance.last_refill_at = utcnow()
 
     db.session.commit()
 

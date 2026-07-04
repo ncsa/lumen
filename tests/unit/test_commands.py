@@ -1,7 +1,9 @@
 """Tests for YAML sync functions in lumen/commands.py."""
+from datetime import datetime
+
 from sqlalchemy import select
 
-from lumen.commands import sync_clients_from_yaml, sync_groups_from_yaml, sync_models_from_yaml, sync_user_groups_from_yaml
+from lumen.commands import sync_clients_from_yaml, sync_groups_from_yaml, sync_models_from_yaml, sync_user_groups_from_yaml, sync_user_limits_from_yaml
 
 
 def test_sync_models_creates_model_config(app):
@@ -580,5 +582,215 @@ def test_sync_user_groups_default_groups_apply_to_all(app):
             select(GroupMember).filter_by(entity_id=uid, group_id=everyone.id)
         ).scalar_one_or_none()
         assert member is not None
+
+
+# --- sync_user_limits_from_yaml -------------------------------------------------
+# These mirror the sync_clients_from_yaml tests above. The profile reads coin
+# settings from EntityLimit/EntityBalance (profile/routes.py:156-169), so admin
+# edits to a user's max/refresh/starting must reach the DB on config reload, not
+# only at login. The live balance (EntityBalance.coins_left) is reset to the new
+# starting only when an existing per-user limit's starting actually changes.
+
+def _set_global_token_defaults(app, max_=0, refresh=0, starting=None):
+    """_token_fields fills missing fields from app.config['TOKEN_DEFAULTS']."""
+    if starting is None:
+        starting = max_
+    app.config["TOKEN_DEFAULTS"] = {"max": max_, "refresh": refresh, "starting": starting}
+
+
+def test_sync_user_limits_creates_entity_limit(app):
+    """Flat form (users.<email>.{max,refresh,starting}) creates a config-managed EntityLimit."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        _set_global_token_defaults(app)
+        uid = _make_user(db, "flat@example.com")
+
+        sync_user_limits_from_yaml({
+            "users": {"flat@example.com": {"max": 100, "refresh": 10, "starting": 100}}
+        })
+
+        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=uid)).scalar_one()
+        assert float(limit.max_coins) == 100.0
+        assert float(limit.refresh_coins) == 10.0
+        assert float(limit.starting_coins) == 100.0
+        assert limit.config_managed is True
+
+
+def test_sync_user_limits_creates_entity_limit_nested_pool(app):
+    """Nested pool: form (users.<email>.pool.{...}) creates a limit with correct values.
+
+    Regression test: _token_fields must be called on the unwrapped `pool` block, not the
+    raw user block — otherwise the nested form returns None and the limit is never created
+    (or, on a later reload, deleted).
+    """
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        _set_global_token_defaults(app)
+        uid = _make_user(db, "nested@example.com")
+
+        sync_user_limits_from_yaml({
+            "users": {"nested@example.com": {"pool": {"max": 200, "refresh": 20, "starting": 200}}}
+        })
+
+        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=uid)).scalar_one()
+        assert float(limit.max_coins) == 200.0
+        assert float(limit.refresh_coins) == 20.0
+        assert float(limit.starting_coins) == 200.0
+        assert limit.config_managed is True
+
+
+def test_sync_user_limits_updates_existing(app):
+    """A pre-existing config-managed limit is updated to the new values."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        _set_global_token_defaults(app)
+        uid = _make_user(db, "upd@example.com")
+        db.session.add(EntityLimit(
+            entity_id=uid, max_coins=50, refresh_coins=5, starting_coins=50, config_managed=True,
+        ))
+        db.session.commit()
+
+        sync_user_limits_from_yaml({
+            "users": {"upd@example.com": {"max": 500, "refresh": 50, "starting": 50}}
+        })
+
+        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=uid)).scalar_one()
+        assert float(limit.max_coins) == 500.0
+        assert float(limit.refresh_coins) == 50.0
+        assert float(limit.starting_coins) == 50.0
+
+
+def test_sync_user_limits_resets_balance_when_starting_changes(app):
+    """Changing an existing limit's starting resets coins_left to the new value.
+
+    This test fails if old_starting is captured AFTER the in-place upsert mutation (the
+    mutation overwrites starting_coins, so the delta is always zero and the reset never fires).
+    """
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
+        _set_global_token_defaults(app)
+        uid = _make_user(db, "rst@example.com")
+        db.session.add(EntityLimit(
+            entity_id=uid, max_coins=100, refresh_coins=10, starting_coins=100, config_managed=True,
+        ))
+        old_refill = datetime(2025, 1, 1, 0, 0, 0)
+        db.session.add(EntityBalance(entity_id=uid, coins_left=50, last_refill_at=old_refill))
+        db.session.commit()
+
+        sync_user_limits_from_yaml({
+            "users": {"rst@example.com": {"max": 100, "refresh": 10, "starting": 200}}
+        })
+
+        balance = db.session.execute(select(EntityBalance).filter_by(entity_id=uid)).scalar_one()
+        assert float(balance.coins_left) == 200.0
+        assert balance.last_refill_at > old_refill
+
+
+def test_sync_user_limits_leaves_balance_when_only_max_changes(app):
+    """Changing only max (not starting) leaves the live balance untouched."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
+        _set_global_token_defaults(app)
+        uid = _make_user(db, "maxonly@example.com")
+        db.session.add(EntityLimit(
+            entity_id=uid, max_coins=100, refresh_coins=10, starting_coins=100, config_managed=True,
+        ))
+        db.session.add(EntityBalance(entity_id=uid, coins_left=42, last_refill_at=datetime(2025, 1, 1)))
+        db.session.commit()
+
+        sync_user_limits_from_yaml({
+            "users": {"maxonly@example.com": {"max": 1000, "refresh": 10, "starting": 100}}
+        })
+
+        balance = db.session.execute(select(EntityBalance).filter_by(entity_id=uid)).scalar_one()
+        assert float(balance.coins_left) == 42.0
+
+
+def test_sync_user_limits_preserves_balance_on_first_per_user_block(app):
+    """Adding a first per-user block for a user on the global pool preserves accrued coins."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
+        _set_global_token_defaults(app)
+        uid = _make_user(db, "first@example.com")
+        # User was on the global pool — no EntityLimit, but has an accrued balance.
+        db.session.add(EntityBalance(entity_id=uid, coins_left=250, last_refill_at=datetime(2025, 1, 1)))
+        db.session.commit()
+
+        sync_user_limits_from_yaml({
+            "users": {"first@example.com": {"max": 500, "refresh": 10, "starting": 500}}
+        })
+
+        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=uid)).scalar_one()
+        assert float(limit.starting_coins) == 500.0
+        balance = db.session.execute(select(EntityBalance).filter_by(entity_id=uid)).scalar_one()
+        assert float(balance.coins_left) == 250.0  # preserved, not reset to 500
+
+
+def test_sync_user_limits_skips_unlimited_balance_reset(app):
+    """An unlimited user (max=-2) whose starting changes gets the limit updated but balance untouched."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
+        _set_global_token_defaults(app)
+        uid = _make_user(db, "unlim@example.com")
+        db.session.add(EntityLimit(
+            entity_id=uid, max_coins=-2, refresh_coins=0, starting_coins=0, config_managed=True,
+        ))
+        db.session.add(EntityBalance(entity_id=uid, coins_left=77, last_refill_at=datetime(2025, 1, 1)))
+        db.session.commit()
+
+        sync_user_limits_from_yaml({
+            "users": {"unlim@example.com": {"max": -2, "refresh": 0, "starting": 100}}
+        })
+
+        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=uid)).scalar_one()
+        assert float(limit.max_coins) == -2.0
+        assert float(limit.starting_coins) == 100.0
+        balance = db.session.execute(select(EntityBalance).filter_by(entity_id=uid)).scalar_one()
+        assert float(balance.coins_left) == 77.0
+
+
+def test_sync_user_limits_removes_limit_when_pool_removed(app):
+    """If the pool config is dropped from yaml, the config-managed EntityLimit is deleted."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        _set_global_token_defaults(app)
+        uid = _make_user(db, "rm@example.com")
+        db.session.add(EntityLimit(
+            entity_id=uid, max_coins=100, refresh_coins=10, starting_coins=100, config_managed=True,
+        ))
+        db.session.commit()
+
+        sync_user_limits_from_yaml({"users": {"rm@example.com": {"groups": ["default"]}}})
+
+        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=uid)).scalar_one_or_none()
+        assert limit is None
+
+
+def test_sync_user_limits_skips_user_not_in_db(app):
+    """A config entry for an email with no DB user (never logged in) is skipped without error."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        _set_global_token_defaults(app)
+
+        sync_user_limits_from_yaml({
+            "users": {"ghost@example.com": {"max": 100, "refresh": 10, "starting": 100}}
+        })
+
+        # No entity, so no limit row should exist for any entity_id.
+        count = db.session.execute(select(EntityLimit)).scalars().all()
+        assert count == []
 
 
