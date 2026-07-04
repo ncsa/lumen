@@ -41,7 +41,7 @@ A **Period** selector at the top right controls the window for every stat and ch
 Admins see their own usage by default, with two extra controls:
 
 - **Show all users** — a checkbox that switches the page to system-wide totals across every user and
-  client, and reveals the user-growth charts.
+  project, and reveals the user-growth charts.
 - **Per-user filter** — from the **Users** admin page, the bar-chart button next to a user opens the
   Usage page filtered to that user. A banner at the top shows whose usage you're viewing, with a
   **Clear filter** link to return to your own.

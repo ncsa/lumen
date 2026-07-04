@@ -1,4 +1,4 @@
-"""Basic smoke tests for chat, usage, clients, and admin pages."""
+"""Basic smoke tests for chat, usage, projects, and admin pages."""
 from http import HTTPStatus
 
 from sqlalchemy import select
@@ -47,13 +47,13 @@ def test_profile_page_loads(auth_client):
     assert resp.status_code == HTTPStatus.OK
 
 
-def test_clients_page_requires_login(client):
-    resp = client.get("/clients", follow_redirects=False)
+def test_projects_page_requires_login(client):
+    resp = client.get("/projects", follow_redirects=False)
     assert resp.status_code == HTTPStatus.FOUND
 
 
-def test_clients_page_loads(auth_client):
-    resp = auth_client.get("/clients")
+def test_projects_page_loads(auth_client):
+    resp = auth_client.get("/projects")
     assert resp.status_code == HTTPStatus.OK
 
 

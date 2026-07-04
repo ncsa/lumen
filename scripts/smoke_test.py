@@ -20,10 +20,10 @@ HOST = urlparse(BASE).netloc
 # friendly themed page (or a real 404), never an unstyled crash.
 EDGE_PROBES = [
     "/models/does-not-exist",
-    "/clients/999999",
+    "/projects/999999",
     "/admin/users/999999/profile",
     "/help/nonexistent-page",
-    "/profile/client/999999",
+    "/profile/project/999999",
 ]
 
 

@@ -27,7 +27,7 @@ CONFIG_YAML=./dev.config.yaml uv run python -c \
 ## smoke_test.py
 
 Crawls every reachable in-app link and probes known edge cases (missing models,
-clients, users, help pages). Fails if any link 404/500s or renders an unstyled
+projects, users, help pages). Fails if any link 404/500s or renders an unstyled
 crash page. Use it after UI or routing changes.
 
 ```bash
@@ -36,8 +36,8 @@ BASE_URL=http://localhost:5001 uv run python scripts/smoke_test.py
 
 ## screenshots.py
 
-Regenerates the screenshots in `docs/img/` (chat, models, model detail, clients,
-client detail, profile). The footer and skip-to-content link are cropped, and the
+Regenerates the screenshots in `docs/img/` (chat, models, model detail, projects,
+project detail, profile). The footer and skip-to-content link are cropped, and the
 model-detail shot is taken as a non-admin user so admin-only endpoint URLs are not
 shown. Run it with the **same** `CONFIG_YAML` as the running app.
 

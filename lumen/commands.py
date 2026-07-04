@@ -32,7 +32,7 @@ _ACCESS_INPUT = {
     "graylist": "allowed",
 }
 _LEGACY_ACCESS_TERMS = {"whitelist", "blacklist", "graylist"}
-# Recognized model_access list keys at a scope (group/client), new + legacy.
+# Recognized model_access list keys at a scope (group/project), new + legacy.
 _SCOPE_ACCESS_KEYS = ("allowed", "blocked", "whitelist", "blacklist", "graylist")
 
 # Deduplicate deprecation warnings; the config watcher re-runs sync every 5s.
@@ -51,7 +51,7 @@ def write_config_yaml(config_path, data):
     Each top-level key is dumped as its own document fragment (preserving key order
     and keeping blocks visually separated), the previous file is backed up to
     ``<config>.bak``, and the new content is written atomically via a temp file.
-    Shared by the admin config editor and client creation.
+    Shared by the admin config editor and project creation.
 
     If you add a new secret-bearing key to the schema, add it to
     :data:`SENSITIVE_KEYS` in :mod:`lumen.services.config_watcher` so it is
@@ -74,22 +74,22 @@ def write_config_yaml(config_path, data):
         os.unlink(tmp_path)
 
 
-def backfill_clients_to_config(yaml_data, config_path):
-    """Ensure every client entity in the DB has an entry in config.yaml.
+def backfill_projects_to_config(yaml_data, config_path):
+    """Ensure every project entity in the DB has an entry in config.yaml.
 
-    Existing installs have clients that live only in the DB (created before client
+    Existing installs have projects that live only in the DB (created before project
     creation wrote them to config); add an empty entry for each one missing from the
-    file so it reflects which clients exist. Mutates yaml_data in place and writes the
+    file so it reflects which projects exist. Mutates yaml_data in place and writes the
     file only when something was added. Returns True if the file was written.
     """
     names = db.session.execute(
-        select(Entity.name).where(Entity.entity_type == "client")
+        select(Entity.name).where(Entity.entity_type == "project")
     ).scalars().all()
-    clients_cfg = yaml_data.setdefault("clients", {})
+    projects_cfg = yaml_data.setdefault("projects", {})
     added = False
     for name in names:
-        if name not in clients_cfg:
-            clients_cfg[name] = {}
+        if name not in projects_cfg:
+            projects_cfg[name] = {}
             added = True
     if added:
         write_config_yaml(config_path, yaml_data)
@@ -425,12 +425,12 @@ def sync_user_groups_from_yaml(yaml_data):
     db.session.commit()
 
 
-def sync_clients_from_yaml(yaml_data):
-    """Sync EntityLimit and EntityModelAccess for client (service) entities from yaml_data['clients'].
+def sync_projects_from_yaml(yaml_data):
+    """Sync EntityLimit and EntityModelAccess for project (service) entities from yaml_data['projects'].
 
     Config format:
-      clients:
-        default:                    <- applied to all clients without a named entry
+      projects:
+        default:                    <- applied to all projects without a named entry
           max: 100
           refresh: 0
           starting: 100
@@ -438,18 +438,18 @@ def sync_clients_from_yaml(yaml_data):
             default: allowed        <- entity-level default for unlisted models
             allowed: [name, ...]
             blocked: [name, ...]
-        my-client-name:             <- overrides for a specific client
+        my-project-name:            <- overrides for a specific project
           max: 500
           groups: [research]        <- group memberships granting extra model access
     """
-    clients_cfg = yaml_data.get("clients", {})
-    if not clients_cfg:
+    projects_cfg = yaml_data.get("projects", {})
+    if not projects_cfg:
         return
 
-    default_cfg = clients_cfg.get("default", {})
-    named_cfg = {k: v for k, v in clients_cfg.items() if k != "default"}
+    default_cfg = projects_cfg.get("default", {})
+    named_cfg = {k: v for k, v in projects_cfg.items() if k != "default"}
 
-    client_entities = db.session.execute(select(Entity).filter_by(entity_type="client")).scalars().all()
+    project_entities = db.session.execute(select(Entity).filter_by(entity_type="project")).scalars().all()
 
     # Preload all models once to avoid an N+1 lookup per model_access entry
     models_by_name = {
@@ -460,10 +460,10 @@ def sync_clients_from_yaml(yaml_data):
         g.name: g for g in db.session.execute(select(Group)).scalars().all()
     }
 
-    for entity in client_entities:
-        # An empty named entry (e.g. `my-client: {}`, written on client creation so the
-        # file records that the client exists) carries no settings, so fall back to the
-        # shared `default` block just as a client with no entry at all would.
+    for entity in project_entities:
+        # An empty named entry (e.g. `my-project: {}`, written on project creation so the
+        # file records that the project exists) carries no settings, so fall back to the
+        # shared `default` block just as a project with no entry at all would.
         cfg = named_cfg.get(entity.name) or default_cfg
         if not cfg:
             continue
@@ -491,7 +491,7 @@ def sync_clients_from_yaml(yaml_data):
 
         # Sync model_access
         access_cfg = cfg.get("model_access", {})
-        pairs, entity_default, ack_models = _parse_scope_access(access_cfg, context=f"client '{entity.name}'")
+        pairs, entity_default, ack_models = _parse_scope_access(access_cfg, context=f"project '{entity.name}'")
         _apply_legacy_ack(ack_models, models_by_name)
         entity.model_access_default = entity_default
 
@@ -500,7 +500,7 @@ def sync_clients_from_yaml(yaml_data):
             mc = models_by_name.get(model_name)
             if mc is None:
                 current_app.logger.warning(
-                    "sync_clients_from_yaml: model '%s' not found for client '%s', skipping",
+                    "sync_projects_from_yaml: model '%s' not found for project '%s', skipping",
                     model_name, entity.name,
                 )
                 continue
@@ -511,13 +511,13 @@ def sync_clients_from_yaml(yaml_data):
             ))
 
         # Sync config-managed group memberships. Membership can grant model access the
-        # client's own rules would otherwise block (resolved in services/llm.py).
+        # project's own rules would otherwise block (resolved in services/llm.py).
         desired_group_ids = set()
         for gname in cfg.get("groups", []) or []:
             group = groups_by_name.get(gname)
             if group is None:
                 current_app.logger.warning(
-                    "sync_clients_from_yaml: group '%s' not found for client '%s', skipping",
+                    "sync_projects_from_yaml: group '%s' not found for project '%s', skipping",
                     gname, entity.name,
                 )
                 continue
@@ -540,7 +540,7 @@ def sync_clients_from_yaml(yaml_data):
 def sync_user_limits_from_yaml(yaml_data):
     """Sync per-user EntityLimit (coin pool) rows from yaml_data['users'].
 
-    Mirrors the EntityLimit upsert in sync_clients_from_yaml, but for user entities.
+    Mirrors the EntityLimit upsert in sync_projects_from_yaml, but for user entities.
     Unlike the login path (_apply_user_model_overrides in auth/routes.py), this runs on
     every config reload so admin edits to a user's max/refresh/starting take effect
     immediately instead of waiting for the user to log in again.
@@ -588,7 +588,7 @@ def sync_user_limits_from_yaml(yaml_data):
         max_coins, refresh_coins, starting_coins = pool
 
         # Capture the prior starting value BEFORE the in-place mutation below — the
-        # client-sync pattern mutates the row in place, so reading it after would always
+        # project-sync pattern mutates the row in place, so reading it after would always
         # yield the new value and the balance-reset check would never fire.
         old_starting = float(limit.starting_coins) if limit is not None else None
 
@@ -625,11 +625,11 @@ def sync_user_limits_from_yaml(yaml_data):
 @click.command("init-db")
 @with_appcontext
 def init_db_cmd():
-    """Sync ModelConfig, ModelEndpoint, Groups, and clients from config.yaml."""
+    """Sync ModelConfig, ModelEndpoint, Groups, and projects from config.yaml."""
     yaml_data = current_app.config["YAML_DATA"]
     sync_models_from_yaml(yaml_data)
     sync_groups_from_yaml(yaml_data)
-    sync_clients_from_yaml(yaml_data)
+    sync_projects_from_yaml(yaml_data)
     click.echo("Database synced from config.yaml.")
 
 

@@ -66,22 +66,22 @@ def test_profile_page_with_no_endpoints(app, auth_client, test_model):
 
 
 # ---------------------------------------------------------------------------
-# client_profile_page redirect
+# project_profile_page redirect
 # ---------------------------------------------------------------------------
 
-def test_client_profile_page_redirects(app, auth_client):
+def test_project_profile_page_redirects(app, auth_client):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
-        svc = Entity(entity_type="client", name="svc", initials="SV", active=True)
+        svc = Entity(entity_type="project", name="svc", initials="SV", active=True)
         db.session.add(svc)
         db.session.commit()
         db.session.refresh(svc)
         sid = svc.id
 
-    resp = auth_client.get(f"/profile/client/{sid}", follow_redirects=False)
+    resp = auth_client.get(f"/profile/project/{sid}", follow_redirects=False)
     assert resp.status_code == HTTPStatus.MOVED_PERMANENTLY
-    assert "/clients/" in resp.headers["Location"]
+    assert "/projects/" in resp.headers["Location"]
 
 
 # ---------------------------------------------------------------------------

@@ -31,15 +31,15 @@ Model access is **orthogonal**: three independent per-model fields control it, i
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `access` | inherit | The model's own allow/block default. Leave unset to inherit scope defaults (`model_access.default`, then `defaults.models.access`). When set, it ranks above group/user *defaults* but below an explicit per-scope `allowed`/`blocked` rule — so a model can be blocked-by-default yet enabled for a specific group/user (see [User Groups](config-users.md) and [Clients](config-clients.md)). |
-| `needs_ack` | `false` | When `true`, a user must acknowledge the model before using it. This is a **sticky, model-level property** — no group, client, or user scope can add or remove it. It only triggers the consent gate; it does not by itself grant or deny access. |
+| `access` | inherit | The model's own allow/block default. Leave unset to inherit scope defaults (`model_access.default`, then `defaults.models.access`). When set, it ranks above group/user *defaults* but below an explicit per-scope `allowed`/`blocked` rule — so a model can be blocked-by-default yet enabled for a specific group/user (see [User Groups](config-users.md) and [Projects](config-projects.md)). |
+| `needs_ack` | `false` | When `true`, a user must acknowledge the model before using it. This is a **sticky, model-level property** — no group, project, or user scope can add or remove it. It only triggers the consent gate; it does not by itself grant or deny access. |
 | `disabled` | `false` | **Hard off.** The model is hidden everywhere and cannot be used. This is **not overridable** by any scope — it always wins. Use it to take a model offline without deleting it. |
 | `ack_message` | unset | Optional acknowledgement message shown when `needs_ack` is `true`. Overrides the global `defaults.models.ack_message`. |
 
 ```yaml
 models:
   - name: my-model
-    access: allowed       # baseline; overridable per group/client/user
+    access: allowed       # baseline; overridable per group/project/user
     needs_ack: true       # require acknowledgement (model-level, sticky)
     ack_message: "This model was trained outside the U.S. — use with awareness."
     input_cost_per_million: 0.5
@@ -51,7 +51,7 @@ models:
 
 ### `disabled` is a hard off
 
-Setting `disabled: true` short-circuits all access resolution to blocked — the model disappears from the chat UI, the API, and every scope's allow list. No group, client, or user override can bring it back. This replaces the old `active: false`. To **permanently** remove a model, delete its entry from `config.yaml` entirely.
+Setting `disabled: true` short-circuits all access resolution to blocked — the model disappears from the chat UI, the API, and every scope's allow list. No group, project, or user override can bring it back. This replaces the old `active: false`. To **permanently** remove a model, delete its entry from `config.yaml` entirely.
 
 > The legacy `active:` key is still accepted as input (with a deprecation warning): `active: false` maps to `disabled: true`. Prefer `disabled` in new configs.
 

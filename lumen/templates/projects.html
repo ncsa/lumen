@@ -1,13 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Clients — {{ app_name }}{% endblock %}
+{% block title %}Projects — {{ app_name }}{% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <h1 class="mb-0">Clients</h1>
+  <h1 class="mb-0">Projects</h1>
   {% if is_admin %}
-  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createClientModal"
+  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createProjectModal"
           aria-haspopup="dialog">
-    + New Client
+    + New Project
   </button>
   {% endif %}
 </div>
@@ -17,8 +17,8 @@
   <div class="col-sm-6 col-lg-3">
     <div class="card h-100">
       <div class="card-body">
-        <div class="text-muted small mb-1">{% if is_admin %}Total Clients{% else %}Clients{% endif %}</div>
-        <div class="fs-4 fw-semibold">{{ "{:,}".format(total_clients) }}</div>
+        <div class="text-muted small mb-1">{% if is_admin %}Total Projects{% else %}Projects{% endif %}</div>
+        <div class="fs-4 fw-semibold">{{ "{:,}".format(total_projects) }}</div>
         <div class="text-muted small">{% if is_admin %}all{% else %}managed by you{% endif %}</div>
       </div>
     </div>
@@ -54,8 +54,8 @@
 
 <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
   <div class="d-flex align-items-center gap-2">
-    <label for="client-per-page" class="text-muted small mb-0">Display</label>
-    <select id="client-per-page" class="form-select form-select-sm" style="width:auto">
+    <label for="project-per-page" class="text-muted small mb-0">Display</label>
+    <select id="project-per-page" class="form-select form-select-sm" style="width:auto">
       <option value="25">25</option>
       <option value="50">50</option>
       <option value="100">100</option>
@@ -64,21 +64,21 @@
     <span class="text-muted small mb-0">results</span>
     {% if is_admin %}
     <div class="form-check ms-2 mb-0">
-      <input class="form-check-input" type="checkbox" id="client-show-disabled">
-      <label class="form-check-label text-muted small" for="client-show-disabled">Show disabled</label>
+      <input class="form-check-input" type="checkbox" id="project-show-disabled">
+      <label class="form-check-label text-muted small" for="project-show-disabled">Show disabled</label>
     </div>
     {% endif %}
   </div>
   <div class="d-flex align-items-center gap-2">
-    <label for="client-search" class="text-muted small mb-0">Search:</label>
-    <input id="client-search" type="search" class="form-control form-control-sm" style="width:220px"
-           placeholder="Filter by name…" aria-label="Filter clients by name">
+    <label for="project-search" class="text-muted small mb-0">Search:</label>
+    <input id="project-search" type="search" class="form-control form-control-sm" style="width:220px"
+           placeholder="Filter by name…" aria-label="Filter projects by name">
   </div>
 </div>
 
 <div class="table-responsive">
-  <table class="table table-striped table-hover align-middle" id="client-table">
-    <caption class="visually-hidden">Client accounts list</caption>
+  <table class="table table-striped table-hover align-middle" id="project-table">
+    <caption class="visually-hidden">Project accounts list</caption>
     <thead class="table-light">
       <tr>
         <th scope="col" class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
@@ -91,33 +91,33 @@
         <th><span class="visually-hidden">Actions</span></th>
       </tr>
     </thead>
-    <tbody id="client-tbody">
+    <tbody id="project-tbody">
       <tr><td colspan="8" class="text-center text-muted py-3">Loading…</td></tr>
     </tbody>
   </table>
 </div>
 
 <div class="d-flex justify-content-between align-items-center mt-2 flex-wrap gap-2">
-  <span id="client-range" class="text-muted small"></span>
-  <div id="client-pagination" class="d-flex gap-1 flex-wrap"></div>
+  <span id="project-range" class="text-muted small"></span>
+  <div id="project-pagination" class="d-flex gap-1 flex-wrap"></div>
 </div>
 
 {% if is_admin %}
-<!-- Create Client Modal -->
-<div class="modal fade" id="createClientModal" tabindex="-1" aria-labelledby="createClientModalLabel">
+<!-- Create Project Modal -->
+<div class="modal fade" id="createProjectModal" tabindex="-1" aria-labelledby="createProjectModalLabel">
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
-        <h2 class="modal-title h5" id="createClientModalLabel">New Client</h2>
+        <h2 class="modal-title h5" id="createProjectModalLabel">New Project</h2>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <label for="client-name-input" class="form-label">Client name</label>
-        <input type="text" id="client-name-input" class="form-control" placeholder="e.g. research-bot">
+        <label for="project-name-input" class="form-label">Project name</label>
+        <input type="text" id="project-name-input" class="form-control" placeholder="e.g. research-bot">
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-primary" id="create-client-btn">Create</button>
+        <button class="btn btn-primary" id="create-project-btn">Create</button>
       </div>
     </div>
   </div>
@@ -148,12 +148,12 @@
   let showDisabled = params.get('show_disabled') === '1';
   let debounceTimer;
 
-  const tbody = document.getElementById('client-tbody');
-  const paginationEl = document.getElementById('client-pagination');
-  const rangeLabel = document.getElementById('client-range');
-  const searchInput = document.getElementById('client-search');
-  const perPageSel = document.getElementById('client-per-page');
-  const showDisabledChk = document.getElementById('client-show-disabled');
+  const tbody = document.getElementById('project-tbody');
+  const paginationEl = document.getElementById('project-pagination');
+  const rangeLabel = document.getElementById('project-range');
+  const searchInput = document.getElementById('project-search');
+  const perPageSel = document.getElementById('project-per-page');
+  const showDisabledChk = document.getElementById('project-show-disabled');
 
   searchInput.value = search;
   perPageSel.value = String(perPage);
@@ -205,11 +205,11 @@
 
     paginationEl.innerHTML = html;
     paginationEl.querySelectorAll('button[data-page]').forEach(b => {
-      b.addEventListener('click', () => { page = parseInt(b.dataset.page); fetchClients(); });
+      b.addEventListener('click', () => { page = parseInt(b.dataset.page); fetchProjects(); });
     });
   }
 
-  function fetchClients() {
+  function fetchProjects() {
     updateSortHeaders();
     syncUrl();
     const qs = new URLSearchParams({ page, per_page: perPage, sort, order });
@@ -218,7 +218,7 @@
 
     tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">Loading…</td></tr>';
 
-    fetch('/clients/data?' + qs.toString())
+    fetch('/projects/data?' + qs.toString())
       .then(r => r.json())
       .then(data => {
         const start = (data.page - 1) * data.per_page + 1;
@@ -227,13 +227,13 @@
           ? `Showing ${start.toLocaleString()} to ${end.toLocaleString()} of ${data.total.toLocaleString()} entries`
           : 'No entries found';
 
-        if (!data.clients.length) {
-          tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No clients found.</td></tr>';
+        if (!data.projects.length) {
+          tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No projects found.</td></tr>';
           paginationEl.innerHTML = '';
           return;
         }
 
-        tbody.innerHTML = data.clients.map(c => {
+        tbody.innerHTML = data.projects.map(c => {
           const activeIcon = c.active
             ? '<span role="img" aria-label="Active">✓</span>'
             : '<span role="img" aria-label="Inactive" class="text-danger">✗</span>';
@@ -244,7 +244,7 @@
             const toggleLabel = c.active ? 'Deactivate' : 'Activate';
             actions += ` <button class="btn btn-sm ${toggleClass} toggle-btn" data-id="${c.id}" title="${toggleLabel}" aria-label="${toggleLabel} ${escHtml(c.name)}"><i class="bi ${toggleIcon}" aria-hidden="true"></i></button>`;
           }
-          return `<tr id="client-row-${c.id}">
+          return `<tr id="project-row-${c.id}">
             <td><a href="${escHtml(c.detail_url)}">${escHtml(c.name)}</a></td>
             <td class="text-center">${c.managers}</td>
             <td class="text-center">${activeIcon}</td>
@@ -258,24 +258,24 @@
 
         if (IS_ADMIN) {
           tbody.querySelectorAll('.toggle-btn').forEach(btn => {
-            btn.addEventListener('click', () => toggleClient(btn));
+            btn.addEventListener('click', () => toggleProject(btn));
           });
         }
 
         renderPagination(data.total, data.page, data.per_page);
       })
       .catch(() => {
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-3">Failed to load clients.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-3">Failed to load projects.</td></tr>';
       });
   }
 
-  function toggleClient(btn) {
+  function toggleProject(btn) {
     const id = btn.dataset.id;
     btn.disabled = true;
-    fetch(`/clients/${id}/toggle`, { method: 'POST', headers: { "X-CSRFToken": csrfToken } })
+    fetch(`/projects/${id}/toggle`, { method: 'POST', headers: { "X-CSRFToken": csrfToken } })
       .then(r => r.json())
-      // Re-fetch so a client that was just disabled drops out unless "Show disabled" is on.
-      .then(() => fetchClients())
+      // Re-fetch so a project that was just disabled drops out unless "Show disabled" is on.
+      .then(() => fetchProjects())
       .catch(() => { btn.disabled = false; });
   }
 
@@ -287,7 +287,7 @@
       if (sort === col) { order = order === 'asc' ? 'desc' : 'asc'; }
       else { sort = col; order = DESC_COLS.has(col) ? 'desc' : 'asc'; }
       page = 1;
-      fetchClients();
+      fetchProjects();
     };
     th.addEventListener('click', activate);
     th.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
@@ -298,39 +298,39 @@
     debounceTimer = setTimeout(() => {
       search = searchInput.value.trim();
       page = 1;
-      fetchClients();
+      fetchProjects();
     }, 300);
   });
 
   perPageSel.addEventListener('change', () => {
     perPage = parseInt(perPageSel.value);
     page = 1;
-    fetchClients();
+    fetchProjects();
   });
 
   if (showDisabledChk) {
     showDisabledChk.addEventListener('change', () => {
       showDisabled = showDisabledChk.checked;
       page = 1;
-      fetchClients();
+      fetchProjects();
     });
   }
 
-  fetchClients();
+  fetchProjects();
 })();
 
 {% if is_admin %}
-document.getElementById("create-client-btn").addEventListener("click", async function () {
-  const name = document.getElementById("client-name-input").value.trim();
+document.getElementById("create-project-btn").addEventListener("click", async function () {
+  const name = document.getElementById("project-name-input").value.trim();
   if (!name) return;
-  const resp = await fetch("/clients", {
+  const resp = await fetch("/projects", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
     body: JSON.stringify({ name }),
   });
   if (resp.ok) {
     const data = await resp.json();
-    window.location.href = "/clients/" + data.id;
+    window.location.href = "/projects/" + data.id;
   } else {
     const data = await resp.json();
     alert("Error: " + (data.error || "Unknown error"));

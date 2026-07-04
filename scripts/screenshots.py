@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Regenerate the help-doc screenshots in docs/img/ from a running dev instance.
 
-Captures Chat, Models, Model detail, Clients, Client detail, and Profile with the
+Captures Chat, Models, Model detail, Projects, Project detail, and Profile with the
 footer and skip-to-content link cropped out. The model-detail shot is taken as a
 non-admin user so admin-only endpoint URLs are not exposed.
 
@@ -42,7 +42,7 @@ ilw-footer, footer, [slot='footer'] { display:none !important; }
 
 def ensure_demo_data(app):
     """Idempotently create a non-admin demo user (for the URL-free model-detail
-    shot) and a demo client with a key, then return (model_name, user_cookie)."""
+    shot) and a demo project with a key, then return (model_name, user_cookie)."""
     with app.app_context():
         model = os.environ.get("MODEL")
         if not model:
@@ -60,15 +60,15 @@ def ensure_demo_data(app):
             db.session.add(user)
         user.model_access_default = "allowed"  # see every model on the detail page
 
-        client = db.session.execute(
-            select(Entity).filter_by(name="example-bot", entity_type="client")
+        project = db.session.execute(
+            select(Entity).filter_by(name="example-bot", entity_type="project")
         ).scalar_one_or_none()
-        if not client:
-            client = Entity(entity_type="client", name="example-bot", initials="EB", active=True)
-            db.session.add(client)
+        if not project:
+            project = Entity(entity_type="project", name="example-bot", initials="EB", active=True)
+            db.session.add(project)
             db.session.flush()
             key = "sk_example_0123456789abcdef"
-            db.session.add(APIKey(entity_id=client.id, name="example-key",
+            db.session.add(APIKey(entity_id=project.id, name="example-key",
                                   key_hash=hash_api_key(key),
                                   key_hint=f"{key[:7]}...{key[-4:]}", active=True))
         db.session.commit()
@@ -136,10 +136,10 @@ def main():
             print(f"{name}.png")
 
         shot("/models", "models")
-        shot("/clients", "clients")
-        page.goto(BASE + "/clients", wait_until="networkidle")
-        href = page.eval_on_selector("a[href*='/clients/']", "e => e.getAttribute('href')")
-        shot(href, "client-detail", full=True)
+        shot("/projects", "projects")
+        page.goto(BASE + "/projects", wait_until="networkidle")
+        href = page.eval_on_selector("a[href*='/projects/']", "e => e.getAttribute('href')")
+        shot(href, "project-detail", full=True)
         shot("/profile", "profile", full=True)
         actx.close()
 

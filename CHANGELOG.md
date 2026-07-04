@@ -4,6 +4,15 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** The "client" domain concept (machine-to-machine service accounts with their own API keys, coin pools, and model access) has been renamed to "project" across the entire codebase — data model, API, UI, configuration, and documentation. This is a clean break with no backwards compatibility shims. Operators upgrading to this version must:
+  - Rename the top-level `clients:` key to `projects:` in `config.yaml`. Named entries and the `default` block are otherwise unchanged.
+  - Run `flask db upgrade` to apply migration `c4d5e6f7a8b9`, which renames the `entity_managers.client_entity_id` column to `project_entity_id`, updates the `entities.entity_type` discriminator value from `'client'` to `'project'` (and recreates its CHECK constraint), and refreshes the affected schema comments.
+  - Update any bookmarks or external links pointing at `/clients/…` URLs, which now live at `/projects/…`. The legacy `/profile/client/<sid>` redirect has moved to `/profile/project/<sid>`.
+  - Update API consumers that read the `clients` key from the `GET /projects/data` (formerly `/clients/data`) JSON payload, which now returns `projects`.
+  The OAuth2 `client_id` / `client_secret` credentials in the `oauth2:` config block are unrelated to this rename and are unchanged. The Flask test-client fixtures (`client`, `auth_client`, `admin_client`) and the OpenAI SDK `client = OpenAI(...)` usage examples are also unchanged.
+
 ## [1.20.0] - 2026-07-03
 
 ### Added

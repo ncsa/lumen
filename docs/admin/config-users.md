@@ -6,7 +6,7 @@ Lumen uses a group-based system to assign coin budgets and model access controls
 
 ## Admins
 
-Admins have full access to the Lumen interface, including the ability to create clients, view all usage data, and manage all users. Add admin emails under `admins`:
+Admins have full access to the Lumen interface, including the ability to create projects, view all usage data, and manage all users. Add admin emails under `admins`:
 
 ```yaml
 admins:

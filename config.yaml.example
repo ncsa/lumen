@@ -118,23 +118,23 @@ groups:
   #   max: 0
   #   refresh: 0
 
-# Client (service account) coin pool and model access.
-# 'default' applies to all clients without a named entry.
-# Named entries (by client name) override 'default' for that specific client.
+# Project (service account) coin pool and model access.
+# 'default' applies to all projects without a named entry.
+# Named entries (by project name) override 'default' for that specific project.
 # model_access.default: whitelist|blacklist|graylist — behavior for models not explicitly listed
-# model_access.whitelist/blacklist — per-model overrides (clients cannot be assigned graylist directly;
+# model_access.whitelist/blacklist — per-model overrides (projects cannot be assigned graylist directly;
 #   they give consent through the UI when accessing a globally-graylisted model)
-#clients:
+#projects:
 #  default:
-#    max: 100.0        # coin budget per client (-2 = unlimited, 0 = blocked)
+#    max: 100.0        # coin budget per project (-2 = unlimited, 0 = blocked)
 #    refresh: 0.0      # coins added per hour
 #    starting: 100.0   # coins when pool is first created
 #    model_access:
 #      default: whitelist   # allow all models not explicitly listed
-#      blacklist: []        # always deny these models for all clients
-#      whitelist: []        # always allow these models for all clients
+#      blacklist: []        # always deny these models for all projects
+#      whitelist: []        # always allow these models for all projects
 #
-#  research-bot:       # overrides default for this specific client
+#  research-bot:       # overrides default for this specific project
 #    max: 500.0
 #    refresh: 1.0
 #    starting: 500.0

@@ -69,7 +69,7 @@ def main():
             name = f"{args.prefix}-{i}"
 
             entity = Entity(
-                entity_type="client",
+                entity_type="project",
                 name=name,
                 initials=args.prefix[:4].upper(),
                 active=True,

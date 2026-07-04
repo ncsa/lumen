@@ -39,7 +39,7 @@ graph TD
         Chat["chat blueprint\n(Web UI)"]
         API["api blueprint\n(OpenAI-compat /v1)"]
         Admin["admin blueprint"]
-        Clients["clients / profile blueprints"]
+        Projects["projects / profile blueprints"]
         Models["models_page blueprint"]
         Metrics["metrics blueprint\n(Prometheus)"]
         Help["help blueprint\n(Markdown docs)"]
@@ -56,7 +56,7 @@ graph TD
     Browser --> Chat
     Browser --> API
     Browser --> Admin
-    Browser --> Clients
+    Browser --> Projects
     Browser --> Models
     Auth --> CILogon
     Chat --> API
@@ -110,7 +110,7 @@ lumen/                   # Main Python package
 │   ├── chat/
 │   ├── api/             # OpenAI-compatible /v1 routes
 │   ├── admin/
-│   ├── clients/
+│   ├── projects/
 │   ├── profile/
 │   ├── models_page/
 │   ├── metrics/
@@ -171,8 +171,8 @@ The app factory (`create_app`) wires all layers together: it initialises extensi
 | `auth` | `/` | Landing page, OAuth2 login/callback/logout, group auto-assignment |
 | `chat` | `/chat` | Web chat UI (SSE streaming) + conversation management |
 | `api` | `/v1` | OpenAI-compatible completions, models, and embeddings endpoints |
-| `admin` | `/admin` | User/client management, analytics dashboard |
-| `clients` | `/clients` | Service account & API key management |
+| `admin` | `/admin` | User/project management, analytics dashboard |
+| `projects` | `/projects` | Service account & API key management |
 | `profile` | `/profile` | Personal API keys, usage stats |
 | `models_page` | `/models` | Model catalog and detail pages with HuggingFace READMEs |
 | `metrics` | `/metrics` | Prometheus scrape endpoint (optional Bearer auth) |
@@ -209,11 +209,11 @@ The chat blueprint's `/chat/<id>/message` SSE endpoint is functionally a web-UI 
 
 | Model | Purpose |
 |---|---|
-| `Entity` | Unified table for human users (OAuth) and service clients; `entity_type ∈ {user, client}` |
+| `Entity` | Unified table for human users (OAuth) and service projects; `entity_type ∈ {user, project}` |
 | `APIKey` | HMAC-SHA256 hashed API keys; tracks per-key request counts, tokens, cost, `last_used_at` |
 | `Group` | Named groups with auto-assignment rules evaluated against OAuth claims at login |
 | `GroupMember` | Entity ↔ Group many-to-many; supports `config_managed` flag |
-| `EntityManager` | User → Client delegation (a user can manage a client's keys) |
+| `EntityManager` | User → Project delegation (a user can manage a project's keys) |
 
 ### Token Economy
 
@@ -260,7 +260,7 @@ Entity ──< EntityStat
 Entity ──< GroupMember >── Group ──< GroupLimit
                                    ──< GroupModelAccess
 Entity ──< Conversation ──< Message
-Entity ──< EntityManager (user → client)
+Entity ──< EntityManager (user → project)
 Entity ──< RequestLog (SET NULL on delete)
 ModelConfig ──< ModelEndpoint
 ModelConfig ──< ModelStat
@@ -300,7 +300,7 @@ All three workers are daemon threads started inside `create_app`. A `SERVER_IS_M
 |---|---|---|---|
 | Health checker | `services/health.py` | 60 s | Polls each `ModelEndpoint` via OpenAI `models.list()`; sets `healthy` flag |
 | Token refiller | `services/token_refill.py` | 60 s poll, hourly effective | Increments `EntityBalance` by `refresh_coins`, capped at `max_coins` |
-| Config watcher | `services/config_watcher.py` | 5 s | Hot-reloads models/groups/clients from `config.yaml`; warns on restart-required changes |
+| Config watcher | `services/config_watcher.py` | 5 s | Hot-reloads models/groups/projects from `config.yaml`; warns on restart-required changes |
 
 ---
 
@@ -361,7 +361,7 @@ Two model-level properties sit outside this chain: `disabled: true` short-circui
 
 ### API Key Auth (programmatic access)
 
-Keys are HMAC-SHA256 hashed (using `LUMEN_ENCRYPTION_KEY`) before storage. The `@api_key_required` decorator recomputes the hash of the presented Bearer token and compares against `api_keys.key_hash`. Human users create keys at `/profile`; service clients create keys at `/clients/<id>/keys`. Only the key hint (last few characters) is stored in plaintext for UI identification.
+Keys are HMAC-SHA256 hashed (using `LUMEN_ENCRYPTION_KEY`) before storage. The `@api_key_required` decorator recomputes the hash of the presented Bearer token and compares against `api_keys.key_hash`. Human users create keys at `/profile`; service projects create keys at `/projects/<id>/keys`. Only the key hint (last few characters) is stored in plaintext for UI identification.
 
 ---
 
@@ -393,7 +393,7 @@ Coin values use sentinel semantics: `-2` = unlimited, `0` = blocked, positive = 
 
 ## Configuration Management
 
-`config.yaml` is the single source of truth for runtime configuration. On each `create_app` call, models, groups, and clients are synced to the database (`config_managed=True` rows are owned by config; manual additions are preserved).
+`config.yaml` is the single source of truth for runtime configuration. On each `create_app` call, models, groups, and projects are synced to the database (`config_managed=True` rows are owned by config; manual additions are preserved).
 
 | Section | Controls |
 |---|---|
@@ -401,7 +401,7 @@ Coin values use sentinel semantics: `-2` = unlimited, `0` = blocked, positive = 
 | `oauth2.*` | CILogon client credentials, scopes, redirect URI, IdP hint |
 | `models[]` | Model definitions: endpoints, costs, capabilities, notices, modalities |
 | `groups.*` | Group definitions, auto-assignment rules, coin limits, model access policies |
-| `clients.*` | Service account coin budgets and model access defaults |
+| `projects.*` | Service account coin budgets and model access defaults |
 | `chat.*` | Upload settings (allowed extensions, max size), soft/hard delete mode |
 | `rate_limiting.*` | Per-user rate limit rules, optional Redis storage URI |
 | `prometheus.*` | Metrics collection settings, optional scrape Bearer token |
@@ -409,7 +409,7 @@ Coin values use sentinel semantics: `-2` = unlimited, `0` = blocked, positive = 
 | `logs.*` | Access log toggle, model health log toggle, log level |
 | `monitoring.*` | Internal monitoring token |
 
-**Hot-reload (5 s):** The config watcher syncs models, groups, and clients to the DB without a restart. Changes to `oauth2`, `database_url`, `debug`, or `prometheus` emit a restart-required warning to logs.
+**Hot-reload (5 s):** The config watcher syncs models, groups, and projects to the DB without a restart. Changes to `oauth2`, `database_url`, `debug`, or `prometheus` emit a restart-required warning to logs.
 
 Environment variables (`DATABASE_URL`, `LUMEN_SECRET_KEY`, `LUMEN_ENCRYPTION_KEY`, `OAUTH2_*`) override config.yaml values and take precedence at startup.
 
@@ -539,7 +539,7 @@ A custom `_ThemeLoader` (Jinja2 `BaseLoader`) checks the active theme directory 
 | `services/llm.py` is 520 lines | `services/llm.py` | Single file handles access resolution, coin accounting, endpoint selection, streaming, and stats — multiple concerns. Hard to unit-test individual pieces. Split into `access.py`, `budget.py`, `proxy.py`. |
 | No retry / backoff on upstream failure | `services/llm.py::send_message_stream` | If an upstream endpoint fails mid-stream, the error is propagated directly to the client with no retry to a healthy endpoint. The health checker will eventually mark the endpoint unhealthy, but the current request fails unrecoverably. |
 | Background worker death is silent | All three workers | Exceptions are caught and logged but the thread continues sleeping. A crash loop (repeated exceptions) produces log noise but no alert. Add a dead-thread watchdog or liveness signal. |
-| `config_watcher` polls every 5 s but reapplies full sync | `config_watcher.py` | On every tick, the watcher compares and syncs models/groups/clients to the DB regardless of whether `config.yaml` has changed (no mtime/hash check). At scale with many models and groups, this adds unnecessary DB load. |
+| `config_watcher` polls every 5 s but reapplies full sync | `config_watcher.py` | On every tick, the watcher compares and syncs models/groups/projects to the DB regardless of whether `config.yaml` has changed (no mtime/hash check). At scale with many models and groups, this adds unnecessary DB load. |
 | Conversations store model name as a snapshot string | `conversations.model` | If a model is renamed or removed, the conversation still shows the old name. There is no FK to `model_configs`, so model detail links from conversation history will break. |
 | `message.content` is plain text | `messages.content` | Multi-modal messages (images, files) are not stored; uploaded file content is embedded as text in the content field. File metadata is not preserved, making conversation replay or re-analysis impossible. |
 | Gravatar email hash leaks email existence | `entities.gravatar_hash` | The MD5 hash of an email can be used to confirm whether a specific email address has logged in, by recomputing the hash externally. Low risk in an institutional context but worth noting. |
@@ -595,5 +595,5 @@ A custom `_ThemeLoader` (Jinja2 `BaseLoader`) checks the active theme directory 
 | Themes as Jinja2 loader overlays | Universities can fully brand the UI without forking application code or maintaining a separate deployment. |
 | HMAC-SHA256 API key hashing with `encryption_key` | Keys are never stored in plaintext; compromise of the DB alone does not expose usable keys. HMAC over plain SHA-256 binds the hash to the server secret. |
 | CSRF exemption for `/v1/*` | OpenAI-compatible API clients do not send CSRF tokens and authenticate via Bearer tokens instead. Session auth is never used on these routes. |
-| Unified `Entity` table for users and clients | Simplifies the data model — coin budgets, model access rules, stats, and API keys are the same schema for both entity types. The `entity_type` discriminator keeps queries straightforward. |
+| Unified `Entity` table for users and projects | Simplifies the data model — coin budgets, model access rules, stats, and API keys are the same schema for both entity types. The `entity_type` discriminator keeps queries straightforward. |
 | Background workers as daemon threads (not external jobs) | Zero operational overhead for simple deployments. The tradeoff is that workers are not independently scalable or observable. For large deployments, extract into Celery or APScheduler tasks. |

@@ -12,8 +12,8 @@
         <a href="{{ url_for('profile.index') }}" class="uic-nav-link">Profile</a>
         <a href="{{ url_for('models_page.index') }}" class="uic-nav-link">Models</a>
         <a href="{{ url_for('profile.usage') }}" class="uic-nav-link">Usage</a>
-        {% if is_admin or nav_clients %}
-        <a href="{{ url_for('clients.index') }}" class="uic-nav-link">Clients</a>
+        {% if is_admin or nav_projects %}
+        <a href="{{ url_for('projects.index') }}" class="uic-nav-link">Projects</a>
         {% endif %}
         {% if is_admin %}
         <a href="{{ url_for('admin.users') }}" class="uic-nav-link">Users</a>
