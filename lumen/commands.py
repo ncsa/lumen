@@ -52,6 +52,10 @@ def write_config_yaml(config_path, data):
     and keeping blocks visually separated), the previous file is backed up to
     ``<config>.bak``, and the new content is written atomically via a temp file.
     Shared by the admin config editor and client creation.
+
+    If you add a new secret-bearing key to the schema, add it to
+    :data:`SENSITIVE_KEYS` in :mod:`lumen.services.config_watcher` so it is
+    masked before being sent to the admin browser (see ``config_api_get``).
     """
     parts = [
         yaml.dump({k: v}, Dumper=yaml.SafeDumper, default_flow_style=False, allow_unicode=True, sort_keys=False)
