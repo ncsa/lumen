@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Regenerate the help-doc screenshots in docs/img/ from a running dev instance.
 
-Captures Chat, Models, Model detail, Projects, Project detail, and Profile with the
+Captures Chat, Models, Usage, Projects, Project detail, Profile, and Model detail with the
 footer and skip-to-content link cropped out. The model-detail shot is taken as a
 non-admin user so admin-only endpoint URLs are not exposed.
 
@@ -136,6 +136,7 @@ def main():
             print(f"{name}.png")
 
         shot("/models", "models")
+        shot("/usage", "usage", full=True)
         shot("/projects", "projects")
         page.goto(BASE + "/projects", wait_until="networkidle")
         href = page.eval_on_selector("a[href*='/projects/']", "e => e.getAttribute('href')")

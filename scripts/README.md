@@ -36,8 +36,8 @@ BASE_URL=http://localhost:5001 uv run python scripts/smoke_test.py
 
 ## screenshots.py
 
-Regenerates the screenshots in `docs/img/` (chat, models, model detail, projects,
-project detail, profile). The footer and skip-to-content link are cropped, and the
+Regenerates the screenshots in `docs/img/` (chat, models, usage, projects,
+project detail, profile, model detail). The footer and skip-to-content link are cropped, and the
 model-detail shot is taken as a non-admin user so admin-only endpoint URLs are not
 shown. Run it with the **same** `CONFIG_YAML` as the running app.
 
