@@ -373,3 +373,93 @@ models:
         assert "********" not in cfg.read_text()
     finally:
         app.config["CONFIG_YAML"] = original
+
+
+def test_config_post_remove_endpoint_preserves_remaining_key(app, admin_client, tmp_path):
+    """Removing an endpoint restores the remaining endpoint's OWN key, not the deleted one's."""
+    config = """\
+app:
+  name: Lumen
+  secret_key: real-secret
+models:
+  - name: gpt-4o
+    active: true
+    endpoints:
+      - url: https://api.openai.com/v1
+        api_key: sk-first
+      - url: https://api.anthropic.com/v1
+        api_key: sk-second
+"""
+    original, cfg = _use_config(app, tmp_path, config)
+    try:
+        masked = admin_client.get("/admin/api/config").get_json()
+        # Drop the first endpoint (simulate admin clicking ✕ on row 0).
+        masked["models"][0]["endpoints"].pop(0)
+        resp = admin_client.post("/admin/api/config", json=masked)
+        assert resp.status_code == HTTPStatus.OK
+        on_disk = cfg.read_text()
+        # The remaining endpoint (url=anthropic) must keep its own key, not sk-first.
+        assert "sk-second" in on_disk
+        assert "sk-first" not in on_disk
+        assert "********" not in on_disk
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
+def test_config_post_reorder_endpoints_preserves_keys(app, admin_client, tmp_path):
+    """Reordering endpoints restores each to its OWN key by URL, not by position."""
+    config = """\
+app:
+  name: Lumen
+  secret_key: real-secret
+models:
+  - name: gpt-4o
+    active: true
+    endpoints:
+      - url: https://api.openai.com/v1
+        api_key: sk-openai
+      - url: https://api.anthropic.com/v1
+        api_key: sk-anthropic
+"""
+    original, cfg = _use_config(app, tmp_path, config)
+    try:
+        masked = admin_client.get("/admin/api/config").get_json()
+        # Swap the two endpoints.
+        eps = masked["models"][0]["endpoints"]
+        eps[0], eps[1] = eps[1], eps[0]
+        resp = admin_client.post("/admin/api/config", json=masked)
+        assert resp.status_code == HTTPStatus.OK
+        on_disk = cfg.read_text()
+        # Each URL must be paired with its own key after the round-trip.
+        assert "sk-openai" in on_disk
+        assert "sk-anthropic" in on_disk
+        assert "********" not in on_disk
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
+def test_config_post_duplicate_url_count_mismatch_rejects(app, admin_client, tmp_path):
+    """Adding/removing within a duplicate-URL group → 400, not silent corruption."""
+    config = """\
+app:
+  name: Lumen
+  secret_key: real-secret
+models:
+  - name: gpt-4o
+    active: true
+    endpoints:
+      - url: https://api.openai.com/v1
+        api_key: sk-first
+      - url: https://api.openai.com/v1
+        api_key: sk-second
+"""
+    original, cfg = _use_config(app, tmp_path, config)
+    try:
+        masked = admin_client.get("/admin/api/config").get_json()
+        # Drop one of the two same-URL endpoints — count mismatch → ambiguous.
+        masked["models"][0]["endpoints"].pop(0)
+        resp = admin_client.post("/admin/api/config", json=masked)
+        assert resp.status_code == HTTPStatus.BAD_REQUEST
+        assert "********" not in cfg.read_text()
+    finally:
+        app.config["CONFIG_YAML"] = original

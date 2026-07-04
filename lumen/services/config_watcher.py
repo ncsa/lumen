@@ -203,11 +203,15 @@ def restore_config_secrets(data, on_disk):
 
     For dotted paths, the on-disk value at the same path is used.  For
     ``models[].endpoints[].api_key``, models are matched by ``name`` and
-    endpoints **by position** within the model — this correctly handles the
-    documented round-robin pattern of multiple endpoints sharing one URL
-    (matched by index, not URL).  If a model name appears more than once on
-    disk the match is ambiguous, so endpoints for that name are left as MASK
-    and the caller's safety check rejects the save.  Mutates ``data`` in place.
+    endpoints **by URL** within the model.  This correctly handles remove,
+    reorder, and insert of unique-URL endpoints (each URL identifies its key).
+    For the documented round-robin pattern (multiple endpoints sharing one
+    URL), keys are restored positionally within the URL group — but only when
+    the group's endpoint count is unchanged; an added/removed duplicate-URL
+    endpoint is ambiguous and left as MASK so the caller's safety check
+    rejects the save.  If a model name appears more than once on disk the
+    match is also ambiguous, so endpoints for that name are left as MASK.
+    Mutates ``data`` in place.
     """
     for path in SENSITIVE_KEYS:
         if _resolve_path(data, path) == MASK:
@@ -243,13 +247,31 @@ def restore_config_secrets(data, on_disk):
         if not candidates or len(candidates) != 1:
             continue  # no match or duplicate names → leave MASK → 400
         deps = candidates[0]
-        for i, iep in enumerate(ieps):
-            if not isinstance(iep, dict) or iep.get("api_key") != MASK:
-                continue
-            if i < len(deps) and isinstance(deps[i], dict):
-                disk_key = deps[i].get("api_key")
-                if disk_key:
-                    iep["api_key"] = disk_key
+
+        # Group disk endpoints by URL: url → [api_key, ...] (in order).
+        disk_keys_by_url: dict[str, list] = {}
+        for dep in deps:
+            if isinstance(dep, dict) and isinstance(dep.get("url"), str):
+                disk_keys_by_url.setdefault(dep["url"], []).append(dep.get("api_key"))
+
+        # Group incoming endpoints by URL the same way.
+        incoming_by_url: dict[str, list] = {}
+        for iep in ieps:
+            if isinstance(iep, dict) and isinstance(iep.get("url"), str):
+                incoming_by_url.setdefault(iep["url"], []).append(iep)
+
+        # Restore: match by URL.  For a unique URL (one disk, one incoming) this
+        # is unambiguous regardless of position.  For duplicate URLs (round-
+        # robin), restore positionally within the group — but only when the
+        # count matches; a changed count (add/remove within the group) is
+        # ambiguous → leave MASK → 400.
+        for url, ieps_at_url in incoming_by_url.items():
+            disk_keys = disk_keys_by_url.get(url)
+            if not disk_keys or len(disk_keys) != len(ieps_at_url):
+                continue  # no disk match or count mismatch → leave MASK → 400
+            for i, iep in enumerate(ieps_at_url):
+                if iep.get("api_key") == MASK and disk_keys[i]:
+                    iep["api_key"] = disk_keys[i]
 
 
 def _find_unrestorable_masks(data) -> list[str]:
