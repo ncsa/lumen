@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-07-05
+
 ### Fixed
 
 - Fixed a database connection-pool leak in the chat streaming endpoint. After saving the conversation, `/chat/stream` read an expired ORM attribute (`conv.id`) post-commit, which silently checked out a fresh pool connection that was still held while the final SSE event was yielded to the client. If the client had disconnected by then, the generator was never closed, Flask's teardown never ran, and the connection stayed checked out until the process restarted — visible as a steadily climbing `lumen_db_pool_connections{state="checked_out"}` gauge. The conversation id is now captured before the commit and the session is released before the final yield, so the generator holds no connection while suspended. Regression tests assert the pool is empty while the generator is suspended at both the final-event and error-event yields.
