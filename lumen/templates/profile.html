@@ -170,6 +170,40 @@
 <p id="key-empty" class="text-muted" hidden>No API keys match your filter.</p>
 
 
+{% if project_list %}
+<!-- Projects (clients this user can access) -->
+<div class="d-flex justify-content-between align-items-center mt-4 mb-0">
+  <h2 class="mb-0">Projects</h2>
+</div>
+<div class="d-flex justify-content-between align-items-center mt-2 mb-1">
+  <div class="text-muted small">Projects (clients) you can access.</div>
+  <div class="d-flex align-items-center gap-2">
+    <label for="project-search" class="text-muted small mb-0">Search:</label>
+    <input id="project-search" type="search" class="form-control form-control-sm" style="width:200px"
+           placeholder="Filter by name…" aria-label="Filter projects by name">
+  </div>
+</div>
+<div class="table-responsive">
+  <table class="table table-striped table-hover align-middle mb-0" id="project-table">
+    <caption class="visually-hidden">Projects you can access</caption>
+    <thead class="table-light">
+      <tr>
+        <th scope="col" class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="tokens">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="created">Created <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+      </tr>
+    </thead>
+    <tbody id="project-tbody">
+      <tr><td colspan="5" class="text-muted text-center">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+<p id="project-empty" class="text-muted" hidden>No projects match your filter.</p>
+{% endif %}
+
+
 <!-- Model Access -->
 <div class="d-flex justify-content-between align-items-center mt-4 mb-0">
   <h2 class="mb-0">Model Access</h2>
@@ -389,6 +423,65 @@ document.getElementById('key-search').addEventListener('input', e => {
   keyDebounce = setTimeout(() => { keyFilter = e.target.value.trim(); renderKeys(); }, 200);
 });
 renderKeys();
+
+{% if project_list %}
+// ── Projects table ────────────────────────────────────────────────────────
+const PROJECT_ROWS = [
+  {% for p in project_list %}
+  {
+    name: {{ p.name | tojson }},
+    detail_url: {{ p.detail_url | tojson }},
+    requests: {{ p.requests }},
+    tokens: {{ p.tokens }},
+    cost: {{ "%.6f"|format(p.cost) }},
+    created: {{ p.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') | tojson if p.created_at else 'null' }},
+  },
+  {% endfor %}
+];
+
+const projectState = { col: 'name', dir: 'asc' };
+let projectFilter = '';
+const projectTbody = document.getElementById('project-tbody');
+const projectEmpty = document.getElementById('project-empty');
+
+function renderProjects() {
+  const f = projectFilter.toLowerCase();
+  let rows = PROJECT_ROWS.filter(p => !f || p.name.toLowerCase().includes(f));
+  rows.sort((a, b) => {
+    let av, bv;
+    if (projectState.col === 'name') { av = a.name.toLowerCase(); bv = b.name.toLowerCase(); }
+    else if (projectState.col === 'created') { av = a.created || ''; bv = b.created || ''; }
+    else { av = a[projectState.col]; bv = b[projectState.col]; }
+    const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+    return projectState.dir === 'asc' ? cmp : -cmp;
+  });
+  applySortHeaders('project-table', projectState);
+  if (!rows.length) {
+    projectTbody.innerHTML = '';
+    projectEmpty.hidden = false;
+  } else {
+    projectEmpty.hidden = true;
+    projectTbody.innerHTML = rows.map(p => {
+      const dt = fmtDate(p.created);
+      return `<tr>
+        <td><a href="${escHtml(p.detail_url)}">${escHtml(p.name)}</a></td>
+        <td class="text-end">${p.requests ? p.requests.toLocaleString() : '—'}</td>
+        <td class="text-end">${p.tokens ? p.tokens.toLocaleString() : '—'}</td>
+        <td class="text-end">${parseFloat(p.cost).toFixed(2)}</td>
+        <td>${dt.text}</td>
+      </tr>`;
+    }).join('');
+  }
+}
+
+makeSortable('project-table', projectState, new Set(['requests','tokens','cost','created']), renderProjects);
+let projectDebounce;
+document.getElementById('project-search').addEventListener('input', e => {
+  clearTimeout(projectDebounce);
+  projectDebounce = setTimeout(() => { projectFilter = e.target.value.trim(); renderProjects(); }, 200);
+});
+renderProjects();
+{% endif %}
 
 // ── Model Access table ────────────────────────────────────────────────────
 const MODEL_ROWS = [

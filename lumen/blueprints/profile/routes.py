@@ -13,6 +13,7 @@ from lumen.models.api_key import APIKey
 from lumen.models.conversation import Conversation
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
+from lumen.models.entity_manager import EntityManager
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
@@ -169,6 +170,49 @@ def _build_coin_pool(eid: int):
     }
 
 
+def _build_project_list(eid: int) -> list:
+    """Active project entities this user manages, with aggregated usage stats.
+
+    Mirrors the per-row query in projects/routes.py `/projects/data` but scoped
+    to the user's EntityManager links and without pagination.
+    """
+    project_ids = [
+        r[0]
+        for r in db.session.execute(
+            select(EntityManager.project_entity_id).filter_by(user_entity_id=eid)
+        ).all()
+    ]
+    if not project_ids:
+        return []
+    rows = db.session.execute(
+        select(
+            Entity,
+            func.coalesce(EntityStat.requests, 0).label("requests"),
+            func.coalesce(EntityStat.input_tokens + EntityStat.output_tokens, 0).label("tokens"),
+            func.coalesce(EntityStat.cost, 0).label("cost"),
+        )
+        .where(
+            Entity.id.in_(project_ids),
+            Entity.entity_type == "project",
+            Entity.active == True,
+        )
+        .outerjoin(EntityStat, Entity.id == EntityStat.entity_id)
+        .order_by(Entity.name)
+    ).all()
+    return [
+        {
+            "id": c.id,
+            "name": c.name,
+            "detail_url": url_for("projects.detail", sid=c.id),
+            "requests": int(requests),
+            "tokens": int(tokens),
+            "cost": float(cost),
+            "created_at": c.created_at,
+        }
+        for c, requests, tokens, cost in rows
+    ]
+
+
 def _get_profile_data(eid: int) -> dict:
     chat_agg, conversation_count = _fetch_chat_stats(eid)
     api_keys = db.session.execute(select(APIKey).filter_by(entity_id=eid).order_by(APIKey.created_at)).scalars().all()
@@ -178,6 +222,7 @@ def _get_profile_data(eid: int) -> dict:
     usage_by_model = {u["model_name"]: u for u in model_usage}
     model_access_list = _build_model_access_list(usage_by_model, all_models, eps_by_model, access_statuses, consent_map)
     coin_pool = _build_coin_pool(eid)
+    project_list = _build_project_list(eid)
     return {
         "chat_agg": chat_agg,
         "conversation_count": conversation_count,
@@ -185,6 +230,7 @@ def _get_profile_data(eid: int) -> dict:
         "model_usage": model_usage,
         "model_access_list": model_access_list,
         "coin_pool": coin_pool,
+        "project_list": project_list,
         "status": {"total_tokens_used": total_tokens_used, "total_cost": total_cost},
     }
 
