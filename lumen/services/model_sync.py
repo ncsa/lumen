@@ -130,6 +130,7 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
 
 _NOISE = re.compile(
     r"^\d{2,}[bm]?$"
+    r"|^\d$"                       # single digits are version fragments, not distinctive
     r"|^fp\d+$|^bf\d+$|^q\d.*$|^[abkm]$"
     r"|^instruct$|^chat$|^hf$|^gguf$|^it$|^preview$"
 )
@@ -309,6 +310,12 @@ def sync_model(model_def: dict) -> dict:
         ]:
             if new_val is not None and model_def.get(field) != new_val:
                 updates[field] = new_val
+
+        # Description: only fill in when the operator left it blank — never
+        # overwrite a hand-written description with the models.dev blurb.
+        dev_desc = dev_match.get("description")
+        if dev_desc and not model_def.get("description"):
+            updates["description"] = dev_desc
 
         # Pricing: average across providers offering the same base model on
         # models.dev, excluding $0 listings. Overwrites a stale/zero operator

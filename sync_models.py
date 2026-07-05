@@ -132,7 +132,8 @@ def fetch_modelsdev() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 _NOISE = re.compile(
-    r"^\d{2,}[bm]?$"    # parameter sizes: 27b, 30b, 120b (keep single digits for version matching)
+    r"^\d{2,}[bm]?$"    # parameter sizes: 27b, 30b, 120b
+    r"|^\d$"             # single digits are version fragments, not distinctive
     r"|^fp\d+$"          # precisions: fp8, fp16
     r"|^bf\d+$"          # bf16
     r"|^q\d.*$"          # quantization: q5_k_m
@@ -281,6 +282,12 @@ def compute_changes(
         ]:
             if new_val is not None and model_def.get(field) != new_val:
                 changes[field] = (model_def.get(field), new_val)
+
+        # Description: only fill in when the operator left it blank — never
+        # overwrite a hand-written description with the models.dev blurb.
+        dev_desc = dev_model.get("description")
+        if dev_desc and not model_def.get("description"):
+            changes["description"] = (model_def.get("description"), dev_desc)
 
         # Pricing: average across providers offering the same base model on
         # models.dev, excluding $0 listings. Overwrites a stale/zero operator
