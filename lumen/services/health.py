@@ -1,3 +1,4 @@
+import concurrent.futures
 import logging
 import time
 import threading
@@ -13,6 +14,23 @@ from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 
 logger = logging.getLogger(__name__)
+
+# The openai/httpx client's own timeout=5.0 bounds well-behaved failures (refused,
+# reset), but a network path that silently drops packets (no RST) can leave the
+# raw socket.connect() blocked far longer than that. Running each probe through
+# this executor with a hard result() timeout guarantees one blackholed endpoint
+# can't stall every later endpoint in the same pass. A stuck probe's thread is
+# abandoned (not killed — Python can't force-abort a blocked native call) and
+# occupies a worker slot until the OS eventually gives up; the pool is sized
+# with headroom so that's tolerable unless many endpoints are blackholed at once.
+_PROBE_TIMEOUT = 10
+_probe_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="health-probe")
+
+
+def _probe_endpoint(url: str, api_key: str, expected: str) -> bool:
+    with openai.OpenAI(api_key=api_key, base_url=url, timeout=5.0) as client:
+        models = client.models.list()
+    return expected in {m.id for m in models.data}
 
 
 def check_all_endpoints() -> int:
@@ -39,14 +57,17 @@ def check_all_endpoints() -> int:
     now = utcnow()
     for ep, url, api_key, expected in probes:
         try:
-            with openai.OpenAI(api_key=api_key, base_url=url, timeout=5.0) as client:
-                models = client.models.list()
-            model_ids = {m.id for m in models.data}
-            ep.healthy = expected in model_ids
+            ep.healthy = _probe_executor.submit(_probe_endpoint, url, api_key, expected).result(timeout=_PROBE_TIMEOUT)
             if log_enabled:
                 found = "found" if ep.healthy else "NOT FOUND"
                 current_app.logger.info(
                     "health check %s → endpoint UP, model '%s' %s", url, expected, found
+                )
+        except concurrent.futures.TimeoutError:
+            ep.healthy = False
+            if log_enabled:
+                current_app.logger.info(
+                    "health check %s → endpoint DOWN (probe exceeded %ss, abandoned)", url, _PROBE_TIMEOUT
                 )
         except Exception as e:
             ep.healthy = False

@@ -197,17 +197,53 @@ def test_logging_exception_endpoint(app, test_model, test_model_endpoint):
             app.config["LOG_MODEL_HEALTH"] = False
 
 
-def test_no_open_transaction_during_probe(app, test_model, test_model_endpoint):
-    """The read transaction must be released before the network probe so the
-    connection is never left idle-in-transaction during the (slow) HTTP call."""
+def test_hung_probe_does_not_block_other_endpoints(app, test_model, test_model_endpoint):
+    """A probe stuck past _PROBE_TIMEOUT (e.g. a network path silently dropping
+    packets, so the raw socket.connect() never returns) must be abandoned rather
+    than block the rest of the pass — other endpoints still get checked."""
+    import time
+    from lumen.extensions import db
+    from lumen.models.model_endpoint import ModelEndpoint
+
     with app.app_context():
-        from lumen.extensions import db
+        ep2 = _add_endpoint(db, test_model["id"], "http://second/v1", "key", model_name="dummy")
+        db.session.commit()
+        ep1_id, ep2_id = test_model_endpoint["id"], ep2.id
+
+    with app.app_context():
+        from lumen.services import health
+
+        def hung_openai(*args, base_url=None, **kwargs):
+            if base_url == "http://second/v1":
+                return _make_openai_mock(["dummy"])
+            cm = MagicMock()
+            cm.__enter__ = MagicMock(side_effect=lambda: time.sleep(1))
+            cm.__exit__ = MagicMock(return_value=False)
+            return cm
+
+        with patch.object(health, "_PROBE_TIMEOUT", 0.05), \
+             patch("lumen.services.health.openai.OpenAI", side_effect=hung_openai):
+            assert health.check_all_endpoints() == 2
+
+    with app.app_context():
+        ep1 = db.session.get(ModelEndpoint, ep1_id)
+        ep2 = db.session.get(ModelEndpoint, ep2_id)
+        assert ep1.healthy is False  # abandoned after exceeding _PROBE_TIMEOUT
+        assert ep2.healthy is True   # unaffected by the other endpoint hanging
+
+
+def test_no_open_transaction_during_probe(app, test_model, test_model_endpoint):
+    """Probes run on a separate thread pool with no Flask app context pushed, so
+    they structurally cannot touch db.session/hold the app's DB connection open
+    for the (slow, potentially hanging) duration of the network call."""
+    with app.app_context():
+        from flask import has_app_context
         from lumen.services.health import check_all_endpoints
 
-        in_txn_during_probe = []
+        probe_had_app_context = []
 
         def record_then_list():
-            in_txn_during_probe.append(db.session().in_transaction())
+            probe_had_app_context.append(has_app_context())
             return MagicMock(data=[])
 
         client = MagicMock()
@@ -219,7 +255,7 @@ def test_no_open_transaction_during_probe(app, test_model, test_model_endpoint):
         with patch("lumen.services.health.openai.OpenAI", return_value=cm):
             check_all_endpoints()
 
-        assert in_txn_during_probe == [False]
+        assert probe_had_app_context == [False]
 
 
 def test_start_health_checker_starts_daemon_thread(app):

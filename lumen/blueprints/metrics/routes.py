@@ -41,83 +41,94 @@ class LumenDBCollector:
         from lumen.models.model_stat import ModelStat
         from lumen.models.entity import Entity
 
-        rows = db.session.execute(
-            select(
-                ModelConfig.model_name,
-                ModelStat.source,
-                func.coalesce(func.sum(ModelStat.requests), 0),
-                func.coalesce(func.sum(ModelStat.input_tokens), 0),
-                func.coalesce(func.sum(ModelStat.output_tokens), 0),
-                func.coalesce(func.sum(ModelStat.cost), 0),
+        # This generator interleaves several DB calls with `yield`s. If the consumer
+        # (generate_latest) ever abandons iteration partway through — or the
+        # per-request app-context teardown that would normally call
+        # db.session.remove() doesn't line up with how this generator is driven —
+        # the connection checked out below can be left idle-in-transaction until
+        # Postgres's idle_in_transaction_session_timeout kills it. Unlike every
+        # other DB-touching call site in this codebase, this one can't rely on
+        # implicit per-request cleanup, so it releases its own session explicitly.
+        try:
+            rows = db.session.execute(
+                select(
+                    ModelConfig.model_name,
+                    ModelStat.source,
+                    func.coalesce(func.sum(ModelStat.requests), 0),
+                    func.coalesce(func.sum(ModelStat.input_tokens), 0),
+                    func.coalesce(func.sum(ModelStat.output_tokens), 0),
+                    func.coalesce(func.sum(ModelStat.cost), 0),
+                )
+                .join(ModelConfig, ModelStat.model_config_id == ModelConfig.id)
+                .group_by(ModelConfig.model_name, ModelStat.source)
+            ).all()
+
+            # Cumulative per-(model, source) usage totals summed from ModelStat.
+            # CounterMetricFamily appends "_total" to each name, so the exposed
+            # samples are lumen_model_requests_total, lumen_model_cost_coins_total, etc.
+            reqs_m = CounterMetricFamily(
+                "lumen_model_requests",
+                "Cumulative LLM requests per model and source",
+                labels=["model", "source"],
             )
-            .join(ModelConfig, ModelStat.model_config_id == ModelConfig.id)
-            .group_by(ModelConfig.model_name, ModelStat.source)
-        ).all()
+            inp_m = CounterMetricFamily(
+                "lumen_model_input_tokens",
+                "Cumulative input tokens per model and source",
+                labels=["model", "source"],
+            )
+            out_m = CounterMetricFamily(
+                "lumen_model_output_tokens",
+                "Cumulative output tokens per model and source",
+                labels=["model", "source"],
+            )
+            cost_m = CounterMetricFamily(
+                "lumen_model_cost_coins",
+                "Cumulative cost in coins per model and source",
+                labels=["model", "source"],
+            )
 
-        # Cumulative per-(model, source) usage totals summed from ModelStat.
-        # CounterMetricFamily appends "_total" to each name, so the exposed
-        # samples are lumen_model_requests_total, lumen_model_cost_coins_total, etc.
-        reqs_m = CounterMetricFamily(
-            "lumen_model_requests",
-            "Cumulative LLM requests per model and source",
-            labels=["model", "source"],
-        )
-        inp_m = CounterMetricFamily(
-            "lumen_model_input_tokens",
-            "Cumulative input tokens per model and source",
-            labels=["model", "source"],
-        )
-        out_m = CounterMetricFamily(
-            "lumen_model_output_tokens",
-            "Cumulative output tokens per model and source",
-            labels=["model", "source"],
-        )
-        cost_m = CounterMetricFamily(
-            "lumen_model_cost_coins",
-            "Cumulative cost in coins per model and source",
-            labels=["model", "source"],
-        )
+            for model_name, source, reqs, inp, out, cost in rows:
+                labels = [model_name, source]
+                reqs_m.add_metric(labels, float(reqs))
+                inp_m.add_metric(labels, float(inp))
+                out_m.add_metric(labels, float(out))
+                cost_m.add_metric(labels, float(cost))
 
-        for model_name, source, reqs, inp, out, cost in rows:
-            labels = [model_name, source]
-            reqs_m.add_metric(labels, float(reqs))
-            inp_m.add_metric(labels, float(inp))
-            out_m.add_metric(labels, float(out))
-            cost_m.add_metric(labels, float(cost))
+            yield reqs_m
+            yield inp_m
+            yield out_m
+            yield cost_m
 
-        yield reqs_m
-        yield inp_m
-        yield out_m
-        yield cost_m
+            health_m = GaugeMetricFamily(
+                "lumen_model_endpoint_healthy",
+                "1=healthy 0=unhealthy per model endpoint",
+                labels=["model", "endpoint_url"],
+            )
+            for model_name, url, healthy in db.session.execute(
+                select(ModelConfig.model_name, ModelEndpoint.url, ModelEndpoint.healthy)
+                .join(ModelConfig, ModelEndpoint.model_config_id == ModelConfig.id)
+            ).all():
+                health_m.add_metric([model_name, url], 1.0 if healthy else 0.0)
+            yield health_m
 
-        health_m = GaugeMetricFamily(
-            "lumen_model_endpoint_healthy",
-            "1=healthy 0=unhealthy per model endpoint",
-            labels=["model", "endpoint_url"],
-        )
-        for model_name, url, healthy in db.session.execute(
-            select(ModelConfig.model_name, ModelEndpoint.url, ModelEndpoint.healthy)
-            .join(ModelConfig, ModelEndpoint.model_config_id == ModelConfig.id)
-        ).all():
-            health_m.add_metric([model_name, url], 1.0 if healthy else 0.0)
-        yield health_m
-
-        # active = admin has not disabled the user (Entity.active=True, the default)
-        # total  = all users ever registered
-        users_m = GaugeMetricFamily(
-            "lumen_users",
-            "User counts: active (not disabled by admin) and total",
-            labels=["status"],
-        )
-        active_count = db.session.scalar(
-            select(func.count(Entity.id)).filter_by(entity_type="user", active=True)
-        ) or 0
-        total_count = db.session.scalar(
-            select(func.count(Entity.id)).filter_by(entity_type="user")
-        ) or 0
-        users_m.add_metric(["active"], float(active_count))
-        users_m.add_metric(["total"], float(total_count))
-        yield users_m
+            # active = admin has not disabled the user (Entity.active=True, the default)
+            # total  = all users ever registered
+            users_m = GaugeMetricFamily(
+                "lumen_users",
+                "User counts: active (not disabled by admin) and total",
+                labels=["status"],
+            )
+            active_count = db.session.scalar(
+                select(func.count(Entity.id)).filter_by(entity_type="user", active=True)
+            ) or 0
+            total_count = db.session.scalar(
+                select(func.count(Entity.id)).filter_by(entity_type="user")
+            ) or 0
+            users_m.add_metric(["active"], float(active_count))
+            users_m.add_metric(["total"], float(total_count))
+            yield users_m
+        finally:
+            db.session.remove()
 
         # Connection-pool gauges. A slow leak (connections checked out and never
         # returned) shows up here as checked_out climbing and never falling back;

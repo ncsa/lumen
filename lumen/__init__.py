@@ -340,7 +340,7 @@ def create_app():
         # Cache is_admin and project membership in the session to avoid 3 DB queries per request.
         # Cache is populated on first request after login and cleared on logout.
         nav_cache = session.get("_nav")
-        if nav_cache is not None:
+        if nav_cache is not None and "project_ids" in nav_cache:
             result["is_admin"] = nav_cache["is_admin"]
             result["nav_projects"] = nav_cache["project_ids"]
             return result

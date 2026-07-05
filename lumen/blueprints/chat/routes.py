@@ -191,6 +191,15 @@ def chat_stream():
     if not ok:
         return jsonify({"error": msg}), code
 
+    # Release the connection checked out by the queries above — the streaming
+    # loop below can run for many minutes with no further DB activity, and
+    # holding a connection idle-in-transaction that long risks Postgres
+    # killing it (idle_in_transaction_session_timeout), which then surfaces
+    # as "server closed the connection unexpectedly" on a later, unrelated
+    # request that reuses the now-dead pooled connection. A fresh connection
+    # is opened lazily by generate() once it needs to write the conversation.
+    db.session.remove()
+
     def generate():
         try:
             result = None
