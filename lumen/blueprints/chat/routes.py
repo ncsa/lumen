@@ -241,10 +241,18 @@ def chat_stream():
             ))
 
             conv.updated_at = utcnow()
+            # Read conv.id before commit: expire_on_commit would otherwise
+            # check out a fresh connection to refresh it, and that connection
+            # would still be held during the final yield below.
+            conv_id = conv.id
             db.session.commit()
 
-            result["conversation_id"] = conv.id
+            result["conversation_id"] = conv_id
             result["done"] = True
+            # Hold no DB connection while the final event is in flight — if the
+            # client disconnected, this generator may never be closed and any
+            # checked-out connection would leak until the process restarts.
+            db.session.remove()
             yield f"data: {json.dumps(result)}\n\n"
 
         except Exception as e:
