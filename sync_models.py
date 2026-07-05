@@ -51,22 +51,23 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
     # SGLang: /get_server_info is the authoritative source — it exposes
     # max_req_input_len (the real per-request limit from --context-length,
     # not the model's theoretical max), is_embedding, and enable_multimodal.
-    # A 200 means we hit SGLang. We capture the capability flags even when
-    # max_req_input_len is absent (e.g. embedding-only deployments) so they
-    # survive the fallback chain below.
+    # A 200 alone doesn't prove it's SGLang (a proxy/gateway in front of vLLM
+    # could return 200 for that path), so we only tag backend="sglang" when the
+    # body actually contains at least one SGLang-specific key we consume.
     sglang_flags: dict = {}
     try:
         r = requests.get(f"{base}/get_server_info", headers=headers, timeout=TIMEOUT)
         if r.ok:
             info = r.json()
-            sglang_flags = {
-                "backend": "sglang",
-                "is_embedding": bool(info.get("is_embedding")),
-                "enable_multimodal": info.get("enable_multimodal"),
-            }
-            mrl = info.get("max_req_input_len")
-            if mrl is not None:
-                return {"id": info.get("served_model_name") or "", "max_model_len": mrl, **sglang_flags}
+            if any(k in info for k in ("max_req_input_len", "is_embedding", "enable_multimodal")):
+                sglang_flags = {
+                    "backend": "sglang",
+                    "is_embedding": bool(info.get("is_embedding")),
+                    "enable_multimodal": info.get("enable_multimodal"),
+                }
+                mrl = info.get("max_req_input_len")
+                if mrl is not None:
+                    return {"id": info.get("served_model_name") or "", "max_model_len": mrl, **sglang_flags}
     except Exception:
         pass
 

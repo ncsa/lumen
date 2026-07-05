@@ -261,6 +261,22 @@ def test_vllm_used_when_server_info_absent(monkeypatch):
     assert "backend" not in r  # vLLM path: no sglang flags
 
 
+def test_proxy_200_empty_body_not_tagged_sglang(monkeypatch):
+    """A proxy/gateway in front of vLLM that returns 200 {} for /get_server_info
+    must not be tagged backend="sglang" — that would trigger the text-only veto
+    on a real multimodal vLLM server behind it."""
+    def fake_get(url, **kw):
+        if url.endswith("/get_server_info"):
+            return _Resp({})  # 200 but empty — not SGLang
+        if url.endswith("/models"):
+            return _Resp({"data": [{"id": "m", "max_model_len": 32768}]})
+        return _Resp({}, ok=False)
+    monkeypatch.setattr(model_sync.requests, "get", fake_get)
+    r = model_sync.fetch_endpoint_model({"url": "http://x", "api_key": "k"})
+    assert "backend" not in r  # must fall through to vLLM path
+    assert r["max_model_len"] == 32768
+
+
 def test_get_model_info_fallback(monkeypatch):
     """Older SGLang with neither /get_server_info nor /v1/models max_model_len
     → /get_model_info context_length is used."""
