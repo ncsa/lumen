@@ -262,9 +262,29 @@ def users_search_api():
 @admin_required
 def sync_model_api():
     from lumen.services.model_sync import sync_model
+    from lumen.services.config_watcher import MASK
     model_def = request.get_json(force=True, silent=True)
     if not isinstance(model_def, dict):
         return jsonify({"error": "Expected a JSON object"}), HTTPStatus.BAD_REQUEST
+    # The browser sends endpoint api_keys masked as MASK; the sync probe needs
+    # the real key to authenticate against the endpoint. Restore from on-disk
+    # config by matching model name + endpoint URL before probing.
+    config_path = current_app.config["CONFIG_YAML"]
+    try:
+        with open(config_path) as f:
+            on_disk = yaml.safe_load(f) or {}
+    except OSError:
+        on_disk = {}
+    disk_model = next((m for m in on_disk.get("models", [])
+                       if isinstance(m, dict) and m.get("name") == model_def.get("name")), None)
+    if disk_model:
+        disk_keys = {(ep.get("url", "").rstrip("/") or ""): ep.get("api_key")
+                     for ep in disk_model.get("endpoints", []) if isinstance(ep, dict)}
+        for ep in model_def.get("endpoints", []):
+            if ep.get("api_key") == MASK:
+                restored = disk_keys.get((ep.get("url", "") or "").rstrip("/"))
+                if restored:
+                    ep["api_key"] = restored
     result = sync_model(model_def)
     return jsonify(result)
 

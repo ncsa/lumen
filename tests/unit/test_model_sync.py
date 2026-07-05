@@ -213,6 +213,28 @@ def test_sglang_server_info_preferred_over_v1_models(monkeypatch):
     assert not any(u.endswith("/models") for u in calls), "v1/models must not be called when server_info succeeds"
 
 
+def test_sglang_management_endpoints_probed_at_root_not_v1(monkeypatch):
+    """SGLang's /get_server_info lives at the server root, not under /v1.
+    An endpoint URL like http://host/v1 must probe http://host/get_server_info,
+    not http://host/v1/get_server_info (which 404s on real SGLang). Without the
+    /v1 strip, max_req_input_len is never seen and the fallback to /v1/models
+    reports the model's theoretical max (e.g. 1048576) instead of the configured
+    window (e.g. 500410)."""
+    calls = []
+    def fake_get(url, **kw):
+        calls.append(url)
+        if url == "http://x/get_server_info":
+            return _Resp({"max_req_input_len": 500410, "served_model_name": "zai-org/GLM-5.2-FP8",
+                          "is_embedding": False, "enable_multimodal": None})
+        return _Resp({}, ok=False)
+    monkeypatch.setattr(model_sync.requests, "get", fake_get)
+    r = model_sync.fetch_endpoint_model({"url": "http://x/v1", "api_key": "k"})
+    assert r["max_model_len"] == 500410
+    assert r["backend"] == "sglang"
+    assert "http://x/get_server_info" in calls
+    assert not any("/v1/get_server_info" in u for u in calls), "must probe root, not /v1"
+
+
 def test_sglang_server_info_without_max_req_input_len_preserves_flags(monkeypatch):
     """A 200 from /get_server_info without max_req_input_len (e.g. embedding-only
     SGLang) must still carry is_embedding/enable_multimodal through the fallback
