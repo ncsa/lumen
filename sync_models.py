@@ -51,23 +51,26 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
     # SGLang: /get_server_info is the authoritative source — it exposes
     # max_req_input_len (the real per-request limit from --context-length,
     # not the model's theoretical max), is_embedding, and enable_multimodal.
-    # A 200 means we hit SGLang and have everything; skip /v1/models entirely.
+    # A 200 means we hit SGLang. We capture the capability flags even when
+    # max_req_input_len is absent (e.g. embedding-only deployments) so they
+    # survive the fallback chain below.
+    sglang_flags: dict = {}
     try:
         r = requests.get(f"{base}/get_server_info", headers=headers, timeout=TIMEOUT)
         if r.ok:
             info = r.json()
+            sglang_flags = {
+                "backend": "sglang",
+                "is_embedding": bool(info.get("is_embedding")),
+                "enable_multimodal": info.get("enable_multimodal"),
+            }
             mrl = info.get("max_req_input_len")
             if mrl is not None:
-                return {
-                    "id": info.get("served_model_name") or "",
-                    "max_model_len": mrl,
-                    "is_embedding": bool(info.get("is_embedding")),
-                    "enable_multimodal": info.get("enable_multimodal"),
-                }
+                return {"id": info.get("served_model_name") or "", "max_model_len": mrl, **sglang_flags}
     except Exception:
         pass
 
-    # vLLM (or SGLang without /get_server_info): /v1/models gives id + max_model_len.
+    # vLLM (or SGLang without max_req_input_len): /v1/models gives id + max_model_len.
     model_id = None
     try:
         r = requests.get(f"{base}/models", headers=headers, timeout=TIMEOUT)
@@ -76,7 +79,7 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
             model_id = models[0].get("id")
             mml = models[0].get("max_model_len")
             if mml is not None:
-                return {"id": model_id or "", "max_model_len": mml}
+                return {"id": model_id or "", "max_model_len": mml, **sglang_flags}
     except Exception:
         pass
 
@@ -85,9 +88,14 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
         r = requests.get(f"{base}/get_model_info", headers=headers, timeout=TIMEOUT)
         info = r.json()
         if "context_length" in info:
-            return {"id": model_id or info.get("model_path", ""), "max_model_len": info["context_length"]}
+            return {"id": model_id or info.get("model_path", ""), "max_model_len": info["context_length"], **sglang_flags}
     except Exception:
         pass
+
+    # SGLang responded with capability flags but no context length anywhere —
+    # still return them so the modality override can fire.
+    if sglang_flags:
+        return {"id": model_id or "", "max_model_len": None, **sglang_flags}
 
     return None
 
@@ -174,7 +182,18 @@ def find_in_modelsdev(model_id: str, models: list[dict], config_name: str | None
 # Pricing (average across providers)
 # ---------------------------------------------------------------------------
 
-def _average_price(dev_model: dict, dev_models: list[dict]) -> tuple[float | None, float | None]:
+def _build_price_index(models: list[dict]) -> dict[str, list[dict]]:
+    """Group models.dev entries by normalized id, once, so _average_price is
+    an O(1) lookup instead of re-scanning the whole catalogue per model."""
+    idx: dict[str, list[dict]] = {}
+    for m in models:
+        nid = _normalize_id(m.get("id", ""))
+        if nid:
+            idx.setdefault(nid, []).append(m)
+    return idx
+
+
+def _average_price(dev_model: dict, price_index: dict[str, list[dict]]) -> tuple[float | None, float | None]:
     """Average input/output cost (USD per million tokens) across every
     models.dev provider that lists the same base model, ignoring zero/missing
     prices (a $0 listing is not a real price and would skew the average down).
@@ -187,9 +206,7 @@ def _average_price(dev_model: dict, dev_models: list[dict]) -> tuple[float | Non
         return None, None
     inputs: list[float] = []
     outputs: list[float] = []
-    for m in dev_models:
-        if _normalize_id(m.get("id", "")) != needle:
-            continue
+    for m in price_index.get(needle, []):
         c = m.get("cost") or {}
         try:
             ci = float(c.get("input") or 0)
@@ -206,12 +223,32 @@ def _average_price(dev_model: dict, dev_models: list[dict]) -> tuple[float | Non
 
 
 # ---------------------------------------------------------------------------
+# Server-authoritative modalities
+# ---------------------------------------------------------------------------
+
+def _server_modalities(ep_model: dict, pending_in, current_in) -> tuple:
+    """Return (srv_in, srv_out) from SGLang server capability flags.
+
+    Each component is the authoritative modality list, or None to mean
+    "don't touch this field". pending_in is the input_modalities already
+    proposed by models.dev (if any); current_in is the operator's current
+    value — used as the base to which image is added when multimodal is on.
+    """
+    if ep_model.get("is_embedding"):
+        return ["text"], []
+    if ep_model.get("enable_multimodal") is True:
+        base = pending_in or current_in or ["text"]
+        return (base if "image" in base else [*base, "image"]), None
+    return ["text"], None
+
+
+# ---------------------------------------------------------------------------
 # Change computation
 # ---------------------------------------------------------------------------
 
 def compute_changes(
     model_def: dict, ep_model: dict | None, dev_model: dict | None,
-    dev_models: list[dict] | None = None,
+    price_index: dict[str, list[dict]] | None = None,
 ) -> tuple[dict, list[str]]:
     """Return (changes, removals) where changes maps field → (old, new) and
     removals is a list of obsolete field names present in model_def."""
@@ -237,8 +274,8 @@ def compute_changes(
         # Pricing: average across providers offering the same base model on
         # models.dev, excluding $0 listings. Overwrites a stale/zero operator
         # value the same way other fields are corrected on a trusted match.
-        if dev_models:
-            avg_in, avg_out = _average_price(dev_model, dev_models)
+        if price_index:
+            avg_in, avg_out = _average_price(dev_model, price_index)
             if avg_in is not None and model_def.get("input_cost_per_million") != avg_in:
                 changes["input_cost_per_million"] = (model_def.get("input_cost_per_million"), avg_in)
             if avg_out is not None and model_def.get("output_cost_per_million") != avg_out:
@@ -246,26 +283,24 @@ def compute_changes(
 
     # SGLang /get_server_info capability flags are authoritative over models.dev
     # — they reflect what the operator actually enabled on the serving backend,
-    # so a disabled modality on the server vetoes a models.dev claim. (Only
-    # present when the endpoint was reached via /get_server_info.)
-    if ep_model and "enable_multimodal" in ep_model:
-        if ep_model.get("is_embedding"):
-            srv_in, srv_out = ["text"], []
-        elif ep_model.get("enable_multimodal") is True:
-            dev_change = changes.get("input_modalities")
-            base = dev_change[1] if dev_change else (model_def.get("input_modalities") or ["text"])
-            srv_in = base if "image" in base else [*base, "image"]
-            srv_out = None
-        else:
-            srv_in, srv_out = ["text"], None
-
-        for field, srv in (("input_modalities", srv_in), ("output_modalities", srv_out)):
-            if srv is None:
-                continue
-            if model_def.get(field) != srv:
-                changes[field] = (model_def.get(field), srv)
-            elif field in changes:
-                del changes[field]
+    # so a disabled modality on the server vetoes a models.dev claim.
+    if ep_model and ep_model.get("backend") == "sglang":
+        pending = changes.get("input_modalities", (None, None))[1]
+        srv_in, srv_out = _server_modalities(
+            ep_model,
+            pending,
+            model_def.get("input_modalities"),
+        )
+        if srv_in is not None:
+            if model_def.get("input_modalities") != srv_in:
+                changes["input_modalities"] = (model_def.get("input_modalities"), srv_in)
+            elif "input_modalities" in changes:
+                del changes["input_modalities"]
+        if srv_out is not None:
+            if model_def.get("output_modalities") != srv_out:
+                changes["output_modalities"] = (model_def.get("output_modalities"), srv_out)
+            elif "output_modalities" in changes:
+                del changes["output_modalities"]
 
     removals = [f for f in OBSOLETE_FIELDS if f in model_def]
     return changes, removals
@@ -365,6 +400,7 @@ def main():
     print("Fetching models.dev ... ", end="", flush=True)
     dev_models = fetch_modelsdev()
     print(f"{len(dev_models)} models\n" if dev_models else "failed\n")
+    price_index = _build_price_index(dev_models) if dev_models else {}
 
     any_changes = False
 
@@ -396,7 +432,7 @@ def main():
                 if dev_model else "  models.dev: no match"
             )
 
-        changes, removals = compute_changes(model_def, ep_model, dev_model, dev_models)
+        changes, removals = compute_changes(model_def, ep_model, dev_model, price_index)
 
         if not changes and not removals:
             print("  No changes.\n")
