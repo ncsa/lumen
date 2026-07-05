@@ -25,13 +25,18 @@ _cache: dict = {"data": None, "ts": 0.0, "index": {}}
 # models.dev fetch + cache
 # ---------------------------------------------------------------------------
 
-def get_modelsdev() -> list[dict]:
+def get_modelsdev() -> tuple[list[dict], dict[str, list[dict]]]:
+    """Return a (models, price_index) snapshot from the TTL cache.
+
+    Both come from the same fetch so callers can't see a torn view if a
+    concurrent request refreshes the cache between two separate reads.
+    """
     now = time.monotonic()
     if _cache["data"] is None or now - _cache["ts"] > _TTL:
         _cache["data"] = _fetch_modelsdev()
         _cache["ts"] = now
         _cache["index"] = _build_price_index(_cache["data"])
-    return _cache["data"] or []
+    return _cache["data"] or [], _cache["index"]
 
 
 def _fetch_modelsdev() -> list[dict]:
@@ -250,8 +255,7 @@ def sync_model(model_def: dict) -> dict:
       matched   – models.dev model id that was matched, or None
       endpoint_ok – whether at least one endpoint responded
     """
-    dev_models = get_modelsdev()
-    price_index = _cache["index"]
+    dev_models, price_index = get_modelsdev()
 
     ep_model = None
     for ep in model_def.get("endpoints", []):

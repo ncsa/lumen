@@ -4,7 +4,7 @@ from lumen.services import model_sync
 
 def _patch(monkeypatch, ep_model, dev_match):
     monkeypatch.setattr(model_sync, "fetch_endpoint_model", lambda ep: ep_model)
-    monkeypatch.setattr(model_sync, "get_modelsdev", lambda: [dev_match] if dev_match else [])
+    monkeypatch.setattr(model_sync, "get_modelsdev", lambda: ([dev_match] if dev_match else [], {}))
     monkeypatch.setattr(model_sync, "find_in_modelsdev", lambda *a, **k: dev_match)
 
 def test_context_window_comes_from_endpoint_not_dev(monkeypatch):
@@ -116,9 +116,8 @@ def test_no_change_when_values_already_match(monkeypatch):
 
 def _patch_price(monkeypatch, dev_models, dev_match):
     monkeypatch.setattr(model_sync, "fetch_endpoint_model", lambda ep: None)
-    monkeypatch.setattr(model_sync, "get_modelsdev", lambda: dev_models)
+    monkeypatch.setattr(model_sync, "get_modelsdev", lambda: (dev_models, model_sync._build_price_index(dev_models)))
     monkeypatch.setattr(model_sync, "find_in_modelsdev", lambda *a, **k: dev_match)
-    monkeypatch.setattr(model_sync, "_cache", {"data": dev_models, "ts": 0.0, "index": model_sync._build_price_index(dev_models)})
 
 
 def test_price_averaged_across_providers(monkeypatch):
@@ -282,9 +281,8 @@ def test_get_model_info_fallback(monkeypatch):
 
 def _patch_ep(monkeypatch, ep_model, dev_match):
     monkeypatch.setattr(model_sync, "fetch_endpoint_model", lambda ep: ep_model)
-    monkeypatch.setattr(model_sync, "get_modelsdev", lambda: [dev_match] if dev_match else [])
+    monkeypatch.setattr(model_sync, "get_modelsdev", lambda: ([dev_match] if dev_match else [], {}))
     monkeypatch.setattr(model_sync, "find_in_modelsdev", lambda *a, **k: dev_match)
-    monkeypatch.setattr(model_sync, "_cache", {"data": [], "ts": 0.0, "index": {}})
 
 
 def test_server_embedding_sets_text_in_empty_out(monkeypatch):
