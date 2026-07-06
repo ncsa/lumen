@@ -116,7 +116,7 @@
     <tbody>
       {% for mgr in managers %}
       <tr>
-        <td>{{ mgr.name }}</td>
+        <td>{% if is_admin %}<a href="{{ url_for('admin.user_profile', eid=mgr.id) }}">{{ mgr.name }}</a>{% else %}{{ mgr.name }}{% endif %}</td>
         <td>{{ mgr.email or "—" }}</td>
         {% if is_admin %}
         <td>

@@ -17,6 +17,7 @@ All notable changes to Lumen will be documented in this file.
 - The config editor's **Update**/**Update All** buttons (and the `sync_models.py` CLI) now sync model **pricing** from models.dev. The input/output cost is the average across every provider listing the same base model, excluding $0 listings (which are not real prices and would skew the average down). Averaging avoids picking the lowest/highest/first provider and gives a representative cost; on a trusted models.dev match it overwrites a stale or zero operator-set value the same way other fields are corrected.
 - Model sync now queries SGLang's `/get_server_info` first. Its `max_req_input_len` is the real per-request limit derived from the operator's `--context-length` and available KV cache — authoritative over `/v1/models`' `max_model_len`, which on SGLang reports the model's theoretical max rather than the configured window. When `/get_server_info` succeeds, `/v1/models` is skipped entirely.
 - SGLang's `is_embedding` and `enable_multimodal` flags are now treated as authoritative over models.dev for modalities: an embedding model gets `output_modalities=[]`; a server with multimodal disabled is vetoed to text-only input; a server with multimodal enabled ensures image is present. vLLM (which exposes no such flags) continues to use models.dev for modalities.
+- On a project's detail page, each manager's name is now a link (for admins) to that manager's profile page, so an admin can jump straight from the project roster to a user's profile.
 
 ## [1.21.0] - 2026-07-05
 
