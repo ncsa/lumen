@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-07-05
+
 ### Fixed
 
 - Fixed a `KeyError: 'project_ids'` on every page for users with a session predating the 1.21.0 client→project rename. `inject_nav` cached nav state in `session["_nav"]` under the old key (`client_ids`); after upgrading, any browser still holding that cookie hit a `KeyError` when the context processor read the new `project_ids` key. The cache is now rebuilt (rather than trusted blindly) whenever it doesn't contain `project_ids`.
