@@ -57,8 +57,17 @@ def _fetch_modelsdev() -> list[dict]:
 # Endpoint probe
 # ---------------------------------------------------------------------------
 
+def _sglang_root(base: str) -> str:
+    """SGLang's management endpoints (/get_server_info, /get_model_info) live at
+    the server root, not under the /v1 OpenAI API prefix that operators
+    configure as the endpoint URL. Strip a trailing /v1 so the probe reaches
+    the real management path; /v1/models is still probed at `base`."""
+    return base[:-3] if base.lower().endswith("/v1") else base
+
+
 def fetch_endpoint_model(endpoint: dict) -> dict | None:
     base = endpoint["url"].rstrip("/")
+    root = _sglang_root(base)
     headers = {"Authorization": f"Bearer {endpoint.get('api_key', '')}"}
 
     # SGLang: /get_server_info is the authoritative source — it exposes
@@ -67,9 +76,10 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
     # A 200 alone doesn't prove it's SGLang (a proxy/gateway in front of vLLM
     # could return 200 for that path), so we only tag backend="sglang" when the
     # body actually contains at least one SGLang-specific key we consume.
+    # The endpoint is served at the server root (see _sglang_root), not /v1.
     sglang_flags: dict = {}
     try:
-        r = requests.get(f"{base}/get_server_info", headers=headers, timeout=ENDPOINT_TIMEOUT)
+        r = requests.get(f"{root}/get_server_info", headers=headers, timeout=ENDPOINT_TIMEOUT)
         if r.ok:
             info = r.json()
             if any(k in info for k in ("max_req_input_len", "is_embedding", "enable_multimodal")):
@@ -97,9 +107,9 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
     except Exception:
         pass
 
-    # Older SGLang: /get_model_info returns context_length.
+    # Older SGLang: /get_model_info returns context_length. Also at the root.
     try:
-        r = requests.get(f"{base}/get_model_info", headers=headers, timeout=ENDPOINT_TIMEOUT)
+        r = requests.get(f"{root}/get_model_info", headers=headers, timeout=ENDPOINT_TIMEOUT)
         info = r.json()
         if "context_length" in info:
             return {"id": model_id or info.get("model_path", ""), "max_model_len": info["context_length"], **sglang_flags}
@@ -120,6 +130,7 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
 
 _NOISE = re.compile(
     r"^\d{2,}[bm]?$"
+    r"|^\d$"                       # single digits are version fragments, not distinctive
     r"|^fp\d+$|^bf\d+$|^q\d.*$|^[abkm]$"
     r"|^instruct$|^chat$|^hf$|^gguf$|^it$|^preview$"
 )
@@ -299,6 +310,12 @@ def sync_model(model_def: dict) -> dict:
         ]:
             if new_val is not None and model_def.get(field) != new_val:
                 updates[field] = new_val
+
+        # Description: only fill in when the operator left it blank — never
+        # overwrite a hand-written description with the models.dev blurb.
+        dev_desc = dev_match.get("description")
+        if dev_desc and not model_def.get("description"):
+            updates["description"] = dev_desc
 
         # Pricing: average across providers offering the same base model on
         # models.dev, excluding $0 listings. Overwrites a stale/zero operator

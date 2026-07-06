@@ -64,6 +64,40 @@ def test_find_allows_same_kind_match():
     assert model_sync.find_in_modelsdev("qwen2-audio", models, config_name="qwen2-audio") is not None
 
 
+def test_find_rejects_version_digit_only_overlap():
+    """Single-digit version fragments (e.g. "1" and "0" from "1.0") must not
+    create a false match between unrelated models. Without filtering single
+    digits, ornith-1.0-35b (tokens: ornith,1,0) would match xai/grok-build-0.1
+    (tokens: xai,grok,build,0,1) with score 2 — purely on version digits."""
+    models = [
+        {"id": "xai/grok-build-0.1", "name": "Grok Build 0.1", "modalities": {"input": ["text"]}},
+    ]
+    assert model_sync.find_in_modelsdev(
+        "deepreinforce-ai/Ornith-1.0-35B-FP8", models,
+        config_name="ornith-1.0-35b") is None
+
+
+def test_description_filled_from_dev_when_blank(monkeypatch):
+    """A blank operator description is filled from models.dev on a trusted match."""
+    _patch(monkeypatch,
+           ep_model=None,
+           dev_match={"description": "A great model for coding."})
+    result = model_sync.sync_model({"name": "m", "endpoints": [{"url": "http://x"}]})
+    assert result["updates"]["description"] == "A great model for coding."
+
+
+def test_description_not_overwritten_when_set(monkeypatch):
+    """A hand-written operator description is never overwritten by models.dev."""
+    _patch(monkeypatch,
+           ep_model=None,
+           dev_match={"description": "A great model for coding."})
+    result = model_sync.sync_model({
+        "name": "m", "description": "My custom description",
+        "endpoints": [{"url": "http://x"}],
+    })
+    assert "description" not in result["updates"]
+
+
 def test_modalities_overridden_on_match(monkeypatch):
     """A trusted models.dev match corrects modalities (e.g. text -> text+image)."""
     _patch(monkeypatch,
@@ -211,6 +245,28 @@ def test_sglang_server_info_preferred_over_v1_models(monkeypatch):
     assert r["is_embedding"] is False
     assert r["enable_multimodal"] is None
     assert not any(u.endswith("/models") for u in calls), "v1/models must not be called when server_info succeeds"
+
+
+def test_sglang_management_endpoints_probed_at_root_not_v1(monkeypatch):
+    """SGLang's /get_server_info lives at the server root, not under /v1.
+    An endpoint URL like http://host/v1 must probe http://host/get_server_info,
+    not http://host/v1/get_server_info (which 404s on real SGLang). Without the
+    /v1 strip, max_req_input_len is never seen and the fallback to /v1/models
+    reports the model's theoretical max (e.g. 1048576) instead of the configured
+    window (e.g. 500410)."""
+    calls = []
+    def fake_get(url, **kw):
+        calls.append(url)
+        if url == "http://x/get_server_info":
+            return _Resp({"max_req_input_len": 500410, "served_model_name": "zai-org/GLM-5.2-FP8",
+                          "is_embedding": False, "enable_multimodal": None})
+        return _Resp({}, ok=False)
+    monkeypatch.setattr(model_sync.requests, "get", fake_get)
+    r = model_sync.fetch_endpoint_model({"url": "http://x/v1", "api_key": "k"})
+    assert r["max_model_len"] == 500410
+    assert r["backend"] == "sglang"
+    assert "http://x/get_server_info" in calls
+    assert not any("/v1/get_server_info" in u for u in calls), "must probe root, not /v1"
 
 
 def test_sglang_server_info_without_max_req_input_len_preserves_flags(monkeypatch):

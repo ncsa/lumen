@@ -44,8 +44,17 @@ OBSOLETE_FIELDS = ["supports_vision"]
 # Fetch helpers
 # ---------------------------------------------------------------------------
 
+def _sglang_root(base: str) -> str:
+    """SGLang's management endpoints (/get_server_info, /get_model_info) live at
+    the server root, not under the /v1 OpenAI API prefix that operators
+    configure as the endpoint URL. Strip a trailing /v1 so the probe reaches
+    the real management path; /v1/models is still probed at `base`."""
+    return base[:-3] if base.lower().endswith("/v1") else base
+
+
 def fetch_endpoint_model(endpoint: dict) -> dict | None:
     base = endpoint["url"].rstrip("/")
+    root = _sglang_root(base)
     headers = {"Authorization": f"Bearer {endpoint['api_key']}"}
 
     # SGLang: /get_server_info is the authoritative source — it exposes
@@ -54,9 +63,10 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
     # A 200 alone doesn't prove it's SGLang (a proxy/gateway in front of vLLM
     # could return 200 for that path), so we only tag backend="sglang" when the
     # body actually contains at least one SGLang-specific key we consume.
+    # The endpoint is served at the server root (see _sglang_root), not /v1.
     sglang_flags: dict = {}
     try:
-        r = requests.get(f"{base}/get_server_info", headers=headers, timeout=TIMEOUT)
+        r = requests.get(f"{root}/get_server_info", headers=headers, timeout=TIMEOUT)
         if r.ok:
             info = r.json()
             if any(k in info for k in ("max_req_input_len", "is_embedding", "enable_multimodal")):
@@ -84,9 +94,9 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
     except Exception:
         pass
 
-    # Older SGLang: /get_model_info returns context_length.
+    # Older SGLang: /get_model_info returns context_length. Also at the root.
     try:
-        r = requests.get(f"{base}/get_model_info", headers=headers, timeout=TIMEOUT)
+        r = requests.get(f"{root}/get_model_info", headers=headers, timeout=TIMEOUT)
         info = r.json()
         if "context_length" in info:
             return {"id": model_id or info.get("model_path", ""), "max_model_len": info["context_length"], **sglang_flags}
@@ -122,7 +132,8 @@ def fetch_modelsdev() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 _NOISE = re.compile(
-    r"^\d{2,}[bm]?$"    # parameter sizes: 27b, 30b, 120b (keep single digits for version matching)
+    r"^\d{2,}[bm]?$"    # parameter sizes: 27b, 30b, 120b
+    r"|^\d$"             # single digits are version fragments, not distinctive
     r"|^fp\d+$"          # precisions: fp8, fp16
     r"|^bf\d+$"          # bf16
     r"|^q\d.*$"          # quantization: q5_k_m
@@ -271,6 +282,12 @@ def compute_changes(
         ]:
             if new_val is not None and model_def.get(field) != new_val:
                 changes[field] = (model_def.get(field), new_val)
+
+        # Description: only fill in when the operator left it blank — never
+        # overwrite a hand-written description with the models.dev blurb.
+        dev_desc = dev_model.get("description")
+        if dev_desc and not model_def.get("description"):
+            changes["description"] = (model_def.get("description"), dev_desc)
 
         # Pricing: average across providers offering the same base model on
         # models.dev, excluding $0 listings. Overwrites a stale/zero operator
