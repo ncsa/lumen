@@ -11,7 +11,7 @@ from lumen.extensions import db
 from lumen.timeutils import utcnow
 from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
-from lumen.models.entity_manager import EntityManager
+from lumen.models.entity_manager import EntityManager, get_managed_projects
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.models.entity_stat import EntityStat
@@ -36,30 +36,13 @@ def _require_project_access(entity_id: int, sid: int):
             abort(HTTPStatus.FORBIDDEN)
 
 
-def _get_user_projects(entity_id: int):
-    assocs = db.session.execute(select(EntityManager).filter_by(user_entity_id=entity_id)).scalars().all()
-    project_ids = [a.project_entity_id for a in assocs]
-    if not project_ids:
-        return []
-    return db.session.execute(
-        select(Entity)
-        .where(
-            Entity.id.in_(project_ids),
-            Entity.entity_type == "project",
-            Entity.active == True,
-        )
-        .order_by(Entity.name)
-    ).scalars().all()
-
-
-
 def _scoped_project_ids(entity_id, entity):
     """Full set of project ids visible to this caller (admins: all; others: managed)."""
     if is_admin(entity):
         return db.session.execute(
             select(Entity.id).where(Entity.entity_type == "project")
         ).scalars().all()
-    return [c.id for c in _get_user_projects(entity_id)]
+    return [c.id for c in get_managed_projects(entity_id)]
 
 
 @projects_bp.route("/projects", methods=["GET"])
@@ -137,7 +120,7 @@ def data():
             stmt = stmt.where(Entity.active == True)
     else:
         # Non-admins only ever see the active projects they manage.
-        managed_ids = [c.id for c in _get_user_projects(entity_id)]
+        managed_ids = [c.id for c in get_managed_projects(entity_id)]
         if not managed_ids:
             return jsonify({"projects": [], "total": 0, "page": page, "per_page": per_page})
         stmt = stmt.where(Entity.id.in_(managed_ids))

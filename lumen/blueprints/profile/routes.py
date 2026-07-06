@@ -13,6 +13,7 @@ from lumen.models.api_key import APIKey
 from lumen.models.conversation import Conversation
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
+from lumen.models.entity_manager import get_managed_projects
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
@@ -169,6 +170,41 @@ def _build_coin_pool(eid: int):
     }
 
 
+def _build_project_list(eid: int) -> list:
+    """Active project entities this user manages, with aggregated usage stats.
+
+    Skips non-user entities (e.g. when _get_profile_data is called for a
+    project via projects.detail), since projects don't manage other projects.
+    """
+    entity = db.session.get(Entity, eid)
+    if entity is None or entity.entity_type != "user":
+        return []
+    projects = get_managed_projects(eid)
+    if not projects:
+        return []
+    stat_rows = db.session.execute(
+        select(
+            EntityStat.entity_id.label("eid"),
+            func.coalesce(EntityStat.requests, 0).label("requests"),
+            func.coalesce(EntityStat.input_tokens + EntityStat.output_tokens, 0).label("tokens"),
+            func.coalesce(EntityStat.cost, 0).label("cost"),
+        ).where(EntityStat.entity_id.in_([p.id for p in projects]))
+    ).all()
+    stats = {r.eid: r for r in stat_rows}
+    return [
+        {
+            "id": p.id,
+            "name": p.name,
+            "detail_url": url_for("projects.detail", sid=p.id),
+            "requests": int(getattr(stats.get(p.id), "requests", 0)),
+            "tokens": int(getattr(stats.get(p.id), "tokens", 0)),
+            "cost": float(getattr(stats.get(p.id), "cost", 0)),
+            "created_at": p.created_at,
+        }
+        for p in projects
+    ]
+
+
 def _get_profile_data(eid: int) -> dict:
     chat_agg, conversation_count = _fetch_chat_stats(eid)
     api_keys = db.session.execute(select(APIKey).filter_by(entity_id=eid).order_by(APIKey.created_at)).scalars().all()
@@ -178,6 +214,7 @@ def _get_profile_data(eid: int) -> dict:
     usage_by_model = {u["model_name"]: u for u in model_usage}
     model_access_list = _build_model_access_list(usage_by_model, all_models, eps_by_model, access_statuses, consent_map)
     coin_pool = _build_coin_pool(eid)
+    project_list = _build_project_list(eid)
     return {
         "chat_agg": chat_agg,
         "conversation_count": conversation_count,
@@ -185,6 +222,7 @@ def _get_profile_data(eid: int) -> dict:
         "model_usage": model_usage,
         "model_access_list": model_access_list,
         "coin_pool": coin_pool,
+        "project_list": project_list,
         "status": {"total_tokens_used": total_tokens_used, "total_cost": total_cost},
     }
 

@@ -357,3 +357,100 @@ def test_profile_page_shows_model_with_past_usage(app, auth_client, test_user):
 
     resp = auth_client.get("/profile")
     assert resp.status_code == HTTPStatus.OK
+
+
+# ---------------------------------------------------------------------------
+# Projects (clients) section
+# ---------------------------------------------------------------------------
+
+def _make_managed_project(app, user_id, name="managed-svc"):
+    """Create an active project entity managed by user_id; return its id."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.entity_manager import EntityManager
+        proj = Entity(entity_type="project", name=name, initials="MS", active=True)
+        db.session.add(proj)
+        db.session.flush()
+        db.session.add(EntityManager(user_entity_id=user_id, project_entity_id=proj.id))
+        db.session.commit()
+        db.session.refresh(proj)
+        return proj.id
+
+
+def test_profile_projects_section_hidden_when_none(auth_client):
+    """No managed projects → the Projects section is not rendered."""
+    resp = auth_client.get("/profile")
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.get_data(as_text=True)
+    assert 'id="project-table"' not in body
+    assert 'id="project-search"' not in body
+
+
+def test_profile_projects_section_shows_managed_project(app, auth_client, test_user):
+    """A managed project appears in the Projects section of the user's profile."""
+    _make_managed_project(app, test_user["id"], name="my-client-svc")
+    resp = auth_client.get("/profile")
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.get_data(as_text=True)
+    # Section scaffolding present
+    assert 'id="project-table"' in body
+    assert 'id="project-search"' in body
+    # Project name is emitted into the JS rows
+    assert "my-client-svc" in body
+
+
+def test_profile_projects_section_excludes_inactive(app, auth_client, test_user):
+    """An inactive managed project is not shown (query filters active==True)."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.entity_manager import EntityManager
+        proj = Entity(entity_type="project", name="inactive-client", initials="IC", active=False)
+        db.session.add(proj)
+        db.session.flush()
+        db.session.add(EntityManager(user_entity_id=test_user["id"], project_entity_id=proj.id))
+        db.session.commit()
+
+    resp = auth_client.get("/profile")
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.get_data(as_text=True)
+    assert 'id="project-table"' not in body
+    assert "inactive-client" not in body
+
+
+def test_admin_user_profile_shows_projects_section(app, admin_client, test_user):
+    """Admin viewing another user's profile also sees that user's Projects section."""
+    _make_managed_project(app, test_user["id"], name="user-client")
+    resp = admin_client.get(f"/admin/users/{test_user['id']}/profile")
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.get_data(as_text=True)
+    assert 'id="project-table"' in body
+    assert "user-client" in body
+
+
+def test_profile_projects_zero_usage_renders_zero_not_dash(app, auth_client, test_user):
+    """A project with no usage shows 0, not — (matches the Keys table behavior)."""
+    _make_managed_project(app, test_user["id"], name="zero-usage-svc")
+    resp = auth_client.get("/profile")
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.get_data(as_text=True)
+    # The JS row data for a zero-usage project must carry 0, not null/undefined.
+    assert "zero-usage-svc" in body
+    assert "requests: 0" in body
+    assert "tokens: 0" in body
+    # The falsy-zero ternary that rendered 0 as — must be absent.
+    assert "p.requests ?" not in body
+    assert "p.tokens ?" not in body
+
+
+def test_project_detail_page_does_not_render_projects_section(app, auth_client, test_user):
+    """A project's own detail page (which reuses _get_profile_data) must not
+    waste a query building a project list for a project entity, and must not
+    render the Projects section."""
+    pid = _make_managed_project(app, test_user["id"], name="detail-svc")
+    resp = auth_client.get(f"/projects/{pid}")
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.get_data(as_text=True)
+    assert 'id="project-table"' not in body
+
