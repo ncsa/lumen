@@ -465,8 +465,8 @@ function renderProjects() {
       const dt = fmtDate(p.created);
       return `<tr>
         <td><a href="${escHtml(p.detail_url)}">${escHtml(p.name)}</a></td>
-        <td class="text-end">${p.requests ? p.requests.toLocaleString() : '—'}</td>
-        <td class="text-end">${p.tokens ? p.tokens.toLocaleString() : '—'}</td>
+        <td class="text-end">${p.requests.toLocaleString()}</td>
+        <td class="text-end">${p.tokens.toLocaleString()}</td>
         <td class="text-end">${parseFloat(p.cost).toFixed(2)}</td>
         <td>${dt.text}</td>
       </tr>`;

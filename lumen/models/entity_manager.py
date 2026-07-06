@@ -1,6 +1,8 @@
+from sqlalchemy import select
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..extensions import db
+from .entity import Entity
 
 
 class EntityManager(db.Model):
@@ -25,3 +27,22 @@ class EntityManager(db.Model):
         db.Index("ix_entity_managers_project_entity_id", "project_entity_id"),
         {"comment": "Maps users to project entities they are permitted to manage"},
     )
+
+
+def get_managed_projects(user_entity_id: int):
+    """Active project entities this user manages, ordered by name.
+
+    Single join over EntityManager → Entity; returns Entity rows.
+    Shared by the projects blueprint (access scoping) and the profile
+    blueprint (Projects section).
+    """
+    return db.session.execute(
+        select(Entity)
+        .join(EntityManager, EntityManager.project_entity_id == Entity.id)
+        .where(
+            EntityManager.user_entity_id == user_entity_id,
+            Entity.entity_type == "project",
+            Entity.active == True,
+        )
+        .order_by(Entity.name)
+    ).scalars().all()

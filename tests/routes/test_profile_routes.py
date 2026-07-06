@@ -428,3 +428,29 @@ def test_admin_user_profile_shows_projects_section(app, admin_client, test_user)
     assert 'id="project-table"' in body
     assert "user-client" in body
 
+
+def test_profile_projects_zero_usage_renders_zero_not_dash(app, auth_client, test_user):
+    """A project with no usage shows 0, not — (matches the Keys table behavior)."""
+    _make_managed_project(app, test_user["id"], name="zero-usage-svc")
+    resp = auth_client.get("/profile")
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.get_data(as_text=True)
+    # The JS row data for a zero-usage project must carry 0, not null/undefined.
+    assert "zero-usage-svc" in body
+    assert "requests: 0" in body
+    assert "tokens: 0" in body
+    # The falsy-zero ternary that rendered 0 as — must be absent.
+    assert "p.requests ?" not in body
+    assert "p.tokens ?" not in body
+
+
+def test_project_detail_page_does_not_render_projects_section(app, auth_client, test_user):
+    """A project's own detail page (which reuses _get_profile_data) must not
+    waste a query building a project list for a project entity, and must not
+    render the Projects section."""
+    pid = _make_managed_project(app, test_user["id"], name="detail-svc")
+    resp = auth_client.get(f"/projects/{pid}")
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.get_data(as_text=True)
+    assert 'id="project-table"' not in body
+

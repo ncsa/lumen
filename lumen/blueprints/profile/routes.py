@@ -13,7 +13,7 @@ from lumen.models.api_key import APIKey
 from lumen.models.conversation import Conversation
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
-from lumen.models.entity_manager import EntityManager
+from lumen.models.entity_manager import get_managed_projects
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
@@ -173,43 +173,35 @@ def _build_coin_pool(eid: int):
 def _build_project_list(eid: int) -> list:
     """Active project entities this user manages, with aggregated usage stats.
 
-    Mirrors the per-row query in projects/routes.py `/projects/data` but scoped
-    to the user's EntityManager links and without pagination.
+    Skips non-user entities (e.g. when _get_profile_data is called for a
+    project via projects.detail), since projects don't manage other projects.
     """
-    project_ids = [
-        r[0]
-        for r in db.session.execute(
-            select(EntityManager.project_entity_id).filter_by(user_entity_id=eid)
-        ).all()
-    ]
-    if not project_ids:
+    entity = db.session.get(Entity, eid)
+    if entity is None or entity.entity_type != "user":
         return []
-    rows = db.session.execute(
+    projects = get_managed_projects(eid)
+    if not projects:
+        return []
+    stat_rows = db.session.execute(
         select(
-            Entity,
+            EntityStat.entity_id.label("eid"),
             func.coalesce(EntityStat.requests, 0).label("requests"),
             func.coalesce(EntityStat.input_tokens + EntityStat.output_tokens, 0).label("tokens"),
             func.coalesce(EntityStat.cost, 0).label("cost"),
-        )
-        .where(
-            Entity.id.in_(project_ids),
-            Entity.entity_type == "project",
-            Entity.active == True,
-        )
-        .outerjoin(EntityStat, Entity.id == EntityStat.entity_id)
-        .order_by(Entity.name)
+        ).where(EntityStat.entity_id.in_([p.id for p in projects]))
     ).all()
+    stats = {r.eid: r for r in stat_rows}
     return [
         {
-            "id": c.id,
-            "name": c.name,
-            "detail_url": url_for("projects.detail", sid=c.id),
-            "requests": int(requests),
-            "tokens": int(tokens),
-            "cost": float(cost),
-            "created_at": c.created_at,
+            "id": p.id,
+            "name": p.name,
+            "detail_url": url_for("projects.detail", sid=p.id),
+            "requests": int(getattr(stats.get(p.id), "requests", 0)),
+            "tokens": int(getattr(stats.get(p.id), "tokens", 0)),
+            "cost": float(getattr(stats.get(p.id), "cost", 0)),
+            "created_at": p.created_at,
         }
-        for c, requests, tokens, cost in rows
+        for p in projects
     ]
 
 
