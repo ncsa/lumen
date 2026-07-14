@@ -23,7 +23,7 @@ def service_project(app):
 
 @pytest.fixture
 def managed_project(app, service_project, test_user):
-    """service_project with test_user as manager."""
+    """service_project with test_user as manager (non-owner)."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_manager import EntityManager
@@ -33,6 +33,47 @@ def managed_project(app, service_project, test_user):
         ))
         db.session.commit()
     return service_project
+
+
+@pytest.fixture
+def owned_project(app, service_project, test_user):
+    """service_project with test_user as owner (is_owner=True)."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_manager import EntityManager
+        db.session.add(EntityManager(
+            user_entity_id=test_user["id"],
+            project_entity_id=service_project["id"],
+            is_owner=True,
+        ))
+        db.session.commit()
+    return service_project
+
+
+@pytest.fixture
+def owner_auth_client(auth_client, owned_project):
+    """auth_client with test_user as owner of owned_project."""
+    return auth_client
+
+
+@pytest.fixture
+def second_user(app):
+    """A second user for transfer/add-manager tests."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        entity = Entity(
+            entity_type="user",
+            email="second@example.com",
+            name="Second User",
+            initials="SU",
+            gravatar_hash="ghi789",
+            active=True,
+        )
+        db.session.add(entity)
+        db.session.commit()
+        db.session.refresh(entity)
+        return {"id": entity.id, "name": entity.name, "email": entity.email}
 
 
 @pytest.fixture
@@ -385,6 +426,176 @@ def test_remove_manager_not_found_returns_404(admin_client, service_project, tes
         f"/projects/{service_project['id']}/users/{test_user['id']}"
     )
     assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+# ---------------------------------------------------------------------------
+# Owner / project-admin functionality
+# ---------------------------------------------------------------------------
+
+def test_create_project_with_owner(app, admin_client, writable_config, test_user):
+    resp = admin_client.post("/projects", json={"name": "owned-svc", "owner_email": "testuser@example.com"})
+    assert resp.status_code == HTTPStatus.CREATED
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.entity_manager import EntityManager
+        project = db.session.execute(select(Entity).filter_by(name="owned-svc", entity_type="project")).scalar_one()
+        assoc = db.session.execute(
+            select(EntityManager).filter_by(user_entity_id=test_user["id"], project_entity_id=project.id)
+        ).scalar_one()
+        assert assoc.is_owner is True
+
+
+def test_create_project_owner_not_found_returns_404(admin_client, writable_config):
+    resp = admin_client.post("/projects", json={"name": "bad-owner", "owner_email": "nobody@example.com"})
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+def test_create_project_without_owner_is_ownerless(app, admin_client, writable_config):
+    resp = admin_client.post("/projects", json={"name": "no-owner"})
+    assert resp.status_code == HTTPStatus.CREATED
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.entity_manager import EntityManager
+        project = db.session.execute(select(Entity).filter_by(name="no-owner", entity_type="project")).scalar_one()
+        count = db.session.scalar(
+            select(func.count()).select_from(EntityManager).filter_by(project_entity_id=project.id)
+        )
+        assert count == 0
+
+
+def test_owner_can_add_manager(owner_auth_client, owned_project, second_user):
+    resp = owner_auth_client.post(
+        f"/projects/{owned_project['id']}/users",
+        json={"email": "second@example.com"},
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+
+
+def test_owner_can_remove_manager(app, owner_auth_client, owned_project, second_user):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_manager import EntityManager
+        db.session.add(EntityManager(
+            user_entity_id=second_user["id"],
+            project_entity_id=owned_project["id"],
+        ))
+        db.session.commit()
+    resp = owner_auth_client.delete(
+        f"/projects/{owned_project['id']}/users/{second_user['id']}"
+    )
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+
+
+def test_owner_cannot_remove_self(owner_auth_client, owned_project, test_user):
+    resp = owner_auth_client.delete(
+        f"/projects/{owned_project['id']}/users/{test_user['id']}"
+    )
+    assert resp.status_code == HTTPStatus.CONFLICT
+
+
+def test_owner_can_toggle(app, owner_auth_client, owned_project):
+    resp = owner_auth_client.post(f"/projects/{owned_project['id']}/toggle")
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.get_json()["active"] is False
+
+
+def test_non_owner_manager_cannot_toggle(managed_auth_client, managed_project):
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/toggle")
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_non_owner_manager_cannot_add_manager(managed_auth_client, managed_project, second_user):
+    resp = managed_auth_client.post(
+        f"/projects/{managed_project['id']}/users",
+        json={"email": "second@example.com"},
+    )
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_owner_can_search_users(owner_auth_client, owned_project):
+    resp = owner_auth_client.get(f"/projects/{owned_project['id']}/users/search?q=test")
+    assert resp.status_code == HTTPStatus.OK
+
+
+def test_transfer_ownership(app, owner_auth_client, owned_project, test_user, second_user):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_manager import EntityManager
+        db.session.add(EntityManager(
+            user_entity_id=second_user["id"],
+            project_entity_id=owned_project["id"],
+            is_owner=False,
+        ))
+        db.session.commit()
+    resp = owner_auth_client.post(
+        f"/projects/{owned_project['id']}/owner",
+        json={"user_id": second_user["id"]},
+    )
+    assert resp.status_code == HTTPStatus.OK
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_manager import EntityManager
+        old = db.session.execute(
+            select(EntityManager).filter_by(user_entity_id=test_user["id"], project_entity_id=owned_project["id"])
+        ).scalar_one()
+        new = db.session.execute(
+            select(EntityManager).filter_by(user_entity_id=second_user["id"], project_entity_id=owned_project["id"])
+        ).scalar_one()
+        assert old.is_owner is False
+        assert new.is_owner is True
+
+
+def test_transfer_to_non_manager_creates_manager(app, owner_auth_client, owned_project, test_user, second_user):
+    resp = owner_auth_client.post(
+        f"/projects/{owned_project['id']}/owner",
+        json={"user_id": second_user["id"]},
+    )
+    assert resp.status_code == HTTPStatus.OK
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_manager import EntityManager
+        old = db.session.execute(
+            select(EntityManager).filter_by(user_entity_id=test_user["id"], project_entity_id=owned_project["id"])
+        ).scalar_one()
+        new = db.session.execute(
+            select(EntityManager).filter_by(user_entity_id=second_user["id"], project_entity_id=owned_project["id"])
+        ).scalar_one()
+        assert old.is_owner is False
+        assert new.is_owner is True
+
+
+def test_transfer_requires_owner_or_admin(managed_auth_client, managed_project, second_user):
+    resp = managed_auth_client.post(
+        f"/projects/{managed_project['id']}/owner",
+        json={"user_id": second_user["id"]},
+    )
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_transfer_unknown_user_returns_404(owner_auth_client, owned_project):
+    resp = owner_auth_client.post(
+        f"/projects/{owned_project['id']}/owner",
+        json={"user_id": 99999},
+    )
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+def test_transfer_missing_user_id_returns_400(owner_auth_client, owned_project):
+    resp = owner_auth_client.post(
+        f"/projects/{owned_project['id']}/owner",
+        json={},
+    )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+
+
+def test_transfer_to_current_owner_returns_409(owner_auth_client, owned_project, test_user):
+    resp = owner_auth_client.post(
+        f"/projects/{owned_project['id']}/owner",
+        json={"user_id": test_user["id"]},
+    )
+    assert resp.status_code == HTTPStatus.CONFLICT
 
 
 # ---------------------------------------------------------------------------

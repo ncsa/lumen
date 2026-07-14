@@ -11,7 +11,12 @@ from lumen.extensions import db
 from lumen.timeutils import utcnow
 from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
-from lumen.models.entity_manager import EntityManager, get_managed_projects
+from lumen.models.entity_manager import (
+    EntityManager,
+    get_managed_projects,
+    get_project_owner,
+    is_project_owner,
+)
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.models.entity_stat import EntityStat
@@ -34,6 +39,17 @@ def _require_project_access(entity_id: int, sid: int):
         ).scalar_one_or_none()
         if not assoc:
             abort(HTTPStatus.FORBIDDEN)
+
+
+def _require_project_admin(entity_id: int, sid: int):
+    """Abort 403 unless caller is a global admin or the project's owner.
+
+    Owner-level actions: add/remove managers, transfer ownership, toggle.
+    Regular managers (non-owners) are rejected here.
+    """
+    entity = db.session.get(Entity, entity_id)
+    if not is_admin(entity) and not is_project_owner(entity_id, sid):
+        abort(HTTPStatus.FORBIDDEN)
 
 
 def _scoped_project_ids(entity_id, entity):
@@ -180,18 +196,27 @@ def detail(sid):
         .order_by(Entity.name)
     ).scalars().all()
 
+    owner = get_project_owner(sid)
+    owner_id = owner.id if owner else None
+    entity = db.session.get(Entity, entity_id)
+    can_manage = is_admin(entity) or (owner_id == entity_id)
+
     return render_template(
         "project_detail.html",
         project=project,
         managers=managers,
+        owner_id=owner_id,
+        can_manage=can_manage,
         **data,
     )
 
 
 @projects_bp.route("/projects/<int:sid>/toggle", methods=["POST"])
-@admin_required
+@login_required
 def toggle_project(sid):
+    entity_id = session["entity_id"]
     project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
+    _require_project_admin(entity_id, sid)
     project.active = not project.active
     db.session.commit()
     return jsonify({"active": project.active})
@@ -205,6 +230,15 @@ def create_project():
     if not name:
         return jsonify({"error": "Project name required"}), HTTPStatus.BAD_REQUEST
 
+    owner_email = (data.get("owner_email") or "").strip()
+    owner_user = None
+    if owner_email:
+        owner_user = db.session.execute(
+            select(Entity).filter_by(email=owner_email, entity_type="user")
+        ).scalar_one_or_none()
+        if not owner_user:
+            return jsonify({"error": "Owner user not found"}), HTTPStatus.NOT_FOUND
+
     project = Entity(
         entity_type="project",
         name=name,
@@ -212,6 +246,15 @@ def create_project():
         active=True,
     )
     db.session.add(project)
+    db.session.flush()
+
+    if owner_user:
+        db.session.add(EntityManager(
+            user_entity_id=owner_user.id,
+            project_entity_id=project.id,
+            is_owner=True,
+        ))
+
     db.session.commit()
 
     # Record the project in config.yaml with an empty entry so the file always reflects
@@ -248,8 +291,11 @@ def delete_project(sid):
 
 
 @projects_bp.route("/projects/<int:sid>/users/search")
-@admin_required
+@login_required
 def search_project_users(sid):
+    entity_id = session["entity_id"]
+    _require_project_admin(entity_id, sid)
+
     q = (request.args.get("q") or "").strip()
     if len(q) < 2:
         return jsonify({"users": []})
@@ -279,8 +325,11 @@ def search_project_users(sid):
 
 
 @projects_bp.route("/projects/<int:sid>/users", methods=["POST"])
-@admin_required
+@login_required
 def add_project_manager(sid):
+    entity_id = session["entity_id"]
+    _require_project_admin(entity_id, sid)
+
     data = request.get_json() or {}
     email = (data.get("email") or "").strip()
     if not email:
@@ -306,8 +355,11 @@ def add_project_manager(sid):
 
 
 @projects_bp.route("/projects/<int:sid>/users/<int:uid>", methods=["DELETE"])
-@admin_required
+@login_required
 def remove_project_manager(sid, uid):
+    entity_id = session["entity_id"]
+    _require_project_admin(entity_id, sid)
+
     db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
 
     target_assoc = db.session.execute(
@@ -316,9 +368,55 @@ def remove_project_manager(sid, uid):
     if not target_assoc:
         return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
 
+    if target_assoc.is_owner:
+        return jsonify({"error": "Transfer ownership before removing the owner"}), HTTPStatus.CONFLICT
+
     db.session.delete(target_assoc)
     db.session.commit()
     return "", HTTPStatus.NO_CONTENT
+
+
+@projects_bp.route("/projects/<int:sid>/owner", methods=["POST"])
+@login_required
+def transfer_ownership(sid):
+    entity_id = session["entity_id"]
+    _require_project_admin(entity_id, sid)
+
+    data = request.get_json() or {}
+    new_owner_id = data.get("user_id")
+    if not new_owner_id:
+        return jsonify({"error": "user_id required"}), HTTPStatus.BAD_REQUEST
+
+    db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
+    new_owner = db.session.execute(
+        select(Entity).filter_by(id=new_owner_id, entity_type="user")
+    ).scalar_one_or_none()
+    if not new_owner:
+        return jsonify({"error": "User not found"}), HTTPStatus.NOT_FOUND
+
+    old_owner_assoc = db.session.execute(
+        select(EntityManager).filter_by(project_entity_id=sid, is_owner=True)
+    ).scalar_one_or_none()
+
+    new_assoc = db.session.execute(
+        select(EntityManager).filter_by(user_entity_id=new_owner_id, project_entity_id=sid)
+    ).scalar_one_or_none()
+    if new_assoc is old_owner_assoc:
+        return jsonify({"error": "User is already the owner"}), HTTPStatus.CONFLICT
+
+    if old_owner_assoc:
+        old_owner_assoc.is_owner = False
+    if new_assoc:
+        new_assoc.is_owner = True
+    else:
+        db.session.add(EntityManager(
+            user_entity_id=new_owner_id,
+            project_entity_id=sid,
+            is_owner=True,
+        ))
+
+    db.session.commit()
+    return jsonify({"owner_id": new_owner_id}), HTTPStatus.OK
 
 
 @projects_bp.route("/projects/<int:sid>/keys", methods=["POST"])

@@ -112,8 +112,15 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <label for="project-name-input" class="form-label">Project name</label>
-        <input type="text" id="project-name-input" class="form-control" placeholder="e.g. research-bot">
+        <div class="mb-3">
+          <label for="project-name-input" class="form-label">Project name</label>
+          <input type="text" id="project-name-input" class="form-control" placeholder="e.g. research-bot">
+        </div>
+        <div class="mb-3">
+          <label for="project-owner-input" class="form-label">Owner email (optional)</label>
+          <input type="email" id="project-owner-input" class="form-control" placeholder="user@example.edu">
+          <div class="form-text">The owner can add/remove managers, transfer ownership, and activate/deactivate this project.</div>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -323,10 +330,13 @@
 document.getElementById("create-project-btn").addEventListener("click", async function () {
   const name = document.getElementById("project-name-input").value.trim();
   if (!name) return;
+  const ownerEmail = document.getElementById("project-owner-input").value.trim();
+  const body = { name };
+  if (ownerEmail) body.owner_email = ownerEmail;
   const resp = await fetch("/projects", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify(body),
   });
   if (resp.ok) {
     const data = await resp.json();

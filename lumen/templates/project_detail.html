@@ -5,7 +5,7 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-1">
   <a href="{{ url_for('projects.index') }}" class="btn btn-sm btn-outline-secondary">← Projects</a>
-  {% if is_admin %}
+  {% if can_manage %}
   {% if project.active %}
   <button class="btn btn-sm btn-outline-danger"
           onclick="toggleProject({{ project.id }}, true)">
@@ -98,7 +98,7 @@
 <!-- Managers -->
 <div class="d-flex justify-content-between align-items-center mt-4 mb-0">
   <h2 class="mb-0">Managers</h2>
-  {% if is_admin %}
+  {% if can_manage %}
   <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addManagerModal"
           aria-haspopup="dialog">+ Add Manager</button>
   {% endif %}
@@ -110,24 +110,40 @@
       <tr>
         <th>Name</th>
         <th>Email</th>
-        {% if is_admin %}<th><span class="visually-hidden">Actions</span></th>{% endif %}
+        {% if can_manage %}<th><span class="visually-hidden">Actions</span></th>{% endif %}
       </tr>
     </thead>
     <tbody>
       {% for mgr in managers %}
       <tr>
-        <td>{% if is_admin %}<a href="{{ url_for('admin.user_profile', eid=mgr.id) }}">{{ mgr.name }}</a>{% else %}{{ mgr.name }}{% endif %}</td>
-        <td>{{ mgr.email or "—" }}</td>
-        {% if is_admin %}
         <td>
-          <button class="btn btn-sm btn-outline-danger"
-                  onclick="removeManager({{ project.id }}, {{ mgr.id }}, '{{ mgr.name | e }}')"
-                  aria-label="Remove {{ mgr.name }}">Remove</button>
+          {% if is_admin %}<a href="{{ url_for('admin.user_profile', eid=mgr.id) }}">{{ mgr.name }}</a>{% else %}{{ mgr.name }}{% endif %}
+          {% if mgr.id == owner_id %}<span class="badge bg-primary ms-1">Owner</span>{% endif %}
+        </td>
+        <td>{{ mgr.email or "—" }}</td>
+        {% if can_manage %}
+        <td>
+          <div class="d-flex gap-1 align-items-center">
+            {% if mgr.id == owner_id %}
+            <span class="d-inline-block" tabindex="0" data-bs-toggle="tooltip" data-bs-placement="top"
+                  title="Transfer ownership before removing">
+              <button class="btn btn-sm btn-outline-danger" disabled
+                      aria-label="Cannot remove owner {{ mgr.name }}">Remove</button>
+            </span>
+            {% else %}
+            <button class="btn btn-sm btn-outline-danger"
+                    onclick="removeManager({{ project.id }}, {{ mgr.id }}, '{{ mgr.name | e }}')"
+                    aria-label="Remove {{ mgr.name }}">Remove</button>
+            <button class="btn btn-sm btn-outline-primary"
+                    onclick="makeOwner({{ project.id }}, {{ mgr.id }}, '{{ mgr.name | e }}')"
+                    aria-label="Make {{ mgr.name }} the owner">Make Owner</button>
+            {% endif %}
+          </div>
         </td>
         {% endif %}
       </tr>
       {% else %}
-      <tr><td colspan="{{ 3 if is_admin else 2 }}" class="text-muted text-center">No managers assigned.</td></tr>
+      <tr><td colspan="{{ 3 if can_manage else 2 }}" class="text-muted text-center">No managers assigned.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -246,7 +262,7 @@
   </div>
 </div>
 
-{% if is_admin %}
+{% if can_manage %}
 <!-- Add Manager Modal -->
 {{ user_search_modal('addManagerModal', 'Add Manager', 'add-manager-email', 'manager-suggestions', 'add-manager-btn', 'Add Manager',
    'Search for a user by name or email address.') }}
@@ -559,7 +575,7 @@ document.getElementById("save-key-btn").addEventListener("click", async function
 });
 
 
-{% if is_admin %}
+{% if can_manage %}
 // Add manager — shared user-search typeahead (see static/js/user-search.js).
 const managerInput = document.getElementById("add-manager-email");
 const managerSearch = initUserSearch({
@@ -600,6 +616,18 @@ function removeManager(sid, uid, name) {
   if (!confirm(`Remove ${name} as manager?`)) return;
   fetch("/projects/" + sid + "/users/" + uid, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } })
     .then(r => { if (r.ok) location.reload(); else alert("Failed to remove manager."); });
+}
+
+// Transfer ownership
+function makeOwner(sid, uid, name) {
+  if (!confirm(`Transfer ownership to ${name}? You will no longer be able to manage managers for this project.`)) return;
+  fetch("/projects/" + sid + "/owner", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+    body: JSON.stringify({ user_id: uid }),
+  })
+    .then(r => { if (r.ok) location.reload(); else r.json().then(d => alert(d.error || "Failed to transfer ownership.")); })
+    .catch(() => alert("Failed to transfer ownership."));
 }
 
 // Toggle project active state
