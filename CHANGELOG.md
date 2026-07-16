@@ -4,6 +4,10 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Minimized the Docker image. The `Dockerfile` is now a multi-stage build: dependencies are installed in a builder stage and only the finished `/app` (venv + source) is copied into a clean runtime stage with `COPY --chown`, eliminating the full-tree duplication that the old `RUN chown -R /app` layer caused. `UV_NO_CACHE=1` is now set before `uv sync` (previously set after, so it had no effect), and uv is pulled from the official image instead of `pip install uv`. `entrypoint.sh` calls `flask`/`uvicorn` directly from the venv on `PATH` rather than via `uv run`, so the uv binary is no longer shipped in the runtime image. Dev-only artifacts (`models/`, `tests/`, `scripts/`, `chart/`, `.github/`, root markdown) are now excluded via `.dockerignore`.
+
 ## [1.23.0] - 2026-07-15
 
 ### Added

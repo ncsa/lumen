@@ -37,3 +37,18 @@ logs/
 
 loadtesting/
 LOADTESTING.md
+
+lumen.sql
+backup.dump
+
+# Dev/example artifacts and tooling not used at runtime
+models/
+tests/
+scripts/
+chart/
+.github/
+.gitnexus/
+docker-compose*.yml
+docker-compose*.yml.example
+/*.md
+.coverage
