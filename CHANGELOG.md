@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-07-15
+
 ### Added
 
 - Projects can now have an **owner** — a manager who can additionally add/remove managers, transfer ownership, and activate/deactivate the project. Admins designate an owner at project creation (optional owner email field) or reassign it later via the "Make Owner" button on the project detail page. The owner is a flagged manager (`entity_managers.is_owner`), so all existing manager access continues to work unchanged. The owner cannot be removed directly; ownership must be transferred first.
