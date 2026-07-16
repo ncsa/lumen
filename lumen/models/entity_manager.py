@@ -18,6 +18,7 @@ class EntityManager(db.Model):
     id: Mapped[int] = mapped_column(db.Integer, primary_key=True, comment="Primary key")
     user_entity_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), comment="The user who has management rights over the project")
     project_entity_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), comment="The project entity being managed")
+    is_owner: Mapped[bool] = mapped_column(db.Boolean, default=False, nullable=False, comment="True for the project owner; at most one owner per project (enforced by app logic)")
 
     user: Mapped["Entity"] = relationship(foreign_keys=[user_entity_id], backref="managed_projects_assoc")
     project: Mapped["Entity"] = relationship(foreign_keys=[project_entity_id], backref="manager_assoc")
@@ -46,3 +47,27 @@ def get_managed_projects(user_entity_id: int):
         )
         .order_by(Entity.name)
     ).scalars().all()
+
+
+def get_project_owner(project_entity_id: int):
+    """The user Entity that owns this project, or None if no owner is set."""
+    return db.session.execute(
+        select(Entity)
+        .join(EntityManager, EntityManager.user_entity_id == Entity.id)
+        .where(
+            EntityManager.project_entity_id == project_entity_id,
+            EntityManager.is_owner == True,
+        )
+    ).scalar_one_or_none()
+
+
+def is_project_owner(user_entity_id: int, project_entity_id: int) -> bool:
+    """True if user_entity_id is the owner of project_entity_id."""
+    assoc = db.session.execute(
+        select(EntityManager).filter_by(
+            user_entity_id=user_entity_id,
+            project_entity_id=project_entity_id,
+            is_owner=True,
+        )
+    ).scalar_one_or_none()
+    return assoc is not None

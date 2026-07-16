@@ -134,6 +134,7 @@ erDiagram
         int id PK
         int user_entity_id FK
         int project_entity_id FK
+        boolean is_owner
     }
 
     model_stats {
@@ -468,13 +469,14 @@ Per-group model access overrides. Mirrors `entity_model_access` but applies to a
 
 ## entity_managers
 
-Maps users to the project entities they are permitted to manage. A manager can view and administer a project's API keys and usage.
+Maps users to the project entities they are permitted to manage. A manager can view and administer a project's API keys and usage. The `is_owner` flag designates the project owner — a manager who can additionally add/remove managers, transfer ownership, and activate/deactivate the project. At most one owner per project (enforced by app logic).
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `id` | Integer | NO | Primary key |
 | `user_entity_id` | Integer (FK → entities) | NO | The user (must be `entity_type = 'user'`) who has management rights. Cascades on delete. |
 | `project_entity_id` | Integer (FK → entities) | NO | The project entity being managed. Cascades on delete. |
+| `is_owner` | Boolean | NO | True for the project owner; at most one owner per project (enforced by app logic). Default `false`. |
 
 **Constraints:** `UNIQUE(user_entity_id, project_entity_id)`
 

@@ -21,27 +21,34 @@ The top row shows the project's activity and budget:
 
 Managers are the users responsible for a project. They can create and revoke API keys, grant model consent, and view usage — but they cannot manage other managers or deactivate the project.
 
-### Adding a Manager (admin only)
+One manager can be designated as the **owner**. The owner has all manager powers plus the ability to add/remove managers, transfer ownership, and activate/deactivate the project. Each project has at most one owner. The owner is marked with an **Owner** badge in the managers table.
+
+### Adding a Manager (admin or owner)
 
 1. Click **+ Add Manager**.
 2. A search dialog opens. Start typing a user's name or email.
 3. Select the user from the dropdown.
 4. Click **Add Manager**.
 
-### Removing a Manager (admin only)
+### Removing a Manager (admin or owner)
 
-Click **Remove** next to any manager in the table.
+Click **Remove** next to any manager in the table. The owner cannot be removed directly — you must transfer ownership to another manager first.
+
+### Transferring Ownership (admin or owner)
+
+Click **Make Owner** next to a non-owner manager to transfer ownership. The previous owner becomes a regular manager. If you are the current owner, transferring ownership means you will no longer be able to manage managers or toggle the project.
 
 ### What Managers Can Do
 
-| Action | Manager | Admin |
-|--------|---------|-------|
-| Create API keys for this project | ✓ | ✓ |
-| Revoke API keys for this project | ✓ | ✓ |
-| Grant model consent for this project | ✓ | ✓ |
-| View usage on this page | ✓ | ✓ |
-| Add / remove managers | — | ✓ |
-| Activate / deactivate the project | — | ✓ |
+| Action | Manager | Owner | Admin |
+|--------|---------|-------|-------|
+| Create API keys for this project | ✓ | ✓ | ✓ |
+| Revoke API keys for this project | ✓ | ✓ | ✓ |
+| Grant model consent for this project | ✓ | ✓ | ✓ |
+| View usage on this page | ✓ | ✓ | ✓ |
+| Add / remove managers | — | ✓ | ✓ |
+| Transfer ownership | — | ✓ | ✓ |
+| Activate / deactivate the project | — | ✓ | ✓ |
 
 ## API Keys
 
