@@ -401,7 +401,7 @@ def transfer_ownership(sid):
     new_assoc = db.session.execute(
         select(EntityManager).filter_by(user_entity_id=new_owner_id, project_entity_id=sid)
     ).scalar_one_or_none()
-    if new_assoc is old_owner_assoc:
+    if new_assoc is not None and new_assoc is old_owner_assoc:
         return jsonify({"error": "User is already the owner"}), HTTPStatus.CONFLICT
 
     if old_owner_assoc:

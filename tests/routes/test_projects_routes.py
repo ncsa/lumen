@@ -598,6 +598,34 @@ def test_transfer_to_current_owner_returns_409(owner_auth_client, owned_project,
     assert resp.status_code == HTTPStatus.CONFLICT
 
 
+def test_admin_assigns_owner_to_ownerless_project(app, admin_client, service_project, second_user):
+    """Admin can assign an owner to a project that has no owner, even when the
+    target user is not already a manager (the None-is-None edge case)."""
+    resp = admin_client.post(
+        f"/projects/{service_project['id']}/owner",
+        json={"user_id": second_user["id"]},
+    )
+    assert resp.status_code == HTTPStatus.OK
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_manager import EntityManager
+        assoc = db.session.execute(
+            select(EntityManager).filter_by(
+                user_entity_id=second_user["id"], project_entity_id=service_project["id"]
+            )
+        ).scalar_one()
+        assert assoc.is_owner is True
+
+
+def test_plain_non_manager_forbidden_on_owner_routes(auth_client, service_project, second_user):
+    """A user who is neither admin, owner, nor manager gets 403 on owner-level routes."""
+    resp = auth_client.post(
+        f"/projects/{service_project['id']}/owner",
+        json={"user_id": second_user["id"]},
+    )
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
 # ---------------------------------------------------------------------------
 # API key management
 # ---------------------------------------------------------------------------
