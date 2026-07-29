@@ -7,8 +7,10 @@ from flask import Blueprint, Response, current_app, request
 from prometheus_client import CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 
+from lumen.extensions import db
 from lumen.services.pool_tracker import (
     STRANDED_AFTER,
+    format_holders,
     format_outstanding,
     stranded_count,
     thread_dump,
@@ -194,6 +196,25 @@ def metrics():
     return Response(db_output + http_output, status=HTTPStatus.OK, mimetype=CONTENT_TYPE_LATEST)
 
 
+def _format_pool_status() -> str:
+    """The pool's own count of checked-out connections.
+
+    Printed alongside the tracker so one capture answers whether a reported
+    checkout is real: the tracker naming a holder while checked_out is 0 means
+    the entry is stale bookkeeping, not a leaked connection.
+    """
+    pool = db.engine.pool
+    try:
+        return (
+            f"{type(pool).__name__}: size={pool.size()} checked_in={pool.checkedin()} "
+            f"checked_out={pool.checkedout()} overflow={pool.overflow()} "
+            f"max_overflow={pool._max_overflow}\n"
+        )
+    except AttributeError:
+        # Pools without queue semantics (SQLite StaticPool/NullPool) lack these.
+        return f"{type(pool).__name__}: no queue semantics, nothing to report\n"
+
+
 @metrics_bp.route("/metrics/debug")
 @_metrics_auth_required
 def metrics_debug():
@@ -205,8 +226,12 @@ def metrics_debug():
     Authenticated with the same bearer token as /metrics.
     """
     body = (
-        f"=== DB pool checkouts held over {STRANDED_AFTER:.0f}s ===\n"
+        "=== DB pool status ===\n"
+        f"{_format_pool_status()}"
+        f"\n=== DB pool checkouts held over {STRANDED_AFTER:.0f}s ===\n"
         f"{format_outstanding(min_age=STRANDED_AFTER)}"
+        f"\n=== what retains those checkouts ===\n"
+        f"{format_holders()}"
         "\n=== all DB pool checkouts ===\n"
         f"{format_outstanding()}"
         "\n=== thread dump ===\n"
