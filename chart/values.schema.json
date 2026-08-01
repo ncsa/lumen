@@ -7,6 +7,12 @@
       "type": "integer",
       "minimum": 1
     },
+    "wsgiWorkers": {
+      "oneOf": [
+        { "type": "integer", "minimum": 1 },
+        { "type": "string", "enum": ["auto"] }
+      ]
+    },
     "image": {
       "type": "object",
       "additionalProperties": false,

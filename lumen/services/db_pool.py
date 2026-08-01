@@ -30,6 +30,13 @@ MAX_TOTAL_FRACTION = POOL_FRACTION + OVERFLOW_FRACTION
 # Pass-through engine options that remain admin-configurable.
 _PASSTHROUGH_KEYS = ("pool_timeout", "pool_recycle")
 
+# a2wsgi's own default thread pool size; also the floor when deriving from the pool.
+DEFAULT_WSGI_WORKERS = 10
+# Ceiling for the derived count. A large pool_size is cheap (connections open on
+# demand), but the same number of OS threads is not, so a derived value stops here
+# and anything higher has to be asked for explicitly.
+MAX_AUTO_WSGI_WORKERS = 64
+
 
 def _is_sqlite(uri: str) -> bool:
     return uri.startswith("sqlite")
@@ -75,6 +82,36 @@ def detect_replicas() -> int:
     if env.isdigit() and int(env) > 0:
         return int(env)
     return 1
+
+
+def resolve_wsgi_workers(engine_options: dict) -> int:
+    """Concurrent requests one process serves, i.e. a2wsgi's thread pool size.
+
+    ``LUMEN_WSGI_WORKERS`` is a positive integer, or ``auto`` to derive the count
+    from this process's own pool: a thread inside a database call holds a pooled
+    connection, so ``pool_size + max_overflow`` is where extra threads stop adding
+    throughput and start waiting out ``pool_timeout``. Anything else keeps a2wsgi's
+    default of 10, as does ``auto`` when the pool is not sized (SQLite, or
+    ``max_connections`` unavailable). A derived value is clamped to
+    ``DEFAULT_WSGI_WORKERS..MAX_AUTO_WSGI_WORKERS``.
+    """
+    setting = os.environ.get("LUMEN_WSGI_WORKERS", "").strip().lower()
+    if setting.isdigit() and int(setting) > 0:
+        return int(setting)
+    if setting != "auto" or "pool_size" not in engine_options:
+        return DEFAULT_WSGI_WORKERS
+
+    capacity = int(engine_options["pool_size"]) + int(engine_options.get("max_overflow", 0))
+    workers = min(MAX_AUTO_WSGI_WORKERS, max(DEFAULT_WSGI_WORKERS, capacity))
+    if capacity > MAX_AUTO_WSGI_WORKERS:
+        logger.info(
+            "Auto-sized WSGI thread pool: workers=%d (pool capacity %d exceeds the %d "
+            "ceiling; set LUMEN_WSGI_WORKERS explicitly to go higher)",
+            workers, capacity, MAX_AUTO_WSGI_WORKERS,
+        )
+    else:
+        logger.info("Auto-sized WSGI thread pool: workers=%d", workers)
+    return workers
 
 
 def query_max_connections(uri: str) -> int:

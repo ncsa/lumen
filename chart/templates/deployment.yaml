@@ -91,6 +91,8 @@ spec:
               value: /app/config/config.yaml
             - name: LUMEN_REPLICAS
               value: {{ .Values.replicaCount | quote }}
+            - name: LUMEN_WSGI_WORKERS
+              value: {{ .Values.wsgiWorkers | quote }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

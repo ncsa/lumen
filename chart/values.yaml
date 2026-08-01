@@ -4,6 +4,13 @@
 # -- Number of Lumen app replicas. ≥2 requires redis for shared rate-limit state.
 replicaCount: 1
 
+# -- Concurrent requests served per pod (a2wsgi thread pool). Requests beyond
+# this queue. Use "auto" to derive it from this pod's connection pool
+# (database.poolSize + database.maxOverflow, clamped to 10-64); a number sets it
+# directly, in which case keep it at or below that sum or the extra threads just
+# block on the pool.
+wsgiWorkers: 10
+
 image:
   # -- Container image repository
   repository: ncsa/lumen

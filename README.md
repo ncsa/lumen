@@ -343,6 +343,21 @@ rate_limiting:
 
 By default, limits are tracked in-memory (per-process). For multi-worker deployments (e.g. gunicorn with multiple workers), set `storage_url` to a shared Redis instance so limits are enforced across all workers. Changing `storage_url` requires a restart; changing `limit` takes effect within ~5 seconds (hot-reloaded).
 
+### Request concurrency
+
+Lumen is a WSGI app served through `a2wsgi` under uvicorn, so each worker process serves requests from a thread pool. That pool holds **10 threads by default** — an 11th concurrent request waits until a thread frees up. Set `LUMEN_WSGI_WORKERS` to change it (Helm: `wsgiWorkers`):
+
+```bash
+LUMEN_WSGI_WORKERS=32 uvicorn asgi:app --host 0.0.0.0 --port 5001
+
+# or derive it from this process's connection pool
+LUMEN_WSGI_WORKERS=auto uvicorn asgi:app --host 0.0.0.0 --port 5001
+```
+
+A thread inside a database call holds a pooled connection, so `pool_size + max_overflow` (see below) is the point past which extra threads stop adding throughput and just wait out `pool_timeout`. `auto` sets the thread count to that sum, clamped to 10–64: a large `pool_size` costs little (connections open on demand) but the same number of OS threads does, so going above 64 has to be asked for by number. `auto` falls back to 10 when the pool is unsized (SQLite, or `max_connections` unavailable at startup), and because the pool is itself divided across workers × replicas, it scales the thread count down as you add processes or pods.
+
+`auto` sizes for the worst case where every thread is in a database call. Streaming paths release their connection before the LLM call, so if your traffic is mostly streaming you can safely set a number well above `pool_size + max_overflow` instead. Either way, raising threads is usually cheaper than adding worker processes (`--workers` / `WEB_CONCURRENCY`), which divide the same connection budget further and duplicate every per-process cache.
+
 ### Database connection pool
 
 On PostgreSQL the pool is **auto-sized** from the server's `max_connections`, divided across all worker processes and Kubernetes replicas so combined usage cannot exhaust the server: 60% to `pool_size`, 20% to `max_overflow`, and 20% reserved for psql/migrations/monitoring. Worker count is detected from `WEB_CONCURRENCY` or the uvicorn `--workers` flag; replica count comes from the `LUMEN_REPLICAS` env var (set by the Helm chart from `replicaCount`). Pre-ping is always enabled. SQLite has no connection limit, so sizing is skipped. Changes require a restart.

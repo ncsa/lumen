@@ -178,3 +178,42 @@ def test_detect_replicas(monkeypatch):
     assert db_pool.detect_replicas() == 3
     monkeypatch.delenv("LUMEN_REPLICAS", raising=False)
     assert db_pool.detect_replicas() == 1
+
+
+def test_wsgi_workers_defaults_when_unset(monkeypatch):
+    monkeypatch.delenv("LUMEN_WSGI_WORKERS", raising=False)
+    assert db_pool.resolve_wsgi_workers({"pool_size": 60, "max_overflow": 20}) == 10
+
+
+def test_wsgi_workers_explicit_value(monkeypatch):
+    monkeypatch.setenv("LUMEN_WSGI_WORKERS", "32")
+    assert db_pool.resolve_wsgi_workers({"pool_size": 60, "max_overflow": 20}) == 32
+
+
+def test_wsgi_workers_auto_sums_pool_and_overflow(monkeypatch):
+    monkeypatch.setenv("LUMEN_WSGI_WORKERS", "auto")
+    assert db_pool.resolve_wsgi_workers({"pool_size": 30, "max_overflow": 10}) == 40
+
+
+def test_wsgi_workers_auto_floors_at_default(monkeypatch):
+    monkeypatch.setenv("LUMEN_WSGI_WORKERS", "auto")
+    assert db_pool.resolve_wsgi_workers({"pool_size": 2, "max_overflow": 1}) == 10
+
+
+def test_wsgi_workers_auto_caps_at_ceiling(monkeypatch):
+    """An oversized explicit pool (cheap in connections) must not become 550 threads."""
+    monkeypatch.setenv("LUMEN_WSGI_WORKERS", "auto")
+    assert db_pool.resolve_wsgi_workers({"pool_size": 500, "max_overflow": 50}) == 64
+
+
+def test_wsgi_workers_auto_without_sized_pool(monkeypatch):
+    """SQLite returns {} and the max_connections fallback omits pool_size."""
+    monkeypatch.setenv("LUMEN_WSGI_WORKERS", "auto")
+    assert db_pool.resolve_wsgi_workers({}) == 10
+    assert db_pool.resolve_wsgi_workers({"pool_pre_ping": True}) == 10
+
+
+def test_wsgi_workers_ignores_garbage(monkeypatch):
+    for value in ("0", "-4", "many", ""):
+        monkeypatch.setenv("LUMEN_WSGI_WORKERS", value)
+        assert db_pool.resolve_wsgi_workers({"pool_size": 60, "max_overflow": 20}) == 10
