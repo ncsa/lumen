@@ -836,3 +836,124 @@ def test_chat_completions_streaming_records_duration(
         assert log.input_tokens == 5
         assert log.output_tokens == 7
         assert log.duration > 0
+
+
+def _allow_model(app, test_user, test_model):
+    """Grant the test user unlimited access to the test model."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_model_access import EntityModelAccess
+        _grant_unlimited_pool(app, test_user["id"])
+        db.session.add(EntityModelAccess(
+            entity_id=test_user["id"], model_config_id=test_model["id"],
+            access_type="allowed",
+        ))
+        db.session.commit()
+
+
+class _UsageChunk:
+    """A final chunk carrying usage, so the generator reaches its billing block."""
+
+    class usage:  # noqa: N801 - stands in for the OpenAI usage object
+        prompt_tokens = 1
+        completion_tokens = 1
+
+    def model_dump(self):
+        return {"choices": [{"delta": {"content": "hi"}}]}
+
+
+def _fake_openai(monkeypatch, routes, chunks):
+    def _stream():
+        yield from chunks
+
+    class _FakeClient:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        @property
+        def chat(self):
+            def _create(**kwargs):
+                return _stream()
+            return type("C", (), {"completions": type("X", (), {"create": staticmethod(_create)})()})()
+
+    monkeypatch.setattr(routes.openai, "OpenAI", lambda *a, **k: _FakeClient())
+
+
+def test_streaming_error_after_billing_holds_no_connection(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+):
+    """The error-path yields must not run while a connection is checked out.
+
+    Billing checks a connection back out mid-generator, so an error raised after it
+    left the connection held across the two error events. A client that has gone
+    away never lets those yields finish, so the connection stayed checked out for
+    the life of the process.
+    """
+    from lumen.blueprints.api import routes
+    token, _ = api_key
+    _allow_model(app, test_user, test_model)
+    with app.app_context():
+        from lumen.extensions import db
+        pool = db.engine.pool
+
+    def boom(*a, **k):
+        raise RuntimeError("billing blew up")
+
+    _fake_openai(monkeypatch, routes, [_UsageChunk()])
+    monkeypatch.setattr(routes, "_record_api_key_usage", boom)
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"],
+              "messages": [{"role": "user", "content": "hi"}], "stream": True},
+    )
+    assert resp.status_code == HTTPStatus.OK
+    # Laziness is required: a buffered response would already have run teardown
+    # and hidden any leak.
+    assert resp.is_streamed
+
+    saw_error = False
+    try:
+        for raw in resp.response:
+            if b'"error"' in raw:
+                saw_error = True
+                assert pool.checkedout() == 0, (
+                    "DB connection checked out while the error event is in flight"
+                )
+        assert saw_error
+    finally:
+        resp.close()
+
+
+def test_streaming_abandoned_by_client_releases_connection(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+):
+    """Closing the stream early must not leave a connection checked out.
+
+    The GeneratorExit path logs an aborted request, which checks a connection back
+    out after the session was released before the LLM call. Note this passes with or
+    without the generator's own ``finally``: Werkzeug always closes the iterable, so
+    the app-context teardown covers this case. The ``finally`` is there for the case
+    that cannot be reproduced in-process — an iterable abandoned without close, which
+    is what leaves the context unpopped and the connection held for good.
+    """
+    from lumen.blueprints.api import routes
+    token, _ = api_key
+    _allow_model(app, test_user, test_model)
+    with app.app_context():
+        from lumen.extensions import db
+        pool = db.engine.pool
+
+    _fake_openai(monkeypatch, routes, [_UsageChunk(), _UsageChunk()])
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"],
+              "messages": [{"role": "user", "content": "hi"}], "stream": True},
+    )
+    assert resp.is_streamed
+    next(iter(resp.response))  # one event, then walk away mid-stream
+    resp.close()
+
+    assert pool.checkedout() == 0

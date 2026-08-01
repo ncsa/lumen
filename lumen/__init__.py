@@ -218,6 +218,31 @@ def create_app():
     oauth.init_app(app)
     limiter.init_app(app)
 
+    # Registered after db.init_app so it runs BEFORE Flask-SQLAlchemy's own teardown:
+    # Flask calls teardown_appcontext functions in reverse registration order.
+    # scoped_session.remove() closes the session — which ROLLBACKs — before clearing
+    # its registry, and SessionTransaction.close() detaches the transaction from the
+    # session before closing its connections. So a rollback that raises leaves the
+    # connection checked out with nothing left holding a handle on it, while the
+    # still-registered session (the registry is a plain dict keyed by id(app_ctx))
+    # pins it for the life of the process. Flask's teardown loop has no except, so
+    # until now that error escaped AppContext.pop() and was never logged.
+    @app.teardown_appcontext
+    def release_db_session(exc):
+        try:
+            db.session.remove()
+        except Exception:
+            app.logger.exception("db.session.remove() failed during app-context teardown")
+            try:
+                # Dropping the registry entry releases the last strong reference to
+                # the connection fairy, so SQLAlchemy's weakref finalizer resets or
+                # invalidates the connection and checks it back in. Required either
+                # way: without it Flask-SQLAlchemy's teardown retries the same
+                # failing close() and the error escapes pop() as before.
+                db.session.registry.clear()
+            except Exception:
+                app.logger.exception("could not clear the DB session registry")
+
     from flask_wtf.csrf import CSRFProtect
     csrf = CSRFProtect(app)
     if rl_cfg.get("storage_url"):

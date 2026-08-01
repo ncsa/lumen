@@ -433,8 +433,20 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                     f"Error during streaming request "
                     f"(endpoint={ep_id} {ep_url} model={remote_model}, entity_id={entity_id})",
                 )
+                # Roll back the half-finished billing and hold no connection while the
+                # error events are in flight — a client that has gone away can leave
+                # the yields below pending forever. remove() rolls back as part of
+                # closing the session, so no separate rollback() is needed.
+                db.session.remove()
                 yield f"data: {json.dumps({'error': {'message': msg, 'type': err_type}})}\n\n"
                 yield "data: [DONE]\n\n"
+            finally:
+                # Nothing may outlive this generator holding a connection:
+                # stream_with_context keeps the request context alive until the
+                # generator is closed, and an abandoned generator is never closed.
+                # Also covers the GeneratorExit path above, where
+                # record_aborted_request checks a connection back out.
+                db.session.remove()
 
     return Response(stream_with_context(generate()), content_type="text/event-stream")
 
