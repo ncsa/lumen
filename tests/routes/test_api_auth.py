@@ -771,3 +771,68 @@ def test_chat_completions_streaming_error_emits_done(
     body = resp.get_data(as_text=True)
     assert '"error"' in body
     assert "data: [DONE]" in body
+
+
+def test_chat_completions_streaming_records_duration(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+):
+    """A successful streaming /v1/chat/completions request records a non-zero
+    duration in request_logs, consistent with the chat streaming path
+    (send_message_stream in llm.py) which has always recorded duration."""
+    from lumen.blueprints.api import routes
+    token, _ = api_key
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_model_access import EntityModelAccess
+        _grant_unlimited_pool(app, test_user["id"])
+        db.session.add(EntityModelAccess(
+            entity_id=test_user["id"], model_config_id=test_model["id"],
+            access_type="allowed",
+        ))
+        db.session.commit()
+
+    class _Usage:
+        prompt_tokens = 5
+        completion_tokens = 7
+
+    class _Chunk:
+        def __init__(self, usage):
+            self.usage = usage
+
+        def model_dump(self):
+            return {"choices": [{"delta": {"content": "hi"}}]}
+
+    def _stream():
+        yield _Chunk(None)
+        yield _Chunk(_Usage())
+
+    class _FakeClient:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+        @property
+        def chat(self):
+            def _create(**kwargs):
+                return _stream()
+            return type("C", (), {"completions": type("X", (), {"create": staticmethod(_create)})()})()
+
+    monkeypatch.setattr(routes.openai, "OpenAI", lambda *a, **k: _FakeClient())
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"],
+              "messages": [{"role": "user", "content": "hi"}], "stream": True},
+    )
+    body = resp.get_data(as_text=True)
+    assert "data: [DONE]" in body
+
+    with app.app_context():
+        from lumen.extensions import db
+        from sqlalchemy import select
+        from lumen.models.request_log import RequestLog
+        log = db.session.execute(select(RequestLog)).scalar_one()
+        assert log.source == "api"
+        assert log.input_tokens == 5
+        assert log.output_tokens == 7
+        assert log.duration > 0

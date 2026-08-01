@@ -385,6 +385,7 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
 
     def generate():
         billed = False
+        t0 = _time.time()
         with openai.OpenAI(api_key=ep_api_key, base_url=ep_url) as client:
             try:
                 stream_options = {**kwargs.pop("stream_options", {}), "include_usage": True}
@@ -398,6 +399,7 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                     if chunk.usage is not None:
                         usage = chunk.usage
                     yield f"data: {json.dumps(chunk.model_dump())}\n\n"
+                duration = _time.time() - t0
                 yield "data: [DONE]\n\n"
 
                 if usage is not None:
@@ -408,7 +410,7 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                     )
                     subtract_coins(entity_id, mc_id, cost, effective=effective)
                     update_stats(entity_id, mc_id, "api", usage.prompt_tokens, usage.completion_tokens, cost,
-                                 endpoint_id=ep_id)
+                                 endpoint_id=ep_id, duration=duration)
                     _record_api_key_usage(ak_id, usage.prompt_tokens, usage.completion_tokens, cost)
                     db.session.commit()
                     billed = True
@@ -422,7 +424,8 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                 # Client disconnected mid-stream before billing — log a zero-cost
                 # request so we can monitor how often this happens, then re-raise.
                 if not billed:
-                    record_aborted_request(entity_id, mc_id, "api", endpoint_id=ep_id)
+                    record_aborted_request(entity_id, mc_id, "api", endpoint_id=ep_id,
+                                           duration=_time.time() - t0)
                 raise
             except Exception as exc:
                 msg, err_type, _ = _classify_upstream_error(

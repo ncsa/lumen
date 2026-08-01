@@ -1,9 +1,9 @@
 import logging
+import sys
 from logging.config import fileConfig
 
-from flask import current_app
-
 from alembic import context
+from flask import current_app
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -13,6 +13,25 @@ config = context.config
 # This line sets up loggers basically.
 fileConfig(config.config_file_name)
 logger = logging.getLogger('alembic.env')
+
+SQLITE_MIGRATION_ERROR = """\
+ERROR: Database migrations cannot be run against SQLite.
+
+Migrations are PostgreSQL-only. The following migrations use PostgreSQL-specific
+DDL that SQLite does not support (ALTER TABLE ... ADD/DROP CONSTRAINT):
+
+  - y9z0a1b2c3d4  request_logs surrogate PK (DROP CONSTRAINT without batch mode)
+  - b2c3d4e5f6g7  entity_type CHECK constraint (ADD CONSTRAINT)
+  - c4d5e6f7a8b9  rename client to project (ADD/DROP CONSTRAINT)
+
+For local SQLite development, create the schema from the ORM models and stamp
+the migration head instead:
+
+    BACKGROUND_WORKER=false uv run python -c \\
+      "from lumen import create_app; from lumen.extensions import db; \\
+       app=create_app(); app.app_context().push(); db.create_all()"
+    uv run flask --app 'lumen:create_app' db stamp head
+"""
 
 
 def get_engine():
@@ -102,6 +121,14 @@ def run_migrations_online():
             target_metadata=get_metadata(),
             **conf_args
         )
+
+        # SQLite guard: migrations are PostgreSQL-only. Block upgrade/downgrade
+        # (which execute migration scripts) while allowing stamp (which doesn't).
+        if connectable.dialect.name == "sqlite":
+            fn = getattr(context.get_context(), "_migrations_fn", None)
+            if fn and getattr(fn, "__name__", "") in ("upgrade", "downgrade"):
+                print(SQLITE_MIGRATION_ERROR, file=sys.stderr)
+                sys.exit(1)
 
         with context.begin_transaction():
             context.run_migrations()

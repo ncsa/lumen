@@ -122,8 +122,15 @@ ollama pull llama3.2
 
 ### 3. Initialize the database and start
 
+> **Do not run `uv run flask db upgrade` with SQLite.** The migrations are PostgreSQL-only (several use `ALTER TABLE … ADD/DROP CONSTRAINT`, which SQLite does not support). Running `flask db upgrade` against SQLite will fail partway through, leaving the database in a partially-migrated state. The command is gated and will exit with an error if attempted.
+
+For local SQLite development, create the schema directly from the ORM models and stamp the migration head:
+
 ```bash
-uv run flask db upgrade
+BACKGROUND_WORKER=false uv run python -c \
+  "from lumen import create_app; from lumen.extensions import db; \
+   app=create_app(); app.app_context().push(); db.create_all()"
+uv run flask --app 'lumen:create_app' db stamp head
 uv run lumen
 ```
 
