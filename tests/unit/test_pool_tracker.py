@@ -1,6 +1,7 @@
 """Tests for connection-pool checkout tracking and the pool watchdog."""
 import gc
 import logging
+import weakref
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
@@ -194,3 +195,51 @@ def test_watchdog_noop_without_limit():
     pool_tracker._pressure_count = 0
     pool_tracker.watchdog(75, 0)
     assert pool_tracker._pressure_count == 0
+
+
+def test_checkout_records_a_live_app_context(app):
+    """A stranded checkout whose context is still alive means teardown never ran."""
+    with app.app_context():
+        record = _fake_record()
+        pool_tracker._on_checkout(None, record, None)
+        try:
+            assert pool_tracker._outstanding[id(record)].app_ctx_state() == "alive"
+            assert "app_ctx=alive" in pool_tracker.format_outstanding()
+        finally:
+            pool_tracker._on_checkin(None, record)
+
+
+def test_checkout_reports_a_collected_app_context(app):
+    """Once the context is popped it is collected, so teardown did run.
+
+    Pushed and popped explicitly rather than with a ``with`` block, which can leave
+    the context referenced by the frame and keep the weakref alive.
+    """
+    ctx = app.app_context()
+    ctx.push()
+    record = _fake_record()
+    pool_tracker._on_checkout(None, record, None)
+    ctx.pop()
+    del ctx
+    gc.collect()
+    try:
+        assert pool_tracker._outstanding[id(record)].app_ctx_state() == "collected"
+    finally:
+        pool_tracker._on_checkin(None, record)
+
+
+def test_checkout_without_an_app_context_reports_none():
+    """Checkouts made outside a request — background workers — record no context.
+
+    Built directly rather than through ``_on_checkout`` because pytest-flask pushes
+    a context around every test, so the no-context path is unreachable from here.
+    """
+    record = _fake_record()
+    entry = pool_tracker.Checkout(
+        endpoint="no-request-context",
+        thread="worker",
+        at=0.0,
+        stack="",
+        record_ref=weakref.ref(record),
+    )
+    assert entry.app_ctx_state() == "none"

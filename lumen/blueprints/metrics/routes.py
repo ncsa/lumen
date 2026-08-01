@@ -228,6 +228,11 @@ def metrics_debug():
     body = (
         "=== DB pool status ===\n"
         f"{_format_pool_status()}"
+        # A session left in the registry by a failed remove() pins its connection for
+        # the life of the process, so in steady state this should not exceed the number
+        # of in-flight requests. Matching the stranded count means the sessions were
+        # never removed.
+        f"sessions still registered: {len(db.session.registry.registry)}\n"
         f"\n=== DB pool checkouts held over {STRANDED_AFTER:.0f}s ===\n"
         f"{format_outstanding(min_age=STRANDED_AFTER)}"
         f"\n=== what retains those checkouts ===\n"

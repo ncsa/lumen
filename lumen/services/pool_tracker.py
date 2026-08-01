@@ -25,7 +25,8 @@ import types
 import weakref
 from typing import NamedTuple
 
-from flask import has_request_context, request
+from flask import has_app_context, has_request_context, request
+from flask.globals import app_ctx
 from sqlalchemy import event
 from sqlalchemy.pool import Pool
 
@@ -64,9 +65,22 @@ class Checkout(NamedTuple):
     at: float  # time.monotonic() when the connection was checked out
     stack: str
     record_ref: weakref.ref  # to the SQLAlchemy _ConnectionRecord this describes
+    app_ctx_ref: weakref.ref = None  # to the Flask app context that checked it out
 
     def age(self, now: float = None) -> float:
         return (now if now is not None else time.monotonic()) - self.at
+
+    def app_ctx_state(self) -> str:
+        """Whether the app context that checked this connection out is still alive.
+
+        Flask-SQLAlchemy releases the session from ``teardown_appcontext``, so on a
+        stranded checkout this says which half of the mechanism failed: ``alive``
+        means the context was never popped and teardown never ran, ``collected``
+        means it ran and the connection leaked anyway.
+        """
+        if self.app_ctx_ref is None:
+            return "none"
+        return "alive" if self.app_ctx_ref() is not None else "collected"
 
     def is_stale(self) -> bool:
         """True when the connection record is gone but the entry survived.
@@ -89,6 +103,7 @@ def _on_checkout(dbapi_connection, connection_record, connection_proxy):
         at=time.monotonic(),
         stack="".join(traceback.format_stack(limit=_STACK_DEPTH)[:-1]),
         record_ref=weakref.ref(connection_record),
+        app_ctx_ref=weakref.ref(app_ctx._get_current_object()) if has_app_context() else None,
     )
     with _lock:
         _outstanding[id(connection_record)] = record
@@ -141,7 +156,8 @@ def format_outstanding(min_age: float = 0.0, limit: int = 25) -> str:
     for r in records[:limit]:
         stale = "  STALE-TRACKER-ENTRY (connection not actually held)" if r.is_stale() else ""
         lines.append(
-            f"\n--- held {r.age(now):.0f}s  endpoint={r.endpoint}  thread={r.thread}{stale} ---\n{r.stack}"
+            f"\n--- held {r.age(now):.0f}s  endpoint={r.endpoint}  thread={r.thread}"
+            f"  app_ctx={r.app_ctx_state()}{stale} ---\n{r.stack}"
         )
     return "\n".join(lines) + "\n"
 
