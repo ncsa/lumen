@@ -1,5 +1,7 @@
 import logging
 import os
+import socket
+import threading
 from functools import wraps
 from http import HTTPStatus
 
@@ -12,6 +14,7 @@ from lumen.services.pool_tracker import (
     STRANDED_AFTER,
     format_holders,
     format_outstanding,
+    format_scope_report,
     stranded_count,
     thread_dump,
     watchdog,
@@ -196,6 +199,52 @@ def metrics():
     return Response(db_output + http_output, status=HTTPStatus.OK, mimetype=CONTENT_TYPE_LATEST)
 
 
+def _format_deployment() -> str:
+    """Static deployment facts, so one capture is self-contained.
+
+    The per-process pool numbers only mean something next to the multiplier they
+    were divided by (worker processes x replicas) and the server budget they were
+    divided out of (Postgres ``max_connections``). ``max_connections`` is queried
+    live on a throwaway unpooled connection, so it works even while this
+    process's own pool is exhausted — which is exactly when this endpoint runs.
+    """
+    from lumen.services.db_pool import query_max_connections, resolve_wsgi_workers
+
+    cfg = current_app.config
+    topo = cfg.get("POOL_TOPOLOGY", {})
+    opts = cfg.get("SQLALCHEMY_ENGINE_OPTIONS", {})
+    uri = cfg.get("SQLALCHEMY_DATABASE_URI", "")
+    workers = topo.get("workers", "?")
+    replicas = topo.get("replicas", "?")
+    wsgi_threads = resolve_wsgi_workers(opts)
+    live_wsgi = sum(1 for t in threading.enumerate() if t.name.startswith("WSGI_"))
+    if uri.startswith("sqlite"):
+        max_conn = "n/a (sqlite)"
+    else:
+        try:
+            max_conn = query_max_connections(uri)
+        except Exception as exc:  # DB unreachable — report it rather than 500 the capture
+            max_conn = f"unavailable ({type(exc).__name__})"
+    lines = [
+        f"host: {socket.gethostname()}  app version: {cfg.get('APP_VERSION', '?')}",
+        f"worker processes: {workers} (WEB_CONCURRENCY={os.environ.get('WEB_CONCURRENCY', 'unset')})"
+        f"  replicas: {replicas} (LUMEN_REPLICAS={os.environ.get('LUMEN_REPLICAS', 'unset')})",
+        f"wsgi thread pool: {wsgi_threads} per process"
+        f" (LUMEN_WSGI_WORKERS={os.environ.get('LUMEN_WSGI_WORKERS', 'unset')}), {live_wsgi} spawned",
+        f"engine options: pool_size={opts.get('pool_size', 'default')}"
+        f" max_overflow={opts.get('max_overflow', 'default')}"
+        f" pool_timeout={opts.get('pool_timeout', 'default')}"
+        f" pool_recycle={opts.get('pool_recycle', 'default')}",
+        f"postgres max_connections: {max_conn}",
+    ]
+    if isinstance(max_conn, int) and "pool_size" in opts:
+        budget = (int(opts["pool_size"]) + int(opts.get("max_overflow", 0))) * int(workers) * int(replicas)
+        lines.append(
+            f"pool budget: (pool_size+max_overflow) x workers x replicas = {budget} of {max_conn}"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def _format_pool_status() -> str:
     """The pool's own count of checked-out connections.
 
@@ -226,13 +275,20 @@ def metrics_debug():
     Authenticated with the same bearer token as /metrics.
     """
     body = (
-        "=== DB pool status ===\n"
+        "=== deployment ===\n"
+        f"{_format_deployment()}"
+        "\n=== DB pool status ===\n"
         f"{_format_pool_status()}"
         # A session left in the registry by a failed remove() pins its connection for
         # the life of the process, so in steady state this should not exceed the number
         # of in-flight requests. Matching the stranded count means the sessions were
         # never removed.
         f"sessions still registered: {len(db.session.registry.registry)}\n"
+        # Answers, per app-context scope key, whether teardown ever ran for the
+        # context a leaked checkout was created under — "teardown=NEVER" on a
+        # still-registered key means the context was abandoned without pop().
+        f"\n=== scope keys: checkouts vs teardowns vs session registry ===\n"
+        f"{format_scope_report(list(db.session.registry.registry))}"
         f"\n=== DB pool checkouts held over {STRANDED_AFTER:.0f}s ===\n"
         f"{format_outstanding(min_age=STRANDED_AFTER)}"
         f"\n=== what retains those checkouts ===\n"

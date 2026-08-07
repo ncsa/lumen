@@ -23,6 +23,7 @@ import time
 import traceback
 import types
 import weakref
+from collections import deque
 from typing import NamedTuple
 
 from flask import has_app_context, has_request_context, request
@@ -55,6 +56,14 @@ _lock = threading.Lock()
 _outstanding: dict = {}
 _registered = False
 _pressure_count = 0
+# Ring buffer of recent app-context teardowns: (scope_key, monotonic time,
+# whether a session was registered for that scope when teardown ran). Sized so
+# the window comfortably covers STRANDED_AFTER at production request rates —
+# a leaked checkout whose scope key never shows up here within the window was
+# created under an app context that never went through teardown at all.
+_TEARDOWN_RING = 4096
+_teardowns: deque = deque(maxlen=_TEARDOWN_RING)
+_teardowns_total = 0
 
 
 class Checkout(NamedTuple):
@@ -66,6 +75,7 @@ class Checkout(NamedTuple):
     stack: str
     record_ref: weakref.ref  # to the SQLAlchemy _ConnectionRecord this describes
     app_ctx_ref: weakref.ref = None  # to the Flask app context that checked it out
+    scope_key: int = None  # id() of that app context — the scoped-session registry key
 
     def age(self, now: float = None) -> float:
         return (now if now is not None else time.monotonic()) - self.at
@@ -73,10 +83,11 @@ class Checkout(NamedTuple):
     def app_ctx_state(self) -> str:
         """Whether the app context that checked this connection out is still alive.
 
-        Flask-SQLAlchemy releases the session from ``teardown_appcontext``, so on a
-        stranded checkout this says which half of the mechanism failed: ``alive``
-        means the context was never popped and teardown never ran, ``collected``
-        means it ran and the connection leaked anyway.
+        ``alive`` means the context object still exists — either mid-request or
+        pushed and never popped. ``collected`` only means it was garbage
+        collected; that does NOT prove teardown ran (a context abandoned without
+        ``pop()`` is collected all the same). Whether teardown actually ran for
+        this checkout's scope is answered by :func:`format_scope_report`.
         """
         if self.app_ctx_ref is None:
             return "none"
@@ -97,13 +108,15 @@ def _on_checkout(dbapi_connection, connection_record, connection_proxy):
     endpoint = "no-request-context"
     if has_request_context():
         endpoint = request.endpoint or request.path
+    ctx = app_ctx._get_current_object() if has_app_context() else None
     record = Checkout(
         endpoint=endpoint,
         thread=threading.current_thread().name,
         at=time.monotonic(),
         stack="".join(traceback.format_stack(limit=_STACK_DEPTH)[:-1]),
         record_ref=weakref.ref(connection_record),
-        app_ctx_ref=weakref.ref(app_ctx._get_current_object()) if has_app_context() else None,
+        app_ctx_ref=weakref.ref(ctx) if ctx is not None else None,
+        scope_key=id(ctx) if ctx is not None else None,
     )
     with _lock:
         _outstanding[id(connection_record)] = record
@@ -112,6 +125,71 @@ def _on_checkout(dbapi_connection, connection_record, connection_proxy):
 def _on_checkin(dbapi_connection, connection_record):
     with _lock:
         _outstanding.pop(id(connection_record), None)
+
+
+def record_teardown(had_session: bool):
+    """Record that app-context teardown ran for the current context.
+
+    Called from the app's ``teardown_appcontext`` handler, so the context being
+    torn down is still current and its ``id()`` is the scoped-session registry
+    key about to be removed. ``had_session`` says whether a session was actually
+    registered under that key at teardown time.
+    """
+    global _teardowns_total
+    key = id(app_ctx._get_current_object()) if has_app_context() else None
+    with _lock:
+        _teardowns_total += 1
+        _teardowns.append((key, time.monotonic(), had_session))
+
+
+def format_scope_report(registry_keys: list) -> str:
+    """Cross-reference outstanding checkouts against teardowns and the registry.
+
+    For each app-context scope key seen on an outstanding checkout or still in
+    the scoped-session registry, answers the question the plain listing cannot:
+    did teardown ever run for that context? A leaked checkout whose key is still
+    registered and never appears in the teardown ring was created under an app
+    context that never went through ``pop()`` — e.g. a request that reused a
+    stale context left pushed on its worker thread. Two checkouts from different
+    times sharing one key is the same condition seen from the other side.
+    """
+    now = time.monotonic()
+    registry_keys = set(registry_keys)
+    with _lock:
+        records = list(_outstanding.values())
+        teardowns = list(_teardowns)
+        total = _teardowns_total
+    window = now - teardowns[0][1] if teardowns else 0.0
+    by_key: dict = {}
+    for r in records:
+        by_key.setdefault(r.scope_key, []).append(r)
+    lines = [
+        f"{len(registry_keys)} session(s) registered; {total} teardown(s) recorded, "
+        f"ring holds the last {len(teardowns)} covering {window:.0f}s"
+    ]
+    for key in sorted(set(by_key) | registry_keys, key=lambda k: (k is None, k or 0)):
+        recs = by_key.get(key, [])
+        if key is None:
+            lines.append(f"key None (no app context)  checkouts={len(recs)}")
+            continue
+        parts = [f"key 0x{key:x}  checkouts={len(recs)}"]
+        if recs:
+            oldest = min(r.at for r in recs)
+            parts.append(f"(oldest {now - oldest:.0f}s)")
+            ran = [(t, had) for k, t, had in teardowns if k == key and t >= oldest]
+            if ran:
+                t, had = ran[-1]
+                parts.append(
+                    f"teardown=ran {t - oldest:.0f}s after oldest checkout"
+                    f" (session {'present' if had else 'absent'})"
+                )
+            elif teardowns and oldest >= teardowns[0][1]:
+                parts.append("teardown=NEVER (within ring window)")
+            else:
+                parts.append("teardown=unknown (ring does not cover that period)")
+        parts.append(f"registered={'yes' if key in registry_keys else 'no'}")
+        lines.append("  ".join(parts))
+    return "\n".join(lines) + "\n"
 
 
 def init_pool_tracking():
@@ -155,9 +233,10 @@ def format_outstanding(min_age: float = 0.0, limit: int = 25) -> str:
         lines.append(f"(showing the {limit} oldest)")
     for r in records[:limit]:
         stale = "  STALE-TRACKER-ENTRY (connection not actually held)" if r.is_stale() else ""
+        scope = f"0x{r.scope_key:x}" if r.scope_key is not None else "none"
         lines.append(
             f"\n--- held {r.age(now):.0f}s  endpoint={r.endpoint}  thread={r.thread}"
-            f"  app_ctx={r.app_ctx_state()}{stale} ---\n{r.stack}"
+            f"  app_ctx={r.app_ctx_state()}  scope={scope}{stale} ---\n{r.stack}"
         )
     return "\n".join(lines) + "\n"
 

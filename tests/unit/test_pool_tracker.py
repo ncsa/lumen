@@ -228,6 +228,59 @@ def test_checkout_reports_a_collected_app_context(app):
         pool_tracker._on_checkin(None, record)
 
 
+def test_checkout_records_the_scope_key(app):
+    """The scope key is the id of the current app context — the same key the
+    scoped-session registry uses — so a capture can match a leaked checkout to
+    its registry entry."""
+    with app.app_context():
+        from flask.globals import app_ctx
+        expected = id(app_ctx._get_current_object())
+        record = _fake_record()
+        pool_tracker._on_checkout(None, record, None)
+        try:
+            assert pool_tracker._outstanding[id(record)].scope_key == expected
+            assert f"scope=0x{expected:x}" in pool_tracker.format_outstanding()
+        finally:
+            pool_tracker._on_checkin(None, record)
+
+
+def test_scope_report_flags_a_checkout_whose_context_never_tore_down(app):
+    """The discriminating capture: a checkout made under a context that never
+    went through teardown reads NEVER, one whose context tore down without
+    releasing it reads ran-with-session-present."""
+    with app.app_context():
+        record = _fake_record()
+        pool_tracker._on_checkout(None, record, None)
+        key = pool_tracker._outstanding[id(record)].scope_key
+    try:
+        # Some teardown activity, none of it for this checkout's scope.
+        pool_tracker._teardowns.clear()
+        pool_tracker.record_teardown(had_session=True)  # different (current-test) ctx
+        report = pool_tracker.format_scope_report([key])
+        assert f"key 0x{key:x}" in report
+        assert "teardown=NEVER" not in report  # ring starts after the checkout
+        # Age the ring window back past the checkout so absence is conclusive.
+        k, t, had = pool_tracker._teardowns[0]
+        pool_tracker._teardowns[0] = (k, pool_tracker._outstanding[id(record)].at - 1, had)
+        report = pool_tracker.format_scope_report([key])
+        assert "teardown=NEVER (within ring window)" in report
+        assert "registered=yes" in report
+
+        # Now teardown runs for that scope: the verdict flips.
+        pool_tracker._teardowns.append((key, pool_tracker._outstanding[id(record)].at + 1, True))
+        report = pool_tracker.format_scope_report([])
+        assert "teardown=ran" in report
+        assert "session present" in report
+    finally:
+        pool_tracker._on_checkin(None, record)
+
+
+def test_scope_report_with_no_teardowns_recorded():
+    pool_tracker._teardowns.clear()
+    report = pool_tracker.format_scope_report([])
+    assert "0 session(s) registered" in report
+
+
 def test_checkout_without_an_app_context_reports_none():
     """Checkouts made outside a request — background workers — record no context.
 

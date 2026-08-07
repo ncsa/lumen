@@ -130,14 +130,19 @@ def create_app():
         db_url = db_cfg["url"].replace("postgres://", "postgresql://", 1)
         app.config["SQLALCHEMY_DATABASE_URI"] = db_url
     from lumen.services.db_pool import build_engine_options, detect_replicas, detect_workers
+    workers = detect_workers()
+    replicas = detect_replicas()
     engine_options = build_engine_options(
         app.config["SQLALCHEMY_DATABASE_URI"],
         db_cfg,
-        workers=detect_workers(),
-        replicas=detect_replicas(),
+        workers=workers,
+        replicas=replicas,
     )
     if engine_options:
         app.config["SQLALCHEMY_ENGINE_OPTIONS"] = engine_options
+    # What the pool was sized against, kept for /metrics/debug: the per-process
+    # pool numbers only make sense next to the multiplier they were divided by.
+    app.config["POOL_TOPOLOGY"] = {"workers": workers, "replicas": replicas}
     if "debug" in app_cfg:
         app.config["DEBUG"] = app_cfg["debug"]
     app.config["SESSION_COOKIE_SECURE"] = not app.debug
@@ -211,7 +216,7 @@ def create_app():
 
     # Initialize extensions
     from .extensions import db, migrate, oauth, limiter
-    from .services.pool_tracker import init_pool_tracking
+    from .services.pool_tracker import init_pool_tracking, record_teardown
     init_pool_tracking()
     db.init_app(app)
     migrate.init_app(app, db)
@@ -230,6 +235,9 @@ def create_app():
     @app.teardown_appcontext
     def release_db_session(exc):
         try:
+            # Ring-buffer this teardown's scope key so /metrics/debug can tell whether
+            # a leaked checkout's app context ever went through teardown at all.
+            record_teardown(had_session=db.session.registry.has())
             db.session.remove()
         except Exception:
             app.logger.exception("db.session.remove() failed during app-context teardown")

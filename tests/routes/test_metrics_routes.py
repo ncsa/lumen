@@ -88,6 +88,11 @@ def test_metrics_debug_returns_checkouts_and_thread_dump(app, client):
     body = resp.get_data(as_text=True)
     assert "=== all DB pool checkouts ===" in body
     assert "=== thread dump ===" in body
+    # The scope report cross-references checkouts against teardowns and the
+    # session registry, so a capture can tell whether a leaked checkout's app
+    # context ever went through teardown.
+    assert "=== scope keys: checkouts vs teardowns vs session registry ===" in body
+    assert "teardown(s) recorded" in body
 
 
 def test_metrics_debug_reports_pool_status(app, client):
@@ -103,6 +108,23 @@ def test_metrics_debug_reports_pool_status(app, client):
     assert "=== what retains those checkouts ===" in body
     # The test app runs on SQLite, whose pool has no queue semantics.
     assert "checked_out=" in body or "no queue semantics" in body
+
+
+def test_metrics_debug_reports_deployment_facts(app, client):
+    """The capture carries the static sizing context — workers x replicas, the
+    wsgi thread pool, engine options and the server's max_connections — so the
+    live pool numbers can be judged without hunting through configs."""
+    original = _set_prometheus(app, {"enabled": True, "token": "secret"})
+    try:
+        resp = client.get("/metrics/debug", headers={"Authorization": "Bearer secret"})
+    finally:
+        app.config["YAML_DATA"] = original
+    body = resp.get_data(as_text=True)
+    assert "=== deployment ===" in body
+    assert "worker processes:" in body
+    assert "wsgi thread pool:" in body
+    # The test app runs on SQLite, which has no max_connections.
+    assert "postgres max_connections: n/a (sqlite)" in body
 
 
 def test_metrics_exposes_stranded_pool_gauge(app, client):
