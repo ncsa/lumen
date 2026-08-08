@@ -83,6 +83,34 @@ resp = client.chat.completions.create(
 print(resp.choices[0].message.content)
 ```
 
+## R
+
+Use the [ellmer](https://ellmer.tidyverse.org) package with `chat_openai_compatible()` pointed at the Lumen base URL. The `credentials` function in the snippet below reads your key from the `LUMEN_API_KEY` environment variable.
+
+```r
+library(ellmer)
+
+chat <- chat_openai_compatible(
+  base_url = "https://lumen.example.com/v1",
+  name = "Lumen",
+  model = "MODEL",
+  credentials = function() Sys.getenv("LUMEN_API_KEY")
+)
+
+chat$chat("Hello!")
+```
+
+Instead of exporting `LUMEN_API_KEY` in your shell, you can store it in your R environment file: run `usethis::edit_r_environ()`, add a line `LUMEN_API_KEY="sk_…"`, save, and restart R.
+
+For image-capable models, pass an image alongside your prompt with `content_image_url()` (or `content_image_file()` for a local file):
+
+```r
+chat$chat(
+  "What is in this image?",
+  content_image_url("https://example.com/photo.jpg")
+)
+```
+
 ## Images and audio
 
 Models that accept images take standard OpenAI `image_url` content blocks in a chat request.

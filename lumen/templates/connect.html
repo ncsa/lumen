@@ -46,6 +46,10 @@ setx LUMEN_API_KEY "sk_…"        # Windows (new terminals)</code></pre>
       <button class="nav-link" id="tab-python" data-bs-toggle="tab" data-bs-target="#pane-python"
               type="button" role="tab" aria-controls="pane-python" aria-selected="false">Python</button>
     </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-r" data-bs-toggle="tab" data-bs-target="#pane-r"
+              type="button" role="tab" aria-controls="pane-r" aria-selected="false">R</button>
+    </li>
   </ul>
 
   <div class="tab-content border border-top-0 rounded-bottom p-3">
@@ -71,6 +75,16 @@ setx LUMEN_API_KEY "sk_…"        # Windows (new terminals)</code></pre>
 
     <div class="tab-pane fade" id="pane-python" role="tabpanel" aria-labelledby="tab-python">
       <div id="examples-python"></div>
+    </div>
+
+    <div class="tab-pane fade" id="pane-r" role="tabpanel" aria-labelledby="tab-r">
+      <p class="text-muted small mb-2">
+        Uses the <a href="https://ellmer.tidyverse.org">ellmer</a> package. The snippet's
+        <code>credentials</code> function reads your key from the <code>LUMEN_API_KEY</code> environment
+        variable — set it with <code>usethis::edit_r_environ()</code> (add
+        <code>LUMEN_API_KEY="sk_…"</code>, save, then restart R), or export it before starting R.
+      </p>
+      <div id="examples-r"></div>
     </div>
 
   </div>

@@ -212,6 +212,27 @@
       "print(result.text)";
   }
 
+  // ── R (ellmer) ───────────────────────────────────────────────────────────
+  function rSetup(id) {
+    return "library(ellmer)\n\n" +
+      "chat <- chat_openai_compatible(\n" +
+      '  base_url = "' + BASE + '",\n' +
+      '  name = "' + data.provider_name + '",\n' +
+      '  model = "' + id + '",\n' +
+      '  credentials = function() Sys.getenv("LUMEN_API_KEY")\n' +
+      ")\n";
+  }
+  function rText(id) {
+    return rSetup(id) + "\n" + 'chat$chat("Hello!")';
+  }
+  function rVision(id) {
+    return rSetup(id) + "\n" +
+      "chat$chat(\n" +
+      '  "What is in this image?",\n' +
+      '  content_image_url("https://example.com/photo.jpg")\n' +
+      ")";
+  }
+
   function render() {
     renderOpenCode();
 
@@ -232,16 +253,20 @@
 
     const curl = document.getElementById("examples-curl");
     const py = document.getElementById("examples-python");
+    const r = document.getElementById("examples-r");
     curl.innerHTML = "";
     py.innerHTML = "";
+    r.innerHTML = "";
 
     if (generic || hasText) {
       curl.appendChild(block("Chat completion", curlText(id)));
       py.appendChild(block("Chat completion", pyText(id)));
+      r.appendChild(block("Chat completion", rText(id)));
     }
     if (hasImage) {
       curl.appendChild(block("Vision (image input)", curlVision(id)));
       py.appendChild(block("Vision (image input)", pyVision(id)));
+      r.appendChild(block("Vision (image input)", rVision(id)));
     }
     if (hasAudio) {
       curl.appendChild(block("Audio in chat", curlAudioChat(id), null, AUDIO_NOTE));
@@ -251,6 +276,15 @@
     if (audioOnly) {
       curl.appendChild(block("Audio transcription", curlTranscribe(id)));
       py.appendChild(block("Audio transcription", pyTranscribe(id)));
+    }
+    // ellmer covers text and vision models; audio-only speech models have no R
+    // example, so leave a pointer rather than an empty pane.
+    if (!r.children.length) {
+      const note = document.createElement("p");
+      note.className = "text-muted small mb-0";
+      note.textContent = "This model's audio features aren't covered by the R examples. " +
+        "Use the curl or Python tab for audio models.";
+      r.appendChild(note);
     }
   }
 

@@ -4,6 +4,10 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- The [Connect page](/connect) and Connect guide now include an **R** example, using the [ellmer](https://ellmer.tidyverse.org) package's `chat_openai_compatible()`. The tab follows the model selector (text and vision examples) and reads the key from `LUMEN_API_KEY` via `credentials`.
+
 ### Security
 
 - Fixed a stored XSS in the admin users table (`admin/users.html`). User display names (from the IdP) were interpolated into `innerHTML` unescaped, in both link text and `aria-label`/`title` attributes; a name containing markup could execute JavaScript in an admin's session. Names are now escaped with an `escHtml` helper.
