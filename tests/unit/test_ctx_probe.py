@@ -59,6 +59,52 @@ def test_anomaly_report_empty():
     assert format_context_anomalies().strip() == "(none)"
 
 
+def test_push_provenance_is_recorded(app):
+    ctx = app.app_context()
+    assert "push not recorded" in ctx_probe.describe_push(ctx)
+    ctx.push()
+    try:
+        described = ctx_probe.describe_push(ctx)
+        assert "on thread" in described
+        assert "test_push_provenance_is_recorded" in described
+    finally:
+        ctx.pop()
+
+
+def test_cross_thread_pop_is_recorded(app):
+    """A context popped on a different thread than it was pushed on consumes
+    the token without the reset taking effect in the pushing thread — that
+    thread stays poisoned with the context current at depth 0."""
+    import threading
+
+    ctx_probe._anomalies.clear()
+    ctx = app.app_context()
+    ctx.push()
+    try:
+        def pop_elsewhere():
+            try:
+                ctx.pop()
+            except Exception:
+                pass  # expected: the pop cannot complete outside the push thread
+
+        t = threading.Thread(target=pop_elsewhere, name="other-thread")
+        t.start()
+        t.join()
+        report = format_context_anomalies()
+        assert f"cross-thread-pop  ctx=0x{id(ctx):x}" in report
+        assert "popped on other-thread" in report
+        assert "test_cross_thread_pop_is_recorded" in report  # push stack included
+    finally:
+        # The cross-thread pop consumed the token; drain any leftover state so
+        # this test does not poison the suite's main thread.
+        if ctx._cv_tokens:
+            ctx.pop()
+        else:
+            from flask.globals import _cv_app
+            if _cv_app.get(None) is ctx:
+                _cv_app.set(None)
+
+
 def test_pop_raising_is_recorded(app):
     """A pop that raises leaves the app context current with teardown never
     run — the silent variant of the leak. The exception must be recorded."""

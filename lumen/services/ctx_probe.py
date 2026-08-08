@@ -16,6 +16,7 @@ import logging
 import threading
 import time
 import traceback
+import weakref
 from collections import deque
 
 from flask.ctx import AppContext, RequestContext
@@ -31,6 +32,23 @@ _ANOMALY_RING = 50
 _lock = threading.Lock()
 _anomalies: deque = deque(maxlen=_ANOMALY_RING)
 _anomalies_total = 0
+# Push provenance per live app context: ctx -> (thread name, monotonic time,
+# stack). Weak-keyed so dead contexts clean up after themselves. Lets an
+# ambient-context report say who pushed the context, and the pop wrapper
+# detect a pop on a different thread than the push — which strands the
+# context: the token reset cannot take effect outside the pushing thread's
+# contextvars context, leaving the context current there with no tokens left.
+_pushes: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def describe_push(ctx) -> str:
+    """Who pushed this app context, when, and from where."""
+    with _lock:
+        info = _pushes.get(ctx)
+    if info is None:
+        return "push not recorded (predates the probe)"
+    thread, t, stack = info
+    return f"pushed {time.monotonic() - t:.0f}s ago on thread {thread} from:\n{stack}"
 
 
 def record_context_anomaly(kind: str, ctx_id: int, depth: int, detail: str):
@@ -73,14 +91,16 @@ def install_ctx_probe():
     orig_req_pop = RequestContext.pop
 
     def push(self, *args, **kwargs):
+        stack = "".join(traceback.format_stack(limit=_STACK_DEPTH)[:-1])
         if self._cv_tokens:
-            stack = "".join(traceback.format_stack(limit=_STACK_DEPTH)[:-1])
             record_context_anomaly("double-push", id(self), len(self._cv_tokens) + 1, stack)
             logger.warning(
                 "app context 0x%x pushed again (depth becomes %d); its inner pop "
                 "will skip teardown and strand this request's DB session. Pushed from:\n%s",
                 id(self), len(self._cv_tokens) + 1, stack,
             )
+        with _lock:
+            _pushes[self] = (threading.current_thread().name, time.monotonic(), stack)
         return orig_push(self, *args, **kwargs)
 
     def pop(self, *args, **kwargs):
@@ -91,6 +111,23 @@ def install_ctx_probe():
                 "app context 0x%x popped at depth %d — teardown skipped, the DB "
                 "session registered under this scope stays registered. Popped from:\n%s",
                 id(self), len(self._cv_tokens), stack,
+            )
+        with _lock:
+            info = _pushes.get(self)
+        if info is not None and info[0] != threading.current_thread().name:
+            # The contextvar token can only be reset in the pushing thread's
+            # context; popped elsewhere, the token is consumed but the context
+            # stays current over there — a poisoned thread with depth 0.
+            stack = "".join(traceback.format_stack(limit=_STACK_DEPTH)[:-1])
+            record_context_anomaly(
+                "cross-thread-pop", id(self), len(self._cv_tokens),
+                f"pushed on thread {info[0]}, popped on "
+                f"{threading.current_thread().name}\npush stack:\n{info[2]}\npop stack:\n{stack}",
+            )
+            logger.warning(
+                "app context 0x%x pushed on thread %s but popped on %s — the push "
+                "thread stays poisoned with this context current",
+                id(self), info[0], threading.current_thread().name,
             )
         try:
             return orig_pop(self, *args, **kwargs)

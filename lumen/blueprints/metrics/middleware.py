@@ -9,7 +9,7 @@ from flask.globals import _cv_app
 # mode is automatically engaged when PROMETHEUS_MULTIPROC_DIR is set.
 from prometheus_client import Counter, Histogram
 
-from lumen.services.ctx_probe import record_context_anomaly
+from lumen.services.ctx_probe import describe_push, record_context_anomaly
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,11 @@ def make_metrics_middleware(wsgi_app):
             _reported_ambient.add(baseline_ctx)
             record_context_anomaly(
                 "ambient-context-at-start", id(baseline_ctx), len(baseline_ctx._cv_tokens),
-                f"already current when {method} {path} started",
+                # app id distinguishes a second Flask app object's context (its
+                # sessions key elsewhere) from this app's (sessions key to it and
+                # leak); the push provenance names whoever left it behind.
+                f"already current when {method} {path} started; "
+                f"app=0x{id(baseline_ctx.app):x}; {describe_push(baseline_ctx)}",
             )
             logger.warning(
                 "app context 0x%x already current at the start of %s %s — this "
