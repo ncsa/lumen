@@ -9,6 +9,7 @@ from flask.globals import _cv_app
 # mode is automatically engaged when PROMETHEUS_MULTIPROC_DIR is set.
 from prometheus_client import Counter, Histogram
 
+from lumen.extensions import db
 from lumen.services.ctx_probe import describe_push, record_context_anomaly
 
 logger = logging.getLogger(__name__)
@@ -91,21 +92,38 @@ def make_metrics_middleware(wsgi_app):
         # down. The close()-time check compares against this baseline and so is
         # blind to exactly this case; report it here instead, once per context.
         # (Legitimate in tests, where the client runs inside a fixture context.)
-        if baseline_ctx is not None and baseline_ctx not in _reported_ambient:
-            _reported_ambient.add(baseline_ctx)
-            record_context_anomaly(
-                "ambient-context-at-start", id(baseline_ctx), len(baseline_ctx._cv_tokens),
-                # app id distinguishes a second Flask app object's context (its
-                # sessions key elsewhere) from this app's (sessions key to it and
-                # leak); the push provenance names whoever left it behind.
-                f"already current when {method} {path} started; "
-                f"app=0x{id(baseline_ctx.app):x}; {describe_push(baseline_ctx)}",
-            )
-            logger.warning(
-                "app context 0x%x already current at the start of %s %s — this "
-                "worker thread is poisoned; sessions keyed to it are never torn down",
-                id(baseline_ctx), method, path,
-            )
+        if baseline_ctx is not None:
+            # Self-heal outside tests (where an ambient context around the test
+            # client is legitimate): release the session registered under the
+            # stuck context's key and clear the contextvar, so this request —
+            # and every later one on this thread — pushes a fresh context.
+            heal = not baseline_ctx.app.testing
+            if baseline_ctx not in _reported_ambient:
+                _reported_ambient.add(baseline_ctx)
+                record_context_anomaly(
+                    "ambient-context-at-start", id(baseline_ctx), len(baseline_ctx._cv_tokens),
+                    # app id distinguishes a second Flask app object's context (its
+                    # sessions key elsewhere) from this app's (sessions key to it and
+                    # leak); the push provenance names whoever left it behind.
+                    f"already current when {method} {path} started; "
+                    f"app=0x{id(baseline_ctx.app):x}; "
+                    f"{'healed (session closed, context cleared); ' if heal else ''}"
+                    f"{describe_push(baseline_ctx)}",
+                )
+                logger.warning(
+                    "app context 0x%x already current at the start of %s %s — this "
+                    "worker thread is poisoned; sessions keyed to it are never torn down%s",
+                    id(baseline_ctx), method, path, " (healing)" if heal else "",
+                )
+            if heal:
+                stuck = db.session.registry.registry.pop(id(baseline_ctx), None)
+                if stuck is not None:
+                    try:
+                        stuck.close()  # rolls back and returns the connection
+                    except Exception:
+                        logger.exception("closing the stranded session failed")
+                _cv_app.set(None)
+                baseline_ctx = None
         start = time.time()
         try:
             body = wsgi_app(environ, _start_response)

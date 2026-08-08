@@ -9,7 +9,7 @@ from functools import wraps
 from http import HTTPStatus
 
 import openai
-from flask import Blueprint, current_app, request, jsonify, g, Response, stream_with_context
+from flask import Blueprint, current_app, request, jsonify, g, Response
 from sqlalchemy import case, func, select, update as sa_update
 
 logger = logging.getLogger(__name__)
@@ -383,6 +383,13 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
     mc_out_cost  = float(model_config.output_cost_per_million)
     db.session.remove()  # return connection to pool before the LLM call
 
+    # The generator body runs after this request's contexts are gone, on
+    # whatever worker thread iterates the response body. It must not depend on
+    # ambient request/app context (stream_with_context re-pushes the request's
+    # context onto that thread and poisons it if the generator is abandoned),
+    # so push short-lived app contexts around the DB work — never across a yield.
+    app = current_app._get_current_object()
+
     def generate():
         billed = False
         t0 = _time.time()
@@ -408,11 +415,12 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                         + usage.completion_tokens * mc_out_cost / 1_000_000,
                         6,
                     )
-                    subtract_coins(entity_id, mc_id, cost, effective=effective)
-                    update_stats(entity_id, mc_id, "api", usage.prompt_tokens, usage.completion_tokens, cost,
-                                 endpoint_id=ep_id, duration=duration)
-                    _record_api_key_usage(ak_id, usage.prompt_tokens, usage.completion_tokens, cost)
-                    db.session.commit()
+                    with app.app_context():
+                        subtract_coins(entity_id, mc_id, cost, effective=effective)
+                        update_stats(entity_id, mc_id, "api", usage.prompt_tokens, usage.completion_tokens, cost,
+                                     endpoint_id=ep_id, duration=duration)
+                        _record_api_key_usage(ak_id, usage.prompt_tokens, usage.completion_tokens, cost)
+                        db.session.commit()
                     billed = True
                 else:
                     logger.warning(
@@ -424,8 +432,9 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                 # Client disconnected mid-stream before billing — log a zero-cost
                 # request so we can monitor how often this happens, then re-raise.
                 if not billed:
-                    record_aborted_request(entity_id, mc_id, "api", endpoint_id=ep_id,
-                                           duration=_time.time() - t0)
+                    with app.app_context():
+                        record_aborted_request(entity_id, mc_id, "api", endpoint_id=ep_id,
+                                               duration=_time.time() - t0)
                 raise
             except Exception as exc:
                 msg, err_type, _ = _classify_upstream_error(
@@ -433,22 +442,14 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                     f"Error during streaming request "
                     f"(endpoint={ep_id} {ep_url} model={remote_model}, entity_id={entity_id})",
                 )
-                # Roll back the half-finished billing and hold no connection while the
-                # error events are in flight — a client that has gone away can leave
-                # the yields below pending forever. remove() rolls back as part of
-                # closing the session, so no separate rollback() is needed.
-                db.session.remove()
+                # Any half-finished billing was already rolled back when its app
+                # context exited; nothing is held while the error events below
+                # are in flight — a client that has gone away can leave those
+                # yields pending forever.
                 yield f"data: {json.dumps({'error': {'message': msg, 'type': err_type}})}\n\n"
                 yield "data: [DONE]\n\n"
-            finally:
-                # Nothing may outlive this generator holding a connection:
-                # stream_with_context keeps the request context alive until the
-                # generator is closed, and an abandoned generator is never closed.
-                # Also covers the GeneratorExit path above, where
-                # record_aborted_request checks a connection back out.
-                db.session.remove()
 
-    return Response(stream_with_context(generate()), content_type="text/event-stream")
+    return Response(generate(), content_type="text/event-stream")
 
 
 def _do_audio(kind: str):

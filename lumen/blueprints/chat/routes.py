@@ -6,7 +6,7 @@ from http import HTTPStatus
 
 import filetype
 import pypdf
-from flask import Blueprint, Response, current_app, jsonify, render_template, request, session, stream_with_context
+from flask import Blueprint, Response, current_app, jsonify, render_template, request, session
 from werkzeug.utils import secure_filename
 
 logger = logging.getLogger(__name__)
@@ -200,10 +200,19 @@ def chat_stream():
     # is opened lazily by generate() once it needs to write the conversation.
     db.session.remove()
 
+    # The generator body runs after this request's contexts are gone, on
+    # whatever worker thread iterates the response body. It must not depend on
+    # ambient request/app context (stream_with_context re-pushes the request's
+    # context onto that thread and poisons it if the generator is abandoned),
+    # so: create the LLM stream while the request context is still current, and
+    # push short-lived app contexts around the DB work — never across a yield.
+    app = current_app._get_current_object()
+    llm_stream = send_message_stream(messages, model, entity_id=entity_id, source="chat", effective=effective)
+
     def generate():
         try:
             result = None
-            for chunk, thinking, final in send_message_stream(messages, model, entity_id=entity_id, source="chat", effective=effective):
+            for chunk, thinking, final in llm_stream:
                 if thinking is not None:
                     yield f"data: {json.dumps({'thinking_chunk': thinking})}\n\n"
                 elif chunk is not None:
@@ -215,61 +224,63 @@ def chat_stream():
                 yield f"data: {json.dumps({'error': 'Empty response from model'})}\n\n"
                 return
 
-            conv = None
-            if conversation_id:
-                conv = db.session.execute(
-                    select(Conversation).filter_by(id=conversation_id, entity_id=entity_id)
-                ).scalar_one_or_none()
+            # The conversation write gets its own short-lived app context: its
+            # teardown releases the session before the final yield below, so no
+            # connection is held while the last event is in flight — if the
+            # client disconnected, this generator may never be closed.
+            with app.app_context():
+                conv = None
+                if conversation_id:
+                    conv = db.session.execute(
+                        select(Conversation).filter_by(id=conversation_id, entity_id=entity_id)
+                    ).scalar_one_or_none()
 
-            if conv is None:
+                if conv is None:
+                    user_msg = next((m for m in reversed(messages) if m["role"] == "user"), None)
+                    raw_content = _message_content_to_text(user_msg["content"]) if user_msg else ""
+                    title = raw_content[:40] if raw_content else "New Chat"
+                    conv = Conversation(entity_id=entity_id, title=title, model=model)
+                    db.session.add(conv)
+                    db.session.flush()
+
                 user_msg = next((m for m in reversed(messages) if m["role"] == "user"), None)
-                raw_content = _message_content_to_text(user_msg["content"]) if user_msg else ""
-                title = raw_content[:40] if raw_content else "New Chat"
-                conv = Conversation(entity_id=entity_id, title=title, model=model)
-                db.session.add(conv)
-                db.session.flush()
+                if user_msg:
+                    db.session.add(Message(
+                        conversation_id=conv.id, role="user",
+                        content=_message_content_to_text(user_msg["content"])
+                    ))
 
-            user_msg = next((m for m in reversed(messages) if m["role"] == "user"), None)
-            if user_msg:
                 db.session.add(Message(
-                    conversation_id=conv.id, role="user",
-                    content=_message_content_to_text(user_msg["content"])
+                    conversation_id=conv.id,
+                    role="assistant",
+                    content=result["reply"],
+                    input_tokens=result["input_tokens"],
+                    output_tokens=result["output_tokens"],
+                    thinking=result.get("thinking"),
+                    thinking_tokens=result.get("thinking_tokens"),
+                    time_to_first_token=result.get("time_to_first_token"),
+                    duration=result.get("duration"),
+                    output_speed=result.get("output_speed"),
                 ))
 
-            db.session.add(Message(
-                conversation_id=conv.id,
-                role="assistant",
-                content=result["reply"],
-                input_tokens=result["input_tokens"],
-                output_tokens=result["output_tokens"],
-                thinking=result.get("thinking"),
-                thinking_tokens=result.get("thinking_tokens"),
-                time_to_first_token=result.get("time_to_first_token"),
-                duration=result.get("duration"),
-                output_speed=result.get("output_speed"),
-            ))
-
-            conv.updated_at = utcnow()
-            # Read conv.id before commit: expire_on_commit would otherwise
-            # check out a fresh connection to refresh it, and that connection
-            # would still be held during the final yield below.
-            conv_id = conv.id
-            db.session.commit()
+                conv.updated_at = utcnow()
+                # Read conv.id before commit: expire_on_commit would otherwise
+                # check out a fresh connection to refresh it, and that connection
+                # would still be held during the final yield below.
+                conv_id = conv.id
+                db.session.commit()
 
             result["conversation_id"] = conv_id
             result["done"] = True
-            # Hold no DB connection while the final event is in flight — if the
-            # client disconnected, this generator may never be closed and any
-            # checked-out connection would leak until the process restarts.
-            db.session.remove()
             yield f"data: {json.dumps(result)}\n\n"
 
         except Exception as e:
+            # Any half-done DB work was already rolled back when its app
+            # context exited; there is no ambient session here to clean up.
             logger.exception("chat_stream error (model=%s, entity=%s)", model, entity_id)
-            db.session.rollback()
             yield f"data: {json.dumps({'error': 'An error occurred. Please try again.'})}\n\n"
 
-    resp = Response(stream_with_context(generate()), content_type="text/event-stream")
+    resp = Response(generate(), content_type="text/event-stream")
     resp.headers["X-Accel-Buffering"] = "no"
     resp.headers["Cache-Control"] = "no-cache"
     return resp

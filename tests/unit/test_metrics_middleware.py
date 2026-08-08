@@ -184,6 +184,50 @@ def test_middleware_checks_the_exception_path(app, caplog):
     leaked[0].pop()  # clean up
 
 
+def test_middleware_heals_a_poisoned_thread(caplog):
+    """Outside tests, an ambient context at request start is neutralized: the
+    session registered under its key is closed and the contextvar cleared, so
+    this and every later request on the thread pushes a fresh context."""
+    import logging
+    from unittest.mock import MagicMock
+
+    from flask import Flask
+    from flask.globals import _cv_app
+
+    from lumen.blueprints.metrics.middleware import make_metrics_middleware
+    from lumen.extensions import db
+
+    prod_app = Flask("prod-like")  # testing defaults to False → heal path
+    prior = _cv_app.get(None)  # the test fixture's own context, restored below
+    ctx = prod_app.app_context()
+    ctx.push()
+    stuck_session = MagicMock()
+    db.session.registry.registry[id(ctx)] = stuck_session
+
+    def clean_app(environ, start_response):
+        start_response("200 OK", [])
+        return [b"ok"]
+
+    wrapped = make_metrics_middleware(clean_app)
+    try:
+        with caplog.at_level(logging.WARNING, logger="lumen.blueprints.metrics.middleware"):
+            body = wrapped(_fake_environ("/v1/models"), lambda *a: None)
+            list(body)
+            body.close()
+        assert _cv_app.get(None) is None  # contextvar cleared
+        assert id(ctx) not in db.session.registry.registry
+        stuck_session.close.assert_called_once()
+        assert any("(healing)" in r.getMessage() for r in caplog.records)
+    finally:
+        # The heal cleared the contextvar; drop the orphaned push token rather
+        # than popping (pop would assert on the mismatched current context),
+        # and restore the fixture's own context so its teardown pops cleanly.
+        ctx._cv_tokens.clear()
+        db.session.registry.registry.pop(id(ctx), None)
+        if prior is not None:
+            _cv_app.set(prior)
+
+
 def test_middleware_records_500_on_app_exception():
     """If the wrapped app raises, status defaults to '500' and the exception propagates."""
     import pytest

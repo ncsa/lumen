@@ -553,26 +553,39 @@ def send_message_stream(
 
     ``effective`` is the coin pool limit already resolved during preflight; it is
     threaded to subtract_coins to avoid re-resolving it after the stream completes.
+
+    Must be *called* inside an application context (view code); the returned
+    generator runs without one. Each DB phase pushes its own short-lived app
+    context that never spans a ``yield``, so no session is ever keyed to a
+    context that outlives the phase — Flask's stream_with_context instead
+    re-pushes the request's context onto whichever worker thread iterates the
+    body, and an abandoned generator leaves it stuck there, poisoning every
+    later request on that thread.
     """
-    config = db.session.execute(select(ModelConfig).where(ModelConfig.model_name == model, ModelConfig.active)).scalar_one_or_none()
-    if config is None:
-        raise ValueError(f"Unknown or inactive model: {model}")
+    app = current_app._get_current_object()
+    return _send_message_stream(app, messages, model, entity_id, source, effective)
 
-    endpoint = get_next_endpoint(config.id)
-    if endpoint is None:
-        raise RuntimeError(f"No healthy endpoints for model '{model}'")
 
-    # Extract all scalars from ORM objects before releasing the DB connection.
-    # The streaming LLM call can take minutes; holding a pool connection (and an
-    # open transaction) for that entire duration exhausts the pool under load.
-    remote_model = endpoint.model_name or model
-    ep_api_key   = endpoint.api_key
-    ep_url       = endpoint.url
-    ep_id        = endpoint.id
-    mc_id        = config.id
-    mc_in_cost   = float(config.input_cost_per_million)
-    mc_out_cost  = float(config.output_cost_per_million)
-    db.session.remove()  # return connection to pool before the LLM call
+def _send_message_stream(app, messages, model, entity_id, source, effective):
+    with app.app_context():
+        config = db.session.execute(select(ModelConfig).where(ModelConfig.model_name == model, ModelConfig.active)).scalar_one_or_none()
+        if config is None:
+            raise ValueError(f"Unknown or inactive model: {model}")
+
+        endpoint = get_next_endpoint(config.id)
+        if endpoint is None:
+            raise RuntimeError(f"No healthy endpoints for model '{model}'")
+
+        # Extract all scalars from ORM objects before the context exits. The
+        # streaming LLM call can take minutes; the context teardown releases the
+        # session (and its pool connection) before the first token is awaited.
+        remote_model = endpoint.model_name or model
+        ep_api_key   = endpoint.api_key
+        ep_url       = endpoint.url
+        ep_id        = endpoint.id
+        mc_id        = config.id
+        mc_in_cost   = float(config.input_cost_per_million)
+        mc_out_cost  = float(config.output_cost_per_million)
 
     t0 = time.time()
     t_first = None
@@ -619,19 +632,21 @@ def send_message_stream(
         output_speed = output_tokens / duration if duration > 0 else 0.0
 
         if entity_id is not None:
-            subtract_coins(entity_id, mc_id, cost, effective=effective)
-            update_stats(
-                entity_id, mc_id, source,
-                input_tokens, output_tokens, cost,
-                endpoint_id=ep_id, duration=duration,
-            )
-            db.session.commit()
+            with app.app_context():
+                subtract_coins(entity_id, mc_id, cost, effective=effective)
+                update_stats(
+                    entity_id, mc_id, source,
+                    input_tokens, output_tokens, cost,
+                    endpoint_id=ep_id, duration=duration,
+                )
+                db.session.commit()
             billed = True
     except GeneratorExit:
         # Client disconnected mid-stream before billing — log a zero-cost request
         # so we can monitor how often this happens, then re-raise to close cleanly.
         if entity_id is not None and not billed:
-            record_aborted_request(entity_id, mc_id, source, endpoint_id=ep_id, duration=time.time() - t0)
+            with app.app_context():
+                record_aborted_request(entity_id, mc_id, source, endpoint_id=ep_id, duration=time.time() - t0)
         raise
 
     yield None, None, {

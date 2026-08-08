@@ -202,8 +202,8 @@ def test_chat_stream_holds_no_connection_at_yields(app, auth_client, test_user, 
         pool = db.engine.pool
 
     def fake_stream(messages, model, entity_id=None, source="chat", effective=None):
-        from lumen.extensions import db
-        db.session.remove()  # the real send_message_stream does this before the LLM call
+        # The real send_message_stream runs context-free between yields; its
+        # DB phases each push their own short-lived app context.
         yield "Hello", None, None
         yield None, None, {
             "reply": "Hello",
@@ -254,8 +254,6 @@ def test_chat_stream_error_path_holds_no_connection(app, auth_client, test_user,
         pool = db.engine.pool
 
     def fake_stream(messages, model, entity_id=None, source="chat", effective=None):
-        from lumen.extensions import db
-        db.session.remove()
         yield "Hello", None, None
         # Missing "reply" key → KeyError inside the billing block, after the
         # conversation SELECT/flush has checked out a connection.
