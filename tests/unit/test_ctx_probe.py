@@ -57,3 +57,17 @@ def test_double_push_warns_with_stack(app, caplog):
 def test_anomaly_report_empty():
     ctx_probe._anomalies.clear()
     assert format_context_anomalies().strip() == "(none)"
+
+
+def test_pop_raising_is_recorded(app):
+    """A pop that raises leaves the app context current with teardown never
+    run — the silent variant of the leak. The exception must be recorded."""
+    import pytest
+
+    ctx_probe._anomalies.clear()
+    ctx = app.app_context()
+    # Popping a context that was never pushed makes the original pop raise.
+    with pytest.raises(Exception):
+        ctx.pop()
+    report = format_context_anomalies()
+    assert f"app-ctx-pop-raised  ctx=0x{id(ctx):x}" in report

@@ -163,9 +163,14 @@ def format_scope_report(registry_keys: list) -> str:
     by_key: dict = {}
     for r in records:
         by_key.setdefault(r.scope_key, []).append(r)
+    # In steady state nearly every request teardown finds a session (all /v1
+    # requests query at auth); a no-session share tracking the leak rate means
+    # teardowns are running under a different key than the session's.
+    absent = sum(1 for _, _, had in teardowns if not had)
     lines = [
         f"{len(registry_keys)} session(s) registered; {total} teardown(s) recorded, "
-        f"ring holds the last {len(teardowns)} covering {window:.0f}s"
+        f"ring holds the last {len(teardowns)} covering {window:.0f}s; "
+        f"{absent} of {len(teardowns)} ring teardown(s) found no session"
     ]
     for key in sorted(set(by_key) | registry_keys, key=lambda k: (k is None, k or 0)):
         recs = by_key.get(key, [])

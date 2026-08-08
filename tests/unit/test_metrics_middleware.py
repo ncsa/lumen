@@ -113,12 +113,14 @@ def test_middleware_warns_when_a_context_survives_the_request(app, caplog):
     with caplog.at_level(logging.WARNING, logger="lumen.blueprints.metrics.middleware"):
         body = wrapped(_fake_environ("/v1/models"), lambda *a: None)
         list(body)
-        assert caplog.records == []  # only close() is the end of the request
+        # Only close() is the end of the request (the fixture's own ambient
+        # context may additionally be reported at request start).
+        assert not any("still current after" in r.getMessage() for r in caplog.records)
         body.close()
-    assert len(caplog.records) == 1
-    msg = caplog.records[0].getMessage()
-    assert "still current after GET /v1/models" in msg
-    assert "stranded" in msg
+    leftover = [r.getMessage() for r in caplog.records if "still current after" in r.getMessage()]
+    assert len(leftover) == 1
+    assert "still current after GET /v1/models" in leftover[0]
+    assert "stranded" in leftover[0]
     # Also kept for /metrics/debug, keyed to the leaked context's id.
     from lumen.services.ctx_probe import format_context_anomalies
     report = format_context_anomalies()
@@ -129,7 +131,8 @@ def test_middleware_warns_when_a_context_survives_the_request(app, caplog):
 
 def test_middleware_is_silent_for_a_balanced_request(app, caplog):
     """An ambient context around the request (test fixtures, nested dispatch)
-    is the baseline, not a leak."""
+    is the close()-check baseline, not a leftover — though it is reported once
+    as ambient-at-start, since in production it means a poisoned thread."""
     import logging
     from lumen.blueprints.metrics.middleware import make_metrics_middleware
 
@@ -146,7 +149,39 @@ def test_middleware_is_silent_for_a_balanced_request(app, caplog):
             body = wrapped(_fake_environ("/v1/models"), lambda *a: None)
             list(body)
             body.close()
-    assert caplog.records == []
+            # A second request on the same poisoned baseline reports nothing new.
+            body2 = wrapped(_fake_environ("/v1/models"), lambda *a: None)
+            list(body2)
+            body2.close()
+    messages = [r.getMessage() for r in caplog.records]
+    assert not any("still current after" in m for m in messages)  # no leftover
+    ambient = [m for m in messages if "already current at the start" in m]
+    assert len(ambient) == 1  # reported once per context, not per request
+
+
+def test_middleware_checks_the_exception_path(app, caplog):
+    """A request that raises never gets a body close(); the leftover check
+    must run on the exception path instead."""
+    import logging
+    import pytest
+    from lumen.blueprints.metrics.middleware import make_metrics_middleware
+    from lumen.services.ctx_probe import format_context_anomalies
+
+    leaked = []
+
+    def exploding_leaking_app(environ, start_response):
+        ctx = app.app_context()
+        ctx.push()  # never popped
+        leaked.append(ctx)
+        raise RuntimeError("boom")
+
+    wrapped = make_metrics_middleware(exploding_leaking_app)
+    with caplog.at_level(logging.WARNING, logger="lumen.blueprints.metrics.middleware"):
+        with pytest.raises(RuntimeError, match="boom"):
+            wrapped(_fake_environ("/v1/models"), lambda *a: None)
+    assert any("raised" in r.getMessage() for r in caplog.records)
+    assert f"leftover-context-after-exception  ctx=0x{id(leaked[0]):x}" in format_context_anomalies()
+    leaked[0].pop()  # clean up
 
 
 def test_middleware_records_500_on_app_exception():

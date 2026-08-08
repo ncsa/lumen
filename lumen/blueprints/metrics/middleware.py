@@ -1,6 +1,7 @@
 import logging
 import re
 import time
+import weakref
 
 from flask.globals import _cv_app
 
@@ -11,6 +12,11 @@ from prometheus_client import Counter, Histogram
 from lumen.services.ctx_probe import record_context_anomaly
 
 logger = logging.getLogger(__name__)
+
+# App contexts already reported as ambient-at-request-start, so a poisoned
+# worker thread is reported once rather than on every subsequent request it
+# serves. Weak so dead contexts do not pin memory or block id() reuse detection.
+_reported_ambient: "weakref.WeakSet" = weakref.WeakSet()
 
 _http_requests = Counter(
     "lumen_http_requests_total",
@@ -79,11 +85,43 @@ def make_metrics_middleware(wsgi_app):
             return start_response(status, headers, exc_info)
 
         baseline_ctx = _cv_app.get(None)
+        # An app context already current when a request STARTS is a poisoned
+        # worker thread: some earlier request pushed it and never popped, and
+        # every session created while it is current is keyed to it — never torn
+        # down. The close()-time check compares against this baseline and so is
+        # blind to exactly this case; report it here instead, once per context.
+        # (Legitimate in tests, where the client runs inside a fixture context.)
+        if baseline_ctx is not None and baseline_ctx not in _reported_ambient:
+            _reported_ambient.add(baseline_ctx)
+            record_context_anomaly(
+                "ambient-context-at-start", id(baseline_ctx), len(baseline_ctx._cv_tokens),
+                f"already current when {method} {path} started",
+            )
+            logger.warning(
+                "app context 0x%x already current at the start of %s %s — this "
+                "worker thread is poisoned; sessions keyed to it are never torn down",
+                id(baseline_ctx), method, path,
+            )
         start = time.time()
         try:
-            return _ContextCheckingBody(
-                wsgi_app(environ, _start_response), method, path, baseline_ctx
-            )
+            body = wsgi_app(environ, _start_response)
+        except BaseException:
+            # No body, so the close()-time check below will never run; verify
+            # here that the raising request did not abandon a context.
+            ctx = _cv_app.get(None)
+            if ctx is not None and ctx is not baseline_ctx:
+                record_context_anomaly(
+                    "leftover-context-after-exception", id(ctx), len(ctx._cv_tokens),
+                    f"left behind by {method} {path} raising",
+                )
+                logger.warning(
+                    "app context 0x%x still current after %s %s raised; teardown "
+                    "never ran for it and its DB session is stranded",
+                    id(ctx), method, path,
+                )
+            raise
+        else:
+            return _ContextCheckingBody(body, method, path, baseline_ctx)
         finally:
             _http_requests.labels(
                 method=method,

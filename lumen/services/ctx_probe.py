@@ -18,7 +18,7 @@ import time
 import traceback
 from collections import deque
 
-from flask.ctx import AppContext
+from flask.ctx import AppContext, RequestContext
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +37,10 @@ def record_context_anomaly(kind: str, ctx_id: int, depth: int, detail: str):
     """Keep the anomaly for /metrics/debug, so a capture is self-contained
     rather than depending on the warning still being in the log."""
     global _anomalies_total
+    thread = threading.current_thread().name
     with _lock:
         _anomalies_total += 1
-        _anomalies.append((time.monotonic(), kind, ctx_id, depth, detail))
+        _anomalies.append((time.monotonic(), kind, ctx_id, depth, thread, detail))
 
 
 def format_context_anomalies() -> str:
@@ -55,8 +56,11 @@ def format_context_anomalies() -> str:
     if not items:
         return "(none)\n"
     lines = [f"{total} anomaly(ies) since start, showing the last {len(items)}"]
-    for t, kind, ctx_id, depth, detail in items:
-        lines.append(f"\n--- {now - t:.0f}s ago  {kind}  ctx=0x{ctx_id:x}  depth={depth} ---\n{detail}")
+    for t, kind, ctx_id, depth, thread, detail in items:
+        lines.append(
+            f"\n--- {now - t:.0f}s ago  {kind}  ctx=0x{ctx_id:x}  depth={depth}"
+            f"  thread={thread} ---\n{detail}"
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -66,6 +70,7 @@ def install_ctx_probe():
         return
     orig_push = AppContext.push
     orig_pop = AppContext.pop
+    orig_req_pop = RequestContext.pop
 
     def push(self, *args, **kwargs):
         if self._cv_tokens:
@@ -87,9 +92,35 @@ def install_ctx_probe():
                 "session registered under this scope stays registered. Popped from:\n%s",
                 id(self), len(self._cv_tokens), stack,
             )
-        return orig_pop(self, *args, **kwargs)
+        try:
+            return orig_pop(self, *args, **kwargs)
+        except BaseException as exc:
+            stack = "".join(traceback.format_stack(limit=_STACK_DEPTH)[:-1])
+            record_context_anomaly(
+                "app-ctx-pop-raised", id(self), len(self._cv_tokens),
+                f"{type(exc).__name__}: {exc}\n{stack}",
+            )
+            logger.warning("AppContext.pop for 0x%x raised %r", id(self), exc)
+            raise
+
+    def req_pop(self, *args, **kwargs):
+        # RequestContext.pop resets the request contextvar in a finally BEFORE
+        # popping the app context; if anything in there raises, the app context
+        # is silently never popped and its teardown never runs.
+        try:
+            return orig_req_pop(self, *args, **kwargs)
+        except BaseException as exc:
+            stack = "".join(traceback.format_stack(limit=_STACK_DEPTH)[:-1])
+            record_context_anomaly(
+                "request-ctx-pop-raised", id(self), len(self._cv_tokens),
+                f"{type(exc).__name__}: {exc}\n{stack}",
+            )
+            logger.warning("RequestContext.pop for 0x%x raised %r", id(self), exc)
+            raise
 
     push._lumen_ctx_probe = True
     pop._lumen_ctx_probe = True
+    req_pop._lumen_ctx_probe = True
     AppContext.push = push
     AppContext.pop = pop
+    RequestContext.pop = req_pop
