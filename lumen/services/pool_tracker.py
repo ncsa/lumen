@@ -173,10 +173,11 @@ def format_scope_report(registry_keys: list) -> str:
             lines.append(f"key None (no app context)  checkouts={len(recs)}")
             continue
         parts = [f"key 0x{key:x}  checkouts={len(recs)}"]
+        matching = [(t, had) for k, t, had in teardowns if k == key]
         if recs:
             oldest = min(r.at for r in recs)
             parts.append(f"(oldest {now - oldest:.0f}s)")
-            ran = [(t, had) for k, t, had in teardowns if k == key and t >= oldest]
+            ran = [(t, had) for t, had in matching if t >= oldest]
             if ran:
                 t, had = ran[-1]
                 parts.append(
@@ -187,6 +188,15 @@ def format_scope_report(registry_keys: list) -> str:
                 parts.append("teardown=NEVER (within ring window)")
             else:
                 parts.append("teardown=unknown (ring does not cover that period)")
+        elif matching:
+            # A registered session holding no connection: say when its scope last
+            # tore down — a teardown that left the session registered is its own clue.
+            t, had = matching[-1]
+            parts.append(
+                f"teardown=last ran {now - t:.0f}s ago (session {'present' if had else 'absent'})"
+            )
+        else:
+            parts.append("teardown=NEVER (within ring window)")
         parts.append(f"registered={'yes' if key in registry_keys else 'no'}")
         lines.append("  ".join(parts))
     return "\n".join(lines) + "\n"

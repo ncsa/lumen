@@ -93,6 +93,8 @@ def test_metrics_debug_returns_checkouts_and_thread_dump(app, client):
     # context ever went through teardown.
     assert "=== scope keys: checkouts vs teardowns vs session registry ===" in body
     assert "teardown(s) recorded" in body
+    # The push/pop probes' catches ship in the same capture.
+    assert "=== app-context anomalies" in body
 
 
 def test_metrics_debug_reports_pool_status(app, client):

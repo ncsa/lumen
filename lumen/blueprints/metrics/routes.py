@@ -10,6 +10,7 @@ from prometheus_client import CollectorRegistry, generate_latest, CONTENT_TYPE_L
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 
 from lumen.extensions import db
+from lumen.services.ctx_probe import format_context_anomalies
 from lumen.services.pool_tracker import (
     STRANDED_AFTER,
     format_holders,
@@ -289,6 +290,10 @@ def metrics_debug():
         # still-registered key means the context was abandoned without pop().
         f"\n=== scope keys: checkouts vs teardowns vs session registry ===\n"
         f"{format_scope_report(list(db.session.registry.registry))}"
+        # The push/pop probes' catches, with the stack that did it: a ctx= here
+        # matching a teardown=NEVER key above names the moment it was orphaned.
+        "\n=== app-context anomalies (double push / skipped teardown / leftover context) ===\n"
+        f"{format_context_anomalies()}"
         f"\n=== DB pool checkouts held over {STRANDED_AFTER:.0f}s ===\n"
         f"{format_outstanding(min_age=STRANDED_AFTER)}"
         f"\n=== what retains those checkouts ===\n"

@@ -275,6 +275,17 @@ def test_scope_report_flags_a_checkout_whose_context_never_tore_down(app):
         pool_tracker._on_checkin(None, record)
 
 
+def test_scope_report_gives_teardown_status_for_connectionless_sessions():
+    """A registered session holding no connection still gets a teardown verdict:
+    NEVER is the same never-torn-down disease without the stranded connection."""
+    pool_tracker._teardowns.clear()
+    orphan, torn = 0xabc1, 0xabc2
+    pool_tracker._teardowns.append((torn, 1.0, True))
+    report = pool_tracker.format_scope_report([orphan, torn])
+    assert f"key 0x{orphan:x}  checkouts=0  teardown=NEVER" in report
+    assert f"key 0x{torn:x}  checkouts=0  teardown=last ran" in report
+
+
 def test_scope_report_with_no_teardowns_recorded():
     pool_tracker._teardowns.clear()
     report = pool_tracker.format_scope_report([])

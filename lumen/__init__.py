@@ -217,7 +217,9 @@ def create_app():
     # Initialize extensions
     from .extensions import db, migrate, oauth, limiter
     from .services.pool_tracker import init_pool_tracking, record_teardown
+    from .services.ctx_probe import install_ctx_probe
     init_pool_tracking()
+    install_ctx_probe()
     db.init_app(app)
     migrate.init_app(app, db)
     oauth.init_app(app)
