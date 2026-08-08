@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 from lumen.extensions import db, limiter
 from lumen.timeutils import utcnow
 from lumen.models.api_key import APIKey
-from lumen.services.crypto import hash_api_key
+from lumen.services.crypto import hash_api_key, cache_salt_for_entity
 from lumen.models.entity import Entity
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
@@ -31,6 +31,53 @@ api_bp = Blueprint("api", __name__, url_prefix="/v1")
 # copy; effective cache lifetime is correct per-worker but not shared across workers.
 _rates_cache: dict = {"data": {}, "expires_at": 0.0}
 _rates_lock = threading.Lock()
+
+# Client request params forwarded to the upstream chat completion, by transport.
+# This is an allowlist: anything a client sends that is not named here is dropped
+# — including OpenAI-SDK control params (`extra_body`/`extra_headers`) and backend
+# passthrough/smuggling fields (vLLM `vllm_xargs`, SGLang `custom_logit_processor`,
+# `lora_path`, `priority`, `input_ids`, …). Default-deny means new risky fields a
+# backend adds are dropped without Lumen having to track them.
+#
+# `model`, `messages`, `prompt`, `stream` are handled explicitly by the views;
+# `stream_options` is set server-side (Lumen forces include_usage for billing);
+# `cache_salt` is handled specially in _forward_params.
+_FORWARD_NATIVE = frozenset({
+    "temperature", "top_p", "max_tokens", "max_completion_tokens", "n", "stop",
+    "presence_penalty", "frequency_penalty", "logit_bias", "logprobs", "top_logprobs",
+    "seed", "response_format", "tools", "tool_choice", "parallel_tool_calls",
+    "reasoning_effort",
+})
+# Non-OpenAI extensions that vLLM/SGLang read from the raw JSON body. The OpenAI
+# SDK does not type these, so they must ride in a *server-built* extra_body — never
+# a client-supplied one.
+_FORWARD_EXTRA_BODY = frozenset({
+    "top_k", "min_p", "repetition_penalty", "min_tokens", "stop_token_ids",
+    "ignore_eos", "skip_special_tokens", "chat_template_kwargs", "structural_tag",
+})
+
+
+def _forward_params(data: dict, entity_id: int) -> dict:
+    """Sanitize a client request into the kwargs forwarded upstream.
+
+    Forwards only allowlisted sampling params; drops everything else. Non-OpenAI
+    extensions plus a per-request ``cache_salt`` ride in a server-controlled
+    ``extra_body`` — a client can never inject its own ``extra_body`` (which the
+    OpenAI SDK deep-merges over the typed params, the vector for suppressing the
+    usage chunk to dodge billing, or swapping the routed model).
+
+    ``cache_salt`` is honored if the client sends a non-empty string; otherwise a
+    stable per-entity salt is derived so prefix-cache reuse is isolated per user
+    (ncsa/lumen#36).
+    """
+    kwargs = {k: data[k] for k in _FORWARD_NATIVE if k in data}
+    extra_body = {k: data[k] for k in _FORWARD_EXTRA_BODY if k in data}
+
+    client_salt = data.get("cache_salt")
+    extra_body["cache_salt"] = client_salt if isinstance(client_salt, str) and client_salt else cache_salt_for_entity(entity_id)
+
+    kwargs["extra_body"] = extra_body
+    return kwargs
 
 
 def _api_key_id():
@@ -573,8 +620,8 @@ def chat_completions():
     if not model_name or not messages:
         return _err("model and messages are required")
 
-    extra = {k: v for k, v in data.items() if k not in ("model", "messages", "stream")}
-    return _do_chat(model_name, messages, stream, **extra)
+    forward = _forward_params(data, g.entity.id)
+    return _do_chat(model_name, messages, stream, **forward)
 
 
 @api_bp.route("/completions", methods=["POST"])
@@ -594,7 +641,8 @@ def completions():
     if data.get("stream", False):
         return _err("Streaming is not supported on /v1/completions; use /v1/chat/completions")
 
-    response, err = _complete_and_bill(model_name, [{"role": "user", "content": prompt}])
+    forward = _forward_params(data, g.entity.id)
+    response, err = _complete_and_bill(model_name, [{"role": "user", "content": prompt}], **forward)
     if err:
         return err
     if not response.choices:

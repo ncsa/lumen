@@ -64,6 +64,7 @@ from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
 from lumen.models.group_limit import GroupLimit
 from lumen.models.group_model_access import GroupModelAccess
+from lumen.services.crypto import cache_salt_for_entity
 from lumen.models.entity import Entity
 
 def _resolve_allow_block(
@@ -586,6 +587,9 @@ def _send_message_stream(app, messages, model, entity_id, source, effective):
         mc_id        = config.id
         mc_in_cost   = float(config.input_cost_per_million)
         mc_out_cost  = float(config.output_cost_per_million)
+        # Derive the per-entity prefix-cache salt while a context is current;
+        # the create() call below runs context-free (no current_app). See #36.
+        cache_salt   = cache_salt_for_entity(entity_id) if entity_id is not None else None
 
     t0 = time.time()
     t_first = None
@@ -600,6 +604,7 @@ def _send_message_stream(app, messages, model, entity_id, source, effective):
                 messages=messages,
                 stream=True,
                 stream_options={"include_usage": True},
+                extra_body={"cache_salt": cache_salt} if cache_salt else {},
             )
 
             thinking_parts = []
