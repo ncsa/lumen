@@ -25,6 +25,7 @@ All notable changes to Lumen will be documented in this file.
 ### Fixed
 
 - Knowledge cutoff values synced from models.dev are normalized to `YYYY-MM`: models.dev sometimes reports full `YYYY-MM-DD` dates, which overflowed the 7-character database column on PostgreSQL.
+- Saving from the admin config editor failed with "Permission denied: ./config.yaml.bak" in container deployments where only config.yaml itself is bind-mounted: the pre-save backup is now best-effort (logged as a warning) instead of aborting the save.
 - The admin "Reset coins" button refilled to a stale amount after Max Coins was changed in the Edit dialog: editing Max Coins now also updates the starting balance the reset refills to.
 - Blanking Max Coins in an Edit dialog now removes the entity's own coin pool so it falls back to the inherited group/default pool (previously blank fields were silently ignored).
 - "Make Owner" and "Remove" buttons on the project detail page did nothing: the manager's name was JSON-encoded inside a double-quoted `onclick` attribute, truncating the handler at the name's opening quote (`Uncaught SyntaxError: Unexpected end of input`).
