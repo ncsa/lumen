@@ -957,3 +957,44 @@ def test_streaming_abandoned_by_client_releases_connection(
     resp.close()
 
     assert pool.checkedout() == 0
+
+
+# ---------------------------------------------------------------------------
+# end_date — expired models are hidden and rejected on the API
+# ---------------------------------------------------------------------------
+
+def _expire_model(app, model_id):
+    from datetime import timedelta
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        from lumen.timeutils import utcnow
+        db.session.get(ModelConfig, model_id).end_date = utcnow() - timedelta(days=1)
+        db.session.commit()
+
+
+def test_expired_model_absent_from_list(
+    app, client, test_user, test_model, test_model_endpoint, api_key,
+):
+    token, _ = api_key
+    with app.app_context():
+        _grant_unlimited_pool(app, test_user["id"])
+    _expire_model(app, test_model["id"])
+    resp = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == HTTPStatus.OK
+    ids = [m["id"] for m in resp.get_json()["data"]]
+    assert test_model["model_name"] not in ids
+
+
+def test_expired_model_get_404(
+    app, client, test_user, test_model, test_model_endpoint, api_key,
+):
+    token, _ = api_key
+    with app.app_context():
+        _grant_unlimited_pool(app, test_user["id"])
+    _expire_model(app, test_model["id"])
+    resp = client.get(
+        f"/v1/models/{test_model['model_name']}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == HTTPStatus.NOT_FOUND

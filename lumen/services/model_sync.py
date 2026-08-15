@@ -21,6 +21,19 @@ _TTL = 600  # 10 minutes
 _cache: dict = {"data": None, "ts": 0.0, "index": {}}
 
 
+def _normalize_knowledge(value):
+    """Clamp a models.dev knowledge cutoff to YYYY-MM (the DB column is String(7)).
+
+    models.dev sometimes reports YYYY-MM-DD; keep just the year-month. Other
+    values that cannot fit the column are dropped."""
+    if not value:
+        return None
+    value = str(value)
+    if re.match(r"^\d{4}-\d{2}", value):
+        return value[:7]
+    return value if len(value) <= 7 else None
+
+
 # ---------------------------------------------------------------------------
 # models.dev fetch + cache
 # ---------------------------------------------------------------------------
@@ -303,7 +316,7 @@ def sync_model(model_def: dict) -> dict:
     # is no match, nothing here is touched, so operator-set values are preserved.
     if dev_match:
         for field, new_val in [
-            ("knowledge_cutoff",   dev_match.get("knowledge")),
+            ("knowledge_cutoff",   _normalize_knowledge(dev_match.get("knowledge"))),
             ("supports_reasoning", dev_match.get("reasoning")),
             ("input_modalities",   (dev_match.get("modalities") or {}).get("input")),
             ("output_modalities",  (dev_match.get("modalities") or {}).get("output")),

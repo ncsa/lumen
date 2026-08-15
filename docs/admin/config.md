@@ -25,6 +25,7 @@ defaults:
   models:
     access: blocked            # baseline for models that omit `access:`
     ack_message: "This model was trained outside the U.S. — use with awareness."
+    early_access_message: "This model is an early-access preview and may change or be removed."
   tokens:
     max: 0                     # fallback coin pool for users/projects without their own
     refresh: 0
@@ -35,6 +36,7 @@ defaults:
 |-------|-------------|
 | `defaults.models.access` | Baseline allow/block state for any model that does not set its own `access`. |
 | `defaults.models.ack_message` | Global acknowledgement message shown for `needs_ack` models that don't set their own `ack_message`. (Replaces the old `app.graylist_default_notice`, which is still accepted as input.) |
+| `defaults.models.early_access_message` | Warning shown when acknowledging an `early_access` model. When unset, a built-in default message is used. |
 | `defaults.tokens.max` / `refresh` / `starting` | Fallback coin-pool values. A group or project only needs to set the fields that differ from these; omitted token fields are filled from `defaults.tokens`. |
 
 ## Model Access Resolution

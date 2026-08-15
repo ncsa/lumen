@@ -11,6 +11,9 @@
     <div class="col-12 col-lg-8" style="min-width:0">
       <h1 class="mb-3">
         {{ config.model_name }}
+        {% if config.early_access %}
+        <span class="badge rounded-pill bg-info text-dark fs-6 align-middle">early access</span>
+        {% endif %}
         {% if config.url %}
         <a href="{{ config.url }}" target="_blank" rel="noopener noreferrer"
            class="ms-2 fs-5 text-decoration-none align-middle"
@@ -57,10 +60,10 @@
           <span role="img" aria-label="Warning">⚠</span> Access Acknowledgment Required
         </div>
         <div class="card-body">
-          {% if consent %}
+          {% if consented %}
           <p class="mb-0">
-            <strong>Access enabled.</strong> You acknowledged this model on
-            <span class="local-datetime" data-utc="{{ consent.consented_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>.
+            <strong>Access enabled.</strong> You acknowledged this model{% if consent_display_at %} on
+            <span class="local-datetime" data-utc="{{ consent_display_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>{% endif %}.
           </p>
           {% else %}
           <p class="mb-2 small">This model requires acknowledgment before use. By enabling access you confirm you have read any notices and accept responsibility for appropriate use.</p>
@@ -98,6 +101,12 @@
                 <th scope="row" class="text-muted fw-normal ps-3">Endpoints</th>
                 <td class="text-end pe-3">{{ healthy_count }}/{{ endpoints | length }} healthy</td>
               </tr>
+              {% if config.end_date %}
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3">Available until</th>
+                <td class="text-end pe-3"><span class="local-datetime" data-utc="{{ config.end_date.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span></td>
+              </tr>
+              {% endif %}
               {% if is_admin %}
               {% for ep in endpoints %}
               <tr>
@@ -120,7 +129,7 @@
       </div>
 
       {% set has_details = config.url or config.context_window or config.max_output_tokens or config.input_modalities
-                           or config.output_modalities or config.knowledge_cutoff
+                           or config.output_modalities or config.knowledge_cutoff or config.created_at
                            or config.supports_reasoning is not none
                            or config.supports_function_calling is not none %}
       {% if has_details %}
@@ -183,6 +192,12 @@
                 <td class="text-end pe-3">{% if config.supports_function_calling %}<span role="img" aria-label="Supported">✓</span>{% else %}<span aria-label="Not supported">—</span>{% endif %}</td>
               </tr>
               {% endif %}
+              {% if config.created_at %}
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3">First seen</th>
+                <td class="text-end pe-3"><span class="local-datetime" data-utc="{{ config.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span></td>
+              </tr>
+              {% endif %}
             </tbody>
           </table>
         </div>
@@ -211,7 +226,7 @@
     </div>{# end sidebar #}
   </div>{# end row #}
 </ilw-content>
-{% if access_status == 'needs_ack' and not consent %}{% include '_graylist_modal.html' %}{% endif %}
+{% if access_status == 'needs_ack' and not consented %}{% include '_graylist_modal.html' %}{% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -253,10 +268,10 @@
   {% endif %}
 })();
 
-{% if access_status == 'needs_ack' and not consent %}
+{% if access_status == 'needs_ack' and not consented %}
 const openGraylistModal = initGraylistConsent(() => location.reload());
 document.getElementById('graylist-open-btn').addEventListener('click', () => {
-  openGraylistModal({{ config.model_name | tojson }}, {{ effective_notice | tojson if effective_notice else 'null' }});
+  openGraylistModal({{ config.model_name | tojson }}, {{ effective_notice | tojson if effective_notice else 'null' }}, {{ early_access_notice | tojson if early_access_notice else 'null' }});
 });
 {% endif %}
 </script>

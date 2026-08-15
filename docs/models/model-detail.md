@@ -10,7 +10,7 @@ The page is split into two columns.
 
 ### Left Column
 
-- **Model name** with a link to the model's HuggingFace page (when available).
+- **Model name** with a link to the model's HuggingFace page (when available). Early-access models show an **early access** badge next to the name.
 - **Description** — A short summary of the model.
 - **README** — The model's full documentation, rendered from its HuggingFace repository.
 
@@ -26,7 +26,7 @@ This card appears when the model requires acknowledgment before use:
 | **Already acknowledged** | A confirmation with the date you accepted |
 | **Blocked** | A notice that this model is not available to you |
 
-Click the button to give one-time consent. After acknowledging, the model is immediately available in the chat interface and API.
+Click the button to give one-time consent. The dialog lists everything that applies: the model's notice (when it requires acknowledgment) and an early-access warning (when the model is an early-access preview that may change or be removed). One click acknowledges all of it. After acknowledging, the model is immediately available in the chat interface and API. If the model later gains a new requirement — for example it becomes early access — you are asked to acknowledge once more.
 
 #### Availability
 
@@ -34,6 +34,7 @@ Click the button to give one-time consent. After acknowledging, the model is imm
 |-------|-------------|
 | **Status** | Overall health: ok / degraded / down |
 | **Endpoints** | Healthy backend count vs. total |
+| **Available until** | Shown when the model has an end date; the model can no longer be used after this time |
 | **Requests / hr** | Requests sent to this model in the last hour |
 | **Requests / 24h** | Requests sent to this model in the last 24 hours |
 
@@ -50,6 +51,7 @@ Technical details that help you decide if this model fits your task:
 | **Knowledge Cutoff** | The date beyond which the model has no training data |
 | **Reasoning** | Checkmark if the model can show its step-by-step thinking before giving an answer |
 | **Function Calling** | Checkmark if the model can request to run a tool (such as a search script or data query) on the user's computer via the API — not available in Lumen's built-in chat. The user explicitly agrees to each request; the model cannot access data without their consent. |
+| **First seen** | When the model was added to this Lumen instance |
 
 #### Pricing
 

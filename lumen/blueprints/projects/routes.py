@@ -22,7 +22,7 @@ from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.models.entity_stat import EntityStat
 from lumen.services.crypto import hash_api_key
-from lumen.services.llm import get_model_access_status, has_model_consent
+from lumen.services.llm import get_model_access_status
 from lumen.blueprints.profile.routes import _get_profile_data
 
 projects_bp = Blueprint("projects", __name__)
@@ -552,12 +552,17 @@ def project_consent(sid, model_name):
     if get_model_access_status(sid, config.id) != "needs_ack":
         return jsonify({"error": "Model does not require acknowledgement for this project"}), HTTPStatus.BAD_REQUEST
 
-    if not has_model_consent(sid, config.id):
-        db.session.add(EntityModelConsent(
-            entity_id=sid,
-            model_config_id=config.id,
-            consented_at=utcnow(),
-        ))
-        db.session.commit()
+    row = db.session.execute(
+        select(EntityModelConsent).filter_by(entity_id=sid, model_config_id=config.id)
+    ).scalar_one_or_none()
+    if row is None:
+        row = EntityModelConsent(entity_id=sid, model_config_id=config.id)
+        db.session.add(row)
+    now = utcnow()
+    if config.needs_ack and row.consented_at is None:
+        row.consented_at = now
+    if config.early_access and row.early_access_at is None:
+        row.early_access_at = now
+    db.session.commit()
 
     return jsonify({"ok": True}), HTTPStatus.OK

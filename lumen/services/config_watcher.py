@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 # Log the config-version deprecation warning at most once per process.
 _version_warned = False
 
+# Shown when an early-access model is acknowledged; overridable via defaults.models.early_access_message.
+DEFAULT_EARLY_ACCESS_MESSAGE = (
+    "**Early access:** This model is offered as an early-access preview. "
+    "It may change, produce inconsistent results, or be removed at any time without notice."
+)
+
 
 def apply_hot_config(app, yaml_data: dict):
     """Apply hot-reloadable yaml settings to app.config. Called at startup and on config reload."""
@@ -74,6 +80,7 @@ def apply_hot_config(app, yaml_data: dict):
     app.config["MODEL_DEFAULTS"] = {
         "access": models_defaults.get("access", "blocked"),
         "ack_message": ack_message,
+        "early_access_message": models_defaults.get("early_access_message") or DEFAULT_EARLY_ACCESS_MESSAGE,
     }
     tokens_defaults = defaults_cfg.get("tokens") or {}
     _td_max = tokens_defaults.get("max", 0)

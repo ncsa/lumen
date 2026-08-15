@@ -280,7 +280,9 @@ def test_apply_hot_config_model_and_token_defaults(app, restore_config):
     }
     with app.app_context():
         apply_hot_config(app, yaml_data)
-        assert app.config["MODEL_DEFAULTS"] == {"access": "allowed", "ack_message": "please ack"}
+        from lumen.services.config_watcher import DEFAULT_EARLY_ACCESS_MESSAGE
+        assert app.config["MODEL_DEFAULTS"] == {"access": "allowed", "ack_message": "please ack",
+                                                "early_access_message": DEFAULT_EARLY_ACCESS_MESSAGE}
         assert app.config["TOKEN_DEFAULTS"] == {"max": 500, "refresh": 50, "starting": 250}
 
 

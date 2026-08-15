@@ -318,3 +318,125 @@ def test_blocked_model_still_blocked_when_require_consent_false(app, ids):
         db.session.add(EntityModelAccess(entity_id=entity_id, model_config_id=model_id, access_type="blocked"))
         db.session.commit()
         assert get_model_access(entity_id, model_id, require_consent=False) is False
+
+
+# ---------------------------------------------------------------------------
+# early_access — second acknowledgement requirement, tracked per-requirement
+# ---------------------------------------------------------------------------
+
+def _set_early_access(app, model_id):
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    mc = db.session.get(ModelConfig, model_id)
+    mc.early_access = True
+    db.session.commit()
+
+
+def test_early_access_resolves_to_needs_ack(app, ids):
+    entity_id, model_id = ids
+    with app.app_context():
+        _set_early_access(app, model_id)
+        assert get_model_access_status(entity_id, model_id) == "needs_ack"
+
+
+def test_early_access_blocks_chat_without_consent(app, ids):
+    entity_id, model_id = ids
+    with app.app_context():
+        _set_early_access(app, model_id)
+        assert get_model_access(entity_id, model_id) is False
+
+
+def test_early_access_allows_chat_with_early_ack(app, ids):
+    entity_id, model_id = ids
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_model_consent import EntityModelConsent
+        from lumen.timeutils import utcnow
+        _set_early_access(app, model_id)
+        db.session.add(EntityModelConsent(entity_id=entity_id, model_config_id=model_id, early_access_at=utcnow()))
+        db.session.commit()
+        assert get_model_access(entity_id, model_id) is True
+
+
+def test_needs_ack_consent_does_not_cover_later_early_access(app, ids):
+    """A model that gains early_access after the user consented must re-prompt."""
+    entity_id, model_id = ids
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_model_consent import EntityModelConsent
+        from lumen.services.llm import bulk_model_access_info, has_model_consent
+        from lumen.timeutils import utcnow
+        _set_needs_ack(app, model_id)
+        db.session.add(EntityModelConsent(entity_id=entity_id, model_config_id=model_id, consented_at=utcnow()))
+        db.session.commit()
+        assert has_model_consent(entity_id, model_id) is True
+        _set_early_access(app, model_id)
+        assert has_model_consent(entity_id, model_id) is False
+        _, consent_map = bulk_model_access_info(entity_id, [model_id])
+        assert model_id not in consent_map
+
+
+def test_both_requirements_satisfied(app, ids):
+    entity_id, model_id = ids
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_model_consent import EntityModelConsent
+        from lumen.services.llm import bulk_model_access_info, has_model_consent
+        from lumen.timeutils import utcnow
+        _set_needs_ack(app, model_id)
+        _set_early_access(app, model_id)
+        db.session.add(EntityModelConsent(entity_id=entity_id, model_config_id=model_id,
+                                          consented_at=utcnow(), early_access_at=utcnow()))
+        db.session.commit()
+        assert has_model_consent(entity_id, model_id) is True
+        _, consent_map = bulk_model_access_info(entity_id, [model_id])
+        assert model_id in consent_map
+
+
+# ---------------------------------------------------------------------------
+# end_date — model hidden and rejected after the date (exclusive)
+# ---------------------------------------------------------------------------
+
+def _set_end_date(app, model_id, end_date):
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    mc = db.session.get(ModelConfig, model_id)
+    mc.end_date = end_date
+    db.session.commit()
+
+
+def test_expired_end_date_blocks(app, ids):
+    entity_id, model_id = ids
+    with app.app_context():
+        from datetime import timedelta
+        from lumen.timeutils import utcnow
+        _set_end_date(app, model_id, utcnow() - timedelta(days=1))
+        assert get_model_access_status(entity_id, model_id) == "blocked"
+        assert get_model_access(entity_id, model_id) is False
+
+
+def test_future_end_date_still_allowed(app, ids):
+    entity_id, model_id = ids
+    with app.app_context():
+        from datetime import timedelta
+        from lumen.timeutils import utcnow
+        _set_end_date(app, model_id, utcnow() + timedelta(days=1))
+        assert get_model_access_status(entity_id, model_id) == "allowed"
+
+
+def test_active_sql_filter_excludes_expired(app, ids):
+    """ModelConfig.active hybrid excludes expired models in SQL and Python."""
+    entity_id, model_id = ids
+    with app.app_context():
+        from datetime import timedelta
+        from sqlalchemy import select
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        from lumen.timeutils import utcnow
+        _set_end_date(app, model_id, utcnow() - timedelta(minutes=1))
+        active_ids = db.session.execute(select(ModelConfig.id).where(ModelConfig.active)).scalars().all()
+        assert model_id not in active_ids
+        assert db.session.get(ModelConfig, model_id).active is False
+        _set_end_date(app, model_id, utcnow() + timedelta(minutes=5))
+        active_ids = db.session.execute(select(ModelConfig.id).where(ModelConfig.active)).scalars().all()
+        assert model_id in active_ids

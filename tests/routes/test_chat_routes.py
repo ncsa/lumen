@@ -448,3 +448,32 @@ def test_chat_stream_whitelist_passes_access(app, auth_client, test_user, test_m
         "model": test_model["model_name"],
     })
     assert resp.status_code != HTTPStatus.FORBIDDEN
+
+
+def test_chat_stream_expired_model_rejected(app, auth_client, test_user, test_model):
+    """A model past its end_date is treated like an unknown model on /chat/stream."""
+    from datetime import timedelta
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        from lumen.timeutils import utcnow
+        db.session.get(ModelConfig, test_model["id"]).end_date = utcnow() - timedelta(days=1)
+        db.session.commit()
+    resp = auth_client.post("/chat/stream", json={
+        "messages": [{"role": "user", "content": "hi"}],
+        "model": test_model["model_name"],
+    })
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+
+
+def test_chat_page_excludes_expired_model(app, auth_client, test_user, test_model, test_model_endpoint):
+    from datetime import timedelta
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        from lumen.timeutils import utcnow
+        db.session.get(ModelConfig, test_model["id"]).end_date = utcnow() - timedelta(days=1)
+        db.session.commit()
+    resp = auth_client.get("/chat")
+    assert resp.status_code == HTTPStatus.OK
+    assert test_model["model_name"].encode() not in resp.data
