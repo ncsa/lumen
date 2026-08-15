@@ -23,7 +23,7 @@ from lumen.models.entity_stat import EntityStat
 from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
-from lumen.services.llm import bulk_model_access_info, check_coin_budget, get_pool_limit, send_message_stream
+from lumen.services.llm import bulk_model_access_info, check_coin_budget, get_pool_limit, model_notices, send_message_stream
 
 chat_bp = Blueprint("chat", __name__)
 
@@ -105,7 +105,6 @@ def chat_page():
     model_ids = [m.id for m in all_models]
     # Bulk-resolve access and consents to avoid N+1 per-model DB queries
     access_statuses, consent_map = bulk_model_access_info(entity_id, model_ids)
-    default_ack = current_app.config.get("MODEL_DEFAULTS", {}).get("ack_message")
     # Pool limit is entity-level; fetch once rather than once per model via get_effective_limit
     pool = get_pool_limit(entity_id)
 
@@ -123,8 +122,9 @@ def chat_page():
             continue
         consented = (m.id in consent_map) if status == "needs_ack" else True
         consent_at = consent_map.get(m.id) if status == "needs_ack" else None
-        notice = (m.ack_message or default_ack) if status == "needs_ack" else None
-        available_models.append({"model": m, "status": status, "consented": consented, "consent_at": consent_at, "notice": notice})
+        notice, early_notice = model_notices(m) if status == "needs_ack" else (None, None)
+        available_models.append({"model": m, "status": status, "consented": consented, "consent_at": consent_at,
+                                 "notice": notice, "early_notice": early_notice})
 
     store_conversations = db.session.execute(
         select(Entity.store_conversations).where(Entity.id == entity_id)

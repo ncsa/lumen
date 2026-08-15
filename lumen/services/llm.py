@@ -108,19 +108,24 @@ def _resolve_single_access(
     model_needs_ack: bool = False,
     model_disabled: bool = False,
     global_default: str = "blocked",
+    model_early_access: bool = False,
+    model_end_date=None,
 ) -> str:
     """Resolve 'allowed', 'needs_ack', or 'blocked' from pre-fetched per-model access data.
 
-    - 'disabled' models short-circuit to 'blocked' and cannot be overridden.
+    - 'disabled' models and models past their end_date short-circuit to 'blocked'
+      and cannot be overridden.
     - The allow/block axis follows the precedence in _resolve_allow_block.
-    - 'needs_ack' is a model-level property; scopes can neither add nor remove it.
+    - 'needs_ack' means the model has acknowledgement requirements (needs_ack
+      and/or early_access); these are model-level properties that scopes can
+      neither add nor remove.
     """
-    if model_disabled:
+    if model_disabled or (model_end_date is not None and model_end_date <= utcnow()):
         return "blocked"
     access = _resolve_allow_block(ema_type, gma_types, model_access, group_defaults, entity_default, global_default)
     if access == "blocked":
         return "blocked"
-    return "needs_ack" if model_needs_ack else "allowed"
+    return "needs_ack" if (model_needs_ack or model_early_access) else "allowed"
 
 
 class PoolLimit(NamedTuple):
@@ -153,7 +158,9 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
 
     Returns (access_statuses, consent_map) where access_statuses is a dict
     {model_config_id: "allowed"|"blocked"|"needs_ack"} and consent_map is a dict
-    {model_config_id: consented_at} for models where the entity has acknowledged the model.
+    {model_config_id: acknowledged_at} for models where the entity has satisfied
+    ALL of the model's acknowledgement requirements (needs_ack and early_access);
+    the value is the most recent acknowledgement timestamp.
 
     Issues a fixed set of queries regardless of the number of models — replaces N+1
     per-model calls to get_model_access_status / has_model_consent.
@@ -164,7 +171,8 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
     baseline = {
         r.id: r
         for r in db.session.execute(
-            select(ModelConfig.id, ModelConfig.access, ModelConfig.needs_ack, ModelConfig.disabled)
+            select(ModelConfig.id, ModelConfig.access, ModelConfig.needs_ack, ModelConfig.disabled,
+                   ModelConfig.early_access, ModelConfig.end_date)
             .where(ModelConfig.id.in_(model_config_ids))
         ).all()
     }
@@ -202,15 +210,21 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
     entity = db.session.get(Entity, entity_id)
     entity_default = entity.model_access_default if entity else None
 
-    consent_map = {
-        r.model_config_id: r.consented_at
-        for r in db.session.execute(
-            select(EntityModelConsent).where(
-                EntityModelConsent.entity_id == entity_id,
-                EntityModelConsent.model_config_id.in_(model_config_ids),
-            )
-        ).scalars().all()
-    }
+    # Only models whose acknowledgement requirements are ALL satisfied appear in
+    # consent_map; a requirement added after consent leaves its timestamp NULL,
+    # so the model drops out and the UI re-prompts.
+    consent_map = {}
+    for r in db.session.execute(
+        select(EntityModelConsent).where(
+            EntityModelConsent.entity_id == entity_id,
+            EntityModelConsent.model_config_id.in_(model_config_ids),
+        )
+    ).scalars().all():
+        mc = baseline.get(r.model_config_id)
+        if _consent_satisfied(r, mc.needs_ack if mc else False, mc.early_access if mc else False):
+            times = [t for t in (r.consented_at, r.early_access_at) if t is not None]
+            if times:
+                consent_map[r.model_config_id] = max(times)
 
     global_default = current_app.config.get("MODEL_DEFAULTS", {}).get("access", "blocked")
     access_statuses: dict = {}
@@ -225,6 +239,8 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
             model_needs_ack=(mc.needs_ack if mc else False),
             model_disabled=(mc.disabled if mc else False),
             global_default=global_default,
+            model_early_access=(mc.early_access if mc else False),
+            model_end_date=(mc.end_date if mc else None),
         )
 
     return access_statuses, consent_map
@@ -282,11 +298,33 @@ def get_model_access_status(entity_id: int, model_config_id: int) -> str:
     return access_statuses[model_config_id]
 
 
+def _consent_satisfied(row, needs_ack: bool, early_access: bool) -> bool:
+    """True if a consent row covers all of a model's acknowledgement requirements."""
+    if row is None:
+        return False
+    return (not needs_ack or row.consented_at is not None) and \
+           (not early_access or row.early_access_at is not None)
+
+
 def has_model_consent(entity_id: int, model_config_id: int) -> bool:
-    """Return True if the entity has acknowledged a model that requires consent."""
-    return db.session.execute(
+    """Return True if the entity has satisfied all of the model's acknowledgement requirements."""
+    row = db.session.execute(
         select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=model_config_id)
-    ).scalar_one_or_none() is not None
+    ).scalar_one_or_none()
+    mc = db.session.get(ModelConfig, model_config_id)
+    return _consent_satisfied(row, mc.needs_ack if mc else False, mc.early_access if mc else False)
+
+
+def model_notices(mc) -> tuple:
+    """Return (ack_notice, early_access_notice) markdown strings for a ModelConfig.
+
+    ack_notice is set iff the model has needs_ack (per-model message falling back
+    to defaults.models.ack_message); early_access_notice is set iff the model is
+    early_access (global defaults.models.early_access_message)."""
+    defaults = current_app.config.get("MODEL_DEFAULTS", {})
+    ack_notice = (mc.ack_message or defaults.get("ack_message")) if mc.needs_ack else None
+    early_notice = defaults.get("early_access_message") if mc.early_access else None
+    return ack_notice, early_notice
 
 
 def get_model_access(entity_id: int, model_config_id: int, require_consent: bool = True) -> bool:

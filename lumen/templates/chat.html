@@ -38,7 +38,7 @@
       <select id="model-picker" class="form-select form-select-sm" style="max-width:280px">
         {% for item in available_models %}
         <option value="{{ item.model.model_name }}"
-                {% if item.status == 'needs_ack' %}{% if not item.consented %}data-graylist="true"{% else %}data-consented-graylist="true" data-consented-at="{{ item.consent_at.strftime('%Y-%m-%dT%H:%M:%SZ') if item.consent_at else '' }}"{% endif %} data-notice="{{ item.notice or '' }}"{% endif %}>
+                {% if item.status == 'needs_ack' %}{% if not item.consented %}data-graylist="true"{% else %}data-consented-graylist="true" data-consented-at="{{ item.consent_at.strftime('%Y-%m-%dT%H:%M:%SZ') if item.consent_at else '' }}"{% endif %} data-notice="{{ item.notice or '' }}" data-early-notice="{{ item.early_notice or '' }}"{% endif %}>
           {% if item.status == 'needs_ack' and not item.consented %}⚠ {% endif %}{{ item.model.model_name }}
         </option>
         {% endfor %}
@@ -175,6 +175,7 @@
     } else if (opt && opt.dataset.consentedGraylist === "true") {
       warning.classList.add("d-none");
       iconBtn.dataset.notice = opt.dataset.notice || "";
+      iconBtn.dataset.earlyNotice = opt.dataset.earlyNotice || "";
       iconBtn.dataset.consentedAt = opt.dataset.consentedAt || "";
       iconBtn.classList.remove("d-none");
     } else {
@@ -187,8 +188,10 @@
   document.getElementById("graylist-consented-icon").addEventListener("click", function () {
     if (_consentPopover) { dismissConsentPopover(); return; }
     const notice = this.dataset.notice || "";
+    const earlyNotice = this.dataset.earlyNotice || "";
     const consentedAt = this.dataset.consentedAt || "";
     let content = notice ? DOMPurify.sanitize(marked.parse(notice)) : "";
+    if (earlyNotice) content += DOMPurify.sanitize(marked.parse(earlyNotice));
     if (consentedAt) {
       const dt = new Date(consentedAt);
       content += `<p class="mb-0${notice ? " mt-1" : ""}"><strong>Access enabled.</strong> You acknowledged this model on ${dt.toLocaleString()}.</p>`;
@@ -229,7 +232,7 @@
 
   document.getElementById("graylist-btn").addEventListener("click", () => {
     const opt = picker.options[picker.selectedIndex];
-    if (opt) openGraylistModal(opt.value, opt.dataset.notice || null);
+    if (opt) openGraylistModal(opt.value, opt.dataset.notice || null, opt.dataset.earlyNotice || null);
   });
 
   // ── Sidebar toggle (desktop) ────────────────────────────────────
@@ -665,7 +668,7 @@
     if (!model) { appAlert("Please select a model."); return; }
     const selectedOpt = picker.options[picker.selectedIndex];
     if (selectedOpt && selectedOpt.dataset.graylist === "true") {
-      openGraylistModal(selectedOpt.value, selectedOpt.dataset.notice || null);
+      openGraylistModal(selectedOpt.value, selectedOpt.dataset.notice || null, selectedOpt.dataset.earlyNotice || null);
       return;
     }
 

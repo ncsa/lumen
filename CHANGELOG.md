@@ -4,6 +4,12 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Models can be marked **early access** (`early_access: true` in `config.yaml`): users must acknowledge that the model may change or be removed before using it. This works alongside the existing `needs_ack` acknowledgment — a single dialog acknowledges both at once — and the consent record now tracks each requirement separately, so a model that gains a new requirement after a user consented prompts them once more. The early-access warning text is configurable via `defaults.models.early_access_message`. Early-access models show an "early access" badge on the models list and detail pages.
+- Models can have an **end date** (`end_date` in `config.yaml`, date or UTC datetime): after it passes, the model is hidden from the chat picker, models pages, and API model list, and any use is rejected — the same treatment as `disabled`. Without an end date the model remains usable indefinitely. A future end date is shown as "Available until" on the model detail page.
+- The model detail page shows **First seen** — when the model was first added to the system.
+
 ### Changed
 
 - **Breaking:** projects and per-user coin pools are no longer configured in `config.yaml`. The `projects:` section (limits, model access, groups) and the `max`/`refresh`/`starting`/`pool` keys under `users:` are ignored (with a startup warning); project creation no longer writes entries into the file, and the admin config editor's Projects section and per-user Token Pool card were removed. Values previously synced into the database remain in effect. Instead, an **Edit** button above the stats on the project detail page lets the owner or an admin change the project's name and active flag (admins can also set Max Coins and Refill Rate), and the same Edit button on a user's profile (admin only, in admin mode or via the admin Users page) enables/disables the user and sets their coin pool. Lowering Max Coins clamps the entity's current balance.
@@ -18,6 +24,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Fixed
 
+- Knowledge cutoff values synced from models.dev are normalized to `YYYY-MM`: models.dev sometimes reports full `YYYY-MM-DD` dates, which overflowed the 7-character database column on PostgreSQL.
 - The admin "Reset coins" button refilled to a stale amount after Max Coins was changed in the Edit dialog: editing Max Coins now also updates the starting balance the reset refills to.
 - Blanking Max Coins in an Edit dialog now removes the entity's own coin pool so it falls back to the inherited group/default pool (previously blank fields were silently ignored).
 - "Make Owner" and "Remove" buttons on the project detail page did nothing: the manager's name was JSON-encoded inside a double-quoted `onclick` attribute, truncating the handler at the name's opening quote (`Uncaught SyntaxError: Unexpected end of input`).

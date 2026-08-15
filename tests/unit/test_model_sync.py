@@ -402,3 +402,34 @@ def test_vllm_modalities_use_dev_only(monkeypatch):
               dev_match={"modalities": {"input": ["text", "image"], "output": ["text"]}})
     result = model_sync.sync_model({"name": "m", "endpoints": [{"url": "http://x"}]})
     assert result["updates"]["input_modalities"] == ["text", "image"]
+
+
+# ---------------------------------------------------------------------------
+# knowledge cutoff normalization — models.dev sometimes reports YYYY-MM-DD but
+# the DB column is String(7) YYYY-MM
+# ---------------------------------------------------------------------------
+
+def test_normalize_knowledge_truncates_full_date():
+    assert model_sync._normalize_knowledge("2024-06-15") == "2024-06"
+
+
+def test_normalize_knowledge_passes_year_month():
+    assert model_sync._normalize_knowledge("2024-06") == "2024-06"
+
+
+def test_normalize_knowledge_empty_is_none():
+    assert model_sync._normalize_knowledge(None) is None
+    assert model_sync._normalize_knowledge("") is None
+
+
+def test_normalize_knowledge_drops_long_garbage():
+    assert model_sync._normalize_knowledge("not-a-date-at-all") is None
+
+
+def test_sync_model_truncates_dev_knowledge_date(monkeypatch):
+    """A YYYY-MM-DD knowledge value from models.dev is stored as YYYY-MM."""
+    _patch(monkeypatch,
+           ep_model=None,
+           dev_match={"knowledge": "2024-06-15"})
+    result = model_sync.sync_model({"name": "m", "endpoints": [{"url": "http://x"}]})
+    assert result["updates"]["knowledge_cutoff"] == "2024-06"

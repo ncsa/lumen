@@ -370,6 +370,12 @@
           </h3>
           <div id="graylist-notice-body" aria-live="polite"></div>
         </div>
+        <div id="graylist-early-section" class="mb-3" hidden>
+          <h3 class="h6 fw-semibold text-warning-emphasis">
+            <span role="img" aria-label="warning">⚠</span> Early Access
+          </h3>
+          <div id="graylist-early-body" aria-live="polite"></div>
+        </div>
         <p class="mb-0 small">
           This model requires acknowledgment before use. By enabling access you confirm you have read
           any notices above and accept responsibility for appropriate use of this project.
@@ -548,6 +554,7 @@ const MODEL_ROWS = [
     consented: {{ row.consented | tojson }},
     model_status: {{ row.model_status | tojson }},
     notice: {{ row.notice | tojson if row.notice else 'null' }},
+    early_notice: {{ row.early_notice | tojson if row.early_notice else 'null' }},
   },
   {% endfor %}
 ];
@@ -599,7 +606,7 @@ function renderModels() {
       } else if (r.access_status === 'needs_ack' && r.consented) {
         accessCell = `<span class="badge bg-success"><span role="img" aria-label="check">✓</span> Consented</span>`;
       } else {
-        accessCell = `<button class="btn btn-sm btn-warning graylist-btn" data-name="${escHtml(r.model_name)}" data-notice="${escHtml(r.notice || '')}" aria-haspopup="dialog"><span role="img" aria-label="warning">⚠</span> Needs consent</button>`;
+        accessCell = `<button class="btn btn-sm btn-warning graylist-btn" data-name="${escHtml(r.model_name)}" data-notice="${escHtml(r.notice || '')}" data-early-notice="${escHtml(r.early_notice || '')}" aria-haspopup="dialog"><span role="img" aria-label="warning">⚠</span> Needs consent</button>`;
       }
       const statusBadge = r.model_status === 'ok'
         ? `<span class="badge bg-success">ok</span>`
@@ -619,7 +626,7 @@ function renderModels() {
       </tr>`;
     }).join('');
     modelTbody.querySelectorAll('.graylist-btn').forEach(btn => {
-      btn.addEventListener('click', () => openGraylistModal(btn.dataset.name, btn.dataset.notice || null));
+      btn.addEventListener('click', () => openGraylistModal(btn.dataset.name, btn.dataset.notice || null, btn.dataset.earlyNotice || null));
     });
   }
 }
@@ -778,11 +785,19 @@ document.getElementById("edit-project-save-btn").addEventListener("click", async
 // Graylist consent modal
 let graylistModelName = null;
 
-function openGraylistModal(modelName, notice) {
+function openGraylistModal(modelName, notice, earlyNotice) {
   graylistModelName = modelName;
   document.getElementById("graylistModalLabel").textContent = "Access Acknowledgment: " + modelName;
   const noticeSection = document.getElementById("graylist-notice-section");
   const noticeBody = document.getElementById("graylist-notice-body");
+  const earlySection = document.getElementById("graylist-early-section");
+  const earlyBody = document.getElementById("graylist-early-body");
+  if (earlyNotice) {
+    earlyBody.innerHTML = DOMPurify.sanitize(marked.parse(earlyNotice));
+    earlySection.hidden = false;
+  } else {
+    earlySection.hidden = true;
+  }
   if (notice) {
     noticeBody.innerHTML = DOMPurify.sanitize(marked.parse(notice));
     noticeSection.hidden = false;

@@ -52,7 +52,8 @@
               "additionalProperties": false,
               "properties": {
                 "access": { "type": "string", "enum": ["allowed", "blocked"] },
-                "ackMessage": { "type": "string" }
+                "ackMessage": { "type": "string" },
+                "earlyAccessMessage": { "type": "string" }
               }
             },
             "tokens": {
@@ -372,6 +373,8 @@
               "active": { "type": "boolean" },
               "access": { "type": "string", "enum": ["allowed", "blocked"] },
               "needsAck": { "type": "boolean" },
+              "earlyAccess": { "type": "boolean" },
+              "endDate": { "type": "string" },
               "disabled": { "type": "boolean" },
               "ackMessage": { "type": "string" },
               "inputCostPerMillion": { "type": "number", "minimum": 0 },

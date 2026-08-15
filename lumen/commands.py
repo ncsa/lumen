@@ -2,6 +2,8 @@ import os
 import re
 import shutil
 import tempfile
+from datetime import date, datetime, timezone
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
 
 import click
@@ -64,9 +66,17 @@ def write_config_yaml(config_path, data):
         with os.fdopen(fd, "w") as f:
             f.write("\n".join(parts))
         # Back up the current config before overwriting so a partial or
-        # malformed save can be recovered from <config>.bak.
+        # malformed save can be recovered from <config>.bak. Best-effort:
+        # in containers only config.yaml itself is bind-mounted, so the
+        # directory may not be writable — a failed backup must not block
+        # the save.
         if os.path.exists(config_path):
-            shutil.copy2(config_path, config_path + ".bak")
+            try:
+                shutil.copy2(config_path, config_path + ".bak")
+            except OSError as e:
+                current_app.logger.warning(
+                    "write_config_yaml: could not write backup %s.bak: %s", config_path, e
+                )
         shutil.copyfile(tmp_path, config_path)
     finally:
         os.unlink(tmp_path)
@@ -172,6 +182,52 @@ def _normalize_model_url(url):
     return url
 
 
+def _normalize_end_date(value, model_name=None):
+    """Coerce a config end_date (date, datetime, or ISO string) to naive-UTC datetime.
+
+    A bare date means midnight UTC of that day (exclusive), i.e. the model is
+    usable through the end of the previous day. Unparseable values are dropped
+    with a warning."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day)
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        # The admin config editor round-trips YAML dates through JSON, which
+        # Flask serializes in RFC 822 form ("Thu, 31 Dec 2026 00:00:00 GMT").
+        try:
+            parsed = parsedate_to_datetime(str(value))
+        except ValueError:
+            _warn_once(("end-date", model_name), "invalid end_date '%s' on model '%s'; ignoring", value, model_name)
+            return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _normalize_knowledge_cutoff(value, model_name=None):
+    """Clamp a knowledge cutoff to YYYY-MM (the column is String(7)).
+
+    models.dev sometimes reports YYYY-MM-DD; keep just the year-month. Other
+    values longer than 7 characters are dropped with a warning."""
+    if not value:
+        return None
+    value = str(value)
+    if re.match(r"^\d{4}-\d{2}", value):
+        return value[:7]
+    if len(value) > 7:
+        _warn_once(("knowledge-cutoff", model_name),
+                   "invalid knowledge_cutoff '%s' on model '%s'; expected YYYY-MM, ignoring", value, model_name)
+        return None
+    return value
+
+
 def _apply_model_fields(config, model_def):
     config.input_cost_per_million = model_def["input_cost_per_million"]
     config.output_cost_per_million = model_def["output_cost_per_million"]
@@ -194,9 +250,10 @@ def _apply_model_fields(config, model_def):
     config.context_window = model_def.get("context_window") or None
     config.max_output_tokens = model_def.get("max_output_tokens") or None
     config.supports_reasoning = model_def.get("supports_reasoning")
-    config.knowledge_cutoff = model_def.get("knowledge_cutoff") or None
+    config.knowledge_cutoff = _normalize_knowledge_cutoff(model_def.get("knowledge_cutoff"), model_def.get("name"))
     config.notice = model_def.get("notice") or None
     config.ack_message = model_def.get("ack_message") or None
+    config.end_date = _normalize_end_date(model_def.get("end_date"), model_def.get("name"))
 
 
 def _apply_model_access(config, model_def):
@@ -206,6 +263,7 @@ def _apply_model_access(config, model_def):
     (active: false -> disabled) with a deprecation warning.
     """
     config.needs_ack = bool(model_def.get("needs_ack", False))
+    config.early_access = bool(model_def.get("early_access", False))
 
     disabled = model_def.get("disabled")
     access = model_def.get("access")

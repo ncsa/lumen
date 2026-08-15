@@ -44,6 +44,8 @@ erDiagram
         string access
         bool needs_ack
         text ack_message
+        bool early_access
+        datetime end_date
         bool disabled
         text description
         string url
@@ -97,6 +99,7 @@ erDiagram
         int entity_id FK
         int model_config_id FK
         datetime consented_at
+        datetime early_access_at
     }
 
     groups {
@@ -311,6 +314,8 @@ Configuration and metadata for each AI model that Lumen can proxy. One row per l
 | `access` | String(8) | YES | The model's own default access: `'allowed'`, `'blocked'`, or NULL to inherit scope/global defaults. When set it ranks above group/entity *defaults* but below an explicit per-scope rule. |
 | `needs_ack` | Boolean | NO | Requires user acknowledgement before use; a sticky model-level property that no scope can add or remove. Default `false`. |
 | `ack_message` | Text | YES | Per-model acknowledgement message; overrides the global `defaults.models.ack_message`. |
+| `early_access` | Boolean | NO | Early-access model: users must acknowledge it may change or be removed before use. A sticky model-level property like `needs_ack`. Default `false`. |
+| `end_date` | DateTime | YES | Naive-UTC datetime after which the model is hidden everywhere and rejected (exclusive comparison). NULL = no end date. |
 | `disabled` | Boolean | NO | Hard off: the model is hidden everywhere and not overridable by any scope. Default `false`. |
 | `description` | Text | YES | Human-readable description shown in the UI |
 | `url` | String(512) | YES | Link to the model's documentation or provider page |
@@ -325,7 +330,7 @@ Configuration and metadata for each AI model that Lumen can proxy. One row per l
 | `created_at` | DateTime | NO | UTC timestamp when the model was registered |
 
 **Notes:**
-- `active` is a derived, read-only property (`active = not disabled`), not a stored column. It replaces the old `active` column.
+- `active` is a derived, read-only property (`active = not disabled and (end_date is null or end_date > now)`), not a stored column. It replaces the old `active` column.
 
 ---
 
@@ -397,14 +402,15 @@ If the model has `needs_ack: true`, the entity must still record acknowledgement
 
 ## entity_model_consents
 
-Records that an entity has explicitly accepted the terms or notice for a model with `needs_ack: true`. A row here is required before such a model can be used.
+Records that an entity has acknowledged a model's requirements. A model can carry two acknowledgement requirements — `needs_ack` (tracked in `consented_at`) and `early_access` (tracked in `early_access_at`). A requirement is satisfied when its timestamp is set; if a model gains a requirement after the entity consented, the new requirement's timestamp is NULL and the entity is prompted to acknowledge again (a single combined dialog covers all outstanding requirements).
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `id` | Integer | NO | Primary key |
 | `entity_id` | Integer (FK → entities) | NO | The consenting entity. Cascades on delete. |
 | `model_config_id` | Integer (FK → model_configs) | NO | The model for which consent was given. Cascades on delete. |
-| `consented_at` | DateTime | NO | UTC timestamp when the entity accepted the model notice |
+| `consented_at` | DateTime | YES | UTC timestamp when the entity acknowledged the model notice (`needs_ack`); NULL if never required |
+| `early_access_at` | DateTime | YES | UTC timestamp when the entity acknowledged the early-access warning; NULL if never required |
 
 **Constraints:** `UNIQUE(entity_id, model_config_id)`
 

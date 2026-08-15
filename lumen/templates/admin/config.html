@@ -890,7 +890,9 @@ function renderModelForm(m, idx) {
         field('mdl-disabled','',cbi('mdl-disabled',!!m.disabled,'Disabled (hard off; hidden everywhere, not overridable)'))
       )}
       ${cbi('mdl-needsack', !!m.needs_ack, 'Requires acknowledgement before use (sticky; cannot be overridden)')}
+      ${cbi('mdl-earlyaccess', !!m.early_access, 'Early access (users must acknowledge the model may change or be removed)')}
       ${field('mdl-ackmsg','Acknowledgement Message', tai('mdl-ackmsg', m.ack_message, 2),'overrides the global defaults.models.ack_message')}
+      ${field('mdl-enddate','End Date', ti('mdl-enddate', m.end_date, 'YYYY-MM-DD'),'UTC; model is hidden and rejected after this; empty = no end date')}
     `)}
     ${card('Pricing & Limits', `
       ${row3(field('mdl-in-cost', 'Input Cost / 1M tokens ($)',  ni('mdl-in-cost',  m.input_cost_per_million)),
@@ -959,11 +961,13 @@ function collectCurrentModel() {
   m.name                   = val('mdl-name')     || undefined;
   m.access                 = val('mdl-access')   || undefined;
   m.needs_ack              = boolVal('mdl-needsack') || undefined;
+  m.early_access           = boolVal('mdl-earlyaccess') || undefined;
   m.disabled               = boolVal('mdl-disabled') || undefined;
   m.description            = val('mdl-desc')     || undefined;
   m.url                    = val('mdl-url')      || undefined;
   m.notice                 = val('mdl-notice')   || undefined;
   m.ack_message            = val('mdl-ackmsg')   || undefined;
+  m.end_date               = val('mdl-enddate')  || undefined;
   m.input_cost_per_million = numVal('mdl-in-cost');
   m.output_cost_per_million= numVal('mdl-out-cost');
   m.audio_cost_per_hour    = $('mdl-in-audio')?.checked ? numVal('mdl-audio-cost') : undefined;
@@ -1099,6 +1103,7 @@ function renderDefaults() {
     ${card('Model Defaults', `
       ${field('def-access','Default Access',si('def-access',m.access||'blocked',['allowed','blocked']),'baseline for models that omit access:')}
       ${field('def-ackmsg','Default Acknowledgement Message',tai('def-ackmsg',m.ack_message,2),'shown for models with needs_ack unless overridden per model')}
+      ${field('def-earlymsg','Early Access Message',tai('def-earlymsg',m.early_access_message,2),'shown for early_access models; empty = built-in default')}
     `)}
     ${card('Token Defaults', `
       <p class="text-muted small mb-2">Fallback coin pool when a user or project has no limit set (via its profile/detail Edit dialog) and no group pool applies. Scopes override only the fields they set.</p>
@@ -1112,14 +1117,14 @@ function renderDefaults() {
 }
 function collectDefaults() {
   if (!$('def-access')) return;
-  const models = { access: val('def-access') || undefined, ack_message: val('def-ackmsg') || undefined };
+  const models = { access: val('def-access') || undefined, ack_message: val('def-ackmsg') || undefined, early_access_message: val('def-earlymsg') || undefined };
   const mx = numVal('def-tok-max'), rf = numVal('def-tok-ref'), st = numVal('def-tok-start');
   const tokens = {};
   if (mx !== undefined) tokens.max = mx;
   if (rf !== undefined) tokens.refresh = rf;
   if (st !== undefined) tokens.starting = st;
   const d = {};
-  if (models.access || models.ack_message) d.models = models;
+  if (models.access || models.ack_message || models.early_access_message) d.models = models;
   if (Object.keys(tokens).length) d.tokens = tokens;
   if (Object.keys(d).length) state.data.defaults = d; else delete state.data.defaults;
 }

@@ -26,6 +26,8 @@ The **Models** page (`/models`) shows every AI model available in your Lumen ins
 | **disabled** (gray) | Model has been turned off |
 | **no endpoints** (gray) | No backends have been set up for this model |
 
+Models that require a one-time acknowledgment show a **required** badge, and early-access models show an **early access** badge — these models may change or be removed at any time, and you must acknowledge that before using them. A model with an end date disappears from this page once the date passes.
+
 ## Understanding Pricing
 
 Coins are Lumen's internal currency. See the [Introduction](../introduction.md#tokens-and-coins) for a full explanation of how tokens and coins relate. The prices shown here are per million tokens — typical single messages cost a small fraction of that.

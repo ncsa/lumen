@@ -36,6 +36,10 @@ class ModelConfig(db.Model):
     needs_ack: Mapped[bool] = mapped_column(db.Boolean, nullable=False, default=False, server_default=db.false(), comment="Requires user acknowledgement before use; sticky model-level property, not overridable by scopes")
     # Per-model acknowledgement message; overrides the global defaults.models.ack_message
     ack_message: Mapped[Optional[str]] = mapped_column(db.Text, comment="Per-model acknowledgement message; overrides the global defaults.models.ack_message")
+    # Early-access model: users must acknowledge it may change or be removed
+    early_access: Mapped[bool] = mapped_column(db.Boolean, nullable=False, default=False, server_default=db.false(), comment="Early-access model: requires acknowledgement that it may change or be removed; sticky model-level property")
+    # Naive-UTC datetime after which the model is hidden and rejected (exclusive); NULL = no end date
+    end_date: Mapped[Optional[datetime]] = mapped_column(db.DateTime, comment="Naive-UTC datetime after which the model is hidden and rejected (exclusive); NULL = no end date")
     # Hard off: hidden everywhere and cannot be overridden by any scope
     disabled: Mapped[bool] = mapped_column(db.Boolean, nullable=False, default=False, server_default=db.false(), comment="Hard off: hidden everywhere and not overridable by any scope")
     description: Mapped[Optional[str]] = mapped_column(db.Text, comment="Human-readable description shown in the UI")
@@ -61,9 +65,10 @@ class ModelConfig(db.Model):
 
     @hybrid_property
     def active(self) -> bool:
-        """A model is active (visible and usable) unless it is disabled."""
-        return not self.disabled
+        """A model is active (visible and usable) unless it is disabled or past its end date."""
+        return not self.disabled and (self.end_date is None or self.end_date > utcnow())
 
     @active.expression
     def active(cls):
-        return cls.disabled == False  # noqa: E712
+        return db.and_(cls.disabled == False,  # noqa: E712
+                       db.or_(cls.end_date.is_(None), cls.end_date > utcnow()))

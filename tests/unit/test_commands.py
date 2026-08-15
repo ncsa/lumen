@@ -432,3 +432,82 @@ def test_sync_user_groups_default_groups_apply_to_all(app):
             select(GroupMember).filter_by(entity_id=uid, group_id=everyone.id)
         ).scalar_one_or_none()
         assert member is not None
+
+
+# ---------------------------------------------------------------------------
+# _normalize_end_date / _normalize_knowledge_cutoff
+# ---------------------------------------------------------------------------
+
+def test_normalize_end_date_from_date(app):
+    from datetime import date, datetime
+    from lumen.commands import _normalize_end_date
+    with app.app_context():
+        assert _normalize_end_date(date(2026, 9, 1)) == datetime(2026, 9, 1)
+
+
+def test_normalize_end_date_naive_datetime_passthrough(app):
+    from datetime import datetime
+    from lumen.commands import _normalize_end_date
+    with app.app_context():
+        dt = datetime(2026, 9, 1, 12, 30)
+        assert _normalize_end_date(dt) == dt
+
+
+def test_normalize_end_date_aware_datetime_to_naive_utc(app):
+    from datetime import datetime, timezone, timedelta
+    from lumen.commands import _normalize_end_date
+    with app.app_context():
+        aware = datetime(2026, 9, 1, 12, 0, tzinfo=timezone(timedelta(hours=2)))
+        assert _normalize_end_date(aware) == datetime(2026, 9, 1, 10, 0)
+
+
+def test_normalize_end_date_from_iso_string(app):
+    from datetime import datetime
+    from lumen.commands import _normalize_end_date
+    with app.app_context():
+        assert _normalize_end_date("2026-09-01") == datetime(2026, 9, 1)
+        assert _normalize_end_date("2026-09-01T08:15:00") == datetime(2026, 9, 1, 8, 15)
+
+
+def test_normalize_end_date_garbage_is_none(app):
+    from lumen.commands import _normalize_end_date
+    with app.app_context():
+        assert _normalize_end_date("not-a-date", "m") is None
+    assert _normalize_end_date(None) is None
+    assert _normalize_end_date("") is None
+
+
+def test_normalize_knowledge_cutoff_truncates(app):
+    from lumen.commands import _normalize_knowledge_cutoff
+    with app.app_context():
+        assert _normalize_knowledge_cutoff("2024-06-15") == "2024-06"
+        assert _normalize_knowledge_cutoff("2024-06") == "2024-06"
+        assert _normalize_knowledge_cutoff(None) is None
+        assert _normalize_knowledge_cutoff("not-a-real-date", "m") is None
+
+
+def test_apply_model_fields_sets_early_access_and_end_date(app):
+    from datetime import date, datetime
+    from lumen.commands import _apply_model_fields
+    from lumen.models.model_config import ModelConfig
+    with app.app_context():
+        mc = ModelConfig(model_name="ea-model")
+        _apply_model_fields(mc, {
+            "name": "ea-model",
+            "input_cost_per_million": 1.0,
+            "output_cost_per_million": 2.0,
+            "early_access": True,
+            "end_date": date(2026, 12, 31),
+            "knowledge_cutoff": "2024-06-15",
+        })
+        assert mc.early_access is True
+        assert mc.end_date == datetime(2026, 12, 31)
+        assert mc.knowledge_cutoff == "2024-06"
+
+
+def test_normalize_end_date_rfc822_from_config_editor(app):
+    """The admin config editor round-trips YAML dates through JSON as RFC 822."""
+    from datetime import datetime
+    from lumen.commands import _normalize_end_date
+    with app.app_context():
+        assert _normalize_end_date("Thu, 31 Dec 2026 00:00:00 GMT") == datetime(2026, 12, 31)

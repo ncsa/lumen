@@ -54,6 +54,8 @@ config:
       # -- Global acknowledgement message for needs_ack models without their own
       # ackMessage (replaces the old graylist default notice). Empty = none.
       ackMessage: ""
+      # -- Global acknowledgement message for earlyAccess models. Empty = built-in default.
+      earlyAccessMessage: ""
     tokens:
       # -- Fallback coin pool for entities with no UI-set limit and no group pool.
       max: 0
@@ -303,6 +305,8 @@ models: []
 #     url: "https://huggingface.co/google/gemma-4-31B-it"
 #     access: allowed           # allowed|blocked baseline (overridable per group/project/user)
 #     needsAck: false           # true = require one-time user acknowledgement (model-level, sticky)
+#     earlyAccess: false        # true = early-access model; users must acknowledge it may change or be removed
+#     endDate: ""               # optional ISO date/datetime (UTC); model hidden and rejected after this (exclusive)
 #     disabled: false           # true = hard off: hidden everywhere, not overridable by any scope
 #     ackMessage: ""            # optional; overrides config.defaults.models.ackMessage when needsAck
 #     inputCostPerMillion: 0.05

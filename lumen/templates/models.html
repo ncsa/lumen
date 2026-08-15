@@ -64,6 +64,9 @@
         {% if config.needs_ack %}
           <span class="badge rounded-pill bg-warning text-dark">required</span>
         {% endif %}
+        {% if config.early_access %}
+          <span class="badge rounded-pill bg-info text-dark">early access</span>
+        {% endif %}
       </td>
     </tr>
     {% else %}

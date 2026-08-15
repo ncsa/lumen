@@ -1,10 +1,10 @@
 // Initialises the shared graylist consent modal.
 // onSuccess(modelName) is called after a successful POST.
-// Returns openGraylistModal(modelName, notice) for callers to trigger the dialog.
+// Returns openGraylistModal(modelName, notice, earlyNotice) for callers to trigger the dialog.
 function initGraylistConsent(onSuccess) {
   let pendingModelName = null;
 
-  function openGraylistModal(modelName, notice) {
+  function openGraylistModal(modelName, notice, earlyNotice) {
     pendingModelName = modelName;
     document.getElementById("graylistModalLabel").textContent = "Access Acknowledgment: " + modelName;
     const noticeSection = document.getElementById("graylist-notice-section");
@@ -14,6 +14,14 @@ function initGraylistConsent(onSuccess) {
       noticeSection.hidden = false;
     } else {
       noticeSection.hidden = true;
+    }
+    const earlySection = document.getElementById("graylist-early-section");
+    const earlyBody = document.getElementById("graylist-early-body");
+    if (earlyNotice) {
+      earlyBody.innerHTML = DOMPurify.sanitize(marked.parse(earlyNotice));
+      earlySection.hidden = false;
+    } else {
+      earlySection.hidden = true;
     }
     new bootstrap.Modal(document.getElementById("graylistModal")).show();
   }

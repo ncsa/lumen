@@ -3,7 +3,7 @@ from http import HTTPStatus
 from urllib.parse import urlparse
 
 import requests as http_requests
-from flask import Blueprint, current_app, render_template, session
+from flask import Blueprint, render_template, session
 from sqlalchemy import func, select
 
 from lumen.decorators import login_required
@@ -12,7 +12,7 @@ from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.request_log import RequestLog
-from lumen.services.llm import bulk_model_access_info, get_model_access_status, has_model_consent
+from lumen.services.llm import _consent_satisfied, bulk_model_access_info, get_model_access_status, model_notices
 
 models_page_bp = Blueprint("models_page", __name__)
 
@@ -69,8 +69,15 @@ def detail(model_name):
         else None
     )
 
-    default_ack = current_app.config.get("MODEL_DEFAULTS", {}).get("ack_message")
-    effective_notice = (config.ack_message or default_ack) if access_status == "needs_ack" else config.notice
+    ack_notice, early_access_notice = model_notices(config)
+    effective_notice = ack_notice if access_status == "needs_ack" else config.notice
+    # Consent is satisfied only when every acknowledgement requirement has its
+    # timestamp; a requirement added later re-shows the acknowledge button.
+    consented = _consent_satisfied(consent, config.needs_ack, config.early_access)
+    consent_display_at = None
+    if consented and consent is not None:
+        times = [t for t in (consent.consented_at, consent.early_access_at) if t is not None]
+        consent_display_at = max(times) if times else None
     return render_template(
         "model_detail.html",
         config=config,
@@ -80,8 +87,10 @@ def detail(model_name):
         requests_last_hour=requests_last_hour,
         requests_last_day=requests_last_day,
         access_status=access_status,
-        consent=consent,
+        consented=consented,
+        consent_display_at=consent_display_at,
         effective_notice=effective_notice,
+        early_access_notice=early_access_notice if access_status == "needs_ack" else None,
     )
 
 
