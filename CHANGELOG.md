@@ -24,6 +24,8 @@ All notable changes to Lumen will be documented in this file.
 
 ### Fixed
 
+- Model sync endpoint probes are hardened against SSRF: endpoint URLs must be http/https, hostnames that resolve to private, loopback, link-local, multicast, or reserved IP ranges are refused, and the probes no longer follow redirects — so the admin "Update from endpoint" feature cannot be used to reach internal services.
+- Request bodies are now capped via `MAX_CONTENT_LENGTH` (2× the chat upload `max_size_mb`, with a 100 MB ceiling), so oversized uploads are rejected with 413 before being buffered into memory.
 - Knowledge cutoff values synced from models.dev are normalized to `YYYY-MM`: models.dev sometimes reports full `YYYY-MM-DD` dates, which overflowed the 7-character database column on PostgreSQL.
 - Saving from the admin config editor failed with "Permission denied: ./config.yaml.bak" in container deployments where only config.yaml itself is bind-mounted: the pre-save backup is now best-effort (logged as a warning) instead of aborting the save.
 - The admin "Reset coins" button refilled to a stale amount after Max Coins was changed in the Edit dialog: editing Max Coins now also updates the starting balance the reset refills to.

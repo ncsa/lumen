@@ -11,6 +11,10 @@ import time
 
 import requests
 
+import ipaddress
+import socket
+from urllib.parse import urlparse
+
 MODELSDEV_URL = "https://models.dev/api.json"
 ENDPOINT_TIMEOUT = 10
 MODELSDEV_TIMEOUT = 15
@@ -78,8 +82,35 @@ def _sglang_root(base: str) -> str:
     return base[:-3] if base.lower().endswith("/v1") else base
 
 
+def _validate_endpoint_url(url: str) -> None:
+    """Validate an endpoint URL is safe to fetch (blocks SSRF).
+
+    Only http/https schemes are allowed. The hostname is resolved and every
+    resolved IP is checked against private, loopback, link-local, multicast,
+    and reserved ranges so neither a direct private-IP URL nor a DNS rebinding
+    attack can reach internal services.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Blocked: unsupported scheme '{parsed.scheme}'")
+    if not parsed.hostname:
+        raise ValueError("Blocked: no hostname in URL")
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, parsed.port, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        return
+    for _, _, _, _, sockaddr in infos:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+            raise ValueError(f"Blocked: hostname resolves to private/reserved IP {ip}")
+
+
 def fetch_endpoint_model(endpoint: dict) -> dict | None:
     base = endpoint["url"].rstrip("/")
+    try:
+        _validate_endpoint_url(base)
+    except ValueError:
+        return None
     root = _sglang_root(base)
     headers = {"Authorization": f"Bearer {endpoint.get('api_key', '')}"}
 
@@ -92,7 +123,7 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
     # The endpoint is served at the server root (see _sglang_root), not /v1.
     sglang_flags: dict = {}
     try:
-        r = requests.get(f"{root}/get_server_info", headers=headers, timeout=ENDPOINT_TIMEOUT)
+        r = requests.get(f"{root}/get_server_info", headers=headers, timeout=ENDPOINT_TIMEOUT, allow_redirects=False)
         if r.ok:
             info = r.json()
             if any(k in info for k in ("max_req_input_len", "is_embedding", "enable_multimodal")):
@@ -110,7 +141,7 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
     # vLLM (or SGLang without max_req_input_len): /v1/models gives id + max_model_len.
     model_id = None
     try:
-        r = requests.get(f"{base}/models", headers=headers, timeout=ENDPOINT_TIMEOUT)
+        r = requests.get(f"{base}/models", headers=headers, timeout=ENDPOINT_TIMEOUT, allow_redirects=False)
         models = r.json().get("data", [])
         if models:
             model_id = models[0].get("id")
@@ -122,7 +153,7 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
 
     # Older SGLang: /get_model_info returns context_length. Also at the root.
     try:
-        r = requests.get(f"{root}/get_model_info", headers=headers, timeout=ENDPOINT_TIMEOUT)
+        r = requests.get(f"{root}/get_model_info", headers=headers, timeout=ENDPOINT_TIMEOUT, allow_redirects=False)
         info = r.json()
         if "context_length" in info:
             return {"id": model_id or info.get("model_path", ""), "max_model_len": info["context_length"], **sglang_flags}

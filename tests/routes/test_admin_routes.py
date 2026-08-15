@@ -270,6 +270,23 @@ def test_config_post_backs_up_previous_config(app, admin_client, tmp_path):
         app.config["CONFIG_YAML"] = original
 
 
+def test_config_post_succeeds_when_backup_unwritable(app, admin_client, tmp_path):
+    """A failed .bak copy (e.g. read-only dir in a container) must not block the save."""
+    from unittest.mock import patch
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("app:\n  name: Original\n")
+    original = app.config["CONFIG_YAML"]
+    app.config["CONFIG_YAML"] = str(cfg)
+    try:
+        with patch("lumen.commands.shutil.copy2", side_effect=PermissionError(13, "Permission denied")):
+            resp = admin_client.post("/admin/api/config", json={"app": {"name": "Updated"}})
+        assert resp.status_code == HTTPStatus.OK
+        assert "Updated" in cfg.read_text()
+        assert not (tmp_path / "config.yaml.bak").exists()
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
 def test_config_post_forbidden_when_editor_disabled(app, admin_client, tmp_path):
     """POST /admin/api/config returns 403 when CONFIG_EDITOR is False (git-managed config)."""
     cfg = tmp_path / "config.yaml"

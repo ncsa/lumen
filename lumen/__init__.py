@@ -151,6 +151,14 @@ def create_app():
     app.config["PERMANENT_SESSION_LIFETIME"] = 86400
     from lumen.services.config_watcher import apply_hot_config, _apply_theme
     apply_hot_config(app, yaml_data)
+    # Cap request body size so Werkzeug rejects oversized uploads with 413
+    # before buffering the body into memory.  Derived from the chat upload
+    # config with a 2x margin for multipart encoding overhead and a sane
+    # ceiling so a misconfigured max_size_mb cannot re-enable the attack.
+    _upload_cfg = yaml_data.get("chat", {}).get("upload", {})
+    _max_upload_mb = min(int(_upload_cfg.get("max_size_mb", 10)), 100)
+    app.config["MAX_CONTENT_LENGTH"] = _max_upload_mb * 1024 * 1024 * 2
+
     app.config["APP_VERSION"] = os.environ.get("APP_VERSION", "develop")
     app.config["GIT_COMMIT"] = os.environ.get("GIT_COMMIT", "N/A")
 
