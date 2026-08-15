@@ -169,9 +169,6 @@ Individual users can be configured under a top-level `users` map keyed by email.
 users:
   alice@example.edu:
     groups: [research-bot]      # extra named groups to add (in addition to rule-matched ones)
-    max: 100                    # token pool override (missing fields fall back to defaults.tokens)
-    refresh: 0.1
-    starting: 100
     model_access:
       default: blocked          # this user's default for unlisted models
       allowed: [model-a]        # grant a model even when its own default is blocked
@@ -181,8 +178,9 @@ users:
 | Field | Description |
 |-------|-------------|
 | `groups` | Named groups to add for this user, on top of any matched by group `rules`. |
-| `max` / `refresh` / `starting` | Per-user token pool; missing fields fall back to `defaults.tokens`. |
 | `model_access` | Same `allowed` / `blocked` / `default` shape as a group. A user rule beats group rules. |
+
+Per-user **coin pools** are no longer configured in `config.yaml`. An admin sets a user's Max Coins and Refill Rate (and can enable/disable the account) from the **Edit** button on the user's profile page (`/admin/users/<id>/profile`, or the admin's own `/profile` in admin mode). Users without their own pool fall back to their best group pool and then `defaults.tokens`. Legacy `max`/`refresh`/`starting`/`pool` keys under `users:` are ignored with a startup warning; pools previously synced from config remain in effect in the database.
 
 **Legacy form:** an allowed-only `models: [name, ...]` list is still accepted and behaves like `model_access.allowed`. Prefer `model_access` for new config — the admin config editor writes that form.
 

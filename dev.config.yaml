@@ -70,16 +70,6 @@ groups:
       allowed:
       - granite-speech
 
-projects:
-  default:
-    max: 100
-    refresh: 0.05
-    starting: 100
-    model_access:
-      default: blocked
-      allowed:
-      - dummy
-
 # Per-user overrides. The dev user is added to granite-testers so they can use the
 # blocked-by-default `granite-speech` model — exercising the per-user editor + resolution.
 users:

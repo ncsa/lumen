@@ -3,8 +3,13 @@
 {% block title %}{{ project.name }} — {{ app_name }}{% endblock %}
 
 {% block content %}
-<div class="mb-4">
+<div class="mb-4 d-flex justify-content-between align-items-center">
   <a href="{{ url_for('projects.index') }}" class="btn btn-sm btn-outline-secondary">← Projects</a>
+  {% if can_manage %}
+  <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editProjectModal">
+    <i class="bi bi-pencil" aria-hidden="true"></i> Edit
+  </button>
+  {% endif %}
 </div>
 <ilw-content>
 
@@ -18,7 +23,7 @@
       <!-- Col 1: avatar + name + status, centred -->
       <div class="col-12 col-md-3 text-center profile-col-identity">
         <img src="{{ gravatar_url }}" width="115" height="115"
-             class="rounded-circle profile-avatar-img" alt="">
+             class="rounded-circle profile-avatar-img" alt="Avatar for {{ project.name }}">
         <h2 class="profile-name mt-0 mb-0">{{ project.name }}</h2>
         <p class="text-muted small mt-0 mb-0">
           Created:
@@ -304,6 +309,47 @@
 </div>
 
 {% if can_manage %}
+<!-- Edit Project Modal -->
+<div class="modal fade" id="editProjectModal" tabindex="-1" aria-labelledby="editProjectModalLabel">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="editProjectModalLabel">Edit Project</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close Edit Project dialog"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label" for="edit-project-name">Project Name</label>
+          <input type="text" id="edit-project-name" class="form-control" value="{{ project.name }}">
+        </div>
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" role="switch" id="edit-project-active"
+                 {% if project.active %}checked{% endif %}>
+          <label class="form-check-label" for="edit-project-active">Active</label>
+        </div>
+        {% if is_admin %}
+        <div class="mb-3">
+          <label class="form-label" for="edit-project-max">Max Coins</label>
+          <input type="number" id="edit-project-max" class="form-control" step="0.01"
+                 value="{{ "%.2f"|format(project_limit.max_coins) if project_limit is not none else '' }}">
+          <div class="form-text">-2 = unlimited, 0 = blocked. Clear Max Coins to use the inherited group/default pool.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="edit-project-refresh">Refill Rate (coins/hour)</label>
+          <input type="number" id="edit-project-refresh" class="form-control" step="0.01" min="0"
+                 value="{{ "%.2f"|format(project_limit.refresh_coins) if project_limit is not none else '' }}">
+        </div>
+        {% endif %}
+        <div id="edit-project-error" class="text-danger small" role="alert" aria-live="assertive" hidden></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="edit-project-save-btn">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Add Manager Modal -->
 {{ user_search_modal('addManagerModal', 'Add Manager', 'add-manager-email', 'manager-suggestions', 'add-manager-btn', 'Add Manager',
    'Search for a user by name or email address.') }}
@@ -677,8 +723,12 @@ async function removeManager(sid, uid, name) {
 }
 
 // Transfer ownership
+const CALLER_IS_OWNER = {{ (owner_id == session['entity_id']) | tojson }};
 async function makeOwner(sid, uid, name) {
-  if (!await appConfirm(`Transfer ownership to ${name}? You will no longer be able to manage managers for this project.`, { title: "Transfer Ownership", okLabel: "Transfer" })) return;
+  const consequence = CALLER_IS_OWNER
+    ? "You will no longer be able to manage managers for this project."
+    : "The current owner will become a regular manager.";
+  if (!await appConfirm(`Transfer ownership to ${name}? ${consequence}`, { title: "Transfer Ownership", okLabel: "Transfer" })) return;
   fetch("/projects/" + sid + "/owner", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
@@ -695,6 +745,34 @@ function toggleProject(sid, currentActive) {
     .then(() => location.reload())
     .catch(() => appAlert("Failed to update project."));
 }
+
+// Edit project modal
+const editProjectModal = document.getElementById("editProjectModal");
+editProjectModal.addEventListener("shown.bs.modal", () => document.getElementById("edit-project-name").focus());
+document.getElementById("edit-project-save-btn").addEventListener("click", async () => {
+  const errEl = document.getElementById("edit-project-error");
+  errEl.hidden = true;
+  const payload = {
+    name: document.getElementById("edit-project-name").value,
+    active: document.getElementById("edit-project-active").checked,
+  };
+  const maxEl = document.getElementById("edit-project-max");
+  const refreshEl = document.getElementById("edit-project-refresh");
+  if (maxEl && refreshEl) {
+    // Blank Max Coins to clear the project's own pool (revert to inherited).
+    payload.max_coins = maxEl.value;
+    payload.refresh_coins = refreshEl.value;
+  }
+  const resp = await fetch("/projects/" + PROJECT_ID, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+    body: JSON.stringify(payload),
+  });
+  if (resp.ok) { location.reload(); return; }
+  const data = await resp.json().catch(() => ({}));
+  errEl.textContent = data.error || "Failed to save changes.";
+  errEl.hidden = false;
+});
 {% endif %}
 
 // Graylist consent modal

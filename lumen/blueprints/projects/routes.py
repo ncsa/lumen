@@ -1,17 +1,17 @@
 import hashlib
-import os
 from http import HTTPStatus
 
-import yaml
-from flask import Blueprint, abort, current_app, jsonify, render_template, request, session, url_for
-from sqlalchemy import func, select
+from flask import Blueprint, abort, jsonify, render_template, request, session, url_for
+from sqlalchemy import case, func, select
 
-from lumen.commands import sync_projects_from_yaml, write_config_yaml
+from lumen.blueprints.admin.routes import apply_coin_pool_edit
 from lumen.decorators import admin_required, is_admin, login_required
 from lumen.extensions import db
 from lumen.timeutils import utcnow
 from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
+from lumen.models.entity_balance import EntityBalance
+from lumen.models.entity_limit import EntityLimit
 from lumen.models.entity_manager import (
     EntityManager,
     get_managed_projects,
@@ -29,6 +29,9 @@ projects_bp = Blueprint("projects", __name__)
 
 # Must match the options rendered by the frontend per-page selector.
 _VALID_PER_PAGE = {25, 50, 100, 200}
+# Sentinel for "unlimited" sort key (mirrors admin/routes.py): -2 is the
+# canonical "unlimited" value, encoded as BIGINT_MAX so it sorts last.
+_BIGINT_MAX = 9223372036854775807
 
 
 def _require_project_access(entity_id: int, sid: int):
@@ -104,10 +107,9 @@ def data():
     per_page = request.args.get("per_page", 25, type=int)
     if per_page not in _VALID_PER_PAGE:
         per_page = 25
-    sort = request.args.get("sort", "name")
-    order = request.args.get("order", "asc")
+    sort = request.args.get("sort", "last_used")
+    order = request.args.get("order", "desc")
     search = (request.args.get("search") or "").strip()
-    show_disabled = request.args.get("show_disabled") in ("1", "true")
 
     mgr_sq = (
         select(
@@ -118,6 +120,26 @@ def data():
         .subquery()
     )
 
+    balance_sq = (
+        select(
+            EntityBalance.entity_id,
+            EntityBalance.coins_left.label("coins_available"),
+        )
+        .subquery()
+    )
+
+    unlimited_sq = (
+        select(EntityLimit.entity_id)
+        .where(EntityLimit.max_coins == -2)
+        .distinct()
+        .subquery()
+    )
+
+    coins_avail_sort = case(
+        (unlimited_sq.c.entity_id != None, _BIGINT_MAX),  # noqa: E711
+        else_=func.coalesce(balance_sq.c.coins_available, 0),
+    )
+
     stmt = (
         select(
             Entity,
@@ -125,18 +147,19 @@ def data():
             func.coalesce(EntityStat.input_tokens + EntityStat.output_tokens, 0).label("tokens"),
             func.coalesce(EntityStat.cost, 0).label("cost"),
             func.coalesce(mgr_sq.c.mgr_count, 0).label("managers"),
+            coins_avail_sort.label("coins_available"),
+            EntityStat.last_used_at.label("last_used_at"),
         )
         .where(Entity.entity_type == "project")
         .outerjoin(EntityStat, Entity.id == EntityStat.entity_id)
         .outerjoin(mgr_sq, Entity.id == mgr_sq.c.project_id)
+        .outerjoin(balance_sq, Entity.id == balance_sq.c.entity_id)
+        .outerjoin(unlimited_sq, Entity.id == unlimited_sq.c.entity_id)
     )
 
-    if admin:
-        # Admins see all projects; disabled ones only when explicitly requested.
-        if not show_disabled:
-            stmt = stmt.where(Entity.active == True)
-    else:
-        # Non-admins only ever see the active projects they manage.
+    # Everyone sees disabled projects: admins see all, managers see theirs —
+    # a manager must be able to reach a deactivated project to re-enable it.
+    if not admin:
         managed_ids = [c.id for c in get_managed_projects(entity_id)]
         if not managed_ids:
             return jsonify({"projects": [], "total": 0, "page": page, "per_page": per_page})
@@ -149,8 +172,10 @@ def data():
         "name": Entity.name,
         "managers": func.coalesce(mgr_sq.c.mgr_count, 0),
         "active": Entity.active,
+        "last_used": EntityStat.last_used_at,
         "requests": func.coalesce(EntityStat.requests, 0),
         "tokens": func.coalesce(EntityStat.input_tokens + EntityStat.output_tokens, 0),
+        "coins_available": coins_avail_sort,
         "cost": func.coalesce(EntityStat.cost, 0),
         "created": Entity.created_at,
     }.get(sort, Entity.name)
@@ -160,6 +185,22 @@ def data():
     total = db.session.scalar(select(func.count()).select_from(stmt.subquery()))
     rows = db.session.execute(stmt.offset((page - 1) * per_page).limit(per_page)).all()
 
+    # Per-row data for the inline edit dialog: whether the caller owns the
+    # project, and the project's own coin limit (None = inherited pool).
+    owner_ids = {
+        em.project_entity_id
+        for em in db.session.execute(
+            select(EntityManager).filter_by(user_entity_id=entity_id, is_owner=True)
+        ).scalars().all()
+    }
+    page_ids = [c.id for c, *_ in rows]
+    limits = {
+        lim.entity_id: lim
+        for lim in db.session.execute(
+            select(EntityLimit).where(EntityLimit.entity_id.in_(page_ids))
+        ).scalars().all()
+    } if page_ids else {}
+
     return jsonify({
         "projects": [
             {
@@ -167,13 +208,18 @@ def data():
                 "name": c.name,
                 "managers": int(managers),
                 "active": c.active,
+                "last_used": last_used_at.strftime("%Y-%m-%dT%H:%M:%SZ") if last_used_at else None,
                 "requests": int(requests),
                 "tokens": int(tokens),
+                "coins_available": -2 if float(coins_available) >= _BIGINT_MAX else float(coins_available),
                 "cost": float(cost),
                 "created": c.created_at.strftime("%Y-%m-%dT%H:%M:%SZ") if c.created_at else None,
                 "detail_url": url_for("projects.detail", sid=c.id),
+                "is_owner": c.id in owner_ids,
+                "max_coins": float(limits[c.id].max_coins) if c.id in limits else None,
+                "refresh_coins": float(limits[c.id].refresh_coins) if c.id in limits else None,
             }
-            for c, requests, tokens, cost, managers in rows
+            for c, requests, tokens, cost, managers, coins_available, last_used_at in rows
         ],
         "total": total,
         "page": page,
@@ -205,6 +251,12 @@ def detail(sid):
     h = hashlib.md5(project.name.strip().lower().encode()).hexdigest()
     gravatar_url = f"https://www.gravatar.com/avatar/{h}?s=230&d=identicon&f=y"
 
+    # The project's own limit row (not an inherited group/default pool), used to
+    # prefill the edit dialog without materializing inherited values.
+    project_limit = db.session.execute(
+        select(EntityLimit).filter_by(entity_id=sid)
+    ).scalar_one_or_none()
+
     return render_template(
         "project_detail.html",
         project=project,
@@ -212,8 +264,47 @@ def detail(sid):
         owner_id=owner_id,
         can_manage=can_manage,
         gravatar_url=gravatar_url,
+        project_limit=project_limit,
         **data,
     )
+
+
+@projects_bp.route("/projects/<int:sid>", methods=["PATCH"])
+@login_required
+def update_project(sid):
+    """Edit a project's name/active (owner or admin) and coin pool (admin only)."""
+    entity_id = session["entity_id"]
+    project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
+    _require_project_admin(entity_id, sid)
+
+    data = request.get_json() or {}
+    caller = db.session.get(Entity, entity_id)
+    if ("max_coins" in data or "refresh_coins" in data) and not is_admin(caller):
+        return jsonify({"error": "Only administrators can change coin limits"}), HTTPStatus.FORBIDDEN
+
+    if "name" in data:
+        name = (data.get("name") or "").strip()
+        if not name:
+            return jsonify({"error": "Project name required"}), HTTPStatus.BAD_REQUEST
+        duplicate = db.session.execute(
+            select(Entity).where(
+                Entity.entity_type == "project", Entity.name == name, Entity.id != sid
+            )
+        ).scalar_one_or_none()
+        if duplicate:
+            return jsonify({"error": "A project with this name already exists"}), HTTPStatus.CONFLICT
+        project.name = name
+        project.initials = name[:2].upper()
+
+    error = apply_coin_pool_edit(sid, data)
+    if error:
+        return jsonify({"error": error}), HTTPStatus.BAD_REQUEST
+
+    if "active" in data:
+        project.active = bool(data["active"])
+
+    db.session.commit()
+    return jsonify({"ok": True, "name": project.name, "active": project.active})
 
 
 @projects_bp.route("/projects/<int:sid>/toggle", methods=["POST"])
@@ -261,27 +352,6 @@ def create_project():
         ))
 
     db.session.commit()
-
-    # Record the project in config.yaml with an empty entry so the file always reflects
-    # which projects exist (they otherwise live only in the DB). Skip when the editor is
-    # disabled or the file is not writable — the project still exists in the DB.
-    config_path = current_app.config["CONFIG_YAML"]
-    if current_app.config.get("CONFIG_EDITOR", True) and os.access(config_path, os.W_OK):
-        try:
-            with open(config_path) as f:
-                cfg_data = yaml.safe_load(f) or {}
-            projects_cfg = cfg_data.setdefault("projects", {})
-            if name not in projects_cfg:
-                projects_cfg[name] = {}
-                write_config_yaml(config_path, cfg_data)
-                current_app.config["YAML_DATA"] = cfg_data
-        except OSError as e:
-            current_app.logger.warning("create_project: could not write config.yaml: %s", e)
-
-    # Apply the configured coin pool and model access defaults (projects.default or a
-    # named override) immediately, so a new project starts with the right defaults
-    # instead of waiting for the next config reload.
-    sync_projects_from_yaml(current_app.config["YAML_DATA"])
 
     return jsonify({"id": project.id, "name": project.name}), HTTPStatus.CREATED
 

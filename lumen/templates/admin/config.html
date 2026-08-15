@@ -89,7 +89,6 @@ const state = {
   currentSection: null,
   selectedModelIdx: 0,
   selectedGroupKey: null,
-  selectedProjectKey: null,
   selectedUserKey: null,
 };
 
@@ -102,8 +101,7 @@ const SECTIONS = [
   { id:'rate_limiting', label:'Rate Limiting',  desc:'Request rate limits' },
   { id:'defaults',      label:'Defaults',       desc:'Global model & token defaults' },
   { id:'groups',        label:'Groups',         desc:'User groups and access control' },
-  { id:'users',         label:'Users',          desc:'Per-user overrides (tokens & model access)' },
-  { id:'projects',      label:'Projects',       desc:'API project configurations' },
+  { id:'users',         label:'Users',          desc:'Per-user overrides (groups & model access)' },
   { id:'models',        label:'Models',         desc:'AI model configurations' },
 ];
 
@@ -187,7 +185,6 @@ function normalizeLegacyConfig(data) {
     if (ma.default in DEF) ma.default = DEF[ma.default];
   };
   for (const g of Object.values(data.groups || {})) fixMA(g && g.model_access);
-  for (const c of Object.values(data.projects || {})) fixMA(c && c.model_access);
   for (const u of Object.values(data.users || {})) fixMA(u && u.model_access);
 }
 
@@ -293,7 +290,6 @@ function resetConfig() {
   state.data = clone(state.original);
   state.selectedModelIdx = 0;
   state.selectedGroupKey = null;
-  state.selectedProjectKey = null;
   state.selectedUserKey = null;
   renderSection(state.currentSection);
 }
@@ -835,77 +831,6 @@ function collectCurrentGroup() {
 }
 function collectGroups() { collectCurrentGroup(); }
 
-// ── Projects ───────────────────────────────────────────────────────────────
-function renderProjects() {
-  const projects = state.data.projects || {};
-  const keys = orderedKeys(projects);
-  if (!state.selectedProjectKey || !projects[state.selectedProjectKey]) state.selectedProjectKey = keys[0] || null;
-  const opts = keys.map(k => `<option value="${esc(k)}"${k === state.selectedProjectKey ? ' selected' : ''}>${esc(k)}</option>`).join('');
-  $('cfg-body').innerHTML = `
-    <div class="entity-bar">
-      <label for="cli-sel" class="fw-semibold small mb-0 text-nowrap">Project:</label>
-      <select id="cli-sel" class="form-select form-select-sm" onchange="switchProject(this.value)">${opts}</select>
-      <button class="btn btn-primary btn-sm text-nowrap" onclick="addProject()">+ New</button>
-      <button class="btn btn-outline-danger btn-sm" onclick="deleteProject()">Delete</button>
-    </div>
-    <div id="cli-form">${state.selectedProjectKey ? renderProjectForm(state.selectedProjectKey, projects[state.selectedProjectKey]) : ''}</div>
-  `;
-  if (state.selectedProjectKey) initModelAccess('project', projects[state.selectedProjectKey]);
-}
-function renderProjectForm(key, c) {
-  if (!c) return '';
-  return `
-    ${card(`Project: ${esc(key)}`, `
-      ${field('cli-groups','Groups',ti('cli-groups',(c.groups||[]).join(', ')),'comma-separated — grants access to group models')}
-    `)}
-    ${card('Token Pool', row3(
-      field('cli-max',  'Max Coins',          ni('cli-max',   c.max),     '-2=unlimited, 0=blocked'),
-      field('cli-ref',  'Refresh (coins/hr)', ni('cli-ref',   c.refresh)),
-      field('cli-start','Starting Coins',     ni('cli-start', c.starting))
-    ))}
-    ${modelAccessCard('project')}
-  `;
-}
-function switchProject(key) {
-  collectCurrentProject();
-  state.selectedProjectKey = key;
-  const c = state.data.projects?.[key] || {};
-  $('cli-form').innerHTML = renderProjectForm(key, c);
-  initModelAccess('project', c);
-}
-async function addProject() {
-  const name = await appPrompt('New project name:', { title: 'New Project', okLabel: 'Create' });
-  if (!name?.trim()) return;
-  const key = name.trim();
-  if (state.data.projects?.[key]) { appAlert('Project already exists.'); return; }
-  if (!state.data.projects) state.data.projects = {};
-  collectCurrentProject();
-  state.data.projects[key] = { max: 50, refresh: 0.1, starting: 50, model_access: { default: 'blocked' } };
-  state.selectedProjectKey = key;
-  renderProjects();
-}
-async function deleteProject() {
-  if (!state.selectedProjectKey) return;
-  if (!await appConfirm(`Delete project "${state.selectedProjectKey}"?`, { title: 'Delete Project', okLabel: 'Delete', okClass: 'btn-danger' })) return;
-  delete state.data.projects[state.selectedProjectKey];
-  state.selectedProjectKey = null;
-  renderProjects();
-}
-function collectCurrentProject() {
-  const key = state.selectedProjectKey;
-  if (!key || !$('cli-max')) return;
-  const prev = state.data.projects?.[key] || {};
-  const c = { ...prev };  // preserve any keys this form doesn't render
-  const mx = numVal('cli-max');   if (mx !== undefined) c.max      = mx; else delete c.max;
-  const rf = numVal('cli-ref');   if (rf !== undefined) c.refresh  = rf; else delete c.refresh;
-  const st = numVal('cli-start'); if (st !== undefined) c.starting = st; else delete c.starting;
-  c.model_access = cleanModelAccess(prev.model_access);  // widget-managed, mutated in place
-  const groups = arrFromCommas('cli-groups'); if (groups.length) c.groups = groups; else delete c.groups;
-  if (!state.data.projects) state.data.projects = {};
-  state.data.projects[key] = c;
-}
-function collectProjects() { collectCurrentProject(); }
-
 // ── Models ─────────────────────────────────────────────────────────────────
 function renderModels() {
   const models = state.data.models || [];
@@ -1176,7 +1101,7 @@ function renderDefaults() {
       ${field('def-ackmsg','Default Acknowledgement Message',tai('def-ackmsg',m.ack_message,2),'shown for models with needs_ack unless overridden per model')}
     `)}
     ${card('Token Defaults', `
-      <p class="text-muted small mb-2">Fallback coin pool when a user/group/project specifies no limit. Scopes override only the fields they set.</p>
+      <p class="text-muted small mb-2">Fallback coin pool when a user or project has no limit set (via its profile/detail Edit dialog) and no group pool applies. Scopes override only the fields they set.</p>
       ${row3(
         field('def-tok-max','Max Coins',ni('def-tok-max',t.max),'-2=unlimited, 0=blocked'),
         field('def-tok-ref','Refresh (coins/hr)',ni('def-tok-ref',t.refresh)),
@@ -1225,11 +1150,6 @@ function renderUserForm(key, u) {
     ${card(`User: ${esc(key)}`, `
       ${field('usr-groups','Groups',ti('usr-groups',(u.groups||[]).join(', ')),hint)}
     `)}
-    ${card('Token Pool', row3(
-      field('usr-max','Max Coins',ni('usr-max',u.max),'-2=unlimited, 0=blocked'),
-      field('usr-ref','Refresh (coins/hr)',ni('usr-ref',u.refresh)),
-      field('usr-start','Starting Coins',ni('usr-start',u.starting))
-    ))}
     ${modelAccessCard('user')}
   `;
 }
@@ -1273,9 +1193,6 @@ function collectCurrentUser() {
   const prev = state.data.users?.[key] || {};
   const u = {};
   const groups = arrFromCommas('usr-groups'); if (groups.length) u.groups = groups;
-  const mx = numVal('usr-max');   if (mx !== undefined) u.max      = mx;
-  const rf = numVal('usr-ref');   if (rf !== undefined) u.refresh  = rf;
-  const st = numVal('usr-start'); if (st !== undefined) u.starting = st;
   const ma = cleanModelAccess(prev.model_access);  // widget-managed (legacy `models:` folded in on load)
   if (ma) u.model_access = ma;
   if (!state.data.users) state.data.users = {};
@@ -1300,12 +1217,12 @@ function initAddUserDialog() {
 const COLLECTORS = {
   app: collectApp, oauth2: collectOauth2, api: collectApi, chat: collectChat,
   rate_limiting: collectRateLimiting, defaults: collectDefaults,
-  admins: collectAdmins, groups: collectGroups, projects: collectProjects, users: collectUsers, models: collectModels,
+  admins: collectAdmins, groups: collectGroups, users: collectUsers, models: collectModels,
 };
 const RENDERERS = {
   app: renderApp, oauth2: renderOauth2, api: renderApi, chat: renderChat,
   rate_limiting: renderRateLimiting, defaults: renderDefaults,
-  admins: renderAdmins, groups: renderGroups, projects: renderProjects, users: renderUsers, models: renderModels,
+  admins: renderAdmins, groups: renderGroups, users: renderUsers, models: renderModels,
 };
 
 // ── Boot ───────────────────────────────────────────────────────────────────

@@ -118,6 +118,31 @@ def test_set_admin_mode_rejected_without_csrf_token(csrf_client):
     assert b"CSRF" in resp.data
 
 
+def test_update_project_rejected_without_csrf_token(app, csrf_client, test_user):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.entity_manager import EntityManager
+        project = Entity(entity_type="project", name="csrf-svc", initials="CS", active=True)
+        db.session.add(project)
+        db.session.flush()
+        db.session.add(EntityManager(
+            user_entity_id=test_user["id"], project_entity_id=project.id, is_owner=True,
+        ))
+        db.session.commit()
+        sid = project.id
+
+    resp = csrf_client.patch(f"/projects/{sid}", json={"name": "x"})
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert b"CSRF" in resp.data
+
+
+def test_update_user_rejected_without_csrf_token(csrf_client, test_user):
+    resp = csrf_client.patch(f"/admin/users/{test_user['id']}", json={"active": True})
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert b"CSRF" in resp.data
+
+
 def test_api_blueprint_exempt_from_csrf(csrf_client):
     """The /v1/ API blueprint must not require CSRF tokens."""
     resp = csrf_client.post(

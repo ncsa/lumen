@@ -122,21 +122,6 @@ def make_graylist_access(app):
 
 
 @pytest.fixture
-def writable_config(app, tmp_path):
-    """Point CONFIG_YAML at a writable temp copy so create_project's write-back
-    doesn't mutate the shared committed fixture. Restores afterwards."""
-    import shutil
-    cfg = tmp_path / "config.yaml"
-    shutil.copy(app.config["CONFIG_YAML"], cfg)
-    original_path = app.config["CONFIG_YAML"]
-    original_data = app.config.get("YAML_DATA")
-    app.config["CONFIG_YAML"] = str(cfg)
-    yield cfg
-    app.config["CONFIG_YAML"] = original_path
-    app.config["YAML_DATA"] = original_data
-
-
-@pytest.fixture
 def unlimited_pool(app, managed_project):
     """Grant managed_project an unlimited coin pool."""
     with app.app_context():
@@ -239,7 +224,7 @@ def test_create_project_requires_admin(auth_client):
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_create_project_succeeds(app, admin_client, writable_config):
+def test_create_project_succeeds(app, admin_client):
     resp = admin_client.post("/projects", json={"name": "created-svc"})
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.get_json()
@@ -250,16 +235,6 @@ def test_create_project_succeeds(app, admin_client, writable_config):
         c = db.session.execute(select(Entity).filter_by(name="created-svc", entity_type="project")).scalar_one_or_none()
         assert c is not None
         assert c.active is True
-
-
-def test_create_project_writes_empty_config_entry(admin_client, writable_config):
-    """Creating a project records an empty entry in config.yaml so the file reflects it."""
-    import yaml
-    resp = admin_client.post("/projects", json={"name": "cfg-svc"})
-    assert resp.status_code == HTTPStatus.CREATED
-    saved = yaml.safe_load(writable_config.read_text()) or {}
-    assert "cfg-svc" in saved.get("projects", {})
-    assert saved["projects"]["cfg-svc"] == {}
 
 
 def test_create_project_empty_name_returns_400(admin_client):
@@ -294,7 +269,126 @@ def test_toggle_reactivates_inactive_project(app, admin_client, service_project)
 
 
 # ---------------------------------------------------------------------------
-# Project data API (pagination + show disabled)
+# Update project (PATCH)
+# ---------------------------------------------------------------------------
+
+def test_update_project_requires_owner_or_admin(managed_auth_client, managed_project):
+    resp = managed_auth_client.patch(f"/projects/{managed_project['id']}", json={"name": "nope"})
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_update_project_owner_renames_and_toggles(app, owner_auth_client, owned_project):
+    resp = owner_auth_client.patch(
+        f"/projects/{owned_project['id']}", json={"name": "renamed-svc", "active": False}
+    )
+    assert resp.status_code == HTTPStatus.OK
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        c = db.session.get(Entity, owned_project["id"])
+        assert c.name == "renamed-svc"
+        assert c.initials == "RE"
+        assert c.active is False
+
+
+def test_update_project_owner_cannot_set_coins(owner_auth_client, owned_project):
+    resp = owner_auth_client.patch(
+        f"/projects/{owned_project['id']}", json={"max_coins": 100, "refresh_coins": 1}
+    )
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_update_project_admin_sets_coins(app, admin_client, service_project):
+    resp = admin_client.patch(
+        f"/projects/{service_project['id']}", json={"max_coins": 100, "refresh_coins": 2}
+    )
+    assert resp.status_code == HTTPStatus.OK
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        limit = db.session.execute(
+            select(EntityLimit).filter_by(entity_id=service_project["id"])
+        ).scalar_one_or_none()
+        assert limit is not None
+        assert float(limit.max_coins) == 100.0
+        assert float(limit.refresh_coins) == 2.0
+        assert float(limit.starting_coins) == 100.0
+        assert limit.config_managed is False
+
+
+def test_update_project_lowering_max_clamps_balance(app, admin_client, service_project):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.timeutils import utcnow
+        db.session.add(EntityLimit(
+            entity_id=service_project["id"], max_coins=100, refresh_coins=1, starting_coins=100,
+        ))
+        db.session.add(EntityBalance(
+            entity_id=service_project["id"], coins_left=80, last_refill_at=utcnow(),
+        ))
+        db.session.commit()
+    resp = admin_client.patch(f"/projects/{service_project['id']}", json={"max_coins": 50})
+    assert resp.status_code == HTTPStatus.OK
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        balance = db.session.execute(
+            select(EntityBalance).filter_by(entity_id=service_project["id"])
+        ).scalar_one_or_none()
+        assert float(balance.coins_left) == 50.0
+
+
+def test_update_project_unlimited_max_accepted(admin_client, service_project):
+    resp = admin_client.patch(
+        f"/projects/{service_project['id']}", json={"max_coins": -2, "refresh_coins": 0}
+    )
+    assert resp.status_code == HTTPStatus.OK
+
+
+def test_update_project_new_pool_defaults_refresh_to_zero(app, admin_client, service_project):
+    resp = admin_client.patch(f"/projects/{service_project['id']}", json={"max_coins": 100})
+    assert resp.status_code == HTTPStatus.OK
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        limit = db.session.execute(
+            select(EntityLimit).filter_by(entity_id=service_project["id"])
+        ).scalar_one_or_none()
+        assert float(limit.max_coins) == 100.0
+        assert float(limit.refresh_coins) == 0.0
+
+
+def test_update_project_refresh_alone_requires_existing_pool(admin_client, service_project):
+    resp = admin_client.patch(f"/projects/{service_project['id']}", json={"refresh_coins": 5})
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+
+
+def test_update_project_invalid_values_return_400(admin_client, service_project):
+    for payload in (
+        {"max_coins": -1, "refresh_coins": 0},
+        {"max_coins": 10, "refresh_coins": -1},
+        {"max_coins": "abc", "refresh_coins": 1},
+        {"max_coins": 10000000, "refresh_coins": 1},
+        {"name": "   "},
+    ):
+        resp = admin_client.patch(f"/projects/{service_project['id']}", json=payload)
+        assert resp.status_code == HTTPStatus.BAD_REQUEST, payload
+
+
+def test_update_project_duplicate_name_returns_409(app, admin_client, service_project):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        db.session.add(Entity(entity_type="project", name="other-svc", initials="OS", active=True))
+        db.session.commit()
+    resp = admin_client.patch(f"/projects/{service_project['id']}", json={"name": "other-svc"})
+    assert resp.status_code == HTTPStatus.CONFLICT
+
+
+# ---------------------------------------------------------------------------
+# Project data API (pagination)
 # ---------------------------------------------------------------------------
 
 def test_projects_data_requires_login(client):
@@ -312,18 +406,68 @@ def test_projects_data_lists_active_project(admin_client, service_project):
     assert service_project["name"] in names
 
 
-def test_projects_data_hides_disabled_by_default(admin_client, service_project):
+def test_projects_data_includes_disabled(admin_client, service_project):
     admin_client.post(f"/projects/{service_project['id']}/toggle")  # deactivate
     resp = admin_client.get("/projects/data")
-    names = [c["name"] for c in resp.get_json()["projects"]]
-    assert service_project["name"] not in names
+    row = next(c for c in resp.get_json()["projects"] if c["name"] == service_project["name"])
+    assert row["active"] is False
 
 
-def test_projects_data_show_disabled_reveals(admin_client, service_project):
-    admin_client.post(f"/projects/{service_project['id']}/toggle")  # deactivate
-    resp = admin_client.get("/projects/data?show_disabled=1")
-    names = [c["name"] for c in resp.get_json()["projects"]]
-    assert service_project["name"] in names
+def test_projects_data_includes_edit_fields(app, owner_auth_client, owned_project):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        db.session.add(EntityLimit(
+            entity_id=owned_project["id"], max_coins=75, refresh_coins=1.5, starting_coins=75,
+        ))
+        db.session.commit()
+    resp = owner_auth_client.get("/projects/data")
+    row = next(c for c in resp.get_json()["projects"] if c["name"] == owned_project["name"])
+    assert row["is_owner"] is True
+    assert row["max_coins"] == 75.0
+    assert row["refresh_coins"] == 1.5
+
+
+def test_projects_data_edit_fields_default(managed_auth_client, managed_project):
+    resp = managed_auth_client.get("/projects/data")
+    row = next(c for c in resp.get_json()["projects"] if c["name"] == managed_project["name"])
+    assert row["is_owner"] is False
+    assert row["max_coins"] is None
+    assert row["refresh_coins"] is None
+    assert row["coins_available"] == 0.0
+    assert row["last_used"] is None
+
+
+def test_projects_data_unlimited_coins_available(admin_client, managed_project, unlimited_pool):
+    resp = admin_client.get("/projects/data")
+    row = next(c for c in resp.get_json()["projects"] if c["name"] == managed_project["name"])
+    assert row["coins_available"] == -2
+
+
+def test_reset_project_tokens(app, admin_client, service_project):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
+        db.session.add(EntityLimit(
+            entity_id=service_project["id"], max_coins=100, refresh_coins=1, starting_coins=100,
+        ))
+        db.session.add(EntityBalance(entity_id=service_project["id"], coins_left=3))
+        db.session.commit()
+    resp = admin_client.post(f"/admin/entities/{service_project['id']}/reset-tokens")
+    assert resp.status_code == HTTPStatus.OK
+    assert float(resp.get_json()["coins_available"]) == 100.0
+
+
+def test_projects_data_manager_sees_disabled_project(app, owner_auth_client, owned_project):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        db.session.get(Entity, owned_project["id"]).active = False
+        db.session.commit()
+    resp = owner_auth_client.get("/projects/data")
+    row = next(c for c in resp.get_json()["projects"] if c["name"] == owned_project["name"])
+    assert row["active"] is False
 
 
 def test_projects_data_invalid_per_page_falls_back(admin_client, service_project):
@@ -432,7 +576,7 @@ def test_remove_manager_not_found_returns_404(admin_client, service_project, tes
 # Owner / project-admin functionality
 # ---------------------------------------------------------------------------
 
-def test_create_project_with_owner(app, admin_client, writable_config, test_user):
+def test_create_project_with_owner(app, admin_client, test_user):
     resp = admin_client.post("/projects", json={"name": "owned-svc", "owner_email": "testuser@example.com"})
     assert resp.status_code == HTTPStatus.CREATED
     with app.app_context():
@@ -446,12 +590,12 @@ def test_create_project_with_owner(app, admin_client, writable_config, test_user
         assert assoc.is_owner is True
 
 
-def test_create_project_owner_not_found_returns_404(admin_client, writable_config):
+def test_create_project_owner_not_found_returns_404(admin_client):
     resp = admin_client.post("/projects", json={"name": "bad-owner", "owner_email": "nobody@example.com"})
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
-def test_create_project_without_owner_is_ownerless(app, admin_client, writable_config):
+def test_create_project_without_owner_is_ownerless(app, admin_client):
     resp = admin_client.post("/projects", json={"name": "no-owner"})
     assert resp.status_code == HTTPStatus.CREATED
     with app.app_context():

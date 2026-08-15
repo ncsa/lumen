@@ -357,7 +357,7 @@ Budget configuration for a single entity. Each entity has at most one limit row.
 | `max_coins` | Numeric(12,6) | NO | Maximum coins the entity may hold at any time. `-2` = unlimited, `0` = blocked. |
 | `refresh_coins` | Numeric(12,6) | NO | Coins added at each periodic refill cycle |
 | `starting_coins` | Numeric(12,6) | NO | Coins granted when the entity is first created or reset |
-| `config_managed` | Boolean | NO | When `true`, this row is owned by `config.yaml` and must not be edited through the UI |
+| `config_managed` | Boolean | NO | Historical: `true` on rows created by the old `config.yaml` limit sync. Rows edited through the project/profile Edit dialogs are set to `false`. |
 
 ---
 

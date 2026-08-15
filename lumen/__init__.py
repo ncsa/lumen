@@ -376,8 +376,10 @@ def create_app():
 
         # Cache is_admin and project membership in the session to avoid 3 DB queries per request.
         # Cache is populated on first request after login and cleared on logout.
+        # "v" invalidates caches written by older code (bump when the cached shape
+        # or the membership query changes, e.g. inactive projects now included).
         nav_cache = session.get("_nav")
-        if nav_cache is not None and "project_ids" in nav_cache:
+        if nav_cache is not None and nav_cache.get("v") == 2:
             result["is_admin"] = nav_cache["is_admin"]
             result["nav_projects"] = nav_cache["project_ids"]
             return result
@@ -396,21 +398,22 @@ def create_app():
         ).scalars().all()
         project_ids = [a.project_entity_id for a in assocs]
         if project_ids:
+            # Deactivated projects still count: a manager needs the Projects
+            # menu to reach and re-enable them.
             projects = db.session.execute(
                 select(Entity)
                 .where(
                     Entity.id.in_(project_ids),
                     Entity.entity_type == "project",
-                    Entity.active == True,
                 )
                 .order_by(Entity.name)
             ).scalars().all()
-            active_project_ids = [c.id for c in projects]
+            managed_project_ids = [c.id for c in projects]
         else:
-            active_project_ids = []
+            managed_project_ids = []
 
-        session["_nav"] = {"is_admin": is_admin_val, "project_ids": active_project_ids}
-        result["nav_projects"] = active_project_ids
+        session["_nav"] = {"v": 2, "is_admin": is_admin_val, "project_ids": managed_project_ids}
+        result["nav_projects"] = managed_project_ids
         return result
 
     # Register markdown Jinja2 filter
@@ -425,8 +428,8 @@ def create_app():
 
     app.jinja_env.filters["markdown"] = _md_filter
 
-    # Sync models, groups, and projects from yaml into DB on every startup
-    from lumen.commands import backfill_projects_to_config, sync_groups_from_yaml, sync_models_from_yaml, sync_projects_from_yaml, sync_user_groups_from_yaml, sync_user_limits_from_yaml
+    # Sync models and groups from yaml into DB on every startup
+    from lumen.commands import sync_groups_from_yaml, sync_models_from_yaml, sync_user_groups_from_yaml
     with app.app_context():
         try:
             sync_models_from_yaml(yaml_data)
@@ -443,22 +446,16 @@ def create_app():
         except Exception as e:
             print(f"WARNING: Could not sync user groups from yaml (run 'flask db upgrade' first): {e}",
                   file=sys.stderr)
-        try:
-            sync_user_limits_from_yaml(yaml_data)
-        except Exception as e:
-            print(f"WARNING: Could not sync user limits from yaml (run 'flask db upgrade' first): {e}",
-                  file=sys.stderr)
-        try:
-            # Self-heal config.yaml for installs whose projects pre-date write-on-create.
-            if app.config.get("CONFIG_EDITOR", True) and os.access(config_yaml_path, os.W_OK):
-                backfill_projects_to_config(yaml_data, config_yaml_path)
-        except Exception as e:
-            print(f"WARNING: Could not backfill projects to config.yaml: {e}", file=sys.stderr)
-        try:
-            sync_projects_from_yaml(yaml_data)
-        except Exception as e:
-            print(f"WARNING: Could not sync projects from yaml (run 'flask db upgrade' first): {e}",
-                  file=sys.stderr)
+
+    # Project entries and per-user coin pools are no longer read from config.yaml;
+    # they are managed in the database via the project detail / profile Edit dialogs.
+    if yaml_data.get("projects"):
+        print("WARNING: the 'projects' section in config.yaml is no longer applied; "
+              "manage project limits from the project detail page.", file=sys.stderr)
+    if any(isinstance(cfg, dict) and (cfg.get("pool") or any(k in cfg for k in ("max", "refresh", "starting")))
+           for cfg in (yaml_data.get("users") or {}).values()):
+        print("WARNING: per-user coin pools (max/refresh/starting/pool) in config.yaml are no "
+              "longer applied; manage user limits from the profile page.", file=sys.stderr)
 
     # Start background threads only in the main worker process.
     # - Werkzeug dev server: double-imports the app; only run in the child (WERKZEUG_RUN_MAIN=true).

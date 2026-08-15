@@ -26,7 +26,7 @@ defaults:
     access: blocked            # baseline for models that omit `access:`
     ack_message: "This model was trained outside the U.S. — use with awareness."
   tokens:
-    max: 0                     # fallback coin pool for groups/projects
+    max: 0                     # fallback coin pool for users/projects without their own
     refresh: 0
     starting: 0
 ```
@@ -91,8 +91,6 @@ When running, Lumen watches `config.yaml` for changes and automatically reloads 
 | `models[*].input_cost_per_million` / `output_cost_per_million` | Change pricing |
 | `groups[*]` | Add, edit, or remove user groups |
 | `groups[*].model_access` | Override model access rules per group |
-| `projects.default` | Change default coin pool for new projects |
-| `projects[*]` | Configure individual project budgets and access |
 | `admins` | Update the list of administrator email addresses |
 | `chat.remove` | Change conversation soft-delete vs hard-delete mode |
 | `chat.upload` | Adjust upload file size limits and allowed file types |
@@ -118,7 +116,7 @@ Some settings are read only at startup and cannot be hot-reloaded. Lumen logs a 
 
 On startup, Lumen validates `config.yaml` and loads it into memory. While running, a background thread checks the file's modification time every 5 seconds. When a change is detected, it re-parses the YAML, applies the differences, and logs `config.yaml reloaded`. If a restart-required setting changed, it also emits a warning.
 
-The `init-db` command syncs config changes to the database (models, groups, model access, projects) without waiting for the watcher or restarting. It does not update in-memory settings like `APP_NAME` or `CHAT_CONVERSATION_REMOVE_MODE` — those only update when the watcher picks up the change or the app restarts.
+The `init-db` command syncs config changes to the database (models, groups, model access) without waiting for the watcher or restarting. It does not update in-memory settings like `APP_NAME` or `CHAT_CONVERSATION_REMOVE_MODE` — those only update when the watcher picks up the change or the app restarts.
 
 ```bash
 uv run flask init-db

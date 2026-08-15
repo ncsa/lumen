@@ -9,13 +9,12 @@ from lumen.extensions import db, oauth
 from lumen.timeutils import utcnow
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
-from lumen.models.entity_limit import EntityLimit
 from lumen.models.entity_model_access import EntityModelAccess
 from lumen.models.model_config import ModelConfig
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
 from lumen.services.llm import get_pool_limit
-from lumen.commands import _token_fields, _parse_scope_access, _desired_groups_from_config
+from lumen.commands import _parse_scope_access, _desired_groups_from_config
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -64,35 +63,12 @@ def _reconcile_group_memberships(entity: Entity, desired_ids: set) -> None:
 
 
 def _apply_user_model_overrides(entity: Entity, email: str, yaml_data: dict) -> None:
-    """Reconcile per-user coin pool limits and per-user allowed-model lists from yaml. Does not commit."""
+    """Reconcile per-user allowed-model lists from yaml. Does not commit."""
     user_cfg = yaml_data.get("users", {}).get(email, {})
-
-    # Coin pool — missing fields fall back to defaults.tokens via _token_fields.
-    pool_src = user_cfg.get("pool") or user_cfg
-    pool = _token_fields(pool_src) if isinstance(pool_src, dict) else None
-    if pool:
-        max_coins, refresh_coins, starting_coins = pool
-        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=entity.id)).scalar_one_or_none()
-        if limit and limit.config_managed:
-            limit.max_coins = max_coins
-            limit.refresh_coins = refresh_coins
-            limit.starting_coins = starting_coins
-        elif not limit:
-            db.session.add(EntityLimit(
-                entity_id=entity.id,
-                max_coins=max_coins,
-                refresh_coins=refresh_coins,
-                starting_coins=starting_coins,
-                config_managed=True,
-            ))
-    else:
-        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=entity.id, config_managed=True)).scalar_one_or_none()
-        if limit:
-            db.session.delete(limit)
 
     # Per-user model access: `model_access` {allowed/blocked/default}, or the legacy
     # allowed-only `models:` list. Config is the only source of a user's EntityModelAccess
-    # rows, so we delete-and-recreate (consistent with sync_projects_from_yaml).
+    # rows, so we delete-and-recreate.
     ma_cfg = user_cfg.get("model_access")
     if ma_cfg is not None:
         pairs, user_default, ack_models = _parse_scope_access(ma_cfg, context=f"user '{email}'")

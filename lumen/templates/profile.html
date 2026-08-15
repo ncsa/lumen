@@ -3,9 +3,16 @@
 
 {% block content %}
 <ilw-content>
-{% if viewing_user %}
-<div class="mb-4">
+{% if viewing_user or (is_admin and profile_entity) %}
+<div class="mb-4 d-flex justify-content-between align-items-center">
+  {% if viewing_user %}
   <a href="{{ url_for('admin.users') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
+  {% else %}<span></span>{% endif %}
+  {% if is_admin and profile_entity %}
+  <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editUserModal">
+    <i class="bi bi-pencil" aria-hidden="true"></i> Edit
+  </button>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -355,6 +362,43 @@
 {% endif %}
 {% if not viewing_user %}{% include '_graylist_modal.html' %}{% endif %}
 
+{% if is_admin and profile_entity %}
+<!-- Edit User Modal -->
+<div class="modal fade" id="editUserModal" tabindex="-1" aria-labelledby="editUserModalLabel">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="editUserModalLabel">Edit User</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close Edit User dialog"></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" role="switch" id="edit-user-active"
+                 {% if profile_entity.active %}checked{% endif %}>
+          <label class="form-check-label" for="edit-user-active">Active</label>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="edit-user-max">Max Coins</label>
+          <input type="number" id="edit-user-max" class="form-control" step="0.01"
+                 value="{{ "%.2f"|format(user_limit.max_coins) if user_limit is not none else '' }}">
+          <div class="form-text">-2 = unlimited, 0 = blocked. Clear Max Coins to use the inherited group/default pool.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="edit-user-refresh">Refill Rate (coins/hour)</label>
+          <input type="number" id="edit-user-refresh" class="form-control" step="0.01" min="0"
+                 value="{{ "%.2f"|format(user_limit.refresh_coins) if user_limit is not none else '' }}">
+        </div>
+        <div id="edit-user-error" class="text-danger small" role="alert" aria-live="assertive" hidden></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="edit-user-save-btn">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <style>
 .profile-avatar-img { border: 1px solid rgba(0,0,0,.1); }
 .profile-name { font-size: 1.25rem; font-weight: 600; line-height: 1.25; }
@@ -398,6 +442,40 @@ if (hashTabBtn && hashTabBtn.closest('#profile-tabs')) bootstrap.Tab.getOrCreate
 document.querySelectorAll('#profile-tabs [data-bs-toggle="tab"]').forEach(btn => {
   btn.addEventListener('shown.bs.tab', () => history.replaceState(null, '', '#' + btn.id.slice(4)));
 });
+
+{% if is_admin and profile_entity %}
+// ── Edit user modal (rendered only for admins)
+{
+  const editUserModal = document.getElementById("editUserModal");
+  const EDIT_USER_ID = {{ profile_entity.id }};
+  editUserModal.addEventListener("shown.bs.modal", () => document.getElementById("edit-user-active").focus());
+  document.getElementById("edit-user-save-btn").addEventListener("click", async () => {
+    const errEl = document.getElementById("edit-user-error");
+    errEl.hidden = true;
+    const active = document.getElementById("edit-user-active").checked;
+    if (!active && !IS_ADMIN_VIEW) {
+      const ok = await appConfirm("Deactivating your own account will block your requests and log you out. Continue?",
+        { title: "Deactivate Account", okLabel: "Deactivate", okClass: "btn-danger" });
+      if (!ok) return;
+    }
+    // Blank Max Coins to clear the user's own pool (revert to inherited).
+    const payload = {
+      active,
+      max_coins: document.getElementById("edit-user-max").value,
+      refresh_coins: document.getElementById("edit-user-refresh").value,
+    };
+    const resp = await fetch("/admin/users/" + EDIT_USER_ID, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+      body: JSON.stringify(payload),
+    });
+    if (resp.ok) { location.reload(); return; }
+    const data = await resp.json().catch(() => ({}));
+    errEl.textContent = data.error || "Failed to save changes.";
+    errEl.hidden = false;
+  });
+}
+{% endif %}
 
 // ── Admin mode toggle (only rendered for eligible admins on their own profile)
 const adminModeToggle = document.getElementById("admin-mode-toggle");

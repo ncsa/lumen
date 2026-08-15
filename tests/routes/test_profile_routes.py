@@ -400,8 +400,8 @@ def test_profile_projects_section_shows_managed_project(app, auth_client, test_u
     assert "my-client-svc" in body
 
 
-def test_profile_projects_section_excludes_inactive(app, auth_client, test_user):
-    """An inactive managed project is not shown (query filters active==True)."""
+def test_profile_projects_section_includes_inactive(app, auth_client, test_user):
+    """An inactive managed project is still shown so the manager can reach and re-enable it."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
@@ -415,8 +415,8 @@ def test_profile_projects_section_excludes_inactive(app, auth_client, test_user)
     resp = auth_client.get("/profile")
     assert resp.status_code == HTTPStatus.OK
     body = resp.get_data(as_text=True)
-    assert 'id="project-table"' not in body
-    assert "inactive-client" not in body
+    assert 'id="project-table"' in body
+    assert "inactive-client" in body
 
 
 def test_admin_user_profile_shows_projects_section(app, admin_client, test_user):

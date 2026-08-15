@@ -43,17 +43,21 @@ At the top of the page, four cards summarize the projects you can see:
 |--------|------------|
 | **Name** | Clickable link to the project detail page |
 | **Managers** | Number of users who manage this project |
-| **Active** | Green checkmark for active, red X for deactivated |
-| **Requests** | Total API requests |
-| **Tokens Used** | Total input + output tokens |
-| **Coins** | Total coins spent |
 | **Created** | When the project was created |
+| **Active** | Green checkmark for active, red X for deactivated |
+| **Last Used** | When the project last made a request |
+| **Requests** | Total API requests |
+| **Tokens** | Total input + output tokens |
+| **Coins Left** | Current balance (∞ = unlimited) |
+| **Coins Spent** | Total coins spent |
 
 Click any column header to sort. Use the search box to filter by name.
 
+Each row has an edit (pencil) button that opens a dialog to change the project's name and active flag (admins can also set Max Coins and Refill Rate). The button is enabled for the project's owner and for admins; other managers see it disabled with a note explaining why. Admins additionally get view-usage, reset-coins (refill to the starting balance), and activate/deactivate buttons — the same actions as on the admin Users page.
+
 ## Creating a Project
 
-> **Admin setup:** Projects are created through the web interface here, but coin budgets and model access defaults are configured in `config.yaml`. See [Configuring Projects](../admin/config-projects.md) for details.
+> **Admin setup:** Projects are created and managed entirely through the web interface; an admin sets a project's coin budget from the Edit dialog on its detail page. See [Configuring Projects](../admin/config-projects.md) for details.
 
 Only administrators can create new projects:
 

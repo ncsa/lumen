@@ -12,16 +12,12 @@ from sqlalchemy import delete, select, update
 
 from .extensions import db
 from lumen.models.entity import Entity
-from lumen.models.entity_balance import EntityBalance
-from lumen.models.entity_limit import EntityLimit
-from lumen.models.entity_model_access import EntityModelAccess
 from lumen.models.group import Group
 from lumen.models.group_limit import GroupLimit
 from lumen.models.group_member import GroupMember
 from lumen.models.group_model_access import GroupModelAccess
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
-from lumen.timeutils import utcnow
 
 # Maps config-input access vocabulary (new + legacy) to the stored value.
 # Acknowledgement (graylist) is a model-level property now, so legacy 'graylist'
@@ -74,28 +70,6 @@ def write_config_yaml(config_path, data):
         shutil.copyfile(tmp_path, config_path)
     finally:
         os.unlink(tmp_path)
-
-
-def backfill_projects_to_config(yaml_data, config_path):
-    """Ensure every project entity in the DB has an entry in config.yaml.
-
-    Existing installs have projects that live only in the DB (created before project
-    creation wrote them to config); add an empty entry for each one missing from the
-    file so it reflects which projects exist. Mutates yaml_data in place and writes the
-    file only when something was added. Returns True if the file was written.
-    """
-    names = db.session.execute(
-        select(Entity.name).where(Entity.entity_type == "project")
-    ).scalars().all()
-    projects_cfg = yaml_data.setdefault("projects", {})
-    added = False
-    for name in names:
-        if name not in projects_cfg:
-            projects_cfg[name] = {}
-            added = True
-    if added:
-        write_config_yaml(config_path, yaml_data)
-    return added
 
 
 def _normalize_access(value, *, context=""):
@@ -443,211 +417,13 @@ def sync_user_groups_from_yaml(yaml_data):
     db.session.commit()
 
 
-def sync_projects_from_yaml(yaml_data):
-    """Sync EntityLimit and EntityModelAccess for project (service) entities from yaml_data['projects'].
-
-    Config format:
-      projects:
-        default:                    <- applied to all projects without a named entry
-          max: 100
-          refresh: 0
-          starting: 100
-          model_access:
-            default: allowed        <- entity-level default for unlisted models
-            allowed: [name, ...]
-            blocked: [name, ...]
-        my-project-name:            <- overrides for a specific project
-          max: 500
-          groups: [research]        <- group memberships granting extra model access
-    """
-    projects_cfg = yaml_data.get("projects", {})
-    if not projects_cfg:
-        return
-
-    default_cfg = projects_cfg.get("default", {})
-    named_cfg = {k: v for k, v in projects_cfg.items() if k != "default"}
-
-    project_entities = db.session.execute(select(Entity).filter_by(entity_type="project")).scalars().all()
-
-    # Preload all models once to avoid an N+1 lookup per model_access entry
-    models_by_name = {
-        mc.model_name: mc for mc in db.session.execute(select(ModelConfig)).scalars().all()
-    }
-    # Preload groups by name for membership reconciliation.
-    groups_by_name = {
-        g.name: g for g in db.session.execute(select(Group)).scalars().all()
-    }
-
-    for entity in project_entities:
-        # An empty named entry (e.g. `my-project: {}`, written on project creation so the
-        # file records that the project exists) carries no settings, so fall back to the
-        # shared `default` block just as a project with no entry at all would.
-        cfg = named_cfg.get(entity.name) or default_cfg
-        if not cfg:
-            continue
-
-        # Upsert EntityLimit
-        pool = _token_fields(cfg)
-        if pool is not None:
-            max_coins, refresh_coins, starting_coins = pool
-            limit = db.session.execute(select(EntityLimit).filter_by(entity_id=entity.id)).scalar_one_or_none()
-            if limit:
-                limit.max_coins = max_coins
-                limit.refresh_coins = refresh_coins
-                limit.starting_coins = starting_coins
-                limit.config_managed = True
-            else:
-                db.session.add(EntityLimit(
-                    entity_id=entity.id,
-                    max_coins=max_coins,
-                    refresh_coins=refresh_coins,
-                    starting_coins=starting_coins,
-                    config_managed=True,
-                ))
-        else:
-            db.session.execute(delete(EntityLimit).where(EntityLimit.entity_id == entity.id, EntityLimit.config_managed == True))
-
-        # Sync model_access
-        access_cfg = cfg.get("model_access", {})
-        pairs, entity_default, ack_models = _parse_scope_access(access_cfg, context=f"project '{entity.name}'")
-        _apply_legacy_ack(ack_models, models_by_name)
-        entity.model_access_default = entity_default
-
-        db.session.execute(delete(EntityModelAccess).where(EntityModelAccess.entity_id == entity.id))
-        for model_name, access_type in pairs:
-            mc = models_by_name.get(model_name)
-            if mc is None:
-                current_app.logger.warning(
-                    "sync_projects_from_yaml: model '%s' not found for project '%s', skipping",
-                    model_name, entity.name,
-                )
-                continue
-            db.session.add(EntityModelAccess(
-                entity_id=entity.id,
-                model_config_id=mc.id,
-                access_type=access_type,
-            ))
-
-        # Sync config-managed group memberships. Membership can grant model access the
-        # project's own rules would otherwise block (resolved in services/llm.py).
-        desired_group_ids = set()
-        for gname in cfg.get("groups", []) or []:
-            group = groups_by_name.get(gname)
-            if group is None:
-                current_app.logger.warning(
-                    "sync_projects_from_yaml: group '%s' not found for project '%s', skipping",
-                    gname, entity.name,
-                )
-                continue
-            desired_group_ids.add(group.id)
-
-        existing_by_group = {
-            m.group_id: m
-            for m in db.session.execute(select(GroupMember).filter_by(entity_id=entity.id)).scalars().all()
-        }
-        for group_id, member in existing_by_group.items():
-            if member.config_managed and group_id not in desired_group_ids:
-                db.session.delete(member)
-        for group_id in desired_group_ids:
-            if group_id not in existing_by_group:
-                db.session.add(GroupMember(group_id=group_id, entity_id=entity.id, config_managed=True))
-
-    db.session.commit()
-
-
-def sync_user_limits_from_yaml(yaml_data):
-    """Sync per-user EntityLimit (coin pool) rows from yaml_data['users'].
-
-    Mirrors the EntityLimit upsert in sync_projects_from_yaml, but for user entities.
-    Unlike the login path (_apply_user_model_overrides in auth/routes.py), this runs on
-    every config reload so admin edits to a user's max/refresh/starting take effect
-    immediately instead of waiting for the user to log in again.
-
-    The live coin balance (EntityBalance.coins_left) is reset to the new starting value
-    only when an EXISTING per-user limit row's starting_coins actually changes. Adding a
-    first per-user block for a user on the global pool preserves their accrued balance;
-    changing only max/refresh leaves the balance untouched.
-
-    The upsert overwrites unconditionally and forces config_managed=True, diverging from
-    the login path's `if limit and limit.config_managed` guard (auth/routes.py:76). No
-    endpoint creates non-config-managed user EntityLimit rows today; a future manual-limit
-    feature would need to reconcile this.
-    """
-    users_cfg = yaml_data.get("users", {}) or {}
-    for email, cfg in users_cfg.items():
-        # A null/non-dict entry behaves like an empty block (no pool → fall through to
-        # the global pool), matching the login path where user_cfg defaults to {}.
-        if not isinstance(cfg, dict):
-            cfg = {}
-        entity = db.session.execute(
-            select(Entity).filter_by(entity_type="user", email=email)
-        ).scalar_one_or_none()
-        if entity is None:
-            # The literal "default" key and any not-yet-logged-in users resolve to no
-            # Entity; their limit row is created at login. Skip.
-            continue
-
-        # Unwrap the pool exactly as the login path does (auth/routes.py:71-72): a nested
-        # `pool:` block and the flat top-level form are both valid.
-        pool_src = cfg.get("pool") or cfg
-        pool = _token_fields(pool_src) if isinstance(pool_src, dict) else None
-
-        limit = db.session.execute(
-            select(EntityLimit).filter_by(entity_id=entity.id)
-        ).scalar_one_or_none()
-
-        if pool is None:
-            # No token fields in this user's block: drop any config-managed limit so the
-            # entity falls through to the group/global pool.
-            if limit is not None and limit.config_managed:
-                db.session.delete(limit)
-            continue
-
-        max_coins, refresh_coins, starting_coins = pool
-
-        # Capture the prior starting value BEFORE the in-place mutation below — the
-        # project-sync pattern mutates the row in place, so reading it after would always
-        # yield the new value and the balance-reset check would never fire.
-        old_starting = float(limit.starting_coins) if limit is not None else None
-
-        if limit is not None:
-            limit.max_coins = max_coins
-            limit.refresh_coins = refresh_coins
-            limit.starting_coins = starting_coins
-            limit.config_managed = True
-        else:
-            db.session.add(EntityLimit(
-                entity_id=entity.id,
-                max_coins=max_coins,
-                refresh_coins=refresh_coins,
-                starting_coins=starting_coins,
-                config_managed=True,
-            ))
-
-        # Reset the live balance only on a genuine starting change of an existing
-        # per-user limit. old_starting is None exactly when there was no prior limit row
-        # (first per-user block) — preserve the accrued balance in that case.
-        # -2 == unlimited; skip the reset (matches reset_user_tokens, admin/routes.py:78).
-        starting_changed = (old_starting is not None) and (old_starting != float(starting_coins))
-        if starting_changed and max_coins != -2:
-            balance = db.session.execute(
-                select(EntityBalance).filter_by(entity_id=entity.id)
-            ).scalar_one_or_none()
-            if balance is not None:
-                balance.coins_left = starting_coins
-                balance.last_refill_at = utcnow()
-
-    db.session.commit()
-
-
 @click.command("init-db")
 @with_appcontext
 def init_db_cmd():
-    """Sync ModelConfig, ModelEndpoint, Groups, and projects from config.yaml."""
+    """Sync ModelConfig, ModelEndpoint, and Groups from config.yaml."""
     yaml_data = current_app.config["YAML_DATA"]
     sync_models_from_yaml(yaml_data)
     sync_groups_from_yaml(yaml_data)
-    sync_projects_from_yaml(yaml_data)
     click.echo("Database synced from config.yaml.")
 
 

@@ -1,4 +1,5 @@
 import os
+from decimal import Decimal, InvalidOperation
 
 import yaml
 from http import HTTPStatus
@@ -32,6 +33,82 @@ admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 _BIGINT_MAX = 9223372036854775807
 # Must match the options rendered by the frontend per-page selector.
 _VALID_PER_PAGE = {25, 50, 100, 200}
+
+
+# Coin fields must fit Numeric(12, 6): 6 integer digits.
+_COIN_MAX_MAGNITUDE = Decimal(10) ** 6
+
+
+def apply_coin_pool_edit(entity_id, data):
+    """Validate max_coins/refresh_coins from a UI edit payload and upsert the
+    entity's coin pool as UI-managed (config_managed=False).
+
+    Keys absent from the payload leave the pool untouched. A blank
+    (empty/null) max_coins clears the entity's own pool — the row is deleted
+    so the entity falls back to its group/default pool. A blank refresh_coins
+    leaves the current rate unchanged (0 when creating a new pool). Lowering
+    max_coins clamps the entity's current balance. The UI exposes no separate
+    starting value, so starting_coins (what reset-tokens refills to) tracks
+    max_coins whenever a finite max is set. Returns an error message, or None
+    on success (caller commits).
+    """
+    present = {k: data[k] for k in ("max_coins", "refresh_coins") if k in data}
+    if not present:
+        return None
+
+    def _blank(v):
+        return v is None or v == ""
+
+    if "max_coins" in present and _blank(present["max_coins"]):
+        limit = db.session.execute(
+            select(EntityLimit).filter_by(entity_id=entity_id)
+        ).scalar_one_or_none()
+        if limit is not None:
+            db.session.delete(limit)
+        return None
+
+    values = {}
+    for key, raw in present.items():
+        if _blank(raw):
+            continue
+        try:
+            values[key] = Decimal(str(raw))
+        except InvalidOperation:
+            return f"{key} must be a number"
+    if not values:
+        return None
+    max_coins = values.get("max_coins")
+    refresh_coins = values.get("refresh_coins")
+    if max_coins is not None and max_coins != -2 and max_coins < 0:
+        return "max_coins must be -2 (unlimited) or >= 0"
+    if refresh_coins is not None and refresh_coins < 0:
+        return "refresh_coins must be >= 0"
+    if any(v.copy_abs() >= _COIN_MAX_MAGNITUDE for v in values.values()):
+        return "coin values must be less than 1,000,000"
+
+    limit = db.session.execute(
+        select(EntityLimit).filter_by(entity_id=entity_id)
+    ).scalar_one_or_none()
+    if limit is None:
+        if max_coins is None:
+            return "max_coins is required when no coin pool exists yet"
+        limit = EntityLimit(entity_id=entity_id, starting_coins=0)
+        db.session.add(limit)
+    if max_coins is not None:
+        limit.max_coins = max_coins
+        if max_coins >= 0:
+            limit.starting_coins = max_coins
+    if refresh_coins is not None:
+        limit.refresh_coins = refresh_coins
+    limit.config_managed = False
+
+    if max_coins is not None and max_coins >= 0:
+        balance = db.session.execute(
+            select(EntityBalance).filter_by(entity_id=entity_id)
+        ).scalar_one_or_none()
+        if balance and balance.coins_left > max_coins:
+            balance.coins_left = max_coins
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -72,9 +149,26 @@ def toggle_user(eid):
     return jsonify({"active": entity.active})
 
 
+@admin_bp.route("/users/<int:eid>", methods=["PATCH"])
+@admin_required
+def update_user(eid):
+    """Edit a user's active flag and coin pool from the profile Edit dialog."""
+    entity = db.first_or_404(select(Entity).filter_by(id=eid, entity_type="user"))
+    data = request.get_json() or {}
+    error = apply_coin_pool_edit(eid, data)
+    if error:
+        return jsonify({"error": error}), HTTPStatus.BAD_REQUEST
+    if "active" in data:
+        entity.active = bool(data["active"])
+    db.session.commit()
+    return jsonify({"ok": True, "active": entity.active})
+
+
 @admin_bp.route("/users/<int:eid>/reset-tokens", methods=["POST"])
+@admin_bp.route("/entities/<int:eid>/reset-tokens", methods=["POST"])
 @admin_required
 def reset_user_tokens(eid):
+    """Refill an entity's (user or project) balance to its starting coins."""
     entity = db.get_or_404(Entity, eid)
     pool = get_pool_limit(entity.id)
     if pool is None:
@@ -101,6 +195,11 @@ def reset_user_tokens(eid):
 def user_profile(eid):
     entity = db.get_or_404(Entity, eid)
     data = _get_profile_data(eid)
+    # The user's own limit row (not an inherited group/default pool), used to
+    # prefill the edit dialog without materializing inherited values.
+    user_limit = db.session.execute(
+        select(EntityLimit).filter_by(entity_id=eid)
+    ).scalar_one_or_none()
     return render_template(
         "profile.html",
         **data,
@@ -108,6 +207,7 @@ def user_profile(eid):
         profile_entity=entity,
         gravatar_url=_gravatar_url(entity.email, size=230),
         profile_groups=_entity_groups(eid),
+        user_limit=user_limit,
     )
 
 
@@ -122,8 +222,8 @@ def api_users():
     per_page = request.args.get("per_page", 25, type=int)
     if per_page not in _VALID_PER_PAGE:
         per_page = 25
-    sort = request.args.get("sort", "name")
-    order = request.args.get("order", "asc")
+    sort = request.args.get("sort", "last_used")
+    order = request.args.get("order", "desc")
     search = request.args.get("search", "").strip()
 
     balance_sq = (
@@ -182,12 +282,23 @@ def api_users():
     total = db.session.scalar(select(func.count()).select_from(stmt.subquery()))
     rows = db.session.execute(stmt.offset((page - 1) * per_page).limit(per_page)).all()
 
+    # The user's own coin limit (None = inherited pool), for the edit dialog.
+    page_ids = [entity.id for entity, *_ in rows]
+    limits = {
+        lim.entity_id: lim
+        for lim in db.session.execute(
+            select(EntityLimit).where(EntityLimit.entity_id.in_(page_ids))
+        ).scalars().all()
+    } if page_ids else {}
+
     return jsonify({
         "users": [
             {
                 "id": entity.id,
                 "name": entity.name,
                 "active": entity.active,
+                "max_coins": float(limits[entity.id].max_coins) if entity.id in limits else None,
+                "refresh_coins": float(limits[entity.id].refresh_coins) if entity.id in limits else None,
                 "joined": entity.created_at.strftime("%Y-%m-%dT%H:%M:%SZ") if entity.created_at else None,
                 "last_used": last_used_at.strftime("%Y-%m-%dT%H:%M:%SZ") if last_used_at else None,
                 "requests": int(requests),

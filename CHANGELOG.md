@@ -6,13 +6,20 @@ All notable changes to Lumen will be documented in this file.
 
 ### Changed
 
+- **Breaking:** projects and per-user coin pools are no longer configured in `config.yaml`. The `projects:` section (limits, model access, groups) and the `max`/`refresh`/`starting`/`pool` keys under `users:` are ignored (with a startup warning); project creation no longer writes entries into the file, and the admin config editor's Projects section and per-user Token Pool card were removed. Values previously synced into the database remain in effect. Instead, an **Edit** button above the stats on the project detail page lets the owner or an admin change the project's name and active flag (admins can also set Max Coins and Refill Rate), and the same Edit button on a user's profile (admin only, in admin mode or via the admin Users page) enables/disables the user and sets their coin pool. Lowering Max Coins clamps the entity's current balance.
+
 - Project detail page redesigned to match the user profile layout: profile header card with project identicon and stats, and Managers / API Keys / Models tabs.
 - Native browser dialogs (`alert()`, `confirm()`, `prompt()`) replaced everywhere with a styled, accessible Bootstrap modal via new shared `appAlert`/`appConfirm`/`appPrompt` helpers in app.js (enforced by `tests/unit/test_no_native_dialogs.py`).
 - Navigation bar: Projects moved between Profile and Models (all themes).
+- The projects table now matches the admin users table: Created, Last Used, Coins Left, and Coins Spent columns, plus admin buttons for view-usage and reset-coins alongside the activate/deactivate toggle. Both the projects and admin users tables now sort by Last Used (newest first) by default.
+- The projects table's details (sliders) button was replaced by an edit (pencil) button that opens the project edit dialog inline (enabled for the project owner and admins; disabled with an explanatory tooltip otherwise), and the admin users table gained the same pencil for editing a user's active flag and coin pool.
+- The projects table and the Projects menu entry always include deactivated projects (admins see all projects, managers see the ones they manage) so owners can reach and re-enable them; the "Show disabled" toggle was removed.
 - Refill Rate on the profile and project pages now always shows when the next refill happens — the actual local clock time next to the countdown, or "after first use" when no refill is scheduled yet — and all header stat boxes keep a uniform height.
 
 ### Fixed
 
+- The admin "Reset coins" button refilled to a stale amount after Max Coins was changed in the Edit dialog: editing Max Coins now also updates the starting balance the reset refills to.
+- Blanking Max Coins in an Edit dialog now removes the entity's own coin pool so it falls back to the inherited group/default pool (previously blank fields were silently ignored).
 - "Make Owner" and "Remove" buttons on the project detail page did nothing: the manager's name was JSON-encoded inside a double-quoted `onclick` attribute, truncating the handler at the name's opening quote (`Uncaught SyntaxError: Unexpected end of input`).
 - CI test failures (`ModuleNotFoundError: No module named 'httpx'`): the openai 3.x SDK now uses `httpx2`, and the upstream-error tests were updated to match. Dependency floors were raised to the majors actually locked and tested (`openai>=3`, `flask-limiter>=4`, `pypdf>=6`, `psutil>=7`, `pytest>=9`, `pytest-cov>=7`).
 

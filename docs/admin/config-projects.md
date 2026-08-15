@@ -1,6 +1,6 @@
 # Configuring Projects
 
-> 🔒 **Admin only.** This page documents administrator features. Configuration lives in `config.yaml` and the in-app Config editor (`/admin/config`), which are only available to administrators.
+> 🔒 **Admin only.** This page documents administrator features.
 
 Projects are named identities for automated tools or apps that need their own API access, separate from personal user accounts.
 
@@ -13,80 +13,25 @@ Projects are useful when:
 - You want to separate application usage from personal usage and budgets
 - A team needs to share API access without giving out personal keys
 
-## Global Defaults
+## Managing Projects
 
-Under `projects.default`, set the default coin pool and model access for any project that doesn't have a named entry:
+Projects live entirely in the database and are managed through the web interface — there is no `projects:` section in `config.yaml`. (If an older config still contains one, it is ignored and a warning is printed at startup.)
 
-```yaml
-projects:
-  default:
-    max: 100.0            # coin budget (-2 = unlimited, 0 = blocked)
-    refresh: 0.05         # coins added per hour
-    starting: 100.0       # coins when pool is first created
-    model_access:
-      default: blocked     # deny everything not explicitly listed
-      blocked: []          # always-deny list
-      allowed: [dummy]     # always-allow list
-```
+- **Create** a project at `/projects` (admin only). A new project has no coin pool of its own and falls back to the global `defaults.tokens` pool (see [Admin Configuration](config.md)) or a group pool if the project is a group member.
+- **Edit** a project from its detail page (`/projects/<id>`) via the **Edit** button above the stats: the project owner or an admin can change the name and active flag; only admins can set the coin pool (**Max Coins** and **Refill Rate**). Clearing Max Coins removes the project's own pool so it falls back to the inherited group/default pool.
+- **Assign managers and create API keys** from the detail page tabs.
+
+### Coin Pool
 
 | Field | Description |
 |-------|-------------|
-| `max` | Coin budget cap (0 = blocked, -2 = unlimited) |
-| `refresh` | Coins replenished per hour, up to the `max` cap (0 = no auto-refresh) |
-| `starting` | Initial coins when a project's pool is created |
-| `model_access.default` | Default behavior for unlisted models: `allowed` or `blocked` |
-| `model_access.allowed` | Models always accessible to this project |
-| `model_access.blocked` | Models always denied to this project |
+| Max Coins | Coin budget cap (0 = blocked, -2 = unlimited) |
+| Refill Rate | Coins replenished per hour, up to the cap (0 = no auto-refresh) |
 
-The `max`, `refresh`, and `starting` fields fall back to the top-level `defaults.tokens` block when omitted from a named project; only the fields that differ from the defaults need to be set. See [Admin Configuration](config.md) for the `defaults` block.
+Setting Max Coins from the Edit dialog also sets the starting balance (what an admin coin reset refills to) to the same value. Lowering Max Coins clamps the project's current balance to the new cap.
 
-Like groups, a project's `model_access` controls only the **allow/block axis**. Acknowledgement is a model-level property (`needs_ack` — see [Configuring Models](config-models.md#access-control)); there is no per-project graylist. Managers grant acknowledgement on a project's behalf through the UI.
+### Model Access and Groups
 
-> **Deprecated keys:** legacy `whitelist`/`blacklist`/`graylist` are still accepted as input (with a deprecation warning) — `whitelist`→`allowed`, `blacklist`→`blocked`, `graylist`→`allowed` plus a reminder to set `needs_ack` on the model. Prefer `allowed`/`blocked`.
+A project's model access (allow/block rules and per-project default) and group memberships are stored in the database. Group membership can grant access to models the project's own rules would otherwise block — the same group model-access resolution used for users applies to projects. Acknowledgement is a model-level property (`needs_ack` — see [Configuring Models](config-models.md#access-control)); managers grant acknowledgement on a project's behalf through the UI.
 
-## Per-Project Overrides
-
-Add a named entry under `projects` to give a specific project different settings:
-
-```yaml
-projects:
-  default:
-    max: 100.0
-    refresh: 0.05
-    starting: 100.0
-    model_access:
-      default: blocked
-
-  research-bot:
-    max: 500.0
-    refresh: 1.0
-    starting: 500.0
-    model_access:
-      default: allowed
-      allowed: [gpt-4o, llama3, qwen3.5-9b-q5]
-```
-
-A named entry **completely replaces** the defaults for that project — there is no partial inheritance. Any field omitted from a named entry is not inherited from `default`; the project will have no budget or model access for that field until it is explicitly set. (An **empty** entry, `my-project: {}`, is the one exception: it carries no settings and so falls back to `projects.default`, just like a project with no entry at all. This is what the UI writes when a project is first created — see [Creating Projects](#creating-projects).)
-
-### Groups
-
-A project can be added to one or more groups with a `groups:` list. Membership can grant access to models the project's own `model_access` rules would otherwise block — the same group model-access resolution used for users applies to projects:
-
-```yaml
-projects:
-  research-bot:
-    max: 500.0
-    groups: [research, beta-models]
-```
-
-Memberships listed here are config-managed: they are added on config reload and removed when dropped from the list. Unknown group names are skipped with a warning. See [Configuring Users](config-users.md) for how groups and their model access work.
-
-## Creating Projects
-
-Projects are created through the web interface at `/projects` by an admin. When you create one, Lumen also writes an empty entry (`<project-name>: {}`) into `config.yaml` so the file always records that the project exists; you can then fill in its budget, model access, and groups. Because an empty entry falls back to `projects.default`, a newly created project starts with the default budget and access until you customize it.
-
-> **Note:** Writing to `config.yaml` (on project creation or via the Config editor) rewrites the file and does not preserve comments. Project creation skips the write when the Config editor is disabled or the file is not writable — the project is still created in the database, but you'll need to add its entry manually.
-
-On startup, any projects that already exist in the database but are missing from `config.yaml` are backfilled with an empty entry (when the file is writable and the Config editor is enabled), so upgrading an existing install populates the file automatically.
-
-The sync command (`uv run flask init-db`) and the config watcher apply budgets, model access, and group membership to projects that exist in the database. Once a project exists, the UI lets you assign managers and create API keys.
+> **Migration note:** older Lumen versions synced per-project budgets, model access, and groups from a `projects:` section in `config.yaml`. Rows created by that sync remain in effect in the database; the config section itself is no longer read.

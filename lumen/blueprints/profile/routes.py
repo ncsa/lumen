@@ -13,6 +13,7 @@ from lumen.models.api_key import APIKey
 from lumen.models.conversation import Conversation
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
+from lumen.models.entity_limit import EntityLimit
 from lumen.models.entity_manager import get_managed_projects
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.group import Group
@@ -237,6 +238,11 @@ def index():
     data = _get_profile_data(entity_id)
 
     profile_entity = db.session.get(Entity, entity_id)
+    # The user's own limit row (not an inherited group/default pool), used to
+    # prefill the admin edit dialog without materializing inherited values.
+    user_limit = db.session.execute(
+        select(EntityLimit).filter_by(entity_id=entity_id)
+    ).scalar_one_or_none()
     return render_template(
         "profile.html", **data,
         profile_entity=profile_entity,
@@ -244,6 +250,7 @@ def index():
         profile_groups=_entity_groups(entity_id),
         admin_eligible=is_admin_eligible(profile_entity),
         admin_mode=bool(session.get("admin_mode")),
+        user_limit=user_limit,
     )
 
 

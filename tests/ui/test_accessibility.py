@@ -160,3 +160,24 @@ def test_admin_user_profile_page_accessibility(admin_client, test_user):
     resp = admin_client.get(url)
     assert resp.status_code == HTTPStatus.OK
     _run_all_checks(resp.data, url)
+
+
+def test_own_profile_page_as_admin_accessibility(admin_client):
+    # Admin mode renders the Edit User modal on the admin's own profile.
+    resp = admin_client.get("/profile")
+    assert resp.status_code == HTTPStatus.OK
+    _run_all_checks(resp.data, "/profile")
+
+
+def test_project_detail_page_accessibility(app, admin_client):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        project = Entity(entity_type="project", name="a11y-svc", initials="AS", active=True)
+        db.session.add(project)
+        db.session.commit()
+        sid = project.id
+    url = f"/projects/{sid}"
+    resp = admin_client.get(url)
+    assert resp.status_code == HTTPStatus.OK
+    _run_all_checks(resp.data, url)

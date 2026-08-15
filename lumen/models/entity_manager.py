@@ -31,10 +31,11 @@ class EntityManager(db.Model):
 
 
 def get_managed_projects(user_entity_id: int):
-    """Active project entities this user manages, ordered by name.
+    """Project entities this user manages (active or not), ordered by name.
 
-    Single join over EntityManager → Entity; returns Entity rows.
-    Shared by the projects blueprint (access scoping) and the profile
+    Deactivated projects are included so a manager can still reach them
+    and re-enable. Single join over EntityManager → Entity; returns Entity
+    rows. Shared by the projects blueprint (access scoping) and the profile
     blueprint (Projects section).
     """
     return db.session.execute(
@@ -43,7 +44,6 @@ def get_managed_projects(user_entity_id: int):
         .where(
             EntityManager.user_entity_id == user_entity_id,
             Entity.entity_type == "project",
-            Entity.active == True,
         )
         .order_by(Entity.name)
     ).scalars().all()
