@@ -343,7 +343,7 @@ document.getElementById("create-project-btn").addEventListener("click", async fu
     window.location.href = "/projects/" + data.id;
   } else {
     const data = await resp.json();
-    alert("Error: " + (data.error || "Unknown error"));
+    appAlert("Error: " + (data.error || "Unknown error"));
   }
 });
 {% endif %}

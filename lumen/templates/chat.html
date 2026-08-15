@@ -662,7 +662,7 @@
     if (!userText && !pendingAttachment) return;
 
     const model = picker.value;
-    if (!model) { alert("Please select a model."); return; }
+    if (!model) { appAlert("Please select a model."); return; }
     const selectedOpt = picker.options[picker.selectedIndex];
     if (selectedOpt && selectedOpt.dataset.graylist === "true") {
       openGraylistModal(selectedOpt.value, selectedOpt.dataset.notice || null);

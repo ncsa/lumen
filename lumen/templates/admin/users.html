@@ -258,7 +258,7 @@
   function resetTokens(btn) {
     const id = btn.dataset.id;
     if (btn.dataset.unlimited === 'true') {
-      alert('This user has unlimited coins.');
+      appAlert('This user has unlimited coins.');
       return;
     }
     btn.disabled = true;
@@ -266,7 +266,7 @@
       .then(r => r.json())
       .then(data => {
         if (data.error) {
-          alert(data.error);
+          appAlert(data.error);
         } else {
           const row = document.getElementById(`user-row-${id}`);
           row.cells[6].textContent = parseFloat(data.coins_available).toFixed(2); // coins left

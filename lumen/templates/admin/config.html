@@ -795,20 +795,20 @@ function switchGroup(key) {
   $('grp-form').innerHTML = renderGroupForm(key, g);
   initModelAccess('group', g);
 }
-function addGroup() {
-  const name = prompt('New group name:');
+async function addGroup() {
+  const name = await appPrompt('New group name:', { title: 'New Group', okLabel: 'Create' });
   if (!name?.trim()) return;
   const key = name.trim();
-  if (state.data.groups?.[key]) { alert('Group already exists.'); return; }
+  if (state.data.groups?.[key]) { appAlert('Group already exists.'); return; }
   if (!state.data.groups) state.data.groups = {};
   collectCurrentGroup();
   state.data.groups[key] = { max: 0, refresh: 0, starting: 0, model_access: { default: 'blocked' } };
   state.selectedGroupKey = key;
   renderGroups();
 }
-function deleteGroup() {
+async function deleteGroup() {
   if (!state.selectedGroupKey) return;
-  if (!confirm(`Delete group "${state.selectedGroupKey}"?`)) return;
+  if (!await appConfirm(`Delete group "${state.selectedGroupKey}"?`, { title: 'Delete Group', okLabel: 'Delete', okClass: 'btn-danger' })) return;
   delete state.data.groups[state.selectedGroupKey];
   state.selectedGroupKey = null;
   renderGroups();
@@ -873,20 +873,20 @@ function switchProject(key) {
   $('cli-form').innerHTML = renderProjectForm(key, c);
   initModelAccess('project', c);
 }
-function addProject() {
-  const name = prompt('New project name:');
+async function addProject() {
+  const name = await appPrompt('New project name:', { title: 'New Project', okLabel: 'Create' });
   if (!name?.trim()) return;
   const key = name.trim();
-  if (state.data.projects?.[key]) { alert('Project already exists.'); return; }
+  if (state.data.projects?.[key]) { appAlert('Project already exists.'); return; }
   if (!state.data.projects) state.data.projects = {};
   collectCurrentProject();
   state.data.projects[key] = { max: 50, refresh: 0.1, starting: 50, model_access: { default: 'blocked' } };
   state.selectedProjectKey = key;
   renderProjects();
 }
-function deleteProject() {
+async function deleteProject() {
   if (!state.selectedProjectKey) return;
-  if (!confirm(`Delete project "${state.selectedProjectKey}"?`)) return;
+  if (!await appConfirm(`Delete project "${state.selectedProjectKey}"?`, { title: 'Delete Project', okLabel: 'Delete', okClass: 'btn-danger' })) return;
   delete state.data.projects[state.selectedProjectKey];
   state.selectedProjectKey = null;
   renderProjects();
@@ -1018,10 +1018,10 @@ function addModel() {
   state.selectedModelIdx = state.data.models.length - 1;
   renderModels();
 }
-function deleteModel() {
+async function deleteModel() {
   const idx = state.selectedModelIdx;
   if (!state.data.models?.[idx]) return;
-  if (!confirm(`Delete model "${state.data.models[idx].name || `Model ${idx}`}"?`)) return;
+  if (!await appConfirm(`Delete model "${state.data.models[idx].name || `Model ${idx}`}"?`, { title: 'Delete Model', okLabel: 'Delete', okClass: 'btn-danger' })) return;
   state.data.models.splice(idx, 1);
   state.selectedModelIdx = Math.max(0, idx - 1);
   renderModels();
@@ -1260,9 +1260,9 @@ function commitNewUser(email) {
   bootstrap.Modal.getInstance($('add-user-modal'))?.hide();
   renderUsers();
 }
-function deleteUser() {
+async function deleteUser() {
   if (!state.selectedUserKey) return;
-  if (!confirm(`Delete user "${state.selectedUserKey}"?`)) return;
+  if (!await appConfirm(`Delete user "${state.selectedUserKey}"?`, { title: 'Delete User', okLabel: 'Delete', okClass: 'btn-danger' })) return;
   delete state.data.users[state.selectedUserKey];
   state.selectedUserKey = null;
   renderUsers();

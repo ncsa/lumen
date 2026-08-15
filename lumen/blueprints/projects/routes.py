@@ -1,3 +1,4 @@
+import hashlib
 import os
 from http import HTTPStatus
 
@@ -201,12 +202,16 @@ def detail(sid):
     entity = db.session.get(Entity, entity_id)
     can_manage = is_admin(entity) or (owner_id == entity_id)
 
+    h = hashlib.md5(project.name.strip().lower().encode()).hexdigest()
+    gravatar_url = f"https://www.gravatar.com/avatar/{h}?s=230&d=identicon&f=y"
+
     return render_template(
         "project_detail.html",
         project=project,
         managers=managers,
         owner_id=owner_id,
         can_manage=can_manage,
+        gravatar_url=gravatar_url,
         **data,
     )
 

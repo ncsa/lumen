@@ -29,7 +29,7 @@ function initGraylistConsent(onSuccess) {
       onSuccess(pendingModelName);
     } else {
       const data = await resp.json().catch(() => ({}));
-      alert("Error: " + (data.error || "Unknown"));
+      appAlert("Error: " + (data.error || "Unknown"));
     }
   });
 

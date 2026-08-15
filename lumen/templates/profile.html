@@ -47,13 +47,13 @@
             </div>
           </div>
           <div class="col-4">
-            <div class="profile-stat-card p-3 rounded border">
+            <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Coins Used</div>
               <div class="fw-bold fs-5">{{ "%.2f"|format(status.total_cost) }}</div>
             </div>
           </div>
           <div class="col-4">
-            <div class="profile-stat-card p-3 rounded border">
+            <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Tokens Used</div>
               <div class="fw-bold fs-5">{{ "{:,}".format(status.total_tokens_used) }}</div>
             </div>
@@ -88,11 +88,12 @@
             </div>
           </div>
           <div class="col-4">
-            <div class="profile-stat-card p-3 rounded border">
+            <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Refill Rate</div>
               {% if coin_pool is not none and coin_pool.coin_limit != -2 and coin_pool.coins_per_hour > 0 %}
                 <div class="fw-bold fs-5">+{{ "%.2f"|format(coin_pool.coins_per_hour) }}<span class="text-muted fw-normal fs-6">/hr</span></div>
-                {% if coin_pool.next_refill %}<div class="text-muted small">next <span class="local-time" data-utc="{{ coin_pool.next_refill.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span></div>{% endif %}
+                {% if coin_pool.next_refill %}<div class="text-muted small">next <span class="local-time" data-utc="{{ coin_pool.next_refill.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span></div>
+                {% else %}<div class="text-muted small">next after first use</div>{% endif %}
               {% else %}
                 <div class="fw-bold fs-5 text-muted">—</div>
               {% endif %}
@@ -383,8 +384,10 @@ document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootst
 
 // Show next refill as "in X minutes"
 document.querySelectorAll(".local-time[data-utc]").forEach(el => {
-  const mins = Math.max(0, Math.round((new Date(el.dataset.utc) - Date.now()) / 60000));
-  el.textContent = mins <= 1 ? "in seconds" : `in ${mins} minutes`;
+  const d = new Date(el.dataset.utc);
+  const mins = Math.max(0, Math.round((d - Date.now()) / 60000));
+  const at = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  el.textContent = (mins <= 1 ? "in seconds" : `in ${mins} minutes`) + ` (${at})`;
 });
 
 let openGraylistModal = () => {};
@@ -502,10 +505,10 @@ function renderKeys() {
     keyTbody.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
     keyTbody.querySelectorAll('.delete-key-btn').forEach(btn => {
       btn.addEventListener('click', async function () {
-        if (!confirm("Delete this API key? Usage history is kept.")) return;
+        if (!await appConfirm("Delete this API key? Usage history is kept.", { title: "Delete API Key", okLabel: "Delete", okClass: "btn-danger" })) return;
         const resp = await fetch("/profile/keys/" + this.dataset.id, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } });
         if (resp.ok) location.reload();
-        else alert("Failed to delete key.");
+        else appAlert("Failed to delete key.");
       });
     });
   }
@@ -760,7 +763,7 @@ document.getElementById("save-key-btn").addEventListener("click", async function
     location.reload();
   } else {
     const data = await resp.json();
-    alert("Error: " + (data.error || "Unknown"));
+    appAlert("Error: " + (data.error || "Unknown"));
   }
 });
 } // end if (!IS_ADMIN_VIEW)

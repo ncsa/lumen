@@ -4,8 +4,16 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Project detail page redesigned to match the user profile layout: profile header card with project identicon and stats, and Managers / API Keys / Models tabs.
+- Native browser dialogs (`alert()`, `confirm()`, `prompt()`) replaced everywhere with a styled, accessible Bootstrap modal via new shared `appAlert`/`appConfirm`/`appPrompt` helpers in app.js (enforced by `tests/unit/test_no_native_dialogs.py`).
+- Navigation bar: Projects moved between Profile and Models (all themes).
+- Refill Rate on the profile and project pages now always shows when the next refill happens — the actual local clock time next to the countdown, or "after first use" when no refill is scheduled yet — and all header stat boxes keep a uniform height.
+
 ### Fixed
 
+- "Make Owner" and "Remove" buttons on the project detail page did nothing: the manager's name was JSON-encoded inside a double-quoted `onclick` attribute, truncating the handler at the name's opening quote (`Uncaught SyntaxError: Unexpected end of input`).
 - CI test failures (`ModuleNotFoundError: No module named 'httpx'`): the openai 3.x SDK now uses `httpx2`, and the upstream-error tests were updated to match. Dependency floors were raised to the majors actually locked and tested (`openai>=3`, `flask-limiter>=4`, `pypdf>=6`, `psutil>=7`, `pytest>=9`, `pytest-cov>=7`).
 
 ## [1.25.0] - 2026-08-14

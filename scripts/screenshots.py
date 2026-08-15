@@ -27,6 +27,7 @@ from playwright.sync_api import sync_playwright
 from lumen import create_app
 from lumen.extensions import db
 from lumen.models.entity import Entity
+from lumen.models.entity_manager import EntityManager
 from lumen.models.model_config import ModelConfig
 from lumen.services.crypto import hash_api_key
 from lumen.models.api_key import APIKey
@@ -71,6 +72,22 @@ def ensure_demo_data(app):
             db.session.add(APIKey(entity_id=project.id, name="example-key",
                                   key_hash=hash_api_key(key),
                                   key_hint=f"{key[:7]}...{key[-4:]}", active=True))
+
+        # The dev user must manage the demo project or /projects renders no
+        # link to it (admins browse as normal users by default).
+        dev_email = app.config.get("DEV_USER")
+        dev = db.session.execute(
+            select(Entity).filter_by(email=dev_email, entity_type="user")
+        ).scalar_one_or_none() if dev_email else None
+        if dev is None and dev_email:
+            dev = Entity(entity_type="user", email=dev_email, name="Dev User",
+                         initials="DU", active=True)
+            db.session.add(dev)
+            db.session.flush()
+        if dev and not db.session.execute(
+            select(EntityManager).filter_by(user_entity_id=dev.id, project_entity_id=project.id)
+        ).scalar_one_or_none():
+            db.session.add(EntityManager(user_entity_id=dev.id, project_entity_id=project.id, is_owner=True))
         db.session.commit()
 
         cookie = app.session_interface.get_signing_serializer(app).dumps({

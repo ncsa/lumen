@@ -76,3 +76,57 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   });
 });
+
+// ── Styled dialogs replacing native alert()/confirm()/prompt() ─────────────
+// Each returns a promise that resolves when the dialog closes:
+// appAlert → true, appConfirm → true/false, appPrompt → string or null.
+(function () {
+  function openDialog({ title, message, okLabel, okClass, showCancel, showInput, inputValue }) {
+    const el = document.getElementById("app-dialog");
+    const okBtn = document.getElementById("app-dialog-ok");
+    const input = document.getElementById("app-dialog-input");
+
+    document.getElementById("app-dialog-title").textContent = title;
+    const msgEl = document.getElementById("app-dialog-message");
+    msgEl.textContent = message;
+    msgEl.hidden = showInput; // for prompts the message becomes the input label
+    document.getElementById("app-dialog-input-label").textContent = message;
+    document.getElementById("app-dialog-input-wrap").hidden = !showInput;
+    input.value = inputValue || "";
+    document.getElementById("app-dialog-cancel").hidden = !showCancel;
+    okBtn.textContent = okLabel;
+    okBtn.className = "btn " + okClass;
+
+    const modal = bootstrap.Modal.getOrCreateInstance(el);
+    return new Promise(function (resolve) {
+      let result = showInput ? null : !showCancel; // dismissing an alert still resolves true
+      const onOk = () => { result = showInput ? input.value : true; modal.hide(); };
+      const onKey = e => { if (e.key === "Enter") { e.preventDefault(); onOk(); } };
+      const onHidden = () => {
+        okBtn.removeEventListener("click", onOk);
+        input.removeEventListener("keydown", onKey);
+        el.removeEventListener("hidden.bs.modal", onHidden);
+        resolve(result);
+      };
+      okBtn.addEventListener("click", onOk);
+      if (showInput) {
+        input.addEventListener("keydown", onKey);
+        el.addEventListener("shown.bs.modal", () => input.focus(), { once: true });
+      }
+      el.addEventListener("hidden.bs.modal", onHidden);
+      modal.show();
+    });
+  }
+
+  window.appAlert = (message, title = "Notice") =>
+    openDialog({ title, message, okLabel: "OK", okClass: "btn-primary",
+                 showCancel: false, showInput: false });
+  window.appConfirm = (message, opts = {}) =>
+    openDialog({ title: opts.title || "Please Confirm", message,
+                 okLabel: opts.okLabel || "OK", okClass: opts.okClass || "btn-primary",
+                 showCancel: true, showInput: false });
+  window.appPrompt = (message, opts = {}) =>
+    openDialog({ title: opts.title || "Input Needed", message,
+                 okLabel: opts.okLabel || "OK", okClass: "btn-primary",
+                 showCancel: true, showInput: true, inputValue: opts.value });
+})();

@@ -2,20 +2,22 @@
 
 This page is for people managing Lumen-based services and tools. For details on what a project is, start with the [Projects overview](./projects.md).
 
-The project detail page (`/projects/<id>`) is where you manage a specific project: view usage, assign managers, create API keys, and check model access.
+The project detail page (`/projects/<id>`) is where you manage a specific project: view usage, assign managers, create API keys, and check model access. It is laid out like the [Profile page](../guides/profile.md): a header card at the top, followed by **Managers**, **API Keys**, and **Models** tabs.
 
 ![Project detail page](../img/project-detail.png)
 
-## Usage Cards
+## Header Card
 
-The top row shows the project's activity and budget:
+The left side of the card shows the project's auto-generated avatar, its name, the creation date, and — for the owner or an admin — the **Deactivate**/**Activate** button. The right side shows the project's activity and budget:
 
 | Card | Description |
 |------|-------------|
-| **Total Tokens Used** | All input + output tokens this project has consumed |
-| **Coins Spent** | Total coins spent by this project |
-| **Coin Pool** | Current balance (or **Unlimited** / **Not configured**) |
-| **Coin Refill** | Auto-refill rate and countdown to next refill |
+| **Managers** | Number of users managing this project |
+| **Coins Used** | Total coins spent by this project |
+| **Tokens Used** | All input + output tokens this project has consumed |
+| **Favorite Model** | The model this project has sent the most requests to |
+| **Coins Available** | Current balance (or **Unlimited** / not configured) |
+| **Refill Rate** | Auto-refill rate and countdown to next refill |
 
 ## Managers
 
