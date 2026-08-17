@@ -29,9 +29,9 @@ class ModelConfig(db.Model):
     output_cost_per_million: Mapped[Decimal] = mapped_column(db.Numeric(12, 6), comment="USD cost per one million output tokens")
     # USD cost per hour of audio; only set for speech-to-text (ASR) models
     audio_cost_per_hour: Mapped[Optional[Decimal]] = mapped_column(db.Numeric(12, 6), comment="USD cost per hour of audio; only set for speech-to-text models")
-    # Per-model default access ('allowed'/'blocked'); NULL means inherit group/global defaults.
-    # Ranks above group/user *defaults* but below explicit per-model allow/block rules.
-    access: Mapped[Optional[str]] = mapped_column(db.String(8), comment="Per-model default access: 'allowed', 'blocked', or NULL to inherit group/global defaults; overridden only by explicit per-scope rules")
+    # Owning user entity; NULL means the model is available to everyone.
+    # ondelete=SET NULL: deleting the owner makes the model public again.
+    owner_entity_id: Mapped[Optional[int]] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="SET NULL"), comment="Owning user entity; NULL = available to everyone. When set, only the owner and members of granted groups may use the model")
     # Requires user acknowledgement before use; model-level only, not overridable by scopes
     needs_ack: Mapped[bool] = mapped_column(db.Boolean, nullable=False, default=False, server_default=db.false(), comment="Requires user acknowledgement before use; sticky model-level property, not overridable by scopes")
     # Per-model acknowledgement message; overrides the global defaults.models.ack_message
@@ -62,6 +62,8 @@ class ModelConfig(db.Model):
 
     endpoints: Mapped[list["ModelEndpoint"]] = relationship(backref="model_config", lazy="select", cascade="all, delete-orphan", passive_deletes=True)
     stats: Mapped[list["ModelStat"]] = relationship(backref="model_config", lazy="select", passive_deletes=True)
+    owner: Mapped[Optional["Entity"]] = relationship(foreign_keys=[owner_entity_id])
+    group_grants: Mapped[list["ModelGroupAccess"]] = relationship(backref="model_config", lazy="select", cascade="all, delete-orphan", passive_deletes=True)
 
     @hybrid_property
     def active(self) -> bool:

@@ -147,6 +147,20 @@ gateway:
   timeout: "600s"
 ```
 
+### Group Rules
+
+The chart emits a **version 3** `config.yaml`. Groups, memberships, and coin pools for groups/users/projects are managed in the app (database), not in config — the only group-related value left is `config.groupRules`, which auto-assigns users to groups at login based on their OAuth profile. A user matching **all** rules of a group is added to it; a group named here is created if missing (an empty list just ensures the group exists).
+
+```yaml
+config:
+  groupRules:
+    uiuc-staff:
+      - field: affiliation
+        contains: staff@illinois.edu
+      - field: idp
+        equals: urn:mace:incommon:uiuc.edu
+```
+
 ### Models
 
 Models are registered in Lumen's config regardless of `replicas`. Use `replicas: 0` for external endpoints, `replicas: 1+` to deploy an inference server in-cluster.
@@ -171,7 +185,6 @@ models:
       inputCostPerMillion: 2.5
       outputCostPerMillion: 10.0
       contextWindow: 128000
-      access: allowed
 ```
 
 #### In-cluster vLLM deployment
@@ -223,7 +236,6 @@ models:
       inputCostPerMillion: 0.1
       outputCostPerMillion: 0.3
       contextWindow: 8192
-      access: allowed
 ```
 
 #### In-cluster SGLang deployment
@@ -263,7 +275,6 @@ models:
       inputCostPerMillion: 0.05
       outputCostPerMillion: 0.10
       contextWindow: 32768
-      access: allowed
 ```
 
 ## Values Reference
@@ -279,9 +290,9 @@ models:
 | `config.debug` | `false` | Flask debug mode |
 | `config.admins` | `[]` | Admin email addresses |
 | `config.configEditor` | `false` | Allow editing config.yaml from the `/admin/config` UI (read-only by default since the chart manages the config) |
-| `config.defaults.models.access` | `blocked` | Baseline access for models that omit `lumen.access` (`allowed`/`blocked`) |
 | `config.defaults.models.ackMessage` | `""` | Global acknowledgement message for `needsAck` models without their own |
-| `config.defaults.tokens.max` / `refresh` / `starting` | `0` | Fallback coin pool for groups/clients that omit these fields |
+| `config.defaults.tokens.max` / `refresh` / `starting` | `0` | Fallback coin pool for entities with no UI-set limit and no group pool |
+| `config.groupRules` | `{}` | Group auto-assignment rules: group name → list of OAuth rules (`field` + `contains`/`equals`). See Group Rules section |
 | `config.rateLimiting.limit` | `"30 per minute"` | Rate limit per user |
 | `oauth2.serverMetadataUrl` | CILogon OIDC URL | OIDC provider metadata URL |
 | `oauth2.redirectUri` | `""` | Auto-computed from ingress/gateway if empty |

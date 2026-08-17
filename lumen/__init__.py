@@ -63,6 +63,11 @@ def create_app():
     with open(config_yaml_path) as f:
         yaml_data = yaml.safe_load(f)
 
+    from lumen.services.config_watcher import CONFIG_VERSION_ERROR, config_version_ok
+    if not config_version_ok(yaml_data or {}):
+        print(f"ERROR: {CONFIG_VERSION_ERROR} App cannot start.", file=sys.stderr)
+        sys.exit(1)
+
     # A model is active unless explicitly disabled (or the legacy active: false).
     active_models = [
         m for m in yaml_data.get("models", [])
@@ -436,8 +441,8 @@ def create_app():
 
     app.jinja_env.filters["markdown"] = _md_filter
 
-    # Sync models and groups from yaml into DB on every startup
-    from lumen.commands import sync_groups_from_yaml, sync_models_from_yaml, sync_user_groups_from_yaml
+    # Sync models and rule groups from yaml into DB on every startup
+    from lumen.commands import sync_group_rules_from_yaml, sync_models_from_yaml
     with app.app_context():
         try:
             sync_models_from_yaml(yaml_data)
@@ -445,25 +450,10 @@ def create_app():
             print(f"WARNING: Could not sync models from yaml (run 'flask db upgrade' first): {e}",
                   file=sys.stderr)
         try:
-            sync_groups_from_yaml(yaml_data)
+            sync_group_rules_from_yaml(yaml_data)
         except Exception as e:
-            print(f"WARNING: Could not sync groups from yaml (run 'flask db upgrade' first): {e}",
+            print(f"WARNING: Could not sync group rules from yaml (run 'flask db upgrade' first): {e}",
                   file=sys.stderr)
-        try:
-            sync_user_groups_from_yaml(yaml_data)
-        except Exception as e:
-            print(f"WARNING: Could not sync user groups from yaml (run 'flask db upgrade' first): {e}",
-                  file=sys.stderr)
-
-    # Project entries and per-user coin pools are no longer read from config.yaml;
-    # they are managed in the database via the project detail / profile Edit dialogs.
-    if yaml_data.get("projects"):
-        print("WARNING: the 'projects' section in config.yaml is no longer applied; "
-              "manage project limits from the project detail page.", file=sys.stderr)
-    if any(isinstance(cfg, dict) and (cfg.get("pool") or any(k in cfg for k in ("max", "refresh", "starting")))
-           for cfg in (yaml_data.get("users") or {}).values()):
-        print("WARNING: per-user coin pools (max/refresh/starting/pool) in config.yaml are no "
-              "longer applied; manage user limits from the profile page.", file=sys.stderr)
 
     # Start background threads only in the main worker process.
     # - Werkzeug dev server: double-imports the app; only run in the child (WERKZEUG_RUN_MAIN=true).

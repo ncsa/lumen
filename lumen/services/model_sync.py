@@ -87,8 +87,13 @@ def _validate_endpoint_url(url: str) -> None:
 
     Only http/https schemes are allowed. The hostname is resolved and every
     resolved IP is checked against private, loopback, link-local, multicast,
-    and reserved ranges so neither a direct private-IP URL nor a DNS rebinding
-    attack can reach internal services.
+    and reserved ranges.
+
+    Known limitation: this check and the subsequent requests.get resolve DNS
+    independently, so an attacker who flips resolution between the two lookups
+    (DNS rebinding with a very low TTL) can still reach an internal IP. This
+    pre-check plus allow_redirects=False on the probes reduce, but do not
+    eliminate, SSRF risk.
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):

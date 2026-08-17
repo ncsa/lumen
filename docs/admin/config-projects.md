@@ -15,7 +15,7 @@ Projects are useful when:
 
 ## Managing Projects
 
-Projects live entirely in the database and are managed through the web interface — there is no `projects:` section in `config.yaml`. (If an older config still contains one, it is ignored and a warning is printed at startup.)
+Projects live entirely in the database and are managed through the web interface — there is no `projects:` section in `config.yaml`. (Config version 3 removed the section; a config that still contains one is rejected at startup — see [Admin Configuration](config.md#file-version).)
 
 - **Create** a project at `/projects` (admin only). A new project has no coin pool of its own and falls back to the global `defaults.tokens` pool (see [Admin Configuration](config.md)) or a group pool if the project is a group member.
 - **Edit** a project from its detail page (`/projects/<id>`) via the **Edit** button above the stats: the project owner or an admin can change the name and active flag; only admins can set the coin pool (**Max Coins** and **Refill Rate**). Clearing Max Coins removes the project's own pool so it falls back to the inherited group/default pool.
@@ -32,6 +32,6 @@ Setting Max Coins from the Edit dialog also sets the starting balance (what an a
 
 ### Model Access and Groups
 
-A project's model access (allow/block rules and per-project default) and group memberships are stored in the database. Group membership can grant access to models the project's own rules would otherwise block — the same group model-access resolution used for users applies to projects. Acknowledgement is a model-level property (`needs_ack` — see [Configuring Models](config-models.md#access-control)); managers grant acknowledgement on a project's behalf through the UI.
+Projects get model access the same way users do: every public (unowned) model is available to every project. Owned models are granted through groups, and there is currently **no way to add a project to a group** — group memberships created by older Lumen versions remain in effect, but new project memberships cannot be created yet (group membership dialogs are planned). Until then, a model that a project needs must stay public. Acknowledgement is a model-level property (`needs_ack` — see [Configuring Models](config-models.md#access-control)); managers grant acknowledgement on a project's behalf through the UI.
 
 > **Migration note:** older Lumen versions synced per-project budgets, model access, and groups from a `projects:` section in `config.yaml`. Rows created by that sync remain in effect in the database; the config section itself is no longer read.

@@ -48,9 +48,9 @@ def _drain(gen):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_group(db, name, active=True, model_access_default=None):
+def _make_group(db, name, active=True):
     from lumen.models.group import Group
-    g = Group(name=name, active=active, model_access_default=model_access_default)
+    g = Group(name=name, active=active)
     db.session.add(g)
     db.session.flush()
     return g
@@ -62,37 +62,50 @@ def _add_member(db, group_id, entity_id):
     db.session.flush()
 
 
-def _add_group_model_access(db, group_id, model_config_id, access_type):
-    from lumen.models.group_model_access import GroupModelAccess
-    db.session.add(GroupModelAccess(group_id=group_id, model_config_id=model_config_id, access_type=access_type))
+def _add_group_grant(db, group_id, model_config_id):
+    from lumen.models.model_group_access import ModelGroupAccess
+    db.session.add(ModelGroupAccess(group_id=group_id, model_config_id=model_config_id))
     db.session.flush()
 
 
-def test_model_access_blocked_beats_group_default_allowed(app, test_user, test_model):
-    """A model pinned access='blocked' stays blocked even for a group whose default is allowed."""
+def _make_owner(db, email="owner@example.com"):
+    """Create a separate user entity to own a model; returns its id."""
+    from lumen.models.entity import Entity
+    owner = Entity(entity_type="user", email=email, name="Owner", active=True)
+    db.session.add(owner)
+    db.session.flush()
+    return owner.id
+
+
+def _set_owner(db, model_id, owner_entity_id):
+    from lumen.models.model_config import ModelConfig
+    db.session.get(ModelConfig, model_id).owner_entity_id = owner_entity_id
+    db.session.flush()
+
+
+def test_owned_model_blocked_despite_group_membership(app, test_user, test_model):
+    """An owned model stays blocked for a group member when the group has no grant."""
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.model_config import ModelConfig
         from lumen.services.llm import get_model_access_status
-        db.session.get(ModelConfig, model_id).access = "blocked"
-        g = _make_group(db, "students", model_access_default="allowed")
+        _set_owner(db, model_id, _make_owner(db))
+        g = _make_group(db, "students")
         _add_member(db, g.id, entity_id)
         db.session.commit()
         assert get_model_access_status(entity_id, model_id) == "blocked"
 
 
-def test_explicit_group_allow_overrides_model_blocked(app, test_user, test_model):
-    """An explicit per-model group 'allowed' rule overrides the model's access='blocked' (granite-testers pattern)."""
+def test_group_grant_unblocks_owned_model(app, test_user, test_model):
+    """A group grant gives members access to an owned model (granite-testers pattern)."""
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.model_config import ModelConfig
         from lumen.services.llm import get_model_access_status
-        db.session.get(ModelConfig, model_id).access = "blocked"
+        _set_owner(db, model_id, _make_owner(db))
         g = _make_group(db, "granite-testers")
         _add_member(db, g.id, entity_id)
-        _add_group_model_access(db, g.id, model_id, "allowed")
+        _add_group_grant(db, g.id, model_id)
         db.session.commit()
         assert get_model_access_status(entity_id, model_id) == "allowed"
 
@@ -108,106 +121,102 @@ def _set_needs_ack(db, model_id):
     db.session.flush()
 
 
-def test_group_blacklist_blocks(app, test_user, test_model):
+def test_owned_model_blocked_for_non_owner(app, test_user, test_model):
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
         from lumen.extensions import db
         from lumen.services.llm import get_model_access_status
-        g = _make_group(db, "blk-group")
-        _add_member(db, g.id, entity_id)
-        _add_group_model_access(db, g.id, model_id, "blocked")
+        _set_owner(db, model_id, _make_owner(db))
         db.session.commit()
         assert get_model_access_status(entity_id, model_id) == "blocked"
 
 
-def test_group_whitelist_allows(app, test_user, test_model):
+def test_group_grant_allows_member(app, test_user, test_model):
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
         from lumen.extensions import db
         from lumen.services.llm import get_model_access_status
+        _set_owner(db, model_id, _make_owner(db))
         g = _make_group(db, "wl-group")
         _add_member(db, g.id, entity_id)
-        _add_group_model_access(db, g.id, model_id, "allowed")
+        _add_group_grant(db, g.id, model_id)
         db.session.commit()
         assert get_model_access_status(entity_id, model_id) == "allowed"
 
 
-def test_group_needs_ack(app, test_user, test_model):
+def test_group_grant_needs_ack(app, test_user, test_model):
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
         from lumen.extensions import db
         from lumen.services.llm import get_model_access_status
         _set_needs_ack(db, model_id)
+        _set_owner(db, model_id, _make_owner(db))
         g = _make_group(db, "gl-group")
         _add_member(db, g.id, entity_id)
-        _add_group_model_access(db, g.id, model_id, "allowed")
+        _add_group_grant(db, g.id, model_id)
         db.session.commit()
         assert get_model_access_status(entity_id, model_id) == "needs_ack"
 
 
-def test_group_blacklist_beats_group_whitelist(app, test_user, test_model):
+def test_grant_to_other_group_does_not_allow(app, test_user, test_model):
+    """A grant to a group the entity is not in does not open an owned model."""
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
         from lumen.extensions import db
         from lumen.services.llm import get_model_access_status
-        g1 = _make_group(db, "blk2")
-        g2 = _make_group(db, "wl2")
+        _set_owner(db, model_id, _make_owner(db))
+        g1 = _make_group(db, "mine")
+        g2 = _make_group(db, "granted-other")
         _add_member(db, g1.id, entity_id)
-        _add_member(db, g2.id, entity_id)
-        _add_group_model_access(db, g1.id, model_id, "blocked")
-        _add_group_model_access(db, g2.id, model_id, "allowed")
+        _add_group_grant(db, g2.id, model_id)
         db.session.commit()
         assert get_model_access_status(entity_id, model_id) == "blocked"
 
 
-def test_group_default_whitelist_allows(app, test_user, test_model):
+def test_public_model_allowed_for_group_member(app, test_user, test_model):
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
         from lumen.extensions import db
         from lumen.services.llm import get_model_access_status
-        g = _make_group(db, "def-wl", model_access_default="allowed")
+        g = _make_group(db, "def-wl")
         _add_member(db, g.id, entity_id)
         db.session.commit()
-        # No per-model rule; group default is allowed
+        # Ownerless model is visible to everyone regardless of groups
         assert get_model_access_status(entity_id, model_id) == "allowed"
 
 
-def test_group_default_blacklist_blocks(app, test_user, test_model):
+def test_owner_sees_own_model(app, test_user, test_model):
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.model_config import ModelConfig
         from lumen.services.llm import get_model_access_status
-        # Group default applies only when the model does not pin its own access.
-        db.session.get(ModelConfig, model_id).access = None
-        g = _make_group(db, "def-blk", model_access_default="blocked")
-        _add_member(db, g.id, entity_id)
+        _set_owner(db, model_id, entity_id)
         db.session.commit()
-        assert get_model_access_status(entity_id, model_id) == "blocked"
+        assert get_model_access_status(entity_id, model_id) == "allowed"
 
 
-def test_group_default_needs_ack(app, test_user, test_model):
+def test_public_needs_ack(app, test_user, test_model):
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
         from lumen.extensions import db
         from lumen.services.llm import get_model_access_status
         _set_needs_ack(db, model_id)
-        g = _make_group(db, "def-gl", model_access_default="allowed")
-        _add_member(db, g.id, entity_id)
         db.session.commit()
         assert get_model_access_status(entity_id, model_id) == "needs_ack"
 
 
-def test_inactive_group_ignored(app, test_user, test_model):
+def test_inactive_group_grant_ignored(app, test_user, test_model):
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
         from lumen.extensions import db
         from lumen.services.llm import get_model_access_status
-        g = _make_group(db, "inactive-g", active=False, model_access_default="blocked")
+        _set_owner(db, model_id, _make_owner(db))
+        g = _make_group(db, "inactive-g", active=False)
         _add_member(db, g.id, entity_id)
+        _add_group_grant(db, g.id, model_id)
         db.session.commit()
-        # Inactive group is ignored; per-model baseline (allowed) applies
-        assert get_model_access_status(entity_id, model_id) == "allowed"
+        # Inactive group's grant is ignored; the owned model stays blocked
+        assert get_model_access_status(entity_id, model_id) == "blocked"
 
 
 # ---------------------------------------------------------------------------
@@ -321,9 +330,8 @@ def test_check_coin_budget_no_access(app, test_user, test_model):
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
         from lumen.services.llm import check_coin_budget
-        db.session.add(EntityModelAccess(entity_id=entity_id, model_config_id=model_id, access_type="blocked"))
+        _set_owner(db, model_id, _make_owner(db))
         db.session.commit()
         ok, code, msg, _eff = check_coin_budget(entity_id, model_id)
         assert not ok

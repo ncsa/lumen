@@ -13,34 +13,37 @@ def test_models_lists_active_model(app, auth_client, test_model):
     assert test_model["model_name"].encode() in resp.data
 
 
-def test_models_blocked_model_not_listed(app, auth_client, test_model, test_user):
+def _make_other_owner(app):
+    """Create a second user entity to own a model."""
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"],
-            model_config_id=test_model["id"],
-            access_type="blocked",
-        ))
+        from lumen.models.entity import Entity
+        owner = Entity(entity_type="user", email="owner@example.com", name="Owner", active=True)
+        db.session.add(owner)
         db.session.commit()
+        return owner.id
+
+
+def test_models_owned_model_not_listed(app, auth_client, test_model, test_user):
+    """A model owned by someone else (no grant) is hidden from the list."""
+    from tests.conftest import set_model_owner
+    with app.app_context():
+        owner_id = _make_other_owner(app)
+        set_model_owner(test_model["id"], owner_id)
 
     resp = auth_client.get("/models")
     assert resp.status_code == HTTPStatus.OK
     assert test_model["model_name"].encode() not in resp.data
 
 
-def test_models_group_blacklisted_not_listed(app, auth_client, test_model, test_user):
+def test_models_inactive_granted_group_not_listed(app, auth_client, test_model, test_user):
+    """A grant through an inactive group does not make an owned model visible."""
+    from tests.conftest import grant_model_to_group, make_group_with_member, set_model_owner
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.group import Group
-        from lumen.models.group_member import GroupMember
-        from lumen.models.group_model_access import GroupModelAccess
-        group = Group(name="test-group")
-        db.session.add(group)
-        db.session.flush()
-        db.session.add(GroupMember(entity_id=test_user["id"], group_id=group.id))
-        db.session.add(GroupModelAccess(group_id=group.id, model_config_id=test_model["id"], access_type="blocked"))
-        db.session.commit()
+        owner_id = _make_other_owner(app)
+        set_model_owner(test_model["id"], owner_id)
+        group_id = make_group_with_member(test_user["id"], active=False)
+        grant_model_to_group(test_model["id"], group_id)
 
     resp = auth_client.get("/models")
     assert resp.status_code == HTTPStatus.OK
@@ -77,15 +80,10 @@ def test_model_detail_ok(auth_client, test_model):
 
 
 def test_model_detail_blocked_renders_access_denied(app, auth_client, test_model, test_user):
+    from tests.conftest import set_model_owner
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"],
-            model_config_id=test_model["id"],
-            access_type="blocked",
-        ))
-        db.session.commit()
+        owner_id = _make_other_owner(app)
+        set_model_owner(test_model["id"], owner_id)
 
     resp = auth_client.get(f"/models/{test_model['model_name']}")
     assert resp.status_code == HTTPStatus.OK

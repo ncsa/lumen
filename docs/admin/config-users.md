@@ -2,7 +2,7 @@
 
 > 🔒 **Admin only.** This page documents administrator features. Configuration lives in `config.yaml` and the in-app Config editor (`/admin/config`), which are only available to administrators.
 
-Lumen uses a group-based system to assign coin budgets and model access controls. Groups are matched to users at login using OAuth identity-provider profiles.
+Lumen uses a group-based system to assign coin budgets and grant access to owned models. As of config version 3, `config.yaml` carries only two user-management sections: `admins:` and `group_rules:`. Everything else about groups — coin pools, memberships (users and projects), and model grants — lives in the database. Rows created by older config-based syncs keep working; management dialogs for groups and pools are planned.
 
 ## Admins
 
@@ -24,70 +24,31 @@ app:
       - staff
 ```
 
-To make the dev user an admin, add their email to the top-level `admins:` list. Group membership does not grant admin status.
+`app.dev_user.groups` still works: the listed groups are assigned to the dev user at login. To make the dev user an admin, add their email to the top-level `admins:` list. Group membership does not grant admin status.
 
 `dev_user` is for development only and should be removed in production.
 
-## Groups
-
-Groups are defined under the `groups` key. Users are automatically placed into matching groups when they log in via OAuth.
-
-```yaml
-groups:
-  default:
-    max: 0
-    refresh: 0
-    starting: 0
-    model_access:
-      default: blocked
-
-  staff:
-    rules:
-      - field: affiliation
-        contains: staff@illinois.edu
-      - field: idp
-        equals: urn:mace:incommon:uiuc.edu
-    max: 20.0
-    refresh: 0.05
-    starting: 20.0
-    model_access:
-      default: allowed
-```
-
-The `max`, `refresh`, and `starting` token fields fall back to the top-level `defaults.tokens` block when omitted — a group only needs to set the fields that differ from the defaults. See [Admin Configuration](config.md) for the `defaults` block.
-
-### Group Structure
-
-| Field | Description |
-|-------|-------------|
-| `rules` | Conditions that trigger group membership at login |
-| `max` | Coin budget cap (0 = denied, -2 = unlimited) |
-| `refresh` | Coins added per hour, up to the `max` cap (0 = no refresh) |
-| `starting` | Initial coin pool when a user is first created |
-| `model_access` | Per-group model allow/block rules |
-
-### Group Model Access
-
-A group's `model_access` block sets only the **allow/block axis** for its members:
-
-```yaml
-model_access:
-  default: allowed | blocked   # baseline for models not listed below
-  allowed: [model-name, ...]   # models this group may always use
-  blocked: [model-name, ...]   # models this group may never use
-```
-
-| Field | Description |
-|-------|-------------|
-| `default` | What to do with models not named in `allowed`/`blocked`: `allowed` or `blocked` |
-| `allowed` | Models always available to this group |
-| `blocked` | Models always denied to this group |
-
-Acknowledgement is **not** a group setting — it lives on the model via `needs_ack` (see [Configuring Models](config-models.md#access-control)). A group only decides whether a model is allowed or blocked; if an allowed model has `needs_ack: true`, members still acknowledge it once before use.
-
-> **Deprecated keys:** the old `whitelist`/`blacklist`/`graylist` keys and the `graylist` default value are still accepted as input (with a deprecation warning) — `whitelist`→`allowed`, `blacklist`→`blocked`, and `graylist` maps to `allowed` plus a reminder to set `needs_ack` on the model. Prefer `allowed`/`blocked` in new configs.
-
 ## Group Rules
+
+The top-level `group_rules:` section maps a group name to a list of rules matched against the user's OAuth identity-provider profile at every login. A user matching **all** rules of a group (AND logic) is automatically added to that group:
+
+```yaml
+group_rules:
+  staff:
+    - field: affiliation
+      contains: staff@illinois.edu
+    - field: idp
+      equals: urn:mace:incommon:uiuc.edu
+```
+
+A group named under `group_rules` is created (as a bare group row) if it does not exist yet; an empty rule list just ensures the group exists:
+
+```yaml
+group_rules:
+  manual-group: []    # created if missing; members are managed in the app
+```
+
+Config sync never edits or deletes groups — removing a name from `group_rules` only stops the auto-assignment; the group and its members stay in the database.
 
 Rules match against fields in the user's OAuth identity-provider profile:
 
@@ -105,85 +66,16 @@ Rules can use two matcher types:
 | `contains` | Case-sensitive substring match | `contains: staff@illinois.edu` |
 | `equals` | Exact match | `equals: urn:mace:incommon:uiuc.edu` |
 
-All rules within a group must match for a user to be assigned that group (AND logic):
+## Everything Else Lives in the Database
 
-```yaml
-  research-bot:
-    rules:
-      - field: affiliation
-        contains: research@
-      - field: idp
-        equals: urn:mace:incommon:myuniversity.edu
-```
+Config version 3 removed the `groups:` and `users:` sections. What they used to configure is now DB-managed:
 
-## The default Group
+- **Group coin pools** (`max`/`refresh`/`starting`) — pools created by older config syncs remain in effect; group management dialogs are planned. Entities without their own pool fall back to their best group pool and then the top-level `defaults.tokens` block (see [Admin Configuration](config.md)).
+- **Explicit group memberships** (the old `users: <email>: groups: [...]`) — memberships created earlier keep working; new ones will be added through the planned group dialogs. Rule-based auto-assignment via `group_rules` is the config-driven path.
+- **Per-user coin pools** — an admin sets a user's Max Coins and Refill Rate (and can enable/disable the account) from the **Edit** button on the user's profile page (`/admin/users/<id>/profile`, or the admin's own `/profile` in admin mode).
 
-The `default` group is applied to every user on login, even if no rules match. It defines the baseline budget and model access for someone who isn't assigned to any named group. Always set it explicitly so you know the fallback behavior.
+## Groups and Model Access
 
-## Multi-Tier Access Example
+Model access follows ownership: a model with no owner is available to everyone; an owned model is available only to its owner and to members of groups the model has been granted to. Grants are managed by admins on the model detail page (see [Configuring Models](config-models.md#access-control)) — never in `config.yaml`.
 
-Here's an example with three tiers:
-
-```yaml
-groups:
-  default:                    # everyone who doesn't match a named group
-    max: 0
-    refresh: 0
-    starting: 0
-    model_access:
-      default: blocked
-      allowed: [dummy]
-
-  students:
-    rules:
-      - field: affiliation
-        contains: student@
-    max: 10.0
-    refresh: 0.02
-    starting: 10.0
-    model_access:
-      default: blocked
-      allowed: [chat-basic]   # only this model
-
-  researchers:
-    rules:
-      - field: affiliation
-        contains: faculty@
-    max: 50.0
-    refresh: 0.1
-    starting: 50.0
-    model_access:
-      default: allowed        # all models available
-      blocked: [deprecated]   # except this one
-```
-
-- A **student** gets 10 coins and may use only `chat-basic`.
-- A **researcher** gets 50 coins and can use all models except the deprecated one.
-- An **unmatched user** gets nothing.
-
-## Per-User Overrides
-
-Individual users can be configured under a top-level `users` map keyed by email. A user override is layered **on top of** their group memberships and takes precedence over group rules.
-
-```yaml
-users:
-  alice@example.edu:
-    groups: [research-bot]      # extra named groups to add (in addition to rule-matched ones)
-    model_access:
-      default: blocked          # this user's default for unlisted models
-      allowed: [model-a]        # grant a model even when its own default is blocked
-      blocked: [model-b]        # block a model for this user
-```
-
-| Field | Description |
-|-------|-------------|
-| `groups` | Named groups to add for this user, on top of any matched by group `rules`. |
-| `model_access` | Same `allowed` / `blocked` / `default` shape as a group. A user rule beats group rules. |
-
-Per-user **coin pools** are no longer configured in `config.yaml`. An admin sets a user's Max Coins and Refill Rate (and can enable/disable the account) from the **Edit** button on the user's profile page (`/admin/users/<id>/profile`, or the admin's own `/profile` in admin mode). Users without their own pool fall back to their best group pool and then `defaults.tokens`. Legacy `max`/`refresh`/`starting`/`pool` keys under `users:` are ignored with a startup warning; pools previously synced from config remain in effect in the database.
-
-**Legacy form:** an allowed-only `models: [name, ...]` list is still accepted and behaves like `model_access.allowed`. Prefer `model_access` for new config — the admin config editor writes that form.
-
-These overrides are best managed from the **Users** section of the admin config editor, which lets you search the enabled models and set each one's access for the user while showing the resulting effective access and where it comes from (this user, a group, the model's own default, or the global default).
-
-If any of those allowed models has `needs_ack: true`, the user must acknowledge it once before use — that requirement comes from the model, not from these groups.
+Acknowledgement is also not a group setting — it lives on the model via `needs_ack`; if an accessible model has `needs_ack: true`, members still acknowledge it once before use.

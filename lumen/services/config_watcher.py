@@ -10,12 +10,27 @@ from markupsafe import Markup
 _ANNOUNCEMENT_ALLOWED_TAGS = {"a", "b", "br", "em", "i", "li", "ol", "p", "strong", "ul"}
 _ANNOUNCEMENT_ALLOWED_ATTRS = {"a": ["href", "title", "target"]}
 
-from lumen.commands import sync_groups_from_yaml, sync_models_from_yaml, sync_user_groups_from_yaml
+from lumen.commands import sync_group_rules_from_yaml, sync_models_from_yaml
 
 logger = logging.getLogger(__name__)
 
-# Log the config-version deprecation warning at most once per process.
-_version_warned = False
+# Lumen 2.0 reads config version 3 only. Older configs must be migrated by hand:
+# the users:, projects:, clients:, and groups: sections were removed (groups and
+# memberships live in the database), model access is ownership-based (no access/
+# model_access keys), and OAuth auto-assignment moved to a top-level group_rules:.
+REQUIRED_CONFIG_VERSION = 3
+CONFIG_VERSION_ERROR = (
+    "config.yaml must declare 'version: 3'. Lumen 2.0 removed the users:, projects:, "
+    "clients:, and groups: sections (groups and memberships are managed in the "
+    "database), removed the access/model_access keys (model access is ownership-"
+    "based, managed on the model detail page), and moved OAuth auto-assignment "
+    "rules to a top-level 'group_rules:' section."
+)
+
+
+def config_version_ok(yaml_data: dict) -> bool:
+    """True if the config declares the required version."""
+    return int(yaml_data.get("version", 1) or 1) >= REQUIRED_CONFIG_VERSION
 
 # Shown when an early-access model is acknowledged; overridable via defaults.models.early_access_message.
 DEFAULT_EARLY_ACCESS_MESSAGE = (
@@ -26,14 +41,6 @@ DEFAULT_EARLY_ACCESS_MESSAGE = (
 
 def apply_hot_config(app, yaml_data: dict):
     """Apply hot-reloadable yaml settings to app.config. Called at startup and on config reload."""
-    global _version_warned
-    if int(yaml_data.get("version", 1) or 1) < 2 and not _version_warned:
-        logger.warning(
-            "config.yaml is missing 'version: 2'; the legacy (v1) format is deprecated and will be "
-            "migrated to v2 on the next save via the editor or Helm redeploy"
-        )
-        _version_warned = True
-
     app_cfg = yaml_data.get("app", {})
     app.config["APP_NAME"] = app_cfg.get("name", "Lumen")
     app.config["APP_TAGLINE"] = app_cfg.get("tagline", "")
@@ -78,7 +85,6 @@ def apply_hot_config(app, yaml_data: dict):
     # Legacy app.graylist_default_notice feeds the global ack_message when not set under defaults.models.
     ack_message = models_defaults.get("ack_message") or app_cfg.get("graylist_default_notice") or None
     app.config["MODEL_DEFAULTS"] = {
-        "access": models_defaults.get("access", "blocked"),
         "ack_message": ack_message,
         "early_access_message": models_defaults.get("early_access_message") or DEFAULT_EARLY_ACCESS_MESSAGE,
     }
@@ -324,6 +330,10 @@ def _watcher(app, config_path):
             with open(config_path) as f:
                 new_data = yaml.safe_load(f)
 
+            if not config_version_ok(new_data or {}):
+                logger.error("config_watcher: reload skipped — %s", CONFIG_VERSION_ERROR)
+                continue
+
             with app.app_context():
                 old_data = app.config.get("YAML_DATA", {})
                 _check_restart_required(old_data, new_data)
@@ -335,13 +345,9 @@ def _watcher(app, config_path):
                 except Exception as e:
                     logger.warning("config_watcher: sync_models_from_yaml failed: %s", e)
                 try:
-                    sync_groups_from_yaml(new_data)
+                    sync_group_rules_from_yaml(new_data)
                 except Exception as e:
-                    logger.warning("config_watcher: sync_groups_from_yaml failed: %s", e)
-                try:
-                    sync_user_groups_from_yaml(new_data)
-                except Exception as e:
-                    logger.warning("config_watcher: sync_user_groups_from_yaml failed: %s", e)
+                    logger.warning("config_watcher: sync_group_rules_from_yaml failed: %s", e)
 
             app.logger.info("config.yaml reloaded")
         except Exception:

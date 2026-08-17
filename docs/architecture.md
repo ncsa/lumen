@@ -211,7 +211,7 @@ The chat blueprint's `/chat/<id>/message` SSE endpoint is functionally a web-UI 
 |---|---|
 | `Entity` | Unified table for human users (OAuth) and service projects; `entity_type ∈ {user, project}` |
 | `APIKey` | HMAC-SHA256 hashed API keys; tracks per-key request counts, tokens, cost, `last_used_at` |
-| `Group` | Named groups with auto-assignment rules evaluated against OAuth claims at login |
+| `Group` | Named groups; login auto-assignment is driven by the `group_rules` config section |
 | `GroupMember` | Entity ↔ Group many-to-many; supports `config_managed` flag |
 | `EntityManager` | User → Project delegation (a user can manage a project's keys) |
 
@@ -227,15 +227,14 @@ The chat blueprint's `/chat/<id>/message` SSE endpoint is functionally a web-UI 
 
 | Model | Purpose |
 |---|---|
-| `EntityModelAccess` | Per-entity allow/block override for a specific model |
-| `GroupModelAccess` | Same, at group level; entity-level takes precedence |
+| `ModelGroupAccess` | Group grant for an owned model; a row gives all group members access |
 | `EntityModelConsent` | Records user acknowledgment of models with `needs_ack` set |
 
 ### LLM Catalogue
 
 | Model | Purpose |
 |---|---|
-| `ModelConfig` | Logical model (name, cost/token, capabilities, `access`/`needs_ack`/`disabled` flags) |
+| `ModelConfig` | Logical model (name, cost/token, capabilities, `owner_entity_id`, `needs_ack`/`disabled` flags) |
 | `ModelEndpoint` | Physical backend URL + API key; `healthy` flag set by health checker every 60 s |
 | `ModelStat` | Per-(entity, model, source) aggregated usage counters; `UNIQUE(entity_id, model_config_id, source)` |
 | `EntityStat` | Per-entity aggregated totals across all models; enables O(1) admin list queries |
@@ -254,14 +253,15 @@ The chat blueprint's `/chat/<id>/message` SSE endpoint is functionally a web-UI 
 Entity ──< APIKey
 Entity ──< EntityBalance
 Entity ──< EntityLimit
-Entity ──< EntityModelAccess
 Entity ──< EntityModelConsent
 Entity ──< EntityStat
 Entity ──< GroupMember >── Group ──< GroupLimit
-                                   ──< GroupModelAccess
+                                   ──< ModelGroupAccess
 Entity ──< Conversation ──< Message
 Entity ──< EntityManager (user → project)
 Entity ──< RequestLog (SET NULL on delete)
+Entity ──< ModelConfig (owner_entity_id, SET NULL on delete)
+ModelConfig ──< ModelGroupAccess
 ModelConfig ──< ModelEndpoint
 ModelConfig ──< ModelStat
 ModelConfig ──< RequestLog (SET NULL on delete)
@@ -286,7 +286,7 @@ Core proxy logic. Key functions:
 |---|---|
 | `get_next_endpoint(model)` | Round-robin load balancing across healthy endpoints only |
 | `bulk_model_access_info(entity, models)` | Batch-resolve access + consent for many models in O(n) DB queries |
-| `get_model_access_status(entity, model)` | Access resolution: entity rule → group rule → model access → group/entity/global defaults |
+| `get_model_access_status(entity, model)` | Access resolution: disabled/expired → no owner (public) → entity is owner → granted group |
 | `check_coin_budget(entity)` | Validate balance > 0 before forwarding; respects unlimited (-2) and blocked (0) sentinels |
 | `subtract_coins(entity, cost)` | Decrement `EntityBalance.coins_left`; uses `SELECT ... FOR UPDATE` |
 | `send_message_stream()` | Wraps OpenAI SDK streaming as SSE; accumulates token counts for post-request accounting |
@@ -300,7 +300,7 @@ All three workers are daemon threads started inside `create_app`. A `SERVER_IS_M
 |---|---|---|---|
 | Health checker | `services/health.py` | 60 s | Polls each `ModelEndpoint` via OpenAI `models.list()`; sets `healthy` flag |
 | Token refiller | `services/token_refill.py` | 60 s poll, hourly effective | Increments `EntityBalance` by `refresh_coins`, capped at `max_coins` |
-| Config watcher | `services/config_watcher.py` | 5 s | Hot-reloads models/groups/projects from `config.yaml`; warns on restart-required changes |
+| Config watcher | `services/config_watcher.py` | 5 s | Hot-reloads models and group-rule groups from `config.yaml` (skips files older than version 3 with a logged error); warns on restart-required changes |
 
 ---
 
@@ -318,46 +318,37 @@ For local development, set `app.dev_user.email` in `config.yaml` to bypass OAuth
 
 ### Group Auto-Assignment
 
-Groups define field/value rules evaluated against OAuth claims at every login:
+The top-level `group_rules:` config section maps group names to field/value rules evaluated against OAuth claims at every login (matching lives in `lumen/blueprints/auth/routes.py`):
 
 ```yaml
-groups:
+group_rules:
   uiuc-staff:
-    rules:
-      - field: affiliation
-        contains: staff@illinois.edu
-      - field: idp
-        equals: urn:mace:incommon:uiuc.edu
+    - field: affiliation
+      contains: staff@illinois.edu
+    - field: idp
+      equals: urn:mace:incommon:uiuc.edu
 ```
 
-A user is added to a group if **all** rules for that group match. The assignment runs on every login, so group membership is always in sync with IdP claims.
+A user is added to a group if **all** rules for that group match. The assignment runs on every login, so rule-based memberships stay in sync with IdP claims. Groups themselves (pools, explicit memberships, model grants) are DB-managed; `sync_group_rules_from_yaml` (`lumen/commands.py`) only creates a bare group row for each name in `group_rules` — it never edits or deletes groups.
 
-### Model Access Resolution (six-level priority)
+### Model Access Resolution (ownership)
 
-Explicit per-scope rules beat defaults; a model's own `access` beats group/entity
-*defaults* but is overridden by an explicit per-scope rule.
+A model may have an owner (a user). Ownership and group grants live in the DB and
+are edited by admins on the model detail page; config sync never touches them.
 
 ```
-1. EntityModelAccess  (entity-level allowed/blocked row — highest priority)
-        ↓ if absent
-2. GroupModelAccess   (per-model group rule, blocked beats allowed)
-        ↓ if absent
-3. Model access       (model_configs.access, when set: allowed | blocked)
-        ↓ if unset
-4. Group default      (groups.model_access_default: allowed | blocked)
-        ↓ if absent
-5. Entity default     (entities.model_access_default)
-        ↓ if absent
-6. Global default     (defaults.models.access)
+1. Disabled / expired  (model_configs.disabled or past end_date → blocked)
+        ↓ otherwise
+2. No owner            (owner_entity_id IS NULL → allowed for everyone)
+        ↓ otherwise
+3. Entity is owner     (entity == owner_entity_id → allowed)
+        ↓ otherwise
+4. Granted group       (entity in an active group with a ModelGroupAccess row → allowed)
+        ↓ otherwise
+5. Blocked
 ```
-`model_configs.disabled` short-circuits to blocked above all of these; `needs_ack`
-adds the consent gate without changing the allow/block decision.
 
-Access modes:
-- **allowed** — model is accessible
-- **blocked** — model is denied
-
-Two model-level properties sit outside this chain: `disabled: true` short-circuits to blocked and is not overridable by any scope, while `needs_ack: true` adds a one-time acknowledgement gate (`EntityModelConsent`) for any user allowed the model.
+`needs_ack` / `early_access` add a one-time acknowledgement gate (`EntityModelConsent`) on top of an allowed result without changing the access decision. Deleting the owner user makes the model public again (FK `SET NULL`); deleting a granted group removes the grant (cascade).
 
 ### API Key Auth (programmatic access)
 
@@ -393,15 +384,14 @@ Coin values use sentinel semantics: `-2` = unlimited, `0` = blocked, positive = 
 
 ## Configuration Management
 
-`config.yaml` is the single source of truth for runtime configuration. On each `create_app` call, models, groups, and projects are synced to the database (`config_managed=True` rows are owned by config; manual additions are preserved).
+`config.yaml` is the single source of truth for runtime configuration (version 3 required — older files are rejected at startup). On each `create_app` call, models are synced to the database and a bare group row is created for every name in `group_rules`. Groups, memberships, and coin pools for groups/users/projects are DB-managed and never edited or deleted by config sync.
 
 | Section | Controls |
 |---|---|
 | `app.*` | Name, secret_key, encryption_key, database_url, theme, db pool tuning |
 | `oauth2.*` | CILogon client credentials, scopes, redirect URI, IdP hint |
 | `models[]` | Model definitions: endpoints, costs, capabilities, notices, modalities |
-| `groups.*` | Group definitions, auto-assignment rules, coin limits, model access policies |
-| `projects.*` | Service account coin budgets and model access defaults |
+| `group_rules.*` | OAuth auto-assignment rules per group name (groups themselves are DB-managed) |
 | `chat.*` | Upload settings (allowed extensions, max size), soft/hard delete mode |
 | `rate_limiting.*` | Per-user rate limit rules, optional Redis storage URI |
 | `prometheus.*` | Metrics collection settings, optional scrape Bearer token |
@@ -409,7 +399,7 @@ Coin values use sentinel semantics: `-2` = unlimited, `0` = blocked, positive = 
 | `logs.*` | Access log toggle, model health log toggle, log level |
 | `monitoring.*` | Internal monitoring token |
 
-**Hot-reload (5 s):** The config watcher syncs models, groups, and projects to the DB without a restart. Changes to `oauth2`, `database_url`, `debug`, or `prometheus` emit a restart-required warning to logs.
+**Hot-reload (5 s):** The config watcher syncs models and `group_rules` group rows to the DB without a restart. Changes to `oauth2`, `database_url`, `debug`, or `prometheus` emit a restart-required warning to logs.
 
 Environment variables (`DATABASE_URL`, `LUMEN_SECRET_KEY`, `LUMEN_ENCRYPTION_KEY`, `OAUTH2_*`) override config.yaml values and take precedence at startup.
 
@@ -590,7 +580,7 @@ A custom `_ThemeLoader` (Jinja2 `BaseLoader`) checks the active theme directory 
 | Flask + SQLAlchemy 2.x (synchronous) | Simplicity; most latency is in LLM I/O (seconds), not request setup (ms). Synchronous code is easier to reason about for correctness. The tradeoff is thread-per-connection worker exhaustion at high concurrency. |
 | TimescaleDB hypertable for `request_logs` | Time-series partitioning enables fast time-range analytics and retention policies without schema changes. Falls back to a plain PostgreSQL table on SQLite. |
 | Coin economy abstraction | Decouples billing model from raw token counts; allows group-level budgets and refresh rates without exposing per-user pricing details to end users. |
-| Six-tier model access (entity rule > group rule > model `access` > group default > entity default > global default) | Provides fine-grained overrides at every level without per-entity configuration for every model. Explicit rules beat defaults, and a model's own `access` lets it be blocked-by-default while still grant-able to a specific group/user. The global default (`defaults.models.access`) is the final fallback. |
+| Ownership-based model access (no owner = public; owned = owner + granted groups) | One simple, DB-managed rule replaces the old six-tier allow/block precedence chain. Public models need zero configuration; restricting a model is a single owner assignment plus group grants, edited on the model detail page rather than in `config.yaml`. |
 | `config.yaml` as single source of truth with hot-reload | Operators can add/update models and groups without restarting the service; GitOps-friendly (config in a repo, applied automatically). |
 | Themes as Jinja2 loader overlays | Universities can fully brand the UI without forking application code or maintaining a separate deployment. |
 | HMAC-SHA256 API key hashing with `encryption_key` | Keys are never stored in plaintext; compromise of the DB alone does not expose usable keys. HMAC over plain SHA-256 binds the hash to the server secret. |

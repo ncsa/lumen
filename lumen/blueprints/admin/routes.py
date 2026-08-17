@@ -5,7 +5,7 @@ import yaml
 from http import HTTPStatus
 
 from flask import Blueprint, current_app, render_template, request, redirect, url_for, jsonify, session
-from sqlalchemy import func, case, select
+from sqlalchemy import func, case, delete, select
 
 from lumen.blueprints.profile.routes import _entity_groups, _get_profile_data, _gravatar_url
 from lumen.commands import write_config_yaml
@@ -23,7 +23,9 @@ from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
 from lumen.models.entity_stat import EntityStat
+from lumen.models.group import Group
 from lumen.models.model_config import ModelConfig
+from lumen.models.model_group_access import ModelGroupAccess
 from lumen.services.llm import get_model_access_status, get_model_status, get_pool_limit, has_model_consent
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
@@ -367,6 +369,108 @@ def users_search_api():
     )
     users = db.session.execute(stmt).scalars().all()
     return jsonify({"users": [{"name": u.name, "email": u.email} for u in users if u.email]})
+
+
+def _model_access_payload(mc):
+    """JSON payload describing a model's owner and group grants for the Access dialog."""
+    owner = db.session.get(Entity, mc.owner_entity_id) if mc.owner_entity_id else None
+    granted_group_ids = [
+        g.group_id for g in db.session.execute(
+            select(ModelGroupAccess).filter_by(model_config_id=mc.id)
+        ).scalars().all()
+    ]
+    # Grants through inactive groups have no effect, so offer only active
+    # groups — plus any inactive group already granted, so the stale grant
+    # stays visible and removable.
+    groups = db.session.execute(
+        select(Group).where(
+            db.or_(Group.active == True, Group.id.in_(granted_group_ids))  # noqa: E712
+        ).order_by(Group.name)
+    ).scalars().all()
+    return {
+        "owner": {"id": owner.id, "name": owner.name, "email": owner.email} if owner else None,
+        "granted_group_ids": granted_group_ids,
+        "groups": [{"id": g.id, "name": g.name, "active": g.active} for g in groups],
+    }
+
+
+def apply_model_access_edit(mc, data):
+    """Set a model's owner and group grants from an Access dialog payload.
+
+    owner_email blank/null makes the model public and drops all its grants
+    (a public model has no grants). group_ids replaces the grant set and is
+    only honored when the model has an owner. Returns an error message, or
+    None on success (caller commits).
+    """
+    # Validate everything before mutating so an error response leaves no partial edit.
+    new_owner_id = mc.owner_entity_id
+    if "owner_email" in data:
+        owner_email = (data.get("owner_email") or "").strip()
+        if not owner_email:
+            new_owner_id = None
+        else:
+            owner = db.session.execute(
+                select(Entity).where(
+                    Entity.entity_type == "user",
+                    db.func.lower(Entity.email) == owner_email.lower(),
+                )
+            ).scalar_one_or_none()
+            if owner is None:
+                return "no user with that email"
+            new_owner_id = owner.id
+
+    if new_owner_id is None:
+        mc.owner_entity_id = None
+        db.session.execute(delete(ModelGroupAccess).where(ModelGroupAccess.model_config_id == mc.id))
+        return None
+
+    if "group_ids" in data:
+        raw_ids = data.get("group_ids") or []
+        if not isinstance(raw_ids, list) or not all(isinstance(g, int) for g in raw_ids):
+            return "group_ids must be a list of group ids"
+        desired = set(raw_ids)
+        existing_ids = {
+            g.id for g in db.session.execute(select(Group).where(Group.id.in_(desired))).scalars().all()
+        } if desired else set()
+        unknown = desired - existing_ids
+        if unknown:
+            return "unknown group id(s): " + ", ".join(str(g) for g in sorted(unknown))
+        current = {
+            row.group_id: row for row in db.session.execute(
+                select(ModelGroupAccess).filter_by(model_config_id=mc.id)
+            ).scalars().all()
+        }
+        for group_id, row in current.items():
+            if group_id not in desired:
+                db.session.delete(row)
+        for group_id in desired:
+            if group_id not in current:
+                db.session.add(ModelGroupAccess(model_config_id=mc.id, group_id=group_id))
+    mc.owner_entity_id = new_owner_id
+    return None
+
+
+@admin_bp.route("/api/models/<int:mid>/access")
+@admin_required
+def model_access_api_get(mid):
+    """Owner + group grants for the model detail Access dialog."""
+    mc = db.get_or_404(ModelConfig, mid)
+    return jsonify(_model_access_payload(mc))
+
+
+@admin_bp.route("/api/models/<int:mid>/access", methods=["PATCH"])
+@admin_required
+def model_access_api_patch(mid):
+    """Update a model's owner and group grants from the Access dialog."""
+    mc = db.get_or_404(ModelConfig, mid)
+    data = request.get_json(force=True, silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Expected a JSON object"}), HTTPStatus.BAD_REQUEST
+    error = apply_model_access_edit(mc, data)
+    if error:
+        return jsonify({"error": error}), HTTPStatus.BAD_REQUEST
+    db.session.commit()
+    return jsonify(_model_access_payload(mc))
 
 
 @admin_bp.route("/api/sync_model", methods=["POST"])

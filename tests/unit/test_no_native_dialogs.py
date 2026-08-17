@@ -4,7 +4,7 @@ alert()/confirm()/prompt() are unstyled, block the event loop, and cannot be
 themed or made accessible. All user-facing dialogs must be styled Bootstrap
 modals instead — use the shared appAlert()/appConfirm()/appPrompt() helpers in
 static/js/app.js (backed by the #app-dialog modal in base.html), or a bespoke
-modal like the user-search or graylist-consent ones. See CLAUDE.md.
+modal like the user-search or ack-consent ones. See CLAUDE.md.
 """
 import re
 from pathlib import Path

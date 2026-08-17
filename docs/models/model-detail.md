@@ -28,6 +28,20 @@ This card appears when the model requires acknowledgment before use:
 
 Click the button to give one-time consent. The dialog lists everything that applies: the model's notice (when it requires acknowledgment) and an early-access warning (when the model is an early-access preview that may change or be removed). One click acknowledges all of it. After acknowledging, the model is immediately available in the chat interface and API. If the model later gains a new requirement — for example it becomes early access — you are asked to acknowledge once more.
 
+#### Access (Admin Only)
+
+![Access card showing the model's owner and granted groups](../img/model-access.png)
+
+Administrators see an **Access** card showing who may use the model: either **Public** (available to everyone) or the model's **owner** and the groups it has been granted to. A model with no owner is available to all users and projects; an owned model is available only to its owner and to members of the granted groups.
+
+The pencil button opens the **Edit Access** dialog:
+
+- **Owner** — a typeahead field that searches users by name or email; pick a user to make them the owner.
+- **Make public** — clears the owner (and grants become irrelevant), making the model available to everyone.
+- **Groups** — checkboxes selecting which groups are granted access to the owned model.
+
+Ownership and grants are stored in the database and are not part of `config.yaml` — see [Configuring Models](../admin/config-models.md#access-control).
+
 #### Availability
 
 | Field | Description |

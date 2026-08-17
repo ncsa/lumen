@@ -8,7 +8,7 @@
 # Secrets are NOT stored here. Provide them at capture time via environment:
 #   LUMEN_SECRET_KEY, LUMEN_ENCRYPTION_KEY (any non-empty dev value), and
 #   DATABASE_URL (a PostgreSQL/TimescaleDB URL — usage charts need Postgres).
-version: 2
+version: 3
 
 app:
   name: Lumen
@@ -39,37 +39,22 @@ rate_limiting:
 
 defaults:
   models:
-    access: blocked
     ack_message: This model was trained outside the U.S. and may contain biases — use with awareness.
   tokens:
     max: 50
     refresh: 0.1
     starting: 50
 
-groups:
+# Groups and coin pools live in the database; rules only drive OAuth auto-assignment.
+group_rules:
   staff:
-    max: 50
-    refresh: 0.1
-    starting: 50
-    model_access:
-      default: allowed
-    rules:
-    - field: affiliation
-      contains: staff@example.edu
-
-projects:
-  default:
-    max: 100
-    refresh: 0.05
-    starting: 100
-    model_access:
-      default: allowed
+  - field: affiliation
+    contains: staff@example.edu
 
 models:
 - name: qwen2.5-7b-instruct
   description: Qwen2.5 7B instruction-tuned — general-purpose chat.
   url: https://huggingface.co/Qwen/Qwen2.5-7B-Instruct
-  access: allowed
   input_cost_per_million: 0.15
   output_cost_per_million: 0.6
   endpoints:
@@ -79,7 +64,6 @@ models:
 - name: qwen2.5-coder-7b
   description: Qwen2.5 Coder 7B — optimized for code generation.
   url: https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct
-  access: allowed
   input_cost_per_million: 0.15
   output_cost_per_million: 0.6
   endpoints:
@@ -89,7 +73,6 @@ models:
 - name: mistral-7b-instruct
   description: Mistral 7B Instruct v0.3.
   url: https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3
-  access: allowed
   input_cost_per_million: 0.2
   output_cost_per_million: 0.6
   endpoints:
@@ -99,7 +82,6 @@ models:
 - name: qwen2.5-14b-instruct
   description: Qwen2.5 14B instruction-tuned — larger general model.
   url: https://huggingface.co/Qwen/Qwen2.5-14B-Instruct
-  access: allowed
   input_cost_per_million: 0.3
   output_cost_per_million: 1.2
   endpoints:
@@ -109,7 +91,6 @@ models:
 - name: phi-3.5-mini
   description: Microsoft Phi-3.5-mini instruction-tuned — lightweight model.
   url: https://huggingface.co/microsoft/Phi-3.5-mini-instruct
-  access: allowed
   input_cost_per_million: 0.05
   output_cost_per_million: 0.1
   endpoints:

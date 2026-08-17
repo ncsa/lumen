@@ -5,11 +5,11 @@ Lumen is a self-hosted AI gateway. It provides a web chat interface and an OpenA
 **Key features:**
 - Web chat interface for AI models (OpenAI-compatible endpoints, Ollama, vLLM, etc.)
 - OpenAI-compatible API proxy — use Lumen as a drop-in endpoint from any tool or script
-- Projects (machine-to-machine accounts) with their own coin pools and model access rules
+- Projects (machine-to-machine accounts) with their own coin pools
 - File and document uploads in chat (text, PDF, images — configurable per deployment)
 - Login via your institution's identity provider through CILogon
 - Token budgets per user and group — with optional auto-refresh
-- Per-model access control: whitelist, blacklist, and graylist (requires user acknowledgment)
+- Ownership-based model access: models are available to everyone unless an owner is assigned, then only the owner and explicitly granted groups can use them; models can additionally require a one-time user acknowledgment
 - Admin panel to manage users, groups, usage, and analytics charts
 - Institutional theming (built-in: `default`, `illinois`, `uic`, `uis`)
 - Round-robin load balancing across multiple model backends
@@ -77,6 +77,8 @@ cp config.yaml.example config.yaml
 Edit `config.yaml` with at minimum:
 
 ```yaml
+version: 3
+
 app:
   secret_key: "any-random-string"
   encryption_key: "another-random-string"
@@ -98,7 +100,6 @@ The repo includes a lightweight echo server that mirrors your message back with 
 ```yaml
 models:
   - name: dummy
-    active: true
     input_cost_per_million: 0.0
     output_cost_per_million: 0.0
     endpoints:
@@ -141,6 +142,8 @@ Visit `http://localhost:5001`, click **Login**, and you'll be auto-logged in as 
 ---
 
 ## Configuration Reference (`config.yaml`)
+
+The config file must declare `version: 3` at the top level — the app refuses to start on older config versions. Version 3 removed the `users:`, `projects:`, `clients:`, and `groups:` sections: groups, memberships, and coin pools are managed in the database, model access is ownership-based (managed on each model's detail page), and OAuth auto-assignment rules moved to a top-level `group_rules:` section (see below).
 
 ### App settings
 
@@ -204,7 +207,6 @@ Each model entry defines a name users will see and one or more backend endpoints
 ```yaml
 models:
   - name: gpt-4o
-    active: true
     input_cost_per_million: 5.0    # for usage tracking only
     output_cost_per_million: 15.0
     description: "OpenAI GPT-4o"   # optional short description shown in the UI
@@ -222,7 +224,6 @@ models:
         # model: gpt-4o            # optional — overrides the name sent to this endpoint
 
   - name: llama3
-    active: true
     input_cost_per_million: 0.0
     output_cost_per_million: 0.0
     endpoints:
@@ -231,82 +232,34 @@ models:
         model: llama3.2
 ```
 
-Set `active: false` to hide a model without removing it.
+Set `disabled: true` to hide a model without removing it. A model can also require a one-time user acknowledgment before use (`needs_ack: true`, with an optional per-model `ack_message`), be flagged `early_access: true`, or carry an `end_date` after which it is hidden and rejected.
 
 ### Model access control
 
-Lumen supports three access levels for each model:
+Model access is **ownership-based** and managed in the web UI, not in `config.yaml`. For each user or project and each model:
 
-| Level | Meaning |
-|-------|---------|
-| **whitelist** | Explicitly allowed — no acknowledgment required |
-| **graylist** | Visible to users, but requires a one-time acknowledgment before use |
-| **blacklist** | Blocked — model is hidden from users |
+1. A `disabled` model or one past its `end_date` is blocked for everyone.
+2. A model **without an owner** is available to everyone (users and projects).
+3. An **owned** model is available only to its owner and to members of active groups the model has been granted to.
+4. A visible model with `needs_ack` or `early_access` requires a one-time acknowledgment before use.
 
-Access is resolved in this order for each user + model combination:
-
-1. **User override** (admin-set per-user rule) — wins over everything else
-2. **Group per-model rules** — blacklist beats whitelist beats graylist
-3. **Effective default** — most permissive group `model_access.default` wins; falls back to `allowed`
-
-#### Per-group model access
-
-Each group can define its own `model_access:` section:
-
-```yaml
-groups:
-  restricted:
-    model_access:
-      default: blacklist        # deny all models for this group
-      whitelist: [safe-a, safe-b]
-
-  vip:
-    model_access:
-      whitelist: [experimental] # VIP users skip graylist acknowledgment
-
-  all-allowed:
-    model_access:
-      default: whitelist        # allow everything for this group
-```
-
-When a user belongs to multiple groups, the **most permissive default wins** (e.g. if one group has `default: whitelist` and another has `default: blacklist`, the user gets whitelist). For per-model rules, blacklist always beats whitelist/graylist.
+Admins assign the owner and group grants from the **Access** card on the model's detail page (`/models/<name>`): pick an owner via user search, or click **Make public** to clear it, and check the groups that should have access.
 
 ### Groups and coin budgets
 
-Groups control how many coins users can spend. Coins map to cost in USD (e.g. 1 coin ≈ $1 of model usage at your configured rates). Every user gets the `default` group automatically. You can create additional groups and assign users manually via the admin panel, or auto-assign them based on CILogon attributes.
-
-```yaml
-groups:
-  default:
-    max: 0          # coin budget (0 = blocked, -2 = unlimited)
-    refresh: 0      # coins added per hour (0 = no auto-refresh)
-    starting: 0     # coins granted on first login
-
-  faculty:
-    max: 50         # $50 total budget
-    refresh: 0.5    # $0.50/hr auto-refresh
-    starting: 10    # $10 on first login
-```
-
-Coin budget resolution follows the same priority as model access: a **per-user limit always wins over group limits**. If a user has a per-user limit (set via `users:` in `config.yaml`), that value is used regardless of what any group grants. If no per-user limit exists, the most generous group limit applies (`-2` unlimited beats any positive value).
-
-To cap a specific user below their group's budget, set a per-user limit via the `users:` key in `config.yaml`.
+Groups control how many coins users can spend. Coins map to cost in USD (e.g. 1 coin ≈ $1 of model usage at your configured rates). Groups, their memberships, and their coin pools live in the database. Per-user pools are set from the Edit dialog on a user's profile (admin only); when a user has no pool of their own, the most generous group pool applies (`-2` unlimited beats any positive value), falling back to the global `defaults.tokens` pool.
 
 #### Auto-assignment rules
 
-Automatically add users to a group at login based on their CILogon attributes (requires the `org.cilogon.userinfo` scope):
+The top-level `group_rules:` section automatically adds users to a group at login based on their CILogon attributes (requires the `org.cilogon.userinfo` scope). A user must match **all** rules of a group to be added; a group named here is created automatically if it does not exist yet.
 
 ```yaml
-groups:
+group_rules:
   staff:
-    rules:
-      - field: affiliation
-        contains: staff@illinois.edu   # substring match
-      - field: idp
-        equals: urn:mace:incommon:uiuc.edu   # exact match
-    max: 20
-    refresh: 0.05
-    starting: 20
+    - field: affiliation
+      contains: staff@illinois.edu   # substring match
+    - field: idp
+      equals: urn:mace:incommon:uiuc.edu   # exact match
 ```
 
 Supported fields: `affiliation`, `member_of`, `idp`, `ou`. Groups assigned by rules are automatically removed if the rule no longer matches on next login.
@@ -380,17 +333,16 @@ Explicit `pool_size` / `max_overflow` are honored only if they fit within 80% of
 
 ### Projects
 
-Projects are machine-to-machine accounts — scripts, applications, or automated pipelines — that talk to Lumen's OpenAI-compatible API using an API key instead of logging in via OAuth. They are distinct from human users: they have no email address, no web chat access, and no per-user coin budget. Instead, each project has its own coin pool and model access rules.
+Projects are machine-to-machine accounts — scripts, applications, or automated pipelines — that talk to Lumen's OpenAI-compatible API using an API key instead of logging in via OAuth. They are distinct from human users: they have no email address, no web chat access, and no per-user coin budget. Instead, each project has its own coin pool.
 
 **Creating and managing projects**
 
 Admins create projects via the **Projects** page in the web UI (or via the API). Each project has:
 - One or more named API keys (generated in the UI, shown once, then hashed)
-- A coin pool (balance, cap, and optional hourly refill)
-- A model access policy (whitelist / blacklist / graylist)
+- A coin pool (balance, cap, and optional hourly refill), set by admins from the Edit dialog on the project detail page
 - One or more **managers** — regular users who can view and rotate that project's keys
 
-Managers can see the project's detail page and issue new keys but cannot change budgets or model access. Only admins can create projects, adjust budgets, or assign managers.
+Managers can see the project's detail page and issue new keys but cannot change budgets. Only admins can create projects, adjust budgets, or assign managers.
 
 **Using a project API key**
 
@@ -403,35 +355,11 @@ api_key:  sk_...
 
 **Coin pools**
 
-Project coin pools work the same as user coin pools — each request deducts coins based on tokens used at the model's configured rate. The pool recharges at `refresh` coins per hour up to the `max` cap.
-
-**Default coin pool from config**
-
-The `projects:` block in `config.yaml` sets the default pool parameters for all projects and optional named overrides:
-
-```yaml
-projects:
-  default:
-    max: 100.0        # coin budget (-2 = unlimited, 0 = blocked)
-    refresh: 0.0      # coins added per hour
-    starting: 100.0   # coins when the pool is first created
-    model_access:
-      default: whitelist   # allow all models unless explicitly listed
-
-  research-bot:            # named override for this specific project
-    max: 500.0
-    refresh: 1.0
-    starting: 500.0
-    model_access:
-      default: blacklist   # deny all models not in whitelist
-      whitelist: [gpt-4o, llama3]
-```
-
-Named entries match on the project's name as set in the UI. If a project has no named entry, `default` applies. Changes to `config.yaml` do **not** retroactively update existing coin pools — pool parameters are written to the database when the pool is first created.
+Project coin pools work the same as user coin pools — each request deducts coins based on tokens used at the model's configured rate. The pool recharges at `refresh` coins per hour up to the `max` cap. A project without its own pool falls back to the global `defaults.tokens` pool.
 
 **Model access for projects**
 
-Projects follow the same whitelist / blacklist / graylist rules as users. Projects cannot be assigned graylist directly; a manager must visit the project's detail page and click **Accept** on any graylisted model before the project can use it.
+Projects follow the same ownership rules as users: every public (unowned) model is available. For models that require acknowledgment (`needs_ack`), a manager must visit the project's detail page and click **Accept** before the project can use them.
 
 ### Monitoring
 

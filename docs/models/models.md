@@ -1,6 +1,6 @@
 # Models
 
-The **Models** page (`/models`) shows every AI model available in your Lumen instance, along with its pricing and current health.
+The **Models** page (`/models`) shows every AI model available to you in your Lumen instance, along with its pricing and current health. Models that are owned by another user and not granted to any of your groups are not listed.
 
 ![Models dashboard](../img/models.png)
 

@@ -1,3 +1,5 @@
+version: 3
+
 app:
   name: Lumen
   tagline: Illuminating AI access
@@ -21,7 +23,6 @@ app:
     pool_recycle: 1800   # recycle connections after N seconds to avoid stale-connection errors
   debug: true   # set to false in production
   # announcement: ""  # WARNING: rendered as raw HTML — trusted operator input only; never accept user content here.
-  # graylist_default_notice: "..."  # fallback notice shown for any graylisted model with no per-model notice set
   # theme: illinois  # Theme to use; themes live in themes/<name>/. Built-in: default, illinois, uic, uis
   # dev_user: dev@example.com  # Allows bypass of OAuth; can log in as this email directly
   # dev_user:                  # Extended form: also assigns group memberships on every login
@@ -50,7 +51,7 @@ admins:
   - admin@example.com
 
 api:
-  consent: true  # set to false to exempt API requests from the graylist model-consent requirement
+  consent: true  # set to false to exempt API requests from the model acknowledgement (needs_ack) requirement
 
   prometheus:
     enabled: false
@@ -89,34 +90,21 @@ rate_limiting:
   # storage_url: redis://localhost:6379/0  # omit for in-memory (single-process); requires restart to change
   limit: "30 per minute"  # applies to every endpoint, keyed by authenticated user identity
 
-groups:
-  # Groups are created/managed via the admin UI. Rules here auto-assign users at login
-  # based on CILogon userinfo fields (requires org.cilogon.userinfo scope).
-  # Supported matchers: contains (substring) or equals (exact match).
-
+# Groups, memberships, and coin pools are managed in the database, not here.
+# group_rules auto-assigns users to a group at login based on CILogon userinfo
+# fields (requires org.cilogon.userinfo scope). A group named here is created if
+# it does not exist. Matchers: contains (substring) or equals (exact match); a
+# user must match ALL rules of a group to be added.
+# Model access is ownership-based and managed on each model's detail page.
+group_rules: {}
   # aifarms:
-  #   rules:
-  #     - field: member_of
-  #       contains: icc-grp-aifarms   # substring match against the member_of field
-  #   max: 0
-  #   refresh: 0
-  #   model_access:
-  #     whitelist: [gpt-4o, claude-3]   # these models skip graylist for aifarms members
-  #     blacklist: [deprecated-model]
-
-  # restricted-group:
-  #   model_access:
-  #     default: blacklist    # deny everything not in whitelist for this group
-  #     whitelist: [safe-a, safe-b]
-
+  #   - field: member_of
+  #     contains: icc-grp-aifarms   # substring match against the member_of field
   # staff:
-  #   rules:
-  #     - field: affiliation
-  #       contains: staff@illinois.edu
-  #     - field: idp
-  #       equals: urn:mace:incommon:uiuc.edu   # exact match
-  #   max: 0
-  #   refresh: 0
+  #   - field: affiliation
+  #     contains: staff@illinois.edu
+  #   - field: idp
+  #     equals: urn:mace:incommon:uiuc.edu   # exact match
 
 models:
   # The top-level "name" is Lumen's internal model identifier — what callers use in API requests.
@@ -124,7 +112,6 @@ models:
   # allowing endpoints with different model identifiers to back the same Lumen model.
 
   - name: gpt-4o
-    active: true
     input_cost_per_million: 5.0     # coins per 1M input tokens
     output_cost_per_million: 15.0   # coins per 1M output tokens
     # max_input_tokens: 128000        # optional; context window size
@@ -138,7 +125,6 @@ models:
         api_key: sk-def456          # second key; round-robin between these two
 
   - name: gpt-4o-mini
-    active: true
     input_cost_per_million: 0.15
     output_cost_per_million: 0.6
     endpoints:
@@ -146,7 +132,6 @@ models:
         api_key: sk-abc123
 
   - name: claude-3-opus
-    active: true
     input_cost_per_million: 15.0
     output_cost_per_million: 75.0
     endpoints:
@@ -157,7 +142,6 @@ models:
   # Ollama — local models via OpenAI-compatible API (http://localhost:11434/v1)
   # Ollama doesn't enforce API keys; use any non-empty string.
   - name: llama3
-    active: true
     input_cost_per_million: 0.0
     output_cost_per_million: 0.0
     endpoints:
@@ -166,7 +150,6 @@ models:
         model: llama3.2             # actual tag pulled in Ollama
 
   - name: mistral
-    active: true
     input_cost_per_million: 0.0
     output_cost_per_million: 0.0
     endpoints:
@@ -177,7 +160,6 @@ models:
   # Example: same Lumen model name backed by both a cloud endpoint and a local Ollama fallback.
   # Round-robin will distribute load; the health checker will skip unhealthy ones.
   - name: phi3
-    active: true
     input_cost_per_million: 0.0
     output_cost_per_million: 0.0
     endpoints:

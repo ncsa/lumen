@@ -59,7 +59,7 @@ def ensure_demo_data(app):
             user = Entity(entity_type="user", email=DEMO_USER, name="Demo User",
                           initials="DU", active=True)
             db.session.add(user)
-        user.model_access_default = "allowed"  # see every model on the detail page
+        # Models without an owner are visible to everyone, so no access setup is needed.
 
         project = db.session.execute(
             select(Entity).filter_by(name="example-bot", entity_type="project")
@@ -88,12 +88,29 @@ def ensure_demo_data(app):
             select(EntityManager).filter_by(user_entity_id=dev.id, project_entity_id=project.id)
         ).scalar_one_or_none():
             db.session.add(EntityManager(user_entity_id=dev.id, project_entity_id=project.id, is_owner=True))
+
+        # Give one model an owner and a group grant so the admin Access card
+        # (model-access.png) shows a populated example instead of "Everyone".
+        from lumen.models.group import Group
+        from lumen.models.model_group_access import ModelGroupAccess
+        owned = db.session.execute(
+            select(ModelConfig).where(ModelConfig.active).order_by(ModelConfig.model_name)
+        ).scalars().all()
+        owned = owned[1] if len(owned) > 1 else None
+        if dev and owned:
+            owned.owner_entity_id = dev.id
+            grp = db.session.execute(select(Group).filter_by(name="staff")).scalar_one_or_none()
+            if grp and not db.session.execute(
+                select(ModelGroupAccess).filter_by(model_config_id=owned.id, group_id=grp.id)
+            ).scalar_one_or_none():
+                db.session.add(ModelGroupAccess(model_config_id=owned.id, group_id=grp.id))
         db.session.commit()
+        owned_name = owned.model_name if owned else None
 
         cookie = app.session_interface.get_signing_serializer(app).dumps({
             "entity_id": user.id, "entity_name": user.name, "initials": user.initials,
             "entity_email": DEMO_USER, "gravatar_hash": ""})
-        return model, cookie
+        return model, cookie, owned_name
 
 
 def launch(pw):
@@ -114,7 +131,7 @@ def hide_chrome(page):
 
 def main():
     app = create_app()
-    model, cookie = ensure_demo_data(app)
+    model, cookie, owned_name = ensure_demo_data(app)
     os.makedirs(OUT, exist_ok=True)
 
     with sync_playwright() as pw:
@@ -175,6 +192,29 @@ def main():
         href = page.eval_on_selector("a[href*='/projects/']", "e => e.getAttribute('href')")
         shot(href, "project-detail", full=True)
         shot("/profile", "profile", full=True)
+
+        # Admin-only Access card on an owned model's detail page (cropped to the
+        # card). The card renders only in admin mode, so flip the toggle first.
+        if owned_name:
+            page.goto(BASE + "/profile", wait_until="networkidle")
+            page.evaluate("""async () => {
+                const token = document.querySelector('meta[name="csrf-token"]').content;
+                await fetch('/profile/settings/admin-mode', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json', 'X-CSRFToken': token},
+                    body: JSON.stringify({enabled: true}),
+                });
+            }""")
+            page.goto(f"{BASE}/models/{owned_name}", wait_until="networkidle")
+            page.wait_for_timeout(1200)
+            hide_chrome(page)
+            card = page.query_selector("#model-access-edit-btn")
+            if card:
+                card.evaluate("btn => btn.closest('.card').scrollIntoView()")
+                page.query_selector("#model-access-edit-btn").evaluate(
+                    "btn => btn.closest('.card').id = 'shot-access-card'")
+                page.locator("#shot-access-card").screenshot(path=f"{OUT}/model-access.png")
+                print("model-access.png (admin)")
         actx.close()
 
         # ---- non-admin view (no admin-only endpoint URLs) ----

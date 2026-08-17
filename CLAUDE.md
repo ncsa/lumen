@@ -84,7 +84,7 @@ Following rules are here to help the AI avoid the same mistakes again:
   - A streaming response-body generator must run **context-free**. `stream_with_context` is **banned** (enforced by `tests/unit/test_no_stream_with_context.py`): it re-pushes the request's app context onto whichever WSGI worker thread iterates the body, and a client disconnect abandons the generator so the push is never undone — the thread is permanently poisoned, every later request on it reuses the stuck context, and its session teardown never runs (one leaked idle-in-transaction connection per poisoned thread; Flask swallows the error so nothing is logged). Instead: capture `app = current_app._get_current_object()` and every needed scalar in the view while the request context is still current, then inside the generator wrap each DB phase in its own short-lived `with app.app_context():` that closes before the next `yield`. See `llm.py`'s `send_message_stream` and the streaming paths in `chat/routes.py`/`api/routes.py` for the template.
 - updates to the schema should be reflected in docs/dbschema.md and columns/tables should have comments.
 - Don't use bare integer HTTP codes, use `HTTPStatus` constants.
-- Never use native browser dialogs (`alert()`, `confirm()`, `prompt()`) in the UI. Use styled Bootstrap modals instead, following the existing patterns: the user-search modal (`templates/_user_search_modal.html`), the model acknowledgment/graylist consent modal (`templates/_graylist_modal.html`), or the confirmation modals like purge-conversations on the profile page. Modals must follow the accessibility rules below (`aria-labelledby`, labeled close button, focus management).
+- Never use native browser dialogs (`alert()`, `confirm()`, `prompt()`) in the UI. Use styled Bootstrap modals instead, following the existing patterns: the user-search modal (`templates/_user_search_modal.html`), the model acknowledgment consent modal (`templates/_ack_modal.html`), or the confirmation modals like purge-conversations on the profile page. Modals must follow the accessibility rules below (`aria-labelledby`, labeled close button, focus management).
 - updates to config file should be reflected in the helm chart values.yaml and values.schema.json.
 
 ## 6. Accessibility (WCAG 2.1 AA)
@@ -112,7 +112,7 @@ When writing or modifying HTML/JS:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **lumen** (3270 symbols, 7556 relationships, 231 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **lumen** (3104 symbols, 7246 relationships, 199 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 

@@ -53,7 +53,6 @@ from lumen.extensions import db
 from lumen.timeutils import utcnow
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
-from lumen.models.entity_model_access import EntityModelAccess
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
@@ -63,51 +62,15 @@ from lumen.models.request_log import RequestLog
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
 from lumen.models.group_limit import GroupLimit
-from lumen.models.group_model_access import GroupModelAccess
+from lumen.models.model_group_access import ModelGroupAccess
 from lumen.services.crypto import cache_salt_for_entity
-from lumen.models.entity import Entity
-
-def _resolve_allow_block(
-    ema_type: str,
-    gma_types: list,
-    model_access: str,
-    group_defaults: list,
-    entity_default: str,
-    global_default: str,
-) -> str:
-    """Resolve the allow/block axis to 'allowed' or 'blocked' from pre-fetched data.
-
-    Precedence (highest to lowest) — explicit rules beat defaults, and a model's own
-    default beats group/entity defaults but is overridden by explicit per-scope rules:
-    1. Entity per-model rule (ema_type)
-    2. Group per-model rule (gma_types) — blocked beats allowed
-    3. Per-model default (model_access), when set
-    4. Group default (group_defaults) — most permissive (allowed) wins
-    5. Entity-level default (entity_default)
-    6. Global default (defaults.models.access)
-    """
-    if ema_type is not None:
-        return "allowed" if ema_type == "allowed" else "blocked"
-    if gma_types:
-        return "blocked" if "blocked" in gma_types else "allowed"
-    if model_access:
-        return "allowed" if model_access == "allowed" else "blocked"
-    if group_defaults:
-        return "allowed" if "allowed" in group_defaults else "blocked"
-    if entity_default:
-        return "allowed" if entity_default == "allowed" else "blocked"
-    return "allowed" if global_default == "allowed" else "blocked"
-
 
 def _resolve_single_access(
-    ema_type: str,
-    gma_types: list,
-    group_defaults: list,
-    entity_default: str,
-    model_access: str = None,
+    is_owner: bool,
+    owner_entity_id,
+    granted: bool,
     model_needs_ack: bool = False,
     model_disabled: bool = False,
-    global_default: str = "blocked",
     model_early_access: bool = False,
     model_end_date=None,
 ) -> str:
@@ -115,15 +78,15 @@ def _resolve_single_access(
 
     - 'disabled' models and models past their end_date short-circuit to 'blocked'
       and cannot be overridden.
-    - The allow/block axis follows the precedence in _resolve_allow_block.
+    - A model without an owner (owner_entity_id is None) is visible to everyone;
+      an owned model is visible only to its owner and to members of groups the
+      model has been granted to (granted).
     - 'needs_ack' means the model has acknowledgement requirements (needs_ack
-      and/or early_access); these are model-level properties that scopes can
-      neither add nor remove.
+      and/or early_access); these are model-level properties.
     """
     if model_disabled or (model_end_date is not None and model_end_date <= utcnow()):
         return "blocked"
-    access = _resolve_allow_block(ema_type, gma_types, model_access, group_defaults, entity_default, global_default)
-    if access == "blocked":
+    if owner_entity_id is not None and not is_owner and not granted:
         return "blocked"
     return "needs_ack" if (model_needs_ack or model_early_access) else "allowed"
 
@@ -166,49 +129,35 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
     per-model calls to get_model_access_status / has_model_consent.
     """
     if not model_config_ids:
-        return {}, set()
+        return {}, {}
 
     baseline = {
         r.id: r
         for r in db.session.execute(
-            select(ModelConfig.id, ModelConfig.access, ModelConfig.needs_ack, ModelConfig.disabled,
+            select(ModelConfig.id, ModelConfig.owner_entity_id, ModelConfig.needs_ack, ModelConfig.disabled,
                    ModelConfig.early_access, ModelConfig.end_date)
             .where(ModelConfig.id.in_(model_config_ids))
         ).all()
     }
+    # Ids that don't resolve to a model are a caller bug; resolving them to a
+    # status here would silently fail open (no owner row -> public).
+    unknown = set(model_config_ids) - baseline.keys()
+    if unknown:
+        raise ValueError(f"unknown model_config_id(s): {sorted(unknown)}")
 
-    ema_by_model = {
-        r.model_config_id: r.access_type
-        for r in db.session.execute(
-            select(EntityModelAccess).where(
-                EntityModelAccess.entity_id == entity_id,
-                EntityModelAccess.model_config_id.in_(model_config_ids),
-            )
-        ).scalars().all()
-    }
-
-    group_ids = _get_active_group_ids(entity_id)
-
-    gma_by_model: dict = {}
-    group_defaults: list = []
-    if group_ids:
-        for r in db.session.execute(
-            select(GroupModelAccess).where(
-                GroupModelAccess.group_id.in_(group_ids),
-                GroupModelAccess.model_config_id.in_(model_config_ids),
-            )
-        ).scalars().all():
-            gma_by_model.setdefault(r.model_config_id, []).append(r.access_type)
-
-        group_defaults = [
-            g.model_access_default
-            for g in db.session.execute(
-                select(Group).where(Group.id.in_(group_ids), Group.model_access_default.isnot(None))
-            ).scalars().all()
-        ]
-
-    entity = db.session.get(Entity, entity_id)
-    entity_default = entity.model_access_default if entity else None
+    # Group grants only matter for owned models the entity does not own itself.
+    granted_ids: set = set()
+    if any(r.owner_entity_id is not None and r.owner_entity_id != entity_id for r in baseline.values()):
+        group_ids = _get_active_group_ids(entity_id)
+        if group_ids:
+            granted_ids = {
+                mc_id for (mc_id,) in db.session.execute(
+                    select(ModelGroupAccess.model_config_id).where(
+                        ModelGroupAccess.group_id.in_(group_ids),
+                        ModelGroupAccess.model_config_id.in_(model_config_ids),
+                    )
+                ).all()
+            }
 
     # Only models whose acknowledgement requirements are ALL satisfied appear in
     # consent_map; a requirement added after consent leaves its timestamp NULL,
@@ -226,21 +175,17 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
             if times:
                 consent_map[r.model_config_id] = max(times)
 
-    global_default = current_app.config.get("MODEL_DEFAULTS", {}).get("access", "blocked")
     access_statuses: dict = {}
     for mc_id in model_config_ids:
-        mc = baseline.get(mc_id)
+        mc = baseline[mc_id]
         access_statuses[mc_id] = _resolve_single_access(
-            ema_by_model.get(mc_id),
-            gma_by_model.get(mc_id, []) if group_ids else [],
-            group_defaults if group_ids else [],
-            entity_default,
-            model_access=(mc.access if mc else None),
-            model_needs_ack=(mc.needs_ack if mc else False),
-            model_disabled=(mc.disabled if mc else False),
-            global_default=global_default,
-            model_early_access=(mc.early_access if mc else False),
-            model_end_date=(mc.end_date if mc else None),
+            mc.owner_entity_id == entity_id,
+            mc.owner_entity_id,
+            mc_id in granted_ids,
+            model_needs_ack=mc.needs_ack,
+            model_disabled=mc.disabled,
+            model_early_access=mc.early_access,
+            model_end_date=mc.end_date,
         )
 
     return access_statuses, consent_map
@@ -292,7 +237,8 @@ def get_model_access_status(entity_id: int, model_config_id: int) -> str:
     """
     Return 'allowed', 'blocked', or 'needs_ack' for the given entity + model.
 
-    Resolution order: entity model access → group model rules → group defaults → entity default → per-model baseline.
+    A model without an owner is allowed for everyone; an owned model is allowed
+    only for its owner and members of groups it has been granted to.
     """
     access_statuses, _ = bulk_model_access_info(entity_id, [model_config_id])
     return access_statuses[model_config_id]

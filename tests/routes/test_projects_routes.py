@@ -104,19 +104,13 @@ def make_api_key(app):
 
 
 @pytest.fixture
-def make_graylist_access(app):
-    """Factory: mark the model needs_ack and grant allowed access (resolves to needs_ack)."""
+def make_ack_access(app):
+    """Factory: mark the (public) model needs_ack so consent is required."""
     def _make(entity_id, model_config_id):
         with app.app_context():
             from lumen.extensions import db
-            from lumen.models.entity_model_access import EntityModelAccess
             from lumen.models.model_config import ModelConfig
             db.session.get(ModelConfig, model_config_id).needs_ack = True
-            db.session.add(EntityModelAccess(
-                entity_id=entity_id,
-                model_config_id=model_config_id,
-                access_type="allowed",
-            ))
             db.session.commit()
     return _make
 
@@ -844,26 +838,26 @@ def test_delete_key_soft_deletes(app, managed_auth_client, managed_project, make
 
 
 # ---------------------------------------------------------------------------
-# Graylist consent
+# Acknowledgement consent
 # ---------------------------------------------------------------------------
 
-def test_consent_forbidden_for_non_manager(auth_client, service_project, test_model, make_graylist_access):
-    make_graylist_access(service_project["id"], test_model["id"])
+def test_consent_forbidden_for_non_manager(auth_client, service_project, test_model, make_ack_access):
+    make_ack_access(service_project["id"], test_model["id"])
     resp = auth_client.post(
         f"/projects/{service_project['id']}/consent/{test_model['model_name']}"
     )
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_consent_non_graylist_model_returns_400(app, managed_auth_client, managed_project, test_model):
+def test_consent_non_ack_model_returns_400(app, managed_auth_client, managed_project, test_model):
     resp = managed_auth_client.post(
         f"/projects/{managed_project['id']}/consent/{test_model['model_name']}"
     )
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
-def test_consent_graylist_model_succeeds(app, managed_auth_client, managed_project, test_model, make_graylist_access):
-    make_graylist_access(managed_project["id"], test_model["id"])
+def test_consent_ack_model_succeeds(app, managed_auth_client, managed_project, test_model, make_ack_access):
+    make_ack_access(managed_project["id"], test_model["id"])
     resp = managed_auth_client.post(
         f"/projects/{managed_project['id']}/consent/{test_model['model_name']}"
     )
@@ -878,9 +872,9 @@ def test_consent_graylist_model_succeeds(app, managed_auth_client, managed_proje
         assert consent is not None
 
 
-def test_consent_idempotent(app, managed_auth_client, managed_project, test_model, make_graylist_access):
+def test_consent_idempotent(app, managed_auth_client, managed_project, test_model, make_ack_access):
     """Consenting twice doesn't create duplicate rows."""
-    make_graylist_access(managed_project["id"], test_model["id"])
+    make_ack_access(managed_project["id"], test_model["id"])
     managed_auth_client.post(
         f"/projects/{managed_project['id']}/consent/{test_model['model_name']}"
     )

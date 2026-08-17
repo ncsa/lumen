@@ -34,7 +34,7 @@ def test_sync_adds_default_group(app, user):
         assert member is not None
 
 
-def test_sync_adds_named_group(app, user):
+def test_sync_adds_extra_group(app, user):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
@@ -45,11 +45,7 @@ def test_sync_adds_named_group(app, user):
         db.session.commit()
 
         entity = db.session.get(Entity, user)
-        yaml_data = {
-            "users": {"sync@example.com": {"groups": ["staff"]}},
-            "groups": {"default": {}, "staff": {}},
-        }
-        sync_user_from_yaml(entity, "sync@example.com", yaml_data)
+        sync_user_from_yaml(entity, "sync@example.com", {}, extra_groups=["staff"])
         db.session.commit()
 
         members = db.session.execute(select(GroupMember).filter_by(entity_id=user)).scalars().all()
@@ -94,12 +90,8 @@ def test_sync_rule_based_group_assignment(app, user):
 
         entity = db.session.get(Entity, user)
         yaml_data = {
-            "groups": {
-                "uiuc": {
-                    "rules": [
-                        {"field": "eppn", "contains": "@illinois.edu"}
-                    ]
-                }
+            "group_rules": {
+                "uiuc": [{"field": "eppn", "contains": "@illinois.edu"}]
             }
         }
         userinfo = {"eppn": "testuser@illinois.edu"}
@@ -123,10 +115,8 @@ def test_sync_rule_no_match_does_not_assign_group(app, user):
 
         entity = db.session.get(Entity, user)
         yaml_data = {
-            "groups": {
-                "uiuc": {
-                    "rules": [{"field": "eppn", "contains": "@illinois.edu"}]
-                }
+            "group_rules": {
+                "uiuc": [{"field": "eppn", "contains": "@illinois.edu"}]
             }
         }
         userinfo = {"eppn": "testuser@other.edu"}  # doesn't contain @illinois.edu
@@ -150,10 +140,8 @@ def test_sync_rule_equals_type(app, user):
 
         entity = db.session.get(Entity, user)
         yaml_data = {
-            "groups": {
-                "staff": {
-                    "rules": [{"field": "affiliation", "equals": "staff"}]
-                }
+            "group_rules": {
+                "staff": [{"field": "affiliation", "equals": "staff"}]
             }
         }
         userinfo = {"affiliation": "staff"}
@@ -165,74 +153,82 @@ def test_sync_rule_equals_type(app, user):
         assert member is not None
 
 
-def test_sync_user_model_whitelist(app, user):
-    """users.<email>.models list whitelists specific models for the user."""
+def test_sync_ignores_users_section(app, user):
+    """The removed users: section has no effect on memberships (config is v3)."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
-        from lumen.models.entity_model_access import EntityModelAccess
-        from lumen.models.model_config import ModelConfig
-        mc = ModelConfig(model_name="allowed-model", input_cost_per_million=1.0, output_cost_per_million=1.0, access="allowed")
-        db.session.add(mc)
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        db.session.add(Group(name="staff", active=True, config_managed=True))
         db.session.commit()
 
         entity = db.session.get(Entity, user)
-        yaml_data = {
-            "users": {"sync@example.com": {"models": ["allowed-model"]}}
-        }
+        yaml_data = {"users": {"sync@example.com": {"groups": ["staff"]}}}
         sync_user_from_yaml(entity, "sync@example.com", yaml_data)
         db.session.commit()
 
-        rule = db.session.execute(
-            select(EntityModelAccess).filter_by(entity_id=user, model_config_id=mc.id)
+        staff = db.session.execute(select(Group).filter_by(name="staff")).scalar_one()
+        member = db.session.execute(
+            select(GroupMember).filter_by(entity_id=user, group_id=staff.id)
         ).scalar_one_or_none()
-        assert rule is not None
-        assert rule.access_type == "allowed"
+        assert member is None
 
 
-def test_sync_user_model_access_allowed_blocked_default(app, user):
-    """users.<email>.model_access sets allowed/blocked rows and the entity default."""
+def test_sync_null_users_entry_is_harmless(app, user):
+    """A users: entry with a null value must not crash login sync."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
-        from lumen.models.entity_model_access import EntityModelAccess
-        from lumen.models.model_config import ModelConfig
-        a = ModelConfig(model_name="a-model", input_cost_per_million=1.0, output_cost_per_million=1.0)
-        b = ModelConfig(model_name="b-model", input_cost_per_million=1.0, output_cost_per_million=1.0)
-        db.session.add_all([a, b])
+        entity = db.session.get(Entity, user)
+        sync_user_from_yaml(entity, "sync@example.com", {"users": {"sync@example.com": None}})
         db.session.commit()
 
-        entity = db.session.get(Entity, user)
-        yaml_data = {"users": {"sync@example.com": {"model_access": {
-            "default": "blocked", "allowed": ["a-model"], "blocked": ["b-model"],
-        }}}}
-        sync_user_from_yaml(entity, "sync@example.com", yaml_data)
-        db.session.commit()
 
-        entity = db.session.get(Entity, user)
-        assert entity.model_access_default == "blocked"
-        rows = {
-            r.model_config_id: r.access_type
-            for r in db.session.execute(select(EntityModelAccess).filter_by(entity_id=user)).scalars().all()
-        }
-        assert rows == {a.id: "allowed", b.id: "blocked"}
+def _rules_sync(app, user, group_rules, userinfo):
+    """Run sync_user_from_yaml with the given group_rules and userinfo; return the user's group ids."""
+    from lumen.extensions import db
+    from lumen.models.entity import Entity
+    from lumen.models.group_member import GroupMember
+    entity = db.session.get(Entity, user)
+    sync_user_from_yaml(entity, "sync@example.com", {"group_rules": group_rules}, userinfo=userinfo)
+    db.session.commit()
+    return {m.group_id for m in db.session.execute(
+        select(GroupMember).filter_by(entity_id=user)).scalars().all()}
 
 
-def test_sync_user_model_access_replaces_previous(app, user):
-    """Re-syncing with a different model_access removes stale per-user rows."""
+def test_sync_rule_without_field_fails_closed(app, user):
+    """A rule with no 'field' key must never match — not silently match everyone."""
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity import Entity
-        from lumen.models.entity_model_access import EntityModelAccess
-        from lumen.models.model_config import ModelConfig
-        a = ModelConfig(model_name="a-model", input_cost_per_million=1.0, output_cost_per_million=1.0)
-        db.session.add(a)
+        from lumen.models.group import Group
+        g = Group(name="broken", active=True, config_managed=True)
+        db.session.add(g)
         db.session.commit()
-        entity = db.session.get(Entity, user)
+        assert g.id not in _rules_sync(app, user, {"broken": [{}]}, {"eppn": "x@y.edu"})
+        assert g.id not in _rules_sync(app, user, {"broken": [{"contains": "y.edu"}]}, {"eppn": "x@y.edu"})
 
-        sync_user_from_yaml(entity, "sync@example.com", {"users": {"sync@example.com": {"model_access": {"blocked": ["a-model"]}}}})
+
+def test_sync_mixed_fieldless_rule_blocks_group(app, user):
+    """All rules must match; one malformed rule in the list blocks the assignment."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.group import Group
+        g = Group(name="mixed", active=True, config_managed=True)
+        db.session.add(g)
         db.session.commit()
-        # Now drop the rule entirely.
-        sync_user_from_yaml(entity, "sync@example.com", {"users": {"sync@example.com": {}}})
+        rules = [{"field": "eppn", "contains": "@y.edu"}, {}]
+        assert g.id not in _rules_sync(app, user, {"mixed": rules}, {"eppn": "x@y.edu"})
+
+
+def test_sync_rule_without_matcher_fails_closed(app, user):
+    """A rule with a field but neither contains nor equals must not match."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.group import Group
+        g = Group(name="nomatcher", active=True, config_managed=True)
+        db.session.add(g)
         db.session.commit()
-        assert db.session.execute(select(EntityModelAccess).filter_by(entity_id=user)).scalars().all() == []
+        # Previously this compared the field value to "" and matched users
+        # who LACK the field entirely.
+        assert g.id not in _rules_sync(app, user, {"nomatcher": [{"field": "absent"}]}, {"eppn": "x@y.edu"})

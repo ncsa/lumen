@@ -81,12 +81,40 @@ def test_model(app):
             model_name="test-model",
             input_cost_per_million=1.0,
             output_cost_per_million=2.0,
-            access="allowed",
         )
         db.session.add(m)
         db.session.commit()
         db.session.refresh(m)
         return {"id": m.id, "model_name": m.model_name}
+
+
+def set_model_owner(model_id, owner_entity_id):
+    """Set (or clear) a model's owner. Call inside an app context; commits."""
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    db.session.get(ModelConfig, model_id).owner_entity_id = owner_entity_id
+    db.session.commit()
+
+
+def grant_model_to_group(model_id, group_id):
+    """Grant an owned model to a group. Call inside an app context; commits."""
+    from lumen.extensions import db
+    from lumen.models.model_group_access import ModelGroupAccess
+    db.session.add(ModelGroupAccess(model_config_id=model_id, group_id=group_id))
+    db.session.commit()
+
+
+def make_group_with_member(entity_id, name="test-group", active=True):
+    """Create a group containing entity_id; returns the group id. Call inside an app context; commits."""
+    from lumen.extensions import db
+    from lumen.models.group import Group
+    from lumen.models.group_member import GroupMember
+    g = Group(name=name, active=active)
+    db.session.add(g)
+    db.session.flush()
+    db.session.add(GroupMember(entity_id=entity_id, group_id=g.id))
+    db.session.commit()
+    return g.id
 
 
 @pytest.fixture

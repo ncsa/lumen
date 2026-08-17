@@ -145,7 +145,7 @@
   {% endif %}
 </div>
 <div class="table-responsive mt-2">
-  <table class="table table-striped table-hover align-middle mb-0">
+  <table class="table table-bordered table-striped table-hover align-middle mb-0">
     <caption class="visually-hidden">Users who manage this project</caption>
     <thead class="table-light">
       <tr>
@@ -213,7 +213,7 @@
   </div>
 </div>
 <div class="table-responsive">
-  <table class="table table-striped table-hover align-middle mb-0" id="key-table">
+  <table class="table table-bordered table-striped table-hover align-middle mb-0" id="key-table">
     <caption class="visually-hidden">API keys for this project</caption>
     <thead class="table-light">
       <tr>
@@ -250,7 +250,7 @@
   </div>
 </div>
 <div class="table-responsive">
-  <table class="table table-striped table-hover align-middle mb-0" id="model-table">
+  <table class="table table-bordered table-striped table-hover align-middle mb-0" id="model-table">
     <caption class="visually-hidden">Models this project can access</caption>
     <thead class="table-light">
       <tr>
@@ -355,39 +355,8 @@
    'Search for a user by name or email address.') }}
 {% endif %}
 
-<!-- Graylist Consent Modal -->
-<div class="modal fade" id="graylistModal" tabindex="-1" aria-labelledby="graylistModalLabel">
-  <div class="modal-dialog modal-lg">
-    <div class="modal-content">
-      <div class="modal-header border-warning bg-warning bg-opacity-10">
-        <h2 class="modal-title h5" id="graylistModalLabel">Access Acknowledgment</h2>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-      </div>
-      <div class="modal-body">
-        <div id="graylist-notice-section" class="mb-3" hidden>
-          <h3 class="h6 fw-semibold text-warning-emphasis">
-            <span role="img" aria-label="warning">⚠</span> Notice
-          </h3>
-          <div id="graylist-notice-body" aria-live="polite"></div>
-        </div>
-        <div id="graylist-early-section" class="mb-3" hidden>
-          <h3 class="h6 fw-semibold text-warning-emphasis">
-            <span role="img" aria-label="warning">⚠</span> Early Access
-          </h3>
-          <div id="graylist-early-body" aria-live="polite"></div>
-        </div>
-        <p class="mb-0 small">
-          This model requires acknowledgment before use. By enabling access you confirm you have read
-          any notices above and accept responsibility for appropriate use of this project.
-        </p>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-warning" id="graylist-accept-btn">Accept &amp; Enable</button>
-      </div>
-    </div>
-  </div>
-</div>
+<!-- Ack Consent Modal (shared) -->
+{% include '_ack_modal.html' %}
 
 <style>
 .profile-avatar-img { border: 1px solid rgba(0,0,0,.1); }
@@ -410,6 +379,7 @@
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
 <script src="{{ url_for('static', filename='js/user-search.js') }}"></script>
+<script src="{{ url_for('static', filename='js/ack-consent.js') }}"></script>
 <script>
 const PROJECT_ID = {{ project.id }};
 
@@ -606,7 +576,7 @@ function renderModels() {
       } else if (r.access_status === 'needs_ack' && r.consented) {
         accessCell = `<span class="badge bg-success"><span role="img" aria-label="check">✓</span> Consented</span>`;
       } else {
-        accessCell = `<button class="btn btn-sm btn-warning graylist-btn" data-name="${escHtml(r.model_name)}" data-notice="${escHtml(r.notice || '')}" data-early-notice="${escHtml(r.early_notice || '')}" aria-haspopup="dialog"><span role="img" aria-label="warning">⚠</span> Needs consent</button>`;
+        accessCell = `<button class="btn btn-sm btn-warning ack-btn" data-name="${escHtml(r.model_name)}" data-notice="${escHtml(r.notice || '')}" data-early-notice="${escHtml(r.early_notice || '')}" aria-haspopup="dialog"><span role="img" aria-label="warning">⚠</span> Needs consent</button>`;
       }
       const statusBadge = r.model_status === 'ok'
         ? `<span class="badge bg-success">ok</span>`
@@ -625,8 +595,8 @@ function renderModels() {
         <td>${statusBadge}</td>
       </tr>`;
     }).join('');
-    modelTbody.querySelectorAll('.graylist-btn').forEach(btn => {
-      btn.addEventListener('click', () => openGraylistModal(btn.dataset.name, btn.dataset.notice || null, btn.dataset.earlyNotice || null));
+    modelTbody.querySelectorAll('.ack-btn').forEach(btn => {
+      btn.addEventListener('click', () => openAckModal(btn.dataset.name, btn.dataset.notice || null, btn.dataset.earlyNotice || null));
     });
   }
 }
@@ -782,44 +752,10 @@ document.getElementById("edit-project-save-btn").addEventListener("click", async
 });
 {% endif %}
 
-// Graylist consent modal
-let graylistModelName = null;
-
-function openGraylistModal(modelName, notice, earlyNotice) {
-  graylistModelName = modelName;
-  document.getElementById("graylistModalLabel").textContent = "Access Acknowledgment: " + modelName;
-  const noticeSection = document.getElementById("graylist-notice-section");
-  const noticeBody = document.getElementById("graylist-notice-body");
-  const earlySection = document.getElementById("graylist-early-section");
-  const earlyBody = document.getElementById("graylist-early-body");
-  if (earlyNotice) {
-    earlyBody.innerHTML = DOMPurify.sanitize(marked.parse(earlyNotice));
-    earlySection.hidden = false;
-  } else {
-    earlySection.hidden = true;
-  }
-  if (notice) {
-    noticeBody.innerHTML = DOMPurify.sanitize(marked.parse(notice));
-    noticeSection.hidden = false;
-  } else {
-    noticeSection.hidden = true;
-  }
-  new bootstrap.Modal(document.getElementById("graylistModal")).show();
-}
-
-document.getElementById("graylist-accept-btn").addEventListener("click", async function () {
-  if (!graylistModelName) return;
-  const resp = await fetch("/projects/" + PROJECT_ID + "/consent/" + encodeURIComponent(graylistModelName), {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
-  });
-  if (resp.ok) {
-    bootstrap.Modal.getInstance(document.getElementById("graylistModal")).hide();
-    location.reload();
-  } else {
-    const data = await resp.json();
-    appAlert("Error: " + (data.error || "Unknown"));
-  }
-});
+// Ack consent modal (shared _ack_modal.html + ack-consent.js, posting to the project endpoint)
+const openAckModal = initAckConsent(
+  () => location.reload(),
+  name => "/projects/" + PROJECT_ID + "/consent/" + encodeURIComponent(name),
+);
 </script>
 {% endblock %}

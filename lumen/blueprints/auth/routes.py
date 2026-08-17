@@ -3,18 +3,15 @@ from http import HTTPStatus
 
 from flask import Blueprint, abort, redirect, url_for, session, render_template, current_app, jsonify
 from flask_wtf.csrf import generate_csrf
-from sqlalchemy import delete, select
+from sqlalchemy import select
 
 from lumen.extensions import db, oauth
 from lumen.timeutils import utcnow
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
-from lumen.models.entity_model_access import EntityModelAccess
-from lumen.models.model_config import ModelConfig
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
 from lumen.services.llm import get_pool_limit
-from lumen.commands import _parse_scope_access, _desired_groups_from_config
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -34,18 +31,25 @@ def make_initials(name: str) -> str:
 
 def _groups_from_userinfo_rules(userinfo: dict, yaml_data: dict, existing: list[str]) -> list[str]:
     """Return additional group names matched by CILogon attribute rules, excluding already-desired ones."""
+
+    def _rule_matches(rule):
+        # A malformed rule (no field, or neither matcher) must fail closed:
+        # matching it would silently add every user to the group.
+        if not isinstance(rule, dict) or not rule.get("field"):
+            return False
+        value = userinfo.get(rule["field"]) or ""
+        if "contains" in rule:
+            return (rule.get("contains") or "") in value
+        if "equals" in rule:
+            return value == rule["equals"]
+        return False
+
     added: list[str] = []
-    for group_name, group_def in yaml_data.get("groups", {}).items():
+    for group_name, rules in (yaml_data.get("group_rules") or {}).items():
         if group_name in existing or group_name in added:
             continue
-        rules = (group_def or {}).get("rules", [])
-        if rules and all(
-            (rule.get("contains") or "") in (userinfo.get(rule.get("field")) or "")
-            if "contains" in rule
-            else (userinfo.get(rule.get("field")) or "") == rule.get("equals", "")
-            for rule in rules
-            if rule.get("field")
-        ):
+        rules = rules or []
+        if rules and all(_rule_matches(rule) for rule in rules):
             added.append(group_name)
     return added
 
@@ -62,37 +66,18 @@ def _reconcile_group_memberships(entity: Entity, desired_ids: set) -> None:
             db.session.add(GroupMember(group_id=group_id, entity_id=entity.id, config_managed=True))
 
 
-def _apply_user_model_overrides(entity: Entity, email: str, yaml_data: dict) -> None:
-    """Reconcile per-user allowed-model lists from yaml. Does not commit."""
-    user_cfg = yaml_data.get("users", {}).get(email, {})
+def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=None, extra_groups=None):
+    """Sync config-managed group memberships. Does not commit.
 
-    # Per-user model access: `model_access` {allowed/blocked/default}, or the legacy
-    # allowed-only `models:` list. Config is the only source of a user's EntityModelAccess
-    # rows, so we delete-and-recreate.
-    ma_cfg = user_cfg.get("model_access")
-    if ma_cfg is not None:
-        pairs, user_default, ack_models = _parse_scope_access(ma_cfg, context=f"user '{email}'")
-    else:
-        pairs = [(name, "allowed") for name in user_cfg.get("models", [])]
-        user_default = None
-        ack_models = []
-    entity.model_access_default = user_default
-
-    db.session.execute(delete(EntityModelAccess).where(EntityModelAccess.entity_id == entity.id))
-    for model_name, access_type in pairs:
-        mc = db.session.execute(select(ModelConfig).filter_by(model_name=model_name)).scalar_one_or_none()
-        if mc is None:
-            continue
-        # Legacy per-user graylist keeps the model requiring acknowledgement (model property now).
-        if model_name in ack_models and not mc.needs_ack:
-            mc.needs_ack = True
-        db.session.add(EntityModelAccess(entity_id=entity.id, model_config_id=mc.id, access_type=access_type))
-
-
-def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=None):
-    """Sync group memberships and per-user model limits from yaml_data. Does not commit."""
+    Desired memberships are: the 'default' group (when it exists in the DB),
+    any extra_groups (dev login), and groups whose group_rules match userinfo.
+    Explicit per-user assignment happens in the database, not config.yaml.
+    """
     session.pop("_nav", None)
-    desired_names = _desired_groups_from_config(email, yaml_data)
+    desired_names = ["default"]
+    for name in extra_groups or []:
+        if name not in desired_names:
+            desired_names.append(name)
     if userinfo:
         desired_names += _groups_from_userinfo_rules(userinfo, yaml_data, desired_names)
 
@@ -103,7 +88,6 @@ def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=No
             desired_ids.add(group.id)
 
     _reconcile_group_memberships(entity, desired_ids)
-    _apply_user_model_overrides(entity, email, yaml_data)
 
     # Initialize coin balance on first login so usage page shows starting coins immediately
     balance = db.session.execute(select(EntityBalance).filter_by(entity_id=entity.id)).scalar_one_or_none()
@@ -147,16 +131,6 @@ def devlogin():
         abort(HTTPStatus.NOT_FOUND)
     yaml_data = current_app.config.get("YAML_DATA", {})
     dev_groups = current_app.config.get("DEV_USER_GROUPS", [])
-    if dev_groups:
-        users = dict(yaml_data.get("users") or {})
-        entry = dict(users.get(email) or {})
-        existing = list(entry.get("groups") or [])
-        for g in dev_groups:
-            if g not in existing:
-                existing.append(g)
-        entry["groups"] = existing
-        users[email] = entry
-        yaml_data = {**yaml_data, "users": users}
     name = email.split("@")[0]
 
     entity = db.session.execute(select(Entity).filter_by(email=email, entity_type="user")).scalar_one_or_none()
@@ -172,7 +146,7 @@ def devlogin():
         db.session.add(entity)
         db.session.flush()
 
-    sync_user_from_yaml(entity, email, yaml_data)
+    sync_user_from_yaml(entity, email, yaml_data, extra_groups=dev_groups)
     db.session.commit()
 
     session["entity_id"] = entity.id
