@@ -98,6 +98,7 @@ def test_middleware_warns_when_a_context_survives_the_request(app, caplog):
     """A request that leaves an app context pushed past the response body's
     close() has escaped teardown; the middleware names it at that moment."""
     import logging
+
     from lumen.blueprints.metrics.middleware import make_metrics_middleware
 
     leaked = []
@@ -134,6 +135,7 @@ def test_middleware_is_silent_for_a_balanced_request(app, caplog):
     is the close()-check baseline, not a leftover — though it is reported once
     as ambient-at-start, since in production it means a poisoned thread."""
     import logging
+
     from lumen.blueprints.metrics.middleware import make_metrics_middleware
 
     def clean_app(environ, start_response):
@@ -163,7 +165,9 @@ def test_middleware_checks_the_exception_path(app, caplog):
     """A request that raises never gets a body close(); the leftover check
     must run on the exception path instead."""
     import logging
+
     import pytest
+
     from lumen.blueprints.metrics.middleware import make_metrics_middleware
     from lumen.services.ctx_probe import format_context_anomalies
 
@@ -231,6 +235,7 @@ def test_middleware_heals_a_poisoned_thread(caplog):
 def test_middleware_records_500_on_app_exception():
     """If the wrapped app raises, status defaults to '500' and the exception propagates."""
     import pytest
+
     from lumen.blueprints.metrics.middleware import make_metrics_middleware
 
     def exploding_app(environ, start_response):

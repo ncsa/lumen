@@ -3,12 +3,12 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 
-from flask import Blueprint, current_app, redirect, render_template, request, jsonify, session, url_for, abort
+from flask import Blueprint, abort, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy import delete, func, select, text
 
-from lumen.decorators import login_required, is_admin as _is_admin, is_admin_eligible
+from lumen.decorators import is_admin as _is_admin
+from lumen.decorators import is_admin_eligible, login_required
 from lumen.extensions import db
-from lumen.timeutils import utcnow
 from lumen.models.api_key import APIKey
 from lumen.models.conversation import Conversation
 from lumen.models.entity import Entity
@@ -16,15 +16,16 @@ from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
 from lumen.models.entity_manager import get_managed_projects
 from lumen.models.entity_model_consent import EntityModelConsent
+from lumen.models.entity_stat import EntityStat
 from lumen.models.group import Group
-from lumen.models.message import Message
 from lumen.models.group_member import GroupMember
+from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
-from lumen.models.entity_stat import EntityStat
 from lumen.services.crypto import hash_api_key
-from lumen.services.llm import bulk_model_access_info, get_pool_limit, get_model_access_status, model_notices
+from lumen.services.llm import bulk_model_access_info, get_model_access_status, get_pool_limit, model_notices
+from lumen.timeutils import utcnow
 
 profile_bp = Blueprint("profile", __name__)
 

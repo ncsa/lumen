@@ -108,7 +108,7 @@ def test_subtract_coins_uses_passed_effective_without_reresolving(app, test_user
         from lumen.models.entity_balance import EntityBalance
         from lumen.models.entity_limit import EntityLimit
         from lumen.services import llm as llm_mod
-        from lumen.services.llm import subtract_coins, PoolLimit
+        from lumen.services.llm import PoolLimit, subtract_coins
         db.session.add(EntityLimit(entity_id=entity_id, max_coins=100, refresh_coins=0, starting_coins=100))
         db.session.add(EntityBalance(entity_id=entity_id, coins_left=100))
         db.session.commit()
@@ -135,6 +135,7 @@ def test_get_model_access_needs_ack_with_consent(app, test_user, test_model):
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
         from datetime import datetime, timezone
+
         from lumen.extensions import db
         from lumen.models.entity_model_consent import EntityModelConsent
         from lumen.models.model_config import ModelConfig
@@ -149,6 +150,7 @@ def test_has_model_consent_true(app, test_user, test_model):
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
         from datetime import datetime, timezone
+
         from lumen.extensions import db
         from lumen.models.entity_model_consent import EntityModelConsent
         from lumen.services.llm import has_model_consent
@@ -168,11 +170,12 @@ def test_subtract_coins_creates_balance_on_first_use(app, test_user, test_model)
     """subtract_coins creates an EntityBalance row on first use and deducts from starting_coins."""
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
+        from sqlalchemy import select
+
         from lumen.extensions import db
         from lumen.models.entity_balance import EntityBalance
         from lumen.models.entity_limit import EntityLimit
         from lumen.services.llm import subtract_coins
-        from sqlalchemy import select
         db.session.add(EntityLimit(entity_id=entity_id, max_coins=100, refresh_coins=0, starting_coins=100))
         db.session.commit()
         # No EntityBalance row — subtract_coins creates one from starting_coins and deducts
@@ -192,6 +195,7 @@ def test_subtract_coins_skips_insert_when_balance_exists(app, test_user, test_mo
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
         from sqlalchemy import event
+
         from lumen.extensions import db
         from lumen.models.entity_balance import EntityBalance
         from lumen.models.entity_limit import EntityLimit

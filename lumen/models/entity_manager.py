@@ -56,7 +56,7 @@ def get_project_owner(project_entity_id: int):
         .join(EntityManager, EntityManager.user_entity_id == Entity.id)
         .where(
             EntityManager.project_entity_id == project_entity_id,
-            EntityManager.is_owner == True,
+            EntityManager.is_owner == True,  # noqa: E712 — SQL comparison, not a truth check
         )
     ).scalar_one_or_none()
 

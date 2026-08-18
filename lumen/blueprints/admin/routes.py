@@ -1,24 +1,15 @@
 import os
 from decimal import Decimal, InvalidOperation
-
-import yaml
 from http import HTTPStatus
 
-from flask import Blueprint, current_app, render_template, request, redirect, url_for, jsonify, session
-from sqlalchemy import func, case, delete, select
+import yaml
+from flask import Blueprint, current_app, jsonify, redirect, render_template, request, session, url_for
+from sqlalchemy import case, delete, func, select
 
 from lumen.blueprints.profile.routes import _entity_groups, _get_profile_data, _gravatar_url
 from lumen.commands import write_config_yaml
 from lumen.decorators import admin_required
-from lumen.services.config_watcher import (
-    RESTART_REQUIRED,
-    _find_unrestorable_masks,
-    mask_config_secrets,
-    restore_config_secrets,
-)
 from lumen.extensions import db
-from lumen.timeutils import utcnow
-from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
@@ -26,7 +17,14 @@ from lumen.models.entity_stat import EntityStat
 from lumen.models.group import Group
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_group_access import ModelGroupAccess
-from lumen.services.llm import get_model_access_status, get_model_status, get_pool_limit, has_model_consent
+from lumen.services.config_watcher import (
+    RESTART_REQUIRED,
+    _find_unrestorable_masks,
+    mask_config_secrets,
+    restore_config_secrets,
+)
+from lumen.services.llm import get_pool_limit
+from lumen.timeutils import utcnow
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -476,8 +474,8 @@ def model_access_api_patch(mid):
 @admin_bp.route("/api/sync_model", methods=["POST"])
 @admin_required
 def sync_model_api():
-    from lumen.services.model_sync import sync_model
     from lumen.services.config_watcher import MASK
+    from lumen.services.model_sync import sync_model
     model_def = request.get_json(force=True, silent=True)
     if not isinstance(model_def, dict):
         return jsonify({"error": "Expected a JSON object"}), HTTPStatus.BAD_REQUEST

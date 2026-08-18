@@ -6,14 +6,13 @@ seconds so repeated calls during a config-editor session only hit the
 remote API once.
 """
 
+import ipaddress
 import re
+import socket
 import time
+from urllib.parse import urlparse
 
 import requests
-
-import ipaddress
-import socket
-from urllib.parse import urlparse
 
 MODELSDEV_URL = "https://models.dev/api.json"
 ENDPOINT_TIMEOUT = 10

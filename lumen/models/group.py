@@ -4,6 +4,7 @@ from typing import Optional
 from sqlalchemy.orm import DynamicMapped, Mapped, mapped_column, relationship
 
 from lumen.timeutils import utcnow
+
 from ..extensions import db
 
 

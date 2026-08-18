@@ -7,10 +7,10 @@ import bleach
 import yaml
 from markupsafe import Markup
 
+from lumen.commands import sync_group_rules_from_yaml, sync_models_from_yaml
+
 _ANNOUNCEMENT_ALLOWED_TAGS = {"a", "b", "br", "em", "i", "li", "ol", "p", "strong", "ul"}
 _ANNOUNCEMENT_ALLOWED_ATTRS = {"a": ["href", "title", "target"]}
-
-from lumen.commands import sync_group_rules_from_yaml, sync_models_from_yaml
 
 logger = logging.getLogger(__name__)
 

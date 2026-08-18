@@ -14,9 +14,7 @@ Rules enforced (from CLAUDE.md):
 """
 from http import HTTPStatus
 
-import pytest
 from bs4 import BeautifulSoup
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers

@@ -1,8 +1,8 @@
 """Tests for the projects blueprint (/projects/*)."""
 from http import HTTPStatus
+
 import pytest
 from sqlalchemy import func, select
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

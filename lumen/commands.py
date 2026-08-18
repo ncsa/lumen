@@ -12,10 +12,11 @@ from flask import current_app
 from flask.cli import with_appcontext
 from sqlalchemy import delete, select, update
 
-from .extensions import db
 from lumen.models.group import Group
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
+
+from .extensions import db
 
 # Deduplicate deprecation warnings; the config watcher re-runs sync every 5s.
 _warned: set = set()

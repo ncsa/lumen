@@ -53,9 +53,9 @@ def test_devlogin_reuses_existing_user(app, client):
 def test_devlogin_assigns_dev_groups(app, client):
     with app.app_context():
         from lumen.extensions import db
+        from lumen.models.entity import Entity
         from lumen.models.group import Group
         from lumen.models.group_member import GroupMember
-        from lumen.models.entity import Entity
         db.session.add(Group(name="dev-group", active=True, config_managed=True))
         db.session.commit()
 
@@ -121,6 +121,7 @@ def test_devlogin_returns_404_when_not_debug(app, client):
 
 def _callback_with_userinfo(client, userinfo):
     from unittest.mock import MagicMock, patch
+
     from lumen.blueprints.auth import routes as auth_routes
     provider = MagicMock()
     provider.authorize_access_token.return_value = {"userinfo": userinfo}

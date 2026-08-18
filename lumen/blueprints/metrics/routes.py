@@ -6,7 +6,7 @@ from functools import wraps
 from http import HTTPStatus
 
 from flask import Blueprint, Response, current_app, request
-from prometheus_client import CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 
 from lumen.extensions import db
@@ -49,11 +49,12 @@ class LumenDBCollector:
 
     def collect(self):
         from sqlalchemy import func, select
+
         from lumen.extensions import db
+        from lumen.models.entity import Entity
         from lumen.models.model_config import ModelConfig
         from lumen.models.model_endpoint import ModelEndpoint
         from lumen.models.model_stat import ModelStat
-        from lumen.models.entity import Entity
 
         # This generator interleaves several DB calls with `yield`s. If the consumer
         # (generate_latest) ever abandons iteration partway through — or the

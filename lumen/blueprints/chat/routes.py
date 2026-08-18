@@ -7,16 +7,13 @@ from http import HTTPStatus
 import filetype
 import pypdf
 from flask import Blueprint, Response, current_app, jsonify, render_template, request, session
-from werkzeug.utils import secure_filename
-
-logger = logging.getLogger(__name__)
-
-from sqlalchemy import and_, func, or_, select, update as sa_update
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
+from werkzeug.utils import secure_filename
 
 from lumen.decorators import login_required
 from lumen.extensions import db, limiter
-from lumen.timeutils import utcnow
 from lumen.models.conversation import Conversation
 from lumen.models.entity import Entity
 from lumen.models.entity_stat import EntityStat
@@ -24,6 +21,9 @@ from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.services.llm import bulk_model_access_info, check_coin_budget, get_pool_limit, model_notices, send_message_stream
+from lumen.timeutils import utcnow
+
+logger = logging.getLogger(__name__)
 
 chat_bp = Blueprint("chat", __name__)
 
@@ -317,7 +317,7 @@ def chat_stream():
             result["done"] = True
             yield f"data: {json.dumps(result)}\n\n"
 
-        except Exception as e:
+        except Exception:
             # Any half-done DB work was already rolled back when its app
             # context exited; there is no ambient session here to clean up.
             logger.exception("chat_stream error (model=%s, entity=%s)", model, entity_id)

@@ -86,7 +86,6 @@ def test_sync_models_with_endpoints(app):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.model_config import ModelConfig
-        from lumen.models.model_endpoint import ModelEndpoint
         yaml_data = {
             "models": [
                 {
@@ -181,6 +180,7 @@ def test_apply_model_access_defaults(app):
 
 def test_apply_model_access_legacy_active_false_maps_to_disabled(app, caplog):
     import logging
+
     from lumen.commands import _apply_model_fields, _warned
     from lumen.models.model_config import ModelConfig
     with app.app_context():
@@ -227,14 +227,14 @@ def test_apply_model_access_explicit_disabled(app):
 # ---------------------------------------------------------------------------
 
 def test_normalize_end_date_from_date(app):
-    from datetime import date, datetime
+    from datetime import date
+
     from lumen.commands import _normalize_end_date
     with app.app_context():
         assert _normalize_end_date(date(2026, 9, 1)) == datetime(2026, 9, 1)
 
 
 def test_normalize_end_date_naive_datetime_passthrough(app):
-    from datetime import datetime
     from lumen.commands import _normalize_end_date
     with app.app_context():
         dt = datetime(2026, 9, 1, 12, 30)
@@ -242,7 +242,8 @@ def test_normalize_end_date_naive_datetime_passthrough(app):
 
 
 def test_normalize_end_date_aware_datetime_to_naive_utc(app):
-    from datetime import datetime, timezone, timedelta
+    from datetime import timedelta, timezone
+
     from lumen.commands import _normalize_end_date
     with app.app_context():
         aware = datetime(2026, 9, 1, 12, 0, tzinfo=timezone(timedelta(hours=2)))
@@ -250,7 +251,6 @@ def test_normalize_end_date_aware_datetime_to_naive_utc(app):
 
 
 def test_normalize_end_date_from_iso_string(app):
-    from datetime import datetime
     from lumen.commands import _normalize_end_date
     with app.app_context():
         assert _normalize_end_date("2026-09-01") == datetime(2026, 9, 1)
@@ -275,7 +275,8 @@ def test_normalize_knowledge_cutoff_truncates(app):
 
 
 def test_apply_model_fields_sets_early_access_and_end_date(app):
-    from datetime import date, datetime
+    from datetime import date
+
     from lumen.commands import _apply_model_fields
     from lumen.models.model_config import ModelConfig
     with app.app_context():
@@ -295,7 +296,6 @@ def test_apply_model_fields_sets_early_access_and_end_date(app):
 
 def test_normalize_end_date_rfc822_from_config_editor(app):
     """The admin config editor round-trips YAML dates through JSON as RFC 822."""
-    from datetime import datetime
     from lumen.commands import _normalize_end_date
     with app.app_context():
         assert _normalize_end_date("Thu, 31 Dec 2026 00:00:00 GMT") == datetime(2026, 12, 31)

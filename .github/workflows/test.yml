@@ -26,6 +26,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen
 
+      - name: Lint
+        run: uv run ruff check --output-format=github
+
       - name: Run tests
         run: uv run pytest --junitxml=junit.xml
 

@@ -141,6 +141,7 @@ def test_expired_model_blocked_even_for_owner(app, ids):
     entity_id, model_id = ids
     with app.app_context():
         from datetime import timedelta
+
         from lumen.timeutils import utcnow
         set_model_owner(model_id, entity_id)
         _set_end_date(app, model_id, utcnow() - timedelta(days=1))
@@ -419,6 +420,7 @@ def test_future_end_date_still_allowed(app, ids):
     entity_id, model_id = ids
     with app.app_context():
         from datetime import timedelta
+
         from lumen.timeutils import utcnow
         _set_end_date(app, model_id, utcnow() + timedelta(days=1))
         assert get_model_access_status(entity_id, model_id) == "allowed"
@@ -429,7 +431,9 @@ def test_active_sql_filter_excludes_expired(app, ids):
     entity_id, model_id = ids
     with app.app_context():
         from datetime import timedelta
+
         from sqlalchemy import select
+
         from lumen.extensions import db
         from lumen.models.model_config import ModelConfig
         from lumen.timeutils import utcnow
@@ -445,6 +449,7 @@ def test_active_sql_filter_excludes_expired(app, ids):
 def test_bulk_unknown_model_id_raises(app, ids):
     """An id that resolves to no model is a caller bug and must not fail open."""
     import pytest
+
     from lumen.services.llm import bulk_model_access_info
     entity_id, model_id = ids
     with app.app_context():

@@ -97,6 +97,7 @@ def test_restart_keys_covered():
 
 def test_start_config_watcher_creates_daemon_thread(app, tmp_path):
     from unittest.mock import MagicMock, patch
+
     from lumen.services.config_watcher import start_config_watcher
 
     config_path = str(tmp_path / "config.yaml")
@@ -111,8 +112,10 @@ def test_start_config_watcher_creates_daemon_thread(app, tmp_path):
 
 
 def test_watcher_reloads_config_on_mtime_change(app, tmp_path, restore_config):
-    import yaml
     from unittest.mock import patch
+
+    import yaml
+
     from lumen.services.config_watcher import _watcher
 
     config_file = tmp_path / "config.yaml"
@@ -147,8 +150,10 @@ def test_watcher_reloads_config_on_mtime_change(app, tmp_path, restore_config):
 
 
 def test_watcher_syncs_group_rules_on_reload(app, tmp_path, restore_config):
-    import yaml
     from unittest.mock import patch
+
+    import yaml
+
     from lumen.services.config_watcher import _watcher
 
     config_file = tmp_path / "config.yaml"
@@ -185,8 +190,10 @@ def test_watcher_syncs_group_rules_on_reload(app, tmp_path, restore_config):
 
 def test_watcher_skips_reload_of_old_config_version(app, tmp_path, restore_config, caplog):
     """A reload with version < 3 is skipped with an error; the running config is untouched."""
-    import yaml
     from unittest.mock import patch
+
+    import yaml
+
     from lumen.services.config_watcher import _watcher
 
     config_file = tmp_path / "config.yaml"
@@ -228,8 +235,10 @@ def test_watcher_skips_reload_of_old_config_version(app, tmp_path, restore_confi
 
 
 def test_watcher_skips_when_mtime_unchanged(app, tmp_path, restore_config):
-    import yaml
     from unittest.mock import patch
+
+    import yaml
+
     from lumen.services.config_watcher import _watcher
 
     config_file = tmp_path / "config.yaml"
@@ -258,6 +267,7 @@ def test_watcher_skips_when_mtime_unchanged(app, tmp_path, restore_config):
 
 def test_watcher_handles_read_error_gracefully(app, tmp_path, restore_config):
     from unittest.mock import patch
+
     from lumen.services.config_watcher import _watcher
 
     config_file = tmp_path / "config.yaml"
@@ -292,6 +302,7 @@ def test_watcher_handles_read_error_gracefully(app, tmp_path, restore_config):
 def test_dev_user_set_logs_warning(app, caplog, restore_config):
     """A configured dev_user emits a loud warning so an accidental prod setting is visible."""
     import logging
+
     from lumen.services.config_watcher import apply_hot_config
     with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
         with app.app_context():
@@ -301,6 +312,7 @@ def test_dev_user_set_logs_warning(app, caplog, restore_config):
 
 def test_no_dev_user_no_warning(app, caplog, restore_config):
     import logging
+
     from lumen.services.config_watcher import apply_hot_config
     with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
         with app.app_context():

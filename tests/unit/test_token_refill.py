@@ -1,6 +1,7 @@
 """Tests for refill_coin_balances — the per-tick logic of the coin refiller."""
-import pytest
 from datetime import datetime, timedelta, timezone
+
+import pytest
 from sqlalchemy import select
 
 

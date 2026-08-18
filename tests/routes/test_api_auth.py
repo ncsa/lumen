@@ -1,5 +1,6 @@
 """Tests for the /v1 API key authentication decorator (api_key_required)."""
 from http import HTTPStatus
+
 import pytest
 
 
@@ -366,6 +367,7 @@ def test_chat_completions_ack_with_consent_passes_access(
     token, _ = api_key
     with app.app_context():
         from datetime import datetime, timezone
+
         from lumen.extensions import db
         from lumen.models.entity_model_consent import EntityModelConsent
         from lumen.models.model_config import ModelConfig
@@ -607,6 +609,7 @@ def test_chat_completions_upstream_4xx_passes_through(
     """A 4xx from the upstream (e.g. context-length exceeded) is the caller's
     mistake: surface the real status and message, not a generic 500 retry."""
     import openai
+
     from lumen.blueprints.api import routes
     token, _ = api_key
     with app.app_context():
@@ -642,6 +645,7 @@ def test_chat_completions_upstream_5xx_is_generic_500(
 ):
     """A genuine upstream/transport failure stays a generic 500 retry message."""
     import openai
+
     from lumen.blueprints.api import routes
     token, _ = api_key
     with app.app_context():
@@ -761,8 +765,9 @@ def test_chat_completions_streaming_records_duration(
     assert "data: [DONE]" in body
 
     with app.app_context():
-        from lumen.extensions import db
         from sqlalchemy import select
+
+        from lumen.extensions import db
         from lumen.models.request_log import RequestLog
         log = db.session.execute(select(RequestLog)).scalar_one()
         assert log.source == "api"

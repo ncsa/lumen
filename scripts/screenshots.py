@@ -21,16 +21,16 @@ MODEL (default: first active model), CHROME_PATH (fallback browser executable).
 import os
 import time
 
-from sqlalchemy import select
 from playwright.sync_api import sync_playwright
+from sqlalchemy import select
 
 from lumen import create_app
 from lumen.extensions import db
+from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_manager import EntityManager
 from lumen.models.model_config import ModelConfig
 from lumen.services.crypto import hash_api_key
-from lumen.models.api_key import APIKey
 
 BASE = os.environ.get("BASE_URL", "http://localhost:5001").rstrip("/")
 OUT = os.environ.get("OUTPUT_DIR", "docs/img")

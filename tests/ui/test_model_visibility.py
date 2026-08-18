@@ -141,6 +141,7 @@ def test_early_access_badge_on_model_detail(app, auth_client, test_model):
 
 def test_expired_model_absent_from_models_list(app, auth_client, test_model):
     from datetime import timedelta
+
     from lumen.timeutils import utcnow
     _set_model(app, test_model["id"], end_date=utcnow() - timedelta(days=1))
     resp = auth_client.get("/models")
@@ -151,6 +152,7 @@ def test_expired_model_absent_from_models_list(app, auth_client, test_model):
 
 def test_future_end_date_shows_available_until(app, auth_client, test_model):
     from datetime import timedelta
+
     from lumen.timeutils import utcnow
     _set_model(app, test_model["id"], end_date=utcnow() + timedelta(days=30))
     resp = auth_client.get(f"/models/{test_model['model_name']}")

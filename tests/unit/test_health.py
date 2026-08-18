@@ -1,5 +1,4 @@
 """Tests for check_all_endpoints — the per-tick logic of the health checker."""
-import pytest
 from unittest.mock import MagicMock, patch
 
 
@@ -202,6 +201,7 @@ def test_hung_probe_does_not_block_other_endpoints(app, test_model, test_model_e
     packets, so the raw socket.connect() never returns) must be abandoned rather
     than block the rest of the pass — other endpoints still get checked."""
     import time
+
     from lumen.extensions import db
     from lumen.models.model_endpoint import ModelEndpoint
 
@@ -238,6 +238,7 @@ def test_no_open_transaction_during_probe(app, test_model, test_model_endpoint):
     for the (slow, potentially hanging) duration of the network call."""
     with app.app_context():
         from flask import has_app_context
+
         from lumen.services.health import check_all_endpoints
 
         probe_had_app_context = []
@@ -261,7 +262,8 @@ def test_no_open_transaction_during_probe(app, test_model, test_model_endpoint):
 def test_start_health_checker_starts_daemon_thread(app):
     """start_health_checker must start exactly one daemon thread (covers lines 45-55)."""
     import threading
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import patch
+
     from lumen.services.health import start_health_checker
 
     captured = []

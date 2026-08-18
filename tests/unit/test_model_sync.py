@@ -447,6 +447,7 @@ def _fake_addrinfo(ip):
 
 def test_validate_url_rejects_non_http_schemes():
     import pytest
+
     from lumen.services.model_sync import _validate_endpoint_url
     for url in ("ftp://example.com/v1", "file:///etc/passwd", "gopher://example.com"):
         with pytest.raises(ValueError, match="unsupported scheme"):
@@ -455,6 +456,7 @@ def test_validate_url_rejects_non_http_schemes():
 
 def test_validate_url_rejects_missing_hostname():
     import pytest
+
     from lumen.services.model_sync import _validate_endpoint_url
     with pytest.raises(ValueError, match="no hostname"):
         _validate_endpoint_url("http:///v1")
@@ -462,6 +464,7 @@ def test_validate_url_rejects_missing_hostname():
 
 def test_validate_url_rejects_private_and_loopback_ips():
     import pytest
+
     from lumen.services.model_sync import _validate_endpoint_url
     for url in ("http://10.0.0.1/v1", "http://192.168.1.1/v1", "http://172.16.0.1/v1",
                 "http://127.0.0.1/v1", "http://169.254.169.254/v1"):
@@ -470,8 +473,10 @@ def test_validate_url_rejects_private_and_loopback_ips():
 
 
 def test_validate_url_rejects_hostname_resolving_to_private_ip(monkeypatch):
-    import pytest
     import socket
+
+    import pytest
+
     from lumen.services import model_sync
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: _fake_addrinfo("127.0.0.1"))
     with pytest.raises(ValueError, match="private/reserved"):
@@ -480,6 +485,7 @@ def test_validate_url_rejects_hostname_resolving_to_private_ip(monkeypatch):
 
 def test_validate_url_allows_public_ip(monkeypatch):
     import socket
+
     from lumen.services import model_sync
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: _fake_addrinfo("93.184.216.34"))
     model_sync._validate_endpoint_url("https://api.example.com/v1")  # must not raise
@@ -487,6 +493,7 @@ def test_validate_url_allows_public_ip(monkeypatch):
 
 def test_validate_url_dns_failure_passes(monkeypatch):
     import socket
+
     from lumen.services import model_sync
 
     def boom(*a, **k):

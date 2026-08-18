@@ -27,12 +27,12 @@ from sqlalchemy import select, text
 
 from lumen import create_app
 from lumen.extensions import db
-from lumen.models.entity import Entity
-from lumen.models.model_config import ModelConfig
-from lumen.models.entity_stat import EntityStat
 from lumen.models.api_key import APIKey
 from lumen.models.conversation import Conversation
+from lumen.models.entity import Entity
+from lumen.models.entity_stat import EntityStat
 from lumen.models.message import Message
+from lumen.models.model_config import ModelConfig
 from lumen.services.crypto import hash_api_key
 from lumen.timeutils import utcnow
 

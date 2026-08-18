@@ -1,7 +1,7 @@
 from functools import wraps
 from http import HTTPStatus
 
-from flask import session, redirect, url_for, jsonify, render_template, request, current_app
+from flask import current_app, jsonify, redirect, render_template, request, session, url_for
 
 from lumen.extensions import db
 from lumen.models.entity import Entity

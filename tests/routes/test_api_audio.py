@@ -145,13 +145,14 @@ def test_transcription_duration_billing(
 
     expected_cost = round(11 / 3600 * 0.6, 6)
     with app.app_context():
-        from lumen.extensions import db
         from sqlalchemy import select
-        from lumen.models.request_log import RequestLog
-        from lumen.models.model_stat import ModelStat
-        from lumen.models.entity_stat import EntityStat
+
+        from lumen.extensions import db
         from lumen.models.api_key import APIKey
         from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_stat import EntityStat
+        from lumen.models.model_stat import ModelStat
+        from lumen.models.request_log import RequestLog
 
         log = db.session.execute(select(RequestLog)).scalar_one()
         assert log.audio_seconds == 11
@@ -197,8 +198,9 @@ def test_transcription_token_billing(
     # input_cost=1.0/M, output_cost=2.0/M (from test_model fixture)
     expected_cost = round(1000 * 1.0 / 1_000_000 + 500 * 2.0 / 1_000_000, 6)
     with app.app_context():
-        from lumen.extensions import db
         from sqlalchemy import select
+
+        from lumen.extensions import db
         from lumen.models.request_log import RequestLog
         log = db.session.execute(select(RequestLog)).scalar_one()
         assert log.audio_seconds == 0
@@ -231,8 +233,9 @@ def test_translation_duration_billing(
 
     expected_cost = round(30 / 3600 * 1.2, 6)
     with app.app_context():
-        from lumen.extensions import db
         from sqlalchemy import select
+
+        from lumen.extensions import db
         from lumen.models.request_log import RequestLog
         log = db.session.execute(select(RequestLog)).scalar_one()
         assert log.audio_seconds == 30
@@ -248,10 +251,11 @@ def test_transcription_coin_budget_exhausted_429(
 ):
     token, _ = api_key
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_limit import EntityLimit
-        from lumen.models.entity_balance import EntityBalance
         from datetime import datetime, timezone
+
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
         db.session.add(EntityLimit(
             entity_id=test_user["id"], max_coins=100, refresh_coins=0, starting_coins=100,
         ))
@@ -289,8 +293,9 @@ def test_transcription_no_usage_zero_cost(
     assert resp.status_code == HTTPStatus.OK
 
     with app.app_context():
-        from lumen.extensions import db
         from sqlalchemy import select
+
+        from lumen.extensions import db
         from lumen.models.request_log import RequestLog
         log = db.session.execute(select(RequestLog)).scalar_one()
         assert log.audio_seconds == 0

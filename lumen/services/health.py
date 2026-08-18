@@ -1,7 +1,7 @@
 import concurrent.futures
 import logging
-import time
 import threading
+import time
 
 import openai
 from flask import current_app
@@ -9,9 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.orm.exc import StaleDataError
 
 from lumen.extensions import db
-from lumen.timeutils import utcnow
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
+from lumen.timeutils import utcnow
 
 logger = logging.getLogger(__name__)
 

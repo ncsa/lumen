@@ -5,9 +5,9 @@ from flask import Blueprint, abort, jsonify, render_template, request, session, 
 from sqlalchemy import case, func, select
 
 from lumen.blueprints.admin.routes import apply_coin_pool_edit
+from lumen.blueprints.profile.routes import _get_profile_data
 from lumen.decorators import admin_required, is_admin, login_required
 from lumen.extensions import db
-from lumen.timeutils import utcnow
 from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
@@ -19,11 +19,11 @@ from lumen.models.entity_manager import (
     is_project_owner,
 )
 from lumen.models.entity_model_consent import EntityModelConsent
-from lumen.models.model_config import ModelConfig
 from lumen.models.entity_stat import EntityStat
+from lumen.models.model_config import ModelConfig
 from lumen.services.crypto import hash_api_key
 from lumen.services.llm import get_model_access_status
-from lumen.blueprints.profile.routes import _get_profile_data
+from lumen.timeutils import utcnow
 
 projects_bp = Blueprint("projects", __name__)
 
@@ -386,7 +386,7 @@ def search_project_users(sid):
         select(Entity)
         .where(
             Entity.entity_type == "user",
-            Entity.active == True,
+            Entity.active == True,  # noqa: E712 — SQL comparison, not a truth check
             db.or_(Entity.email.ilike(f"%{q}%"), Entity.name.ilike(f"%{q}%")),
         )
         .order_by(Entity.name)

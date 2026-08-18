@@ -9,21 +9,31 @@ from functools import wraps
 from http import HTTPStatus
 
 import openai
-from flask import Blueprint, current_app, request, jsonify, g, Response
-from sqlalchemy import case, func, select, update as sa_update
-
-logger = logging.getLogger(__name__)
+from flask import Blueprint, Response, current_app, g, jsonify, request
+from sqlalchemy import case, func, select
+from sqlalchemy import update as sa_update
 
 from lumen.extensions import db, limiter
-from lumen.timeutils import utcnow
 from lumen.models.api_key import APIKey
-from lumen.services.crypto import hash_api_key, cache_salt_for_entity
 from lumen.models.entity import Entity
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.request_log import RequestLog
 from lumen.services.cost import calculate_audio_cost
-from lumen.services.llm import bulk_model_access_info, check_coin_budget, subtract_coins, get_effective_limit, get_next_endpoint, get_pool_limit, update_stats, record_aborted_request
+from lumen.services.crypto import cache_salt_for_entity, hash_api_key
+from lumen.services.llm import (
+    bulk_model_access_info,
+    check_coin_budget,
+    get_effective_limit,
+    get_next_endpoint,
+    get_pool_limit,
+    record_aborted_request,
+    subtract_coins,
+    update_stats,
+)
+from lumen.timeutils import utcnow
+
+logger = logging.getLogger(__name__)
 
 api_bp = Blueprint("api", __name__, url_prefix="/v1")
 

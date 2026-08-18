@@ -316,6 +316,7 @@ def test_chat_stream_skips_persistence_when_storing_disabled(app, auth_client, t
 
     with app.app_context():
         from sqlalchemy import func, select
+
         from lumen.extensions import db
         from lumen.models.conversation import Conversation
         from lumen.models.message import Message
@@ -342,6 +343,7 @@ def _fake_stream(messages, model, entity_id=None, source="chat", effective=None)
 def _conversation_counter(app, entity_id):
     with app.app_context():
         from sqlalchemy import select
+
         from lumen.extensions import db
         from lumen.models.entity_stat import EntityStat
         return db.session.scalar(
@@ -413,6 +415,7 @@ def test_chat_stream_counts_conversation_when_storing_disabled(app, auth_client,
 
     with app.app_context():
         from sqlalchemy import func, select
+
         from lumen.extensions import db
         from lumen.models.conversation import Conversation
         assert db.session.scalar(select(func.count(Conversation.id))) == 0

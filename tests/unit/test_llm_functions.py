@@ -1,10 +1,9 @@
 """Additional LLM service tests: groups, endpoints, coin functions, stats."""
-from datetime import datetime
 from http import HTTPStatus
 from unittest.mock import MagicMock, patch
-from sqlalchemy import func, select
 
 import pytest
+from sqlalchemy import func, select
 
 # Named test values — written as expressions so the static analyser
 # does not flag bare 3-digit literals on these definition lines.
