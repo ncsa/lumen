@@ -185,7 +185,6 @@ def test_watcher_syncs_group_rules_on_reload(app, tmp_path, restore_config):
 
 def test_watcher_skips_reload_of_old_config_version(app, tmp_path, restore_config, caplog):
     """A reload with version < 3 is skipped with an error; the running config is untouched."""
-    import logging
     import yaml
     from unittest.mock import patch
     from lumen.services.config_watcher import _watcher
@@ -218,6 +217,9 @@ def test_watcher_skips_reload_of_old_config_version(app, tmp_path, restore_confi
         try:
             _watcher(app, str(config_file))
         except SystemExit:
+            # fake_sleep raises SystemExit to break out of the watcher's infinite
+            # loop after a fixed number of iterations; reaching here is the
+            # expected end of the run, not a failure.
             pass
 
     with app.app_context():
