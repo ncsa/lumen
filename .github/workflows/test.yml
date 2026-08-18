@@ -7,27 +7,8 @@ on:
   pull_request:
 
 jobs:
-  # Runs independently of the tests so a lint failure never hides test results.
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.1.0
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version-file: pyproject.toml
-
-      - name: Install dependencies
-        run: uv sync --frozen
-
-      # --output-format=github annotates the offending lines in the PR diff.
-      - name: Ruff
-        run: uv run ruff check --output-format=github
-
+  # Linting lives in .github/workflows/lint.yml so a lint failure never stops
+  # the tests from reporting.
   test:
     runs-on: ubuntu-latest
     permissions:
