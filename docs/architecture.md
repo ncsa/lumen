@@ -211,7 +211,7 @@ The chat blueprint's `/chat/<id>/message` SSE endpoint is functionally a web-UI 
 |---|---|
 | `Entity` | Unified table for human users (OAuth) and service projects; `entity_type ∈ {user, project}` |
 | `APIKey` | HMAC-SHA256 hashed API keys; tracks per-key request counts, tokens, cost, `last_used_at` |
-| `Group` | Named groups; login auto-assignment is driven by the `group_rules` config section |
+| `Group` | Named groups; auto-join rules live in the `group_rules` table, edited on the group detail page |
 | `GroupMember` | Entity ↔ Group many-to-many; supports `config_managed` flag |
 | `EntityManager` | User → Project delegation (a user can manage a project's keys) |
 
@@ -318,7 +318,7 @@ For local development, set `app.dev_user.email` in `config.yaml` to bypass OAuth
 
 ### Group Auto-Assignment
 
-The top-level `group_rules:` config section maps group names to field/value rules evaluated against OAuth claims at every login (matching lives in `lumen/blueprints/auth/routes.py`):
+Auto-join rules live in the database (`group_rules` table, edited on each group's Rules tab) and are evaluated against OAuth claims at every login (matching lives in `lumen/blueprints/auth/routes.py`). The deprecated `group_rules:` config section is imported once by migration `af6a7b8c9d0e` and then ignored. The old yaml shape, for reference:
 
 ```yaml
 group_rules:
@@ -329,7 +329,7 @@ group_rules:
       equals: urn:mace:incommon:uiuc.edu
 ```
 
-A user is added to a group if **all** rules for that group match. The assignment runs on every login, so rule-based memberships stay in sync with IdP claims. Groups themselves (pools, explicit memberships, model grants) are DB-managed; `sync_group_rules_from_yaml` (`lumen/commands.py`) only creates a bare group row for each name in `group_rules` — it never edits or deletes groups.
+A user is added to a group if the group is active, has auto-join enabled, and **all** of its rules match; the assignment runs on every login, so rule-based memberships stay in sync with IdP claims (and are removed when they stop matching). Groups themselves (pools, memberships, model grants, rules) are entirely DB-managed.
 
 ### Model Access Resolution (ownership)
 
@@ -384,14 +384,13 @@ Coin values use sentinel semantics: `-2` = unlimited, `0` = blocked, positive = 
 
 ## Configuration Management
 
-`config.yaml` is the single source of truth for runtime configuration (version 3 required — older files are rejected at startup). On each `create_app` call, models are synced to the database and a bare group row is created for every name in `group_rules`. Groups, memberships, and coin pools for groups/users/projects are DB-managed and never edited or deleted by config sync.
+`config.yaml` is the single source of truth for runtime configuration (version 3 required — older files are rejected at startup). On each `create_app` call, models are synced to the database. Groups — memberships, coin pools, model grants, and auto-join rules — are DB-managed and never touched by config sync (a leftover `group_rules:` section only triggers a deprecation warning).
 
 | Section | Controls |
 |---|---|
 | `app.*` | Name, secret_key, encryption_key, database_url, theme, db pool tuning |
 | `oauth2.*` | CILogon client credentials, scopes, redirect URI, IdP hint |
 | `models[]` | Model definitions: endpoints, costs, capabilities, notices, modalities |
-| `group_rules.*` | OAuth auto-assignment rules per group name (groups themselves are DB-managed) |
 | `chat.*` | Upload settings (allowed extensions, max size), soft/hard delete mode |
 | `rate_limiting.*` | Per-user rate limit rules, optional Redis storage URI |
 | `prometheus.*` | Metrics collection settings, optional scrape Bearer token |
@@ -399,7 +398,7 @@ Coin values use sentinel semantics: `-2` = unlimited, `0` = blocked, positive = 
 | `logs.*` | Access log toggle, model health log toggle, log level |
 | `monitoring.*` | Internal monitoring token |
 
-**Hot-reload (5 s):** The config watcher syncs models and `group_rules` group rows to the DB without a restart. Changes to `oauth2`, `database_url`, `debug`, or `prometheus` emit a restart-required warning to logs.
+**Hot-reload (5 s):** The config watcher syncs models to the DB without a restart. Changes to `oauth2`, `database_url`, `debug`, or `prometheus` emit a restart-required warning to logs.
 
 Environment variables (`DATABASE_URL`, `LUMEN_SECRET_KEY`, `LUMEN_ENCRYPTION_KEY`, `OAUTH2_*`) override config.yaml values and take precedence at startup.
 

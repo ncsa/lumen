@@ -90,11 +90,12 @@ rate_limiting:
   # storage_url: redis://localhost:6379/0  # omit for in-memory (single-process); requires restart to change
   limit: "30 per minute"  # applies to every endpoint, keyed by authenticated user identity
 
-# Groups, memberships, and coin pools are managed in the database, not here.
-# group_rules auto-assigns users to a group at login based on CILogon userinfo
-# fields (requires org.cilogon.userinfo scope). A group named here is created if
-# it does not exist. Matchers: contains (substring) or equals (exact match); a
-# user must match ALL rules of a group to be added.
+# Groups — memberships, coin pools, model grants, and auto-join rules — are
+# managed in the app (each group's page), not here. Auto-join rules match
+# CILogon userinfo fields at login (requires org.cilogon.userinfo scope).
+# DEPRECATED: a group_rules section here is imported into the database once by
+# the upgrade migration (creating missing groups with their rules) and is
+# ignored afterwards — remove it once upgraded.
 # Model access is ownership-based and managed on each model's detail page.
 group_rules: {}
   # aifarms:

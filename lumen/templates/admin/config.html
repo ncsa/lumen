@@ -93,7 +93,6 @@ const SECTIONS = [
   { id:'chat',          label:'Chat',           desc:'Chat interface settings' },
   { id:'rate_limiting', label:'Rate Limiting',  desc:'Request rate limits' },
   { id:'defaults',      label:'Defaults',       desc:'Global model & token defaults' },
-  { id:'group_rules',   label:'Group Rules',    desc:'OAuth auto-assignment rules for groups' },
   { id:'models',        label:'Models',         desc:'AI model configurations' },
 ];
 
@@ -528,75 +527,6 @@ function collectAdmins() {
   state.data.admins = emails.length ? emails : undefined;
 }
 
-// ── Groups ─────────────────────────────────────────────────────────────────
-function renderGroupRules() {
-  const rules = state.data.group_rules || {};
-  const names = Object.keys(rules).sort((a, b) => a.localeCompare(b));
-  $('cfg-body').innerHTML = `
-    <p class="text-muted small mb-2">Groups, memberships, and coin pools are managed in the database.
-    Rules here auto-assign users to a group at login when they match <strong>all</strong> of the group's
-    rules; a group named here is created if it does not exist. Model access is managed on each model's
-    detail page.</p>
-    <div id="gr-list">${names.map(n => groupRuleBlock(n, rules[n] || [])).join('')}</div>
-    <button type="button" class="btn btn-primary btn-sm" onclick="addGroupRule()">+ Add Group</button>
-  `;
-}
-function groupRuleBlock(name, rules) {
-  return `<div class="card mb-3 gr-block">
-    <div class="card-header py-2 d-flex gap-2 align-items-center">
-      <label class="fw-semibold small mb-0 text-nowrap" for="gr-name-${esc(name)}">Group:</label>
-      <input type="text" class="form-control form-control-sm gr-name" id="gr-name-${esc(name)}" value="${esc(name)}" placeholder="group-name">
-      <button type="button" class="btn btn-outline-danger btn-sm px-2" onclick="this.closest('.gr-block').remove()" aria-label="Remove group ${esc(name)}">✕</button>
-    </div>
-    <div class="card-body">
-      <div class="gr-rules">${rules.map((r, i) => ruleRow(r, i)).join('')}</div>
-      <button type="button" class="btn btn-outline-secondary btn-sm mt-1" onclick="addGroupRuleRow(this)">+ Add Rule</button>
-    </div>
-  </div>`;
-}
-function ruleRow(r, idx) {
-  const fv = r.field || 'affiliation';
-  const op = r.contains !== undefined ? 'contains' : 'equals';
-  const vs = r.contains ?? r.equals ?? '';
-  return `<div class="rule-row d-flex gap-2 mb-2 align-items-center">
-    <select class="form-select form-select-sm rule-field flex-shrink-0" style="width:140px" aria-label="Rule field ${idx + 1}">
-      ${['affiliation','member_of','idp','ou'].map(f => `<option${f === fv ? ' selected' : ''}>${f}</option>`).join('')}
-    </select>
-    <select class="form-select form-select-sm rule-op flex-shrink-0" style="width:110px" aria-label="Rule operator ${idx + 1}">
-      <option${op === 'contains' ? ' selected' : ''}>contains</option>
-      <option${op === 'equals'   ? ' selected' : ''}>equals</option>
-    </select>
-    <input class="form-control form-control-sm rule-val" type="text" value="${esc(vs)}" placeholder="value" aria-label="Rule value ${idx + 1}">
-    <button type="button" class="btn btn-outline-secondary btn-sm px-2" onclick="this.closest('.rule-row').remove()" aria-label="Remove rule">✕</button>
-  </div>`;
-}
-function addGroupRuleRow(btn) {
-  const list = btn.closest('.card-body').querySelector('.gr-rules');
-  list.insertAdjacentHTML('beforeend', ruleRow({}, list.children.length));
-}
-async function addGroupRule() {
-  const name = await appPrompt('Group name:', { title: 'Add Group', okLabel: 'Add' });
-  if (!name?.trim()) return;
-  $('gr-list').insertAdjacentHTML('beforeend', groupRuleBlock(name.trim(), []));
-}
-function collectGroupRules() {
-  if (!$('gr-list')) return;
-  const out = {};
-  document.querySelectorAll('#gr-list .gr-block').forEach(block => {
-    const name = block.querySelector('.gr-name').value.trim();
-    if (!name) return;
-    const rules = [];
-    block.querySelectorAll('.rule-row').forEach(row => {
-      const f = row.querySelector('.rule-field').value;
-      const op = row.querySelector('.rule-op').value;
-      const v = row.querySelector('.rule-val').value.trim();
-      if (f && v) { const r = { field: f }; r[op] = v; rules.push(r); }
-    });
-    out[name] = rules;
-  });
-  if (Object.keys(out).length) state.data.group_rules = out; else delete state.data.group_rules;
-}
-
 // ── Models ─────────────────────────────────────────────────────────────────
 function renderModels() {
   const models = state.data.models || [];
@@ -895,12 +825,12 @@ function collectDefaults() {
 const COLLECTORS = {
   app: collectApp, oauth2: collectOauth2, api: collectApi, chat: collectChat,
   rate_limiting: collectRateLimiting, defaults: collectDefaults,
-  admins: collectAdmins, group_rules: collectGroupRules, models: collectModels,
+  admins: collectAdmins, models: collectModels,
 };
 const RENDERERS = {
   app: renderApp, oauth2: renderOauth2, api: renderApi, chat: renderChat,
   rate_limiting: renderRateLimiting, defaults: renderDefaults,
-  admins: renderAdmins, group_rules: renderGroupRules, models: renderModels,
+  admins: renderAdmins, models: renderModels,
 };
 
 // ── Boot ───────────────────────────────────────────────────────────────────

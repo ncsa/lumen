@@ -7,7 +7,7 @@ import bleach
 import yaml
 from markupsafe import Markup
 
-from lumen.commands import sync_group_rules_from_yaml, sync_models_from_yaml
+from lumen.commands import sync_models_from_yaml
 
 _ANNOUNCEMENT_ALLOWED_TAGS = {"a", "b", "br", "em", "i", "li", "ol", "p", "strong", "ul"}
 _ANNOUNCEMENT_ALLOWED_ATTRS = {"a": ["href", "title", "target"]}
@@ -344,10 +344,6 @@ def _watcher(app, config_path):
                     sync_models_from_yaml(new_data)
                 except Exception as e:
                     logger.warning("config_watcher: sync_models_from_yaml failed: %s", e)
-                try:
-                    sync_group_rules_from_yaml(new_data)
-                except Exception as e:
-                    logger.warning("config_watcher: sync_group_rules_from_yaml failed: %s", e)
 
             app.logger.info("config.yaml reloaded")
         except Exception:

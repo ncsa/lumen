@@ -42,7 +42,7 @@ Click **Remove** next to any manager in the table. The owner cannot be removed d
 
 ### Transferring Ownership (admin or owner)
 
-Click **Make Owner** next to a non-owner manager to transfer ownership. The previous owner becomes a regular manager. If you are the current owner, transferring ownership means you will no longer be able to manage managers or toggle the project.
+Click **Change Owner** (next to **+ Add Manager**), search for the new owner by name or email, pick them from the list, and confirm. Only existing **managers** of the project are offered — add the person as a manager first if needed. The previous owner becomes a regular manager; their **Remove** button is disabled until ownership has moved. If you are the current owner, transferring ownership means you will no longer be able to manage managers or toggle the project.
 
 ### What Managers Can Do
 

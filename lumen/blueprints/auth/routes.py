@@ -4,6 +4,7 @@ from http import HTTPStatus
 from flask import Blueprint, abort, current_app, jsonify, redirect, render_template, session, url_for
 from flask_wtf.csrf import generate_csrf
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from lumen.extensions import db, oauth
 from lumen.models.entity import Entity
@@ -29,29 +30,46 @@ def make_initials(name: str) -> str:
     return "??"
 
 
-def _groups_from_userinfo_rules(userinfo: dict, yaml_data: dict, existing: list[str]) -> list[str]:
-    """Return additional group names matched by CILogon attribute rules, excluding already-desired ones."""
+def _group_ids_from_rules(userinfo: dict) -> set:
+    """Group ids whose auto-join rules all match this login's userinfo claims.
+
+    Rules live in the database (group_rules table) and are edited on the group
+    detail page. A group matches only when it is active AND auto_join is set
+    AND it has at least one rule AND every rule matches — an empty rule set
+    fails closed, since matching it would silently add every user to the
+    group. Deactivating a group pauses its auto-join: it stops matching here,
+    so the reconciler removes its auto-memberships at each member's next
+    login (and re-adds them after reactivation).
+    """
 
     def _rule_matches(rule):
-        # A malformed rule (no field, or neither matcher) must fail closed:
-        # matching it would silently add every user to the group.
-        if not isinstance(rule, dict) or not rule.get("field"):
-            return False
-        value = userinfo.get(rule["field"]) or ""
-        if "contains" in rule:
-            return (rule.get("contains") or "") in value
-        if "equals" in rule:
-            return value == rule["equals"]
+        # Claims are provider-controlled and not always strings: booleans
+        # (email_verified), numbers, or lists (CILogon's is_member_of). Match
+        # against the string form of each element so a misconfigured rule can
+        # never raise inside the login callback and take out every sign-in.
+        raw = userinfo.get(rule.field)
+        if raw is None:
+            values = [""]
+        elif isinstance(raw, (list, tuple)):
+            values = [str(v) for v in raw]
+        else:
+            values = [str(raw)]
+        if rule.match == "contains":
+            return any(rule.value in v for v in values)
+        if rule.match == "equals":
+            return any(v == rule.value for v in values)
         return False
 
-    added: list[str] = []
-    for group_name, rules in (yaml_data.get("group_rules") or {}).items():
-        if group_name in existing or group_name in added:
-            continue
-        rules = rules or []
-        if rules and all(_rule_matches(rule) for rule in rules):
-            added.append(group_name)
-    return added
+    matched = set()
+    groups = db.session.execute(
+        select(Group)
+        .options(selectinload(Group.rules))  # login is hot; avoid a lazy load per group
+        .where(Group.auto_join == True, Group.active == True)  # noqa: E712 — SQL comparison, not a truth check
+    ).scalars().all()
+    for group in groups:
+        if group.rules and all(_rule_matches(rule) for rule in group.rules):
+            matched.add(group.id)
+    return matched
 
 
 def _reconcile_group_memberships(entity: Entity, desired_ids: set) -> None:
@@ -66,26 +84,27 @@ def _reconcile_group_memberships(entity: Entity, desired_ids: set) -> None:
             db.session.add(GroupMember(group_id=group_id, entity_id=entity.id, config_managed=True))
 
 
-def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=None, extra_groups=None):
-    """Sync config-managed group memberships. Does not commit.
+def sync_auto_memberships(entity: Entity, userinfo=None, extra_groups=None):
+    """Reconcile auto-assigned group memberships at login. Does not commit.
 
-    Desired memberships are: the 'default' group (when it exists in the DB),
-    any extra_groups (dev login), and groups whose group_rules match userinfo.
-    Explicit per-user assignment happens in the database, not config.yaml.
+    Desired memberships are: any extra_groups (dev login) and groups whose
+    auto-join rules all match userinfo. Names that don't resolve to an
+    existing group are ignored — nothing here creates groups. Explicit
+    membership is managed on the group pages and is untouched.
     """
     session.pop("_nav", None)
-    desired_names = ["default"]
+    desired_names = []
     for name in extra_groups or []:
         if name not in desired_names:
             desired_names.append(name)
-    if userinfo:
-        desired_names += _groups_from_userinfo_rules(userinfo, yaml_data, desired_names)
 
     desired_ids = set()
     for name in desired_names:
-        group = db.session.execute(select(Group).filter_by(name=name)).scalar_one_or_none()
+        group = db.session.execute(select(Group).filter_by(name=name, active=True)).scalar_one_or_none()
         if group:
             desired_ids.add(group.id)
+    if userinfo:
+        desired_ids |= _group_ids_from_rules(userinfo)
 
     _reconcile_group_memberships(entity, desired_ids)
 
@@ -129,7 +148,6 @@ def devlogin():
     # which a co-located reverse proxy can mask as localhost.
     if not current_app.debug:
         abort(HTTPStatus.NOT_FOUND)
-    yaml_data = current_app.config.get("YAML_DATA", {})
     dev_groups = current_app.config.get("DEV_USER_GROUPS", [])
     name = email.split("@")[0]
 
@@ -146,7 +164,7 @@ def devlogin():
         db.session.add(entity)
         db.session.flush()
 
-    sync_user_from_yaml(entity, email, yaml_data, extra_groups=dev_groups)
+    sync_auto_memberships(entity, extra_groups=dev_groups)
     db.session.commit()
 
     session["entity_id"] = entity.id
@@ -175,8 +193,6 @@ def callback():
 
     name = userinfo.get("name") or userinfo.get("given_name") or email.split("@")[0]
 
-    yaml_data = current_app.config.get("YAML_DATA", {})
-
     entity = db.session.execute(select(Entity).filter_by(email=email, entity_type="user")).scalar_one_or_none()
     if not entity:
         entity = Entity(
@@ -195,7 +211,7 @@ def callback():
         entity.name = name
         entity.initials = make_initials(name)
 
-    sync_user_from_yaml(entity, email, yaml_data, userinfo=userinfo)
+    sync_auto_memberships(entity, userinfo=userinfo)
     db.session.commit()
 
     session["entity_id"] = entity.id

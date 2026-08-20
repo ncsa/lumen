@@ -18,13 +18,13 @@ Lumen 2.0 requires **version 3** and refuses to start on anything older — the 
 
 | Removed | Where it went |
 |---------|---------------|
-| `users:` | Explicit group memberships and per-user coin pools live in the database (edited from the user's profile page). For auto-assignment at login, use `group_rules` |
+| `users:` | Explicit group memberships and per-user coin pools live in the database (edited from the user's profile page). For auto-assignment at login, use each group's Rules tab |
 | `projects:` | Projects live entirely in the database (see [Configuring Projects](config-projects.md)) |
 | `clients:` | Same as projects |
-| `groups:` | Group coin pools and memberships live in the database. Only the login auto-assignment rules remain in config, under the new top-level `group_rules:` section |
+| `groups:` | Groups — coin pools, memberships, model grants, and login auto-join rules — live in the database, managed on the Groups pages (a leftover `group_rules:` section is imported into the database once by the upgrade migration, then ignored with a startup warning; remove it) |
 | `access:` on a model, `model_access` on groups/users, `defaults.models.access`, legacy `whitelist`/`blacklist`/`graylist` | DB-managed model ownership (see [Model Access Resolution](#model-access-resolution)) |
 
-Existing database rows created by older config syncs (groups, memberships, pools) keep working; management dialogs for groups and pools are on the roadmap. The new `group_rules:` section maps a group name to a list of OAuth rules (`field` plus `contains` or `equals`) — see [User Groups and Access Control](config-users.md#group-rules).
+Existing database rows created by older config syncs (groups, memberships, pools) keep working and are fully manageable on the Groups pages. Login auto-join rules are edited per group on its Rules tab — see [User Groups and Access Control](config-users.md#auto-join-rules).
 
 ## Global Defaults
 
@@ -87,7 +87,6 @@ When running, Lumen watches `config.yaml` for changes and automatically reloads 
 | `models[*].disabled` | Take a model fully offline |
 | `models[*].endpoints` | Add, remove, or move model backend servers |
 | `models[*].input_cost_per_million` / `output_cost_per_million` | Change pricing |
-| `group_rules` | Change group auto-assignment rules (new group names get a bare group row) |
 | `admins` | Update the list of administrator email addresses |
 | `chat.remove` | Change conversation soft-delete vs hard-delete mode |
 | `chat.upload` | Adjust upload file size limits and allowed file types |
@@ -113,7 +112,7 @@ Some settings are read only at startup and cannot be hot-reloaded. Lumen logs a 
 
 On startup, Lumen validates `config.yaml` and loads it into memory. While running, a background thread checks the file's modification time every 5 seconds. When a change is detected, it re-parses the YAML, applies the differences, and logs `config.yaml reloaded`. If a restart-required setting changed, it also emits a warning.
 
-The `init-db` command syncs config changes to the database (models, and bare group rows for `group_rules` names) without waiting for the watcher or restarting. It does not update in-memory settings like `APP_NAME` or `CHAT_CONVERSATION_REMOVE_MODE` — those only update when the watcher picks up the change or the app restarts.
+The `init-db` command syncs model config changes to the database without waiting for the watcher or restarting. It does not update in-memory settings like `APP_NAME` or `CHAT_CONVERSATION_REMOVE_MODE` — those only update when the watcher picks up the change or the app restarts.
 
 ```bash
 uv run flask init-db

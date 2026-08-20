@@ -4,6 +4,7 @@ import os
 import sys
 from http import HTTPStatus
 
+import click
 import yaml
 from flask import Flask, g, jsonify, render_template, request, session
 from jinja2 import BaseLoader, ChoiceLoader, TemplateNotFound
@@ -42,6 +43,34 @@ class _ThemeLoader(BaseLoader):
             return expected == path and mtime == os.path.getmtime(path)
 
         return source, path, uptodate
+
+
+def _loaded_by_non_serving_cli():
+    """True when a `flask` CLI command other than `run` is loading the app.
+
+    Every CLI command runs create_app() to get the config and db binding, but
+    those processes never serve requests, so the background workers have no
+    reason to run there. It actively hurts for `flask db upgrade`: the workers
+    query the database with the current models while the schema is still on the
+    previous revision, so any migration that adds a column produces a burst of
+    "column ... does not exist" tracebacks before the upgrade lands.
+
+    Only Flask's own CLI counts. Other launchers are click apps too — uvicorn's
+    console script imports asgi.py inside a live click context whose command is
+    named "uvicorn" — so a bare context check would disable the workers on
+    every production replica. Flask's CLI is the one that sets
+    FLASK_RUN_FROM_CLI before loading the app (flask.cli.FlaskGroup
+    .make_context), so require that first. Within Flask's CLI, detection uses
+    the click context rather than sys.argv, because the app module here is
+    itself named "run" ("flask --app run db upgrade") and argv cannot tell
+    that apart from the `run` command.
+    """
+    if os.environ.get("FLASK_RUN_FROM_CLI") != "true":
+        return False  # uvicorn, `uv run lumen`, tests — not the Flask CLI
+    ctx = click.get_current_context(silent=True)
+    if ctx is None:
+        return False
+    return ctx.info_name != "run"
 
 
 def create_app():
@@ -305,6 +334,7 @@ def create_app():
     from lumen.blueprints.auth.routes import auth_bp
     from lumen.blueprints.chat.routes import chat_bp
     from lumen.blueprints.connect.routes import connect_bp
+    from lumen.blueprints.groups.routes import groups_bp
     from lumen.blueprints.help.routes import help_bp
     from lumen.blueprints.metrics.routes import metrics_bp
     from lumen.blueprints.models_page.routes import models_page_bp
@@ -317,6 +347,7 @@ def create_app():
     app.register_blueprint(chat_bp)
     app.register_blueprint(models_page_bp)
     app.register_blueprint(projects_bp)
+    app.register_blueprint(groups_bp)
     app.register_blueprint(profile_bp)
     app.register_blueprint(api_bp)
     csrf.exempt(api_bp)
@@ -444,28 +475,42 @@ def create_app():
 
     app.jinja_env.filters["markdown"] = _md_filter
 
-    # Sync models and rule groups from yaml into DB on every startup
-    from lumen.commands import sync_group_rules_from_yaml, sync_models_from_yaml
+    # Sync models from yaml on every startup. group_rules is no longer read at
+    # runtime: migration af6a7b8c9d0e imported it into the database once, and
+    # rules are managed on each group's page.
+    if yaml_data.get("group_rules"):
+        print("WARNING: config.yaml group_rules is deprecated and ignored — auto-join rules "
+              "live in the database (each group's Rules tab); remove the section from config.yaml.",
+              file=sys.stderr)
+    from lumen.commands import sync_models_from_yaml
     with app.app_context():
         try:
             sync_models_from_yaml(yaml_data)
         except Exception as e:
             print(f"WARNING: Could not sync models from yaml (run 'flask db upgrade' first): {e}",
                   file=sys.stderr)
-        try:
-            sync_group_rules_from_yaml(yaml_data)
-        except Exception as e:
-            print(f"WARNING: Could not sync group rules from yaml (run 'flask db upgrade' first): {e}",
-                  file=sys.stderr)
 
-    # Start background threads only in the main worker process.
+    # Start background threads once per serving process.
     # - Werkzeug dev server: double-imports the app; only run in the child (WERKZEUG_RUN_MAIN=true).
-    # - Uvicorn: create_app() is only called in worker processes, always run unless
-    #   BACKGROUND_WORKER=false is set (use this to disable on extra workers).
+    # - Uvicorn: asgi.py calls create_app() once and a2wsgi serves requests from a
+    #   thread pool (wsgiWorkers sizes that pool, not a process count), so there is
+    #   one set of these threads per container.
+    # - BACKGROUND_WORKER=false opts out entirely. It exists for the test suite and
+    #   for one-off `python -c` scripts, which have no click context for
+    #   _loaded_by_non_serving_cli to detect. Do not set it on a serving replica:
+    #   the config watcher keeps this process's app.config in sync with config.yaml,
+    #   so that pod would stop picking up config changes. Running every replica's
+    #   workers is safe — the coin refill is an atomic guarded UPDATE that a second
+    #   replica no-ops, and health probes converge on the same result.
     if os.environ.get("WERKZEUG_RUN_MAIN") is not None:
         _run_background = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
     else:
         _run_background = os.environ.get("BACKGROUND_WORKER", "true") != "false"
+
+    # A CLI command loads the app too, but never serves; see
+    # _loaded_by_non_serving_cli for why the workers must stay off there.
+    if _run_background and _loaded_by_non_serving_cli():
+        _run_background = False
 
     if _run_background:
         from lumen.services.health import start_health_checker

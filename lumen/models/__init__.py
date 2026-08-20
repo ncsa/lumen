@@ -9,6 +9,7 @@ from .entity_stat import EntityStat
 from .group import Group
 from .group_limit import GroupLimit
 from .group_member import GroupMember
+from .group_rule import GroupRule
 from .message import Message
 from .model_config import ModelConfig
 from .model_endpoint import ModelEndpoint
@@ -31,6 +32,7 @@ __all__ = [
     "Message",
     "Group",
     "GroupMember",
+    "GroupRule",
     "GroupLimit",
     "ModelGroupAccess",
     "RequestLog",

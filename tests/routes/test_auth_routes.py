@@ -56,7 +56,7 @@ def test_devlogin_assigns_dev_groups(app, client):
         from lumen.models.entity import Entity
         from lumen.models.group import Group
         from lumen.models.group_member import GroupMember
-        db.session.add(Group(name="dev-group", active=True, config_managed=True))
+        db.session.add(Group(name="dev-group", active=True))
         db.session.commit()
 
     original = app.config.get("DEV_USER_GROUPS", [])

@@ -26,6 +26,16 @@ class EntityManager(db.Model):
     __table_args__ = (
         db.UniqueConstraint("user_entity_id", "project_entity_id"),
         db.Index("ix_entity_managers_project_entity_id", "project_entity_id"),
+        # At most one owner per project, enforced in the database: two
+        # concurrent ownership transfers would otherwise both commit
+        # is_owner=True, after which get_project_owner() raises for everyone.
+        db.Index(
+            "uq_entity_managers_owner",
+            "project_entity_id",
+            unique=True,
+            postgresql_where=db.text("is_owner"),
+            sqlite_where=db.text("is_owner"),
+        ),
         {"comment": "Maps users to project entities they are permitted to manage"},
     )
 

@@ -33,6 +33,14 @@
     ]
   },
   {
+    "section": "groups",
+    "title": "Groups",
+    "items": [
+      {"slug": "groups",        "title": "Groups Overview",     "filename": "groups.md"},
+      {"slug": "groups/detail", "title": "Group Management",    "filename": "groups-detail.md"}
+    ]
+  },
+  {
     "section": "admin",
     "title": "Admin Guide",
     "items": [

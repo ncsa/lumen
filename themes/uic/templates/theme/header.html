@@ -13,6 +13,7 @@
         {% if is_admin or nav_projects %}
         <a href="{{ url_for('projects.index') }}" class="uic-nav-link">Projects</a>
         {% endif %}
+        <a href="{{ url_for('groups.index') }}" class="uic-nav-link">Groups</a>
         <a href="{{ url_for('models_page.index') }}" class="uic-nav-link">Models</a>
         <a href="{{ url_for('profile.usage') }}" class="uic-nav-link">Usage</a>
         {% if is_admin %}

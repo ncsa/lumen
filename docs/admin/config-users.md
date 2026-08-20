@@ -2,7 +2,7 @@
 
 > 🔒 **Admin only.** This page documents administrator features. Configuration lives in `config.yaml` and the in-app Config editor (`/admin/config`), which are only available to administrators.
 
-Lumen uses a group-based system to assign coin budgets and grant access to owned models. As of config version 3, `config.yaml` carries only two user-management sections: `admins:` and `group_rules:`. Everything else about groups — coin pools, memberships (users and projects), and model grants — lives in the database. Rows created by older config-based syncs keep working; management dialogs for groups and pools are planned.
+Lumen uses a group-based system to assign coin budgets and grant access to owned models. `config.yaml` carries a single user-management section: `admins:`. Everything about groups — coin pools, memberships (users and projects), model grants, and login auto-join rules — lives in the database and is managed on the [Groups pages](../groups/groups.md).
 
 ## Admins
 
@@ -24,31 +24,13 @@ app:
       - staff
 ```
 
-`app.dev_user.groups` still works: the listed groups are assigned to the dev user at login. To make the dev user an admin, add their email to the top-level `admins:` list. Group membership does not grant admin status.
+`app.dev_user.groups` still works: the listed groups are assigned to the dev user at login; names that don't match an existing group are ignored. To make the dev user an admin, add their email to the top-level `admins:` list. Group membership does not grant admin status.
 
 `dev_user` is for development only and should be removed in production.
 
-## Group Rules
+## Auto-join Rules
 
-The top-level `group_rules:` section maps a group name to a list of rules matched against the user's OAuth identity-provider profile at every login. A user matching **all** rules of a group (AND logic) is automatically added to that group:
-
-```yaml
-group_rules:
-  staff:
-    - field: affiliation
-      contains: staff@illinois.edu
-    - field: idp
-      equals: urn:mace:incommon:uiuc.edu
-```
-
-A group named under `group_rules` is created (as a bare group row) if it does not exist yet; an empty rule list just ensures the group exists:
-
-```yaml
-group_rules:
-  manual-group: []    # created if missing; members are managed in the app
-```
-
-Config sync never edits or deletes groups — removing a name from `group_rules` only stops the auto-assignment; the group and its members stay in the database.
+Login auto-assignment is configured per group on the group detail page's **Rules** tab (admin-only) — see [Group Management](../groups/groups-detail.md#rules-admin-only). A user matching **all** of a group's rules (AND logic) is added to the group at sign-in and removed again when they stop matching.
 
 Rules match against fields in the user's OAuth identity-provider profile:
 
@@ -66,12 +48,14 @@ Rules can use two matcher types:
 | `contains` | Case-sensitive substring match | `contains: staff@illinois.edu` |
 | `equals` | Exact match | `equals: urn:mace:incommon:uiuc.edu` |
 
+**Deprecated:** a top-level `group_rules:` section in `config.yaml` is imported into the database once at startup — missing groups are created with their rules and auto-join enabled; groups that already have rules in the database are left alone. Remove the section after upgrading.
+
 ## Everything Else Lives in the Database
 
 Config version 3 removed the `groups:` and `users:` sections. What they used to configure is now DB-managed:
 
-- **Group coin pools** (`max`/`refresh`/`starting`) — pools created by older config syncs remain in effect; group management dialogs are planned. Entities without their own pool fall back to their best group pool and then the top-level `defaults.tokens` block (see [Admin Configuration](config.md)).
-- **Explicit group memberships** (the old `users: <email>: groups: [...]`) — memberships created earlier keep working; new ones will be added through the planned group dialogs. Rule-based auto-assignment via `group_rules` is the config-driven path.
+- **Group coin pools** (`max`/`refresh`/`starting`) — an admin sets a group's Max Coins and Refill Rate from the group's Edit dialog. Entities without their own pool fall back to their best group pool and then the top-level `defaults.tokens` block (see [Admin Configuration](config.md)).
+- **Group memberships** — owners and admins manage members on the group detail page; auto-join rules add members at login.
 - **Per-user coin pools** — an admin sets a user's Max Coins and Refill Rate (and can enable/disable the account) from the **Edit** button on the user's profile page (`/admin/users/<id>/profile`, or the admin's own `/profile` in admin mode).
 
 ## Groups and Model Access

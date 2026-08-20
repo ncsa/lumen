@@ -19,7 +19,8 @@ app:
   logs:
     level: info
   # Bypasses OAuth: every visit logs in as this user. Added to `admins` below so the
-  # config editor is reachable. dev_user groups are applied at login (groups must exist).
+  # config editor is reachable. dev_user groups are applied at login; names that
+  # don't match an existing group are ignored.
   dev_user:
     email: dev@example.com
     groups:
@@ -43,10 +44,11 @@ defaults:
     refresh: 0.1
     starting: 50
 
-# OAuth auto-assignment rules: users matching ALL rules of a group are added to
-# it at login. Groups themselves (membership, coin pools) live in the database;
-# a group named here is created automatically if it does not exist yet. An empty
-# rule list just ensures the group exists without auto-assigning anyone.
+# DEPRECATED: auto-join rules live in the database and are edited on each
+# group's page (admin-only Rules tab). This section is imported into the
+# database once by the upgrade migration and ignored afterwards (a startup
+# warning nags until it is removed). Dev note: the SQLite dev flow
+# (create_all + stamp) skips migrations, so create dev groups in the UI.
 group_rules:
   staff:
   - field: affiliation

@@ -3,7 +3,7 @@ from datetime import datetime
 
 from sqlalchemy import select
 
-from lumen.commands import sync_group_rules_from_yaml, sync_models_from_yaml
+from lumen.commands import sync_models_from_yaml
 
 
 def test_sync_models_creates_model_config(app):
@@ -105,45 +105,114 @@ def test_sync_models_with_endpoints(app):
         assert eps[0].url == "http://ep1/v1"
 
 
-def test_sync_group_rules_creates_missing_groups(app):
+def _run_yaml_import(app, yaml_data):
+    """Run the af6a7b8c9d0e migration's one-time importer against the test DB."""
+    import importlib.util
+    from pathlib import Path
+
+    mig = Path(__file__).resolve().parents[2] / "migrations" / "versions" / "af6a7b8c9d0e_import_yaml_rules_once.py"
+    spec = importlib.util.spec_from_file_location("mig_af6", mig)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    from lumen.extensions import db
+    with db.engine.begin() as bind:
+        mod._import_group_rules(bind, yaml_data)
+
+
+def test_yaml_import_creates_missing_groups_with_rules(app):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.group import Group
-        sync_group_rules_from_yaml({"group_rules": {"staff": [{"field": "affiliation", "contains": "staff@x.edu"}],
-                                                    "empty-rules": []}})
-        staff = db.session.execute(select(Group).filter_by(name="staff")).scalar_one_or_none()
-        empty = db.session.execute(select(Group).filter_by(name="empty-rules")).scalar_one_or_none()
-        assert staff is not None and staff.config_managed is True
-        assert empty is not None
+        _run_yaml_import(app, {"group_rules": {
+            "staff": [{"field": "affiliation", "contains": "staff@x.edu"}],
+            "empty-rules": [],
+        }})
+        staff = db.session.execute(select(Group).filter_by(name="staff")).scalar_one()
+        assert staff.auto_join is True
+        assert [(r.field, r.match, r.value) for r in staff.rules] == [
+            ("affiliation", "contains", "staff@x.edu")
+        ]
+        # A yaml entry with no rules still creates the group, but cannot auto-join.
+        empty = db.session.execute(select(Group).filter_by(name="empty-rules")).scalar_one()
+        assert empty.auto_join is False
+        assert empty.rules == []
 
 
-def test_sync_group_rules_leaves_existing_groups_untouched(app):
-    """Groups are DB-managed; the rules sync only ensures rows exist, never edits them."""
+def test_yaml_import_attaches_to_ruleless_existing_group(app):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.group import Group
-        from lumen.models.group_limit import GroupLimit
-        g = Group(name="staff", active=True, config_managed=False, description="hand-made")
-        db.session.add(g)
-        db.session.flush()
-        db.session.add(GroupLimit(group_id=g.id, max_coins=50, refresh_coins=1, starting_coins=50))
+        db.session.add(Group(name="staff", active=True, description="hand-made"))
         db.session.commit()
 
-        sync_group_rules_from_yaml({"group_rules": {"staff": [{"field": "idp", "equals": "x"}]}})
+        _run_yaml_import(app, {"group_rules": {"staff": [{"field": "idp", "equals": "x"}]}})
 
         db.session.expire_all()
         g = db.session.execute(select(Group).filter_by(name="staff")).scalar_one()
-        assert g.config_managed is False
         assert g.description == "hand-made"
-        assert g.limit is not None and float(g.limit.max_coins) == 50.0
+        assert g.auto_join is True
+        assert [(r.field, r.match, r.value) for r in g.rules] == [("idp", "equals", "x")]
 
 
-def test_sync_group_rules_empty_section_is_noop(app):
+def test_yaml_import_database_rules_win(app):
+    """A group that already has rules in the database is never touched."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.group import Group
-        sync_group_rules_from_yaml({})
-        assert db.session.execute(select(Group)).scalars().all() == []
+        from lumen.models.group_rule import GroupRule
+        g = Group(name="staff", active=True, auto_join=True)
+        db.session.add(g)
+        db.session.flush()
+        db.session.add(GroupRule(group_id=g.id, field="idp", match="equals", value="db-rule"))
+        db.session.commit()
+
+        _run_yaml_import(app, {"group_rules": {"staff": [{"field": "idp", "equals": "yaml-rule"}]}})
+
+        db.session.expire_all()
+        g = db.session.execute(select(Group).filter_by(name="staff")).scalar_one()
+        assert [(r.field, r.match, r.value) for r in g.rules] == [("idp", "equals", "db-rule")]
+
+
+def test_yaml_import_skips_malformed_rules(app):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.group import Group
+        _run_yaml_import(app, {"group_rules": {"broken": [
+            {},  # no field
+            {"field": "eppn"},  # no matcher
+            {"field": "eppn", "contains": ""},  # empty value would match everyone
+            {"field": "eppn", "contains": "@ok.edu"},
+        ]}})
+        g = db.session.execute(select(Group).filter_by(name="broken")).scalar_one()
+        assert [(r.field, r.match, r.value) for r in g.rules] == [("eppn", "contains", "@ok.edu")]
+
+
+def test_yaml_import_is_idempotent(app):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.group import Group
+        yaml_data = {"group_rules": {"staff": [{"field": "idp", "equals": "x"}]}}
+        _run_yaml_import(app, yaml_data)
+        _run_yaml_import(app, yaml_data)
+        g = db.session.execute(select(Group).filter_by(name="staff")).scalar_one()
+        assert len(g.rules) == 1
+
+
+def test_no_runtime_group_rules_import():
+    """Rules an admin deletes must stay deleted: the yaml import lives only in
+    migration af6a7b8c9d0e (run once per database), never at runtime. If this
+    fails, someone reintroduced a startup/reload import — which resurrected
+    deleted rules and re-enabled auto_join every restart."""
+    from pathlib import Path
+
+    import lumen.commands
+    import lumen.services.config_watcher
+
+    assert not hasattr(lumen.commands, "import_group_rules_from_yaml")
+    root = Path(lumen.commands.__file__).resolve().parent
+    for rel in ("__init__.py", "services/config_watcher.py", "commands.py"):
+        source = (root / rel).read_text()
+        assert "import_group_rules_from_yaml" not in source, rel
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,556 @@
+{% extends "base.html" %}
+{% from "_user_search_modal.html" import user_search_modal %}
+{% block title %}Groups — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="mb-0">Groups</h1>
+  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createGroupModal"
+          aria-haspopup="dialog">
+    + New Group
+  </button>
+</div>
+<ilw-content>
+
+<div class="row g-3 mb-1">
+  <div class="col-sm-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="text-muted small mb-1">{% if is_admin %}Total Groups{% else %}Groups{% endif %}</div>
+        <div class="fs-4 fw-semibold">{{ "{:,}".format(total_groups) }}</div>
+        <div class="text-muted small">{% if is_admin %}all{% else %}you belong to{% endif %}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="text-muted small mb-1">Total Members</div>
+        <div class="fs-4 fw-semibold">{{ "{:,}".format(total_members) }}</div>
+        <div class="text-muted small">memberships</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="text-muted small mb-1">Total Requests</div>
+        <div class="fs-4 fw-semibold">{{ "{:,}".format(total_requests) }}</div>
+        <div class="text-muted small">by members, all time</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-6 col-lg-3">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="text-muted small mb-1">Total Tokens Used</div>
+        <div class="fs-4 fw-semibold">{{ "{:,}".format(total_tokens) }}</div>
+        <div class="text-muted small">input + output (all time)</div>
+      </div>
+    </div>
+  </div>
+</div>
+<p class="text-muted small text-center mb-3">Totals count each member once per group — a user in two groups is counted twice.</p>
+
+<div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+  <div class="d-flex align-items-center gap-2">
+    <label for="group-per-page" class="text-muted small mb-0">Display</label>
+    <select id="group-per-page" class="form-select form-select-sm" style="width:auto">
+      <option value="25">25</option>
+      <option value="50">50</option>
+      <option value="100">100</option>
+      <option value="200">200</option>
+    </select>
+    <span class="text-muted small mb-0">results</span>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <label for="group-search" class="text-muted small mb-0">Search:</label>
+    <input id="group-search" type="search" class="form-control form-control-sm" style="width:220px"
+           placeholder="Filter by name…" aria-label="Filter groups by name">
+  </div>
+</div>
+
+<div class="table-responsive">
+  <table class="table table-bordered table-striped table-hover align-middle" id="group-table">
+    <caption class="visually-hidden">Groups list</caption>
+    <thead class="table-light">
+      <tr>
+        <th scope="col" class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-center" data-col="members">Members <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-center" data-col="models">Models <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="created">Created <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-center" data-col="active">Active <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="tokens">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header wrap text-end" data-col="max_coins">Max<br>Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header wrap text-end" data-col="refresh_coins">Refill<br>Rate <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header wrap text-end" data-col="cost">Coins<br>Spent <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th><span class="visually-hidden">Actions</span></th>
+      </tr>
+    </thead>
+    <tbody id="group-tbody">
+      <tr><td colspan="12" class="text-center text-muted py-3">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mt-2 flex-wrap gap-2">
+  <span id="group-range" class="text-muted small"></span>
+  <div id="group-pagination" class="d-flex gap-1 flex-wrap"></div>
+</div>
+
+<!-- Create Group Modal (available to every signed-in user) -->
+<div class="modal fade" id="createGroupModal" tabindex="-1" aria-labelledby="createGroupModalLabel">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="createGroupModalLabel">New Group</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close New Group dialog"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label for="group-name-input" class="form-label">Group name</label>
+          <input type="text" id="group-name-input" class="form-control" placeholder="e.g. research-lab">
+        </div>
+        <div class="mb-3">
+          <label for="group-description-input" class="form-label">Description (optional)</label>
+          <input type="text" id="group-description-input" class="form-control" placeholder="What this group is for">
+        </div>
+        {% if is_admin %}
+        <div class="mb-3 position-relative">
+          <label for="group-owner-input" class="form-label">Owner (optional)</label>
+          <input type="text" id="group-owner-input" class="form-control" placeholder="Search by name or email…"
+                 role="combobox" aria-autocomplete="list" aria-expanded="false"
+                 aria-controls="group-owner-suggestions" autocomplete="off">
+          <ul id="group-owner-suggestions" role="listbox" aria-label="Matching users" class="dropdown-menu w-100 mb-0 p-0"></ul>
+          <div class="form-text">The owner can add/remove members, transfer ownership, grant models and deactivate this group. Not available for auto-join groups — their membership is rule-driven.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="group-max-input">Max Coins (optional)</label>
+          <input type="number" id="group-max-input" class="form-control" step="0.01">
+          <div class="form-text">-2 = unlimited, 0 = blocked. Leave blank for no group coin pool.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="group-refresh-input">Refill Rate (coins/hour)</label>
+          <input type="number" id="group-refresh-input" class="form-control" step="0.01" min="0">
+        </div>
+        <div class="form-check form-switch mb-2">
+          <input class="form-check-input" type="checkbox" role="switch" id="group-auto-input">
+          <label class="form-check-label" for="group-auto-input">Auto-join</label>
+          <div class="form-text">Users whose login claims match all rules below are added automatically at sign-in.</div>
+        </div>
+        <div id="create-rules-wrap" hidden>
+          <div id="create-rules-rows" class="vstack gap-2 mb-2"></div>
+          <button type="button" class="btn btn-sm btn-outline-secondary mb-2" id="create-add-rule-btn">+ Add Rule</button>
+        </div>
+        {% else %}
+        <p class="text-muted small mb-0">You will be the owner of this group.</p>
+        {% endif %}
+        <div id="create-group-error" class="text-danger small" role="alert" aria-live="assertive" hidden></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="create-group-btn">Create</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Group Modal (opened from a row's pencil button; owner or admin) -->
+<div class="modal fade" id="editGroupModal" tabindex="-1" aria-labelledby="editGroupModalLabel">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="editGroupModalLabel">Edit Group</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close Edit Group dialog"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label" for="edit-group-name">Group Name</label>
+          <input type="text" id="edit-group-name" class="form-control">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="edit-group-description">Description</label>
+          <input type="text" id="edit-group-description" class="form-control">
+        </div>
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" role="switch" id="edit-group-active">
+          <label class="form-check-label" for="edit-group-active">Active</label>
+        </div>
+        {% if is_admin %}
+        <div class="mb-3">
+          <label class="form-label" for="edit-group-max">Max Coins</label>
+          <input type="number" id="edit-group-max" class="form-control" step="0.01">
+          <div class="form-text">-2 = unlimited, 0 = blocked. Clear Max Coins to remove the group pool.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="edit-group-refresh">Refill Rate (coins/hour)</label>
+          <input type="number" id="edit-group-refresh" class="form-control" step="0.01" min="0">
+        </div>
+        {% endif %}
+        <div id="edit-group-error" class="text-danger small" role="alert" aria-live="assertive" hidden></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="edit-group-save-btn">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+</ilw-content>
+
+<style>
+.sort-header { cursor: pointer; user-select: none; white-space: nowrap; }
+.sort-header.wrap { white-space: normal; }
+.sort-arrows { display: inline-flex; flex-direction: column; font-size: 0.6em; line-height: 1.1; float: right; margin-left: 6px; margin-top: 2px; }
+.sa-up, .sa-dn { color: #adb5bd; }
+.sort-asc .sa-up { color: #212529; font-weight: 700; }
+.sort-desc .sa-dn { color: #212529; font-weight: 700; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/user-search.js') }}"></script>
+<script>
+(function () {
+  const IS_ADMIN = {{ is_admin | tojson }};
+
+  const params = new URLSearchParams(location.search);
+  let page = parseInt(params.get('page') || '1');
+  let perPage = parseInt(params.get('per_page') || '25');
+  let sort = params.get('sort') || 'name';
+  let order = params.get('order') || 'asc';
+  let search = params.get('search') || '';
+  let debounceTimer;
+
+  const tbody = document.getElementById('group-tbody');
+  const paginationEl = document.getElementById('group-pagination');
+  const rangeLabel = document.getElementById('group-range');
+  const searchInput = document.getElementById('group-search');
+  const perPageSel = document.getElementById('group-per-page');
+
+  searchInput.value = search;
+  perPageSel.value = String(perPage);
+
+  function escHtml(s) {
+    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function fmtDate(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return isNaN(d) ? '—' : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  function fmtCoins(v) {
+    if (v === null || v === undefined) return '—';
+    return v === -2 ? '∞' : parseFloat(v).toFixed(2);
+  }
+
+  function updateSortHeaders() {
+    document.querySelectorAll('#group-table .sort-header').forEach(th => {
+      th.classList.remove('sort-asc', 'sort-desc');
+      if (th.dataset.col === sort) {
+        th.classList.add(order === 'asc' ? 'sort-asc' : 'sort-desc');
+        th.setAttribute('aria-sort', order === 'asc' ? 'ascending' : 'descending');
+      } else {
+        th.removeAttribute('aria-sort');
+      }
+    });
+  }
+
+  function syncUrl() {
+    const p = new URLSearchParams({ page, per_page: perPage, sort, order });
+    if (search) p.set('search', search);
+    history.replaceState(null, '', '?' + p.toString());
+  }
+
+  function renderPagination(total, currentPage, pp) {
+    const pages = Math.ceil(total / pp);
+    if (pages <= 1) { paginationEl.innerHTML = ''; return; }
+
+    const btn = (p, label, disabled, active) =>
+      `<button class="btn btn-sm ${active ? 'btn-primary' : 'btn-outline-secondary'}" ${disabled ? 'disabled' : ''} data-page="${p}" aria-label="Page ${label}">${label}</button>`;
+
+    let html = `<button class="btn btn-sm btn-outline-secondary" ${currentPage === 1 ? 'disabled' : ''} data-page="${currentPage - 1}" aria-label="Previous page">&laquo;</button>`;
+    let start = Math.max(1, currentPage - 3);
+    let end = Math.min(pages, currentPage + 3);
+    if (start > 1) { html += btn(1, '1', false, false); if (start > 2) html += '<span class="px-1 text-muted">…</span>'; }
+    for (let p = start; p <= end; p++) html += btn(p, p, false, p === currentPage);
+    if (end < pages) { if (end < pages - 1) html += '<span class="px-1 text-muted">…</span>'; html += btn(pages, pages, false, false); }
+    html += `<button class="btn btn-sm btn-outline-secondary" ${currentPage === pages ? 'disabled' : ''} data-page="${currentPage + 1}" aria-label="Next page">&raquo;</button>`;
+
+    paginationEl.innerHTML = html;
+    paginationEl.querySelectorAll('button[data-page]').forEach(b => {
+      b.addEventListener('click', () => { page = parseInt(b.dataset.page); fetchGroups(); });
+    });
+  }
+
+  function fetchGroups() {
+    updateSortHeaders();
+    syncUrl();
+    const qs = new URLSearchParams({ page, per_page: perPage, sort, order });
+    if (search) qs.set('search', search);
+
+    tbody.innerHTML = '<tr><td colspan="12" class="text-center text-muted py-3">Loading…</td></tr>';
+
+    fetch('/groups/data?' + qs.toString())
+      .then(r => r.json())
+      .then(data => {
+        const start = (data.page - 1) * data.per_page + 1;
+        const end = Math.min(data.page * data.per_page, data.total);
+        rangeLabel.textContent = data.total
+          ? `Showing ${start.toLocaleString()} to ${end.toLocaleString()} of ${data.total.toLocaleString()} entries`
+          : 'No entries found';
+
+        if (!data.groups.length) {
+          tbody.innerHTML = '<tr><td colspan="12" class="text-center text-muted py-3">No groups found.</td></tr>';
+          paginationEl.innerHTML = '';
+          return;
+        }
+
+        const rowById = new Map(data.groups.map(g => [String(g.id), g]));
+
+        tbody.innerHTML = data.groups.map(g => {
+          const activeIcon = g.active
+            ? '<span role="img" aria-label="Active">✓</span>'
+            : '<span role="img" aria-label="Inactive" class="text-danger">✗</span>';
+          const nameEsc = escHtml(g.name);
+          let actions = '';
+          if (IS_ADMIN || g.is_owner) {
+            actions += `<button class="btn btn-sm btn-outline-primary edit-btn" data-id="${g.id}" title="Edit" aria-label="Edit ${nameEsc}"><i class="bi bi-pencil" aria-hidden="true"></i></button>`;
+            const toggleIcon = g.active ? 'bi-pause-circle' : 'bi-play-circle';
+            const toggleClass = g.active ? 'btn-outline-danger' : 'btn-outline-success';
+            const toggleLabel = g.active ? 'Deactivate' : 'Activate';
+            actions += ` <button class="btn btn-sm ${toggleClass} toggle-btn" data-id="${g.id}" title="${toggleLabel}" aria-label="${toggleLabel} ${nameEsc}"><i class="bi ${toggleIcon}" aria-hidden="true"></i></button>`;
+          } else {
+            actions += `<span class="d-inline-block" tabindex="0" data-bs-toggle="tooltip" data-bs-title="Only the group owner or an admin can edit this group">` +
+              `<button class="btn btn-sm btn-outline-secondary" disabled aria-label="Edit ${nameEsc} (only the group owner or an admin can edit)"><i class="bi bi-pencil" aria-hidden="true"></i></button></span>`;
+          }
+          // Members and usage are withheld for a group with no owner (server
+          // sends null); an admin always gets the real numbers.
+          const withheld = '<span class="text-muted" title="This group has no owner">—</span>';
+          const num = v => v === null ? withheld : v.toLocaleString();
+          return `<tr id="group-row-${g.id}">
+            <td><a href="${escHtml(g.detail_url)}">${nameEsc}</a></td>
+            <td class="text-center">${num(g.members)}</td>
+            <td class="text-center">${g.models}</td>
+            <td>${fmtDate(g.created)}</td>
+            <td class="text-center">${activeIcon}</td>
+            <td>${g.requests === null ? withheld : fmtDate(g.last_used)}</td>
+            <td class="text-end">${num(g.requests)}</td>
+            <td class="text-end">${num(g.tokens)}</td>
+            <td class="text-end">${fmtCoins(g.max_coins)}</td>
+            <td class="text-end">${fmtCoins(g.refresh_coins)}</td>
+            <td class="text-end">${g.cost === null ? withheld : parseFloat(g.cost).toFixed(2)}</td>
+            <td class="text-nowrap">${actions}</td>
+          </tr>`;
+        }).join('');
+
+        tbody.querySelectorAll('.toggle-btn').forEach(btn => {
+          btn.addEventListener('click', () => toggleGroup(btn));
+        });
+        tbody.querySelectorAll('.edit-btn').forEach(btn => {
+          btn.addEventListener('click', () => openEditModal(rowById.get(btn.dataset.id)));
+        });
+        tbody.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
+
+        renderPagination(data.total, data.page, data.per_page);
+      })
+      .catch(() => {
+        tbody.innerHTML = '<tr><td colspan="12" class="text-center text-danger py-3">Failed to load groups.</td></tr>';
+      });
+  }
+
+  function toggleGroup(btn) {
+    const id = btn.dataset.id;
+    btn.disabled = true;
+    fetch(`/groups/${id}/toggle`, { method: 'POST', headers: { "X-CSRFToken": csrfToken } })
+      .then(async r => {
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          appAlert(d.error || 'Failed to update group.');
+        }
+        fetchGroups();
+      })
+      .catch(() => { btn.disabled = false; });
+  }
+
+  const DESC_COLS = new Set(['members', 'models', 'requests', 'tokens', 'cost', 'created', 'last_used', 'max_coins', 'refresh_coins']);
+  document.querySelectorAll('#group-table .sort-header').forEach(th => {
+    th.setAttribute('tabindex', '0');
+    const activate = () => {
+      const col = th.dataset.col;
+      if (sort === col) { order = order === 'asc' ? 'desc' : 'asc'; }
+      else { sort = col; order = DESC_COLS.has(col) ? 'desc' : 'asc'; }
+      page = 1;
+      fetchGroups();
+    };
+    th.addEventListener('click', activate);
+    th.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
+  });
+
+  searchInput.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      search = searchInput.value.trim();
+      page = 1;
+      fetchGroups();
+    }, 300);
+  });
+
+  perPageSel.addEventListener('change', () => {
+    perPage = parseInt(perPageSel.value);
+    page = 1;
+    fetchGroups();
+  });
+
+  // ── Edit group modal (opened from a row's pencil; owner or admin) ────────
+  let editingId = null;
+  const editModalEl = document.getElementById('editGroupModal');
+  const editModal = new bootstrap.Modal(editModalEl);
+  editModalEl.addEventListener('shown.bs.modal', () => document.getElementById('edit-group-name').focus());
+
+  function openEditModal(g) {
+    editingId = g.id;
+    document.getElementById('edit-group-name').value = g.name;
+    document.getElementById('edit-group-description').value = g.description || '';
+    document.getElementById('edit-group-active').checked = g.active;
+    const maxEl = document.getElementById('edit-group-max');
+    if (maxEl) {
+      // Prefill with the exact stored value: coin budgets are Numeric(12,6)
+      // and the payload always sends these fields back, so rounding here
+      // would silently rewrite a sub-cent budget on a name-only edit.
+      maxEl.value = g.max_coins === null ? '' : g.max_coins;
+      document.getElementById('edit-group-refresh').value = g.refresh_coins === null ? '' : g.refresh_coins;
+    }
+    document.getElementById('edit-group-error').hidden = true;
+    editModal.show();
+  }
+
+  document.getElementById('edit-group-save-btn').addEventListener('click', async () => {
+    const errEl = document.getElementById('edit-group-error');
+    errEl.hidden = true;
+    const payload = {
+      name: document.getElementById('edit-group-name').value,
+      description: document.getElementById('edit-group-description').value,
+      active: document.getElementById('edit-group-active').checked,
+    };
+    const maxEl = document.getElementById('edit-group-max');
+    const refreshEl = document.getElementById('edit-group-refresh');
+    if (maxEl && refreshEl) {
+      // Blank Max Coins removes the group's coin pool.
+      payload.max_coins = maxEl.value;
+      payload.refresh_coins = refreshEl.value;
+    }
+    const resp = await fetch('/groups/' + editingId, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+      body: JSON.stringify(payload),
+    });
+    if (resp.ok) { editModal.hide(); fetchGroups(); return; }
+    const data = await resp.json().catch(() => ({}));
+    errEl.textContent = data.error || 'Failed to save changes.';
+    errEl.hidden = false;
+  });
+
+  // ── Create group modal (everyone) ───────────────────────────────────────
+  const createModalEl = document.getElementById('createGroupModal');
+  createModalEl.addEventListener('shown.bs.modal', () => document.getElementById('group-name-input').focus());
+
+  if (IS_ADMIN) {
+    initUserSearch({ inputId: 'group-owner-input', listId: 'group-owner-suggestions', searchUrl: '/admin/api/users/search?q=' });
+
+    const rulesWrap = document.getElementById('create-rules-wrap');
+    const rulesRows = document.getElementById('create-rules-rows');
+    const autoCb = document.getElementById('group-auto-input');
+    function addRuleRow() {
+      const idx = 'c' + Math.random().toString(36).slice(2, 8);
+      const div = document.createElement('div');
+      div.className = 'd-flex gap-2 align-items-center rule-row';
+      div.innerHTML = `
+        <label class="visually-hidden" for="rule-field-${idx}">Field</label>
+        <input type="text" id="rule-field-${idx}" class="form-control form-control-sm rule-field" placeholder="field (e.g. affiliation)">
+        <label class="visually-hidden" for="rule-match-${idx}">Match type</label>
+        <select id="rule-match-${idx}" class="form-select form-select-sm rule-match" style="width:auto">
+          <option value="contains">contains</option>
+          <option value="equals">equals</option>
+        </select>
+        <label class="visually-hidden" for="rule-value-${idx}">Value</label>
+        <input type="text" id="rule-value-${idx}" class="form-control form-control-sm rule-value" placeholder="value">
+        <button type="button" class="btn btn-sm btn-outline-danger rule-remove" aria-label="Remove rule"><i class="bi bi-trash" aria-hidden="true"></i></button>`;
+      rulesRows.appendChild(div);
+    }
+    autoCb.addEventListener('change', () => {
+      rulesWrap.hidden = !autoCb.checked;
+      if (autoCb.checked && !rulesRows.children.length) addRuleRow();
+      // An auto-join group cannot have an owner: membership is rule-driven.
+      const ownerEl = document.getElementById('group-owner-input');
+      ownerEl.disabled = autoCb.checked;
+      if (autoCb.checked) ownerEl.value = '';
+    });
+    document.getElementById('create-add-rule-btn').addEventListener('click', addRuleRow);
+    rulesRows.addEventListener('click', e => {
+      const btn = e.target.closest('.rule-remove');
+      if (btn) {
+        btn.closest('.rule-row').remove();
+        // The focused button just vanished; land focus somewhere sensible.
+        document.getElementById('create-add-rule-btn').focus();
+      }
+    });
+  }
+
+  document.getElementById('create-group-btn').addEventListener('click', async () => {
+    const errEl = document.getElementById('create-group-error');
+    errEl.hidden = true;
+    const name = document.getElementById('group-name-input').value.trim();
+    if (!name) {
+      errEl.textContent = 'Group name required.';
+      errEl.hidden = false;
+      return;
+    }
+    const body = { name, description: document.getElementById('group-description-input').value.trim() };
+    if (IS_ADMIN) {
+      const ownerEmail = document.getElementById('group-owner-input').value.trim();
+      if (ownerEmail) body.owner_email = ownerEmail;
+      const maxVal = document.getElementById('group-max-input').value;
+      if (maxVal !== '') {
+        body.max_coins = maxVal;
+        body.refresh_coins = document.getElementById('group-refresh-input').value;
+      }
+      const autoJoin = document.getElementById('group-auto-input').checked;
+      if (autoJoin) {
+        const rules = [...document.querySelectorAll('#create-rules-rows .rule-row')].map(row => ({
+          field: row.querySelector('.rule-field').value.trim(),
+          match: row.querySelector('.rule-match').value,
+          value: row.querySelector('.rule-value').value.trim(),
+        })).filter(r => r.field || r.value);
+        if (!rules.length) {
+          errEl.textContent = 'Auto-join requires at least one rule.';
+          errEl.hidden = false;
+          return;
+        }
+        body.auto_join = true;
+        body.rules = rules;
+      }
+    }
+    const resp = await fetch('/groups', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+      body: JSON.stringify(body),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      window.location.href = '/groups/' + data.id;
+      return;
+    }
+    const data = await resp.json().catch(() => ({}));
+    errEl.textContent = data.error || 'Failed to create group.';
+    errEl.hidden = false;
+  });
+
+  fetchGroups();
+})();
+</script>
+{% endblock %}

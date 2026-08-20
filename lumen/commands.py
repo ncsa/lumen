@@ -12,7 +12,6 @@ from flask import current_app
 from flask.cli import with_appcontext
 from sqlalchemy import delete, select, update
 
-from lumen.models.group import Group
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 
@@ -228,32 +227,12 @@ def sync_models_from_yaml(yaml_data):
     db.session.commit()
 
 
-def sync_group_rules_from_yaml(yaml_data):
-    """Ensure a Group row exists for every group named in group_rules.
-
-    Groups and memberships are otherwise managed in the database, not
-    config.yaml; group_rules only drives OAuth auto-assignment at login, and a
-    rule can only assign a group that exists. Never deletes or modifies
-    existing groups. Must run inside an app context.
-    """
-    rule_names = set(yaml_data.get("group_rules") or {})
-    if not rule_names:
-        return
-    existing = {
-        g.name for g in db.session.execute(select(Group).where(Group.name.in_(rule_names))).scalars().all()
-    }
-    for name in rule_names - existing:
-        db.session.add(Group(name=name, config_managed=True))
-    db.session.commit()
-
-
 @click.command("init-db")
 @with_appcontext
 def init_db_cmd():
-    """Sync ModelConfig, ModelEndpoint, and rule groups from config.yaml."""
+    """Sync ModelConfig and ModelEndpoint from config.yaml."""
     yaml_data = current_app.config["YAML_DATA"]
     sync_models_from_yaml(yaml_data)
-    sync_group_rules_from_yaml(yaml_data)
     click.echo("Database synced from config.yaml.")
 
 

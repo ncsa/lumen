@@ -18,6 +18,7 @@
       {% if is_admin or nav_projects %}
       <li><a href="{{ url_for('projects.index') }}">Projects</a></li>
       {% endif %}
+      <li><a href="{{ url_for('groups.index') }}">Groups</a></li>
       <li><a href="{{ url_for('models_page.index') }}">Models</a></li>
       <li><a href="{{ url_for('profile.usage') }}">Usage</a></li>
       {% if is_admin %}

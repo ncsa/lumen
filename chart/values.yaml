@@ -102,12 +102,11 @@ config:
   rateLimiting:
     # -- Rate limit per user, e.g. "30 per minute"
     limit: "30 per minute"
-  # -- Group auto-assignment rules: mapping of group name -> list of OAuth
-  # rules. Users matching ALL rules of a group are added to it at login.
-  # A group named here is created if missing; an empty list just ensures the
-  # group exists. Supported fields: affiliation, idp, email.
-  # Groups themselves — coin pools, memberships (users and projects), and
-  # model grants — are managed in the app, not here.
+  # -- DEPRECATED: group auto-join rules are managed in the app (each group's
+  # Rules tab). Anything set here is imported into the database once at startup
+  # (creating missing groups with their rules) and should then be removed.
+  # Mapping of group name -> list of rules; users matching ALL rules are added
+  # at login. Supported fields: affiliation, idp, email.
   # Example:
   # groupRules:
   #   uiuc-staff:

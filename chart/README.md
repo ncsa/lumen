@@ -149,7 +149,7 @@ gateway:
 
 ### Group Rules
 
-The chart emits a **version 3** `config.yaml`. Groups, memberships, and coin pools for groups/users/projects are managed in the app (database), not in config — the only group-related value left is `config.groupRules`, which auto-assigns users to groups at login based on their OAuth profile. A user matching **all** rules of a group is added to it; a group named here is created if missing (an empty list just ensures the group exists).
+The chart emits a **version 3** `config.yaml`. Groups — memberships, coin pools, model grants, and login auto-join rules — are managed in the app (database), not in config. `config.groupRules` is **deprecated**: anything set there is imported into the database once by the upgrade migration (creating missing groups with their rules) and ignored afterwards; manage rules on each group's Rules tab and remove the value.
 
 ```yaml
 config:
@@ -292,7 +292,7 @@ models:
 | `config.configEditor` | `false` | Allow editing config.yaml from the `/admin/config` UI (read-only by default since the chart manages the config) |
 | `config.defaults.models.ackMessage` | `""` | Global acknowledgement message for `needsAck` models without their own |
 | `config.defaults.tokens.max` / `refresh` / `starting` | `0` | Fallback coin pool for entities with no UI-set limit and no group pool |
-| `config.groupRules` | `{}` | Group auto-assignment rules: group name → list of OAuth rules (`field` + `contains`/`equals`). See Group Rules section |
+| `config.groupRules` | `{}` | Deprecated: imported into the database once by the upgrade migration, then ignored — manage auto-join rules on each group's Rules tab |
 | `config.rateLimiting.limit` | `"30 per minute"` | Rate limit per user |
 | `oauth2.serverMetadataUrl` | CILogon OIDC URL | OIDC provider metadata URL |
 | `oauth2.redirectUri` | `""` | Auto-computed from ingress/gateway if empty |

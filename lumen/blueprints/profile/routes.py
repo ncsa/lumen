@@ -38,7 +38,7 @@ def _gravatar_url(email: str, size: int = 80) -> str:
 def _entity_groups(eid: int) -> list:
     return db.session.execute(
         select(Group).join(GroupMember, Group.id == GroupMember.group_id)
-        .where(GroupMember.entity_id == eid, Group.name != "default")
+        .where(GroupMember.entity_id == eid)
         .order_by(Group.name)
     ).scalars().all()
 

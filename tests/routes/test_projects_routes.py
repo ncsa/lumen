@@ -685,23 +685,24 @@ def test_transfer_ownership(app, owner_auth_client, owned_project, test_user, se
         assert new.is_owner is True
 
 
-def test_transfer_to_non_manager_creates_manager(app, owner_auth_client, owned_project, test_user, second_user):
+def test_transfer_to_non_manager_rejected(app, owner_auth_client, owned_project, test_user, second_user):
+    """Ownership is a promotion, not an invitation: the target must be a manager."""
     resp = owner_auth_client.post(
         f"/projects/{owned_project['id']}/owner",
         json={"user_id": second_user["id"]},
     )
-    assert resp.status_code == HTTPStatus.OK
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert "must already be a manager" in resp.get_json()["error"]
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_manager import EntityManager
         old = db.session.execute(
             select(EntityManager).filter_by(user_entity_id=test_user["id"], project_entity_id=owned_project["id"])
         ).scalar_one()
-        new = db.session.execute(
+        assert old.is_owner is True
+        assert db.session.execute(
             select(EntityManager).filter_by(user_entity_id=second_user["id"], project_entity_id=owned_project["id"])
-        ).scalar_one()
-        assert old.is_owner is False
-        assert new.is_owner is True
+        ).scalar_one_or_none() is None
 
 
 def test_transfer_requires_owner_or_admin(managed_auth_client, managed_project, second_user):
@@ -737,8 +738,15 @@ def test_transfer_to_current_owner_returns_409(owner_auth_client, owned_project,
 
 
 def test_admin_assigns_owner_to_ownerless_project(app, admin_client, service_project, second_user):
-    """Admin can assign an owner to a project that has no owner, even when the
-    target user is not already a manager (the None-is-None edge case)."""
+    """An ownerless project gains an owner in two steps: add the user as a
+    manager, then promote them (also covers the no-previous-owner path)."""
+    resp = admin_client.post(
+        f"/projects/{service_project['id']}/owner",
+        json={"user_id": second_user["id"]},
+    )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST  # not a manager yet
+
+    admin_client.post(f"/projects/{service_project['id']}/users", json={"email": second_user["email"]})
     resp = admin_client.post(
         f"/projects/{service_project['id']}/owner",
         json={"user_id": second_user["id"]},
@@ -975,3 +983,46 @@ def test_project_key_no_pool_returns_403(
         json={"model": test_model["model_name"], "messages": [{"role": "user", "content": "hi"}]},
     )
     assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_owner_search_returns_only_managers(owner_auth_client, owned_project, second_user):
+    """The Change Owner dialog only offers existing managers, never outsiders."""
+    hits = owner_auth_client.get(f"/projects/{owned_project['id']}/owner/search?q=Second").get_json()["entities"]
+    assert hits == []
+    owner_auth_client.post(f"/projects/{owned_project['id']}/users", json={"email": second_user["email"]})
+    hits = owner_auth_client.get(f"/projects/{owned_project['id']}/owner/search?q=Second").get_json()["entities"]
+    assert [e["id"] for e in hits] == [second_user["id"]]
+
+
+def test_owner_search_excludes_current_owner(owner_auth_client, owned_project, test_user):
+    hits = owner_auth_client.get(f"/projects/{owned_project['id']}/owner/search?q=Test").get_json()["entities"]
+    assert all(e["id"] != test_user["id"] for e in hits)
+
+
+def test_owner_search_requires_project_admin(managed_auth_client, managed_project):
+    resp = managed_auth_client.get(f"/projects/{managed_project['id']}/owner/search?q=Te")
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_two_project_owner_rows_rejected_by_db(app, owned_project, second_user):
+    """uq_entity_managers_owner makes the concurrent double-transfer impossible
+    to commit — without it, get_project_owner() raises for everyone afterwards."""
+    import pytest as _pytest
+    from sqlalchemy.exc import IntegrityError
+
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_manager import EntityManager
+        db.session.add(EntityManager(
+            user_entity_id=second_user["id"], project_entity_id=owned_project["id"], is_owner=True,
+        ))
+        with _pytest.raises(IntegrityError):
+            db.session.commit()
+        db.session.rollback()
+
+
+def test_project_transfer_to_manager_with_lower_row_id(app, owner_auth_client, owned_project, second_user):
+    owner_auth_client.post(f"/projects/{owned_project['id']}/users", json={"email": second_user["email"]})
+    # second_user's row id is higher here; also cover the reverse by transferring twice
+    r1 = owner_auth_client.post(f"/projects/{owned_project['id']}/owner", json={"user_id": second_user["id"]})
+    assert r1.status_code == HTTPStatus.OK

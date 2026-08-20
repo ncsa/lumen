@@ -99,7 +99,7 @@ erDiagram
         string name
         text description
         bool active
-        bool config_managed
+        bool auto_join
         datetime created_at
     }
 
@@ -108,6 +108,16 @@ erDiagram
         int group_id FK
         int entity_id FK
         bool config_managed
+        bool is_owner
+        datetime joined_at
+    }
+
+    group_rules {
+        int id PK
+        int group_id FK
+        string field
+        string match
+        string value
     }
 
     group_limits {
@@ -208,6 +218,7 @@ erDiagram
     entities ||--o{ entity_managers : "managed by (project)"
 
     groups ||--o{ group_members : "contains"
+    groups ||--o{ group_rules : "auto-join rules"
     groups ||--o| group_limits : "has"
     groups ||--o{ model_group_access : "granted"
 
@@ -233,6 +244,7 @@ erDiagram
 - [entity\_model\_consents](#entity_model_consents)
 - [groups](#groups)
 - [group\_members](#group_members)
+- [group\_rules](#group_rules)
 - [group\_limits](#group_limits)
 - [model\_group\_access](#model_group_access)
 - [entity\_managers](#entity_managers)
@@ -386,7 +398,7 @@ Records that an entity has acknowledged a model's requirements. A model can carr
 
 ## groups
 
-Named collections of entities used for bulk policy assignment. Groups are DB-managed; config sync only creates a bare row for each name in the `group_rules` config section and never edits or deletes groups.
+Named collections of entities used for bulk policy assignment. Groups are managed entirely in the database via the Groups pages; a group with `auto_join` assigns membership at OAuth login to users matching all of its [group\_rules](#group_rules).
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
@@ -394,7 +406,7 @@ Named collections of entities used for bulk policy assignment. Groups are DB-man
 | `name` | String(128) | NO | Unique group identifier (e.g., `faculty`, `students`) |
 | `description` | Text | YES | Optional human-readable description shown in the admin UI |
 | `active` | Boolean | NO | Whether the group is currently in effect |
-| `config_managed` | Boolean | NO | Historical: `true` on rows created by the old `config.yaml` group sync. Config sync no longer edits or deletes groups. |
+| `auto_join` | Boolean | NO | When `true`, users matching all of the group's rules are added as members at OAuth login |
 | `created_at` | DateTime | NO | UTC timestamp when the group was created |
 
 ---
@@ -408,9 +420,27 @@ Association table linking entities to groups. An entity may belong to multiple g
 | `id` | Integer | NO | Primary key |
 | `group_id` | Integer (FK → groups) | NO | The group. Cascades on delete. |
 | `entity_id` | Integer (FK → entities) | NO | The entity that belongs to the group. Cascades on delete. |
-| `config_managed` | Boolean | NO | Historical: `true` on memberships created by the old `config.yaml` sync. New memberships come from `group_rules` login auto-assignment or the UI. |
+| `config_managed` | Boolean | NO | When `true`, assigned automatically at login by the group's auto-join rules; reconciled (added/removed) at each login. Manual memberships are `false`. |
+| `is_owner` | Boolean | NO | True for the group owner; at most one owner per group (enforced by app logic). The owner may add/remove members, transfer ownership, grant models they own, and deactivate the group. |
+| `joined_at` | DateTime | YES | UTC timestamp when the membership was created; `NULL` for memberships that predate the column (join time unknown) |
 
 **Constraints:** `UNIQUE(group_id, entity_id)`
+
+---
+
+## group_rules
+
+Auto-join conditions per group, edited on the group detail page (admin-only Rules tab). A user matching **all** of a group's rules is added as a member at OAuth login; a group with `auto_join` but no rules matches nobody (fails closed).
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `id` | Integer | NO | Primary key |
+| `group_id` | Integer (FK → groups) | NO | The group this rule belongs to. Cascades on delete. |
+| `field` | String(128) | NO | Userinfo claim to inspect (e.g. `affiliation`, `idp`) |
+| `match` | String(8) | NO | `contains` for substring match, `equals` for exact match |
+| `value` | String(256) | NO | Value the claim is compared against |
+
+**Constraints:** index on `group_id`
 
 ---
 

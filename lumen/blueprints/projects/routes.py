@@ -3,6 +3,7 @@ from http import HTTPStatus
 
 from flask import Blueprint, abort, jsonify, render_template, request, session, url_for
 from sqlalchemy import case, func, select
+from sqlalchemy.exc import IntegrityError
 
 from lumen.blueprints.admin.routes import apply_coin_pool_edit
 from lumen.blueprints.profile.routes import _get_profile_data
@@ -451,6 +452,44 @@ def remove_project_manager(sid, uid):
     return "", HTTPStatus.NO_CONTENT
 
 
+@projects_bp.route("/projects/<int:sid>/owner/search")
+@login_required
+def search_owner_candidates(sid):
+    """Managers of the project who could become its owner.
+
+    The Change Owner dialog searches here: only existing managers qualify
+    (ownership is a promotion, not an invitation), and the current owner is
+    excluded.
+    """
+    entity_id = session["entity_id"]
+    _require_project_admin(entity_id, sid)
+    db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
+
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify({"entities": []})
+
+    entities = db.session.execute(
+        select(Entity)
+        .join(EntityManager, EntityManager.user_entity_id == Entity.id)
+        .where(
+            EntityManager.project_entity_id == sid,
+            EntityManager.is_owner == False,  # noqa: E712 — SQL comparison, not a truth check
+            Entity.entity_type == "user",
+            Entity.active == True,  # noqa: E712 — SQL comparison, not a truth check
+            db.or_(Entity.email.ilike(f"%{q}%"), Entity.name.ilike(f"%{q}%")),
+        )
+        .order_by(Entity.name)
+        .limit(10)
+    ).scalars().all()
+    return jsonify({
+        "entities": [
+            {"id": e.id, "name": e.name, "email": e.email, "type": e.entity_type}
+            for e in entities
+        ]
+    })
+
+
 @projects_bp.route("/projects/<int:sid>/owner", methods=["POST"])
 @login_required
 def transfer_ownership(sid):
@@ -476,21 +515,27 @@ def transfer_ownership(sid):
     new_assoc = db.session.execute(
         select(EntityManager).filter_by(user_entity_id=new_owner_id, project_entity_id=sid)
     ).scalar_one_or_none()
-    if new_assoc is not None and new_assoc is old_owner_assoc:
+    if new_assoc is None:
+        return jsonify(
+            {"error": "The new owner must already be a manager of this project"}
+        ), HTTPStatus.BAD_REQUEST
+    if new_assoc is old_owner_assoc:
         return jsonify({"error": "User is already the owner"}), HTTPStatus.CONFLICT
 
     if old_owner_assoc:
+        # Demote and flush BEFORE promoting: SQLAlchemy flushes UPDATEs in
+        # primary-key order, so promoting a lower-id row first would
+        # transiently put two owners under the non-deferrable unique index.
         old_owner_assoc.is_owner = False
-    if new_assoc:
-        new_assoc.is_owner = True
-    else:
-        db.session.add(EntityManager(
-            user_entity_id=new_owner_id,
-            project_entity_id=sid,
-            is_owner=True,
-        ))
+        db.session.flush()
+    new_assoc.is_owner = True
 
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # uq_entity_managers_owner: a concurrent transfer committed first.
+        db.session.rollback()
+        return jsonify({"error": "Ownership changed concurrently; reload and try again"}), HTTPStatus.CONFLICT
     return jsonify({"owner_id": new_owner_id}), HTTPStatus.OK
 
 

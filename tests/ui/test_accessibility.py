@@ -179,3 +179,36 @@ def test_project_detail_page_accessibility(app, admin_client):
     resp = admin_client.get(url)
     assert resp.status_code == HTTPStatus.OK
     _run_all_checks(resp.data, url)
+
+
+def test_groups_page_accessibility(auth_client):
+    resp = auth_client.get("/groups")
+    assert resp.status_code == HTTPStatus.OK
+    _run_all_checks(resp.data, "/groups")
+
+
+def test_groups_page_as_admin_accessibility(admin_client):
+    # Admin mode adds the owner search and coin fields to the create dialog.
+    resp = admin_client.get("/groups")
+    assert resp.status_code == HTTPStatus.OK
+    _run_all_checks(resp.data, "/groups")
+
+
+def test_group_detail_page_accessibility(app, admin_client, test_model, admin_user):
+    from tests.conftest import set_model_owner
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        group = Group(name="a11y-group", active=True)
+        db.session.add(group)
+        db.session.flush()
+        db.session.add(GroupMember(group_id=group.id, entity_id=admin_user["id"], is_owner=True))
+        db.session.commit()
+        gid = group.id
+        # An ownable model enables the Add Model dialog, so it gets checked too.
+        set_model_owner(test_model["id"], admin_user["id"])
+    url = f"/groups/{gid}"
+    resp = admin_client.get(url)
+    assert resp.status_code == HTTPStatus.OK
+    _run_all_checks(resp.data, url)

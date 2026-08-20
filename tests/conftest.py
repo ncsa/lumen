@@ -4,7 +4,8 @@ from pathlib import Path
 import pytest
 
 TEST_CONFIG = str(Path(__file__).parent / "fixtures" / "test_config.yaml")
-DB_PATH = Path(__file__).parent.parent / "test_lumen.db"
+# Flask-SQLAlchemy resolves relative sqlite paths against the instance dir.
+DB_PATH = Path(__file__).parent.parent / "instance" / "test_lumen.db"
 
 
 @pytest.fixture(scope="session")
