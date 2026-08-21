@@ -48,6 +48,9 @@ addopts = "--cov=lumen --cov-report=term-missing -q"
 # down) fails with a stack trace naming the culprit instead of stalling CI.
 # Individual tests still carry their own, tighter guards.
 timeout = 300
+markers = [
+    "postgres: needs a real PostgreSQL + TimescaleDB (set LUMEN_TEST_POSTGRES_URL; skipped otherwise)",
+]
 
 [tool.uv]
 package = true

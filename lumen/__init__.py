@@ -2,13 +2,14 @@ import hashlib
 import logging
 import os
 import sys
+import time
 from http import HTTPStatus
 
 import yaml
 from flask import Flask, g, jsonify, render_template, request, session
-from sqlalchemy import text
 from jinja2 import BaseLoader, ChoiceLoader, TemplateNotFound
 from markupsafe import Markup
+from sqlalchemy import text
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 
@@ -42,6 +43,38 @@ class _ThemeLoader(BaseLoader):
             return expected == path and mtime == os.path.getmtime(path)
 
         return source, path, uptodate
+
+
+logger = logging.getLogger(__name__)
+
+# Fallback when the limit's own window cannot be read. One minute matches the
+# default limit ("30 per minute") and is short enough not to punish a client
+# that merely burst.
+_RATE_LIMIT_RETRY_AFTER_FALLBACK = 60
+
+
+def _rejection_source() -> str:
+    """Which surface the rejected request came from, matching request_logs.source."""
+    return "api" if request.path.startswith("/v1/") else "chat"
+
+
+def _observe_rejection_quietly(reason: str, source: str, model: str) -> None:
+    """Count a rejection, never at the cost of the response.
+
+    Never *triggers* the import of the metrics middleware — the same rule (and
+    the same ``sys.modules`` lookup) as ``pool_tracker._observe_wait``: the
+    metrics middleware is only imported when Prometheus is enabled, and like the
+    other quiet observers it must stay a no-op until the app imports it in the
+    right order. A counter that cannot be incremented is not a reason to fail a
+    request that was already being rejected cleanly.
+    """
+    middleware = sys.modules.get("lumen.blueprints.metrics.middleware")
+    if middleware is None:
+        return
+    try:
+        middleware.observe_rejection(reason, source, model)
+    except Exception:  # noqa: BLE001 - instrumentation must never escalate
+        pass
 
 
 def create_app():
@@ -79,6 +112,7 @@ def create_app():
 
     # Initialize Prometheus registry with DB collector
     from prometheus_client import CollectorRegistry
+
     from lumen.blueprints.metrics.routes import LumenDBCollector
     prom_registry = CollectorRegistry()
     prom_registry.register(LumenDBCollector())
@@ -100,8 +134,58 @@ def create_app():
         multiproc_dir = prom_cfg.get("multiproc_dir", "")
         if multiproc_dir:
             os.environ.setdefault("PROMETHEUS_MULTIPROC_DIR", multiproc_dir)
-        from lumen.blueprints.metrics.middleware import make_metrics_middleware
+        else:
+            # Without a shared directory prometheus_client stays in
+            # single-process mode: each worker keeps a private registry and a
+            # scrape returns whichever worker happened to answer it. Counters
+            # then appear to jump backwards at random, which Prometheus reads
+            # as a counter reset -- wrong numbers, no error, nothing logged.
+            # Silent for the 1x1 deployment, where single-process mode is
+            # exactly right.
+            from lumen.services.db_pool import detect_workers
+
+            if detect_workers() > 1:
+                app.logger.warning(
+                    "prometheus is enabled with %d worker processes but "
+                    "api.prometheus.multiproc_dir is not set; /metrics will "
+                    "report only the worker that serves each scrape.",
+                    detect_workers(),
+                )
+        # Before importing the middleware: importing it constructs the metric
+        # objects, and prometheus_client opens each mmap eagerly at construction.
+        # A recycled pid would otherwise inherit a dead worker's gauge values.
+        from lumen.blueprints.metrics.multiproc import clear_own_stale_gauges
+        clear_own_stale_gauges()
+
+        from lumen.blueprints.metrics.middleware import make_metrics_middleware, reap_dead_workers
         app.wsgi_app = make_metrics_middleware(app.wsgi_app)
+        # Clear out any worker that died without running mark_process_dead
+        # (SIGKILL, OOM kill) before this process starts writing its own files.
+        reap_dead_workers()
+
+    # Both hooks are registered unconditionally, NOT under the prometheus flag:
+    # the metrics middleware is only installed when prometheus is enabled, so a
+    # value captured there is absent in a default deployment, and lumen.queue_wait
+    # is needed by request logging regardless.
+    @app.before_request
+    def _record_queue_wait():
+        # How long the request sat between arriving at the ASGI bridge and a WSGI
+        # worker thread picking it up. The t0 mark is set by the bridge
+        # (services/wsgi_disconnect.py); it is absent under the test client and
+        # the dev server, where there is no queue and nothing to measure.
+        t0 = request.environ.get("lumen.t0_monotonic")
+        if t0 is not None:
+            request.environ["lumen.queue_wait"] = time.monotonic() - t0
+
+    @app.teardown_request
+    def _stash_url_rule(exc):
+        # The metrics middleware labels by the matched rule, but its closures run
+        # with no request context at all: routing has not happened on the way in,
+        # and Flask's wsgi_app pops the context in its finally BEFORE returning
+        # the response iterable. environ is the only channel out. teardown_request
+        # rather than after_request, because after_request is skipped when a
+        # non-Exception BaseException unwinds the request.
+        request.environ["lumen.url_rule"] = request.url_rule.rule if request.url_rule else None
 
     # Configure rate limiting
     rl_cfg = yaml_data.get("rate_limiting", {})
@@ -149,7 +233,7 @@ def create_app():
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.config["PERMANENT_SESSION_LIFETIME"] = 86400
-    from lumen.services.config_watcher import apply_hot_config, _apply_theme
+    from lumen.services.config_watcher import _apply_theme, apply_hot_config
     apply_hot_config(app, yaml_data)
     app.config["APP_VERSION"] = os.environ.get("APP_VERSION", "develop")
     app.config["GIT_COMMIT"] = os.environ.get("GIT_COMMIT", "N/A")
@@ -215,9 +299,9 @@ def create_app():
             app.config[f"OAUTH2_{key.upper()}"] = oauth2_cfg[key]
 
     # Initialize extensions
-    from .extensions import db, migrate, oauth, limiter
-    from .services.pool_tracker import init_pool_tracking, record_teardown
+    from .extensions import db, limiter, migrate, oauth
     from .services.ctx_probe import install_ctx_probe
+    from .services.pool_tracker import init_pool_tracking, record_teardown
     init_pool_tracking()
     install_ctx_probe()
     db.init_app(app)
@@ -284,19 +368,20 @@ def create_app():
         sys.exit(1)
 
     # Import all models so Flask-Migrate can detect them
-    from . import models  # noqa: F401
+    from lumen.blueprints.admin.routes import admin_bp
+    from lumen.blueprints.api.routes import api_bp
 
     # Register blueprints
     from lumen.blueprints.auth.routes import auth_bp
     from lumen.blueprints.chat.routes import chat_bp
-    from lumen.blueprints.models_page.routes import models_page_bp
-    from lumen.blueprints.projects.routes import projects_bp
-    from lumen.blueprints.profile.routes import profile_bp
-    from lumen.blueprints.api.routes import api_bp
-    from lumen.blueprints.admin.routes import admin_bp
-    from lumen.blueprints.metrics.routes import metrics_bp
-    from lumen.blueprints.help.routes import help_bp
     from lumen.blueprints.connect.routes import connect_bp
+    from lumen.blueprints.help.routes import help_bp
+    from lumen.blueprints.metrics.routes import metrics_bp
+    from lumen.blueprints.models_page.routes import models_page_bp
+    from lumen.blueprints.profile.routes import profile_bp
+    from lumen.blueprints.projects.routes import projects_bp
+
+    from . import models  # noqa: F401
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(chat_bp)
@@ -330,10 +415,29 @@ def create_app():
     # Rate limit error handler
     @app.errorhandler(HTTPStatus.TOO_MANY_REQUESTS)
     def ratelimit_handler(e):
+        # Retry-After matters more here than it looks. 300 students whose
+        # OpenAI-SDK clients all receive a bare 429 retry on their own
+        # independent schedules and can synchronise into a storm; the SDK
+        # honours Retry-After and spreads them out instead. Derived from the
+        # limit's own window so it tells the truth, but defensively: a
+        # flask-limiter internal changing shape must degrade to a sane default,
+        # never 500 the error handler.
+        retry_after = _RATE_LIMIT_RETRY_AFTER_FALLBACK
+        try:
+            retry_after = max(1, int(e.limit.limit.get_expiry()))
+        except Exception:  # noqa: BLE001 - any shape change lands here
+            logger.debug("could not derive Retry-After from the rate limit", exc_info=True)
+
+        # reason="rate_limit" with an empty model: the request body has not been
+        # parsed at this point, so which model was wanted is genuinely unknown.
+        # Reporting it empty is honest; guessing would not be.
+        _observe_rejection_quietly("rate_limit", _rejection_source(), "")
+
+        headers = {"Retry-After": str(retry_after)}
         if request.path.startswith("/v1/"):
             return jsonify({"error": {"message": "Rate limit exceeded. Please slow down.",
-                                       "type": "rate_limit_error", "code": "rate_limit_exceeded"}}), HTTPStatus.TOO_MANY_REQUESTS
-        return jsonify({"error": "Rate limit exceeded. Please slow down."}), HTTPStatus.TOO_MANY_REQUESTS
+                                       "type": "rate_limit_error", "code": "rate_limit_exceeded"}}), HTTPStatus.TOO_MANY_REQUESTS, headers
+        return jsonify({"error": "Rate limit exceeded. Please slow down."}), HTTPStatus.TOO_MANY_REQUESTS, headers
 
     # Friendly themed pages for not-found and server errors (JSON for API clients).
     @app.errorhandler(HTTPStatus.NOT_FOUND)
@@ -351,9 +455,11 @@ def create_app():
         return render_template("errors/500.html"), HTTPStatus.INTERNAL_SERVER_ERROR
 
     # Register CLI commands
-    from lumen.commands import init_db_cmd, reassign_model_cmd
+    from lumen.commands import backfill_aggregate_cmd, enable_retention_cmd, init_db_cmd, reassign_model_cmd
     app.cli.add_command(init_db_cmd)
     app.cli.add_command(reassign_model_cmd)
+    app.cli.add_command(backfill_aggregate_cmd)
+    app.cli.add_command(enable_retention_cmd)
 
     # Context processor: inject app_name and nav_projects into all templates
     @app.context_processor
@@ -383,10 +489,11 @@ def create_app():
             return result
 
         from sqlalchemy import select
-        from lumen.models.entity_manager import EntityManager
-        from lumen.models.entity import Entity
-        from lumen.extensions import db
+
         from lumen.decorators import is_admin as _is_admin
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.entity_manager import EntityManager
         entity = db.session.get(Entity, session["entity_id"])
         is_admin_val = _is_admin(entity) if entity else False
         result["is_admin"] = is_admin_val
@@ -401,7 +508,7 @@ def create_app():
                 .where(
                     Entity.id.in_(project_ids),
                     Entity.entity_type == "project",
-                    Entity.active == True,
+                    Entity.active == True,  # noqa: E712 — SQL comparison, not a truth check
                 )
                 .order_by(Entity.name)
             ).scalars().all()
@@ -426,7 +533,14 @@ def create_app():
     app.jinja_env.filters["markdown"] = _md_filter
 
     # Sync models, groups, and projects from yaml into DB on every startup
-    from lumen.commands import backfill_projects_to_config, sync_groups_from_yaml, sync_models_from_yaml, sync_projects_from_yaml, sync_user_groups_from_yaml, sync_user_limits_from_yaml
+    from lumen.commands import (
+        backfill_projects_to_config,
+        sync_groups_from_yaml,
+        sync_models_from_yaml,
+        sync_projects_from_yaml,
+        sync_user_groups_from_yaml,
+        sync_user_limits_from_yaml,
+    )
     with app.app_context():
         try:
             sync_models_from_yaml(yaml_data)
@@ -459,6 +573,15 @@ def create_app():
         except Exception as e:
             print(f"WARNING: Could not sync projects from yaml (run 'flask db upgrade' first): {e}",
                   file=sys.stderr)
+        try:
+            # Prime the metrics snapshot synchronously: without it every rolling
+            # restart serves an empty snapshot for a whole refresh interval, and
+            # a fleet mid-restart mixes primed and unprimed workers.
+            from lumen.services.metrics_snapshot import refresh_snapshot
+            refresh_snapshot()
+        except Exception as e:
+            print(f"WARNING: Could not prime the metrics snapshot (run 'flask db upgrade' first): {e}",
+                  file=sys.stderr)
 
     # Start background threads only in the main worker process.
     # - Werkzeug dev server: double-imports the app; only run in the child (WERKZEUG_RUN_MAIN=true).
@@ -478,5 +601,13 @@ def create_app():
 
         from lumen.services.config_watcher import start_config_watcher
         start_config_watcher(app, config_yaml_path)
+
+    # Deliberately outside the guard above: BACKGROUND_WORKER=false keeps extra
+    # workers from duplicating *shared* work, but the snapshot is per-process
+    # in-memory state, so skipping it would leave that worker serving an empty
+    # /metrics forever. Started regardless of api.prometheus.enabled too — it is
+    # the application's own cache of its own state, not a Prometheus feature.
+    from lumen.services.metrics_snapshot import start_snapshot_refresher
+    start_snapshot_refresher(app)
 
     return app

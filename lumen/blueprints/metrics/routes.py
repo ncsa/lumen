@@ -2,11 +2,12 @@ import logging
 import os
 import socket
 import threading
+import time
 from functools import wraps
 from http import HTTPStatus
 
 from flask import Blueprint, Response, current_app, request
-from prometheus_client import CollectorRegistry, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 
 from lumen.extensions import db
@@ -45,38 +46,25 @@ def _metrics_auth_required(f):
 
 
 class LumenDBCollector:
-    """Custom Prometheus collector that queries the DB on each scrape."""
+    """Custom Prometheus collector serving the background-refreshed snapshot.
+
+    This used to query the database on every scrape, taking a pooled connection
+    to do it — so it competed for the pool it was reporting on and could block up
+    to ``pool_timeout`` during exactly the burst it exists to describe. The
+    queries now run on a daemon thread (``lumen/services/metrics_snapshot.py``)
+    and ``collect()`` is a pure in-memory read. Nothing here may touch the DB.
+    """
 
     def collect(self):
-        from sqlalchemy import func, select
-        from lumen.extensions import db
-        from lumen.models.model_config import ModelConfig
-        from lumen.models.model_endpoint import ModelEndpoint
-        from lumen.models.model_stat import ModelStat
-        from lumen.models.entity import Entity
+        from lumen.services.metrics_snapshot import get_snapshot
 
-        # This generator interleaves several DB calls with `yield`s. If the consumer
-        # (generate_latest) ever abandons iteration partway through — or the
-        # per-request app-context teardown that would normally call
-        # db.session.remove() doesn't line up with how this generator is driven —
-        # the connection checked out below can be left idle-in-transaction until
-        # Postgres's idle_in_transaction_session_timeout kills it. Unlike every
-        # other DB-touching call site in this codebase, this one can't rely on
-        # implicit per-request cleanup, so it releases its own session explicitly.
-        try:
-            rows = db.session.execute(
-                select(
-                    ModelConfig.model_name,
-                    ModelStat.source,
-                    func.coalesce(func.sum(ModelStat.requests), 0),
-                    func.coalesce(func.sum(ModelStat.input_tokens), 0),
-                    func.coalesce(func.sum(ModelStat.output_tokens), 0),
-                    func.coalesce(func.sum(ModelStat.cost), 0),
-                )
-                .join(ModelConfig, ModelStat.model_config_id == ModelConfig.id)
-                .group_by(ModelConfig.model_name, ModelStat.source)
-            ).all()
+        snapshot = get_snapshot()
 
+        # Before the first successful refresh, emit no lumen_model_* series at
+        # all rather than zeros: absent → present is an ordinary new series to
+        # Prometheus, whereas present(1e6) → present(0) → present(1e6) is two
+        # counter resets and a fabricated rate spike.
+        if snapshot.primed:
             # Cumulative per-(model, source) usage totals summed from ModelStat.
             # CounterMetricFamily appends "_total" to each name, so the exposed
             # samples are lumen_model_requests_total, lumen_model_cost_coins_total, etc.
@@ -101,12 +89,12 @@ class LumenDBCollector:
                 labels=["model", "source"],
             )
 
-            for model_name, source, reqs, inp, out, cost in rows:
+            for (model_name, source), usage in snapshot.model_usage.items():
                 labels = [model_name, source]
-                reqs_m.add_metric(labels, float(reqs))
-                inp_m.add_metric(labels, float(inp))
-                out_m.add_metric(labels, float(out))
-                cost_m.add_metric(labels, float(cost))
+                reqs_m.add_metric(labels, float(usage.requests))
+                inp_m.add_metric(labels, float(usage.input_tokens))
+                out_m.add_metric(labels, float(usage.output_tokens))
+                cost_m.add_metric(labels, float(usage.cost))
 
             yield reqs_m
             yield inp_m
@@ -118,10 +106,7 @@ class LumenDBCollector:
                 "1=healthy 0=unhealthy per model endpoint",
                 labels=["model", "endpoint_url"],
             )
-            for model_name, url, healthy in db.session.execute(
-                select(ModelConfig.model_name, ModelEndpoint.url, ModelEndpoint.healthy)
-                .join(ModelConfig, ModelEndpoint.model_config_id == ModelConfig.id)
-            ).all():
+            for model_name, url, healthy in snapshot.endpoint_health:
                 health_m.add_metric([model_name, url], 1.0 if healthy else 0.0)
             yield health_m
 
@@ -132,17 +117,22 @@ class LumenDBCollector:
                 "User counts: active (not disabled by admin) and total",
                 labels=["status"],
             )
-            active_count = db.session.scalar(
-                select(func.count(Entity.id)).filter_by(entity_type="user", active=True)
-            ) or 0
-            total_count = db.session.scalar(
-                select(func.count(Entity.id)).filter_by(entity_type="user")
-            ) or 0
-            users_m.add_metric(["active"], float(active_count))
-            users_m.add_metric(["total"], float(total_count))
+            users_m.add_metric(["active"], float(snapshot.users_active))
+            users_m.add_metric(["total"], float(snapshot.users_total))
             yield users_m
-        finally:
-            db.session.remove()
+
+        # Emitted from here rather than as a prometheus_client Gauge: under
+        # PROMETHEUS_MULTIPROC_DIR every multiprocess_mode is wrong for an age
+        # (livesum reports 4x the age at 4 workers, mostrecent reports whichever
+        # worker wrote last). Computed on the process serving the scrape, it
+        # describes the same snapshot whose sample values are in this response.
+        # Emitted while unprimed too (measured from process start), because that
+        # is precisely the signal an operator alerts on for that state.
+        yield GaugeMetricFamily(
+            "lumen_metrics_snapshot_age_seconds",
+            "Age of the in-memory metrics snapshot this response was built from",
+            value=time.monotonic() - snapshot.captured_at,
+        )
 
         # Connection-pool gauges. A slow leak (connections checked out and never
         # returned) shows up here as checked_out climbing and never falling back;
@@ -190,6 +180,14 @@ def metrics():
     # otherwise fall back to the default per-process registry.
     if "PROMETHEUS_MULTIPROC_DIR" in os.environ:
         from prometheus_client.multiprocess import MultiProcessCollector
+
+        # Imported lazily: importing the middleware constructs its metric objects,
+        # and those must not be created before PROMETHEUS_MULTIPROC_DIR is set.
+        from lumen.blueprints.metrics.middleware import reap_dead_workers
+        # Before the collector is built, not after: a worker killed by SIGKILL
+        # never ran mark_process_dead, so its live gauges would otherwise be
+        # merged into this scrape's aggregates.
+        reap_dead_workers()
         mp_registry = CollectorRegistry()
         MultiProcessCollector(mp_registry)
         http_output = generate_latest(mp_registry)

@@ -12,6 +12,31 @@ jobs:
     permissions:
       checks: write
       pull-requests: write
+
+    # The suite is otherwise SQLite-only, which never runs Alembic and so never
+    # exercises the request_logs hypertable, its continuous aggregate, or any of
+    # the /api/usage/* SQL. Tests marked `postgres` skip when this is absent.
+    services:
+      timescaledb:
+        # Pinned to the production version, not `latest-pg17`. A floating tag
+        # adopts semantic changes silently, and this schema is sensitive to
+        # exactly that class of change: 2.13 flipped the default of
+        # `timescaledb.materialized_only` to true, which decides whether a
+        # continuous aggregate returns the current bucket at all. Bump this
+        # deliberately, in step with the deployment.
+        image: timescale/timescaledb:2.27.2-pg17
+        env:
+          POSTGRES_USER: lumen
+          POSTGRES_PASSWORD: lumen
+          POSTGRES_DB: lumen_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lumen"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v6
 
@@ -28,6 +53,8 @@ jobs:
 
       - name: Run tests
         run: uv run pytest --junitxml=junit.xml
+        env:
+          LUMEN_TEST_POSTGRES_URL: postgresql://lumen:lumen@localhost:5432/lumen_ci
 
       - name: Publish test results
         uses: dorny/test-reporter@v3

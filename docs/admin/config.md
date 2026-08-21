@@ -100,19 +100,21 @@ When running, Lumen watches `config.yaml` for changes and automatically reloads 
 
 ## Changes That Require a Restart
 
-Some settings are read only at startup and cannot be hot-reloaded. Lumen logs a warning when these change (except where noted):
+Some settings are read only at startup and cannot be hot-reloaded. Lumen logs a warning when these change:
 
 | Setting | Why |
 |---------|-----|
 | `app.secret_key` | Flask session signing key — changing it invalidates all active sessions |
+| `app.encryption_key` | API key hashing secret, read once at startup — rotating it invalidates every stored API key |
 | `app.database` | Database connection URL and pool settings are established at startup |
 | `app.debug` | Debug flag affects core application initialization |
+| `app.logs.level` | The application log level is set on the logger at startup (`app.logs.access` and `app.logs.model` do hot-reload) |
 | `oauth2.*` | OAuth client ID, secret, and server metadata are used during session setup |
 | `api.prometheus.enabled` | Metrics collector is initialized at startup |
 | `api.prometheus.multiproc_dir` | Multi-process aggregation directory |
-| `rate_limiting.storage_url` | Redis connection is established at startup; no runtime warning is emitted if this changes |
+| `rate_limiting.storage_url` | Redis connection is established at startup, and it also selects the live-state backend |
 
-> **`app.encryption_key`** is not enforced by the watcher but is equally dangerous to rotate at runtime — changing it immediately invalidates all stored API key hashes. See [Security Notes](#security-notes).
+> **`app.encryption_key`** is as dangerous to rotate at runtime as it is to change at all — a new value invalidates every stored API key hash. See [Security Notes](#security-notes).
 
 ## How It Works
 

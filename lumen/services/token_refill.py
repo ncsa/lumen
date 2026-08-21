@@ -1,7 +1,7 @@
 import logging
 import time
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from flask import current_app
 from sqlalchemy import select, update as sa_update
@@ -23,7 +23,9 @@ def refill_coin_balances(now: datetime = None) -> int:
     if now is None:
         now = utcnow()
     elif now.tzinfo is not None:
-        now = now.replace(tzinfo=None)
+        # Interpret an aware value as UTC and normalize instead of dropping the
+        # offset, so a caller-passed non-UTC time cannot skew the refill window.
+        now = now.astimezone(timezone.utc).replace(tzinfo=None)
     one_hour_ago = now - timedelta(hours=1)
     due = db.session.execute(
         select(EntityBalance).where(
@@ -76,7 +78,7 @@ def refill_coin_balances(now: datetime = None) -> int:
         # can't abort the whole pass.
         last_refill = bal.last_refill_at
         if last_refill.tzinfo is not None:
-            last_refill = last_refill.replace(tzinfo=None)
+            last_refill = last_refill.astimezone(timezone.utc).replace(tzinfo=None)
         hours_elapsed = (now - last_refill).total_seconds() / 3600
 
         if eid in entity_limits:

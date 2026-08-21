@@ -39,8 +39,33 @@ def test_normalize_path_leading_id_only():
 # make_metrics_middleware
 # ---------------------------------------------------------------------------
 
-def _fake_environ(path="/", method="GET"):
-    return {"PATH_INFO": path, "REQUEST_METHOD": method}
+def _fake_environ(path="/", method="GET", rule=None):
+    """A minimal WSGI environ.
+
+    ``rule`` is what ``create_app``'s teardown_request hook would have stashed
+    for a routed request; leaving it None is an unrouted request (a scanner, a
+    404), which is what a bare fake app produces.
+    """
+    environ = {"PATH_INFO": path, "REQUEST_METHOD": method}
+    if rule is not None:
+        environ["lumen.url_rule"] = rule
+    return environ
+
+
+def _capture_labels(monkeypatch):
+    """Record the (method, path_template) of every counter/histogram label call."""
+    from lumen.blueprints.metrics import middleware as mw
+
+    recorded = []
+    for metric in (mw._http_requests, mw._http_latency):
+        orig = metric.labels
+
+        def spy(_orig=orig, **kwargs):
+            recorded.append((kwargs["method"], kwargs["path_template"]))
+            return _orig(**kwargs)
+
+        monkeypatch.setattr(metric, "labels", spy)
+    return recorded
 
 
 def test_middleware_passes_through_response():
@@ -71,27 +96,114 @@ def test_middleware_captures_4xx_status():
     assert status_seen == ["404 Not Found"]
 
 
-def test_middleware_normalizes_path_label(monkeypatch):
-    """Numeric path segments are collapsed before being recorded as a label."""
+# ---------------------------------------------------------------------------
+# Label cardinality — both dimensions. Every label value must come from a
+# bounded set, or a scanner mints unbounded series in every worker process's
+# memory and in the TSDB.
+# ---------------------------------------------------------------------------
+
+def _drive(wrapped, environ):
+    body = wrapped(environ, lambda *a: None)
+    list(body)
+    body.close()
+
+
+def _null_app(environ, start_response):
+    start_response("404 Not Found", [])
+    return []
+
+
+def test_unmatched_paths_all_share_one_label_value(monkeypatch):
+    """50 distinct junk paths must produce exactly one path_template value.
+
+    This is the pre-existing bug Phase 1 makes urgent: the old label was the
+    request path with numbers folded, so /.env, /wp-admin, /cgi-bin/... each
+    minted a new series — unbounded, and multiplied by the worker count.
+    """
     from lumen.blueprints.metrics import middleware as mw
 
-    recorded = []
-    orig = mw._http_requests.labels
+    recorded = _capture_labels(monkeypatch)
+    wrapped = mw.make_metrics_middleware(_null_app)
+    for i in range(50):
+        _drive(wrapped, _fake_environ(f"/wp-admin/setup-{i}.php"))
 
-    def spy(**kwargs):
-        recorded.append(kwargs.get("path_template"))
-        return orig(**kwargs)
+    assert len(recorded) == 100  # one counter + one histogram call per request
+    assert {path for _, path in recorded} == {"<unmatched>"}
 
-    monkeypatch.setattr(mw._http_requests, "labels", spy)
+    from prometheus_client import REGISTRY, generate_latest
+    assert "wp-admin" not in generate_latest(REGISTRY).decode()
 
-    def fake_app(environ, start_response):
-        start_response("200 OK", [])
-        return []
 
-    mw.make_metrics_middleware(fake_app)(
-        _fake_environ("/admin/groups/123"), lambda *a: None
+def test_matched_route_is_labelled_by_its_rule(app, monkeypatch):
+    """A routed request is labelled with the url_rule, not the concrete path."""
+    import re
+
+    from werkzeug.test import EnvironBuilder
+
+    from lumen.blueprints.metrics import middleware as mw
+
+    rule = next(
+        r for r in app.url_map.iter_rules()
+        if "<int:" in r.rule and "GET" in r.methods
     )
-    assert recorded and recorded[-1] == "/admin/groups/{id}"
+    concrete = re.sub(r"<int:[^>]+>", "987654", rule.rule)
+
+    recorded = _capture_labels(monkeypatch)
+    wrapped = mw.make_metrics_middleware(app.wsgi_app)
+    environ = EnvironBuilder(path=concrete).get_environ()
+    _drive(wrapped, environ)
+
+    # The teardown_request hook registered in create_app is the only way this
+    # value can reach the middleware: Flask pops the request context before
+    # wsgi_app returns, so the closures cannot read request.url_rule at all.
+    assert environ["lumen.url_rule"] == rule.rule
+    assert {path for _, path in recorded} == {rule.rule}
+    assert "987654" not in rule.rule
+
+
+def test_unrouted_request_through_the_real_app_is_unmatched(app, monkeypatch):
+    """A 404 has no url_rule; the hook stashes None and the label falls back."""
+    from werkzeug.test import EnvironBuilder
+
+    from lumen.blueprints.metrics import middleware as mw
+
+    recorded = _capture_labels(monkeypatch)
+    wrapped = mw.make_metrics_middleware(app.wsgi_app)
+    environ = EnvironBuilder(path="/.env").get_environ()
+    _drive(wrapped, environ)
+
+    assert environ["lumen.url_rule"] is None
+    assert {path for _, path in recorded} == {"<unmatched>"}
+
+
+def test_junk_methods_all_share_one_label_value(monkeypatch):
+    """HTTP methods are RFC token grammar, so the method label is unbounded too.
+
+    The path fix alone would pass a gate that only scans junk paths while the
+    same explosion continued through the other dimension.
+    """
+    from lumen.blueprints.metrics import middleware as mw
+
+    recorded = _capture_labels(monkeypatch)
+    wrapped = mw.make_metrics_middleware(_null_app)
+    for i in range(20):
+        _drive(wrapped, _fake_environ("/", f"FOOBARBAZ{i}"))
+
+    assert {method for method, _ in recorded} == {"<other>"}
+
+
+def test_standard_methods_are_kept_verbatim(monkeypatch):
+    """The allow-list must not flatten the methods anyone actually queries by."""
+    from lumen.blueprints.metrics import middleware as mw
+
+    recorded = _capture_labels(monkeypatch)
+    wrapped = mw.make_metrics_middleware(_null_app)
+    for method in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"):
+        _drive(wrapped, _fake_environ("/", method))
+
+    assert {m for m, _ in recorded} == {
+        "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"
+    }
 
 
 def test_middleware_warns_when_a_context_survives_the_request(app, caplog):
@@ -328,7 +440,7 @@ def test_streaming_latency_is_measured_over_the_whole_body(monkeypatch):
 
     before = _latency_sum(path)
     wrapped = make_metrics_middleware(streaming_app)
-    body = wrapped(_fake_environ(path, "POST"), lambda s, h, *_: None)
+    body = wrapped(_fake_environ(path, "POST", rule=path), lambda s, h, *_: None)
     assert list(body) == [b"data: done\n\n"]
     body.close()
 
@@ -354,7 +466,7 @@ def test_latency_is_still_recorded_when_the_app_raises(monkeypatch):
     before = _latency_sum(path)
     wrapped = make_metrics_middleware(exploding_app)
     with pytest.raises(RuntimeError):
-        wrapped(_fake_environ(path, "POST"), lambda s, h, *_: None)
+        wrapped(_fake_environ(path, "POST", rule=path), lambda s, h, *_: None)
     assert _latency_sum(path) > before
 
 
@@ -377,8 +489,324 @@ def test_latency_is_observed_once_per_request():
         ) or 0.0
 
     before = count()
-    body = make_metrics_middleware(fake_app)(_fake_environ(path, "POST"), lambda s, h, *_: None)
+    body = make_metrics_middleware(fake_app)(
+        _fake_environ(path, "POST", rule=path), lambda s, h, *_: None
+    )
     list(body)
     body.close()
     body.close()
     assert count() - before == 1
+
+
+# ---------------------------------------------------------------------------
+# Multiprocess gauge invariant — static guard, same shape as
+# tests/unit/test_no_stream_with_context.py
+# ---------------------------------------------------------------------------
+
+def test_every_gauge_declares_a_multiprocess_mode():
+    """Under PROMETHEUS_MULTIPROC_DIR every process writes its own mmap file and
+    the scrape merges them. A Gauge with no explicit multiprocess_mode gets the
+    library default ("all"), which exposes one series per pid instead of the one
+    fleet number the dashboard is built on. Counter/Histogram need nothing —
+    summing is the only correct merge for them.
+    """
+    import ast
+    from pathlib import Path
+
+    lumen_dir = Path(__file__).resolve().parents[2] / "lumen"
+    offenders = []
+    for path in sorted(lumen_dir.rglob("*.py")):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if name != "Gauge":
+                continue
+            if not any(kw.arg == "multiprocess_mode" for kw in node.keywords):
+                offenders.append(f"{path.relative_to(lumen_dir.parent)}:{node.lineno}")
+    assert not offenders, (
+        "every Gauge must pass an explicit multiprocess_mode (see the invariant "
+        "comment in lumen/blueprints/metrics/middleware.py). Found:\n"
+        + "\n".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# lumen.queue_wait — computed by the before_request hook in create_app from the
+# mark the ASGI bridge leaves in environ.
+# ---------------------------------------------------------------------------
+
+def test_queue_wait_is_computed_from_the_bridge_mark(app):
+    import time
+
+    from werkzeug.test import EnvironBuilder
+
+    environ = EnvironBuilder(path="/healthz").get_environ()
+    environ["lumen.t0_monotonic"] = time.monotonic() - 0.5
+    app.wsgi_app(environ, lambda *a: None)
+    assert environ["lumen.queue_wait"] >= 0.5
+
+
+def test_queue_wait_is_absent_when_the_bridge_did_not_mark_the_request(app):
+    """The test client and the dev server never set the mark; the hook must not
+    invent a number for a request that never queued."""
+    from werkzeug.test import EnvironBuilder
+
+    environ = EnvironBuilder(path="/healthz").get_environ()
+    app.wsgi_app(environ, lambda *a: None)
+    assert "lumen.queue_wait" not in environ
+
+
+# ---------------------------------------------------------------------------
+# lumen_wsgi_queue_wait_seconds — the histogram fed from that environ key.
+# ---------------------------------------------------------------------------
+
+def _queue_wait_sample(suffix):
+    """A sample of the unlabelled queue-wait histogram, 0.0 before any observation."""
+    from prometheus_client import REGISTRY
+
+    return REGISTRY.get_sample_value(f"lumen_wsgi_queue_wait_seconds_{suffix}") or 0.0
+
+
+def test_queue_wait_is_observed_when_the_environ_key_is_present():
+    import pytest
+
+    from lumen.blueprints.metrics.middleware import make_metrics_middleware
+
+    def queued_app(environ, start_response):
+        environ["lumen.queue_wait"] = 0.75  # what the before_request hook writes
+        start_response("200 OK", [])
+        return [b"ok"]
+
+    before_count = _queue_wait_sample("count")
+    before_sum = _queue_wait_sample("sum")
+    _drive(make_metrics_middleware(queued_app), _fake_environ("/v1/models", "POST"))
+
+    assert _queue_wait_sample("count") - before_count == 1
+    assert _queue_wait_sample("sum") - before_sum == pytest.approx(0.75)
+
+
+def test_queue_wait_is_not_observed_when_the_environ_key_is_absent():
+    """Under the Flask test client and the Werkzeug dev server nothing queued.
+
+    Observing 0.0 there would fill the histogram with a queue that does not
+    exist and drag every percentile towards zero.
+    """
+    from lumen.blueprints.metrics.middleware import make_metrics_middleware
+
+    before = _queue_wait_sample("count")
+    _drive(make_metrics_middleware(_null_app), _fake_environ("/v1/models", "POST"))
+    assert _queue_wait_sample("count") == before
+
+
+# ---------------------------------------------------------------------------
+# lumen_wsgi_queue_depth / _threads_busy / _threads_total — the claim made in
+# the comment beside them is that they are per-process live values that SUM
+# across live workers and lose a dead worker's contribution. Proving that needs
+# real processes: prometheus_client binds its value class at import time from
+# PROMETHEUS_MULTIPROC_DIR, so a fork of this test process has the
+# single-process class already bound (same reason as
+# tests/unit/test_metrics_multiprocess.py).
+# ---------------------------------------------------------------------------
+
+# Sets the bridge's counters, then drives one request through the middleware —
+# so what is asserted below is the whole chain (accessor -> gauge -> mmap file
+# -> merged scrape), not just a .set() call.
+_GAUGE_CHILD = """
+import os, sys
+
+from lumen.services import wsgi_disconnect as wd
+
+wd._queued, wd._running, wd._threads_total = (int(a) for a in sys.argv[1:4])
+
+# Imported only after the counters are set and with PROMETHEUS_MULTIPROC_DIR
+# already in the environment: importing this module constructs the gauges, and
+# prometheus_client opens each mmap eagerly at construction.
+from lumen.blueprints.metrics import middleware as mw
+
+
+def app(environ, start_response):
+    start_response("200 OK", [])
+    return [b""]
+
+
+body = mw.make_metrics_middleware(app)(
+    {"PATH_INFO": "/", "REQUEST_METHOD": "GET"}, lambda *a: None
+)
+list(body)
+body.close()
+print(os.getpid())
+"""
+
+
+def _run_gauge_child(multiproc_dir, queued, running, threads):
+    """Run one request in a separate process; return its (now dead) pid."""
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "PROMETHEUS_MULTIPROC_DIR": str(multiproc_dir)}
+    result = subprocess.run(
+        [sys.executable, "-c", _GAUGE_CHILD, str(queued), str(running), str(threads)],
+        env=env, capture_output=True, text=True, check=True,
+    )
+    return int(result.stdout.strip())
+
+
+def _merged(multiproc_dir):
+    from prometheus_client import CollectorRegistry
+    from prometheus_client.multiprocess import MultiProcessCollector
+
+    registry = CollectorRegistry()
+    MultiProcessCollector(registry, path=str(multiproc_dir))
+    return registry
+
+
+def _series(registry, name):
+    return [s for m in registry.collect() if m.name == name for s in m.samples]
+
+
+def test_wsgi_pool_gauges_are_one_fleet_number_not_one_series_per_process(tmp_path):
+    """livesum, not the library default: two workers must merge into one sample.
+
+    With the default mode ("all") each process keeps its own series tagged with
+    its pid, so a dashboard panel showing "queue depth" would show four lines at
+    four processes and no total — the failure the file's invariant comment
+    exists to prevent.
+    """
+    _run_gauge_child(tmp_path, 3, 7, 10)
+    _run_gauge_child(tmp_path, 2, 5, 10)
+
+    registry = _merged(tmp_path)
+    for name in ("lumen_wsgi_queue_depth", "lumen_wsgi_threads_busy",
+                 "lumen_wsgi_threads_total"):
+        samples = _series(registry, name)
+        assert len(samples) == 1, f"{name} exposed {len(samples)} series, not a fleet total"
+        assert samples[0].labels == {}, f"{name} is labelled per process: {samples[0].labels}"
+
+    assert registry.get_sample_value("lumen_wsgi_queue_depth") == 5.0
+    assert registry.get_sample_value("lumen_wsgi_threads_busy") == 12.0
+    # Fleet capacity, which is what the depth has to be read against: two
+    # processes of ten threads is twenty threads, not ten.
+    assert registry.get_sample_value("lumen_wsgi_threads_total") == 20.0
+
+
+def test_a_dead_worker_stops_contributing_to_the_pool_gauges(tmp_path):
+    """A gauge is a claim about now, and a dead worker's queue is not queued."""
+    from prometheus_client.multiprocess import mark_process_dead
+
+    pid_a = _run_gauge_child(tmp_path, 3, 7, 10)
+    pid_b = _run_gauge_child(tmp_path, 2, 5, 10)
+    assert pid_a != pid_b
+    assert _merged(tmp_path).get_sample_value("lumen_wsgi_queue_depth") == 5.0
+
+    mark_process_dead(pid_a, str(tmp_path))
+
+    registry = _merged(tmp_path)
+    assert registry.get_sample_value("lumen_wsgi_queue_depth") == 2.0
+    assert registry.get_sample_value("lumen_wsgi_threads_busy") == 5.0
+    assert registry.get_sample_value("lumen_wsgi_threads_total") == 10.0
+    assert registry.get_sample_value("lumen_http_requests_total", {
+        "method": "GET", "path_template": "<unmatched>", "status": "200",
+    }) == 2.0, "the dead worker's counter is real history and must still be summed"
+
+
+def test_pool_gauges_are_sampled_from_the_bridge_accessors(monkeypatch):
+    """Single-process half of the same claim: the gauge tracks the accessor.
+
+    The multiprocess merge above cannot run in this interpreter, so the two
+    halves are tested separately — this one proves the value is read live from
+    ``wsgi_disconnect`` on every request rather than captured once at import.
+    """
+    from prometheus_client import REGISTRY
+
+    from lumen.blueprints.metrics import middleware as mw
+    from lumen.services import wsgi_disconnect as wd
+
+    monkeypatch.setattr(wd, "_queued", 4)
+    monkeypatch.setattr(wd, "_running", 6)
+    monkeypatch.setattr(wd, "_threads_total", 10)
+    _drive(mw.make_metrics_middleware(_null_app), _fake_environ("/"))
+
+    assert REGISTRY.get_sample_value("lumen_wsgi_queue_depth") == 4.0
+    assert REGISTRY.get_sample_value("lumen_wsgi_threads_busy") == 6.0
+    assert REGISTRY.get_sample_value("lumen_wsgi_threads_total") == 10.0
+
+    monkeypatch.setattr(wd, "_queued", 0)
+    _drive(mw.make_metrics_middleware(_null_app), _fake_environ("/"))
+    assert REGISTRY.get_sample_value("lumen_wsgi_queue_depth") == 0.0
+
+
+# ---------------------------------------------------------------------------
+# observe_rejection / lumen_rejections_total
+# ---------------------------------------------------------------------------
+
+def _rejection_count(reason, source, model):
+    from prometheus_client import REGISTRY
+
+    return REGISTRY.get_sample_value(
+        "lumen_rejections_total",
+        {"reason": reason, "source": source, "model": model},
+    ) or 0.0
+
+
+def test_observe_rejection_labels_each_reason_separately():
+    """The whole point is telling the refusals apart: 'too many requests' and
+    'out of coins' are different failures with different remedies."""
+    from lumen.blueprints.metrics.middleware import observe_rejection
+
+    reasons = ("coin_budget", "no_access", "needs_consent", "no_healthy_endpoint")
+    before = {r: _rejection_count(r, "api", "gpt-4o") for r in reasons}
+    for reason in reasons:
+        observe_rejection(reason, "api", "gpt-4o")
+    observe_rejection("coin_budget", "api", "gpt-4o")
+
+    assert _rejection_count("coin_budget", "api", "gpt-4o") == before["coin_budget"] + 2
+    for reason in reasons[1:]:
+        assert _rejection_count(reason, "api", "gpt-4o") == before[reason] + 1
+    # A different source is a different series, not the same counter.
+    assert _rejection_count("no_access", "chat", "gpt-4o") == 0.0
+
+
+def test_observe_rejection_defaults_the_model_to_empty():
+    """rate_limit and queue_shed happen before the body is parsed, so no model
+    is known; the label is empty on purpose rather than invented."""
+    from prometheus_client import REGISTRY, generate_latest
+
+    from lumen.blueprints.metrics.middleware import observe_rejection
+
+    before_rate = _rejection_count("rate_limit", "api", "")
+    before_shed = _rejection_count("queue_shed", "api", "")
+    observe_rejection("rate_limit", "api")          # model omitted entirely
+    observe_rejection("queue_shed", "api", "")      # model explicitly empty
+
+    assert _rejection_count("rate_limit", "api", "") == before_rate + 1
+    assert _rejection_count("queue_shed", "api", "") == before_shed + 1
+    scrape = generate_latest(REGISTRY).decode()
+    assert "# TYPE lumen_rejections_total counter" in scrape
+    assert 'lumen_rejections_total{model="",reason="rate_limit",source="api"}' in scrape
+
+
+# ---------------------------------------------------------------------------
+# observe_pool_wait / lumen_db_pool_wait_seconds
+# ---------------------------------------------------------------------------
+
+def test_observe_pool_wait_records_the_checkout_wait():
+    """lumen_db_pool_connections shows the pool is full; only this shows whether
+    anything is queued behind it."""
+    import pytest
+    from prometheus_client import REGISTRY
+
+    from lumen.blueprints.metrics.middleware import observe_pool_wait
+
+    def sample(suffix):
+        return REGISTRY.get_sample_value(f"lumen_db_pool_wait_seconds_{suffix}") or 0.0
+
+    before_count, before_sum = sample("count"), sample("sum")
+    observe_pool_wait(0.25)
+    observe_pool_wait(1.5)
+
+    assert sample("count") - before_count == 2
+    assert sample("sum") - before_sum == pytest.approx(1.75)

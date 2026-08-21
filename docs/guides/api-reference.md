@@ -282,6 +282,19 @@ HTTP 429 Too Many Requests
 
 Wait a moment and retry. The Usage page shows your recent request volume so you can gauge how close you are to the limit.
 
+A `429` is also returned when your coin budget is exhausted, which needs the opposite
+reaction — retrying shortly will not help until the budget refills. The two are told
+apart by the error `code`:
+
+| `code` | Meaning | What to do |
+|--------|---------|------------|
+| `rate_limit_exceeded` | Too many requests too quickly | Retry after a short pause |
+| `insufficient_quota` | Your coin budget is spent | Wait for the refill, or ask for a larger budget |
+
+Both carry a `Retry-After` header, in seconds, whenever the wait is knowable — the
+OpenAI SDK honours it. A coin budget that never refills automatically sends no
+`Retry-After`, because there is no time to give.
+
 ---
 
 ## Error Responses
@@ -291,5 +304,5 @@ Wait a moment and retry. The Usage page shows your recent request volume so you 
 | `401` | Invalid or missing API key |
 | `403` | Your account does not have access to the requested model |
 | `404` | Model not found |
-| `429` | Rate limit exceeded |
+| `429` | Rate limit exceeded, or coin budget exhausted (see Rate Limits) |
 | `503` | Model backend is currently unavailable |

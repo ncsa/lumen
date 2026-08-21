@@ -20,7 +20,8 @@ from lumen.models.entity_stat import EntityStat
 from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
-from lumen.services.llm import bulk_model_access_info, check_coin_budget, get_pool_limit, send_message_stream
+from lumen.services.live_state import get_live_state
+from lumen.services.llm import bulk_model_access_info, check_coin_budget, coin_retry_after, get_pool_limit, send_message_stream
 from lumen.services.wsgi_disconnect import client_disconnect_event
 from lumen.timeutils import utcnow
 
@@ -214,8 +215,21 @@ def chat_stream():
     if not model_config:
         return jsonify({"error": f"Unknown model: {model}"}), HTTPStatus.BAD_REQUEST
 
-    ok, code, msg, effective = check_coin_budget(entity_id, model_config.id)
+    ok, code, msg, effective = check_coin_budget(
+        entity_id, model_config.id, source="chat", model_name=model,
+    )
     if not ok:
+        if code == HTTPStatus.TOO_MANY_REQUESTS:
+            # The chat surface has the same two-kinds-of-429 problem /v1 has:
+            # the limiter's 429 already carries Retry-After, so without one
+            # here an exhausted budget looks like a rate limit that will clear
+            # in a moment. Only the header is added. The body stays
+            # {"error": "<string>"} because chat.html renders `data.error`
+            # directly (chat.html:710) -- nesting it the way /v1 does would
+            # put "[object Object]" in the user's chat window.
+            retry_after = coin_retry_after(entity_id)
+            if retry_after is not None:
+                return jsonify({"error": msg}), code, {"Retry-After": str(retry_after)}
         return jsonify({"error": msg}), code
 
     store_conversations = db.session.execute(
@@ -245,19 +259,36 @@ def chat_stream():
     app = current_app._get_current_object()
     disconnected = client_disconnect_event()
     llm_stream = send_message_stream(messages, model, entity_id=entity_id, source="chat", effective=effective)
+    # Admitted last, once every rejection above has passed: a refused request
+    # must never appear in flight. The ticket rides in the closure like the
+    # disconnect Event, and generate()'s finally releases it. Nothing between
+    # here and the Response below can raise, so an admitted request always
+    # reaches the generator. The backend is resolved here too — picking one
+    # reads config, which the context-free generator cannot do.
+    live_state = get_live_state()
+    ticket = live_state.admit(model, entity_id)
 
     def generate():
         try:
             result = None
             for chunk, thinking, final in llm_stream:
+                if final is not None:
+                    # Taken before the disconnect check, not after: reaching the
+                    # final tuple means the stream ran to completion and
+                    # send_message_stream has already billed it (outcome "ok",
+                    # aborted false). A client that leaves inside that billing
+                    # window — a few milliseconds, but a busy one — would
+                    # otherwise break here and lose the reply it paid for, with
+                    # nothing in request_logs to say the conversation was
+                    # dropped. Keep it and let the write below run.
+                    result = final
+                    continue
                 if disconnected.is_set():
                     break
                 if thinking is not None:
                     yield f"data: {json.dumps({'thinking_chunk': thinking})}\n\n"
                 elif chunk is not None:
                     yield f"data: {json.dumps({'chunk': chunk})}\n\n"
-                else:
-                    result = final
 
             if result is None and disconnected.is_set():
                 # The client left mid-stream; send_message_stream has already
@@ -337,6 +368,25 @@ def chat_stream():
             # context exited; there is no ambient session here to clean up.
             logger.exception("chat_stream error (model=%s, entity=%s)", model, entity_id)
             yield f"data: {json.dumps({'error': 'An error occurred. Please try again.'})}\n\n"
+        finally:
+            # Bound the live count before anything that could raise. close()
+            # can itself raise (a generator that does not handle the
+            # GeneratorExit thrown at its yield propagates RuntimeError), so it
+            # must never run ahead of the release — a leak that only shows as an
+            # inflated count. The ticket's deadline is the backstop, but the
+            # release is the honest path.
+            live_state.release(ticket)
+            # Close the LLM stream here rather than leaving it to be collected.
+            # Closing it is what raises GeneratorExit inside send_message_stream,
+            # and that handler is where an abandoned stream gets billed. Two
+            # exits above leave it suspended mid-stream: the disconnect check in
+            # the loop, and a GeneratorExit thrown in at a yield. Under
+            # refcounting the collection is usually immediate, but anything
+            # still referencing this frame (a traceback, a log record carrying
+            # exc_info) postpones it indefinitely and an exception raised during
+            # collection is swallowed — so the abort accounting would silently
+            # never happen. A no-op once the stream has run to completion.
+            llm_stream.close()
 
     resp = Response(generate(), content_type="text/event-stream")
     resp.headers["X-Accel-Buffering"] = "no"

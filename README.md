@@ -140,6 +140,82 @@ Visit `http://localhost:5001`, click **Login**, and you'll be auto-logged in as 
 
 ---
 
+## Operator Commands
+
+Run with `uv run flask --app run <command>` locally, or `flask <command>` inside the container.
+Both commands below need PostgreSQL/TimescaleDB; on SQLite they print a note and exit 0.
+
+### `backfill-aggregate`
+
+Materialises a continuous aggregate's full history, month by month, oldest first.
+
+```bash
+flask backfill-aggregate [--name NAME] [--from YYYY-MM] [--force]
+```
+
+| Flag | Meaning |
+|---|---|
+| `--name` | Aggregate to refresh. Default `request_counts_hourly_by_entity`. |
+| `--from` | First month to refresh. Default: the month of the oldest `request_logs` row. |
+| `--force` | Refresh months starting before the retention boundary anyway. |
+
+Migrations create their aggregates `WITH NO DATA`, and the refresh policy only ever materialises its
+own `start_offset` window — so per-user "All Time" charts stay near-empty until this is run. **Run it
+right after `flask db upgrade` creates a new aggregate, and check the printed row counts.** It walks
+month by month because one `CALL refresh_continuous_aggregate(NULL, NULL)` over a production
+hypertable is a single long transaction with unbounded memory, and it never refreshes past `now()`,
+which would materialise the current bucket and hide every request logged after the backfill.
+
+`--force` exists because refreshing a window whose raw chunks retention has already dropped
+recomputes that window as **empty and deletes the materialised rows, with no error**. The command
+refuses such a window and prints how many rows it would have erased; `--force` overrides the refusal
+and erases them.
+
+TimescaleDB refuses an *overlapping* refresh outright rather than queueing behind it, so a month
+landing while a scheduled policy job is mid-refresh fails immediately with `SQLSTATE 55P03`
+(`LockNotAvailable`). `request_metrics_1m`'s policy fires every minute, so a long backfill will meet
+one; each month is retried for up to 60 seconds and the line reports `(after N lock retries)`. Every
+month that succeeds is printed with `OK`, and a month that fails outright prints the exact
+`--from` to resume with. Re-running an already-refreshed month is safe: it recomputes that window
+from the raw rows and overwrites it, so resuming never double-counts.
+
+### `enable-retention`
+
+Reports — and only with `--force`, enables — the `request_logs` retention policy.
+
+```bash
+flask enable-retention [--window '13 months'] [--dry-run|--force]
+```
+
+| Flag | Meaning |
+|---|---|
+| `--window` | Age after which raw chunks are dropped. Default `13 months`. |
+| `--dry-run` | **The default.** Reports only; changes nothing. |
+| `--force` | Actually calls `add_retention_policy`. |
+
+Retention is a command and not a migration on purpose: `entrypoint.sh` runs `flask db upgrade` at
+container start, so a migration would begin deleting data on the next deploy. The dry run prints the
+window, how many `request_logs` rows are already older than it, and each aggregate's earliest bucket
+against its refresh `start_offset` — warning where a `start_offset` is *wider* than the retention
+window, since a scheduled refresh reaching into dropped chunks erases what it recomputes.
+
+The command refuses to enable retention unless `request_counts_hourly_by_entity` **covers all the
+raw history that still exists** — its earliest materialised bucket at or before the oldest surviving
+`request_logs` row, the same test the per-entity charts apply before they will read the aggregate at
+all. "Not empty" is not enough: the aggregate is created `WITH NO DATA` but refreshes its last 30
+days every hour, so ordinary traffic fills that window within an hour of deploy while the history
+retention is about to delete has never been materialised. The refusal prints both timestamps it
+compared and the `flask backfill-aggregate --from YYYY-MM` that fixes it.
+
+`--window` only ever applies to a policy this command creates. If `request_logs` already has a
+retention policy the command changes nothing and says so, including that the window you asked for
+was not applied; changing an existing window needs
+`SELECT remove_retention_policy('request_logs')` first.
+
+Lifetime totals in `entity_stats`/`model_stats` are cumulative and survive retention regardless.
+
+---
+
 ## Configuration Reference (`config.yaml`)
 
 ### App settings

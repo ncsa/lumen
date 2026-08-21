@@ -1,4 +1,6 @@
 """Additional LLM service tests: groups, endpoints, coin functions, stats."""
+import time
+from datetime import datetime, timezone
 from http import HTTPStatus
 from unittest.mock import MagicMock, patch
 
@@ -714,6 +716,79 @@ def test_stream_client_disconnect_bills_estimated_usage(app, test_user, test_mod
         assert db.session.scalar(select(func.count()).select_from(ModelStat)) == 1
 
 
+# ---------------------------------------------------------------------------
+# One clock: every span is measured with time.monotonic()
+#
+# Mixing monotonic with the wall clock does not raise — it writes a duration of
+# roughly ±1.76e9 seconds (the Unix epoch, ~55 years). These bounds fail loudly
+# in both directions. See tests/unit/test_single_clock.py for the static guard.
+# ---------------------------------------------------------------------------
+
+_MAX_PLAUSIBLE_SPAN = 60 * 60  # seconds; a real test stream takes milliseconds
+
+
+def test_completed_stream_records_a_plausible_duration(app, test_user, test_model_endpoint):
+    entity_id = test_user["id"]
+    chunks = [
+        _Chunk(content="hello"),
+        _Chunk(usage=_Usage(prompt_tokens=10, completion_tokens=5)),
+    ]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.models.request_log import RequestLog
+        from lumen.services.llm import send_message_stream
+        db.session.add(EntityLimit(entity_id=entity_id, max_coins=-2, refresh_coins=0, starting_coins=0))
+        db.session.commit()
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)):
+            _, _, result = _drain(send_message_stream([], "test-model", entity_id=entity_id))
+        assert 0 <= result["duration"] < _MAX_PLAUSIBLE_SPAN
+        log = db.session.execute(select(RequestLog).filter_by(entity_id=entity_id)).scalar_one()
+        assert 0 <= log.duration < _MAX_PLAUSIBLE_SPAN
+
+
+def test_aborted_stream_records_a_plausible_duration(app, test_user, test_model_endpoint):
+    """The record_stream_abort path computes its duration from the caller's t0.
+
+    It lives in a different function from the three that measure their own
+    spans, which is how it gets missed: convert the assignments without it and
+    every abandoned request is logged as having taken 55 years.
+    """
+    entity_id = test_user["id"]
+    chunks = [_Chunk(content="partial"), _Chunk(content=" more")]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.models.request_log import RequestLog
+        from lumen.services.llm import send_message_stream
+        db.session.add(EntityLimit(entity_id=entity_id, max_coins=-2, refresh_coins=0, starting_coins=0))
+        db.session.commit()
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)):
+            gen = send_message_stream([{"role": "user", "content": "hi"}], "test-model", entity_id=entity_id)
+            assert next(gen) == ("partial", None, None)  # mid-stream
+            gen.close()  # client disconnect -> GeneratorExit -> record_stream_abort
+        log = db.session.execute(select(RequestLog).filter_by(entity_id=entity_id)).scalar_one()
+        assert log.aborted is True
+        assert 0 <= log.duration < _MAX_PLAUSIBLE_SPAN
+
+
+def test_time_to_first_token_is_a_plausible_span(app, test_model_endpoint):
+    chunks = [
+        _Chunk(content="first"),
+        _Chunk(content=" second"),
+        _Chunk(usage=_Usage(prompt_tokens=10, completion_tokens=5)),
+    ]
+    with app.app_context():
+        from lumen.services.llm import send_message_stream
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)):
+            _, _, result = _drain(send_message_stream([], "test-model"))
+    ttft = result["time_to_first_token"]
+    assert 0 <= ttft < _MAX_PLAUSIBLE_SPAN
+    # It is a prefix of the whole stream, so it cannot exceed the duration —
+    # which it also would if the two were read from different clocks.
+    assert ttft <= result["duration"]
+
+
 def test_disconnect_flag_aborts_stream_without_generator_exit(app, test_user, test_model_endpoint):
     """The flag alone must end the stream — nothing closes the generator.
 
@@ -897,9 +972,14 @@ def test_record_stream_abort_writes_row_without_ambient_context(app, test_user, 
     from lumen.services.llm import record_stream_abort
     entity_id = test_user["id"]
 
+    # A realistic monotonic origin, not 0.0: stream_t0 is now a time.monotonic()
+    # value, so passing 0.0 would record "seconds since boot" as the duration --
+    # a number that satisfies `> 0` while meaning nothing, which is precisely the
+    # mixed-clock bug this conversion exists to prevent.
+    started = time.monotonic()
     record_stream_abort(
         app, billed=False, entity_id=entity_id, model_config_id=test_model["id"],
-        source="api", endpoint_id=test_model_endpoint["id"], started_at=0.0,
+        source="api", endpoint_id=test_model_endpoint["id"], stream_t0=started,
     )
 
     rows = _abort_rows(app, entity_id)
@@ -909,7 +989,9 @@ def test_record_stream_abort_writes_row_without_ambient_context(app, test_user, 
     assert rows[0].output_tokens == 0
     assert rows[0].source == "api"
     assert rows[0].model_endpoint_id == test_model_endpoint["id"]
-    assert rows[0].duration > 0  # measured from started_at
+    # Bounded on both sides: a mixed-clock regression lands at ~1.76e9 (wall
+    # epoch) or at seconds-since-boot, and both blow this ceiling.
+    assert 0 <= rows[0].duration < 60, f"implausible duration {rows[0].duration}"
     assert rows[0].aborted is True
 
 
@@ -918,7 +1000,7 @@ def test_record_stream_abort_skips_when_already_billed(app, test_user, test_mode
     from lumen.services.llm import record_stream_abort
     record_stream_abort(
         app, billed=True, entity_id=test_user["id"], model_config_id=test_model["id"],
-        source="chat", endpoint_id=None, started_at=0.0,
+        source="chat", endpoint_id=None, stream_t0=time.monotonic(),
     )
     assert _abort_rows(app, test_user["id"]) == []
 
@@ -928,7 +1010,7 @@ def test_record_stream_abort_skips_anonymous_stream(app, test_user, test_model):
     from lumen.services.llm import record_stream_abort
     record_stream_abort(
         app, billed=False, entity_id=None, model_config_id=test_model["id"],
-        source="chat", endpoint_id=None, started_at=0.0,
+        source="chat", endpoint_id=None, stream_t0=time.monotonic(),
     )
     assert _abort_rows(app, test_user["id"]) == []
 
@@ -939,7 +1021,7 @@ def test_record_stream_abort_never_raises_into_a_closing_generator(app, test_use
     with patch.object(llm, "record_aborted_request", side_effect=RuntimeError("boom")):
         llm.record_stream_abort(
             app, billed=False, entity_id=test_user["id"], model_config_id=test_model["id"],
-            source="chat", endpoint_id=None, started_at=0.0,
+            source="chat", endpoint_id=None, stream_t0=time.monotonic(),
         )
     assert _abort_rows(app, test_user["id"]) == []
 
@@ -1048,7 +1130,7 @@ def test_stream_abort_increments_the_disconnect_counter(app, test_user, test_mod
     before = _abort_count("chat", "disconnect")
     record_stream_abort(
         app, billed=False, entity_id=test_user["id"], model_config_id=test_model["id"],
-        source="chat", endpoint_id=test_model_endpoint["id"], started_at=0.0,
+        source="chat", endpoint_id=test_model_endpoint["id"], stream_t0=time.monotonic(),
     )
     assert _abort_count("chat", "disconnect") == before + 1
 
@@ -1059,7 +1141,7 @@ def test_stream_abort_counts_anonymous_streams_too(app, test_model):
     before = _abort_count("chat", "disconnect")
     record_stream_abort(
         app, billed=False, entity_id=None, model_config_id=test_model["id"],
-        source="chat", endpoint_id=None, started_at=0.0,
+        source="chat", endpoint_id=None, stream_t0=time.monotonic(),
     )
     assert _abort_count("chat", "disconnect") == before + 1
 
@@ -1070,7 +1152,7 @@ def test_completed_stream_is_not_counted_as_an_abort(app, test_user, test_model)
     before = _abort_count("chat", "disconnect")
     record_stream_abort(
         app, billed=True, entity_id=test_user["id"], model_config_id=test_model["id"],
-        source="chat", endpoint_id=None, started_at=0.0,
+        source="chat", endpoint_id=None, stream_t0=time.monotonic(),
     )
     assert _abort_count("chat", "disconnect") == before
 
@@ -1109,6 +1191,229 @@ def test_upstream_failure_is_counted_with_its_own_reason(app, test_user, test_mo
                 _drain(send_message_stream([], "test-model", entity_id=test_user["id"]))
     assert _abort_count("chat", "upstream_error") == before_up + 1
     assert _abort_count("chat", "disconnect") == before_disc  # not double-counted
+
+
+# ---------------------------------------------------------------------------
+# Request timing columns (started_at, queue_wait, preflight, ttft,
+# ttft_visible, send_blocked, outcome)
+#
+# The bridge marks are published in the WSGI environ by asgi.py and read in the
+# view; the test client and the dev server never pass through it, so a test that
+# wants them has to supply them the way _bridge_environ does below.
+# ---------------------------------------------------------------------------
+
+_QUEUE_WAIT = 0.05  # seconds; a plausible admission wait to stand in for T1 - T0
+
+
+def _bridge_environ(queue_wait=_QUEUE_WAIT):
+    """The environ keys a request would carry if it came through the ASGI bridge.
+
+    ``lumen.queue_wait`` is included because the before_request hook that
+    normally derives it does not run for a synthetic test_request_context.
+    """
+    from lumen.services.wsgi_disconnect import SendBlocked
+    return {
+        "lumen.t0_monotonic": time.monotonic() - queue_wait,
+        "lumen.started_at": datetime.now(timezone.utc),
+        "lumen.queue_wait": queue_wait,
+        "lumen.send_blocked": SendBlocked(),
+    }
+
+
+def test_stream_records_ttft_before_ttft_visible_on_reasoning(app, test_user, test_model_endpoint):
+    """ttft stops at the first chunk of any kind; ttft_visible at the first content.
+
+    On a reasoning model the two are separated by the entire thinking phase,
+    which is the whole point of storing both: one says "the model was queued",
+    the other "the model was thinking". Conflating them makes a reasoning model
+    look like an overloaded one.
+    """
+    entity_id = test_user["id"]
+    chunks = [
+        _Chunk(reasoning_content="think 1"),
+        _Chunk(reasoning_content="think 2"),
+        _Chunk(reasoning_content="think 3"),
+        _Chunk(content="answer"),
+        _Chunk(usage=_Usage(prompt_tokens=10, completion_tokens=5)),
+    ]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.models.request_log import RequestLog
+        from lumen.services.llm import send_message_stream
+        db.session.add(EntityLimit(entity_id=entity_id, max_coins=-2, refresh_coins=0, starting_coins=0))
+        db.session.commit()
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)):
+            _drain(send_message_stream([], "test-model", entity_id=entity_id))
+        log = db.session.execute(select(RequestLog).filter_by(entity_id=entity_id)).scalar_one()
+        assert 0 < log.ttft < log.ttft_visible < _MAX_PLAUSIBLE_SPAN
+        assert log.outcome == "ok"
+
+
+def test_stream_without_the_bridge_records_nulls_not_zeros(app, test_user, test_model_endpoint):
+    """Absent environ keys mean "not measured" — SQL NULL, never a fictitious 0.0.
+
+    Nothing may raise either: the keys are missing on the dev server, under the
+    test client and in direct calls to the streaming helpers.
+    """
+    entity_id = test_user["id"]
+    chunks = [_Chunk(content="hello"), _Chunk(usage=_Usage(prompt_tokens=10, completion_tokens=5))]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.models.request_log import RequestLog
+        from lumen.services.llm import send_message_stream
+        db.session.add(EntityLimit(entity_id=entity_id, max_coins=-2, refresh_coins=0, starting_coins=0))
+        db.session.commit()
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)):
+            _drain(send_message_stream([], "test-model", entity_id=entity_id))
+        log = db.session.execute(select(RequestLog).filter_by(entity_id=entity_id)).scalar_one()
+        assert log.started_at is None
+        assert log.queue_wait is None
+        assert log.preflight is None
+        assert log.send_blocked is None
+        # Measured inside the generator, so they survive the bridge's absence.
+        assert log.ttft is not None
+        assert log.ttft_visible is not None
+        assert log.outcome == "ok"
+
+
+def test_unmeasured_timing_columns_store_sql_null(app, test_user, test_model):
+    """A None-valued timing attribute must reach the database as SQL NULL.
+
+    Read back with raw SQL rather than through the ORM: the instance still holds
+    the Python None either way, so only the stored value distinguishes "not
+    measured" from a fictitious 0.0. This is the invariant that forbids a
+    ``server_default`` on these columns — with one, SQLAlchemy omits the
+    None-valued attribute from the INSERT and the server writes the default,
+    and (worse) the migration's ADD COLUMN would have written it over every
+    pre-existing row as well.
+    """
+    with app.app_context():
+        from sqlalchemy import text
+
+        from lumen.extensions import db
+        from lumen.models.request_log import RequestLog
+        log = RequestLog(
+            time=datetime.now(timezone.utc),
+            entity_id=test_user["id"],
+            model_config_id=test_model["id"],
+            source="chat",
+            input_tokens=0, output_tokens=0, cost=0, duration=0.0,
+            started_at=None, queue_wait=None, preflight=None,
+            ttft=None, ttft_visible=None, send_blocked=None, outcome=None,
+        )
+        db.session.add(log)
+        db.session.commit()
+
+        stored = db.session.execute(text(
+            "SELECT started_at, queue_wait, preflight, ttft, ttft_visible, "
+            "       send_blocked, outcome "
+            "FROM request_logs WHERE id = :id"
+        ), {"id": log.id}).one()
+
+    assert all(v is None for v in stored), f"unmeasured timing stored as {stored!r}"
+
+
+def test_stream_records_the_bridge_marks_captured_in_the_view(app, test_user, test_model_endpoint):
+    """The marks reach the row even though the generator never touches ``request``."""
+    entity_id = test_user["id"]
+    chunks = [_Chunk(content="hello"), _Chunk(usage=_Usage(prompt_tokens=10, completion_tokens=5))]
+    with app.test_request_context(environ_base=_bridge_environ()):
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.models.request_log import RequestLog
+        from lumen.services.llm import send_message_stream
+        db.session.add(EntityLimit(entity_id=entity_id, max_coins=-2, refresh_coins=0, starting_coins=0))
+        db.session.commit()
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)):
+            _drain(send_message_stream([], "test-model", entity_id=entity_id))
+        log = db.session.execute(select(RequestLog).filter_by(entity_id=entity_id)).scalar_one()
+        assert log.started_at is not None
+        assert log.queue_wait == pytest.approx(_QUEUE_WAIT)
+        # T2 - T1, derived from the arrival mark plus the admission wait.
+        assert 0 <= log.preflight < _MAX_PLAUSIBLE_SPAN
+        assert log.send_blocked == 0.0  # a holder is present; nothing blocked
+
+
+def test_aborted_stream_records_disconnect_outcome(app, test_user, test_model_endpoint):
+    """The abort path is the one that matters most, and the easiest to miss.
+
+    It bills through record_stream_abort -> record_aborted_request, a second
+    update_stats call site four functions away from the streaming one. Miss it
+    and every disconnect row — the rows this instrumentation exists to study —
+    is written with NULL timings.
+    """
+    entity_id = test_user["id"]
+    chunks = [_Chunk(content="partial"), _Chunk(content=" more")]
+    with app.test_request_context(environ_base=_bridge_environ()):
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.models.request_log import RequestLog
+        from lumen.services.llm import send_message_stream
+        db.session.add(EntityLimit(entity_id=entity_id, max_coins=-2, refresh_coins=0, starting_coins=0))
+        db.session.commit()
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)):
+            gen = send_message_stream([{"role": "user", "content": "hi"}], "test-model", entity_id=entity_id)
+            assert next(gen) == ("partial", None, None)  # mid-stream
+            gen.close()  # client disconnect -> GeneratorExit -> record_stream_abort
+        log = db.session.execute(select(RequestLog).filter_by(entity_id=entity_id)).scalar_one()
+        assert log.outcome == "disconnect"
+        assert log.aborted is True
+        assert log.started_at is not None
+        assert log.queue_wait == pytest.approx(_QUEUE_WAIT)
+        assert 0 <= log.preflight < _MAX_PLAUSIBLE_SPAN
+        assert 0 < log.ttft < _MAX_PLAUSIBLE_SPAN
+        assert 0 < log.ttft_visible < _MAX_PLAUSIBLE_SPAN
+
+
+def test_update_stats_adds_no_statements(app, test_user, test_model):
+    """The timing columns ride the INSERT that already runs.
+
+    Phase 3's exit gate is "the added statement count per request is zero", and
+    an extra round-trip per request is invisible to every behavioural assertion.
+    """
+    from sqlalchemy import event
+
+    from lumen.extensions import db
+    from lumen.services.llm import RequestTiming, update_stats
+    from lumen.services.wsgi_disconnect import SendBlocked
+
+    entity_id, mc_id = test_user["id"], test_model["id"]
+    statements = []
+
+    def _count(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    with app.app_context():
+        # Warm-up: the first call inserts the ModelStat/EntityStat rows, so it
+        # runs a different set of statements from every later one.
+        update_stats(entity_id, mc_id, "chat", 1, 1, 0.0)
+        db.session.commit()
+
+        event.listen(db.engine, "before_cursor_execute", _count)
+        try:
+            update_stats(entity_id, mc_id, "chat", 1, 1, 0.0)
+            db.session.commit()
+            without_timing = len(statements)
+            statements.clear()
+            update_stats(
+                entity_id, mc_id, "chat", 1, 1, 0.0,
+                timing=RequestTiming(
+                    started_at=datetime.now(timezone.utc),
+                    queue_wait=_QUEUE_WAIT,
+                    picked_up_at=time.monotonic(),
+                    send_blocked=SendBlocked(),
+                ),
+                upstream_t0=time.monotonic(), ttft=0.2, ttft_visible=0.3, outcome="ok",
+            )
+            db.session.commit()
+            with_timing = len(statements)
+        finally:
+            event.remove(db.engine, "before_cursor_execute", _count)
+
+    assert without_timing > 0
+    assert with_timing == without_timing
 
 
 # ---------------------------------------------------------------------------

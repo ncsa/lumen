@@ -931,6 +931,46 @@ def test_streaming_error_after_billing_holds_no_connection(
         resp.close()
 
 
+def test_streaming_billing_error_is_not_reported_as_an_upstream_error(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+):
+    """A failed commit is not the endpoint's fault, and must not be blamed on it.
+
+    The stream ran to completion and the client already holds every chunk; only
+    the accounting failed. The abort metric keeps the two apart via ``phase``,
+    but the error event and the log line went through the upstream classifier,
+    so both named an endpoint and a model that had done nothing wrong -- an
+    operator following either goes hunting a backend problem that does not
+    exist.
+    """
+    from lumen.blueprints.api import routes
+    token, _ = api_key
+    _allow_model(app, test_user, test_model)
+
+    def boom(*a, **k):
+        raise RuntimeError("billing blew up")
+
+    _fake_openai(monkeypatch, routes, [_UsageChunk()])
+    monkeypatch.setattr(routes, "_record_api_key_usage", boom)
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"],
+              "messages": [{"role": "user", "content": "hi"}], "stream": True},
+    )
+    assert resp.status_code == HTTPStatus.OK
+    try:
+        body = b"".join(resp.response)
+    finally:
+        resp.close()
+
+    assert b'"error"' in body, "the billing failure was not reported to the client at all"
+    assert b"Upstream error" not in body, (
+        "a billing failure was reported to the client as an upstream failure"
+    )
+
+
 def test_streaming_abandoned_by_client_releases_connection(
     app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
 ):
@@ -1397,3 +1437,177 @@ def test_completed_api_stream_is_not_counted_as_an_abort(
     body = _chat_post(client, token, test_model["model_name"], True).get_data(as_text=True)
     assert "data: [DONE]" in body
     assert _abort_count("api", "disconnect") == before
+
+
+# ---------------------------------------------------------------------------
+# Request timing columns
+#
+# started_at and queue_wait come from marks the ASGI bridge publishes in the
+# WSGI environ, and the Flask test client never goes through the bridge — so it
+# is supplied here. What the test client *does* exercise for real is the
+# before_request hook that derives queue_wait, and the whole path from the view
+# (where the environ is readable) into the context-free response generator
+# (where it is not).
+# ---------------------------------------------------------------------------
+
+_MAX_PLAUSIBLE_SPAN = 60 * 60  # seconds; a test request takes milliseconds
+_QUEUE_WAIT = 0.05             # seconds of admission wait to stamp T0 behind
+_SEND_BLOCKED = 0.25           # seconds the responder reports blocked in send
+
+
+def _bridge_environ():
+    """The environ keys ``asgi.py`` publishes for a request off the bridge.
+
+    ``lumen.queue_wait`` is deliberately absent: the real before_request hook
+    derives it from the arrival mark, so leaving it out exercises that wiring.
+    """
+    import time
+    from datetime import datetime, timezone
+
+    from lumen.services.wsgi_disconnect import SendBlocked
+    return {
+        "lumen.t0_monotonic": time.monotonic() - _QUEUE_WAIT,
+        "lumen.started_at": datetime.now(timezone.utc),
+        "lumen.send_blocked": SendBlocked(),
+    }
+
+
+def _only_log(app):
+    with app.app_context():
+        from sqlalchemy import select
+
+        from lumen.extensions import db
+        from lumen.models.request_log import RequestLog
+        return db.session.execute(select(RequestLog)).scalar_one()
+
+
+def test_non_streaming_request_records_timing_columns(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+    fresh_rate_limit,
+):
+    """The non-streaming /v1 path bills in the view, where the environ is live."""
+    from lumen.blueprints.api import routes
+    token, _ = api_key
+    _allow_model(app, test_user, test_model)
+    _capturing_openai(monkeypatch, routes, lambda **kw: _NonStreamResponse())
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"],
+              "messages": [{"role": "user", "content": "hi"}], "stream": False},
+        environ_base=_bridge_environ(),
+    )
+    assert resp.status_code == HTTPStatus.OK
+
+    log = _only_log(app)
+    assert log.started_at is not None
+    assert _QUEUE_WAIT <= log.queue_wait < _MAX_PLAUSIBLE_SPAN
+    assert 0 <= log.preflight < _MAX_PLAUSIBLE_SPAN
+    # Nothing streams, so the first chunk is the whole response.
+    assert log.ttft == log.ttft_visible == log.duration
+    assert log.send_blocked == 0.0  # a holder is present; the view never blocks
+    assert log.outcome == "ok"
+
+
+def test_streaming_request_records_timing_columns(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+    fresh_rate_limit,
+):
+    """The streaming path bills inside a context-free generator.
+
+    send_blocked is mutated *after* the first event is out, which is what tells
+    a live holder read at billing time apart from a float captured in the view:
+    at view time nothing has been sent, so a captured float would be 0.0 for
+    ever.
+    """
+    from lumen.blueprints.api import routes
+    token, _ = api_key
+    _allow_model(app, test_user, test_model)
+    _fake_openai(monkeypatch, routes, [_ContentChunk(), _UsageChunk()])
+
+    environ = _bridge_environ()
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"],
+              "messages": [{"role": "user", "content": "hi"}], "stream": True},
+        environ_base=environ,
+    )
+    assert resp.is_streamed
+    events = iter(resp.response)
+    try:
+        next(events)  # one event out; the generator is suspended mid-stream
+        environ["lumen.send_blocked"].seconds = _SEND_BLOCKED
+        for _ in events:
+            pass
+    finally:
+        resp.close()
+
+    log = _only_log(app)
+    assert log.started_at is not None
+    assert _QUEUE_WAIT <= log.queue_wait < _MAX_PLAUSIBLE_SPAN
+    assert 0 <= log.preflight < _MAX_PLAUSIBLE_SPAN
+    assert 0 < log.ttft <= log.ttft_visible < _MAX_PLAUSIBLE_SPAN
+    assert log.send_blocked == pytest.approx(_SEND_BLOCKED)
+    assert log.outcome == "ok"
+    assert log.aborted is False
+
+
+def test_request_without_the_bridge_records_nulls_not_zeros(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+    fresh_rate_limit,
+):
+    """No bridge, no marks: NULL means "not measured" and must not read as zero.
+
+    This is every request under the Werkzeug dev server and the test client.
+    """
+    from lumen.blueprints.api import routes
+    token, _ = api_key
+    _allow_model(app, test_user, test_model)
+    _capturing_openai(monkeypatch, routes, lambda **kw: _NonStreamResponse())
+
+    assert _chat_post(client, token, test_model["model_name"], False).status_code == HTTPStatus.OK
+
+    log = _only_log(app)
+    assert log.started_at is None
+    assert log.queue_wait is None
+    assert log.preflight is None
+    assert log.send_blocked is None
+    assert log.ttft is not None  # measured without the bridge's help
+    assert log.outcome == "ok"
+
+
+def test_aborted_stream_records_disconnect_outcome(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+    fresh_rate_limit,
+):
+    """A client walking away mid-stream is billed through the abort call site.
+
+    That call site is a different function from the streaming one; a row written
+    there with NULL timings loses exactly the requests this instrumentation
+    exists to explain.
+    """
+    from lumen.blueprints.api import routes
+    token, _ = api_key
+    _allow_model(app, test_user, test_model)
+    _fake_openai(monkeypatch, routes, [_ContentChunk(), _ContentChunk(), _UsageChunk()])
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"],
+              "messages": [{"role": "user", "content": "hi"}], "stream": True},
+        environ_base=_bridge_environ(),
+    )
+    assert resp.is_streamed
+    next(iter(resp.response))  # one event, then walk away mid-stream
+    resp.close()
+
+    log = _only_log(app)
+    assert log.outcome == "disconnect"
+    assert log.aborted is True
+    assert log.started_at is not None
+    assert _QUEUE_WAIT <= log.queue_wait < _MAX_PLAUSIBLE_SPAN
+    assert 0 <= log.preflight < _MAX_PLAUSIBLE_SPAN
+    assert 0 < log.ttft < _MAX_PLAUSIBLE_SPAN

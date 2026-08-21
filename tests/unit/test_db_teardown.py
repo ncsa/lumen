@@ -21,13 +21,31 @@ def _broken_rollback(conn):
 
 
 def test_failed_rollback_is_logged_and_the_session_dropped(app, caplog):
+    """The session this app context created must be gone from the registry.
+
+    Asserted against *this context's* key rather than "the registry dict is
+    empty", which is not the same claim and was flaky. ``db.session.registry``
+    is a ``ScopedRegistry`` built with a ``scopefunc``, so its storage is a plain
+    process-wide dict (``sqlalchemy/util/_collections.py``), not a
+    ``threading.local``. The metrics-snapshot refresher runs in this same
+    process, pushes its own app context every pass and registers a session under
+    a different key while it does; catching it mid-pass made ``not registry``
+    false for a session that has nothing to do with this test.
+
+    Nothing is weakened by narrowing it: if ``release_db_session`` stopped
+    clearing the registry after a failed rollback, *this* context's key would
+    still be there and this assertion fails every time.
+    """
     with app.app_context():
         dialect = db.engine.dialect
     original = dialect.do_rollback
     try:
         with caplog.at_level(logging.ERROR):
             dialect.do_rollback = _broken_rollback
-            with app.app_context():
+            # ``ctx`` is deliberately still referenced after the block: the
+            # registry is keyed by ``id(app_ctx)``, and a collected context
+            # frees its address for the next one to reuse.
+            with app.app_context() as ctx:
                 db.session.execute(text("select 1"))
     finally:
         dialect.do_rollback = original
@@ -37,7 +55,7 @@ def test_failed_rollback_is_logged_and_the_session_dropped(app, caplog):
     # Left in the registry, the session would pin its connection for the life of
     # the process — and Flask-SQLAlchemy's own teardown would retry the same
     # failing close(), letting the error escape AppContext.pop() as it did before.
-    assert not db.session.registry.registry
+    assert id(ctx) not in db.session.registry.registry
 
 
 def test_failed_rollback_releases_the_pool_slot(app):
@@ -90,10 +108,17 @@ def test_plain_requests_do_not_accumulate_checkouts(app, client):
     # would otherwise still be holding a connection and skew the baseline.
     gc.collect()
     baseline = pool.checkedout()
+    # Baselined for the same reason the pool count is, and for one more: the
+    # registry dict is process-wide, so a background thread holding a session --
+    # the metrics-snapshot refresher, mid-pass -- owns an entry that has nothing
+    # to do with these requests. A bare `<= 1` fails whenever that pass overlaps
+    # the loop. What is under test is the *absence of accumulation*, so measure
+    # growth against whatever was already there.
+    sessions_baseline = len(db.session.registry.registry)
 
     for _ in range(5):
         assert client.get("/healthz").status_code == HTTPStatus.OK
         assert pool.checkedout() <= baseline + 1
-        assert len(db.session.registry.registry) <= 1
+        assert len(db.session.registry.registry) <= sessions_baseline + 1
 
     assert len(pool_tracker.outstanding()) <= 1

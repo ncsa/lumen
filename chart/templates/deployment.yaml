@@ -84,6 +84,11 @@ spec:
             {{- end }}
           image: {{ include "lumen.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if gt (int .Values.wsgiProcesses) 1 }}
+          args:
+            - "--workers"
+            - {{ .Values.wsgiProcesses | quote }}
+          {{- end }}
           env:
             - name: UV_CACHE_DIR
               value: /tmp/uv-cache
@@ -91,10 +96,16 @@ spec:
               value: /app/config/config.yaml
             - name: LUMEN_REPLICAS
               value: {{ .Values.replicaCount | quote }}
+            - name: WEB_CONCURRENCY
+              value: {{ .Values.wsgiProcesses | quote }}
             - name: LUMEN_WSGI_WORKERS
               value: {{ .Values.wsgiWorkers | quote }}
             - name: LUMEN_WSGI_SEND_TIMEOUT
               value: {{ .Values.wsgiSendTimeout | quote }}
+            {{- if and .Values.api.prometheus.enabled .Values.api.prometheus.multiprocDir }}
+            - name: PROMETHEUS_MULTIPROC_DIR
+              value: {{ .Values.api.prometheus.multiprocDir | quote }}
+            {{- end }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
@@ -124,14 +135,16 @@ spec:
             - name: http
               containerPort: 5001
               protocol: TCP
+          # Covers `flask db upgrade` as well as uvicorn startup: entrypoint.sh
+          # migrates inline before uvicorn binds. See values.yaml.
           startupProbe:
             httpGet:
               path: /healthz
               port: http
-            initialDelaySeconds: 10
-            periodSeconds: 5
-            failureThreshold: 12
-            timeoutSeconds: 5
+            initialDelaySeconds: {{ .Values.startupProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.startupProbe.periodSeconds }}
+            failureThreshold: {{ .Values.startupProbe.failureThreshold }}
+            timeoutSeconds: {{ .Values.startupProbe.timeoutSeconds }}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -168,6 +181,10 @@ spec:
               mountPath: {{ printf "/app/themes/%s" $name }}
               readOnly: true
             {{- end }}
+            {{- if and .Values.api.prometheus.enabled .Values.api.prometheus.multiprocDir }}
+            - name: prometheus-multiproc
+              mountPath: {{ .Values.api.prometheus.multiprocDir }}
+            {{- end }}
       volumes:
         - name: config
           secret:
@@ -176,4 +193,13 @@ spec:
         - name: theme-{{ $name }}
           persistentVolumeClaim:
             claimName: {{ $theme.pvc }}
+        {{- end }}
+        {{- if and .Values.api.prometheus.enabled .Values.api.prometheus.multiprocDir }}
+        # Mounted whenever Prometheus is enabled AND multiprocDir is configured, not
+        # only when wsgiProcesses > 1: prometheus_client enters multiprocess mode as
+        # soon as PROMETHEUS_MULTIPROC_DIR is set (lumen/__init__.py setdefaults it
+        # from config independently of the process count) and raises if the directory
+        # does not exist. Env var set must imply directory present.
+        - name: prometheus-multiproc
+          emptyDir: {}
         {{- end }}

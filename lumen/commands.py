@@ -2,15 +2,17 @@ import os
 import re
 import shutil
 import tempfile
+import time
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import click
 import yaml
 from flask import current_app
 from flask.cli import with_appcontext
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select, text, update
+from sqlalchemy.exc import DBAPIError
 
-from .extensions import db
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
@@ -22,6 +24,8 @@ from lumen.models.group_model_access import GroupModelAccess
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.timeutils import utcnow
+
+from .extensions import db
 
 # Maps config-input access vocabulary (new + legacy) to the stored value.
 # Acknowledgement (graylist) is a model-level property now, so legacy 'graylist'
@@ -36,6 +40,11 @@ _ACCESS_INPUT = {
 _LEGACY_ACCESS_TERMS = {"whitelist", "blacklist", "graylist"}
 # Recognized model_access list keys at a scope (group/project), new + legacy.
 _SCOPE_ACCESS_KEYS = ("allowed", "blocked", "whitelist", "blacklist", "graylist")
+
+# The entity-dimensioned continuous aggregate the per-entity /usage queries read.
+# `enable-retention` refuses while this is empty: dropping raw chunks then destroys
+# history that exists in no aggregate.
+ENTITY_AGGREGATE = "request_counts_hourly_by_entity"
 
 # Deduplicate deprecation warnings; the config watcher re-runs sync every 5s.
 _warned: set = set()
@@ -505,7 +514,7 @@ def sync_projects_from_yaml(yaml_data):
                     config_managed=True,
                 ))
         else:
-            db.session.execute(delete(EntityLimit).where(EntityLimit.entity_id == entity.id, EntityLimit.config_managed == True))
+            db.session.execute(delete(EntityLimit).where(EntityLimit.entity_id == entity.id, EntityLimit.config_managed == True))  # noqa: E712 — SQL comparison, not a truth check
 
         # Sync model_access
         access_cfg = cfg.get("model_access", {})
@@ -710,3 +719,341 @@ def reassign_model_cmd(from_id, to_id):
 
     db.session.commit()
     click.echo("Done.")
+
+
+# --------------------------------------------------------------------------- #
+# TimescaleDB lifecycle (Phase 8): aggregate backfill and retention.           #
+# --------------------------------------------------------------------------- #
+
+def _autocommit_connection():
+    """Open a connection that is *not* inside a transaction block.
+
+    ``CALL refresh_continuous_aggregate`` cannot run inside a transaction, and a
+    ``flask`` command using ``db.session`` is already in one — the CALL then fails
+    with "cannot run inside a transaction block" in the middle of an operator's
+    maintenance window. Same technique as ``seed_analytics.py``.
+    """
+    return db.engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+
+
+def _continuous_aggregates(conn):
+    """Names of every continuous aggregate in this database, alphabetically."""
+    return conn.execute(text(
+        "SELECT view_name FROM timescaledb_information.continuous_aggregates ORDER BY view_name"
+    )).scalars().all()
+
+
+def _bucket_column(conn, view_name):
+    """Name of the aggregate's ``time_bucket`` column, which is always its first."""
+    return conn.execute(text(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = :v AND ordinal_position = 1"
+    ), {"v": view_name}).scalar()
+
+
+def _materialization_hypertable(conn, view_name):
+    """The physical table holding an aggregate's *materialised* rows.
+
+    Not the view. With ``materialized_only = false`` the view unions materialised rows
+    with a live scan of the raw rows above the watermark, so ``MIN(bucket)`` read through
+    the view reports how far back *raw* goes for as long as the watermark is still at
+    -infinity — which is exactly the freshly-migrated state where no backfill has run.
+    Only the materialisation hypertable answers what would still be there once retention
+    has dropped the raw chunks.
+    """
+    return conn.execute(text(
+        "SELECT materialization_hypertable_schema || '.' || materialization_hypertable_name "
+        "FROM timescaledb_information.continuous_aggregates WHERE view_name = :v"
+    ), {"v": view_name}).scalar()
+
+
+def _retention_drop_after(conn):
+    """The retention policy's interval on request_logs, or None if retention is off."""
+    return conn.execute(text(
+        "SELECT config->>'drop_after' FROM timescaledb_information.jobs "
+        "WHERE proc_name = 'policy_retention' AND hypertable_name = 'request_logs'"
+    )).scalar()
+
+
+def _fmt(dt):
+    """Format a timestamp for the terminal. Always UTC — this is an operator tool."""
+    if dt is None:
+        return "none"
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _next_month(dt):
+    year, month = (dt.year + 1, 1) if dt.month == 12 else (dt.year, dt.month + 1)
+    return dt.replace(year=year, month=month, day=1)
+
+
+# TimescaleDB refuses an *overlapping* refresh outright instead of waiting for it: while
+# a background continuous-aggregate policy job is mid-refresh, the CALL raises SQLSTATE
+# 55P03 (lock_not_available) immediately -- measured at 0.02s on 2.27.2. request_metrics_1m
+# has a policy firing every minute and the entity aggregate one every hour, so a 13-month
+# month-by-month backfill will collide at least once. Without a retry that aborts the whole
+# command partway and leaves the operator with a half-backfilled aggregate.
+_LOCK_NOT_AVAILABLE = "55P03"
+_REFRESH_RETRY_BUDGET = 60.0
+_REFRESH_RETRY_SLEEP = 2.0
+
+
+def _refresh_window(conn, name, start, end):
+    """Refresh one window, waiting out a concurrent refresh. Returns the retry count.
+
+    Matches the SQLSTATE rather than the message text: the message is not part of any
+    stability guarantee, and matching it would turn a version bump into a silent loss
+    of the retry.
+    """
+    deadline = time.monotonic() + _REFRESH_RETRY_BUDGET
+    retries = 0
+    while True:
+        try:
+            conn.execute(text("CALL refresh_continuous_aggregate(:n, :s, :e)"),
+                         {"n": name, "s": start, "e": end})
+            return retries
+        except DBAPIError as exc:
+            if getattr(exc.orig, "pgcode", None) != _LOCK_NOT_AVAILABLE:
+                raise
+            if time.monotonic() + _REFRESH_RETRY_SLEEP > deadline:
+                raise
+            retries += 1
+            time.sleep(_REFRESH_RETRY_SLEEP)
+
+
+@click.command("backfill-aggregate")
+@click.option("--name", default=ENTITY_AGGREGATE, show_default=True,
+              help="Continuous aggregate to materialise.")
+@click.option("--from", "from_month", metavar="YYYY-MM", default=None,
+              help="First month to refresh. Defaults to the month of the oldest request_logs row.")
+@click.option("--force", is_flag=True,
+              help="Refresh months starting before the retention boundary anyway. Read the refusal first.")
+@with_appcontext
+def backfill_aggregate_cmd(name, from_month, force):
+    """Materialise a continuous aggregate's full history, month by month.
+
+    A policy-created aggregate holds only its ``start_offset`` window, so per-user
+    "All Time" charts stay near-empty until this is run. One
+    ``CALL refresh_continuous_aggregate(NULL, NULL)`` over 13 months of a production
+    hypertable is a single long transaction with unbounded memory, so this walks
+    month by month, oldest first, and prints the row counts either side of each call.
+    """
+    if db.engine.dialect.name != "postgresql":
+        click.echo(f"backfill-aggregate requires PostgreSQL/TimescaleDB; nothing to do on "
+                   f"{db.engine.dialect.name}.")
+        return
+
+    with _autocommit_connection() as conn:
+        if name not in _continuous_aggregates(conn):
+            click.echo(f"Error: '{name}' is not a continuous aggregate in this database.")
+            raise SystemExit(1)
+        bucket = _bucket_column(conn, name)
+
+        if from_month:
+            try:
+                start = datetime.strptime(from_month, "%Y-%m").replace(tzinfo=timezone.utc)
+            except ValueError:
+                click.echo(f"Error: --from must be YYYY-MM, got '{from_month}'.")
+                raise SystemExit(1)
+        else:
+            start = conn.execute(text(
+                "SELECT date_trunc('month', MIN(time) AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' "
+                "FROM request_logs"
+            )).scalar()
+            if start is None:
+                click.echo("request_logs is empty; nothing to backfill.")
+                return
+
+        # Contract (d): refreshing a window whose raw chunks were dropped recomputes it
+        # as EMPTY and DELETES the materialised rows, with no error at all. A backfill
+        # run a year after retention was enabled would erase every user's pre-retention
+        # history in one call, which is strictly worse than the truncation the whole
+        # phase exists to avoid — so refuse rather than trust the operator's arithmetic.
+        drop_after = _retention_drop_after(conn)
+        if drop_after is not None:
+            boundary = conn.execute(text("SELECT now() - CAST(:d AS interval)"),
+                                    {"d": drop_after}).scalar().astimezone(timezone.utc)
+            if start < boundary:
+                erased = conn.execute(text(
+                    f'SELECT COUNT(*) FROM "{name}" WHERE "{bucket}" >= :s AND "{bucket}" < :b'
+                ), {"s": start, "b": boundary}).scalar()
+                if not force:
+                    # The boundary's own month still starts before the boundary, so the
+                    # hint has to name the month after it or the re-run is refused too.
+                    safe = _next_month(boundary.replace(day=1, hour=0, minute=0,
+                                                        second=0, microsecond=0))
+                    click.echo(
+                        f"Error: refusing to refresh '{name}' from {start:%Y-%m}.\n"
+                        f"  retention on request_logs is '{drop_after}', so raw chunks before\n"
+                        f"  {_fmt(boundary)} may already have been dropped, and every one that\n"
+                        f"  has not will be. Refreshing that window recomputes it as\n"
+                        f"  EMPTY and DELETES the materialised rows, with no error: {erased} rows\n"
+                        f"  of '{name}' would be erased.\n"
+                        f"  Re-run with --from {safe:%Y-%m} to stay inside retention, or --force."
+                    )
+                    raise SystemExit(1)
+                click.echo(
+                    f"WARNING: --force given; months before {_fmt(boundary)} are outside retention "
+                    f"and their {erased} materialised rows will be erased."
+                )
+
+        now = datetime.now(timezone.utc)
+        click.echo(f"Backfilling '{name}' from {start:%Y-%m} to {now:%Y-%m}, month by month.")
+        refreshed = []
+        month = start
+        while month <= now:
+            nxt = _next_month(month)
+            # Never refresh past "now". A window ending in the future materialises the
+            # current bucket and moves the aggregate's watermark beyond it, which turns
+            # real-time aggregation OFF for that bucket: every request logged after the
+            # backfill stays invisible on /usage until a scheduled refresh catches up.
+            # Measured on 2.27.2 — with the month end (future) the next insert was
+            # missing; with now() the watermark stayed two buckets back and it showed.
+            end = min(nxt, now)
+            raw = conn.execute(text(
+                "SELECT COUNT(*) FROM request_logs WHERE time >= :s AND time < :e"
+            ), {"s": month, "e": nxt}).scalar()
+            click.echo(f"  {month:%Y-%m}: {raw} request_logs rows ... ", nl=False)
+            try:
+                retries = _refresh_window(conn, name, month, end)
+            except DBAPIError as exc:
+                click.echo("FAILED")
+                click.echo(f"Error: refreshing {month:%Y-%m} failed: {exc.orig}")
+                if refreshed:
+                    click.echo(f"  Refreshed OK: {refreshed[0]} .. {refreshed[-1]} "
+                               f"({len(refreshed)} months).")
+                else:
+                    click.echo("  No month was refreshed.")
+                click.echo(f"  Resume with: flask backfill-aggregate "
+                           f"--name {name} --from {month:%Y-%m}")
+                raise SystemExit(1)
+            aggregated = conn.execute(text(
+                f'SELECT COUNT(*) FROM "{name}" WHERE "{bucket}" >= :s AND "{bucket}" < :e'
+            ), {"s": month, "e": nxt}).scalar()
+            click.echo(f"{aggregated} aggregate rows OK"
+                       + (f" (after {retries} lock retries)" if retries else ""))
+            refreshed.append(f"{month:%Y-%m}")
+            month = nxt
+
+    if refreshed:
+        click.echo(f"Backfill complete: {len(refreshed)} months refreshed "
+                   f"({refreshed[0]} .. {refreshed[-1]}).")
+    else:
+        click.echo("Backfill complete: no months to refresh.")
+
+
+@click.command("enable-retention")
+@click.option("--window", default="13 months", show_default=True,
+              help="Drop request_logs chunks older than this interval.")
+@click.option("--dry-run/--force", "dry_run", default=True,
+              help="Dry run (the default) only reports; --force adds the retention policy.")
+@with_appcontext
+def enable_retention_cmd(window, dry_run):
+    """Report — and only with --force, enable — the request_logs retention policy.
+
+    Deliberately an operator command rather than a migration: ``entrypoint.sh`` runs
+    ``flask db upgrade`` at container start, so a migration calling
+    ``add_retention_policy`` would begin deleting data on the next deploy and make the
+    "dry run first" gate unenforceable.
+    """
+    if db.engine.dialect.name != "postgresql":
+        click.echo(f"enable-retention requires PostgreSQL/TimescaleDB; nothing to do on "
+                   f"{db.engine.dialect.name}.")
+        return
+
+    with _autocommit_connection() as conn:
+        existing = _retention_drop_after(conn)
+        if existing is not None:
+            click.echo(f"request_logs already has a retention policy (drop_after = {existing}); "
+                       f"no change made. The requested --window '{window}' was NOT applied — "
+                       f"this command never edits an existing policy. To change the window run "
+                       f"SELECT remove_retention_policy('request_logs') and then re-run.")
+            return
+
+        try:
+            conn.execute(text("SELECT CAST(:w AS interval)"), {"w": window}).scalar()
+        except DBAPIError:
+            click.echo(f"Error: --window '{window}' is not a valid PostgreSQL interval.")
+            raise SystemExit(1)
+
+        click.echo(f"Retention window: {window}")
+        dropped, oldest, newest = conn.execute(text(
+            "SELECT COUNT(*), MIN(time), MAX(time) FROM request_logs "
+            "WHERE time < now() - CAST(:w AS interval)"
+        ), {"w": window}).one()
+        click.echo(f"request_logs rows that would eventually be dropped: {dropped}"
+                   + (f" ({_fmt(oldest)} .. {_fmt(newest)})" if dropped else ""))
+
+        aggregates = _continuous_aggregates(conn)
+        for view in aggregates:
+            earliest = conn.execute(text(
+                f'SELECT MIN("{_bucket_column(conn, view)}") FROM "{view}"'
+            )).scalar()
+            start_offset = conn.execute(text(
+                "SELECT config->>'start_offset' FROM timescaledb_information.jobs "
+                "WHERE proc_name = 'policy_refresh_continuous_aggregate' AND hypertable_name = :v"
+            ), {"v": view}).scalar()
+            click.echo(f"  {view}: earliest bucket {_fmt(earliest)}, "
+                       f"refresh start_offset {start_offset or 'none'}")
+            if earliest is not None and start_offset is not None:
+                floor_, wider = conn.execute(text(
+                    "SELECT now() - CAST(:o AS interval), "
+                    "CAST(:o AS interval) > CAST(:w AS interval)"
+                ), {"o": start_offset, "w": window}).one()
+                click.echo("      earliest bucket is "
+                           + ("outside" if earliest < floor_ else "inside")
+                           + f" the refresh window (start_offset floor {_fmt(floor_)})")
+                if wider:
+                    # Contract (d): a scheduled refresh reaching past the retention
+                    # boundary recomputes those buckets as empty and deletes them.
+                    click.echo(f"      WARNING: start_offset ({start_offset}) is wider than the "
+                               f"retention window ({window}); the refresh policy would reach into "
+                               f"dropped chunks and silently erase materialised rows.")
+
+        if ENTITY_AGGREGATE not in aggregates:
+            click.echo(f"Error: '{ENTITY_AGGREGATE}' does not exist. Retention would destroy "
+                       f"per-entity history that is in no aggregate. Run 'flask db upgrade' first.")
+            raise SystemExit(1)
+        # Retention deletes raw chunks, so everything it deletes has to be materialised
+        # already. "Not empty" cannot answer that: the aggregate is created WITH NO DATA
+        # but carries materialized_only = false and an hourly refresh policy with a
+        # 30-day start_offset, so ordinary traffic makes it non-empty within an hour of
+        # deploy — a COUNT(*) guard passes forever after while no historical backfill has
+        # ever run. The question that decides whether history survives is the one
+        # _entity_aggregate_covers asks of this same aggregate before the per-entity
+        # charts are allowed to read it: is its earliest materialised bucket at or before
+        # the oldest raw row that still exists? If it is, everything retention can drop is
+        # held twice. If it is not, the gap between those two timestamps lives only in the
+        # chunks retention is about to delete.
+        earliest = conn.execute(text(
+            f'SELECT MIN("{_bucket_column(conn, ENTITY_AGGREGATE)}") '
+            f'FROM {_materialization_hypertable(conn, ENTITY_AGGREGATE)}'
+        )).scalar()
+        raw_oldest = conn.execute(text("SELECT MIN(time) FROM request_logs")).scalar()
+        if earliest is None:
+            click.echo(f"Error: '{ENTITY_AGGREGATE}' is empty — the backfill has not been run. "
+                       f"Enabling retention now would destroy per-entity history that is in no "
+                       f"aggregate. Run 'flask backfill-aggregate' first.")
+            raise SystemExit(1)
+        if raw_oldest is not None and earliest > raw_oldest:
+            hint = raw_oldest.astimezone(timezone.utc)
+            click.echo(
+                f"Error: '{ENTITY_AGGREGATE}' does not cover the history retention would drop.\n"
+                f"  earliest materialised bucket:      {_fmt(earliest)}\n"
+                f"  oldest surviving request_logs row: {_fmt(raw_oldest)}\n"
+                f"  Everything between those two timestamps is held only in raw chunks, and\n"
+                f"  retention deletes them. Run 'flask backfill-aggregate --from {hint:%Y-%m}'\n"
+                f"  first, then re-run this command."
+            )
+            raise SystemExit(1)
+        click.echo(f"{ENTITY_AGGREGATE} covers request_logs back to {_fmt(earliest)} "
+                   f"(oldest raw row {_fmt(raw_oldest)}).")
+
+        if dry_run:
+            click.echo("Dry run: no policy added. Re-run with --force to enable retention.")
+            return
+
+        job_id = conn.execute(text(
+            "SELECT add_retention_policy('request_logs', drop_after => CAST(:w AS interval))"
+        ), {"w": window}).scalar()
+        click.echo(f"Retention enabled on request_logs (drop_after = {window}, job {job_id}).")

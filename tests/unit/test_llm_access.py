@@ -135,6 +135,7 @@ def test_needs_ack_allows_chat_with_consent(app, ids):
     entity_id, model_id = ids
     with app.app_context():
         from datetime import datetime, timezone
+
         from lumen.extensions import db
         from lumen.models.entity_model_access import EntityModelAccess
         from lumen.models.entity_model_consent import EntityModelConsent
@@ -318,3 +319,99 @@ def test_blocked_model_still_blocked_when_require_consent_false(app, ids):
         db.session.add(EntityModelAccess(entity_id=entity_id, model_config_id=model_id, access_type="blocked"))
         db.session.commit()
         assert get_model_access(entity_id, model_id, require_consent=False) is False
+
+
+# ---------------------------------------------------------------------------
+# Rejection taxonomy: which 403 this is
+# ---------------------------------------------------------------------------
+
+def _recorder(monkeypatch):
+    recorded = []
+    monkeypatch.setattr(
+        "lumen.blueprints.metrics.middleware.observe_rejection",
+        lambda reason, source, model="": recorded.append((reason, source, model)),
+    )
+    return recorded
+
+
+def test_blocked_model_is_counted_as_no_access(app, ids, test_model, monkeypatch):
+    from http import HTTPStatus
+
+    from lumen.extensions import db
+    from lumen.models.entity_model_access import EntityModelAccess
+    from lumen.services.llm import check_coin_budget
+    entity_id, model_id = ids
+    with app.app_context():
+        db.session.add(EntityModelAccess(
+            entity_id=entity_id, model_config_id=model_id, access_type="blocked",
+        ))
+        db.session.commit()
+        recorded = _recorder(monkeypatch)
+        ok, code, _msg, _eff = check_coin_budget(
+            entity_id, model_id, source="api", model_name=test_model["model_name"],
+        )
+        assert ok is False
+        assert code == HTTPStatus.FORBIDDEN
+        assert recorded == [("no_access", "api", test_model["model_name"])]
+
+
+def test_unacknowledged_model_is_counted_as_needs_consent(app, ids, test_model, monkeypatch):
+    """Both refusals are one None from get_effective_limit, and they are not the same.
+
+    "Acknowledge this model" is the user's to fix from the model detail page;
+    "no access" is not. A taxonomy that merged them would hide a support queue.
+    """
+    from http import HTTPStatus
+
+    from lumen.services.llm import check_coin_budget
+    entity_id, model_id = ids
+    with app.app_context():
+        _set_needs_ack(app, model_id)
+        recorded = _recorder(monkeypatch)
+        ok, code, _msg, _eff = check_coin_budget(
+            entity_id, model_id, source="chat", model_name=test_model["model_name"],
+        )
+        assert ok is False
+        assert code == HTTPStatus.FORBIDDEN
+        assert recorded == [("needs_consent", "chat", test_model["model_name"])]
+
+
+def test_consent_exempt_caller_on_a_blocked_model_is_no_access(app, ids, test_model, monkeypatch):
+    """With the consent gate off, a needs_ack model is not a consent rejection."""
+    from lumen.extensions import db
+    from lumen.models.entity_model_access import EntityModelAccess
+    from lumen.services.llm import check_coin_budget
+    entity_id, model_id = ids
+    with app.app_context():
+        _set_needs_ack(app, model_id)
+        db.session.add(EntityModelAccess(
+            entity_id=entity_id, model_config_id=model_id, access_type="blocked",
+        ))
+        db.session.commit()
+        recorded = _recorder(monkeypatch)
+        check_coin_budget(
+            entity_id, model_id, require_consent=False, source="api",
+            model_name=test_model["model_name"],
+        )
+        assert recorded == [("no_access", "api", test_model["model_name"])]
+
+
+def test_access_counting_never_breaks_the_rejection(app, ids, test_model, monkeypatch):
+    """A broken counter must not turn a clean 403 into a 500."""
+    from http import HTTPStatus
+
+    from lumen.services.llm import check_coin_budget
+    entity_id, model_id = ids
+
+    def boom(*a, **kw):
+        raise RuntimeError("prometheus is unhappy")
+
+    with app.app_context():
+        _set_needs_ack(app, model_id)
+        monkeypatch.setattr("lumen.blueprints.metrics.middleware.observe_rejection", boom)
+        ok, code, msg, _eff = check_coin_budget(
+            entity_id, model_id, source="chat", model_name=test_model["model_name"],
+        )
+        assert ok is False
+        assert code == HTTPStatus.FORBIDDEN
+        assert msg == "No access to this model"

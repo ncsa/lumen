@@ -4,6 +4,13 @@
 # -- Number of Lumen app replicas. ≥2 requires redis for shared rate-limit state.
 replicaCount: 1
 
+# -- Number of uvicorn worker processes per pod. Wired to both the
+# WEB_CONCURRENCY env var (so lumen/services/db_pool.py:detect_workers() agrees
+# with uvicorn on one number) and uvicorn's --workers flag. Values >1 require
+# api.prometheus.multiprocDir to be set; the chart then mounts a shared
+# emptyDir there so Prometheus can aggregate metrics across processes.
+wsgiProcesses: 1
+
 # -- Concurrent requests served per pod (a2wsgi thread pool). Requests beyond
 # this queue. Use "auto" to derive it from this pod's connection pool
 # (database.poolSize + database.maxOverflow, clamped to 10-64); a number sets it
@@ -18,6 +25,27 @@ wsgiWorkers: 10
 # above any real client. Keep it below gateway.timeout so a stalled thread is
 # freed before the request would have been cut off anyway.
 wsgiSendTimeout: 300
+
+# Startup probe for the app container. The budget is periodSeconds x
+# failureThreshold (default: 30 minutes) and it has to cover `flask db upgrade`
+# **plus** uvicorn startup, not uvicorn alone: entrypoint.sh runs the migrations
+# inline before uvicorn binds the port, so /healthz does not answer until they
+# finish. Exceed the budget and the kubelet kills the container mid-migration;
+# the restart reruns the interrupted revision from the beginning, and a
+# migration that reliably outlasts the budget never becomes Ready at all —
+# CrashLoopBackOff, and nothing serving wherever there is no older pod still up
+# (a fresh install, a restart, an eviction). The default is
+# deliberately far larger than any migration measured so far: a container whose
+# migration *fails* still exits immediately (entrypoint.sh runs under `set -e`),
+# so a wide budget only delays detecting a process that is alive but not
+# serving, which is exactly what a running migration looks like.
+# Note: a startup longer than the Deployment's default progressDeadlineSeconds
+# (600s) marks the rollout failed even though the pod eventually comes up.
+startupProbe:
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  failureThreshold: 360
+  timeoutSeconds: 5
 
 image:
   # -- Container image repository
@@ -146,6 +174,20 @@ api:
   monitoring:
     # -- Bearer token for the monitoring endpoint. Empty disables it.
     token: ""
+
+## Prometheus Operator ServiceMonitor -----------------------------------------------
+
+serviceMonitor:
+  # -- Create a ServiceMonitor (Prometheus Operator CRD) scraping /metrics on every
+  # pod. Requires the Prometheus Operator CRDs and api.prometheus.enabled=true.
+  # NOTE: api.prometheus.token is not wired in as scrape auth — see the comment in
+  # templates/servicemonitor.yaml — so /metrics will reject unauthenticated scrapes
+  # until that is set up some other way.
+  enabled: false
+  # -- Scrape interval
+  interval: "30s"
+  # -- Scrape timeout
+  scrapeTimeout: "10s"
 
 ## Groups ---------------------------------------------------------------------------
 # Each key is the group name. Groups are matched in order; the first match wins.

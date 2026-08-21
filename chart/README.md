@@ -72,13 +72,13 @@ oauth2:
 
 ### PostgreSQL
 
-The bundled PostgreSQL uses `timescale/timescaledb:2.26.4-pg17` to match the production docker-compose setup. Override `postgresql.image` if you need a different version.
+The bundled PostgreSQL uses `timescale/timescaledb:2.27.2-pg17` to match the production docker-compose setup. Override `postgresql.image` if you need a different version.
 
 **Bundled (default):**
 ```yaml
 postgresql:
   enabled: true
-  image: "timescale/timescaledb:2.26.4-pg17"  # override to pin a different version
+  image: "timescale/timescaledb:2.27.2-pg17"  # override to pin a different version
   auth:
     username: lumen
     password: strong-password
@@ -271,6 +271,10 @@ models:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `replicaCount` | `1` | Number of Lumen pods |
+| `wsgiProcesses` | `1` | uvicorn worker processes per pod (wired to `--workers` and `WEB_CONCURRENCY`); >1 requires `api.prometheus.multiprocDir` |
+| `wsgiSendTimeout` | `300` | Seconds a worker may block handing one response chunk to the server before the client is treated as gone |
+| `startupProbe.periodSeconds` / `failureThreshold` | `5` / `360` | Startup probe budget (30 min by default). Must cover `flask db upgrade` **plus** uvicorn startup — see [Database Migrations](#database-migrations) |
+| `startupProbe.initialDelaySeconds` / `timeoutSeconds` | `10` / `5` | Startup probe delay and per-probe timeout |
 | `image.repository` | `ghcr.io/ncsa/lumen` | Container image repository |
 | `image.tag` | `""` | Image tag (defaults to chart appVersion) |
 | `image.pullPolicy` | `IfNotPresent` | Image pull policy |
@@ -283,11 +287,15 @@ models:
 | `config.defaults.models.ackMessage` | `""` | Global acknowledgement message for `needsAck` models without their own |
 | `config.defaults.tokens.max` / `refresh` / `starting` | `0` | Fallback coin pool for groups/clients that omit these fields |
 | `config.rateLimiting.limit` | `"30 per minute"` | Rate limit per user |
+| `config.llm.connectTimeout` | `5` | Seconds to establish the connection to a model backend |
+| `config.llm.readTimeout` | `300` | Streaming calls: maximum gap between chunks (not total duration) |
+| `config.llm.requestTimeout` | `600` | Non-streaming calls: bound on the whole generation |
+| `config.llm.maxRetries` | `1` | Retries for non-streaming upstream calls (streaming calls are never retried) |
 | `oauth2.serverMetadataUrl` | CILogon OIDC URL | OIDC provider metadata URL |
 | `oauth2.redirectUri` | `""` | Auto-computed from ingress/gateway if empty |
 | `existingSecret` | `""` | Name of pre-existing Secret with credentials |
 | `postgresql.enabled` | `true` | Deploy bundled PostgreSQL |
-| `postgresql.image` | `timescale/timescaledb:2.26.4-pg17` | PostgreSQL container image |
+| `postgresql.image` | `timescale/timescaledb:2.27.2-pg17` | PostgreSQL container image |
 | `postgresql.url` | `""` | External PostgreSQL URL (when enabled=false) |
 | `postgresql.existingSecret` | `""` | Secret containing database URL (when enabled=false) |
 | `redis.enabled` | `false` | Deploy bundled Redis |
@@ -299,10 +307,20 @@ models:
 | `gateway.hostname` | `""` | Gateway hostname |
 | `gateway.timeout` | `"600s"` | Request timeout |
 | `models` | `[]` | Model definitions (see Models section) |
+| `serviceMonitor.enabled` | `false` | Create a Prometheus Operator ServiceMonitor scraping `/metrics`. Does **not** carry `api.prometheus.token` as scrape auth — with a token set, scrapes get 401; see the comment in `templates/servicemonitor.yaml` |
+| `serviceMonitor.interval` | `"30s"` | ServiceMonitor scrape interval |
+| `serviceMonitor.scrapeTimeout` | `"10s"` | ServiceMonitor scrape timeout |
 
 ## Database Migrations
 
-Migrations run automatically as a Helm pre-install/pre-upgrade Job (`flask db upgrade`). The job runs `busybox` to wait for the database before migrating.
+Migrations run automatically at container start: `entrypoint.sh` runs `flask db upgrade` inline and only then `exec`s uvicorn. There is no Helm hook Job. A `busybox` initContainer in the Deployment waits for the database to be reachable first, so the migration does not start against a database that is still coming up.
+
+Two consequences follow from migrating inside the app container rather than in a Job:
+
+- **Migrations overlap with traffic on the old version.** A Job would finish before any new pod started. Here the new pod migrates, and the Deployment uses the default rolling update — at `replicaCount: 1` that is maxSurge 1 / maxUnavailable 0, so the old pod keeps serving the previous code against the half-migrated schema until the new pod is Ready. Where there is no old pod (a fresh install, a pod restart, an eviction, a drained node) nothing serves until `flask db upgrade` returns.
+- **The startup probe budget must cover the migration**, not just uvicorn startup — `/healthz` cannot answer until `flask db upgrade` returns. If the migration outlasts `startupProbe.periodSeconds x startupProbe.failureThreshold` (default 30 minutes) the kubelet kills the container mid-migration, the interrupted revision reruns from the beginning on restart, and the pod can end up in `CrashLoopBackOff`. Raise `startupProbe.failureThreshold` before deploying a migration you expect to take longer.
+
+A migration that *fails* exits non-zero and the container dies immediately (`entrypoint.sh` runs under `set -e`), so a broken migration surfaces as a crashing pod rather than a blocked rollout. For a migration that is known to be long, run `flask db upgrade` manually against the database before the deploy.
 
 ## Notes
 
@@ -310,3 +328,4 @@ Migrations run automatically as a Helm pre-install/pre-upgrade Job (`flask db up
 - **GPU models**: Ensure your cluster has GPU nodes with the `nvidia` RuntimeClass and the NVIDIA device plugin installed.
 - **Model PVCs**: Chart-managed PVCs use `ReadWriteMany` access mode. Ensure your storage class supports it (e.g., Longhorn, NFS).
 - **External secrets for Redis**: If using `redis.existingSecret`, also set `redis.url` so it appears in the config. Without the URL, rate limiting falls back to in-memory.
+- **Chat upload limits**: The chart has no values for `chat.upload` (`max_size_mb`, `max_text_chars`, `allowed_extensions`); the generated config.yaml omits the section and the application defaults apply (10 MB, 100,000 characters). Set them through `config.extraConfig` if you need different limits.

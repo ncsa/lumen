@@ -1,5 +1,9 @@
 """Tests for the /metrics Prometheus endpoint."""
+import threading
+import time
 from http import HTTPStatus
+
+from lumen.extensions import db
 
 
 def _set_prometheus(app, config):
@@ -57,6 +61,11 @@ def test_metrics_cumulative_totals_are_counters(app, client):
     # counters (not gauges), so dashboards keep working after the type change.
     original = _set_prometheus(app, {"enabled": True, "token": "secret"})
     try:
+        # Primed first: an unprimed snapshot deliberately emits no model series
+        # at all (see test_unprimed_snapshot_emits_no_model_series).
+        with app.app_context():
+            from lumen.services.metrics_snapshot import refresh_snapshot
+            refresh_snapshot()
         body = client.get("/metrics", headers={"Authorization": "Bearer secret"}).get_data(as_text=True)
     finally:
         app.config["YAML_DATA"] = original
@@ -136,3 +145,124 @@ def test_metrics_exposes_stranded_pool_gauge(app, client):
     finally:
         app.config["YAML_DATA"] = original
     assert 'lumen_db_pool_connections{state="stranded"}' in body
+
+
+def _count_statements_on_this_thread(engine):
+    """Count SQL statements issued by the calling thread.
+
+    Thread-scoped on purpose: the snapshot refresher is a daemon thread that
+    queries on its own cadence, and its statements are exactly the ones this
+    phase moved *off* the scrape path.
+    """
+    from sqlalchemy import event
+
+    counted = []
+    caller = threading.get_ident()
+
+    def before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+        if threading.get_ident() == caller:
+            counted.append(statement)
+
+    event.listen(engine, "before_cursor_execute", before_cursor_execute)
+    return counted, lambda: event.remove(engine, "before_cursor_execute", before_cursor_execute)
+
+
+def test_scraping_metrics_executes_no_sql(app, client):
+    """The point of the phase: /metrics must not touch the database.
+
+    It used to run a GROUP BY over model_stats plus two COUNT(*) over entities on
+    every scrape, taking a pooled connection to do it — so it competed for the
+    pool it was reporting on, and could block up to pool_timeout during exactly
+    the burst it exists to describe.
+    """
+    with app.app_context():
+        from lumen.services.metrics_snapshot import refresh_snapshot
+        refresh_snapshot()
+        engine = db.engine
+
+    original = _set_prometheus(app, {"enabled": True, "token": "secret"})
+    statements, unsubscribe = _count_statements_on_this_thread(engine)
+    try:
+        for _ in range(20):
+            resp = client.get("/metrics", headers={"Authorization": "Bearer secret"})
+            assert resp.status_code == HTTPStatus.OK
+    finally:
+        unsubscribe()
+        app.config["YAML_DATA"] = original
+
+    assert statements == []
+
+
+def test_snapshot_age_is_exported_and_grows(app, client):
+    original = _set_prometheus(app, {"enabled": True, "token": "secret"})
+    try:
+        with app.app_context():
+            from lumen.services.metrics_snapshot import refresh_snapshot
+            refresh_snapshot()
+        first = _snapshot_age(client)
+        time.sleep(0.05)
+        second = _snapshot_age(client)
+        with app.app_context():
+            refresh_snapshot()
+        after_refresh = _snapshot_age(client)
+    finally:
+        app.config["YAML_DATA"] = original
+
+    # Staleness has to be visible rather than silent: the age grows while the
+    # refresher is idle, and drops back when a pass lands.
+    assert second > first
+    assert after_refresh < second
+
+
+def _snapshot_age(client) -> float:
+    body = client.get("/metrics", headers={"Authorization": "Bearer secret"}).get_data(as_text=True)
+    for line in body.splitlines():
+        if line.startswith("lumen_metrics_snapshot_age_seconds "):
+            return float(line.split()[1])
+    raise AssertionError(f"lumen_metrics_snapshot_age_seconds missing from:\n{body}")
+
+
+def test_unprimed_snapshot_emits_no_model_series(app, client):
+    """Cold start: absent, not zero.
+
+    absent -> present is an ordinary new series to Prometheus, whereas
+    present(1e6) -> present(0) -> present(1e6) is two counter resets and a
+    fabricated rate spike on every restart.
+    """
+    from lumen.services import metrics_snapshot
+
+    original = _set_prometheus(app, {"enabled": True, "token": "secret"})
+    saved = metrics_snapshot._snapshot
+    try:
+        metrics_snapshot._snapshot = metrics_snapshot._UNPRIMED
+        body = client.get("/metrics", headers={"Authorization": "Bearer secret"}).get_data(as_text=True)
+    finally:
+        metrics_snapshot._snapshot = saved
+        app.config["YAML_DATA"] = original
+
+    assert "lumen_model_" not in body
+    assert "lumen_users" not in body
+    # The age gauge is still emitted while unprimed — it is precisely the signal
+    # an operator alerts on for this state — as are the pool gauges.
+    assert "lumen_metrics_snapshot_age_seconds " in body
+    assert "lumen_db_pool_connections" in body
+
+
+def test_snapshot_age_comes_from_the_collector_not_a_prometheus_gauge(app):
+    """Contract (g): the age is yielded by LumenDBCollector, not exported as a
+    prometheus_client Gauge.
+
+    Under PROMETHEUS_MULTIPROC_DIR a Gauge must declare a multiprocess_mode and
+    every mode is wrong for an age: livesum reports 4x the age at 4 workers,
+    mostrecent reports whichever worker wrote last. Computed on the process
+    serving the scrape, the age describes the same snapshot whose sample values
+    are in the same response.
+    """
+    from prometheus_client import REGISTRY, generate_latest
+
+    with app.app_context():
+        collector_output = generate_latest(app.config["PROMETHEUS_REGISTRY"]).decode()
+    default_output = generate_latest(REGISTRY).decode()
+
+    assert "lumen_metrics_snapshot_age_seconds " in collector_output
+    assert "lumen_metrics_snapshot_age_seconds" not in default_output

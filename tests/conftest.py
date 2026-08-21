@@ -7,10 +7,21 @@ TEST_CONFIG = str(Path(__file__).parent / "fixtures" / "test_config.yaml")
 
 
 @pytest.fixture(scope="session")
-def app():
+def app(tmp_path_factory):
+    # A database file unique to this pytest process. The teardown below drops
+    # every table and deletes the file, so two pytest runs sharing one path
+    # destroy each other: the second run's tests fail mid-flight with
+    # "no such table: request_logs" from the autouse clean_db fixture, which
+    # reads as a bug in whatever was being tested. That is not hypothetical --
+    # it showed up while two agents ran different test files in this tree at the
+    # same time, and it would show up again under pytest-xdist or two terminals.
+    # DATABASE_URL wins over the yaml url (see config.py and create_app), so
+    # setting it here is enough to isolate the run.
+    db_path = tmp_path_factory.mktemp("db") / "test_lumen.db"
     os.environ.update({
         "CONFIG_YAML": TEST_CONFIG,
         "BACKGROUND_WORKER": "false",
+        "DATABASE_URL": f"sqlite:///{db_path}",
     })
     from lumen import create_app
     application = create_app()

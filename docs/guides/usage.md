@@ -16,6 +16,10 @@ A **Period** selector at the top right controls the window for every stat and ch
 | **Year** | The last 12 months |
 | **All Time** | Everything on record |
 
+Each window starts at the top of the hour, so "the last 7 days" runs from the beginning of the hour
+that was 7 days ago rather than from this exact minute. Numbers can therefore include up to an extra
+59 minutes of activity at the far end of the window.
+
 ## Summary Cards
 
 | Card | Description |

@@ -20,6 +20,16 @@ app:
     pool_timeout: 10     # seconds to wait for a connection before error (default: 30)
     pool_recycle: 1800   # recycle connections after N seconds to avoid stale-connection errors
   debug: true   # set to false in production
+  # config_editor: true  # allow saving config.yaml from /admin/config. Defaults to true;
+                         # set false when config.yaml is managed by Helm or git (the chart does).
+  # logs:
+  #   level: info    # app log level (DEBUG/INFO/WARNING/ERROR); read at startup only
+  #   access: true   # log every HTTP request (werkzeug/uvicorn access log)
+  #   model: false   # log model health-probe results
+  # github_url: https://github.com/ncsa/lumen  # "source" link shown in the UI
+  # email_themes:    # per-email/domain theme override, checked before app.theme
+  #   "@illinois.edu": illinois
+  #   someone@example.com: uic
   # announcement: ""  # WARNING: rendered as raw HTML — trusted operator input only; never accept user content here.
   # graylist_default_notice: "..."  # fallback notice shown for any graylisted model with no per-model notice set
   # theme: illinois  # Theme to use; themes live in themes/<name>/. Built-in: default, illinois, uic, uis
@@ -54,7 +64,8 @@ api:
 
   prometheus:
     enabled: false
-    token: ""          # Optional. Set to a long random string to require Bearer token auth. Leave empty for no auth.
+    token: ""          # Required when enabled: set to a long random string. A blank token disables
+                       # Prometheus entirely (logged as an error at startup), it does not mean "no auth".
     multiproc_dir: ""  # Optional. Path for multi-worker aggregation (e.g. /tmp/prometheus_multiproc).
                        # For multiple containers, mount a shared volume at this path.
 

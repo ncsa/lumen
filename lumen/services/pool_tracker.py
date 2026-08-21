@@ -11,6 +11,9 @@ leak, named by call site. It is always on: a checkout happens a handful of times
 per request and capturing a bounded stack costs microseconds against LLM calls
 measured in seconds.
 
+It also owns :class:`TimingQueuePool`, which measures the other thing the depth
+gauges cannot say: how long a caller was *blocked* before it got a connection.
+
 Exposed through ``/metrics/debug`` (see the metrics blueprint) and logged
 automatically by :func:`watchdog` when the pool sits near capacity.
 """
@@ -29,7 +32,7 @@ from typing import NamedTuple
 from flask import has_app_context, has_request_context, request
 from flask.globals import app_ctx
 from sqlalchemy import event
-from sqlalchemy.pool import Pool
+from sqlalchemy.pool import Pool, QueuePool
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +222,73 @@ def init_pool_tracking():
     event.listen(Pool, "checkout", _on_checkout)
     event.listen(Pool, "checkin", _on_checkin)
     _registered = True
+
+
+def _observe_wait(seconds: float) -> None:
+    """Report one pool wait to Prometheus, or do nothing at all.
+
+    Never *triggers* the import of the metrics middleware: importing it builds
+    the Prometheus metric objects, and prometheus_client binds each one to its
+    mmap file at construction, so an import that lands before
+    PROMETHEUS_MULTIPROC_DIR is set produces metrics no scrape will ever merge
+    (the hazard the comments in ``lumen/__init__.py`` and the metrics blueprint
+    describe). Looking the module up in ``sys.modules`` instead means this stays
+    a no-op until the app has imported it in the right order. With Prometheus
+    disabled the observation goes to a registry nothing scrapes, which costs one
+    histogram update.
+
+    Swallows everything: a checkout must not fail because a histogram did.
+    """
+    middleware = sys.modules.get("lumen.blueprints.metrics.middleware")
+    if middleware is None:
+        return
+    try:
+        middleware.observe_pool_wait(seconds)
+    except Exception:
+        # Deliberately silent, and deliberately not logged: this runs on every
+        # checkout, so a broken metric would otherwise become a log flood.
+        pass
+
+
+class TimingQueuePool(QueuePool):
+    """A ``QueuePool`` that records how long each checkout blocked.
+
+    SQLAlchemy has no pre-checkout event — ``checkout`` fires once the
+    connection is already in hand — so the wait is not the difference between
+    two event timestamps; the only place it exists is around the acquisition
+    itself. ``_do_get`` is that acquisition. It is semi-private, which is why
+    ``tests/unit/test_pool_tracker.py`` guards its name and signature: an
+    upgrade that moved it would turn this into a silent no-op.
+
+    What "waiting for a connection" means here, i.e. what lands in the histogram:
+
+    * an idle pooled connection taken straight off the queue — microseconds, and
+      still observed, because the left edge of the distribution is what tells a
+      pool that is merely full apart from one requests are queued behind;
+    * time parked waiting for another caller to check a connection back in —
+      the measurement this exists for;
+    * a ``pool_timeout`` expiry, observed as the whole timeout before the
+      ``TimeoutError`` propagates;
+    * opening a NEW connection, TCP handshake and auth included, because
+      ``_do_get`` creates one when the pool is below its ceiling. That is real
+      time the caller is blocked, but it is not queueing — a pool still growing
+      into its ceiling reads high, and ``lumen_db_pool_connections`` is what
+      shows that growth next to it.
+
+    Not included: ``pool_pre_ping``'s liveness check and any reconnect it
+    triggers, which run after ``_do_get`` has already returned.
+
+    ``_do_get`` retries itself recursively when it loses the overflow race, so
+    such a checkout also records the nested attempt as its own near-zero sample.
+    That path is rare and both samples are honest.
+    """
+
+    def _do_get(self):
+        start = time.monotonic()
+        try:
+            return super()._do_get()
+        finally:
+            _observe_wait(time.monotonic() - start)
 
 
 def outstanding(min_age: float = 0.0) -> list:

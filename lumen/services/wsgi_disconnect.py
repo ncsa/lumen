@@ -71,6 +71,26 @@ for what is a routine event; see the comment there for the rest of the trade.
 Note this is the *write* side. It is deliberately not the pump's queue — that is
 the *read* side (request body) and has nothing to do with a stalled reader.
 
+Queue accounting: T0, depth, and shedding
+-----------------------------------------
+This is also the only place in the request path that can see the WSGI thread
+pool's *queue*. A request is submitted to the pool here and does not start
+executing until a worker is free, so the wait is invisible to Flask: by the time
+``before_request`` runs, the queue time has already been spent and nothing
+recorded it. So ``__call__`` stamps T0 into the environ immediately before the
+submit (:data:`T0_ENVIRON_KEY`, :data:`STARTED_AT_ENVIRON_KEY`) and a Flask
+``before_request`` subtracts it from its own T1.
+
+Depth is counted explicitly rather than read from ``executor._work_queue`` —
+private API, and it excludes the items already handed to threads, so a
+completely saturated pool with nothing left to hand out reads as idle. See
+:func:`current_queue_depth` / :func:`current_threads_busy`.
+
+Having both the depth counters and the disconnect Event here also makes one
+optimisation possible: the pump is created *before* the submit, so a request
+that has been sitting in the queue already knows its client hung up. It is
+answered 499 without ever entering the application (:func:`queue_shed_total`).
+
 ``_PumpedBody`` and ``_DisconnectAwareWSGIResponder`` are thin derivations of
 a2wsgi 1.10.10's ``Body`` and ``WSGIResponder``; the bounded send queue and its
 backpressure semantics are inherited unchanged — only the unbounded wait on it
@@ -80,11 +100,15 @@ is replaced.
 import asyncio
 import concurrent.futures
 import contextvars
+import dataclasses
 import functools
 import logging
 import os
+import sys
 import threading
+import time
 import typing
+from datetime import datetime, timezone
 
 from a2wsgi.wsgi import Body, WSGIMiddleware, WSGIResponder, build_environ
 from flask import has_request_context, request
@@ -93,6 +117,17 @@ logger = logging.getLogger(__name__)
 
 #: WSGI environ key holding the ``threading.Event`` set on client disconnect.
 ENVIRON_KEY = "lumen.client_disconnected"
+
+#: WSGI environ key holding ``time.monotonic()`` taken immediately before the
+#: request is handed to the WSGI thread pool (T0). Monotonic because it is only
+#: ever used as one end of a subtraction.
+T0_ENVIRON_KEY = "lumen.t0_monotonic"
+
+#: WSGI environ key holding the wall-clock instant of that same moment.
+STARTED_AT_ENVIRON_KEY = "lumen.started_at"
+
+#: WSGI environ key holding this request's :class:`SendBlocked` holder.
+SEND_BLOCKED_ENVIRON_KEY = "lumen.send_blocked"
 
 #: Environment variable overriding :data:`DEFAULT_SEND_TIMEOUT`, in seconds.
 #: Follows the ``LUMEN_WSGI_WORKERS`` precedent in ``db_pool.py``: server
@@ -125,6 +160,94 @@ _BODY_QUEUE_SIZE = 1
 # (body, more_body) pushed to end the body stream when the client vanished
 # mid-upload, so a blocked read returns EOF instead of waiting forever.
 _EOF: typing.Tuple[bytes, bool] = (b"", False)
+
+# Queue accounting, maintained by _DisconnectAwareWSGIResponder around the
+# submit. Process-wide because there is one thread pool per process; the lock
+# covers the queued/running hand-off, which must be one atomic move so a sample
+# taken between the two never loses a request.
+_counter_lock = threading.Lock()
+_queued = 0
+_running = 0
+_shed_total = 0
+_threads_total = 0
+
+
+def current_queue_depth() -> int:
+    """Requests submitted to the WSGI pool that have not started running."""
+    return _queued
+
+
+def current_threads_busy() -> int:
+    """Requests currently executing on a WSGI worker thread."""
+    return _running
+
+
+def configured_threads_total() -> int:
+    """Worker threads the pool was configured with, or 0 if never constructed.
+
+    Set by the most recently constructed :class:`DisconnectAwareWSGIMiddleware`.
+    Production builds exactly one (``asgi.py``); tests that build several see the
+    last one's value.
+    """
+    return _threads_total
+
+
+def queue_shed_total() -> int:
+    """Requests answered 499 because the client had gone before they started."""
+    return _shed_total
+
+
+def _observe_shed(path: str) -> None:
+    """Count one shed request in the rejection taxonomy, or do nothing at all.
+
+    Never *triggers* the import of the metrics middleware — the same rule (and
+    the same ``sys.modules`` lookup) as ``pool_tracker._observe_wait``:
+    prometheus_client binds each metric to its mmap file at construction, so an
+    import landing before PROMETHEUS_MULTIPROC_DIR is set produces metrics no
+    scrape will ever merge, and this module sits on the hot path of every
+    request through the bridge.
+
+    The model label is empty because it genuinely is unknown here: the request
+    body has never been parsed — the whole point of shedding is that the
+    application never ran — so saying "" is honest, exactly as it is for the
+    rate limiter. The source is derived from the path, since ``request_logs``
+    only knows "chat" and "api" and there is no request context to ask.
+
+    Swallows everything: a request already being shed must not fail because a
+    counter did.
+    """
+    middleware = sys.modules.get("lumen.blueprints.metrics.middleware")
+    if middleware is None:
+        return
+    try:
+        middleware.observe_rejection(
+            "queue_shed", "api" if path.startswith("/v1/") else "chat", "",
+        )
+    except Exception:  # noqa: BLE001 - instrumentation must never escalate
+        logger.debug("counting a shed request failed", exc_info=True)
+
+
+@dataclasses.dataclass
+class SendBlocked:
+    """Running total of seconds this request's WSGI thread spent inside ``send``.
+
+    A *mutable holder* rather than a float, and published in the environ, because
+    the streaming paths bill inside a context-free response generator: at view
+    time nothing has been sent yet, so a float captured into the generator's
+    closure would read 0.0 forever. The generator holds this object instead and
+    reads ``.seconds`` when it bills.
+
+    Mutated in ``send`` and read by the generator on the *same* worker thread
+    (``send`` runs inside ``run_in_executor``), so no lock is needed.
+
+    What it measures, honestly: time to enqueue onto a bounded ``asyncio.Queue``
+    handed across to the event loop. That absorbs event-loop scheduling latency
+    as well as the peer's read rate, so under a burst it is *not* purely "slow
+    client". It also excludes whatever is sent after billing — the final chunks
+    and ``data: [DONE]``.
+    """
+
+    seconds: float = 0.0
 
 
 class _StalledClient(Exception):
@@ -228,8 +351,13 @@ class _DisconnectAwareWSGIResponder(WSGIResponder):
     ``sender``, ``start_response`` and ``wsgi`` (including its
     ``finally: iterable.close()``) are inherited unchanged.
 
-    One responder is built per request, so the Event and the resolved timeout
-    are per-request state.
+    It is also where the queue is measured: ``__call__`` stamps T0 and enters the
+    depth count immediately before the submit, and ``_run_wsgi`` — the work item
+    the pool actually runs — moves the request from queued to busy, sheds it if
+    the client left while it waited, and releases the counters in a ``finally``.
+
+    One responder is built per request, so the Event, the resolved timeout, the
+    ``SendBlocked`` holder and the counter bookkeeping are per-request state.
     """
 
     def __init__(self, app: typing.Any, executor: typing.Any, send_queue_size: int) -> None:
@@ -237,6 +365,101 @@ class _DisconnectAwareWSGIResponder(WSGIResponder):
         self.disconnected = threading.Event()
         self.send_timeout = _send_timeout()
         self.description = "request"
+        self.send_blocked = SendBlocked()
+        # None | "queued" | "running": which module counter this request is
+        # currently held in. Guarded by _counter_lock.
+        self._accounted: typing.Optional[str] = None
+
+    def _enter_queue(self) -> None:
+        """Count this request as submitted but not yet started."""
+        global _queued
+        with _counter_lock:
+            _queued += 1
+            self._accounted = "queued"
+
+    def _enter_thread(self) -> None:
+        """Move this request from the queue count to the busy-threads count."""
+        global _queued, _running
+        with _counter_lock:
+            if self._accounted == "queued":
+                _queued -= 1
+                _running += 1
+                self._accounted = "running"
+
+    def _release(self) -> None:
+        """Drop this request from whichever counter holds it.
+
+        Idempotent, and called from the worker thread's ``finally`` — the
+        request is done writing, so whichever state it was in is released here.
+        A counter that only ever goes up is the failure this guards against.
+        (``__call__``'s cancellation path must use :meth:`_release_if_queued`
+        instead: a cancelled ASGI task must not release a request that is still
+        running on a worker thread.)
+        """
+        global _queued, _running
+        with _counter_lock:
+            if self._accounted == "queued":
+                _queued -= 1
+            elif self._accounted == "running":
+                _running -= 1
+            self._accounted = None
+
+    def _release_if_queued(self) -> None:
+        """Release a request that never reached a worker thread, or do nothing.
+
+        ``__call__``'s ``finally`` must NOT use plain ``_release()``. When the
+        ASGI task is cancelled, cancelling the ``run_in_executor`` wrapper
+        future succeeds even though the underlying work item may already be
+        executing on a worker thread — cancelling the asyncio future does not
+        cancel the ``concurrent.futures`` item behind it. Releasing the
+        ``running`` count here would under-count busy threads for however long
+        the abandoned request keeps draining upstream. So this releases the
+        ``queued`` ticket only; if the worker thread already picked the item up,
+        ``_run_wsgi``'s own ``finally`` owns the release once it truly finishes.
+        Idempotent.
+        """
+        global _queued
+        with _counter_lock:
+            if self._accounted == "queued":
+                _queued -= 1
+                self._accounted = None
+
+    def _shed_disconnected(self, environ: typing.Any, start_response: typing.Any) -> None:
+        """Answer a queued request whose client already left, without the app."""
+        global _shed_total
+        with _counter_lock:
+            _shed_total += 1
+        _observe_shed(environ.get("PATH_INFO", ""))
+        logger.info(
+            "Client disconnected while %s waited for a WSGI worker; shedding it "
+            "without running the application.",
+            self.description,
+        )
+        start_response(
+            "499 Client Closed Request",
+            [("Content-Type", "text/plain"), ("Content-Length", "0")],
+        )
+        self.send({"type": "http.response.body", "body": b""})
+
+    def _run_wsgi(self, environ: typing.Any, start_response: typing.Any) -> None:
+        """The pool work item: accounting, the disconnect short-circuit, the app.
+
+        Runs on a WSGI worker thread.
+        """
+        self._enter_thread()
+        try:
+            if self.disconnected.is_set():
+                # The pump is created *before* run_in_executor (see __call__),
+                # so anything that actually waited in the queue has an accurate
+                # flag here: the client hung up while we were holding its
+                # request. Nothing it can receive is worth producing, so skip
+                # the application entirely — no preflight, no DB work, no
+                # upstream generation.
+                self._shed_disconnected(environ, start_response)
+                return
+            self.wsgi(environ, start_response)
+        finally:
+            self._release()
 
     def send(self, message: typing.Optional[typing.Any]) -> None:
         """Hand one ASGI message to the sender task, bounded by a timeout.
@@ -248,6 +471,7 @@ class _DisconnectAwareWSGIResponder(WSGIResponder):
         future = asyncio.run_coroutine_threadsafe(
             self.send_queue.put(message), loop=self.loop
         )
+        blocked_from = time.monotonic()
         try:
             future.result(self.send_timeout)
         except concurrent.futures.TimeoutError:
@@ -267,11 +491,18 @@ class _DisconnectAwareWSGIResponder(WSGIResponder):
                 SEND_TIMEOUT_ENV,
             )
             raise _StalledClient(self.description) from None
+        finally:
+            # In a ``finally`` so the timeout branch above is counted too. That
+            # branch is where the largest block of a stalled client's life
+            # happens; accumulating only on success would report ~0 for exactly
+            # the outcome this measurement exists to identify.
+            self.send_blocked.seconds += time.monotonic() - blocked_from
 
     async def __call__(self, scope: typing.Any, receive: typing.Any, send: typing.Any) -> None:
         queue: asyncio.Queue = asyncio.Queue(_BODY_QUEUE_SIZE)
         environ = build_environ(scope, _PumpedBody(self.loop, queue))
         environ[ENVIRON_KEY] = self.disconnected
+        environ[SEND_BLOCKED_ENVIRON_KEY] = self.send_blocked
         self.description = "%s %s from %s" % (
             scope.get("method", "?"),
             scope.get("path", "?"),
@@ -283,7 +514,20 @@ class _DisconnectAwareWSGIResponder(WSGIResponder):
             pump = self.loop.create_task(_pump(receive, queue, self.disconnected))
             sender = self.loop.create_task(self.sender(send))
             context = contextvars.copy_context()
-            func = functools.partial(context.run, self.wsgi)
+            func = functools.partial(context.run, self._run_wsgi)
+            self._enter_queue()
+            # T0, stamped as late as possible so that the T1 a Flask
+            # ``before_request`` takes measures the wait for a worker thread and
+            # nothing else.
+            environ[T0_ENVIRON_KEY] = time.monotonic()
+            # Timezone-AWARE on purpose, and deliberately not
+            # ``lumen.timeutils.utcnow()`` (which returns naive UTC, as CLAUDE.md
+            # requires everywhere else): this instant is stored beside and
+            # compared against ``request_logs.time``, which is TIMESTAMPTZ.
+            # Naive UTC written into a TIMESTAMPTZ column is reinterpreted by
+            # Postgres against the session TimeZone — a silent, deployment-
+            # dependent offset. Same documented exception as request_logs.time.
+            environ[STARTED_AT_ENVIRON_KEY] = datetime.now(timezone.utc)
             try:
                 await self.loop.run_in_executor(
                     self.executor, func, environ, self.start_response
@@ -317,6 +561,7 @@ class _DisconnectAwareWSGIResponder(WSGIResponder):
                     self.exc_info[1], self.exc_info[2]
                 )
         finally:
+            self._release_if_queued()
             if pump and not pump.done():
                 pump.cancel()
             if sender and not sender.done():
@@ -325,6 +570,14 @@ class _DisconnectAwareWSGIResponder(WSGIResponder):
 
 class DisconnectAwareWSGIMiddleware(WSGIMiddleware):
     """Drop-in ``a2wsgi.WSGIMiddleware`` that reports client disconnects."""
+
+    def __init__(self, app: typing.Any, workers: int = 10, send_queue_size: int = 10) -> None:
+        super().__init__(app, workers=workers, send_queue_size=send_queue_size)
+        # The pool size is only known here, and the depth counters are useless
+        # without it — depth 8 means nothing until you know whether the pool has
+        # 4 threads or 40.
+        global _threads_total
+        _threads_total = workers
 
     async def __call__(self, scope: typing.Any, receive: typing.Any, send: typing.Any) -> None:
         if scope["type"] == "http":

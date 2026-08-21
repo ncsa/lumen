@@ -24,6 +24,12 @@ _version_warned = False
 # weeks, ignored, which left the entire test suite running against the developer's
 # dev database and dropping its tables on every run. Warn rather than fail, so a
 # config written for a newer version still boots.
+# Keep in step with the keys chart/templates/config-secret.yaml emits under
+# 'app:' — tests/unit/test_config_watcher.py parses that template and fails if a
+# key it ships is missing here, which is how config_editor and email_themes went
+# unlisted: every Helm deploy warned that a key it had just written was ignored,
+# and an operator who deleted config_editor to silence the warning would have
+# re-enabled the read-write admin config editor (it defaults to true).
 KNOWN_APP_KEYS = frozenset({
     "announcement", "config_editor", "database", "debug", "dev_user",
     "email_themes", "encryption_key", "github_url", "graylist_default_notice",
@@ -189,11 +195,25 @@ def _apply_theme(app, yaml_data: dict):
 # This list is also consumed by the admin config editor UI.
 RESTART_REQUIRED = [
     ("app", "secret_key"),
+    # Read once in create_app into ENCRYPTION_KEY; apply_hot_config never
+    # re-reads it. Documented as restart-required (and dangerous to rotate)
+    # since it was introduced, but absent from this list, so the editor let it
+    # be changed with no warning at all.
+    ("app", "encryption_key"),
     ("app", "database"),
     ("app", "debug"),
+    # Its siblings logs.access and logs.model are applied by apply_hot_config,
+    # but the level is set on app.logger in create_app only.
+    ("app", "logs", "level"),
     ("oauth2",),
     ("api", "prometheus", "enabled"),
     ("api", "prometheus", "multiproc_dir"),
+    # Read once at startup: the limiter's storage is configured on the extension,
+    # and get_live_state() resolves its backend from the same URL on first use.
+    # Documented as restart-required since it was introduced, but absent from
+    # this list, so the config editor offered a hot reload that silently did
+    # nothing -- the process kept the old storage while the UI said it had changed.
+    ("rate_limiting", "storage_url"),
 ]
 _RESTART_REQUIRED = RESTART_REQUIRED
 

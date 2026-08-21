@@ -1,0 +1,26 @@
+{{- if .Values.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "lumen.fullname" . }}
+  labels:
+    {{- include "lumen.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "lumen.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval | quote }}
+      scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout | quote }}
+      # api.prometheus.token (the bearer token /metrics requires) is not wired in
+      # here as bearerTokenSecret: it is only ever written inline into the
+      # multi-line config.yaml blob under the "config.yaml" key of the
+      # <fullname>-config Secret (see templates/config-secret.yaml) — the app has
+      # no secret key holding just the raw token, so there is nothing separable
+      # for bearerTokenSecret/authorization.credentials to point at. Until the app
+      # exposes the token as its own secret key, scrape auth must be set up some
+      # other way (e.g. a separate Secret + a manually patched endpoint), or
+      # api.prometheus.token left unset for unauthenticated scraping.
+{{- end }}

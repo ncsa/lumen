@@ -1,6 +1,10 @@
 """Tests for connection-pool checkout tracking and the pool watchdog."""
 import gc
+import inspect
 import logging
+import sys
+import threading
+import time
 import weakref
 
 from sqlalchemy import create_engine, text
@@ -307,3 +311,193 @@ def test_checkout_without_an_app_context_reports_none():
         record_ref=weakref.ref(record),
     )
     assert entry.app_ctx_state() == "none"
+
+
+# --- checkout wait timing (TimingQueuePool) ---------------------------------
+
+
+def _timing_engine(**kwargs):
+    """An engine whose pool is the instrumented one.
+
+    In-memory SQLite with ``check_same_thread`` off, so a connection opened by
+    one thread can be checked back in by another: the contention test needs two
+    threads and it is the pool, not the database, that is under test.
+    """
+    return create_engine(
+        "sqlite://",
+        poolclass=pool_tracker.TimingQueuePool,
+        connect_args={"check_same_thread": False},
+        **kwargs,
+    )
+
+
+def _wait_histogram():
+    """(count, sum) that ``lumen_db_pool_wait_seconds`` holds in this process."""
+    from lumen.blueprints.metrics import middleware
+
+    count = total = 0.0
+    for metric in middleware._db_pool_wait.collect():
+        for sample in metric.samples:
+            if sample.name.endswith("_count"):
+                count = sample.value
+            elif sample.name.endswith("_sum"):
+                total = sample.value
+    return count, total
+
+
+def test_uncontended_checkout_reaches_the_real_histogram():
+    """An immediate hit on the pool is a real observation, not a skipped one.
+
+    Nothing is patched here: the value goes through ``observe_pool_wait`` into
+    the Prometheus histogram, which is what proves the call site is wired. The
+    left edge of the distribution is meaningful — it is what separates a pool
+    that is merely full from one requests are queued behind.
+    """
+    before_count, before_sum = _wait_histogram()
+    engine = _timing_engine()
+    try:
+        with engine.connect() as conn:
+            assert conn.execute(text("select 1")).scalar() == 1
+    finally:
+        engine.dispose()
+    after_count, after_sum = _wait_histogram()
+    assert after_count == before_count + 1
+    assert after_sum - before_sum < 0.05
+
+
+def test_exhausted_pool_records_the_time_the_second_consumer_blocked(monkeypatch):
+    """The measurement itself is real: a real pool, really exhausted.
+
+    ``pool_size=1`` with no overflow, one connection held, and a second thread
+    that cannot proceed until the first is checked back in — asserted by the
+    thread still being alive at the moment of release. Only the *recording* is
+    intercepted, and it still calls through to the real histogram.
+    """
+    from lumen.blueprints.metrics import middleware
+
+    waits = []
+    real_observe = middleware.observe_pool_wait
+
+    def record(seconds):
+        waits.append(seconds)
+        real_observe(seconds)
+
+    monkeypatch.setattr(middleware, "observe_pool_wait", record)
+
+    blocked = 0.2
+    engine = _timing_engine(pool_size=1, max_overflow=0)
+    held = engine.connect()
+    reached_connect = threading.Event()
+
+    def waiter():
+        reached_connect.set()
+        engine.connect().close()
+
+    thread = threading.Thread(target=waiter, name="pool-waiter")
+    try:
+        thread.start()
+        assert reached_connect.wait(timeout=5)
+        time.sleep(blocked)
+        # Nothing in waiter() blocks except the checkout, so a thread still alive
+        # here is a thread queued on the pool.
+        assert thread.is_alive()
+        held.close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+    finally:
+        held.close()
+        engine.dispose()
+
+    assert len(waits) == 2
+    assert min(waits) < 0.05  # the first checkout, which never queued
+    # 10% of slack for the scheduling gap between the event being set and the
+    # waiting thread actually entering the checkout.
+    assert max(waits) >= blocked * 0.9
+
+
+def test_do_get_is_still_the_method_the_timing_pool_wraps():
+    """``_do_get`` is semi-private, and a rename would be silent.
+
+    SQLAlchemy has no pre-checkout event, so the wait can only be measured by
+    wrapping the acquisition. If a future version renames ``_do_get`` or changes
+    its signature, ``TimingQueuePool._do_get`` overrides nothing, every checkout
+    stops being timed, and ``lumen_db_pool_wait_seconds`` goes quietly empty.
+    Fail here, loudly, instead.
+    """
+    assert "_do_get" in vars(QueuePool), (
+        "sqlalchemy.pool.QueuePool no longer defines _do_get. "
+        "pool_tracker.TimingQueuePool._do_get now overrides nothing and "
+        "lumen_db_pool_wait_seconds is silently empty — re-point the timing at "
+        "whatever replaced it."
+    )
+    assert list(inspect.signature(QueuePool._do_get).parameters) == ["self"], (
+        "sqlalchemy.pool.QueuePool._do_get changed signature; "
+        "pool_tracker.TimingQueuePool._do_get must match it or checkouts break."
+    )
+    assert pool_tracker.TimingQueuePool._do_get is not QueuePool._do_get
+
+
+def test_a_broken_metric_does_not_break_the_checkout(monkeypatch):
+    """Instrumentation must never take down a request."""
+    from lumen.blueprints.metrics import middleware
+
+    def boom(seconds):
+        raise RuntimeError("prometheus exploded")
+
+    monkeypatch.setattr(middleware, "observe_pool_wait", boom)
+    engine = _timing_engine()
+    try:
+        with engine.connect() as conn:
+            assert conn.execute(text("select 1")).scalar() == 1
+    finally:
+        engine.dispose()
+
+
+def test_timing_never_imports_the_metrics_middleware_itself(monkeypatch):
+    """With the middleware unimported the timing is a no-op — and stays one.
+
+    Importing that module constructs the Prometheus metric objects, which
+    prometheus_client binds to their mmap files immediately; doing it before
+    PROMETHEUS_MULTIPROC_DIR is set is the hazard documented in
+    lumen/__init__.py. So the checkout path may use the module but must never be
+    what pulls it in.
+    """
+    monkeypatch.delitem(sys.modules, "lumen.blueprints.metrics.middleware", raising=False)
+    engine = _timing_engine()
+    try:
+        with engine.connect() as conn:
+            assert conn.execute(text("select 1")).scalar() == 1
+    finally:
+        engine.dispose()
+    assert "lumen.blueprints.metrics.middleware" not in sys.modules
+
+
+def test_timed_checkouts_are_still_tracked_for_leaks():
+    """Timing must not disturb the leak attribution this module exists for."""
+    pool_tracker.init_pool_tracking()
+    engine = _timing_engine()
+    before = len(pool_tracker.outstanding())
+    conn = engine.connect()
+    try:
+        assert len(pool_tracker.outstanding()) == before + 1
+    finally:
+        conn.close()
+        engine.dispose()
+    assert len(pool_tracker.outstanding()) == before
+
+
+def test_engine_options_wire_the_timing_pool():
+    """A subclass nothing builds an engine with measures nothing.
+
+    Guarding the wiring here rather than in test_db_pool.py because it is this
+    class that is silently disabled if the option is dropped.
+    """
+    from lumen.services import db_pool
+
+    opts = db_pool.build_engine_options(
+        "postgresql://u:p@localhost/db", {"max_connections": 100}, workers=1, replicas=1
+    )
+    assert opts["poolclass"] is pool_tracker.TimingQueuePool
+    # SQLite keeps SQLAlchemy's own pool choice — an in-memory engine must not be
+    # handed a QueuePool — so it is deliberately not instrumented.
+    assert db_pool.build_engine_options("sqlite:///x.db", {}, workers=1, replicas=1) == {}

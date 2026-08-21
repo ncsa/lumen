@@ -99,8 +99,11 @@ def test_query_failure_no_config_uses_sqlalchemy_defaults(monkeypatch):
     opts = db_pool.build_engine_options(
         "postgresql://u:p@localhost/db", {}, workers=1, replicas=1
     )
-    # No auto-sizing possible: omit pool_size/max_overflow so SQLAlchemy defaults apply.
-    assert opts == {"pool_pre_ping": True}
+    # No auto-sizing possible: omit pool_size/max_overflow so SQLAlchemy defaults
+    # apply. The timing pool class stays, though — this fallback means the DB was
+    # unreachable at startup, which is when checkout waits matter most.
+    from lumen.services.pool_tracker import TimingQueuePool
+    assert opts == {"pool_pre_ping": True, "poolclass": TimingQueuePool}
 
 
 def test_max_connections_override_skips_query(monkeypatch):

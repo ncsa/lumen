@@ -3,7 +3,15 @@ from datetime import datetime
 
 from sqlalchemy import select
 
-from lumen.commands import sync_groups_from_yaml, sync_models_from_yaml, sync_projects_from_yaml, sync_user_groups_from_yaml, sync_user_limits_from_yaml
+from lumen.commands import (
+    backfill_aggregate_cmd,
+    enable_retention_cmd,
+    sync_groups_from_yaml,
+    sync_models_from_yaml,
+    sync_projects_from_yaml,
+    sync_user_groups_from_yaml,
+    sync_user_limits_from_yaml,
+)
 
 
 def test_sync_models_creates_model_config(app):
@@ -86,7 +94,6 @@ def test_sync_models_with_endpoints(app):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.model_config import ModelConfig
-        from lumen.models.model_endpoint import ModelEndpoint
         yaml_data = {
             "models": [
                 {
@@ -120,7 +127,6 @@ def test_sync_groups_creates_group_with_limit(app):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.group import Group
-        from lumen.models.group_limit import GroupLimit
         yaml_data = {
             "groups": {
                 "limited-group": {
@@ -269,6 +275,7 @@ def test_sync_projects_skips_unknown_group(app):
 
 def test_backfill_projects_to_config_adds_missing(app, tmp_path):
     import yaml
+
     from lumen.commands import backfill_projects_to_config
     with app.app_context():
         from lumen.extensions import db
@@ -331,10 +338,11 @@ def test_sync_groups_skips_unknown_model_in_access(app):
 def test_sync_groups_legacy_graylist_sets_needs_ack(app):
     """A legacy scope graylist list sets needs_ack on the model (consent preserved on v1 load)."""
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.commands import sync_models_from_yaml, sync_groups_from_yaml
-        from lumen.models.model_config import ModelConfig
         from sqlalchemy import select
+
+        from lumen.commands import sync_groups_from_yaml, sync_models_from_yaml
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
         sync_models_from_yaml({"models": [
             {"name": "gl-model", "input_cost_per_million": 0, "output_cost_per_million": 0},
         ]})
@@ -356,6 +364,7 @@ def test_normalize_access_new_terms(app):
 
 def test_normalize_access_legacy_terms_map_and_warn(app, caplog):
     import logging
+
     from lumen.commands import _normalize_access, _warned
     with app.app_context():
         _warned.clear()
@@ -380,6 +389,7 @@ def test_normalize_access_unknown_returns_none(app):
 def test_parse_scope_access_clean_v2_does_not_warn(app, caplog):
     """A fully-migrated allowed/blocked block must not emit legacy deprecation warnings."""
     import logging
+
     from lumen.commands import _parse_scope_access, _warned
     with app.app_context():
         _warned.clear()
@@ -395,6 +405,7 @@ def test_parse_scope_access_clean_v2_does_not_warn(app, caplog):
 def test_parse_scope_access_legacy_keys_still_warn(app, caplog):
     """Legacy keys that are actually present still warn and map correctly."""
     import logging
+
     from lumen.commands import _parse_scope_access, _warned
     with app.app_context():
         _warned.clear()
@@ -442,6 +453,7 @@ def test_apply_model_access_omitted_is_none_inherit(app):
 
 def test_apply_model_access_legacy_active_false_maps_to_disabled(app, caplog):
     import logging
+
     from lumen.commands import _apply_model_fields, _warned
     from lumen.models.model_config import ModelConfig
     with app.app_context():
@@ -820,3 +832,18 @@ def test_sync_user_limits_skips_user_not_in_db(app):
         assert count == []
 
 
+
+
+def test_backfill_aggregate_is_a_clean_noop_on_sqlite(app):
+    """SQLite has no continuous aggregates. Say so and exit 0 — this is not an error."""
+    result = app.test_cli_runner().invoke(backfill_aggregate_cmd, [])
+    assert result.exit_code == 0, result.output
+    assert "requires PostgreSQL/TimescaleDB" in result.output
+    assert "sqlite" in result.output
+
+
+def test_enable_retention_is_a_clean_noop_on_sqlite(app):
+    result = app.test_cli_runner().invoke(enable_retention_cmd, [])
+    assert result.exit_code == 0, result.output
+    assert "requires PostgreSQL/TimescaleDB" in result.output
+    assert "sqlite" in result.output

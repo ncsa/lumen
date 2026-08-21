@@ -93,6 +93,10 @@ def test_restart_keys_covered():
     assert ("app", "secret_key") in keys
     assert ("app", "database") in keys
     assert ("api", "prometheus", "enabled") in keys
+    # Both are read once in create_app and never re-read by apply_hot_config, so
+    # without an entry here the editor accepts a change that silently does nothing.
+    assert ("app", "encryption_key") in keys
+    assert ("app", "logs", "level") in keys
 
 
 def test_start_config_watcher_creates_daemon_thread(app, tmp_path):
@@ -380,6 +384,60 @@ def test_shipped_configs_have_no_unknown_app_keys():
         data = _yaml.safe_load((root / rel).read_text()) or {}
         unknown = sorted(set(data.get("app") or {}) - KNOWN_APP_KEYS)
         assert not unknown, f"{rel} has unrecognised app key(s): {unknown}"
+
+
+def _chart_app_keys():
+    """Keys the Helm chart writes under 'app:' in the config.yaml it generates.
+
+    Parsed rather than rendered because helm is not a test dependency. Template
+    action lines ({{- if ... }}) are skipped, so a key emitted only under a
+    condition still counts — it can reach a deployed config.yaml.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    text = (root / "chart" / "templates" / "config-secret.yaml").read_text()
+    keys, in_app = [], False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("{{"):
+            continue
+        if line == "    app:":
+            in_app = True
+            continue
+        if in_app:
+            if len(line) - len(line.lstrip()) <= 4:  # left the app: block
+                break
+            if m := re.match(r"^      ([A-Za-z_]+):", line):
+                keys.append(m.group(1))
+    return keys
+
+
+def test_chart_generated_app_keys_do_not_warn(app, caplog, restore_config):
+    """A Helm-deployed config.yaml must not warn about its own keys.
+
+    `config_editor` is emitted unconditionally by the chart but was missing from
+    KNOWN_APP_KEYS, so every Helm deploy logged that it was ignored — while it
+    was in fact applied, and defaults to True (read-write admin config editor)
+    if an operator deletes it to silence the warning.
+    """
+    import logging
+
+    from lumen.services.config_watcher import KNOWN_APP_KEYS, apply_hot_config
+
+    keys = _chart_app_keys()
+    # Guard the parser itself: a template restructure must not silently empty this.
+    assert "config_editor" in keys and "database" in keys, keys
+
+    unknown = sorted(set(keys) - KNOWN_APP_KEYS)
+    assert not unknown, f"chart/templates/config-secret.yaml emits unrecognised app key(s): {unknown}"
+
+    # Empty dicts are inert placeholders for every shape these keys can take.
+    with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
+        with app.app_context():
+            apply_hot_config(app, {"app": dict.fromkeys(keys, {})})
+    assert not any("unrecognised key" in r.getMessage() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
