@@ -8,900 +8,584 @@ All notable changes to Lumen will be documented in this file.
 
 ### Fixed
 
-- The load test served the bare Flask app, so it measured a gateway that does not exist in production and could not see its own bottleneck. `loadtesting/run_loadtest.sh` ran `uvicorn run:app --interface wsgi`, and `run.py` exposes the unwrapped WSGI callable — so uvicorn wrapped it in its own deprecated `_WSGIMiddleware` instead of `asgi.py`'s `DisconnectAwareWSGIMiddleware`. Nothing stamped `lumen.t0_monotonic`, so `request_logs.queue_wait`, `preflight`, `started_at` and `send_blocked` were NULL on every row; client disconnects were undetectable; `LUMEN_WSGI_SEND_TIMEOUT` was not enforced; and the thread pool was uvicorn's hard-coded 10 per process, ignoring `LUMEN_WSGI_WORKERS`. A 500-user run consequently plateaued at exactly 40 concurrent requests (4 processes × 10 threads) while Locust reported 45–70 s response times against a recorded median upstream call of 1.25 s — the missing minute was queueing in a queue Lumen was blind to, and the 2,753 rows it wrote said nothing about it. The harness now serves `asgi:app` with `WEB_CONCURRENCY`, `LUMEN_WSGI_WORKERS` and `WSGI_WORKERS`/`WORKERS` overrides, so the ceiling is `--workers × LUMEN_WSGI_WORKERS` and both halves are configurable.
-- Load-test accounts were created with `EntityModelAccess.access_type = "whitelist"`, a legacy value the access resolver no longer recognises. `_resolve_allow_block` treats any entity-scoped rule that is not exactly `"allowed"` as blocked, and the entity rule is the highest-precedence scope — so every generated account was explicitly *denied* the one model it was created for, and every request returned 403. Worse than having no row at all. `loadtesting/setup_users.py` now writes `"allowed"`.
-- The same misconfiguration is now impossible to make silently, which is the actual defect: `_record_queue_wait` skipped a missing T0 mark without comment, which is correct under the Flask test client and the Werkzeug dev server and a serious misconfiguration anywhere else. It now logs one ERROR per process naming the cause and the fix, suppressed for those two legitimate paths; `LUMEN_REQUIRE_BRIDGE=1` escalates it to a 500 for deployments where an unmeasurable request is worthless (set by the load-test harness). `tests/unit/test_asgi_entrypoint.py` statically bans `--interface wsgi` and serving `run:app` across `entrypoint.sh`, the chart, the compose files, the load-test script and the READMEs — joining backslash continuations first, because the original offending flag sat on a continuation line with no `uvicorn` token of its own, and ignoring comments and unfenced Markdown so the prose explaining the ban does not trip it. The harness also probes one real request and aborts before Locust starts if `queue_wait` came back NULL.
-
-- Every PostgreSQL session Lumen opens is now pinned to UTC. CLAUDE.md's rule is that all times are UTC everywhere in the app and the DB, but `date_trunc`, `EXTRACT` and every `timestamptz` value psycopg2 hands back are evaluated in the *session's* `TimeZone`, which Postgres inherits from whatever `initdb` picked up from the host — and nothing in the app, the chart or the container set it. The invariant therefore held only by luck: the `timescale/timescaledb` image happens to default to UTC, so every test to date ran against a UTC server and this was structurally invisible. Against a server initialised as, say, `CST6CDT`, `EXTRACT(HOUR FROM TIMESTAMPTZ '2026-09-01 02:30:00+00')` is 21 and `EXTRACT(DOW ...)` is Monday rather than Tuesday, so the `/usage` heatmap plots every request in the wrong hour *and* the wrong day; `date_trunc` day/week/month buckets land in the wrong period; comparing the naive-UTC `entities.created_at` against an aware window start silently reinterprets the column in local time, shifting the new-user counts by the UTC offset; and `flask backfill-aggregate` renders `MIN(time)` in local time and so starts a month early. None of it raises anything, and no equality test can catch it — the aggregate arm and the raw arm share the session timezone, so they agree with each other while both are wrong. A `connect` listener on the SQLAlchemy `Engine` class now issues `SET TIME ZONE 'UTC'` on every new PostgreSQL DBAPI connection, which covers the request pool, the CLI's own AUTOCOMMIT connections, `db_pool`'s throwaway unpooled engine, Alembic and any engine a script creates — by construction rather than by each `create_engine` call remembering a `connect_args` — and fires again for pool overflow, `pool_recycle` and pre-ping replacements. It is a no-op on SQLite. New integration coverage asserts the reported heatmap cell against a fixed UTC instant near a day boundary through both the aggregate and the raw arm, and asserts the session timezone on each of those connection paths.
-- A chat client that disconnected during the billing window lost the reply it had just paid for. `send_message_stream` bills a completed stream — coins subtracted, `request_logs` written with `outcome = "ok"` and `aborted = false` — between the last upstream chunk and the final result tuple it yields, and `/chat/stream`'s generator tested the disconnect flag before taking that tuple. A client that left inside those few milliseconds therefore broke out of the loop with no result, so the conversation was never written: the request was charged and logged as a clean success while the reply was discarded, with nothing in `request_logs` to say so. That window is a few milliseconds per request but is entered by every completing stream, so under a class-start burst it is not rare. The final tuple is now taken before the flag is consulted, which is what the surrounding comment already claimed the code did.
-- `/chat/stream` now closes the LLM stream itself instead of leaving it to garbage collection. Two exits leave `send_message_stream` suspended mid-stream — the generator's own disconnect check, and a `GeneratorExit` thrown in at a `yield` by the send timeout — and the `except GeneratorExit` handler that bills an abandoned stream only runs once that generator object is destroyed. Under CPython's refcounting that is usually immediate, but anything still referencing the frame (a traceback, a log record carrying `exc_info` — this codebase has already been bitten by a log record pinning a session) postpones it indefinitely, and an exception raised during collection is swallowed with nothing logged. The abort accounting is the reason the disconnect work exists, so it no longer depends on when an object is collected.
-- A billing failure on the `/v1/chat/completions` streaming path is no longer reported as an upstream failure. Everything after the upstream call went through `_classify_upstream_error`, which names the endpoint and the model in the log and answers the client `"Upstream error. Please try again."` — but a failed commit means the backend generated the whole reply and the client already holds every chunk of it. Both an operator reading the log and a user reading the error event were pointed at an endpoint that had done nothing wrong. The `phase` marker that already keeps the two apart on `lumen_stream_aborts_total` now selects the log line and the client message too.
-
-- CI test failures (`ModuleNotFoundError: No module named 'httpx'`): the openai 3.x SDK now uses `httpx2`, and the upstream-error tests were updated to match. Dependency floors were raised to the majors actually locked and tested (`openai>=3`, `flask-limiter>=4`, `pypdf>=6`, `psutil>=7`, `pytest>=9`, `pytest-cov>=7`).
-- Client disconnects were never detected in production, so a cancelled or abandoned request kept running: Lumen streamed the entire LLM response into a dead socket, the upstream backend generated to completion, and a worker thread stayed pinned for the duration. `a2wsgi`'s WSGI bridge never watched for the ASGI `http.disconnect` event and uvicorn's `send()` silently no-ops once the peer is gone, so the response generator was never closed and the `GeneratorExit` abort path — including the zero-cost `request_logs` row used to monitor disconnects — could not fire at all. The bridge now delivers disconnects to the application, and both streaming paths (`/v1/chat/completions` and `/chat/stream`) stop pulling from the upstream and close the client, which aborts the backend generation.
-
-- Every call Lumen makes to a model backend is now bounded. All four sites previously used the OpenAI SDK's defaults (600s, two retries), so a silently stalled backend could pin a worker thread for roughly thirty minutes across three attempts of one request — long past the gateway deadline that made those attempts orphan work. Streaming calls are never retried, since a retry restarts the whole generation while the first attempt may still be draining upstream. Configurable under `llm:` (`connect_timeout`, `read_timeout`, `request_timeout`, `max_retries`), hot-reloaded, and exposed in the Helm chart.
-
-- A client that stops reading without closing the connection no longer pins a worker thread indefinitely. A half-open TCP link (a sleeping laptop, a dropped NAT entry) reports no disconnect and is never abandoned by the kernel while the peer advertises a zero window, and the thread was blocked inside `yield` where it could not observe the disconnect flag at all — so enough such clients was a total request-serving outage with nothing logged. Handing a chunk to the server is now bounded by `LUMEN_WSGI_SEND_TIMEOUT` (default 300s, Helm: `wsgiSendTimeout`); on expiry the client is treated as gone, the thread is released, and the usual abort accounting runs.
-
-- Streams abandoned by the client are now billed for what they consumed instead of being recorded at zero cost. Upstream reports token usage only in its terminal chunk, which an abandoned stream never reaches, so a client could read content and hang up just before it to pay nothing — repeatably. Aborted requests are now charged using the same per-million rates as completed ones: the upstream's exact usage when the terminal chunk had already arrived, otherwise an estimate (one token per content delta received, prompt tokens approximated from message length). The prompt-side estimate is biased low (chat-template overhead is uncounted, and denser-tokenizing code or non-Latin text under-counts), and reasoning tokens are excluded. The output side assumes the backend emits one token per streamed chunk, which holds for vLLM and SGLang; a backend that chunks below token granularity would over-count, so that assumption is worth rechecking when adding one.
-
-- The test suite ran against the developer's dev database and dropped its tables on every run. `tests/fixtures/test_config.yaml` set `app.database_url`, but since 1.15.0 the app reads `app.database.url`; the orphaned key was silently ignored, so `SQLALCHEMY_DATABASE_URI` fell back to the default `sqlite:///lumen_dev.db`. The fixture now uses the nested key, and `conftest` asks the engine where the database actually is (Flask-SQLAlchemy resolves relative SQLite paths against `instance/`) and refuses to start unless it is SQLite at exactly `test_lumen.db` — an allowlist rather than a denylist, since the suite drops every table at teardown and a misrouted URI destroys real data silently.
-- The PostgreSQL integration tests shared one database across every module, so a module that moved a continuous aggregate's watermark — `refresh_continuous_aggregate(view, NULL, NULL)` moves it to the end of the newest bucket holding data, past the current bucket — made every later module's current-hour rows invisible to real-time aggregation, silently and only in some orders. The three Phase 8 modules now take a private, migrated database from a single `pg_migrated_isolated` fixture in `tests/integration/conftest.py`, dropped in a `finally` so a failed run leaves nothing behind, at the cost of one `flask db upgrade` each.
-- `tests/unit/test_token_refill.py::test_aware_last_refill_at_does_not_abort_pass` failed intermittently with `69.999999 != 70.0`, because it read the clock twice and the elapsed span came out fractionally under two hours. Deriving both values from one reading fixed the flake but left the branch under test dead: SQLite's naive `DateTime` bind strips tzinfo on persist, so the aware `last_refill_at` the test exists to exercise could never survive a round-trip. The aware value is now injected on the in-memory ORM object instead, so the CODE-H2 branch is actually reached.
-- Every span measured in the LLM paths now comes from one clock. `duration`, time-to-first-token and the abort accounting used the wall clock while the new request-arrival instrumentation stamps `time.monotonic()`; combining or subtracting the two yields values off by the Unix epoch (~55 years) with nothing raising, and the wall clock can also step backwards under NTP mid-request. All ten sites in `lumen/services/llm.py` and `lumen/blueprints/api/routes.py` are monotonic, guarded by `tests/unit/test_single_clock.py`. Stored values are unchanged: each is a same-process span on both sides. `record_stream_abort`'s `started_at` parameter is renamed `stream_t0`, since it is a span origin and not the absolute arrival instant that `request_logs.started_at` records.
-- The `/usage` charts no longer drop the first, partial hour of every window. `bucket` in the hourly aggregates is `time_bucket('1 hour', time)` — the hour's *start* — so filtering `bucket >= :start` against a start of `now() - 7 days`, which is mid-hour in general, discarded every request between that instant and the top of the next hour: a 09:45 request has `bucket = 09:00`, and `09:00 >= 09:30` is false. The per-entity endpoints hid this behind their raw-`request_logs` fallback (which filters `time >= :start` and was therefore correct), so the same page answered two different numbers depending on whether the aggregate covered the window yet — meaning everyone's Week/Month/Year totals would have *dropped*, unexplained, the first time the refresh policy ran after deploy. The org-wide charts, which have no raw arm, had carried the same skew since `request_counts_hourly` was introduced. `_usage_period_start` now floors to the hour, which makes `bucket >= :start` and `time >= :start` the same predicate; the cost is that a window can reach up to 59 minutes further back than its name suggests, identically for every chart on the page.
-- An entity deleted from the database no longer reappears in the `/usage` charts. `request_logs.entity_id` is `ON DELETE SET NULL`, but the continuous aggregate materialised the id at refresh time and never re-evaluates the foreign key, so an admin querying a deleted entity got nothing before the refresh policy first ran and that entity's full materialised history afterwards. Both arms now require the entity to still exist. (Nothing in the application hard-deletes an entity — deleting a project flips `active` — so this is about the DBA-level delete that `ON DELETE SET NULL` exists for.)
-- The org-wide `/usage` charts have been missing up to the last two hours of traffic in production ever since TimescaleDB was upgraded to 2.13 or later. `request_counts_hourly` was created without setting `timescaledb.materialized_only`, which was real-time on the version of the day; 2.13 flipped that default to `true`, so on the deployed 2.27.2 the view answers only from its materialisation hypertable — and its policy (`end_offset` 1 hour, hourly schedule) never fills that closer than one to two hours behind now. Every org-wide chart (totals, model breakdown, activity heatmap) reads this view and, unlike the per-entity charts, has no raw-`request_logs` fallback, so nothing errored and the only symptom was that the numbers looked behind. Migration `j4k5l6m7n8o9` sets `materialized_only = false`, which unions the materialised rows with a live scan of the raw tail above the watermark. `end_offset` deliberately stays at one bucket width: real-time aggregation already covers everything past the watermark, so shrinking it buys no freshness and would materialise a partial open bucket, hiding the rest of that hour until the next scheduled run. The test that should have caught this seeded only rows three days old and so passed whichever way the setting went; it now writes a row into the current hour *after* the refresh — provably above the watermark — and asserts it comes back, alongside a direct assertion on the setting itself.
-- Two flaky tests that read `db.session.registry.registry`. A `ScopedRegistry` built with a `scopefunc` (which is how Flask-SQLAlchemy scopes sessions to the app context) stores them in a plain process-wide dict, not a thread-local, so any assertion over the whole dict also sees other threads' sessions. `test_api_stream_disconnect_stops_generation` and its `/chat/stream` sibling raced the server thread through `scoped_session.remove()`, which closes the session — returning the connection, which is what satisfies the `pool.checkedout() == 0` assertion on the line above — and only clears the registry entry on the next line; both now poll for the count with a timeout, so a session that really is stranded still fails. `test_failed_rollback_is_logged_and_the_session_dropped` asserted the dict was empty and was catching the metrics-snapshot refresher mid-pass; it now asserts that its own app context's key is gone, which is the claim it was always making. Neither weakens what the tests detect: remove the registry clean-up from the app-context teardown and both fail every time.
-
-- A Helm-deployed config.yaml warned about its own keys. `config_editor` (emitted unconditionally by the chart) and `email_themes` were missing from the recognised `app:` key list, so every deploy logged "unrecognised key(s) under 'app': config_editor. They are ignored" — while both were in fact applied. The advice that warning gives was actively harmful for this key: an operator who deletes `config_editor` to silence the noise gets the default, `true`, which re-enables the read-write admin config editor that the chart's `configEditor: false` exists to prevent. Neither existing test could catch it — one iterates the key list itself, so a missing key is never tested, and the other checks only the three configs in the repo. A new test parses the keys `chart/templates/config-secret.yaml` emits under `app:` (helm is not a test dependency) and fails if any of them is unlisted.
-- `app.encryption_key` and `app.logs.level` are now listed as restart-required. Both are read once in `create_app` and never re-read by `apply_hot_config`, so the config editor accepted a change to either with no warning at all and the process kept the old value; `app.encryption_key` was already documented as restart-required and dangerous to rotate, but the watcher did not enforce it. Its siblings `app.logs.access` and `app.logs.model` are hot-reloaded and unchanged.
-- The chart README documented a migration mechanism that does not exist: a Helm pre-install/pre-upgrade Job. There is no such hook template. `entrypoint.sh` runs `flask db upgrade` inline in the app container before `exec uvicorn`, and the busybox database wait is an initContainer in the Deployment. The difference matters twice: migrations no longer finish before the rollout starts, so the schema changes underneath the old pod that the default rolling update keeps serving until the new one is Ready (and where there is no old pod — a fresh install, a restart, an eviction — nothing serves until `flask db upgrade` returns); and a failed migration crashes the pod rather than blocking the rollout the way a Job would.
-- The startup probe budget could not cover a migration. `flask db upgrade` runs before uvicorn binds, so `/healthz` cannot answer until it finishes, but the probe allowed about 70 seconds from container start; past that the kubelet kills the container mid-migration, the interrupted revision reruns from the beginning, and at one replica the pod can settle into `CrashLoopBackOff` with the app down. The budget is now 30 minutes and configurable (`startupProbe.initialDelaySeconds` / `periodSeconds` / `failureThreshold` / `timeoutSeconds`), and the coupling — the budget covers migrations *plus* uvicorn startup — is documented in `values.yaml` and the chart README. A wide budget costs little: a migration that *fails* still exits the container immediately under `set -e`, so the only thing a long budget delays is detecting a process that is alive but not serving, which is what a running migration looks like.
-- Chart README fixes: the bundled PostgreSQL image is `timescale/timescaledb:2.27.2-pg17` (the version production runs and CI pins), not the `2.26.4-pg17` named in three places; the Values Reference lists `wsgiSendTimeout`, the `config.llm.*` timeouts and the new `startupProbe` budget; the ServiceMonitor row now says that it carries no scrape auth, so with `api.prometheus.token` set every scrape gets a 401; and a note records that `chat.upload` limits have no Helm values and must go through `config.extraConfig`.
-- `config.yaml.example` documents `app.config_editor`, `app.logs`, `app.github_url` and `app.email_themes`, none of which appeared in any shipped example, and no longer describes a blank `api.prometheus.token` as "no auth" — a blank token disables Prometheus outright.
-- The per-entity `/usage` fallback no longer reads the earliest bucket through the real-time continuous aggregate. With `materialized_only = false` and the aggregate created `WITH NO DATA`, a `MIN(bucket)` against the view scans every raw `request_logs` row below the policy watermark until a backfill has run — the exact window the fallback exists for. `_entity_aggregate_earliest_bucket` now reads the aggregate's materialisation hypertable (resolved via the catalog, the same way as `flask enable-retention`), which holds only what has actually been refreshed: a fast `MIN` that is precisely what the "does the aggregate cover this window?" test needs.
-- A live-request ticket is now released before the LLM stream is closed on `/chat/stream`. Closing a generator can itself raise (a body that does not handle the `GeneratorExit` thrown at its `yield` propagates `RuntimeError`), and the release sat after `close()`, so such a raise silently leaked the ticket and inflated the in-flight count until the deadline. The release is now the first line of the `finally`, matching the `/v1/chat/completions` path.
-- The WSGI worker-pool depth counters no longer under-report busy threads when an ASGI task is cancelled mid-request. Cancelling the `run_in_executor` wrapper future succeeds even though the underlying work item is still executing on a worker thread, and `__call__`'s `finally` used to release the `running` count immediately — so the abandoned request kept consuming upstream while counted as idle. The asyncio task's failure path now releases only a request still in the queue; once a worker thread has picked a request up, that thread's own `finally` owns the release.
-- The chart no longer sets `PROMETHEUS_MULTIPROC_DIR` or mounts its `emptyDir` when `api.prometheus.enabled` is false. Both were gated on `multiprocDir` alone, so a disabled-prometheus deploy with a stale `multiprocDir` value would mount a dead volume and set an env var the code never acts on. The three sites (env var, volume mount, volume) now require `enabled` and `multiprocDir` together.
-- Metric observations on the rejection path no longer trigger a fresh import of the metrics middleware. `_observe_rejection_quietly` and `observe_rejection_quietly` imported it at call time; they now use the same `sys.modules` lookup as `pool_tracker._observe_wait` and `wsgi_disconnect._observe_shed`, so they stay no-ops until the app imports the middleware in the right order.
-- An aware `last_refill_at` is now normalised to UTC rather than silently discarding its offset. `coin_retry_after` and both sites in `refill_coin_balances` used `replace(tzinfo=None)`, which drops whatever offset an aware value carried; they now convert with `astimezone(timezone.utc)` first, so a stray non-UTC aware value cannot skew the next-refill or refill-window arithmetic.
-- The single-clock guard now also covers the timing spans measured in `lumen/services/wsgi_disconnect.py` (`send_blocked`, the bridge's T0) and consumed on the `lumen/blueprints/chat/routes.py` streaming path, not just `llm.py` and `api/routes.py`.
-- `RequestLog`'s model now declares the `ix_request_logs_model_config_id_time` composite index, matching the one migration `f7a8b9c0d1e2` creates on PostgreSQL. The model and an upgraded schema were out of step, so a fresh `create_all` and any autogenerate would report drift, and a SQLite development schema lacked an index the production schema has.
-- The charts' `values.schema.json` now rejects a deployment that enables Prometheus with `wsgiProcesses > 1` but leaves `api.prometheus.multiprocDir` unset. Multi-worker metric aggregation needs a shared directory (the code warns at startup rather than failing), and the schema half of that guard was missing even though the deployment template gating was fixed.
+- Load testing now serves through the real ASGI bridge (asgi:app) instead of a bare Flask app, so queue-wait/preflight/abort metrics are measured and `LUMEN_WSGI_WORKERS` is honored (#47).
+- Load-test accounts are created with `access_type: "allowed"` instead of the legacy unrecognised `"whitelist"` (which denied every model).
+- A missing T0 bridge mark is now loudly logged (and a 500 under `LUMEN_REQUIRE_BRIDGE=1`) instead of silently skipped.
+- Every new PostgreSQL session is pinned to UTC (`SET TIME ZONE 'UTC'` on connect), fixing `/usage` heatmap and bucket errors on non-UTC servers.
+- A client disconnecting in the milliseconds between billing and the final stream yield no longer loses the reply it paid for.
+- `/chat/stream` closes the LLM stream in a `finally` instead of relying on garbage collection to bill abandoned streams.
+- Billing failures on the streaming API are no longer misreported as upstream failures.
+- Bumped dependency floors to the majors actually locked/tested (`openai>=3`, `flask-limiter>=4`, `pypdf>=6`, `psutil>=7`, `pytest>=9`, `pytest-cov>=7`).
+- Client disconnects are now detected in production — the ASGI bridge delivers `http.disconnect` and both streaming paths stop/close on it.
+- All backend calls are timeout/retry-bounded, configurable under `llm:`.
+- A half-open TCP link no longer pins a worker thread; sends are bounded by `LUMEN_WSGI_SEND_TIMEOUT`.
+- Abandoned streams are now billed for what they consumed (exact usage, else an estimate) instead of zero cost.
+- The test suite no longer runs against the dev database; it requires SQLite at exactly `test_lumen.db`.
+- PostgreSQL integration tests use per-module private migrations instead of sharing (and clobbering) one DB.
+- The aware-`last_refill_at` test flake is fixed and the branch is actually reached.
+- Every span in the LLM paths now uses one monotonic clock (`tests/unit/test_single_clock.py`).
+- `/usage` no longer drops the first partial hour of each window.
+- Deleted entities no longer reappear in `/usage` after a continuous-aggregate refresh.
+- Org-wide `/usage` charts no longer lag up to two hours (continuous aggregate built real-time, `materialized_only=false`).
+- Fixed two flaky pool-registry tests and the metrics-snapshot race.
+- Helm-deployed config no longer warns about its own `config_editor`/`email_themes` keys.
+- `app.encryption_key` and `app.logs.level` are now flagged restart-required.
+- Chart README no longer documents a migration Job that does not exist (migrations run inline in the entrypoint).
+- Startup-probe budget raised to 30 minutes (configurable) so a migration can complete.
+- Chart README/values fixes (image tag, `wsgiSendTimeout`, `config.llm.*`, `startupProbe`, ServiceMonitor auth note, chat.upload note).
+- `config.yaml.example` now documents `app.config_editor`, `app.logs`, `app.github_url`, `app.email_themes`.
+- Per-entity `/usage` fallback reads the aggregate's materialised hypertable, not raw rows below the watermark.
+- Live-request ticket is released before (not after) closing the stream on `/chat/stream`.
+- WSGI worker-pool depth counters no longer under-count cancelled ASGI tasks.
+- Chart only mounts `PROMETHEUS_MULTIPROC_DIR` when Prometheus is actually enabled.
+- Rejection-path metrics no longer force a fresh middleware import.
+- Aware `last_refill_at` is normalised to UTC instead of silently dropping its offset.
+- The single-clock guard now covers the wsgi_disconnect timing spans.
+- `RequestLog` model now declares the composite index its PostgreSQL migration creates.
+- `values.schema.json` rejects multi-worker Prometheus deployments without a `multiprocDir`.
 
 ### Added
 
-- Two operator commands for the TimescaleDB lifecycle. `flask backfill-aggregate` materialises a continuous aggregate's full history month by month on its own AUTOCOMMIT connection — `refresh_continuous_aggregate` cannot run inside a transaction block, and a `flask` command using `db.session` is already in one — and clamps the last window to `now()` so the current bucket is left to real-time aggregation instead of being materialised half-finished, which would hide every request logged after the backfill. It refuses any window starting before the retention boundary unless `--force`: refreshing over dropped chunks recomputes that window as empty and *deletes* the materialised rows, with no error, so a backfill run a year after retention was enabled would erase everyone's pre-retention history in one call. Each month is retried for up to 60 seconds on `SQLSTATE 55P03`, matched on the SQLSTATE rather than the message text: TimescaleDB refuses an overlapping refresh outright instead of queueing behind it, and with a policy firing every minute on `request_metrics_1m` a 13-month backfill would otherwise abort partway and leave a half-materialised aggregate; every month that succeeds is printed with `OK` and a failure names the `--from` to resume with. `flask enable-retention` defaults to a dry run and only adds the policy with `--force`; it is a command rather than a migration because `entrypoint.sh` runs `flask db upgrade` at container start, so a migration would begin deleting data on the next deploy. It refuses unless `request_counts_hourly_by_entity` covers all the raw history that still exists — its earliest *materialised* bucket at or before the oldest surviving `request_logs` row, which is the same invariant the per-entity charts require before they will read the aggregate at all. Emptiness is the wrong test twice over: the aggregate refreshes its last 30 days every hour, so ordinary traffic makes it non-empty within an hour of deploy while no historical backfill has run, and it is read through a view with `materialized_only = false`, which answers from the raw rows for as long as the watermark sits where the migration left it — so a freshly migrated aggregate holding nothing at all reads as covering everything. The refusal names both timestamps it compared and the `flask backfill-aggregate --from` that fixes it, and `--window` against an existing policy now says out loud that it was not applied. Both are documented under "Operator Commands" in the README.
-- Two TimescaleDB continuous aggregates over `request_logs`, so the usage charts stop scanning raw rows and can survive a retention policy. `request_counts_hourly_by_entity` groups by `(hour, entity_id, model_config_id, source)` — the existing `request_counts_hourly` has no `entity_id`, which is the whole reason every per-user chart still reads raw rows, and enabling retention before this existed would have truncated every individual's "All Time" history while the org-wide charts kept going. `request_metrics_1m` groups by `(minute, model_config_id, source)` and answers "what is happening right now", which an hourly bucket lagging by an hour structurally cannot. Both carry duration and time-to-first-token sums and maxima, an abort count taken from `outcome`, and cumulative `ttft_le_*` histogram buckets at 0.5/1/2/5/10/30 seconds — `timescaledb_toolkit` is absent from the deployed image, so percentiles come from fixed edges rather than `percentile_agg`. A NULL `ttft_visible` (every row predating the timing columns) counts in none of the buckets, so historical data does not read as uniformly fast. Both set `timescaledb.materialized_only = false`: that setting defaults to `true` on TimescaleDB 2.13+ and hides the current bucket, which would have shown zero to a student who ran forty requests in the 9 a.m. lab and opened `/usage` at 09:50 — a bigger and far more frequent complaint than the truncation the aggregates exist to prevent. Created `WITH NO DATA`; a full-history refresh cannot run inside the migration, since `entrypoint.sh` runs `flask db upgrade` before the app starts.
-- `request_logs` chunks older than 7 days are now compressed, segmented by `(model_config_id, source)` and ordered by `time DESC` — the same columns the analytics queries filter on, so compressed chunks are pruned without being decompressed. Seven days matches the chunk interval, so only closed chunks are ever compressed. Nullable `ADD COLUMN` still works against compressed chunks on the deployed 2.27, so this does not freeze the `request_logs` schema. No retention policy is created by any migration, deliberately: `flask db upgrade` runs at container start, so a migration adding one would begin deleting production data on the next deploy and make the required dry-run gate unenforceable.
-- `lumen_stream_aborts_total{source,reason}` counts streams that ended early, so mid-stream disconnects are visible in Prometheus rather than only in the request log.
-- `request_logs.aborted` records whether the client disconnected before the stream finished, so aborted requests stay identifiable now that they carry a real cost. It replaces the previous "`cost` = 0 means aborted" convention, which a completed request could also satisfy (a zero-priced model, an audio model with no `audio_cost_per_hour`, an upstream returning no usage, or a cost rounding to zero). Rows that predate the column read `false` rather than NULL: the column is `NOT NULL`, so `ADD COLUMN` needs a default and PostgreSQL fills every existing row from it. That is a deliberate choice the migration argues for — a pre-migration abort reads as a completed request, and a false negative in the past is cheaper than a false positive forever — but it does mean "the abort rate in March" answers 0% with nothing marking those rows as unmeasured. No *computed* backfill from the old `cost = 0` convention was attempted, which is what could not be done without false positives.
-- `request_logs` records what the user actually waited for. Seven nullable columns — `started_at`, `queue_wait`, `preflight`, `ttft`, `ttft_visible`, `send_blocked` and `outcome` — ride the INSERT that already happens, so the hot path gains no statement. Until now the table had one timing column, `duration`, which starts after preflight and ends before the billing commit, so "queued behind other students for a worker thread", "waiting on a contended connection pool" and "the model is slow" all produced identical rows. Arrival is stored rather than reconstructed from `time - duration - queue_wait`, which assumes preflight and the billing commit take zero time and is therefore least accurate during exactly the burst it would be used to explain. Historical rows are not backfilled: nothing recorded an arrival time for them. The columns are added bare — nullable, with no server default — because `ADD COLUMN ... DEFAULT 0` does not only default future inserts, it initialises every *existing* row, which on thirteen months of `request_logs` would record the entire history as measured and instant: `ttft_count` is `COUNT(ttft_visible)` so it would count every pre-migration row, each cumulative `ttft_le_*` bucket would count them as sub-edge, and p95 TTFT for every historical bucket would read 0 seconds — irrecoverably, once retention drops the raw chunks. A default is only needed for a `NOT NULL` column on a populated hypertable; these are nullable.
-- Live per-model request state, shared across the fleet when Redis is configured. Each in-flight request holds a ticket carrying a deadline, so a process killed mid-request stops being counted the moment that deadline passes rather than inflating a gauge forever. The Redis backend uses one sorted set per model scored by deadline: a plain set of entity ids — the obvious design — cannot work, because Redis has no per-member TTL and because removing a user on their first completion under-reports the student who submitted three requests at once, which is exactly who a class-start burst is full of. Falls back to per-process state whenever Redis is absent or failing, and every live number is rendered with the topology it was computed from so a per-process count can never be read as a fleet count.
-- `rate_limiting.storage_url` is now listed as restart-required. It has always been documented that way and always been absent from the list, so the config editor offered a hot reload that silently did nothing — the process kept the old storage while the UI reported a change. It now also selects the live-state backend, which made the omission worse.
-- `/metrics` no longer queries the database. The collector ran a `GROUP BY` over `model_stats` plus two `COUNT(*)` over `entities` on **every scrape**, taking a pooled connection to do it — so it competed for the pool it was reporting on and could block for `pool_timeout`, degrading exactly when it was needed. A background thread now refreshes an in-memory snapshot and the scrape is a pure memory read, which also makes it safe to scrape at 1s during an incident. `lumen_metrics_snapshot_age_seconds` exposes the snapshot's age so staleness is visible rather than silent, and before the first refresh no `lumen_model_*` series is emitted at all — absent is a new series to Prometheus, whereas zeros would read as two counter resets.
-- A `LiveState` seam for the numbers that are live, fleet-wide and needed inside the app. `LocalLiveState` tracks in-flight requests per model with a deadline on every ticket, so a process killed mid-request cannot inflate a gauge forever, and a user with three concurrent requests counts as three in flight and one unique user.
-- New Prometheus metrics for the queue Lumen owns: `lumen_wsgi_queue_depth`, `lumen_wsgi_threads_busy`, `lumen_wsgi_threads_total` (all `livesum`, so they sum across live workers and a dead worker stops contributing), `lumen_wsgi_queue_wait_seconds`, and `lumen_rejections_total{reason,source,model}`. Pairing queue depth with time-to-first-token is what separates "Lumen is the bottleneck" from "the backend is": depth high with TTFT flat means the thread pool, depth zero with TTFT climbing means the model.
-- `lumen_db_pool_wait_seconds` records how long each request blocks acquiring a database connection. The pool was observable only as a depth, so "at capacity and fine" and "at capacity and every request is now queuing behind it" looked identical. SQLAlchemy exposes no pre-checkout event — `checkout` fires after acquisition — so this is measured by an instrumented pool class that times the acquisition itself, guarded by a test that fails loudly if the wrapped method's signature moves rather than leaving the histogram silently empty after an upgrade.
-- An exhausted coin budget is now distinguishable from a rate limit. Both answer `429` and they need opposite reactions — "retry shortly" versus "stop until the budget refills" — but a client could not tell them apart. Coin exhaustion now returns `type`/`code` `insufficient_quota` (the taxonomy the rest of `/v1` follows) and, when the entity's pool actually refills, a `Retry-After` derived from its next refill; a pool with `refresh_coins: 0` never refills and so sends no header rather than a fabricated one.
-- Rate-limited requests now carry `Retry-After`, derived from the limit's own window. Without it, hundreds of OpenAI-SDK clients rejected at a class start retry on independent schedules and can re-synchronise into a storm; the SDK honours the header.
-- Health probing is elected to one process per pod. The probe executor is a module global — one per process — and `BACKGROUND_WORKER` is a process-wide env var that uvicorn's children all inherit, so at 4 processes with 10 endpoints every pass was 40 probes across 32 threads, aimed at the same backends real traffic is queued behind. A non-blocking `flock` now elects a single runner; the others skip the pass and read the result the holder wrote. A holder that dies releases the lock via the kernel, and one that is alive but wedged is logged rather than raced.
-- The ASGI bridge records how long each request waited for a worker thread. It stamps the arrival time into the environ before handing the request to the thread pool, tracks queued/running depth explicitly rather than reading a private queue, accumulates the time spent blocked handing chunks to the server, and skips the application entirely for a request whose client already hung up while it was queued.
-- `/metrics` is now correct with more than one WSGI process per pod. A reaper marks workers that died without running `mark_process_dead` (SIGKILL, OOM kill), whose `gauge_livesum_<pid>.db` would otherwise keep contributing a dead worker's last value for the rest of the pod's life; every call is wrapped, because the library's own implementation is an unguarded `glob`+`os.remove` and a lost race would 500 the scrape. A recycled PID no longer inherits its predecessor's gauge values. Counter files are deliberately left alone — a dead worker's increments are real history, and dropping them would make the summed counter go backwards, which Prometheus reads as a reset.
-- HTTP metric labels are bounded on both dimensions. `path_template` now uses the matched Flask url_rule with an `<unmatched>` bucket, and `method` is allow-listed with an `<other>` bucket. Previously a scanner probing `/.env`, `/wp-admin`, ... or sending arbitrary RFC-token methods minted an unbounded set of label values in every process's memory and in the Prometheus TSDB.
-- Multi-process integrity for `/metrics` (Phase 1 of scaling beyond one WSGI process): a new `wsgiProcesses` Helm value (default 1) is wired to both `WEB_CONCURRENCY` and uvicorn's `--workers`, so `lumen/services/db_pool.py:detect_workers()` and uvicorn agree on one number. `--workers` is only passed when `wsgiProcesses > 1`, so the default deployment keeps uvicorn's existing single-process model rather than gaining a supervisor. Whenever `api.prometheus.multiprocDir` is set the chart mounts a shared `emptyDir` there — regardless of process count, because `prometheus_client` enters multiprocess mode as soon as `PROMETHEUS_MULTIPROC_DIR` is set and raises if the directory is absent — and `entrypoint.sh` wipes stale `*.db` files from it before `exec uvicorn` so a restarted pod does not sum a previous run's dead-PID counters into its totals. Also adds an optional `serviceMonitor` (Prometheus Operator `ServiceMonitor`, guarded by `serviceMonitor.enabled`, default false) so multi-pod aggregation has something to scrape; it does not yet carry `api.prometheus.token` as scrape auth, since that token is not exposed as its own Secret key (see the comment in `chart/templates/servicemonitor.yaml`).
-- Unrecognised keys under `app:` in config.yaml now log a warning at startup and on every hot reload, naming the offending keys. Every read of that section is a `.get()` with a default, so a setting renamed by a schema change was previously ignored in silence.
-- `pytest-timeout` (dev dependency) with a 300-second default, so a hanging test fails with a stack trace naming it instead of stalling CI.
-- The SQLAlchemy engine/pool DEBUG lines (one per connection checkout/checkin, e.g. `Connection ... being returned to pool`) are now controlled by `app.database.logging` (default `info`, `debug` to re-enable) rather than leaking through whenever the root logger is at DEBUG. Exposed in the Config editor's Database card.
+- `flask backfill-aggregate` and `flask enable-retention` commands for the TimescaleDB lifecycle (#43).
+- Two TimescaleDB continuous aggregates (`request_counts_hourly_by_entity`, `request_metrics_1m`) so charts stop scanning raw rows.
+- Compression for `request_logs` chunks older than 7 days.
+- `lumen_stream_aborts_total{source,reason}` metric for mid-stream disconnects.
+- `request_logs.aborted` replaces the `cost = 0` abort convention.
+- Seven new `request_logs` timing columns (`started_at`, `queue_wait`, `preflight`, `ttft`, `ttft_visible`, `send_blocked`, `outcome`).
+- Live per-model request state, shared fleet-wide when Redis is configured.
+- `rate_limiting.storage_url` is now flagged restart-required.
+- `/metrics` is now a pure memory read backed by a background snapshot thread (+ `lumen_metrics_snapshot_age_seconds`).
+- A `LiveState` seam with per-ticket deadlines and per-model in-flight/user counts.
+- New queue metrics (`lumen_wsgi_queue_depth`, `lumen_wsgi_threads_{busy,total}`, `lumen_wsgi_queue_wait_seconds`, `lumen_rejections_total`).
+- `lumen_db_pool_wait_seconds` records time spent acquiring a DB connection.
+- Coin exhaustion returns `insufficient_quota` + `Retry-After`; rate limits now send `Retry-After` (#40).
+- Health probing is elected to one process per pod via `flock`.
+- ASGI bridge tracks queue wait and running depth, and skips clients that hung up while queued.
+- `/metrics` is now correct across multiple WSGI processes (dead-worker reaper, PID reuse, bounded labels).
+- Multi-process `/metrics` scale-out: `wsgiProcesses` Helm value, optional `serviceMonitor`, shared `multiprocDir` (#43).
+- Unknown keys under `app:` now log a warning on startup/hot-reload.
+- `pytest-timeout` added as a CI hang backstop.
+- SQLAlchemy engine/pool DEBUG lines controlled by `app.database.logging`.
 
 ## [1.25.0] - 2026-08-14
 
 ### Changed
 
-- The five per-user `/usage` queries (summary, requests, tokens, models, heatmap) now read the `request_counts_hourly_by_entity` continuous aggregate instead of scanning raw `request_logs`. This is what makes a retention policy safe to enable: those five branches read raw rows only because the existing aggregate carries no `entity_id`, so dropping old chunks would have truncated every individual's "All Time" history while the org-wide charts, fed by the aggregate, kept going — an asymmetry that reads as data loss. Each query falls back to the raw table for any window the aggregate does not yet reach back to, and the fallback is not a nicety: `entrypoint.sh` runs `flask db upgrade` at container start, so the aggregate and its refresh policy exist from the moment this deploys while `flask backfill-aggregate` is a separate manual step, and once a policy job advances the view's watermark, real-time aggregation scans raw rows only *above* it — history that was never materialised is invisible through the view rather than merely stale. Without the fallback every user's charts would read near-empty between deploy and backfill. The org-wide branches and the SQLite early-return on all five endpoints are unchanged.
-- CI's TimescaleDB service is pinned to `2.27.2-pg17`, the version production runs, instead of the floating `latest-pg17`. A floating tag adopts semantic changes silently, and this schema is sensitive to exactly that class of change: TimescaleDB 2.13 flipped the default of `timescaledb.materialized_only` to `true`, which decides whether a continuous aggregate returns the current bucket at all. Bump it deliberately, in step with the deployment.
-- The SkipTo navigation button is now hidden until it receives keyboard focus (`displayOption:popup`, matching illinois.edu), instead of always being visible in the corner of the page.
-- The profile page is now organized into tabs below the profile card: **Chat & API Keys**, **Projects** (shown only when the user can access projects), and **Models**. The selected tab is reflected in the URL hash (`/profile#models`) so tabs are deep-linkable.
+- Per-user `/usage` queries read the `request_counts_hourly_by_entity` aggregate (with a raw fallback) so a retention policy is safe to enable.
+- CI TimescaleDB pinned to `2.27.2-pg17` (the production version).
+- SkipTo button hidden until keyboard focus.
+- Profile page reorganised into deep-linkable tabs (Chat & API Keys, Projects, Models).
 
 ### Added
 
-- Admin mode: administrators now act as normal users by default and enable admin permissions with a switch under their email address on the profile page. The mode is per-session and resets on logout.
-- Users can delete all their webchat conversations from the profile page, and disable conversation storage entirely. Disabling storage deletes all existing conversations after a styled confirmation dialog; while disabled, new chats still work but are not saved, and the chat sidebar shows a notice. The conversation count on the profile page is now a lifetime "conversations started" counter (tracked in `entity_stats`) that keeps counting even when conversations are deleted or storage is disabled.
+- Admin mode: admins act as normal users until they enable an admin-mode switch on their profile.
+- Users can delete all webchat conversations and disable conversation storage entirely; conversation count is now a lifetime counter.
 
 ## [1.24.2] - 2026-08-11
 
 ### Added
 
-- A model's `url` in config may now be a bare HuggingFace repo id (e.g. `meta-models/Muse-Glimmer-30B`); it is expanded to `https://huggingface.co/<id>` when the config is synced. Common HuggingFace host variants (`huggingface.com`, `www.`) are rewritten to `huggingface.co` so the README still loads; any other full URL is used as given.
+- A model `url` may be a bare HuggingFace repo id (auto-expanded to `https://huggingface.co/<id>` on sync).
 
 ## [1.24.1] - 2026-08-11
 
 ### Fixed
 
-- The HuggingFace README on the model detail page showed "README unavailable." for disabled models. The detail page renders for a disabled model, but the `/models/<name>/readme` endpoint it fetches from still filtered on `ModelConfig.active` and returned a 404. The README lookup now matches the detail page and only requires the model to exist.
+- Disabled models show their HuggingFace README on the detail page (the lookup no longer filters on `active`).
 
 ## [1.24.0] - 2026-08-08
 
 ### Added
 
-- The [Connect page](/connect) and Connect guide now include an **R** example, using the [ellmer](https://ellmer.tidyverse.org) package's `chat_openai_compatible()`. The tab follows the model selector (text and vision examples) and reads the key from `LUMEN_API_KEY` via `credentials`.
+- Connect page and guide now include an **R** example via the `ellmer` package.
 
 ### Security
 
-- Fixed a stored XSS in the admin users table (`admin/users.html`). User display names (from the IdP) were interpolated into `innerHTML` unescaped, in both link text and `aria-label`/`title` attributes; a name containing markup could execute JavaScript in an admin's session. Names are now escaped with an `escHtml` helper.
-- Fixed a stored XSS on the project detail page (`project_detail.html`). The manager "Remove"/"Make Owner" buttons passed the manager name into an inline `onclick` string via `| e`, which HTML-escapes quotes but is decoded back before JavaScript parsing — allowing string breakout. The name is now emitted as a safe JS literal with `| tojson`.
-- Closed a billing/quota bypass in the OpenAI-compatible proxy. `/v1/chat/completions` and `/v1/completions` previously forwarded *every* unrecognized client field to the upstream model. Because the OpenAI SDK deep-merges a client-supplied `extra_body` over the typed request params, a client could send `extra_body={"stream_options": {"include_usage": false}}` to suppress the usage chunk and receive streamed inference billed as zero cost, or `extra_body={"model": "…"}` to run a different (e.g. costlier) model than the one it was billed for. Forwarding is now a strict **allowlist** of sampling parameters: control params (`extra_body`, `extra_headers`, `extra_query`, `timeout`) and backend passthrough/smuggling fields (vLLM `vllm_xargs`, SGLang `custom_logit_processor`, `lora_path`, `priority`, `input_ids`, …) are dropped, and non-OpenAI extensions (`top_k`, `min_p`, `reasoning_effort`, `chat_template_kwargs`, …) ride in a server-built `extra_body` the client cannot influence. `stream_options.include_usage` is forced on server-side.
-- Prefix-cache isolation between users on shared model backends ([#36](https://github.com/ncsa/lumen/issues/36)). Both the chat and API paths now attach a `cache_salt` to every upstream request — the client's value if it supplies a non-empty one, otherwise a stable per-entity salt derived as `HMAC(SECRET_KEY, "entity:<id>")`. vLLM and SGLang fold this into their prefix-cache key, so a user can no longer detect via response-latency timing that another user recently sent a given prompt prefix (a KV-cache-hit side channel). The derived salt is unguessable across entities, so honoring a client-supplied salt stays safe — a user can only share a cache namespace with someone they deliberately agree a salt with.
+- Fixed stored XSS in the admin users table (unescaped display names).
+- Fixed stored XSS on the project detail page (`onclick` string breakout).
+- Closed a billing/quota bypass in the OpenAI proxy: forwarded client fields are now a strict allowlist.
+- Prefix-cache isolation between users via a derived `cache_salt`.
 
 ### Fixed
 
-- `flask db upgrade` and `flask db downgrade` now exit with a clear error when run against SQLite instead of failing partway through a migration and leaving the database in a partially-migrated state. The migration chain is PostgreSQL-only (three migrations use `ALTER TABLE … ADD/DROP CONSTRAINT`, which SQLite does not support); the SQLite dev path is `db.create_all()` + `flask db stamp head`. The guard is in `migrations/env.py` and allows read-only commands (`stamp`, `current`, `heads`, etc.) through untouched.
-- The graylist consent modal on the project detail page threw `ReferenceError: marked is not defined` when enabling a model that carries a consent notice, because the `marked` and `DOMPurify` CDN scripts were never loaded on that page. Both scripts are now loaded, matching the other pages that render notices.
-- Coin refill no longer clobbers concurrent deductions. `refill_coin_balances()` did a read-modify-write of `coins_left` in Python, which could overwrite an atomic `subtract_coins()` deduction that landed in between (lost update). Refill is now a single atomic `UPDATE ... SET coins_left = LEAST(:max, coins_left + :refill) WHERE last_refill_at <= :cutoff`, crediting against the live DB balance; the cutoff predicate also makes a second worker that already refilled a no-op.
-- Users drawing from the global default coin pool (`defaults.tokens`, with no entity- or group-level limit) are now refilled. The refiller previously only resolved entity and group limits and skipped these users entirely, so on a defaults-only deployment every balance drained to zero permanently.
-- First-login coin-balance initialization now stamps `last_refill_at` with `utcnow()` (naive UTC) instead of an aware `datetime.now(timezone.utc)`. The aware value could raise `TypeError` during the refill pass and, because the loop was not per-row guarded, abort refills for all users; the refiller now also tolerates a stray aware timestamp.
-- `subtract_coins()` no longer attempts an `EntityBalance` INSERT on every request. The balance row exists for every entity after its first request, so the unconditional savepoint INSERT failed each time — logging a `duplicate key value violates unique constraint "entity_balances_entity_id_key"` ERROR in Postgres per billed request, plus a wasted round-trip and savepoint. It now checks for the row first, matching the race-safe pattern already used for `ModelStat`/`EntityStat` in `update_stats()`.
-- **Fixed a permanent DB connection-pool leak affecting every endpoint: Flask's `stream_with_context` poisons a WSGI worker thread when a client disconnects mid-stream.** Production captures showed connections stranded idle-in-transaction for hours, acquired in the API key lookup of ordinary requests, while the threads that acquired them sat idle — the cause was far away, in the streaming endpoints. `stream_with_context` re-pushes the request's app context onto whichever worker thread iterates the response body, and that push is only undone if the generator completes or is closed *on the same thread*; a client disconnect abandons the generator (finalized later by GC, often on another thread, whose cross-context pop fails and is swallowed), leaving the context permanently current on the worker thread. Every subsequent request on that thread then reuses the stuck context (`RequestContext.push` reuses an ambient context of the same app), keys its Flask-SQLAlchemy session to it, and that session's teardown never runs — one permanently stranded connection per poisoned thread, with nothing in the logs at any step.
-  - The streaming generators in `/v1/chat/completions`, `/chat/stream` and `send_message_stream` now run **context-free**: each DB phase (preflight, billing, abort accounting, conversation save) pushes its own short-lived app context that never spans a `yield`, so its teardown releases the session immediately and nothing is keyed to a context that outlives the phase.
-  - `stream_with_context` is now banned outright, enforced by a guard test (`tests/unit/test_no_stream_with_context.py`); the underlying rule — no DB session and no Flask context may span a `yield`, in any generator — is documented in CLAUDE.md.
-  - Defense in depth: the metrics middleware *heals* a poisoned worker thread (outside tests) — when a request starts with an app context already current, the session registered under that context's key is closed and the contextvar cleared, turning any recurrence into a logged, self-correcting anomaly. Independently, `create_app` registers its own `teardown_appcontext` handler ahead of Flask-SQLAlchemy's, so a `db.session.remove()` that fails mid-rollback is logged with its traceback and its registry entry cleared instead of pinning the connection for the life of the process (Flask's teardown loop has no `except`, so that failure was previously invisible).
-  - Chasing this left behind permanent diagnostics, kept because they make the next pool leak attributable from a single capture: every pool checkout records its endpoint, thread, stack and scope key with a `{state="stranded"}` gauge and a near-exhaustion watchdog (`services/pool_tracker.py`); `AppContext.push`/`pop` probes record push provenance, double pushes, skipped teardowns, cross-thread pops and pop failures into a ring buffer (`services/ctx_probe.py`); and `GET /metrics/debug` serves a self-contained capture — deployment/config summary, live pool status, per-checkout retainer chains (type names only, no reprs), a scope-key cross-reference of checkouts vs teardowns vs registered sessions with a teardown verdict per key, app-context anomalies, and a stack dump of every live thread (which also identifies a worker thread wedged mid-request).
+- `flask db upgrade/downgrade` error out clearly on SQLite instead of failing mid-migration.
+- Fixed `marked is not defined` in the graylist consent modal.
+- Coin refill no longer clobbers concurrent deductions (single atomic UPDATE).
+- Users on the global default coin pool are now refilled.
+- First-login balance initialisation stamps naive UTC; the refiller tolerates aware timestamps.
+- `subtract_coins()` no longer attempts an INSERT on every request.
+- Fixed a permanent DB connection-pool leak in streaming endpoints — `stream_with_context` is banned; streaming generators now run context-free.
 
 ### Changed
 
-- The number of requests a worker process serves concurrently is now configurable with the `LUMEN_WSGI_WORKERS` env var (Helm: `wsgiWorkers`, wired into the deployment). `asgi.py` wrapped the Flask app in `WSGIMiddleware` without arguments, silently accepting a2wsgi's default thread pool of 10 — an eleventh concurrent request queued until a thread freed up, with nothing in the config or logs indicating the cap. The default stays 10. Setting it to `auto` derives the thread count from the connection pool this process was sized for (`pool_size + max_overflow`, clamped to 10–64), since a thread inside a database call holds a pooled connection and threads beyond that sum only wait out `pool_timeout`. The ceiling exists because an explicit oversized `pool_size` is cheap in connections (they open on demand) but not in OS threads; `auto` falls back to 10 when the pool is unsized (SQLite, or `max_connections` unavailable).
-- Streaming `/v1/chat/completions` requests now record `duration` in `request_logs`. The streaming API path's `generate()` closure never measured elapsed time, so `update_stats()` was called without `duration` and every streaming API request was logged with `duration = 0.0` (the column default). The non-streaming API path, the audio path, and the chat streaming path (`send_message_stream`) all already recorded duration; only the streaming API path omitted it. No query currently reads `request_logs.duration`, so this has no functional effect today — it corrects the data for future analytics. As with the chat streaming path, the duration for a streaming response includes downstream client download time (the generator's `yield` blocks on the consumer); the two paths are recorded consistently.
-- Minimized the Docker image. The `Dockerfile` is now a multi-stage build: dependencies are installed in a builder stage and only the finished `/app` (venv + source) is copied into a clean runtime stage with `COPY --chown`, eliminating the full-tree duplication that the old `RUN chown -R /app` layer caused. `UV_NO_CACHE=1` is now set before `uv sync` (previously set after, so it had no effect), and uv is pulled from the official image instead of `pip install uv`. `entrypoint.sh` calls `flask`/`uvicorn` directly from the venv on `PATH` rather than via `uv run`, so the uv binary is no longer shipped in the runtime image. Dev-only artifacts (`models/`, `tests/`, `scripts/`, `chart/`, `.github/`, root markdown) are now excluded via `.dockerignore`.
+- The number of concurrent requests per worker is configurable via `LUMEN_WSGI_WORKERS` (Helm `wsgiWorkers`).
+- Streaming `/v1/chat/completions` now records `duration` in `request_logs`.
+- Minimised the Docker image (multi-stage build, smaller runtime).
 
 ## [1.23.0] - 2026-07-15
 
 ### Added
 
-- Projects can now have an **owner** — a manager who can additionally add/remove managers, transfer ownership, and activate/deactivate the project. Admins designate an owner at project creation (optional owner email field) or reassign it later via the "Make Owner" button on the project detail page. The owner is a flagged manager (`entity_managers.is_owner`), so all existing manager access continues to work unchanged. The owner cannot be removed directly; ownership must be transferred first.
+- Projects can have an **owner** who can add/remove managers, transfer ownership, and activate/deactivate the project.
 
 ## [1.22.0] - 2026-07-05
 
 ### Fixed
 
-- Fixed a `KeyError: 'project_ids'` on every page for users with a session predating the 1.21.0 client→project rename. `inject_nav` cached nav state in `session["_nav"]` under the old key (`client_ids`); after upgrading, any browser still holding that cookie hit a `KeyError` when the context processor read the new `project_ids` key. The cache is now rebuilt (rather than trusted blindly) whenever it doesn't contain `project_ids`.
-- Fixed a DB connection-pool leak in `/metrics`' `LumenDBCollector.collect()`, confirmed in production via `pg_stat_activity` showing connections stuck `idle in transaction` on the collector's last query, with no thread anywhere still executing it — i.e. genuinely orphaned, not slow. Unlike every other DB-touching call site in this codebase, `collect()` relied solely on Flask's implicit per-request teardown to release its session; it's a generator interleaving several DB calls with `yield`s, and something about how it's driven/abandoned relative to the app-context lifecycle let that teardown not fire. Each leaked connection sat idle until Postgres's `idle_in_transaction_session_timeout` killed it, and the pool would later hand that dead connection to an unrelated request (typically `/v1/models` or another `/metrics` scrape), which then failed with `server closed the connection unexpectedly`. `collect()` now explicitly releases its own session in a `finally` block instead of depending on request teardown.
-- Tightened `/chat/stream` to release its DB session before the streaming loop starts (previously held from the pre-flight `model_config`/coin-budget queries until `send_message_stream` released it moments later). This closes a small window but is not believed to be the cause of the `idle_in_transaction_session_timeout` reports above — `send_message_stream` and the `/v1` API's equivalent streaming/non-streaming paths already released their sessions before any LLM call, confirmed by existing pool-leak regression tests.
-- Fixed the background health checker stalling indefinitely on one unreachable endpoint. `check_all_endpoints()` probed each endpoint with `openai.OpenAI(..., timeout=5.0)`, but a network path that silently drops packets (no RST, no timely OS-level failure) can leave the underlying `socket.connect()` blocked far longer than that configured timeout — stalling every later endpoint in the same pass, and every subsequent 60s pass, until it eventually resolved. Each probe now runs through a bounded thread pool with a hard 10s `result()` timeout, so a stuck probe is abandoned (marked unhealthy) instead of blocking the rest of the health-check pass.
+- Fixed `KeyError: 'project_ids'` for sessions predating the 1.21.0 client→project rename (nav cache now rebuilt).
+- `/metrics` collector explicitly releases its session in a `finally`.
+- `/chat/stream` releases its DB session before the streaming loop.
+- Health checker no longer stalls on one silently-dropping endpoint (bounded probe thread pool + 10s timeout).
 
 ### Added
 
-- The profile page now shows a **Projects** section (between API Keys and Model Access) listing the projects (clients) a user can access, with usage stats (requests, tokens, coins) and a sortable/searchable table. The section is hidden when the user manages no projects. It also appears on the admin's view-user profile page.
-- The config editor's **Update**/**Update All** buttons (and the `sync_models.py` CLI) now sync model **pricing** from models.dev. The input/output cost is the average across every provider listing the same base model, excluding $0 listings (which are not real prices and would skew the average down). Averaging avoids picking the lowest/highest/first provider and gives a representative cost; on a trusted models.dev match it overwrites a stale or zero operator-set value the same way other fields are corrected.
-- Model sync now queries SGLang's `/get_server_info` first. Its `max_req_input_len` is the real per-request limit derived from the operator's `--context-length` and available KV cache — authoritative over `/v1/models`' `max_model_len`, which on SGLang reports the model's theoretical max rather than the configured window. When `/get_server_info` succeeds, `/v1/models` is skipped entirely.
-- SGLang's `is_embedding` and `enable_multimodal` flags are now treated as authoritative over models.dev for modalities: an embedding model gets `output_modalities=[]`; a server with multimodal disabled is vetoed to text-only input; a server with multimodal enabled ensures image is present. vLLM (which exposes no such flags) continues to use models.dev for modalities.
-- On a project's detail page, each manager's name is now a link (for admins) to that manager's profile page, so an admin can jump straight from the project roster to a user's profile.
+- Profile shows a **Projects** section (access list + usage stats); appears on the admin user view too.
+- Model sync now syncs **pricing** from models.dev; queries SGLang `/get_server_info` (authoritative limits/modalities); manager names link to profiles.
 
 ## [1.21.0] - 2026-07-05
 
 ### Fixed
 
-- Fixed a database connection-pool leak in the chat streaming endpoint. After saving the conversation, `/chat/stream` read an expired ORM attribute (`conv.id`) post-commit, which silently checked out a fresh pool connection that was still held while the final SSE event was yielded to the client. If the client had disconnected by then, the generator was never closed, Flask's teardown never ran, and the connection stayed checked out until the process restarted — visible as a steadily climbing `lumen_db_pool_connections{state="checked_out"}` gauge. The conversation id is now captured before the commit and the session is released before the final yield, so the generator holds no connection while suspended. Regression tests assert the pool is empty while the generator is suspended at both the final-event and error-event yields.
+- Fixed a DB connection-pool leak in the chat streaming endpoint (conversation id captured pre-commit, session released before final yield).
 
 ### Changed
 
-- The OpenCode config generated by the **Connect** page (`/connect` → *Download config.json*) now includes each model's `limit` (context window and max output tokens) and `cost` (USD per million input/output tokens), so OpenCode can size the context window and track spending for Lumen models. The values come from each model's synced `context_window`/`max_output_tokens` and configured `input_cost_per_million`/`output_cost_per_million`.
-- **BREAKING:** The "client" domain concept (machine-to-machine service accounts with their own API keys, coin pools, and model access) has been renamed to "project" across the entire codebase — data model, API, UI, configuration, and documentation. This is a clean break with no backwards compatibility shims. Operators upgrading to this version must:
-  - Rename the top-level `clients:` key to `projects:` in `config.yaml`. Named entries and the `default` block are otherwise unchanged.
-  - Run `flask db upgrade` to apply migration `c4d5e6f7a8b9`, which renames the `entity_managers.client_entity_id` column to `project_entity_id`, updates the `entities.entity_type` discriminator value from `'client'` to `'project'` (and recreates its CHECK constraint), and refreshes the affected schema comments.
-  - Update any bookmarks or external links pointing at `/clients/…` URLs, which now live at `/projects/…`. The legacy `/profile/client/<sid>` redirect has moved to `/profile/project/<sid>`.
-  - Update API consumers that read the `clients` key from the `GET /projects/data` (formerly `/clients/data`) JSON payload, which now returns `projects`.
-  The OAuth2 `client_id` / `client_secret` credentials in the `oauth2:` config block are unrelated to this rename and are unchanged. The Flask test-client fixtures (`client`, `auth_client`, `admin_client`) and the OpenAI SDK `client = OpenAI(...)` usage examples are also unchanged.
+- Connect page config.json includes each model's `limit` and `cost`.
+- **BREAKING:** "client" renamed to "project" across the codebase (config, DB migration `c4d5e6f7a8b9`, URLs, API payload).
 
 ## [1.20.0] - 2026-07-03
 
 ### Added
-- Clients can be added to **groups** via a `groups:` list in their `config.yaml` entry (and via checkboxes in the Config editor's Clients tab). Group membership grants the client access to models its own rules would otherwise block, using the same group model-access resolution as users. Memberships are config-managed — added on reload and removed when dropped from the list.
+
+- Clients can be added to **groups** for model-access resolution.
 
 ### Fixed
-- Admin config edits to a user's coin pool (max coins, refresh rate, starting coins) now take effect on the user's profile immediately on save, instead of waiting for the user to log out and back in. Per-user `EntityLimit` rows are now re-synced from `config.yaml` on every config reload (and at startup), closing an asymmetry where clients and groups were re-synced on reload but users were only synced at login. Changing an existing per-user **starting coins** value also resets the user's live "Coins Available" balance to the new value; changing only max/refresh leaves the accrued balance untouched, and adding a first per-user block for a user on the global pool preserves their accrued balance.
-- The admin Config editor's `/admin/api/config` endpoint no longer returns secret values in plaintext to the browser. Secret-bearing fields (`secret_key`, `encryption_key`, database URL, OAuth client secret, Prometheus/monitoring tokens, `rate_limiting.storage_url`, and per-endpoint `api_key`s) are masked with a `********` sentinel on GET, and on POST any still-masked field is restored from the on-disk value before writing — so saving without retyping a secret preserves it, typing a new value overwrites it, and clearing a field deletes it. A masked secret whose model or endpoint URL no longer matches on disk (so it can't be restored) is rejected with a `400` naming the field, preventing the literal `********` from ever being written to `config.yaml`.
-- Clients created through the `/clients` UI are now recorded in `config.yaml` with an empty entry (`<name>: {}`) so the file always reflects which clients exist. Previously a UI-created client lived only in the database and was invisible to the Config editor, so the next config save could silently drop it. An empty entry falls back to `clients.default`, so newly created clients keep the default budget and access. On startup, any pre-existing clients that were only in the database are backfilled into `config.yaml` the same way (when the file is writable and the Config editor is enabled).
-- Chat completions now merge consecutive leading system messages into a single system message before calling the upstream model, for providers that reject or ignore more than one system message. Applies to both streaming and non-streaming requests.
+
+- Admin coin-pool edits now apply immediately (per-user limits re-synced on reload); changing starting coins resets the balance.
+- Config editor no longer returns secrets in plaintext (masked + restored on save).
+- UI-created clients are now recorded in `config.yaml`.
+- Consecutive leading system messages are merged for providers that reject multiples.
 
 ### Changed
-- The Clients list is now server-side paginated (matching the Users list) with a per-page selector and search. Disabled clients are hidden by default; admins get a **Show disabled** toggle to reveal them.
+
+- Clients list is server-side paginated with search and a "Show disabled" toggle.
 
 ## [1.19.0] - 2026-06-29
 
 ### Added
-- A **Connect your tools** page (`/connect`) that generates ready-to-use client configuration: a downloadable OpenCode (`opencode.ai`) `opencode.json` pre-filled with every model your account can access (keyed off the `LUMEN_API_KEY` environment variable), plus copy-paste **curl** and **Python** examples. Picking a specific model tailors the curl/Python snippets, including vision (`image_url`) examples for image-capable models and chat + `/v1/audio/transcriptions` examples for audio-capable models. The page is linked from the Models dashboard, each model detail page (pre-selecting that model), and the API-key sections of the profile and client pages, and is documented in a new "Connect Your Tools" help guide. Thanks to Josh Henry for the idea.
+
+- **Connect your tools** page (`/connect`): generated OpenCode config, curl, and Python examples.
+- Thanks to Josh Henry for the idea.
 
 ### Fixed
-- The "Total Users (Cumulative)" usage graph now shows the actual total user count instead of only the users created within the selected period. For non-"all" periods (week/month/year) the cumulative line restarted from zero at the start of the window, so an installation with 105 users would show 1–5 over the week. The query now seeds the running total with the count of users that existed before the window.
+
+- "Total Users (Cumulative)" graph now shows the actual total user count (seeds the running total with pre-window users).
 
 ### Changed
-- The Models dashboard (`/models`) replaced the redundant "Total Endpoints" column (its value already appears as the denominator in the "Healthy" column) with an "Acknowledgment" column that shows a yellow "required" pill when a model requires user acknowledgement before use.
-- Explicitly-assigned group memberships (`users.default.groups` and `users.<email>.groups`) now refresh on config reload (and at startup) instead of waiting for the user to log in again. Editing a user's groups in `config.yaml` takes effect immediately. Rule-based ("auto") group memberships still update at login, since they depend on CILogon attributes only available then.
+
+- Models dashboard: "Total Endpoints" column replaced with an "Acknowledgment" pill.
+- Explicit group memberships refresh on config reload (rule-based ones still update at login).
 
 ## [1.18.1] - 2026-06-26
 
 ### Fixed
-- The admin config editor's "Require acknowledgement consent for API requests (/v1/*)" toggle can now be turned off. Unchecking it previously dropped the `api.consent` key from the saved config, which the reader defaults back to `true`, so consent stayed required no matter what. The editor now writes `consent: false` explicitly.
+
+- The "Require acknowledgement consent for API requests" toggle can now be turned off (writes `consent: false`).
 
 ## [1.18.0] - 2026-06-26
 
 ### Fixed
-- The model detail page (`/models/<name>`) no longer returns a 404 for blocked or disabled models. Blocked models now render the page with the existing "Access denied" notice (the template already had the branch, but the route aborted before reaching it); disabled models render instead of 404ing. Links to these models (e.g. from the profile "Models & Access" table) now resolve.
-- Added themed `404` and `500` error pages so a mistyped or stale URL shows a branded "page not found" with a link home instead of the bare default error page. API routes (`/v1/*`) still receive a JSON error body.
-- Clients created through the Clients page (or `POST /clients`) now immediately receive their configured coin pool and model-access defaults (`clients.default` / a named `clients.<name>` entry). Previously a new client was created with no pool, so it fell back to the global token defaults and saw every model as blocked until the next config reload.
-- The `input_modalities` schema migration no longer fails on SQLite (it used PostgreSQL-only `::json`/`::text` casts), so a fresh local dev database can run `flask db upgrade` again. PostgreSQL behavior is unchanged.
-- The background endpoint health checker no longer holds a DB transaction open across its per-endpoint network probes, which left the Postgres connection `idle in transaction` and could trip `idle_in_transaction_session_timeout`.
+
+- Model detail page renders for blocked/disabled models instead of 404.
+- Themed 404/500 pages (API routes still return JSON).
+- New clients immediately get their configured coin pool and model-access defaults.
+- `input_modalities` migration no longer fails on SQLite.
+- Health checker no longer holds a DB transaction open across network probes.
 
 ### Changed
-- Audio (speech-to-text) pricing is now expressed **per hour** (`audio_cost_per_hour`) instead of per minute — cheap ASR rates like `$0.10/hour` no longer need many leading zeros. The DB column is renamed and existing per-minute values are migrated ×60; the legacy `audio_cost_per_minute` config/Helm key is still accepted (converted, with a deprecation warning) and the config editor migrates it on load/save.
-- **Simplified model access, token limits, and model status in `config.yaml` (new `version: 2` format).** Model access is now expressed with three orthogonal per-model fields instead of the old per-scope `whitelist`/`blacklist`/`graylist` lists:
-  - `access: allowed | blocked` — the model's own default (optional; leave unset to inherit scope defaults). When set it ranks **above** group/user *defaults* but below an explicit per-scope `allowed`/`blocked` rule — so a model can be blocked-by-default yet enabled for a specific group or user (no `default` group needed).
-  - `needs_ack: true | false` — requires user acknowledgement before use. This is a sticky model-level property: no group/user/client override can remove it.
-  - `disabled: true | false` — hard off; the model is hidden everywhere and **cannot** be overridden by any scope (replaces `active: false`). Permanently removing a model means deleting it from config.
-  - `ack_message` — optional per-model acknowledgement message, overriding the global default.
-  Groups/users/clients now only set the allow/block axis (`allowed:`/`blocked:` lists + `default:`). The legacy `whitelist`/`blacklist`/`graylist` keys and `active:` are still accepted as input with a deprecation warning (`graylist` maps to `allowed`; acknowledgement is now set on the model).
-- New top-level `defaults` block: `defaults.models.access` / `defaults.models.ack_message` (the global ack message, moved off `app.graylist_default_notice`) and `defaults.tokens.{max,refresh,starting}` — a global token (coin) pool that groups/users/clients override only where they differ, and a final fallback so an entity with no limit isn't blocked by default.
-- New `app.config_editor` flag (default `true`; the Helm chart sets it `false`). When `false`, the `/admin/config` editor is read-only — for git-managed configs.
-- The admin config editor gained **Defaults** and **Users** sections (per-user groups, token pool, and model access), labels OAuth-mapped (rule-based) groups, and saves in the `version: 2` format. The "add user" and client "add manager" dialogs now share one typeahead component (`static/js/user-search.js` + a Jinja macro) and auto-focus the search box; a new `GET /admin/api/users/search` endpoint backs the config-editor user search.
-- The config editor's per-scope **model access** is now set with a **search-driven widget** instead of free-form Allowed/Blocked textareas: search the enabled models, set each to Inherit / Allow / Block, and see the **effective access and where it's decided** (set here, model default, a group, or the global default). Scales to large model counts (only overrides + searched models render). Users now support the full `model_access` (`allowed`/`blocked`/`default`) like groups/clients; the legacy allowed-only `users.<email>.models:` list still parses.
-- DB: `model_configs.active` replaced by `access`/`needs_ack`/`ack_message`/`disabled` columns (`active` remains as a derived read-only property); `group_model_access`/`entity_model_access`/scope defaults migrated from `whitelist`/`blacklist`/`graylist` to `allowed`/`blocked`. The internal access status `graylist` is renamed `needs_ack`.
-- **Acknowledgement (formerly graylist) is preserved on upgrade.** Acknowledgement is now a per-model property (`needs_ack`) rather than a per-scope `graylist` rule. Any model that was graylisted by a specific scope rule is **automatically migrated to `needs_ack: true`** — both by the DB migration (from existing `graylist` access rows) and by the config loader (from a legacy `graylist:` list in a v1 `config.yaml`). The one case that can't be reconstructed is a scope **default** of `graylist` (e.g. a group `model_access.default: graylist`), which named no models; **after upgrading, review groups/clients that used `default: graylist` and set `needs_ack: true` on the models that should still require consent.**
+
+- Audio pricing is **per hour** (`audio_cost_per_hour`); legacy per-minute key still accepted with a deprecation warning.
+- **Simplified model access/tokens in `config.yaml` new `version: 2` format** (`access`, `needs_ack`, `disabled`, `ack_message`), a `defaults` block, and a `config_editor` flag; graylist is migrated to per-model `needs_ack`.
 
 ## [1.17.1] - 2026-06-19
 
 ### Fixed
-- Write actions on long-lived pages (e.g. deleting a conversation after chatting for over an hour) no longer fail with `400 Bad Request`. The CSRF token baked into the page at load expires after `WTF_CSRF_TIME_LIMIT` (1h); the client now refreshes it from a new `GET /csrf-token` endpoint on a 30-minute timer and whenever the tab regains focus. The admin config editor, which kept its own copy of the page-load token, now uses the shared refreshed token too.
+
+- Long-lived pages refresh the CSRF token (30s timer + on focus) so write actions no longer 400 after an hour.
 
 ## [1.17.0] - 2026-06-20
 
 ### Added
-- Reject OAuth logins where the provider marks the email unverified (`email_verified: false`); a missing claim is still accepted. New `oauth2.allow_unverified_email` flag (default `false`, hot-reloaded, in the Helm chart and config editor) overrides this.
-- `lumen_db_pool_connections` Prometheus gauge (labels `state=size|checked_in|checked_out|overflow|limit`) exported from the `/metrics` endpoint, plus a warning log when the connection pool exceeds 80% of capacity. Surfaces slow connection leaks: a `checked_out` value that climbs and never falls back points to a code path that checks out a pool connection and never returns it.
-- `/v1/audio/transcriptions` and `/v1/audio/translations` endpoints (speech-to-text). Billed per minute of audio via `audio_cost_per_minute` on the model config when the upstream reports `usage.type=duration`; falls back to per-token billing otherwise. Adds `audio_seconds` tracking to request logs, model/entity stats, and API keys. Helm chart template, `values.schema.json`, and `config.yaml.example` updated to support `audioCostPerMinute` per model.
+
+- Reject OAuth logins with unverified email (new `oauth2.allow_unverified_email` flag).
+- `lumen_db_pool_connections` gauge + 80%-capacity warning.
+- `/v1/audio/transcriptions` and `/v1/audio/translations` (speech-to-text, billed per minute/`audio_cost_per_minute`).
 
 ### Fixed
-- API endpoints now pass an upstream **4xx** (e.g. context-length exceeded) through with its real status and message instead of masking it as a generic `500 "Upstream error. Please try again."`; 5xx/transport failures still return the generic 500. Streaming error chunks now use the OpenAI `{"error": {"message", "type"}}` shape, and upstream-error logs name the failing endpoint.
-- Model sync no longer sets `max_output_tokens` to the endpoint's `max_model_len`. `context_window` comes from the endpoint (fallback models.dev `limit.context`); `max_output_tokens` comes only from models.dev `limit.output`.
-- Profile/clients/admin usage pages no longer raise a 500 (`TypeError`) when a model has `ModelStat` rows with null input/output token totals; the per-model token total now coalesces null sums to 0.
-- When a client disconnects mid-stream (both the chat and `/v1/chat/completions` streaming paths), Lumen now records a zero-cost `request_logs` entry instead of silently dropping the request. Since every hosted model has a coin cost, these aborted requests are findable by `cost = 0`, making disconnect frequency monitorable.
-- `/v1/chat/completions` and `/v1/completions` now return the JSON `invalid_request_error` for a missing/wrong `Content-Type` or malformed JSON body, instead of a Werkzeug HTML 415/400 page (`request.get_json(silent=True)`).
-- Dev login (`/devlogin`, OAuth bypass) is now gated on debug mode instead of `request.remote_addr`, which a co-located reverse proxy could mask as localhost. It returns 404 when `app.debug` is false even if `dev_user` is set, and a loud warning is logged at startup whenever `dev_user` is configured.
-- Streaming `/v1/chat/completions` now sends a terminating `data: [DONE]` after a mid-stream upstream error, so SSE clients don't hang waiting for it.
-- The admin config editor now backs up `config.yaml` to `config.yaml.bak` before overwriting, so a partial or malformed save can be recovered.
-- Register `EntityStat` in `lumen.models.__init__` so Flask-Migrate autogenerate always sees the table regardless of import order.
-- `subtract_coins` now deducts in a single atomic UPDATE floored at 0 (`GREATEST(0, coins_left - cost)`, compiled to `max(...)` on SQLite) instead of a conditional deduct followed by a separate zeroing. This removes a race where a concurrent coin refill/credit landing between the two statements could be clobbered back to 0 (or the request left uncharged).
-- The announcement cache-busting `hashlib.md5` call now passes `usedforsecurity=False` so it works on FIPS-restricted builds (the digest is a cache key, not a security hash).
+
+- API endpoints pass through upstream 4xx with real status; 5xx still generic.
+- Model sync no longer sets `max_output_tokens` to `max_model_len`.
+- Usage pages no longer 500 on null token totals.
+- Client disconnects record a zero-cost `request_logs` entry.
+- Invalid JSON/Content-Type on `/v1` returns a JSON error.
+- Dev login gated on debug mode (not `remote_addr`).
+- Streaming API sends terminating `data: [DONE]` after mid-stream errors.
+- Config editor backs up `config.yaml.bak` before saving.
+- `subtract_coins` uses a single atomic UPDATE floored at 0.
 
 ### Changed
-- The "best group coin limit" selection (skip 0, unlimited wins, else highest) is now a shared `best_group_pool_limit` helper used by both `get_pool_limit` and the token refiller, instead of duplicated in each.
-- `get_model_access_status` now delegates to `bulk_model_access_info` with a single-element list instead of duplicating the full access-resolution pipeline.
-- `/v1/completions` and the non-streaming `/v1/chat/completions` now share one `_complete_and_bill` helper (upstream call + billing) instead of duplicating it; each endpoint only shapes its own response.
-- Profile/clients/admin pages now resolve model access, endpoints, and the model list once per request instead of twice (the access list and usage list shared the same lookups).
-- All models migrated from the legacy `db.Column`/`db.relationship` style to SQLAlchemy 2.x `Mapped[...]`/`mapped_column`/typed `relationship`. Verified schema-identical (no DB migration needed) via DDL diff on both dialects and Alembic `compare_metadata` against a baseline database.
-- Updated all locked dependencies to their latest versions (notably SQLAlchemy 2.0.51, openai 2.43.0, cryptography 49.0.0, uvicorn 0.49.0); full test suite passes.
-- Minor cleanup: removed a duplicate `datetime` import and an unused `calculate_cost` import, and dropped the unreachable empty-string fallback for `ENCRYPTION_KEY` (the app already refuses to start without it).
-- Centralized UTC time handling: added `lumen.timeutils.utcnow()` (naive UTC) and replaced the scattered `datetime.now(timezone.utc).replace(tzinfo=None)` idiom across all models and call sites. No behavior or schema change.
-- Config sync now preloads models once per pass instead of issuing a per-model-name lookup for every group/client `model_access` entry (removes an N+1 during `init-db` and config reloads).
-- Per-request billing no longer re-resolves model access and the coin pool limit a second time: `check_coin_budget` returns the resolved limit and it is threaded through to `subtract_coins`, halving the access/pool queries on every API and chat request. As a side effect, a graylisted model used via the API when consent is not required is now billed correctly (previously the post-call deduction silently no-op'd).
-- The cumulative `/metrics` totals (`lumen_model_requests_total`, `lumen_model_input_tokens_total`, `lumen_model_output_tokens_total`, and the cost total) are now exported as Prometheus counters instead of gauges, matching the `_total` naming convention. Only the `# TYPE` line changes (gauge → counter); existing queries keep working.
-- Renamed the `/metrics` cost total from `lumen_model_cost_usd_total` to `lumen_model_cost_coins_total` to match Lumen's coin-based accounting (the value has always been the coin amount). **Breaking for dashboards/alerts** referencing the old name — update them to `lumen_model_cost_coins_total`.
+
+- Shared `best_group_pool_limit` helper; `get_model_access_status` delegates to `bulk_model_access_info`; shared `_complete_and_bill`; one lookup pass per request.
+- All models migrated to SQLAlchemy 2.x `Mapped`/`mapped_column`.
+- Updated all locked dependencies.
+- Centralised UTC handling in `lumen.timeutils.utcnow()`.
+- Pure performance cleanups: preload models on sync, single resolve in billing.
+- `/metrics` totals exported as counters; cost total renamed to `lumen_model_cost_coins_total` (**breaking**).
 
 ## [1.16.3] - 2026-06-16
 
 ### Added
-- Automatic database connection-pool sizing on PostgreSQL. The pool is sized from the server's `max_connections`, divided across all worker processes and Kubernetes replicas so combined usage cannot exhaust the server: 60% to `pool_size`, 20% to `max_overflow`, and 20% reserved for psql/migrations/monitoring. Worker count is detected from `WEB_CONCURRENCY` or the uvicorn `--workers` flag; replica count comes from the new `LUMEN_REPLICAS` env var (set by the Helm chart from `replicaCount`). Explicit `app.database.pool_size`/`max_overflow` are still honored when they fit within 80% of `max_connections` across all workers × replicas, otherwise the auto-sized values are used. Added `app.database.max_connections` to override the detected value. Pre-ping is now always enabled (the `pool_pre_ping` config option was removed). SQLite skips pool sizing entirely. If `max_connections` cannot be queried (e.g. the database is briefly unreachable at startup), the app falls back to the configured pool settings instead of failing to boot.
+
+- Automatic PostgreSQL connection-pool sizing from `max_connections` (60/20/20 across workers × replicas); pre-ping always on.
 
 ### Fixed
-- Helm chart: synced `chart/templates/config-secret.yaml` with the current `config.yaml` schema. Renamed the rendered `app.db_pool` block to `app.database` (and the `config.dbPool` values key to `config.database`) so connection-pool settings take effect again — the app reads pool tuning from `app.database.*` since 1.16.x, so the chart's pool values were being silently ignored. Bumped the chart `maxOverflow` default to 60 to match `config.yaml.example`. Removed the obsolete top-level `model_access:` block (and its `modelAccess` values/schema entries); that section was dropped from the app and is now ignored. Added first-class `api:` values for `api.consent`, `api.prometheus`, and `api.monitoring` (previously only settable via `extraConfig`).
+
+- Helm chart synced with the current config schema (`app.database`, `api.*` values).
 
 ## [1.16.2] - 2026-06-14
 
 ### Changed
-- Documentation: consolidated the load-testing guide into `loadtesting/README.md` and removed the duplicate, out-of-sync `LOADTESTING.md` (root) and `docs/loadtesting.md`. Added a **Usage** guide page (`docs/guides/usage.md`) for the `/usage` feature and a nav entry for it. Moved the `prometheus` and `monitoring` config documentation under the `api:` section (README, admin config docs, and `config.yaml.example`) to match where the code reads them.
+
+- Documentation: consolidated load-testing guide, added `/usage` guide.
 
 ### Fixed
-- Documentation: corrected the client API-key prefix in the README (`sk_`, not `lmk-`); removed the nonexistent `max_input_tokens` model field from the model config doc; fixed the "Daily coin budget" wording (it is an hourly-refilled cap, not a daily reset); documented the `api.consent`, `app.theme`, and `app.graylist_default_notice` config keys; clarified that `database_url` accepts SQLite as well as PostgreSQL; and added the `GET /v1/models/<id>` and `POST /v1/completions` endpoints to the API reference.
-- `loadtesting/run_loadtest.sh` now reads the monitor token from `api.monitoring.token` instead of the removed top-level `monitoring.token`, matching the 1.16.1 config change; previously its Lumen health-check probe sent no auth header when a monitor token was configured.
+
+- Documentation corrections (API key prefix, config keys, endpoints).
+- Load-test script reads the monitor token from `api.monitoring.token`.
 
 ## [1.16.1] - 2026-06-14
 
 ### Fixed
-- Monitor-token API auth (`GET /v1/models`) and the Prometheus `/metrics` endpoint now read their config from `api.monitoring` / `api.prometheus`, matching where the config editor writes them and where `config.yaml` nests them. Previously these two read sites still looked at the removed top-level `monitoring` / `prometheus` keys, so the monitor token (e.g. `kuma`) was rejected with 401 and `/metrics` auth was misread. `config_watcher` restart-detection was also updated to the `api.prometheus.*` paths.
+
+- Monitor-token API auth and `/metrics` read config from `api.monitoring`/`api.prometheus`.
 
 ## [1.16.0] - 2026-06-13
 
 ### Added
-- New **Usage** page (`/usage`) accessible to all logged-in users, showing their own requests, tokens, cost, model popularity, and heatmap. Admins see their own usage by default with a "Show all users" checkbox to view system-wide data, and a "Last Active" stat when viewing a specific user. User-growth charts (new users, cumulative) appear only in the all-users view.
-- Users page: added a bar-chart button per user that opens the Usage page filtered to that user.
-- Renamed the admin "Analytics" nav entry to "Usage" and moved it to the main nav for all users.
+
+- New **Usage** page (`/usage`) and a bar-chart per user; renamed "Analytics" nav to "Usage".
 
 ### Changed
-- Config editor: `prometheus` and `monitoring` sections shown as sub-cards of the `API` section; sidebar no longer shows them as separate entries.
-- Config editor Models: inactive models are sorted to the bottom of the model dropdown.
-- `prometheus` and `monitoring` config keys live at the **top level** of `config.yaml` (not nested under `api`). This was always the intended structure; code now correctly reads them from the top level.
+
+- Config editor: prometheus/monitoring as sub-cards; `prometheus`/`monitoring` keys moved to the top level of config.
 
 ### Fixed
-- Config editor no longer warns about "unrecognized fields" when clearing a known field (e.g. `announcement`); the dialog now only fires for top-level keys the editor has no UI for.
-- Config editor uses `shutil.copyfile` instead of `shutil.move` to avoid `Operation not permitted` errors when `/tmp` and the config file are on different filesystems.
-- Group membership rules now require **all** conditions to match (AND), not just any one (OR); previously a user could be placed in a group by matching only the IdP rule without matching the required affiliation.
-- Web chat streaming (`send_message_stream`) now releases its database connection before the LLM call, matching the API path. Previously it held a connection with an open transaction for the entire stream, leaking connections (`idle in transaction`) and exhausting the pool under load.
-- Prometheus `/metrics` endpoint and monitor-token API auth now correctly read config from the top-level `prometheus`/`monitoring` keys instead of the non-existent `api.prometheus`/`api.monitoring` path.
+
+- Group membership rules now require **all** conditions (AND) instead of any one (OR).
+- `/metrics` and monitor auth read config from the top-level keys.
+- Web chat streaming releases its DB connection before the LLM call.
 
 ## [1.15.2] - 2026-06-13
 
 ### Fixed
-- Config editor now uses `/tmp` for the temp file during save instead of writing `.tmp` next to the config, fixing `Permission denied` errors when the config directory is root-owned.
-- Config editor detects when the config file is not writable and shows a read-only banner with the Save button disabled, instead of failing with a cryptic error after editing.
+
+- Config editor writes to a `/tmp` temp file; shows a read-only banner when the config is not writable.
 
 ## [1.15.1] - 2026-06-13
 
 ### Fixed
-- `_RESTART_REQUIRED` alias added to `config_watcher.py` so tests can import the private name alongside the public `RESTART_REQUIRED` used by the admin config editor.
-- `test_database_url_change_warns` updated to use the `app.database` block (replacing the removed `app.database_url` key); `test_restart_keys_covered` updated to assert `("app", "database")` instead of `("app", "database_url")`.
+
+- Test imports/expectations updated for the `app.database` config block.
 
 ## [1.15.0] - 2026-06-13
 
 ### ⚠ Migration Required
 
-- **`app.database_url` and `app.db_pool` have been replaced by a single `app.database` block.** The app will not start without this change. Update your `config.yaml`:
-
-  ```yaml
-  # Before
-  app:
-    database_url: postgresql://user:pass@host/db
-    db_pool:
-      pool_size: 20
-      max_overflow: 30
-      ...
-
-  # After
-  app:
-    database:
-      url: postgresql://user:pass@host/db
-      pool_size: 20
-      max_overflow: 60
-      ...
-  ```
+- `app.database_url` and `app.db_pool` replaced by a single `app.database` block (app will not start without it).
 
 ### Added
-- Admin config editor at `/admin/config`: a browser-based YAML editor accessible only to admins. Supports all config sections (app, OAuth2, groups, clients, models, etc.) with live forms, save/reset, and atomic file writes. Linked in the navbar after Analytics for all themes.
-- Config editor Models section: "Update" button fetches live metadata from the model's endpoints (context window, max output tokens) and models.dev (knowledge cutoff, reasoning support, modalities) and applies the changes to the form without saving. Toast shows friendly field names (e.g. "context size", "cutoff"). models.dev is cached in-process for 10 minutes so repeated clicks don't re-fetch it.
-- Config editor Models section: "Update All" button runs the same sync across every model sequentially, showing a progress counter and a summary toast when done.
+
+- Admin config editor at `/admin/config` with live forms and atomic writes; "Update"/"Update All" model sync.
 
 ### Fixed
-- Connection pool exhaustion under concurrent API load: `_do_chat` and `completions` now extract all needed scalar values from ORM objects and call `db.session.remove()` before the LLM call, so pool connections are not held during long upstream requests or streaming responses.
-- Announcement banner dismiss key now uses a hash of the full HTML content instead of stripped text, so changing only a URL inside a link correctly shows the updated announcement.
+
+- Connection-pool exhaustion under load (scalars extracted, `db.session.remove()` before the LLM call).
+- Announcement dismiss key hashes the full HTML content.
 
 ### Changed
-- Config editor Admins section: the current user's own email row has its remove button disabled with a Bootstrap tooltip explaining why, preventing self-removal from the admin list.
-- Config editor Chat section: Allowed Extensions field now accepts whitespace-separated values (spaces, tabs, or newlines), so extensions can be grouped on one line or many.
-- Config editor: moved Admins section to appear after OAuth2 in the sidebar. Section order in the sidebar now also controls the key order in the saved `config.yaml`.
-- Config schema: `app.database_url` and `app.db_pool.*` merged into a single `app.database` block (`url`, `pool_size`, `max_overflow`, `pool_timeout`, `pool_recycle`, `pool_pre_ping`). Update your `config.yaml` accordingly.
-- Config editor: saving now detects any YAML fields not recognized by the editor. If any exist, a modal lists them and asks for confirmation before they are permanently removed.
+
+- Config editor sections, ordering, banking of unrecognised fields; self-removal guard.
 
 ## [1.14.0] - 2026-06-11
 
 ### Added
-- `api.consent` config flag (default: `true`). Set to `false` to exempt API requests from the graylist model-consent requirement, allowing existing API integrations to keep working while the acknowledgment rollout is in progress. Hot-reloadable.
-- `app.graylist_default_notice` config key: a fallback notice shown for any graylisted model that has no per-model notice set. Hot-reloadable.
-- Chat page: yellow warning icon (⚠) next to the model picker when a graylisted model has already been consented. Hover shows a tooltip; click opens a Bootstrap popover with the notice text and acknowledgment timestamp, auto-dismissing after 5 seconds (pauses on hover).
-- Profile page: "Consented" access cell is now a clickable badge that shows the same acknowledgment popover (notice + timestamp) on click.
+
+- `api.consent` flag (exempt API requests from graylist consent); `app.graylist_default_notice` fallback; consent indicators on chat/profile.
 
 ## [1.13.0] - 2026-06-06
 
 ### Removed
-- Conversations are now always permanently deleted; the `chat.remove` config key and soft-delete (hide) mode have been removed. Token usage is preserved in request logs and usage stats regardless of conversation deletion.
-- Helm chart: migration job removed — migrations already run in the container entrypoint before uvicorn starts, making the job redundant.
+
+- Conversations are always permanently deleted (`chat.remove` soft-delete removed); Helm migration Job removed.
 
 ### Added
-- `/healthz` endpoint that returns 200 when the database is reachable, 503 otherwise; used by Helm chart startup/liveness/readiness probes instead of `/v1/models` which requires authentication.
-- Helm chart: `wait-for-db` init container in the main deployment to prevent crash-looping before PostgreSQL is ready.
-- Docker image: non-root `lumen` user (UID 1000) and `UV_NO_CACHE=1` to fix permission errors when running as non-root.
-- CI: push Docker image to `ghcr.io/ncsa/lumen` in addition to Docker Hub.
-- Helm chart: `UV_CACHE_DIR=/tmp/uv-cache` env var in deployment so uv cache is writable when running as non-root.
-- Helm chart: model fields `supports_reasoning`, `input_modalities`, `output_modalities`, `knowledge_cutoff`, and `url` now rendered into `config.yaml` via the chart template.
-- Dependency: `flask-limiter[redis]` extra so the `redis` package is installed and Redis-backed rate limiting works.
-- Helm chart: `config.name` and `config.tagline` values (defaulting to "Lumen" / "Illuminating AI") rendered into `app.name` / `app.tagline` in `config.yaml`.
-- Helm chart: `config.announcement` value rendered into `app.announcement` in `config.yaml`.
-- Helm chart: `config.emailThemes` map rendered into `app.email_themes` in `config.yaml`.
-- Helm chart: `config.logs.level/access/model` values rendered into `app.logs` in `config.yaml`.
-- Helm chart: `oauth2.params` map rendered into `oauth2.params` in `config.yaml` (e.g. `idphint`, `skin` for CILogon).
-- Helm chart: model name pattern in `values.schema.json` updated to allow dots and underscores in addition to hyphens.
-- Helm chart: Redis Deployment uses `strategy: Recreate` to prevent two pods mounting the same RWO PVC during upgrades.
-- Helm chart: Redis pod `securityContext` includes `fsGroup: 999` so the PVC data directory is writable by the non-root Redis user.
+
+- `/healthz`; `wait-for-db` init container; non-root `lumen` user; CI pushes to `ghcr.io` too; `flask-limiter[redis]`; many new Helm chart values (models, config, announcement, emailThemes, logs, oauth2 params).
 
 ### Fixed
-- Migration: `ix_messages_conversation_id` index creation in `z0a1b2c3d4e5` now uses `if_not_exists=True` to avoid failure on databases where it was already created by an earlier migration.
-- Helm chart: migration job missing `LUMEN_SECRET_KEY` env var, causing app factory to fail during `flask db upgrade`.
-- Helm chart: migration job moved from `pre-install` to `post-install` hook so PostgreSQL exists before it runs.
-- Helm chart: `runAsUser: 1000` added to migration and lumen containers to satisfy `runAsNonRoot`.
-- Helm chart: `chart/Chart.yaml` version and appVersion updated to `1.12.0` to match the application.
-- Helm chart: ingress template passes through `ingress.className` and `ingress.annotations` so cert-manager and Traefik annotations are applied correctly.
+
+- Migration idempotency; chart migration-job env/order/security fixes; Chart.yaml version.
 
 ### Changed
-- Helm chart: default image repository changed from `ghcr.io/ncsa/lumen` to `ncsa/lumen` (Docker Hub).
-- Helm chart: default TimescaleDB image updated to `timescale/timescaledb:2.27.2-pg17`.
+
+- Default image repo on Docker Hub; default TimescaleDB `2.27.2-pg17`.
 
 ## [1.12.0] - 2026-05-21
 
 ### Added
-- Announcement banner can now be dismissed by clicking the ✕ button; dismissed state is stored in `localStorage` keyed by message content so a new message re-shows the banner automatically.
-- `app.email_themes` in `config.yaml` maps email patterns to theme names (e.g. `"@uic.edu": uic`); domain suffixes (starting with `@`) and exact addresses are supported. Takes precedence over `app.theme`.
+
+- Dismissable announcement banner (`localStorage`-backed); `app.email_themes` mapping.
 
 ## [1.11.2] - 2026-05-17
 
 ### Fixed
-- `last_refill_at`: standardize on naive UTC (`TIMESTAMP WITHOUT TIME ZONE`) matching all other `DateTime` columns; removes tz-aware/naive comparison hazard in `token_refill.py`
-- `subtract_coins`: when balance is too low to cover a request cost, the balance is now zeroed out so subsequent requests are blocked rather than silently served for free
-- `subtract_coins`: creates an `EntityBalance` row on first API use if none exists, preventing a silent no-op deduction for new API users
-- `get_coin_balance`: removed the side-effect of creating an `EntityBalance` row; returns `starting_coins` when no row exists without mutating the DB
-- `GET /v1/models`: replaced per-model `get_effective_limit` calls (N+1 queries) with a single `bulk_model_access_info` + `get_pool_limit` call
-- `chat_upload`: added `@limiter.limit` rate limiting (was the only chat endpoint without it)
-- `refill_coin_balances`: use fractional elapsed hours instead of truncating to whole hours, preventing permanent coin loss when the refill thread fires between hour boundaries
-- `refill_coin_balances`: push the "overdue" filter into the SQL query instead of loading all balances into Python first
-- `sync_user_from_yaml`: invalidate the `_nav` session cache on every login so permission changes in `config.yaml` take effect on next login
-- Health checker: added `timeout=5.0` to the `openai.OpenAI` client so a slow endpoint cannot block all health checks
-- Admin analytics routes: replaced f-string SQL interpolation of the bucket interval with a bound `CAST(:bucket AS INTERVAL)` parameter
-- `_reconcile_endpoints`: use `next(..., None)` with a guard instead of bare `next(...)` to avoid `StopIteration` on concurrent config reload
-- `admin_required`: non-API browser requests now receive an HTML 403 page instead of a raw JSON error
-- `list_conversations`: added `limit` (default 50, max 200) and `before` cursor pagination; frontend shows a "Load more…" button when additional conversations exist
-- `list_conversations`: cursor now uses a composite `(updated_at DESC, id DESC)` key to prevent conversations with identical timestamps from being silently skipped on page boundaries
-- `list_conversations`: `before` cursor lookup now filters by `entity_id` to prevent timestamp probing of other users' conversations
-- `list_conversations`: malformed `?limit=` values now fall back to the default instead of returning 500
-- `reset_user_tokens`: reset now restores `starting_coins` rather than `max(starting_coins, max_coins)`, which was incorrectly granting more than the starting allocation
-- `/v1/completions`: requests with `stream: true` now return a 400 error instead of silently ignoring the flag and returning non-streaming JSON
-- `/v1/chat/completions` and `/v1/completions`: guard against upstreams that return `usage=None` or `choices=[]` (content-filtered responses) instead of crashing with `AttributeError`/`IndexError`
-- `chat_upload`: PDF parse errors no longer leak internal exception details to the client; the exception is logged server-side and a generic message is returned
-- `_resolve_single_access`: extracted shared access-resolution helper used by both `get_model_access_status` and `bulk_model_access_info`, eliminating duplicated precedence logic
-- `ModelConfig.endpoints`, `ModelConfig.stats`, `Entity.api_keys`, `Entity.model_stats`: migrated from deprecated `lazy="dynamic"` to `lazy="select"`
-- `_reconcile_endpoints`: build a `{url: endpoint}` dict once instead of iterating the endpoints collection O(n) times per endpoint
-- `_deactivate_removed_models`: replaced Python-side filtering with a SQL `WHERE model_name NOT IN (...)` query and bulk `DELETE`/`UPDATE` statements; also fixed a bug where an empty yaml models list left all existing models active
-- `refill_coin_balances`: normalize `now` to naive UTC at function entry to prevent `TypeError` when mixing timezone-aware and timezone-naive datetimes across database backends
-- Added `*.dump` to `.gitignore` to prevent accidental commit of database dump files
+
+- Naive-UTC `last_refill_at`; `subtract_coins` zeroes short balances and seeds balance rows; N+1 fixes on `/v1/models`, health, sync; rate limit on `chat_upload`; conversation pagination cursor/lookup hardening; PDF error leak; many smaller robustness/security fixes (see git log).
 
 ## [1.11.1] - 2026-05-17
 
 ### Fixed
-- Help sidebar no longer shows the developer-only Architecture and Database Schema pages
-- Release link in the help sidebar no longer produces a double `v` prefix in the URL (e.g. `vv1.11.0` → `v1.11.0`)
+
+- Help sidebar hides developer-only docs; release link no longer double-prefixes `v`.
 
 ## [1.11.0] - 2026-05-17
 
 ### Fixed
-- Migration `y9z0a1b2c3d4`: use composite `PRIMARY KEY (id, time)` on PostgreSQL so TimescaleDB's requirement that the partition column be part of the primary key is satisfied
+
+- Migration uses composite `PRIMARY KEY (id, time)` for TimescaleDB.
 
 ### Added
-- Helm chart at `chart/` for deploying Lumen on Kubernetes; includes bundled PostgreSQL (TimescaleDB) and Redis, standard Ingress and Gateway API HTTPRoute, database migration pre-upgrade Job, and optional in-cluster vLLM/SGLang model inference servers
-- Model storage PVCs default to `ReadWriteMany` access mode to support multi-replica deployments sharing a single volume
-- `storage.prefetch` flag per model: when `true`, a `pre-install,pre-upgrade` Helm hook Job downloads model weights onto the PVC before any inference pod starts, eliminating concurrent download races
+
+- Helm chart at `chart/` (TimescaleDB+Redis, Ingress/Gateway API, migration Job, optional in-cluster inference); RWX model storage PVCs; `storage.prefetch` hook Job.
 
 ## [1.10.0] - 2026-05-17
 
 ### Added
-- Chat assistant messages now show the model name next to the ⓘ icon in the message metadata row; thinking tokens are hidden when zero
+
+- Chat message metadata shows the model name; hidden thinking tokens when zero.
 
 ### Changed
-- Removed `.replace(tzinfo=None)` from `RequestLog.time` comparisons in `models_page/routes.py` and `admin/routes.py`; these TIMESTAMPTZ comparisons now use timezone-aware datetimes throughout
-- Graylist model consent now uses a shared modal dialog (`_graylist_modal.html` + `graylist-consent.js`) on the chat, profile, and model detail pages instead of separate implementations; the old form-POST `models_page.model_consent` route has been removed in favour of the JSON `/profile/consent/<model>` endpoint
-- Chat page: accepting a graylist model via the consent dialog now removes the warning triangle from the model picker and hides the banner without a page reload
-- Profile page: accepting a graylist model via the consent dialog now updates the access badge in-place without a page reload
-- Replaced bare integer HTTP status codes with `HTTPStatus` constants across all blueprint files (`api`, `auth`, `chat`, `clients`, `profile`, `admin`)
-- Renamed the "Usage" page to "Profile": URL changed from `/usage` to `/profile`, nav link updated to "Profile" across all themes, and the admin per-user route moved from `/admin/users/<id>/usage` to `/admin/users/<id>/profile`
-- Decomposed `sync_user_from_yaml` (complexity 46) in `auth/routes.py` into four focused helpers: `_desired_groups_from_config`, `_groups_from_userinfo_rules`, `_reconcile_group_memberships`, and `_apply_user_model_overrides`
-- `datetime.utcnow()` (deprecated in Python 3.12) replaced with `datetime.now(timezone.utc).replace(tzinfo=None)` in `chat/routes.py` and `api/routes.py`
-- `_watcher` exception handler now uses `logger.exception` to preserve stack traces
-- Mid-file imports in `profile/routes.py` moved to top of file
-- Extracted `_build_model_access_list(entity_id, usage_by_model)` helper in `profile/routes.py`; eliminates ~15-line duplicated loop previously copied across `profile`, `admin`, and `clients` blueprints
-- Extracted `_require_client_access(entity_id, sid)` helper in `clients/routes.py`; eliminates duplicated auth guard across four route handlers
-- Deferred import of profile helpers in `admin/routes.py` moved to module-level (rule: deferred imports only inside `create_app`)
-- `inject_nav` context processor caches `is_admin` and client membership in the Flask session, eliminating 3 DB queries per request after the first
-- Extracted `apply_hot_config(app, yaml_data)` into `config_watcher.py`; `create_app` and `_watcher` now share one implementation of hot-reloadable settings
-- `completions()` API endpoint now uses shared `_preflight()` helper instead of duplicating model-lookup / budget-check / endpoint-selection from `_do_chat`
-- `deduct_coins` one-line wrapper removed; all callers updated to call `subtract_coins` directly
-- f-string log calls in `commands.py` converted to `%s`-style lazy interpolation
-- `get_pool_limit` now returns a `PoolLimit` named tuple (`max_coins`, `refresh_coins`, `starting_coins`) instead of a plain tuple
-- Decomposed `_get_profile_data` (complexity 40) in `profile/routes.py` into three focused helpers: `_fetch_chat_stats`, `_build_model_usage`, and `_build_coin_pool`
-- Decomposed `sync_models_from_yaml` (complexity 40) in `commands.py` into three focused helpers: `_apply_model_fields`, `_reconcile_endpoints`, and `_deactivate_removed_models`
-- Theme-switching logic extracted into `_apply_theme()` in `config_watcher.py`, called from both startup and the hot-reload watcher
-- Docs: corrected access control evaluation order (group defaults resolve before entity default; final fallback is allow not deny)
+
+- General cleanup: timezone-aware datetime comparisons, shared graylist consent modal, HTTPStatus constants, "Usage" page renamed to "Profile" (`/profile`), decomposed hot-path functions, deferred-import fixes.
 
 ### Fixed
-- `refill_coin_balances` now uses a timezone-aware `datetime.now(timezone.utc)` for `now` and compares directly against `last_refill_at` without stripping timezone info; the previous naive/aware mismatch could silently break on non-UTC PostgreSQL sessions and raise `TypeError` once SQLAlchemy returns an aware value
-- Added `tests/unit/test_migrations.py` with a test that asserts the Alembic migration graph has exactly one head, catching unmerged migration branches before they reach review
-- `token_refill`: fixed `TypeError` when subtracting `last_refill_at` from `now` after the column was migrated to `DateTime(timezone=True)`; both comparison sites now strip `tzinfo` before arithmetic
-- `send_message_stream` now wraps the OpenAI client in a `with` statement, ensuring the SSL context and socket are closed after each chat request
-- `entity_balances.last_refill_at` is now written as a timezone-aware datetime matching the `TIMESTAMPTZ` column type, preventing potential `TypeError` on arithmetic with timezone-aware values returned by SQLAlchemy
-- `request_logs.time` is now written as a timezone-aware datetime matching the `DateTime(timezone=True)` column declaration
-- `update_stats` now uses SQLAlchemy savepoints (`begin_nested`) for the concurrent-seed INSERT, so an `IntegrityError` from a racing first request no longer rolls back the entire session and discards the preceding coin deduction
-- `subtract_coins` now logs a warning when the balance is already exhausted and the UPDATE affects 0 rows, making silent no-charge events observable in logs
-- `check_coin_budget` no longer calls `get_effective_limit` twice per request; the resolved limit from the first call is reused for the balance check
-- `/v1/models` and `/v1/models/<id>` now pre-fetch all endpoints in a single query instead of issuing one SELECT per model (eliminates N+1 on the hot models endpoint)
-- `/models` page now resolves model access for all models in a fixed number of queries via `bulk_model_access_info`, replacing per-model `get_model_access_status` calls
-- Profile usage tab now resolves model access and endpoint health in bulk, replacing per-model `get_model_access` and lazy-loaded `get_model_status` calls
-- `/v1/completions` now records `endpoint_id` and `duration` in `RequestLog`, matching the `/v1/chat/completions` behaviour
-- Background threads in `health.py` and `token_refill.py` now log exceptions with `logger.exception()` instead of silently swallowing them
-- Health checker joins `ModelConfig.model_name` upfront instead of lazy-loading `ep.model_config` inside the loop; accessing the backref on a `lazy="dynamic"` + `delete-orphan` relationship caused `StaleDataError` on commit
-- `refill_coin_balances` now bulk-loads `EntityLimit`, `GroupMember`, and `GroupLimit` rows before the loop, eliminating N+1 queries per entity
-- `_build_model_access_list` and `chat_page` now bulk-resolve model access status, consents, and endpoint health in a fixed number of queries, replacing N+1 per-model queries
-- Added `bulk_model_access_info()` helper to `services/llm.py` for efficient entity-wide access resolution
-- Model endpoint lists are now pre-fetched in bulk on the profile page, eliminating one lazy SELECT per model
-- `APP_ANNOUNCEMENT` in config.yaml is now sanitized with `bleach.clean()` before being marked safe, preventing HTML/JS injection from config-level input
-- `assert` guards before f-string SQL interpolation in analytics routes replaced with explicit `if … abort(BAD_REQUEST)` — `assert` is disabled under Python `-O`
-- `_md_filter` Jinja2 filter documented as operator-only; output must never be applied to user-supplied content
-- Removed misleading `SECRET_KEY` env var read from `config.py`; it was always overwritten at runtime by `LUMEN_SECRET_KEY`, silently ignoring operator intent
-- Monitor token comparison now uses `hmac.compare_digest()` to prevent timing side-channel attacks
-- `/chat/stream` now enforces a 500-message count limit and 500,000-character total payload limit per request
-- Fixed race condition in `update_stats`: seed INSERT for new `(entity, model, source)` triples now wrapped in `try/except IntegrityError` so concurrent first-requests no longer cause an unhandled 500
-- `request_logs` now uses a surrogate `BIGINT` autoincrement PK; `time` is kept as a regular indexed non-unique column, eliminating timestamp collision between concurrent workers
-- `ModelStat` and `EntityStat` counters now use SQL-level atomic increments instead of ORM read-modify-write, preventing lost updates under concurrent requests
-- `subtract_coins` now uses a single atomic `UPDATE ... WHERE coins_left >= cost` so concurrent requests cannot both deduct from an insufficient balance
-- `request_logs` inserts now add 0–999 µs jitter to the timestamp PK to prevent collisions under concurrent requests
+
+- Timezone-aware refill arithmetic; single-head migration test; `with`-managed OpenAI clients; atomic `update_stats` savepoints; bulk N+1 resolutions; SSRF/security hardening on uploads and analytics.
 
 ### Database
-- Added migration `z1b2c3d4e5f6` to enforce `NOT NULL` on `entity_balances.coins_left` and `entity_balances.last_refill_at`, convert `last_refill_at` to `TIMESTAMPTZ`, and enforce `NOT NULL` on `api_keys.key_hash`
-- Added merge migration `z2a3b4c5d6e7` to reconcile four divergent heads
-- Added index on `model_endpoints.model_config_id` to avoid full table scans on every endpoint lookup
-- Added index on `entity_managers.client_entity_id` to support efficient lookups by client when listing managers
-- `entity_balances.coins_left` and `entity_balances.last_refill_at` are now `NOT NULL`; `last_refill_at` changed to `TIMESTAMP WITH TIME ZONE`
-- `api_keys.key_hash` is now `NOT NULL` (legacy plaintext-to-hash migration is complete)
-- Analytics API endpoints return empty results instead of `OperationalError` when running on SQLite
-- Dropped deprecated `model_configs.max_input_tokens` column; use `context_window` instead
-- Added `CHECK (entity_type IN ('user', 'client'))` constraint on `entities` table
-- API key deletion now hard-deletes the row instead of soft-deactivating it
-- Added composite index `ix_conversations_entity_hidden_updated` on `conversations(entity_id, hidden, updated_at)` to speed up `list_conversations` queries
-- Added `ix_messages_conversation_id` index to `messages.conversation_id`
-- Added FK indexes on `group_members.entity_id`, `entity_model_access.entity_id`, `group_model_access.group_id`, `model_stats.(entity_id, model_config_id)`, `request_logs.(entity_id, model_config_id)`, and `api_keys.entity_id`
+
+- Migrations for `NOT NULL` balances/keys, head merge, indexes (`model_endpoints`, `entity_managers`, conversations, messages, FKs).
 
 ### Accessibility
-- Fixed `colspan` on API keys table loading row from 7 to 6 to match the actual column count (WCAG 1.3.1)
-- Info-icon `ⓘ` spans now respond to Enter/Space keyboard events to toggle the Bootstrap Popover (WCAG 2.1.1)
-- Active/inactive status icons `✓`/`✗` wrapped in `<span role="img" aria-label="...">` in clients and admin/users tables (WCAG 1.1.1)
-- Autocomplete manager listbox now handles `Home`/`End` keys to jump to first/last suggestion (WCAG 2.1.1)
-- Sidebar toggle button `aria-label` now updates to "Show sidebar" / "Hide sidebar" on each click (WCAG 4.1.2)
-- All sort-header `<th>` elements now carry `scope="col"` for unambiguous screen-reader column association (WCAG 1.3.1)
-- Removed redundant `aria-label` from `#period-select` in analytics; the visible `<label>` is sufficient (WCAG 2.5.3)
-- Added fallback text content inside all five `<canvas>` chart elements for assistive technology that does not expose `aria-label` on canvas (WCAG 1.1.1)
-- Wrapped `✓`/`—` capability flags in `model_detail.html` with `<span role="img" aria-label="...">` (WCAG 1.1.1)
-- Modal close buttons now carry context-specific `aria-label` values ("Close New API Key dialog", "Close Access Acknowledgment dialog") (WCAG 4.1.2)
-- `overflow:hidden` on main content wrapper changed to `overflow:auto` to prevent clipping at browser zoom (WCAG 1.4.10)
-- Removed `overflow-y:hidden` from KaTeX display blocks — tall math equations no longer clip at zoom (WCAG 1.4.4)
-- Sortable table `<th>` elements now have `tabindex="0"`, Enter/Space keydown handlers, `aria-sort` attributes, and bold active arrows so sort state is conveyed beyond colour alone (WCAG 1.4.1, 2.1.1, 4.1.2) — affects clients, client detail, profile, and admin users tables
-- SkipTo.js moved from Illinois theme `head_extras.html` into `base.html` and `landing.html` so all themes provide skip navigation (WCAG 2.4.1)
-- Inner `<main>` in `help.html` changed to `<section>` to eliminate duplicate `<main>` landmark (WCAG 1.3.1)
-- Attachment error dismiss now briefly emits an SR-only "dismissed" message before clearing the `aria-live` region (WCAG 4.1.3)
-- `.conv-item:focus-within` now reveals the conversation remove button for keyboard users (WCAG 2.1.1)
-- Admin users search input now has `aria-label="Search users by name or email"` (WCAG 4.1.2)
-- `aria-selected` on `role="listitem"` conversation items replaced with `aria-current` (valid on any role) (WCAG 4.1.2)
-- Empty heatmap day column header now contains a visually-hidden "Day" label in both static HTML and the JS-rendered header row (WCAG 1.3.1)
+
+- Sortable table semantics, modal labels, heading hierarchy, canvas fallback text, `aria-*` fixes, skip navigation for all themes.
 
 ### Security
-- File upload responses now return the sanitized filename instead of the raw browser-supplied name, preventing unsanitized input from reaching client-side DOM rendering paths
-- Non-streaming `/v1/chat/completions` and `/v1/completions` error responses now return a generic message; upstream exception details are logged server-side only
-- Application now refuses to start if `DEV_USER` is set while running in production mode (`SESSION_COOKIE_SECURE=True`), preventing the dev-login bypass from being reachable on public deployments
-- Streaming error responses in `/v1/chat/completions` and `/chat/stream` now return a generic message; upstream exception details (which could include API keys or host names) are logged server-side only
-- Analytics `period` parameter in user-growth endpoints is now validated against the allowed set before use; `trunc` values derived from it are also guarded with an explicit allowlist check
-- Fixed Prometheus `/metrics` token comparison to use `hmac.compare_digest()` preventing timing side-channel attacks
-- Fixed `model_readme` URL check to use `urlparse` hostname validation, preventing SSRF via credential-injection URLs
-- `_md_filter` Jinja filter documented as operator-only; never apply to user-supplied content
-- Upload filenames are sanitized with `werkzeug.utils.secure_filename` before extension extraction and display
-- `_rates_cache` update in the API blueprint is now protected by a `threading.Lock`, eliminating a thundering-herd race under burst traffic
-- Fixed path traversal vulnerability in `/help/img/` route: replaced `send_file` with `send_from_directory` which rejects `../` sequences
-- Added HTTP security response headers (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Strict-Transport-Security`) on all responses
-- Added session cookie security flags (`Secure`, `HttpOnly`, `SameSite=Lax`, 24h lifetime)
-- Changed `SECRET_KEY` fallback in `config.py` from known default to empty string so misconfigured deployments fail loudly
-- Added localhost-only guard to `/devlogin` when not running in debug mode
-- Prometheus with no token configured now logs an error at startup and disables the `/metrics` endpoint (returns 404) instead of serving unauthenticated metrics
-- Added startup warning when rate limiting uses in-memory storage (ineffective under multi-worker deployments)
-- Added allowlist assertions before f-string SQL interpolation in analytics routes
-- Documented `app.announcement` in `config.yaml.example` as trusted operator HTML (not escaped by Jinja2)
+
+- Sanitised filenames/dates; generic error messages; refusal to start with `DEV_USER` in production; validation of analytics `period`; `hmac.compare_digest`; `send_from_directory`; security headers; cookie flags; startup warnings for in-memory rate limiting and unauthenticated `/metrics`.
 
 ## [1.9.3] - 2026-05-11
 
-### Fixed
-- vLLM models that emit `delta.reasoning` (instead of `delta.reasoning_content`) now have their chain-of-thought captured and displayed as thinking
-
 ### Added
-- Help page sidebar now shows the app name (linked to GitHub), version, and git commit at the bottom; version and commit are baked into the Docker image at build time via `APP_VERSION` and `GIT_COMMIT` build args; local dev shows `develop` / `N/A`
-- Thinking/reasoning content from the model is now saved to the database and shown again when reloading a past conversation (collapsed "Thought" block)
-- Token popup (ⓘ) now shows thinking tokens and text output tokens as separate values for reasoning models
-- Site-wide announcement banner below the navbar, configured via `app.announcement` in config.yaml; supports HTML; colors are theme-configurable (`banner_bg_color`, `banner_text_color`) with a pastel yellow default; hot-reloads without a restart
+
+- Version/commit in help sidebar; reasoning/thinking saved to DB and re-shown; token popup splits thinking vs output; announcement banner config.
+
+### Fixed
+
+- vLLM models emitting `delta.reasoning` now capture chain-of-thought.
 
 ## [1.9.2] - 2026-05-10
 
 ### Added
-- Test coverage: spec-compliant OpenAI model mock (adds required `created`, `object`, `owned_by` fields); new negative/else-branch tests for entity `model_access_default`, `subtract_coins` with no balance row, group unlimited pool, `EntityBalance` with null `last_refill_at`, `sync_groups_from_yaml` GroupLimit deletion and unknown-model skip, `sync_clients_from_yaml` no-config skip, `sync_user_from_yaml` non-matching rules / `equals` predicate / limit removal / model whitelist, missing-`messages` 400 on `/v1/chat/completions` and `/chat/stream`, `devlogin` 403 without `DEV_USER`, and OpenAI response field validation on `/v1/models`
+
+- Broader negative/else-branch test coverage and a spec-compliant OpenAI model mock.
 
 ### Fixed
-- Chat message timestamps showed "Invalid Date" because `formatTimestamp` appended a second `Z` to timestamps already ending in `Z` from the backend's `strftime` format
-- `list_conversations` in `chat/routes.py` used the deprecated `Conversation.query` pattern (banned by CLAUDE.md); replaced with `db.session.execute(select(...))`
-- New `EntityBalance` rows were created without `last_refill_at`, leaving them permanently excluded from the coin refill query (`WHERE last_refill_at IS NOT NULL`); both creation sites (`get_coin_balance` in `llm.py` and `sync_user_from_yaml` in `auth/routes.py`) now stamp the current UTC time so newly created balances are picked up by the refiller after one hour
+
+- `Invalid Date` timestamps (`formatTimestamp` double `Z`); deprecated query patterns removed; `EntityBalance` rows stamped with `last_refill_at` so the refiller picks them up.
 
 ### Changed
-- Coin budget resolution: a per-user `EntityLimit` now always wins over group `GroupLimit`s, consistent with how model access works (entity-level rules override group defaults). Previously the highest `max_coins` across user and all groups won, making it impossible to cap a user below their group's budget without removing them from the group.
-- README: updated intro from "chat portal" to "AI gateway" to reflect API proxy capability; added key features for uploads, service accounts, theming, analytics, and Prometheus; added missing config sections (theme, chat.upload, clients, monitoring, prometheus); expanded clients section with full explanation of coin pools, managers, API usage, and model access; added `supports_function_calling` to model config reference; fixed `url` field description; documented coin budget resolution order
-- config.yaml.example: corrected built-in theme list to `default, illinois, uic, uis`
-- docs/dbschema.md: added "Coin Budget Resolution Order" section
+
+- Per-user `EntityLimit` always wins over group limits in budget resolution.
 
 ## [1.9.1] - 2026-05-09
 
 ### Fixed
-- Removed SkipTo.js accessibility test check — SkipTo.js is illinois-theme-only and the check was failing for other themes
+
+- Removed the SkipTo.js-only accessibility test check.
 
 ## [1.9.0] - 2026-05-09
 
 ### Added
-- Theme system: branding (header, footer, logo, colors, CSS/JS) is defined per-theme in `themes/<name>/`. Set `app.theme` in `config.yaml` to switch themes; changes hot-reload within 5 seconds without a restart. Each theme provides `theme.yaml`, `templates/theme/` partials (header, footer, page_open/close, head_extras), and an optional `static/` folder. Built-in themes: `illinois` (default, Illinois Toolkit web components), `default` (plain Bootstrap), `uic` (University of Illinois Chicago — uic.edu branding with official SVG logos, 80px navbar, multi-column footer), and `uis` (University of Illinois Springfield — uis.edu branding with official wordmark, white/navy header, 1200px container, three-column footer with campus/site links and social icons). Chat bubble colors follow the active theme via `--bubble-user` / `--bubble-assistant` CSS variables.
-- "About Illinois Computes" and "Feedback & Support" sections added to the Introduction help page, crediting Illinois Computes and NCSA, with links to computes.illinois.edu, the NCSA support email, and the GitHub issue tracker
-- CSRF protection via Flask-WTF: the model consent form is now protected; the `/v1/` API blueprint is exempt; JavaScript fetch calls (upload, delete conversation) send `X-CSRFToken` header
-- `todo.md` with detailed follow-up items for deferred technical debt (bulk access resolution, admin SQL pattern, CSS consolidation, SQLAlchemy modernization)
-- Tests for help and usage blueprint routes, covering key management, consent flow, coin pool, model status, and markdown frontmatter parsing
+
+- Theme system (`theme.yaml`, partials, per-theme static; built-ins `illinois`, `default`, `uic`, `uis`); "About Illinois Computes"/feedback sections; CSRF via Flask-WTF.
 
 ### Changed
-- The `default` theme is now the fallback when no `app.theme` is set in `config.yaml` (previously `illinois`)
-- Modernized all SQLAlchemy queries from the legacy `Model.query` and `db.session.query()` APIs to `db.session.execute(select(...))` / `db.first_or_404(stmt)` / `db.session.scalar()` across all production files and test files; updated CLAUDE.md to ban both deprecated patterns
-- Consolidated three copies of `_model_status` into `get_model_status()` in `lumen/services/llm.py`
+
+- `default` theme is the fallback; all queries modernised to `db.session.execute(select(...))`.
 
 ### Fixed
-- N+1 queries on `/models` page: model endpoints now fetched in one query and passed to template via `endpoints_map` instead of calling `config.endpoints.all()` per row
-- N+1 queries on `/chat` page: healthy endpoint counts now fetched in one GROUP BY query instead of per-model `.count()` calls
-- N+1 queries in `list_conversations`: last message per conversation now fetched in a single subquery join instead of one query per conversation
-- Datetime timezone in chat JSON responses: `updated_at` and `created_at` now include `Z` suffix so JavaScript interprets them as UTC
-- Removed dead `if not mc.active` branch from inner model status function in `_get_usage_data` (unreachable — only accessible/active models are evaluated there)
+
+- N+1 query fixes on `/models`, `/chat`, `list_conversations`; `Z`-suffixed datetimes in chat JSON.
 
 ## [1.8.0] - 2026-05-09
 
 ### Added
-- `entity_stats` table: pre-aggregated per-entity usage totals (requests, tokens, cost, last\_used\_at) maintained in real-time alongside `model_stats`; eliminates full-table GROUP BY scans on the admin users page, admin users API, and clients listing
-- Admin help docs (`docs/admin/`) covering configuration overview, application settings, user groups and access control, clients, and model configuration
-- `LUMEN_SECRET_KEY` environment variable to override `app.secret_key` without putting it in `config.yaml`
-- Dev server (`run.py`) now watches `docs/nav.json` for changes and hot-reloads automatically
-- Clicking a user's name in the admin users list now navigates to a read-only usage view for that user, showing their name, email, and group memberships
-- `docs/dbschema.md` — full database schema reference with column descriptions, constraints, ER diagram, and access control evaluation order
-- Alembic migration `v2w3x4y5z6a7` adds `COMMENT ON TABLE/COLUMN` to all tables on PostgreSQL
-- `dev.sh` now pulls the latest TimescaleDB image before starting the container
+
+- `entity_stats` pre-aggregated table; admin help docs; `LUMEN_SECRET_KEY`; dev-server docs watch; per-user admin usage view; `dbschema.md`; schema comments.
 
 ### Changed
-- Date columns in sortable tables now default to descending order (newest first) when first clicked
-- Admin users table redesigned: email column replaced with Joined, Last Used, Coins Left, and Coins Spent; never-active users sort to the bottom; dates displayed in the user's local timezone
-- All SQLAlchemy model classes now carry docstrings and `comment=` on every column and table, surfaced as PostgreSQL catalog comments
-- Help docs updated: clearer wording for model detail fields, clients section, and coin cost example in introduction
-- Existing help doc cross-links audited and corrected
-- Coin pool and model access overrides are now config-only; the per-user and per-group edit UI has been removed. Use `config.yaml` groups to manage limits and model access.
+
+- Date columns sort descending; admin users table redesign; model docstrings/comments.
 
 ### Removed
-- Admin Groups page removed from navigation and UI; groups remain config-managed only via `config.yaml`
-- Top-level `model_access:` config section removed; use `groups.default.model_access` for site-wide defaults and per-group `model_access` for per-group rules. Alembic migration `u1v2w3x4y5z6` drops the `global_model_access` table.
-- Admin `/admin/users/<id>/limits` page removed (coin pool overrides and model access overrides are now config-only)
+
+- Admin Groups page and admin per-user limits page; top-level `model_access:` config.
 
 ## [1.7.2] - 2026-05-04
 
 ### Changed
-- Help docs navigation restructured: `docs/nav.json` is now the single source of truth for page order and slugs
-- Help URLs simplified to clean slugs (`/help`, `/help/chat`, `/help/usage`, `/help/api`, `/help/models`, `/help/models/detail`, `/help/clients`, `/help/clients/detail`) — no longer expose filesystem paths
-- Relative links and image paths in markdown docs are now resolved against the filesystem and rewritten to canonical `/help/` URLs, fixing broken cross-page links in the rendered help
+
+- Help docs navigation restructured around `docs/nav.json`; simplified `/help` slugs; relative docs/image links rewritten.
 
 ## [1.7.1] - 2026-05-04
 
 ### Added
-- Help page is now accessible without logging in; unauthenticated visitors see a Login link in the header instead of Log Out and chat navigation
-- Landing (login) page footer now shows Illinois Computes, GitHub Repository, and Request Feature links
+
+- Help accessible without login.
 
 ### Changed
-- Doc image paths converted from absolute (`/help/img/`) to relative (`../img/`)
+
+- Doc image paths made relative.
 
 ## [1.7.0] - 2026-05-04
 
 ### Added
-- Help documentation at `/help` with sidebar navigation and markdown rendering; linked from the utility nav next to Log Out; screenshots in `docs/img/` for chat, usage, models, model detail, and clients pages
-- Add Manager dialog now searches users by name or email as you type (up to 10 results), with keyboard-navigable autocomplete dropdown; existing managers are excluded from results
-- Test coverage: all source files now have ≥50% coverage (overall up to 75%); new tests for chat routes (conversations, delete, stream validation), metrics endpoint (auth, disabled/enabled), config watcher (`_watcher` reload and `start_config_watcher`), model access control on both `/chat/stream` and `/v1/chat/completions` (blacklist→403, graylist no consent→403, graylist+consent and whitelist pass the gate)
-- Client accounts: admins can create client accounts (service entities with no login) and assign managers; managers can create/delete API keys for the client; graylist model consent can be accepted on behalf of a client
-- Client list page (`/clients`) shows all clients to admins (with summary stat cards) and only managed clients to regular users; table is sortable and filterable
-- Client detail page (`/clients/<id>`) shows usage stat cards (tokens, coins, coin pool, coin refill), managers table, API keys table (sortable/filterable), and a model access table (sortable/filterable) with requests, coins, last used, access status, and model status columns; graylisted models can be clicked to open a consent modal
-- `clients:` section in `config.yaml` to configure default and named per-client coin pool limits (`max`, `refresh`, `starting`) and model access default (`whitelist`|`blacklist`); synced to DB on startup and on config hot-reload
-- `entity.model_access_default` column (Alembic migration `r8s9t0u1v2w3`) stores per-client model access default; checked in access resolution after group rules and before global default
-- Clients nav link hidden from users who manage no clients
-- End-to-end tests for client API keys: key created via `POST /clients/<sid>/keys` authenticates against `/v1/` endpoints; soft-deleted key returns 401; no-pool key returns 403
-- `app.dev_user` now accepts a dict with `email` and `groups` keys in addition to a plain email string; groups listed under `dev_user.groups` are assigned to the dev user on every `/devlogin`
+
+- Help documentation at `/help`; autocomplete Add Manager dialog; clients (service accounts) with managers, detail pages, config, and tests; `app.dev_user` dict support.
 
 ### Changed
-- Usage page now has dedicated API Keys section (sortable/filterable with search) and Model Access section (sortable/filterable with access status, consent buttons, and graylist modal), matching the client detail page layout; web chat stats moved to a standalone table
-- New clients no longer automatically add the creating admin as a manager
-- Client detail page Model Access table now includes disabled (inactive) and blocked models, hidden by default behind a "Show disabled" toggle
-- `entity_model_access.allowed` (bool) replaced with `access_type` (whitelist/blacklist/graylist) to support per-entity graylist overrides; Alembic migration `t0u1v2w3x4y5`
-- `clients.model_access.graylist` list in `config.yaml` now syncs to DB as graylist `EntityModelAccess` records, enabling per-client consent-required models alongside a `default: blacklist` policy
-- Admin user limits page now supports setting model access overrides to Allowed, Graylist, or Denied
-- Coins and costs are now displayed to 2 decimal places (was 4) across all templates
+
+- Usage page gains dedicated API Keys and Model Access sections; new clients don't auto-add the creator as manager; `access_type` replaces `allowed`.
 
 ## [1.6.1] - 2026-05-02
 
 ### Added
-- Test suite expanded to 218 tests: added route tests for `/v1` API auth, `/chat/upload`, and admin group/user management; unit tests for token refill math, metrics middleware (`_normalize_path`, WSGI wrapping), config watcher (`_check_restart_required` restart-required key detection), and health checker (healthy/unhealthy/connection-error/name-fallback per endpoint)
-- WCAG 2.1 AA accessibility test suite (`tests/ui/test_accessibility.py`): renders 6 pages via the Flask test client and asserts lang attribute, main landmark, image alt text, form label associations, icon-button aria-label, modal aria-labelledby, data table captions, heading hierarchy, and SkipTo.js presence
-- GitHub Actions CI workflow (`.github/workflows/test.yml`): runs `uv run pytest` on every push to `main` and every pull request
-- GitHub Actions updated to latest major versions: `actions/checkout` v4→v6, `astral-sh/setup-uv` v5→v8, `actions/setup-python` v5→v6
-- `.coverage` and `htmlcov/` added to `.gitignore`
-- Test results summary added to GitHub Actions CI using `dorny/test-reporter@v3` (JUnit XML)
+
+- Expanded test suite (218 tests), WCAG accessibility test suite, GitHub Actions CI, `.gitignore` coverage entries, `dorny/test-reporter`.
 
 ### Fixed
-- `datetime.utcnow()` replaced with `datetime.now(timezone.utc).replace(tzinfo=None)` across 10 models (column defaults), 4 service/blueprint files, and 2 test files — eliminates Python 3.12+ deprecation warnings
-- `Model.query.get(id)` → `db.session.get(Model, id)` and `Model.query.get_or_404(id)` → `db.get_or_404(Model, id)` across all production code and tests — eliminates SQLAlchemy 2.0 legacy API warnings
-- Flask-Limiter in-memory storage warning suppressed in tests by adding `rate_limiting.storage_url: "memory://"` to `test_config.yaml`
-- `<label>` elements without `for` attributes on Display/Search controls in `groups.html` and `users.html`
-- Modal titles changed from `<h5>` to `<h2 class="h5">` across all admin, usage, and clients templates to fix heading hierarchy violations (h1 → h5 skip)
-- `lumen/services/health.py`: per-tick check body extracted into `check_all_endpoints()` for testability; `start_health_checker` retains identical loop behaviour
+
+- Removed `datetime.utcnow()` and `Model.query` legacy usage; label/heading/overflow WCAG fixes.
 
 ### Changed
-- `model_detail` request-count queries ported from raw PostgreSQL SQL (`NOW() - INTERVAL`) to SQLAlchemy ORM (`datetime.utcnow() - timedelta(...)`) for SQLite compatibility
-- `/v1/models` request-rate query (`_get_request_rates`) ported from raw PostgreSQL SQL to dialect-agnostic SQLAlchemy Core; same compiled predicate so TimescaleDB chunk pruning is preserved
-- `lumen/services/token_refill.py`: per-tick refill body extracted into `refill_coin_balances()` so the math is testable in isolation; `start_coin_refiller` retains identical loop+sleep behavior
+
+- Model-detail request-count and `/v1/models` rate queries ported to SQLAlchemy for SQLite/dialect compatibility.
 
 ## [1.6.0] - 2026-05-02
 
 ### Added
-- Model detail page at `/models/<name>`: left column shows description and HuggingFace README (fetched server-side, YAML front-matter stripped, rendered as markdown); right sidebar shows availability (status, endpoint health, req/hr, req/24h), model details (context window, max output tokens, modalities, knowledge cutoff, reasoning, function calling), and pricing
-- `notice` field on models: optional markdown text shown as a warning callout on the detail page; hidden when unset; configurable via `config.yaml`
-- Model names on the `/models` health dashboard are now clickable links to the detail page
-- Admin users see each endpoint URL with an up/down badge on the model detail page
-- Model access lists: whitelist, blacklist, and graylist support for fine-grained model access control
-  - New top-level `model_access:` config section for global defaults with `whitelist`, `blacklist`, `graylist` lists and a `default` field (`whitelist`|`blacklist`|`graylist`, default: `whitelist` = allowed)
-  - Per-group `model_access:` section overrides global rules; each group supports `default`, `whitelist`, `blacklist`, `graylist`, and `*` wildcard shorthand
-  - Graylisted models appear in the chat model picker with a ⚠ indicator; the user must navigate to the model detail page and click "Acknowledge & Enable Access" once before use
-  - Consent is recorded per-user with a timestamp; the model detail page shows the acknowledgment date after consent
-  - Access resolution: user admin override > group rules (blacklist > whitelist > graylist) > global rules > effective default
-  - New DB migration `q7r8s9t0u1v2` adds `global_model_access`, `entity_model_consents` tables; adds `access_type` column to `group_model_access` (replacing `allowed`); adds `model_access_default` to `groups`
+
+- Model detail page, `notice` field, model-name links, endpoint up/down badges, whitelist/blacklist/graylist model access, consent flow.
 
 ### Changed
-- Removed the admin-only chevron toggle and collapsible endpoint rows from the `/models` dashboard (detail page replaces this)
-- HuggingFace README: code blocks wrap instead of overflowing (`white-space: pre-wrap`); images capped at 800px wide; inline `font-family` styles suppressed to match the page design system
-- Group config: `models: [list]` key is deprecated; use `model_access.whitelist: [list]` instead (warning logged on startup if old key detected)
+
+- Removed the admin dashboard chevron rows; HuggingFace README styling; `models:` group key deprecated for `model_access.whitelist`.
 
 ## [1.5.1] - 2026-05-01
 
 ### Fixed
-- Chat streaming crash ("Cannot read properties of null") for non-reasoning models that don't emit thinking chunks
+
+- Chat streaming crash for non-reasoning models.
 
 ### Changed
-- Chat model picker now hides models that have no healthy endpoints available
+
+- Model picker hides models with no healthy endpoints.
 
 ## [1.5.0] - 2026-05-01
 
 ### Added
-- Chat now streams reasoning model thinking as a collapsible "Thinking…" block above the response; collapses to "Thought" when the answer begins; click to expand and read the full chain-of-thought
+
+- Streaming reasoning "Thinking…" blocks; coin-based budget; reset-token button; model config fields; file attachments (text + image) with server-side validation.
 
 ### Changed
-- Replaced token-based budget with a **coin** system: user balances are now in coins (🪙), deducted by cost (`tokens × coins_per_million / 1M`) rather than raw token count
-- Each model's `input_cost_per_million` / `output_cost_per_million` now represents coins per million tokens (set by admin)
-- Default new-user pool: 20 coins starting, 0.05 coins/hour refill
-- Migration resets all existing user balances to 20 coins; group/entity limits reset to 0 (admin reconfiguration required)
-- All cost/budget displays now show 🪙 prefix instead of $, with 4 decimal places for precision
-- Raw LLM token counts (input/output) are still tracked and shown in usage tables
 
-### Added
-- Admin users page: reset-tokens button to restore a user's token balance to their starting or max limit (whichever is greater)
-- Bootstrap Icons for action buttons across the admin UI
-- Model config fields: `context_window`, `max_output_tokens`, `supports_reasoning`, `knowledge_cutoff`, `input_modalities`, `output_modalities` — set via config.yaml, synced to DB
-
-### Changed
-- Replaced `supports_vision` boolean with `input_modalities` JSON array (e.g. `["text", "image"]`)
-- Admin users page: action buttons now use icons (sliders for Limits, play/pause for Activate/Deactivate, refresh for Reset Tokens)
-- Admin users page: numeric columns right-aligned, Active column centered
-- All prices now display rounded to the nearest penny (2 decimal places) instead of showing fractional cents
-
-### Added
-- Chat now supports file attachments: drag-and-drop or click the 📎 button to attach a document or image to any message
-- Supported document types (text extracted server-side): `txt`, `md`, `csv`, `json`, `py`, `js`, `ts`, `html`, `css`, `xml`, `yaml`, `yml`, `pdf` (PDF parsed via `pypdf`)
-- Supported image types (passed directly to the model as a vision content block): `png`, `jpg`, `jpeg`, `gif`
-- File type is validated server-side using magic-byte detection (`filetype` library); a binary file with a mismatched extension is rejected
-- Allowed file types and size/text limits are configurable via `chat.upload` in `config.yaml` (`allowed_extensions`, `max_size_mb`, `max_text_chars`); defaults apply if omitted
+- Token budget → **coin** system; `input_modalities` replaces `supports_vision`; 2-decimal price displays.
 
 ## [1.4.0] - 2026-03-28
 
 ### Added
-- Chat responses now stream token-by-token so users see output as it is generated; markdown and math render incrementally during streaming
-- Models page: optional `description` and `url` fields per model in `config.yaml`; hovering the model name shows the description as a tooltip, and a link icon (Illinois brand `link` icon) opens the URL in a new tab
-- Token balance is now initialized at login so new users see their starting token count on the usage page immediately, rather than after their first API call
-- App log level is now configurable via `app.logs.level` in `config.yaml` (default: `INFO`); set to `DEBUG` for verbose output
+
+- Token-by-token streaming; model `description`/`url`; token balance init at login; configurable `app.logs.level`.
 
 ### Fixed
-- Admin analytics heatmap now displays hours in the browser's local timezone instead of UTC
+
+- Analytics heatmap shows local timezone.
 
 ## [1.3.0] - 2026-03-26
 
 ### Added
-- Footer now includes action links to Illinois Computes, the GitHub repository, and GitHub Issues ("Request Feature"); the GitHub URL defaults to `https://github.com/ncsa/lumen` and can be overridden via `app.github_url` in `config.yaml`
-- Prometheus metrics endpoint (`/metrics`) exposing token usage, cost, request counts, latency histograms, endpoint health, and user counts; enable via `prometheus.enabled: true` in `config.yaml`, optionally protected by a Bearer token (`prometheus.token`) and supports multi-worker aggregation via `prometheus.multiproc_dir`
-- TimescaleDB `request_logs` hypertable and `request_counts_hourly` continuous aggregate for per-request tracking (model, endpoint, tokens, cost, duration)
-- Admin Analytics page (`/admin/analytics`) with period selector, stat cards, user growth charts, token usage, model popularity, and Illinois-branded usage heatmap
-- `dev.sh` starts a local TimescaleDB container (`lumen-tsdb`) on port 5678 if not already running
+
+- Footer links; Prometheus `/metrics`; TimescaleDB `request_logs` + continuous aggregate; Admin Analytics page; `dev.sh` TimescaleDB container.
 
 ### Changed
-- Default `database_url` updated to TimescaleDB on `localhost:5678`; `docker-compose.yml` uses `timescale/timescaledb:latest-pg17`
+
+- Unified token pools; model access independent of pool; group config format; default DB to TimescaleDB.
 
 ### Fixed
-- Admin users page showed 0 requests/tokens/cost for users who only used the chat interface; stats now read from `model_stats` (covering both chat and API usage) instead of `api_keys` (API-only)
 
-### Changed
-- Token budgets are now a single shared pool per user; all model requests draw from one pool, with pool size taken from the largest grant across the user's groups
-- Model access is now a separate boolean per user/group, independent of pool size; user-level settings override groups
-- Group config format updated: `max`/`refresh`/`starting` keys for pool size, `models: [...]` list for access grants
-- Usage page shows token pool as summary cards; Usage by Model lists all accessible models with a Status column and "Show disabled" filter
+- Admin users page reads stats from `model_stats` (chat + API).
 
 ## [1.2.1] - 2026-03-23
 
 ### Fixed
-- Chat message timestamps showed "Invalid Date" with PostgreSQL; `isoformat()` returns `+00:00` offset which broke the JS date parser when `"Z"` was appended — switched to `strftime('%Y-%m-%dT%H:%M:%S')` for consistent output across backends
+
+- Chat timestamps showed `Invalid Date` with PostgreSQL (`strftime` used instead of `isoformat`).
 
 ## [1.2.0] - 2026-03-23
 
-### Fixed
-- `tools`, `tool_choice`, and all other extra parameters from `/v1/chat/completions` requests are now forwarded to the upstream model; previously they were silently dropped, so tool/function calling never worked through the proxy
-- Integer primary key columns created via Alembic migrations were missing PostgreSQL sequences, causing `NotNullViolation` on first insert into `model_stats` (and potentially other tables); migration `g7h8i9j0k1l2` idempotently creates sequences for all affected tables
-
-### Changed
-- All foreign keys now have `ON DELETE CASCADE`: deleting an entity removes its API keys, conversations (and messages), limits, balances, stats, and group memberships; deleting a group removes its members and limits; deleting a model config removes its endpoints, per-model limits, balances, and stats
-
 ### Added
-- LaTeX math rendering in chat responses using KaTeX (via cdnjs); supports `$...$`, `$$...$$`, `\(...\)`, and `\[...\]` delimiters
-- `app.dev_user` config option to bypass OAuth for local development; set to an email address to auto-login without OAuth credentials
-- Admin Users and Groups are now separate pages in the navbar; each table uses server-side pagination (25/50/100/200 per page) and sorting via AJAX callbacks, supporting up to 40,000+ rows without loading all data upfront
-- Users page: stat cards showing total users, requests, tokens, and cost; table includes Tokens Available (∞ for unlimited) and Tokens Used columns; Activate/Deactivate action per user
-- Groups page: hides the built-in `default` group; sortable by name, description, members, and active status
-- `app.logs.model` config flag (hot-reloadable): when `true`, logs each endpoint health check result at INFO level, showing endpoint up/down and whether the expected model was found
-- Model Health Dashboard: admins can expand/collapse per-endpoint detail rows showing endpoint URL, model identifier, last checked time, and up/down status
-- Load testing: `math` question type generates random arithmetic expressions (1–3 grouped operations with +, -, *, /) for more realistic prompt variety; configure via `questions` list in `loadtesting/config.yaml`
-- LaTeX math rendering in chat responses using KaTeX (self-hosted); supports `$...$`, `$$...$$`, `\(...\)`, and `\[...\]` delimiters
-- `app.dev_user` config option to bypass OAuth for local development; set to an email address to auto-login without OAuth credentials
-- WCAG 2.1 AA accessibility compliance across all pages
-- SkipTo.js v5.10.1 (self-hosted) for landmark/heading skip navigation (WCAG 2.4.1 Bypass Blocks)
-- ARIA live region on chat messages area (`role="log"`) so screen readers announce new messages
-- Screen-reader-only text for typing indicator ("Assistant is typing")
-- Keyboard navigation for conversation sidebar items (Enter/Space to select)
-- `aria-label` on all icon-only buttons (hamburger, sidebar toggle, close, remove, info)
-- `aria-labelledby` on all modal dialogs; `for`/`id` associations on all form labels and inputs
-- `role="img"` with `aria-label` on all emoji used as meaningful content (🔒, ✓, ✗)
-- Table `<caption>` elements (visually hidden) on all data tables
-- Visually-hidden "Actions" text in empty `<th>` cells
-- `aria-selected` and left-border indicator on active conversation item
-- Progress bar `aria-label` for token balance display
+
+- LaTeX math rendering (KaTeX); `app.dev_user` bypass; separate admin Users/Groups pages with server-side pagination; model health dashboard; if applicable `app.logs.model`; self-hosted KaTeX/SkipTo.js; full WCAG 2.1 AA compliance.
 
 ### Fixed
-- Color contrast on assistant chat bubble: darkened from `#e84a27` (3.0:1) to `#b5300c` (5.5:1) (WCAG 1.4.3)
-- `.msg-meta` text color darkened from `#6c757d` to `#596068` for contrast on light backgrounds
-- Alert auto-dismiss increased from 5s to 20s with pause on hover/focus (WCAG 2.2.1)
-- `overflow:hidden` on `<main>` and `.chat-page-layout` changed to `overflow:auto` to prevent clipping at zoom (WCAG 1.4.10)
-- Heading hierarchy corrected from h1→h5 to h1→h2 in usage, group detail, and user limits pages
-- Conversation remove button now visible on keyboard focus (not just hover)
-- Focus ring added for `.btn-outline-primary:focus-visible`
-- Logo alt text improved from "I" to "University of Illinois Block I logo"
-- Wrong `colspan="6"` fixed to `colspan="7"` on models empty-state row
-- `aria-current="page"` added to active admin nav tabs
-- Focus management: chat input receives focus after loading a conversation; new-chat button after deletion
-- Dynamic status messages in services page now use `role="alert" aria-live="assertive"`
+
+- Forward `/v1` tool params to upstream; idempotent PK sequences; ON DELETE CASCADE FKs.
 
 ## [1.1.0] - 2026-03-21
 
 ### Fixed
-- Use `openai.OpenAI` as a context manager in all three call sites (`_do_chat` non-streaming, `_do_chat` streaming, `completions`) so SSL contexts and sockets are always closed after each request, fixing "Too many open files" (EMFILE) under load
-- Admin nav link and "Create Service" button were never shown because `is_admin` was not available to templates; now injected via context processor with a live check against `config.yaml` on every request (VULN-06)
+
+- `openai.OpenAI` used as a context manager in all call sites (fixes EMFILE); admin nav/links shown via context processor.
 
 ### Changed
-- All timestamps displayed to users are now shown in their local timezone instead of hardcoded UTC
+
+- All timestamps shown in the user's local timezone.
 
 ### Added
-- Locust load testing toolkit in `loadtesting/`; `uv run dummy` starts a fake LLM backend, `uv run locust` runs the tests, `setup_users.py` provisions test accounts; `locust` is dev-only and excluded from Docker
-- Database connection pool settings now configurable in `config.yaml` under `app.db_pool` (`pool_size`, `max_overflow`, `pool_timeout`, `pool_recycle`, `pool_pre_ping`); requires restart to take effect
+
+- Locust load-testing toolkit; configurable DB pool settings.
 
 ### Security
-- Per-endpoint rate limiting (flask-limiter); single limit configurable under `rate_limiting.limit` in `config.yaml`, keyed by authenticated identity (API key ID or session user ID); returns OpenAI-style JSON 429 for API routes and plain JSON for chat routes
-- `secret_key` and `encryption_key` now default to `""` in `config.yaml.example`; the app refuses to start if either is empty, preventing accidental deployment with known default secrets
-- API keys are now stored as HMAC-SHA256 hashes in the database; only a short hint (`sk_abcd...xyzw`) is retained for display, so a leaked database backup yields no usable keys
-- Disabled user accounts are now immediately blocked from the chat interface; existing sessions are cleared on the next request
-- Admin privileges are now re-verified on every request against the current config, so removing an admin from config takes effect immediately without requiring a server restart or logout
-- Token refills are now performed exclusively by the background task; removed the on-request lazy refill that could race the background task and grant double tokens
+
+- Per-endpoint rate limiting; default secret keys refused at startup; API keys stored as HMAC hashes; disabled users blocked; admins re-verified per request; refills via background task only.
 
 ### Changed
-- Renamed Python package from `illm` to `lumen` (directory, imports, console script, CSS classes, storage keys)
+
+- Package renamed `illm` → `lumen`.
 
 ## [1.0.0] - 2026-03-20
 
 ### Added
-- Initial production release of **Lumen**, a self-hosted AI chat portal for research institutions
-- Web chat interface compatible with OpenAI-compatible endpoints, Ollama, and vLLM
-- Federated login via CILogon (institutional identity provider / OAuth2 + OIDC)
-- Token budget system — per-user and per-group limits with optional background auto-refresh
-- Group management: define groups in `config.yaml`, auto-assign users on login via CILogon attribute rules
-- Admin panel for managing users, groups, models, and usage statistics
-- Round-robin load balancing across multiple model backends
-- Persistent conversation history with optional soft-delete
-- Markdown rendering in assistant chat bubbles (XSS-safe)
-- Per-model token balance display for users
-- API endpoint with usage recording (`/api/...`)
-- Model health dashboard with live status and disabled-model indicators
-- Hot-reload support for `config.yaml` (app name, tagline, OAuth params, logging settings)
-- Illinois Web Toolkit branding (UI colors, Block I logo, `il-blue` palette)
-- Docker support with `Dockerfile`, `docker-compose.yml`, and GitHub Actions workflow to publish `ncsa/lumen`
-- Configurable app name and tagline via `config.yaml`
-- Configurable Werkzeug access log suppression
+
+- Initial production release: OpenAI-compatible web chat, CILogon login, token budgets, groups, admin panel, load balancing, conversation history, markdown, API endpoint, model health dashboard, hot-reload, Illinois branding, Docker.

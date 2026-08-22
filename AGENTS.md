@@ -72,6 +72,7 @@ Following rules are here to help the AI avoid the same mistakes again:
 - Styles and colors match University of Illinois, see https://builder3.toolkit.illinois.edu/getting_started/index.html
 - When adding variables to config.yaml, make sure they are hot loaded if possible or print a warning
 - Track changes in the CHANGELOG.md, if no unreleased section exists, then add it, make sure to not add a new subsection.
+- Keep CHANGELOG entries short: one terse bullet per logical change, present tense, user-facing language. Do not write long narrative paragraphs explaining the "why" at length. Where a change has an obvious PR, link it (e.g. `(#123)`).
 - When bumping the version in pyproject.toml, also run `uv lock` to update uv.lock.
 - When bumping the version for a release, also update `version` and `appVersion` in chart/Chart.yaml to match.
 - When cutting a release, first pull the latest dependencies (`uv lock --upgrade`) and then run the full test suite (`uv run pytest`) before tagging — upgraded dependencies can introduce breaking changes, so the release must not go out unless the tests pass.
