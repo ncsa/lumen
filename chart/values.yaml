@@ -115,6 +115,8 @@ config:
     maxConnections: ""
     poolTimeout: 10
     poolRecycle: 1800
+    # -- SQLAlchemy engine/pool log level (info, debug)
+    logging: "info"
   # -- UI theme. Built-in options: default, illinois, uic, uis.
   # Set to a custom name to use a theme mounted via config.themes.
   theme: "default"

@@ -89,7 +89,8 @@
             "maxOverflow": { "anyOf": [{ "type": "integer", "minimum": 0 }, { "type": "string", "enum": [""] }] },
             "maxConnections": { "anyOf": [{ "type": "integer", "minimum": 1 }, { "type": "string", "enum": [""] }] },
             "poolTimeout": { "type": "integer", "minimum": 1 },
-            "poolRecycle": { "type": "integer", "minimum": 1 }
+            "poolRecycle": { "type": "integer", "minimum": 1 },
+            "logging": { "type": "string", "enum": ["info", "debug"] }
           }
         },
         "name": { "type": "string" },

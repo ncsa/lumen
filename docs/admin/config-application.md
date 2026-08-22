@@ -44,6 +44,7 @@ Optional overrides under `app.database`:
 | `max_connections` | Override the detected Postgres `max_connections` (skips the `SHOW max_connections` query) | queried at startup |
 | `pool_timeout` | Seconds to wait before raising a timeout error | 30 |
 | `pool_recycle` | Recycle connections after N seconds to avoid stale-connection errors | N/A (no recycling) |
+| `logging` | SQLAlchemy engine/pool log level, e.g. `debug` to show per-connection checkout/checkin lines | `info` |
 
 Explicit `pool_size` / `max_overflow` are honored only if they fit within 80% of
 `max_connections` across all workers × replicas; otherwise they are ignored and the
@@ -56,6 +57,7 @@ app:
     # pool_size / max_overflow omitted → auto-sized
     pool_timeout: 30
     pool_recycle: 1800
+    # logging: debug   # SQLAlchemy engine/pool DEBUG lines (checkout/checkin)
 ```
 
 ### Development User

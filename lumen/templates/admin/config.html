@@ -368,6 +368,7 @@ function renderApp() {
       <p class="text-muted small mb-2">Pool Size and Max Overflow are auto-sized from the server's max_connections (split across workers × replicas) when left blank. Pre-ping is always enabled.</p>
       ${row3(field('db-size','Pool Size',ni('db-size',db.pool_size,'1'),'blank = auto'),field('db-overflow','Max Overflow',ni('db-overflow',db.max_overflow,'1'),'blank = auto'),field('db-maxconn','Max Connections',ni('db-maxconn',db.max_connections,'1'),'blank = query server'))}
       ${row2(field('db-timeout','Timeout (s)',ni('db-timeout',db.pool_timeout,'1')),field('db-recycle','Recycle (s)',ni('db-recycle',db.pool_recycle,'1')))}
+      ${field('db-logging','Logging',si('db-logging',(db.logging||'info').toLowerCase(),['info','debug']),'SQLAlchemy engine/pool log level')}
     `)}
     ${card('Dev User', `
       <p class="text-muted small mb-2">Leave blank in production. Bypasses OAuth and uses this email as the logged-in user.</p>
@@ -419,6 +420,7 @@ function collectApp() {
   const mc = numVal('db-maxconn');  if (mc !== undefined) dbCfg.max_connections = mc;
   const pt = numVal('db-timeout');  if (pt !== undefined) dbCfg.pool_timeout   = pt;
   const pr = numVal('db-recycle');  if (pr !== undefined) dbCfg.pool_recycle   = pr;
+  const dl = val('db-logging');     if (dl && dl !== 'info') dbCfg.logging      = dl;
   a.database = Object.keys(dbCfg).length ? dbCfg : undefined;
 
   const lvl = val('log-level');

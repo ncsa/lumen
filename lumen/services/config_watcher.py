@@ -125,6 +125,22 @@ def apply_hot_config(app, yaml_data: dict):
     werkzeug_level = logging.WARNING if not logs_cfg.get("access", True) else logging.INFO
     logging.getLogger("werkzeug").setLevel(werkzeug_level)
     logging.getLogger("uvicorn.access").setLevel(werkzeug_level)
+    # The SQLAlchemy engine/pool logs a DEBUG line per connection checkout/checkin
+    # (e.g. "Connection ... being returned to pool", "rollback-on-return"), which
+    # is noise at normal levels. Only keep it when app.database.logging is debug.
+    # The pool warnings travel under SQLAlchemy's legacy names AND — because the
+    # app's pool subclass lives here — under `lumen.services.pool_tracker.TimingQueuePool`
+    # (SQLAlchemy names instance loggers from the concrete class' module).
+    db_logging = (app_cfg.get("database") or {}).get("logging", "info")
+    db_level = logging.DEBUG if str(db_logging).lower() == "debug" else logging.INFO
+    for _name in ("sqlalchemy.engine", "sqlalchemy.pool"):
+        logging.getLogger(_name).setLevel(db_level)
+    try:
+        from lumen.services.pool_tracker import TimingQueuePool
+
+        logging.getLogger(f"{TimingQueuePool.__module__}.{TimingQueuePool.__name__}").setLevel(db_level)
+    except Exception:
+        pass
     app.config["LOG_MODEL_HEALTH"] = logs_cfg.get("model", False)
 
     oauth2_cfg = yaml_data.get("oauth2", {})
