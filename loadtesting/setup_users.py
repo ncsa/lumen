@@ -39,12 +39,14 @@ def main():
     from lumen.models.api_key import APIKey
     from lumen.models.entity import Entity
     from lumen.models.entity_balance import EntityBalance
+    from lumen.models.entity_model_consent import EntityModelConsent
     from lumen.models.entity_limit import EntityLimit
     from lumen.models.entity_model_access import EntityModelAccess
     from lumen.models.group import Group
     from lumen.models.group_member import GroupMember
     from lumen.models.model_config import ModelConfig
     from lumen.services.crypto import hash_api_key
+    from lumen.timeutils import utcnow
 
     app = create_app()
 
@@ -103,11 +105,22 @@ def main():
             db.session.add(balance)
 
             access = EntityModelAccess(
+                # Must be "allowed", not the legacy "whitelist": _resolve_allow_block
+                # treats any entity rule that is not exactly "allowed" as blocked, and
+                # the entity rule is the highest-precedence scope -- so "whitelist"
+                # actively denied the model and every request 403'd.
                 entity_id=entity.id,
                 model_config_id=model_config.id,
-                access_type="whitelist",
+                access_type="allowed",
             )
             db.session.add(access)
+
+            if model_config.needs_ack:
+                db.session.add(EntityModelConsent(
+                    entity_id=entity.id,
+                    model_config_id=model_config.id,
+                    consented_at=utcnow(),
+                ))
 
             if group:
                 db.session.add(GroupMember(group_id=group.id, entity_id=entity.id))

@@ -6,7 +6,7 @@ import time
 from http import HTTPStatus
 
 import yaml
-from flask import Flask, g, jsonify, render_template, request, session
+from flask import Flask, current_app, g, jsonify, render_template, request, session
 from jinja2 import BaseLoader, ChoiceLoader, TemplateNotFound
 from markupsafe import Markup
 from sqlalchemy import text
@@ -46,6 +46,31 @@ class _ThemeLoader(BaseLoader):
 
 
 logger = logging.getLogger(__name__)
+
+#: Set once a process has reported serving a request without the ASGI bridge.
+_warned_no_bridge = False
+
+_NO_BRIDGE_MESSAGE = (
+    "Request served without the ASGI bridge: no 'lumen.t0_monotonic' mark in the WSGI "
+    "environ, so request_logs.queue_wait, preflight, started_at and send_blocked will "
+    "all be NULL, client disconnects are undetectable, and the send timeout is not "
+    "enforced. Serve 'asgi:app' (which installs DisconnectAwareWSGIMiddleware), not "
+    "'run:app --interface wsgi'. See asgi.py and lumen/services/wsgi_disconnect.py."
+)
+
+
+def _served_without_bridge_is_expected() -> bool:
+    """True for the two deployments that legitimately have no bridge and no queue.
+
+    The Flask test client sets neither SERVER_SOFTWARE nor a real server, and the
+    Werkzeug dev server identifies itself in SERVER_SOFTWARE. Both are checked off
+    ``request.environ`` rather than app config so this stays correct when a test
+    drives a non-testing app through ``werkzeug.test``.
+    """
+    if current_app.testing:
+        return True
+    return request.environ.get("SERVER_SOFTWARE", "").startswith("Werkzeug")
+
 
 # Fallback when the limit's own window cannot be read. One minute matches the
 # default limit ("30 per minute") and is short enough not to punish a client
@@ -176,6 +201,26 @@ def create_app():
         t0 = request.environ.get("lumen.t0_monotonic")
         if t0 is not None:
             request.environ["lumen.queue_wait"] = time.monotonic() - t0
+            return None
+        # No T0: this request did not come through the ASGI bridge, so queue_wait,
+        # preflight, started_at and send_blocked will all store SQL NULL. That is
+        # correct under the test client and the dev server, and silent by design.
+        # Anywhere else it means the server is bypassing asgi.py -- the mistake
+        # that made a whole 500-user load test unmeasurable, with nothing logged.
+        if _served_without_bridge_is_expected():
+            return None
+        if os.environ.get("LUMEN_REQUIRE_BRIDGE", "").strip().lower() not in ("", "0", "false"):
+            logger.error(_NO_BRIDGE_MESSAGE)
+            body = jsonify({"error": "Server misconfigured: request did not pass through "
+                                     "the ASGI bridge, so it cannot be measured."})
+            return body, HTTPStatus.INTERNAL_SERVER_ERROR
+        # Warn-once: this is a deployment-wide property, not a per-request one, so
+        # one line per process says it without flooding the log under load.
+        global _warned_no_bridge
+        if not _warned_no_bridge:
+            _warned_no_bridge = True
+            logger.error(_NO_BRIDGE_MESSAGE)
+        return None
 
     @app.teardown_request
     def _stash_url_rule(exc):
