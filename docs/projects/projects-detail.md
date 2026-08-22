@@ -99,6 +99,6 @@ Use **Show deleted keys** to view previously revoked keys. Use the search box to
 
 ## Model Access
 
-This table shows which models this project can use and how much it has consumed on each. The columns and access badges are the same as on the [Profile page](../guides/profile.md#model-access).
+This table shows which models this project can use and how much it has consumed on each. Models awaiting acknowledgment remain visible; models blocked for the project and disabled, expired, or deleted models are omitted without exposing their metadata. The columns and access badges are the same as on the [Profile page](../guides/profile.md#model-access).
 
 If a model shows **Needs Consent**, you can click it to grant acknowledgment on behalf of the project, making the model available to all API keys associated with this project.

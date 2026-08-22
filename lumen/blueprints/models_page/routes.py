@@ -3,7 +3,7 @@ from http import HTTPStatus
 from urllib.parse import urlparse
 
 import requests as http_requests
-from flask import Blueprint, render_template, session
+from flask import Blueprint, abort, render_template, session
 from sqlalchemy import func, select
 
 from lumen.decorators import is_admin, login_required
@@ -18,6 +18,17 @@ from lumen.models.request_log import RequestLog
 from lumen.services.llm import _consent_satisfied, bulk_model_access_info, get_model_access_status, model_notices
 
 models_page_bp = Blueprint("models_page", __name__)
+
+
+def _visible_model_or_404(model_name):
+    """Return an active model visible to the current entity, or hide its existence."""
+    config = db.first_or_404(
+        select(ModelConfig).where(ModelConfig.model_name == model_name, ModelConfig.active)
+    )
+    access_status = get_model_access_status(session["entity_id"], config.id)
+    if access_status == "blocked":
+        abort(HTTPStatus.NOT_FOUND)
+    return config, access_status
 
 
 @models_page_bp.route("/models")
@@ -37,7 +48,7 @@ def index():
 @models_page_bp.route("/models/<path:model_name>")
 @login_required
 def detail(model_name):
-    config = db.first_or_404(select(ModelConfig).where(ModelConfig.model_name == model_name))
+    config, access_status = _visible_model_or_404(model_name)
     endpoints = list(config.endpoints)
 
     healthy_count = sum(1 for e in endpoints if e.healthy)
@@ -62,8 +73,7 @@ def detail(model_name):
         )
     )
 
-    entity_id = session.get("entity_id")
-    access_status = get_model_access_status(entity_id, config.id) if entity_id else "blocked"
+    entity_id = session["entity_id"]
     consent = (
         db.session.execute(
             select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=config.id)
@@ -115,7 +125,7 @@ def detail(model_name):
 @models_page_bp.route("/models/<path:model_name>/readme")
 @login_required
 def model_readme(model_name):
-    config = db.first_or_404(select(ModelConfig).where(ModelConfig.model_name == model_name))
+    config, _ = _visible_model_or_404(model_name)
     parsed = urlparse(config.url or "")
     if parsed.netloc != "huggingface.co":
         return "", HTTPStatus.NOT_FOUND

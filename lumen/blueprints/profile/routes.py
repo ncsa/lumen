@@ -54,12 +54,17 @@ def _endpoint_status(eps: list) -> str:
 
 
 def _fetch_model_context(eid: int):
-    """Fetch all models, their endpoints, and bulk access/consent info once.
+    """Fetch visible active models, their endpoints, and access/consent info once.
 
     Shared by _build_model_usage and _build_model_access_list so a profile page
     resolves model access and endpoints a single time instead of twice.
     """
-    all_models = db.session.execute(select(ModelConfig).order_by(ModelConfig.model_name)).scalars().all()
+    all_models = db.session.execute(
+        select(ModelConfig).where(ModelConfig.active).order_by(ModelConfig.model_name)
+    ).scalars().all()
+    model_ids = [mc.id for mc in all_models]
+    access_statuses, consent_map = bulk_model_access_info(eid, model_ids)
+    all_models = [mc for mc in all_models if access_statuses.get(mc.id) != "blocked"]
     model_ids = [mc.id for mc in all_models]
     eps_by_model: dict = {}
     if model_ids:
@@ -67,7 +72,6 @@ def _fetch_model_context(eid: int):
             select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(model_ids))
         ).scalars().all():
             eps_by_model.setdefault(ep.model_config_id, []).append(ep)
-    access_statuses, consent_map = bulk_model_access_info(eid, model_ids)
     return all_models, eps_by_model, access_statuses, consent_map
 
 

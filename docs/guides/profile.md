@@ -108,7 +108,7 @@ If you can access any projects, a **Projects** tab lists them with their usage (
 
 ## Model Access
 
-The **Models** tab lists every model available in Lumen and your access status for each.
+The **Models** tab lists models available to you, including models that still need your acknowledgment. Models owned by someone else without a grant to one of your active groups are blocked and omitted completely. Disabled, expired, and deleted models are also omitted, even when you have historical usage for them.
 
 | Column | Description |
 |--------|------------|
@@ -124,7 +124,6 @@ The **Models** tab lists every model available in Lumen and your access status f
 | **Need Consent** (warning) | Model requires a one-time acknowledgment — click to enable it |
 | **Consented** (green) | You have acknowledged this model and can use it |
 | **Allowed** (green) | Model is fully available to you |
-| **Blocked** (red) | Model is not available to you |
 
 ### Model Status
 
@@ -133,6 +132,5 @@ The **Models** tab lists every model available in Lumen and your access status f
 | **ok** (green) | All backends healthy |
 | **degraded** (yellow) | Some backends are down but at least one is working |
 | **down** (red) | No healthy backends |
-| **disabled** (gray) | Model is currently turned off |
 
-Click any column header to sort the table. Use the search box to filter by model name. Check **Show disabled** to include currently disabled models.
+Click any column header to sort the table. Use the search box to filter by model name.

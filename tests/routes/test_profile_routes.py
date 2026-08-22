@@ -267,11 +267,11 @@ def test_user_consent_idempotent(app, auth_client, test_user):
 
 
 # ---------------------------------------------------------------------------
-# _model_status inactive branch (outer function, called from index route)
+# Hidden model metadata
 # ---------------------------------------------------------------------------
 
-def test_profile_page_shows_inactive_model(app, auth_client):
-    """Inactive model appears with disabled status on profile page."""
+def test_profile_page_hides_inactive_model(app, auth_client):
+    """Inactive model metadata is absent from the profile page."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.model_config import ModelConfig
@@ -286,6 +286,7 @@ def test_profile_page_shows_inactive_model(app, auth_client):
 
     resp = auth_client.get("/profile")
     assert resp.status_code == HTTPStatus.OK
+    assert b"inactive-model" not in resp.data
 
 
 # ---------------------------------------------------------------------------
@@ -318,11 +319,11 @@ def test_profile_page_with_coin_pool(app, auth_client, test_user):
 
 
 # ---------------------------------------------------------------------------
-# Models with past usage (line 84: inactive models added from usage_by_id)
+# Hidden models with past usage
 # ---------------------------------------------------------------------------
 
-def test_profile_page_shows_model_with_past_usage(app, auth_client, test_user):
-    """A model that is now inactive but has ModelStat rows still appears."""
+def test_profile_page_hides_inactive_model_with_past_usage(app, auth_client, test_user):
+    """Past usage does not expose metadata for a model that is now inactive."""
     with app.app_context():
         from datetime import datetime, timezone
 
@@ -351,6 +352,32 @@ def test_profile_page_shows_model_with_past_usage(app, auth_client, test_user):
 
     resp = auth_client.get("/profile")
     assert resp.status_code == HTTPStatus.OK
+    assert b"retired-model" not in resp.data
+
+
+def test_profile_page_hides_blocked_model(app, auth_client, test_model):
+    from tests.conftest import set_model_owner
+
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+
+        owner = Entity(entity_type="user", email="private-owner@example.com", name="Private Owner", active=True)
+        db.session.add(owner)
+        db.session.commit()
+        set_model_owner(test_model["id"], owner.id)
+
+    resp = auth_client.get("/profile")
+    assert resp.status_code == HTTPStatus.OK
+    assert test_model["model_name"].encode() not in resp.data
+
+
+def test_profile_page_shows_needs_ack_model(app, auth_client, test_user):
+    model = _make_needs_ack_model(app, test_user["id"], model_name="profile-needs-ack")
+
+    resp = auth_client.get("/profile")
+    assert resp.status_code == HTTPStatus.OK
+    assert model["model_name"].encode() in resp.data
 
 
 # ---------------------------------------------------------------------------

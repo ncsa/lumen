@@ -2,6 +2,8 @@
 
 The model detail page (`/models/<name>`) shows everything you need to know about a specific model before you use it.
 
+The page is available only when the model is public, you own it, or one of your active groups has been granted access. Models awaiting acknowledgment remain visible so you can acknowledge them. Blocked, disabled, expired, deleted, and unknown models return **Not Found** without exposing metadata.
+
 ![Model detail page](../img/model-detail.png)
 
 ## Page Layout
@@ -24,7 +26,6 @@ This card appears when the model requires acknowledgment before use:
 |-------|-------------|
 | **Not yet acknowledged** | A warning card with an "Acknowledge & Enable Access" button |
 | **Already acknowledged** | A confirmation with the date you accepted |
-| **Blocked** | A notice that this model is not available to you |
 
 Click the button to give one-time consent. The dialog lists everything that applies: the model's notice (when it requires acknowledgment) and an early-access warning (when the model is an early-access preview that may change or be removed). One click acknowledges all of it. After acknowledging, the model is immediately available in the chat interface and API. If the model later gains a new requirement — for example it becomes early access — you are asked to acknowledge once more.
 

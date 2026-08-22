@@ -199,6 +199,41 @@ def test_detail_loads_for_manager(managed_auth_client, managed_project):
     assert managed_project["name"].encode() in resp.data
 
 
+def test_detail_only_embeds_visible_model_metadata(app, managed_auth_client, managed_project):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.model_config import ModelConfig
+
+        owner = Entity(entity_type="user", email="model-owner@example.com", name="Model Owner", active=True)
+        blocked = ModelConfig(
+            model_name="project-blocked-model",
+            owner=owner,
+            input_cost_per_million=1,
+            output_cost_per_million=1,
+        )
+        disabled = ModelConfig(
+            model_name="project-disabled-model",
+            disabled=True,
+            input_cost_per_million=1,
+            output_cost_per_million=1,
+        )
+        needs_ack = ModelConfig(
+            model_name="project-needs-ack-model",
+            needs_ack=True,
+            input_cost_per_million=1,
+            output_cost_per_million=1,
+        )
+        db.session.add_all([owner, blocked, disabled, needs_ack])
+        db.session.commit()
+
+    resp = managed_auth_client.get(f"/projects/{managed_project['id']}")
+    assert resp.status_code == HTTPStatus.OK
+    assert b"project-blocked-model" not in resp.data
+    assert b"project-disabled-model" not in resp.data
+    assert b"project-needs-ack-model" in resp.data
+
+
 def test_detail_loads_for_admin(admin_client, service_project):
     resp = admin_client.get(f"/projects/{service_project['id']}")
     assert resp.status_code == HTTPStatus.OK

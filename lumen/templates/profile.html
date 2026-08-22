@@ -269,11 +269,7 @@
 <div class="d-flex justify-content-between align-items-center mt-0 mb-0">
   <h2 class="mb-0">Model Access</h2>
 </div>
-<div class="d-flex justify-content-between align-items-center mt-2 mb-1">
-  <div class="form-check mb-0">
-    <input class="form-check-input" type="checkbox" id="model-show-disabled">
-    <label class="form-check-label text-muted small" for="model-show-disabled">Show disabled</label>
-  </div>
+<div class="d-flex justify-content-end align-items-center mt-2 mb-1">
   <div class="d-flex align-items-center gap-2">
     <label for="model-search" class="text-muted small mb-0">Search:</label>
     <input id="model-search" type="search" class="form-control form-control-sm" style="width:200px"
@@ -682,7 +678,6 @@ const MODEL_ROWS = [
 
 const modelState = { col: 'model_name', dir: 'asc' };
 let modelFilter = '';
-let modelShowDisabled = false;
 const modelTbody = document.getElementById('model-tbody');
 const modelEmpty = document.getElementById('model-empty');
 
@@ -698,7 +693,6 @@ function statusSortKey(s) {
 function renderModels() {
   const f = modelFilter.toLowerCase();
   let rows = MODEL_ROWS.filter(r => {
-    if (!modelShowDisabled && (r.model_status === 'disabled' || r.access_status === 'blocked')) return false;
     return !f || r.model_name.toLowerCase().includes(f);
   });
   rows.sort((a, b) => {
@@ -798,10 +792,6 @@ let modelDebounce;
 document.getElementById('model-search').addEventListener('input', e => {
   clearTimeout(modelDebounce);
   modelDebounce = setTimeout(() => { modelFilter = e.target.value.trim(); renderModels(); }, 200);
-});
-document.getElementById('model-show-disabled').addEventListener('change', e => {
-  modelShowDisabled = e.target.checked;
-  renderModels();
 });
 renderModels();
 
