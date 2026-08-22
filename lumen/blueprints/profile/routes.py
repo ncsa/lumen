@@ -31,7 +31,7 @@ profile_bp = Blueprint("profile", __name__)
 
 
 def _gravatar_url(email: str, size: int = 80) -> str:
-    h = hashlib.md5((email or "").strip().lower().encode()).hexdigest()
+    h = hashlib.md5((email or "").strip().lower().encode(), usedforsecurity=False).hexdigest()
     return f"https://www.gravatar.com/avatar/{h}?s={size}&d=mp"
 
 

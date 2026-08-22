@@ -12,7 +12,9 @@ import socket
 import time
 from urllib.parse import urlparse
 
+import certifi
 import requests
+import urllib3
 
 MODELSDEV_URL = "https://models.dev/api.json"
 ENDPOINT_TIMEOUT = 10
@@ -81,18 +83,15 @@ def _sglang_root(base: str) -> str:
     return base[:-3] if base.lower().endswith("/v1") else base
 
 
-def _validate_endpoint_url(url: str) -> None:
-    """Validate an endpoint URL is safe to fetch (blocks SSRF).
+def _validate_endpoint_url(url: str) -> str:
+    """Validate an endpoint URL is safe to fetch (blocks SSRF) and pin its IP.
 
     Only http/https schemes are allowed. The hostname is resolved and every
     resolved IP is checked against private, loopback, link-local, multicast,
-    and reserved ranges.
-
-    Known limitation: this check and the subsequent requests.get resolve DNS
-    independently, so an attacker who flips resolution between the two lookups
-    (DNS rebinding with a very low TTL) can still reach an internal IP. This
-    pre-check plus allow_redirects=False on the probes reduce, but do not
-    eliminate, SSRF risk.
+    and reserved ranges. Returns the first validated IP; the probes connect to
+    that exact IP (see :func:`_pinned_get`) rather than resolving again, so a
+    DNS-rebinding flip between validation and fetch cannot redirect the request
+    to an internal address.
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
@@ -102,17 +101,49 @@ def _validate_endpoint_url(url: str) -> None:
     try:
         infos = socket.getaddrinfo(parsed.hostname, parsed.port, proto=socket.IPPROTO_TCP)
     except socket.gaierror:
-        return
+        raise ValueError(f"Blocked: hostname '{parsed.hostname}' does not resolve")
     for _, _, _, _, sockaddr in infos:
         ip = ipaddress.ip_address(sockaddr[0])
         if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
             raise ValueError(f"Blocked: hostname resolves to private/reserved IP {ip}")
+    return infos[0][4][0]
+
+
+def _pinned_get(url: str, ip: str, headers: dict):
+    """GET ``url`` connecting to the pre-validated ``ip`` instead of resolving DNS again.
+
+    TLS still verifies against the URL's hostname (SNI and certificate check via
+    server_hostname/assert_hostname), and the Host header carries the original
+    hostname, so the upstream sees a normal request. Redirects are not followed —
+    a redirect target would be an unvalidated URL.
+    """
+    parsed = urlparse(url)
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    path = parsed.path or "/"
+    if parsed.query:
+        path += "?" + parsed.query
+    host_header = parsed.hostname + (f":{parsed.port}" if parsed.port else "")
+    if parsed.scheme == "https":
+        pool = urllib3.HTTPSConnectionPool(
+            ip, port,
+            server_hostname=parsed.hostname,
+            assert_hostname=parsed.hostname,
+            ca_certs=certifi.where(),
+            timeout=ENDPOINT_TIMEOUT,
+            retries=False,
+        )
+    else:
+        pool = urllib3.HTTPConnectionPool(ip, port, timeout=ENDPOINT_TIMEOUT, retries=False)
+    try:
+        return pool.request("GET", path, headers={**headers, "Host": host_header}, redirect=False)
+    finally:
+        pool.close()
 
 
 def fetch_endpoint_model(endpoint: dict) -> dict | None:
     base = endpoint["url"].rstrip("/")
     try:
-        _validate_endpoint_url(base)
+        pinned_ip = _validate_endpoint_url(base)
     except ValueError:
         return None
     root = _sglang_root(base)
@@ -127,8 +158,8 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
     # The endpoint is served at the server root (see _sglang_root), not /v1.
     sglang_flags: dict = {}
     try:
-        r = requests.get(f"{root}/get_server_info", headers=headers, timeout=ENDPOINT_TIMEOUT, allow_redirects=False)
-        if r.ok:
+        r = _pinned_get(f"{root}/get_server_info", pinned_ip, headers)
+        if 200 <= r.status < 300:
             info = r.json()
             if any(k in info for k in ("max_req_input_len", "is_embedding", "enable_multimodal")):
                 sglang_flags = {
@@ -145,7 +176,7 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
     # vLLM (or SGLang without max_req_input_len): /v1/models gives id + max_model_len.
     model_id = None
     try:
-        r = requests.get(f"{base}/models", headers=headers, timeout=ENDPOINT_TIMEOUT, allow_redirects=False)
+        r = _pinned_get(f"{base}/models", pinned_ip, headers)
         models = r.json().get("data", [])
         if models:
             model_id = models[0].get("id")
@@ -157,7 +188,7 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
 
     # Older SGLang: /get_model_info returns context_length. Also at the root.
     try:
-        r = requests.get(f"{root}/get_model_info", headers=headers, timeout=ENDPOINT_TIMEOUT, allow_redirects=False)
+        r = _pinned_get(f"{root}/get_model_info", pinned_ip, headers)
         info = r.json()
         if "context_length" in info:
             return {"id": model_id or info.get("model_path", ""), "max_model_len": info["context_length"], **sglang_flags}

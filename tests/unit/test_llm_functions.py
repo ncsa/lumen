@@ -271,59 +271,6 @@ def test_get_next_endpoint_round_robin(app, test_model):
 
 
 # ---------------------------------------------------------------------------
-# Coin balance tests
-# ---------------------------------------------------------------------------
-
-def test_get_coin_balance_no_limit(app, test_user, test_model):
-    entity_id, model_id = test_user["id"], test_model["id"]
-    with app.app_context():
-        from lumen.services.llm import get_coin_balance
-        # No limit → access is None → returns None
-        assert get_coin_balance(entity_id, model_id) is None
-
-
-def test_get_coin_balance_unlimited(app, test_user, test_model):
-    entity_id, model_id = test_user["id"], test_model["id"]
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_limit import EntityLimit
-        from lumen.services.llm import get_coin_balance
-        db.session.add(EntityLimit(entity_id=entity_id, max_coins=-2, refresh_coins=0, starting_coins=0))
-        db.session.commit()
-        # Unlimited → returns None (no budget to track)
-        assert get_coin_balance(entity_id, model_id) is None
-
-
-def test_get_coin_balance_returns_starting_when_no_row(app, test_user, test_model):
-    entity_id, model_id = test_user["id"], test_model["id"]
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_balance import EntityBalance
-        from lumen.models.entity_limit import EntityLimit
-        from lumen.services.llm import get_coin_balance
-        db.session.add(EntityLimit(entity_id=entity_id, max_coins=_COIN_LIMIT, refresh_coins=0, starting_coins=50))
-        db.session.commit()
-        balance = get_coin_balance(entity_id, model_id)
-        assert balance == 50.0
-        # get_coin_balance must not create a DB row — row creation belongs to subtract_coins/login
-        row = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()
-        assert row is None
-
-
-def test_get_coin_balance_existing_balance(app, test_user, test_model):
-    entity_id, model_id = test_user["id"], test_model["id"]
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_balance import EntityBalance
-        from lumen.models.entity_limit import EntityLimit
-        from lumen.services.llm import get_coin_balance
-        db.session.add(EntityLimit(entity_id=entity_id, max_coins=_COIN_LIMIT, refresh_coins=0, starting_coins=_COIN_LIMIT))
-        db.session.add(EntityBalance(entity_id=entity_id, coins_left=42))
-        db.session.commit()
-        assert get_coin_balance(entity_id, model_id) == 42.0
-
-
-# ---------------------------------------------------------------------------
 # check_coin_budget
 # ---------------------------------------------------------------------------
 

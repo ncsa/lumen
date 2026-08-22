@@ -21,7 +21,7 @@ Lumen 2.0 requires **version 3** and refuses to start on anything older — the 
 | `users:` | Explicit group memberships and per-user coin pools live in the database (edited from the user's profile page). For auto-assignment at login, use each group's Rules tab |
 | `projects:` | Projects live entirely in the database (see [Configuring Projects](config-projects.md)) |
 | `clients:` | Same as projects |
-| `groups:` | Groups — coin pools, memberships, model grants, and login auto-join rules — live in the database, managed on the Groups pages (a leftover `group_rules:` section is imported into the database once by the upgrade migration, then ignored with a startup warning; remove it) |
+| `groups:` | Groups — coin pools, memberships, model grants, and login auto-join rules — live in the database, managed on the Groups pages (a leftover `group_rules:` section is ignored with a startup warning; remove it and recreate the rules on each group's Rules tab) |
 | `access:` on a model, `model_access` on groups/users, `defaults.models.access`, legacy `whitelist`/`blacklist`/`graylist` | DB-managed model ownership (see [Model Access Resolution](#model-access-resolution)) |
 
 Existing database rows created by older config syncs (groups, memberships, pools) keep working and are fully manageable on the Groups pages. Login auto-join rules are edited per group on its Rules tab — see [User Groups and Access Control](config-users.md#auto-join-rules).

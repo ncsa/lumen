@@ -87,9 +87,9 @@ def test_chat_config_change_no_warning(caplog):
 
 
 def test_restart_keys_covered():
-    """Smoke-check that the known restart-required keys are present in _RESTART_REQUIRED."""
-    from lumen.services.config_watcher import _RESTART_REQUIRED
-    keys = {tuple(p) for p in _RESTART_REQUIRED}
+    """Smoke-check that the known restart-required keys are present in RESTART_REQUIRED."""
+    from lumen.services.config_watcher import RESTART_REQUIRED
+    keys = {tuple(p) for p in RESTART_REQUIRED}
     assert ("app", "secret_key") in keys
     assert ("app", "database") in keys
     assert ("api", "prometheus", "enabled") in keys
@@ -648,3 +648,72 @@ def test_shipped_config_example_has_llm_section(app, restore_config):
         assert app.config["LLM_READ_TIMEOUT"] == 300.0
         assert app.config["LLM_REQUEST_TIMEOUT"] == 600.0
         assert app.config["LLM_MAX_RETRIES"] == 1
+# ---------------------------------------------------------------------------
+# validate_config_structure
+# ---------------------------------------------------------------------------
+
+def _valid_config():
+    return {
+        "version": 3,
+        "models": [{
+            "name": "m",
+            "input_cost_per_million": 1.0,
+            "output_cost_per_million": 2,
+            "endpoints": [{"url": "http://x/v1", "api_key": "k"}],
+        }],
+    }
+
+
+def test_validate_config_accepts_valid_config():
+    from lumen.services.config_watcher import validate_config_structure
+    assert validate_config_structure(_valid_config()) == []
+
+
+def test_validate_config_accepts_model_without_endpoints():
+    from lumen.services.config_watcher import validate_config_structure
+    cfg = _valid_config()
+    del cfg["models"][0]["endpoints"]
+    assert validate_config_structure(cfg) == []
+
+
+def test_validate_config_rejects_missing_version():
+    from lumen.services.config_watcher import validate_config_structure
+    cfg = _valid_config()
+    del cfg["version"]
+    assert any("version" in e for e in validate_config_structure(cfg))
+
+
+def test_validate_config_rejects_missing_model_name():
+    from lumen.services.config_watcher import validate_config_structure
+    cfg = _valid_config()
+    del cfg["models"][0]["name"]
+    assert any("name" in e for e in validate_config_structure(cfg))
+
+
+def test_validate_config_rejects_non_numeric_costs():
+    from lumen.services.config_watcher import validate_config_structure
+    cfg = _valid_config()
+    cfg["models"][0]["input_cost_per_million"] = "cheap"
+    errors = validate_config_structure(cfg)
+    assert any("input_cost_per_million" in e for e in errors)
+
+
+def test_validate_config_rejects_missing_costs():
+    from lumen.services.config_watcher import validate_config_structure
+    cfg = _valid_config()
+    del cfg["models"][0]["output_cost_per_million"]
+    assert any("output_cost_per_million" in e for e in validate_config_structure(cfg))
+
+
+def test_validate_config_rejects_endpoint_without_url_or_key():
+    from lumen.services.config_watcher import validate_config_structure
+    cfg = _valid_config()
+    cfg["models"][0]["endpoints"] = [{"api_key": "k"}, {"url": "http://y/v1"}]
+    errors = validate_config_structure(cfg)
+    assert any("url" in e for e in errors)
+    assert any("api_key" in e for e in errors)
+
+
+def test_validate_config_rejects_non_mapping():
+    from lumen.services.config_watcher import validate_config_structure
+    assert validate_config_structure(["not", "a", "dict"]) == ["config must be a YAML mapping"]

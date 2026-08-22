@@ -149,17 +149,7 @@ gateway:
 
 ### Group Rules
 
-The chart emits a **version 3** `config.yaml`. Groups — memberships, coin pools, model grants, and login auto-join rules — are managed in the app (database), not in config. `config.groupRules` is **deprecated**: anything set there is imported into the database once by the upgrade migration (creating missing groups with their rules) and ignored afterwards; manage rules on each group's Rules tab and remove the value.
-
-```yaml
-config:
-  groupRules:
-    uiuc-staff:
-      - field: affiliation
-        contains: staff@illinois.edu
-      - field: idp
-        equals: urn:mace:incommon:uiuc.edu
-```
+The chart emits a **version 3** `config.yaml`. Groups — memberships, coin pools, model grants, and login auto-join rules — are managed in the app (database), not in config. Auto-join rules are edited on each group's Rules tab; there is no `config.groupRules` value.
 
 ### Models
 
@@ -292,11 +282,11 @@ models:
 | `config.secretKey` | `""` | Flask session signing key |
 | `config.encryptionKey` | `""` | API key hashing secret |
 | `config.debug` | `false` | Flask debug mode |
+| `config.diagnostics` | `true` | Stack-capturing DB/context diagnostics surfaced via `/metrics/debug`; set `false` to remove the per-request capture overhead |
 | `config.admins` | `[]` | Admin email addresses |
 | `config.configEditor` | `false` | Allow editing config.yaml from the `/admin/config` UI (read-only by default since the chart manages the config) |
 | `config.defaults.models.ackMessage` | `""` | Global acknowledgement message for `needsAck` models without their own |
 | `config.defaults.tokens.max` / `refresh` / `starting` | `0` | Fallback coin pool for entities with no UI-set limit and no group pool |
-| `config.groupRules` | `{}` | Deprecated: imported into the database once by the upgrade migration, then ignored — manage auto-join rules on each group's Rules tab |
 | `config.rateLimiting.limit` | `"30 per minute"` | Rate limit per user |
 | `config.llm.connectTimeout` | `5` | Seconds to establish the connection to a model backend |
 | `config.llm.readTimeout` | `300` | Streaming calls: maximum gap between chunks (not total duration) |

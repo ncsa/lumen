@@ -173,14 +173,14 @@ def index():
 
     # Summary cards reflect the full visible set, independent of the paginated table.
     group_ids = _scoped_group_ids(entity_id, entity)
-    # Ownerless groups contribute no members or usage for a non-admin (see
-    # _owned_group_ids), so they are left out of the totals rather than
-    # silently inflating them.
+    # Member counts are not sensitive and cover every visible group; usage is
+    # withheld for ownerless groups (see _owned_group_ids), so those are left
+    # out of the usage totals rather than silently inflating them.
+    total_members = db.session.scalar(
+        select(func.count()).select_from(GroupMember).where(GroupMember.group_id.in_(group_ids))
+    ) if group_ids else 0
     agg_ids = group_ids if is_admin(entity) else sorted(_owned_group_ids(group_ids))
     if agg_ids:
-        total_members = db.session.scalar(
-            select(func.count()).select_from(GroupMember).where(GroupMember.group_id.in_(agg_ids))
-        )
         agg = db.session.execute(
             select(
                 func.coalesce(func.sum(EntityStat.requests), 0),
@@ -192,7 +192,7 @@ def index():
         ).one()
         total_requests, total_tokens = int(agg[0]), int(agg[1])
     else:
-        total_members = total_requests = total_tokens = 0
+        total_requests = total_tokens = 0
 
     return render_template(
         "groups.html",
@@ -222,10 +222,11 @@ def data():
     # Resolve visibility first so the aggregates below only scan the caller's
     # groups; an unscoped aggregate over every membership dominates the query.
     visible_ids = None
-    # Members and usage are withheld for ownerless groups unless the caller is
-    # an admin. Narrowing the aggregates to agg_ids (rather than blanking the
-    # numbers afterwards) means the hidden values are never computed at all, so
-    # they cannot leak through the sort order either.
+    # Usage is withheld for ownerless groups unless the caller is an admin
+    # (member counts are not sensitive and always shown). Narrowing the usage
+    # aggregate to agg_ids (rather than blanking the numbers afterwards) means
+    # the hidden values are never computed at all, so they cannot leak through
+    # the sort order either.
     agg_ids = None
     if not admin:
         visible_ids = _scoped_group_ids(entity_id, entity)
@@ -234,7 +235,7 @@ def data():
         owned = _owned_group_ids(visible_ids)
         agg_ids = [gid for gid in visible_ids if gid in owned]
 
-    member_sq = _member_count_sq(agg_ids)
+    member_sq = _member_count_sq(visible_ids)
     model_sq = _model_count_sq(visible_ids)
     usage_sq = _usage_sq(agg_ids)
 
@@ -307,7 +308,7 @@ def data():
                 "id": g.id,
                 "name": g.name,
                 "description": g.description,
-                "members": int(members or 0) if (admin or g.id in has_owner) else None,
+                "members": int(members or 0),
                 "models": int(models),
                 "active": g.active,
                 "auto_join": g.auto_join,
@@ -343,15 +344,16 @@ def detail(gid):
     can_manage = is_admin(entity) or owner_id == entity_id
 
     # An ownerless group exposes neither its member list nor its rolled-up
-    # usage to a non-admin (see _owned_group_ids).
+    # usage to a non-admin (see _owned_group_ids). The member count alone is
+    # not sensitive and is always shown.
     show_members = is_admin(entity) or owner_id is not None
 
-    member_count = total_requests = total_tokens = None
+    member_count = db.session.scalar(
+        select(func.count()).select_from(GroupMember).where(GroupMember.group_id == gid)
+    )
+    total_requests = total_tokens = None
     total_cost = None
     if show_members:
-        member_count = db.session.scalar(
-            select(func.count()).select_from(GroupMember).where(GroupMember.group_id == gid)
-        )
         agg = db.session.execute(
             select(
                 func.coalesce(func.sum(EntityStat.requests), 0),
@@ -662,7 +664,17 @@ def members_data(gid):
     direction = sort_col.desc().nullslast() if order == "desc" else sort_col.asc().nullslast()
     stmt = stmt.order_by(direction)
 
-    total = db.session.scalar(select(func.count()).select_from(stmt.subquery()))
+    # Count from the base membership filters only — no need to re-run the
+    # ordered join query just to count its rows.
+    count_stmt = (
+        select(func.count())
+        .select_from(GroupMember)
+        .join(Entity, Entity.id == GroupMember.entity_id)
+        .where(GroupMember.group_id == gid)
+    )
+    if search:
+        count_stmt = count_stmt.where(db.or_(Entity.name.ilike(f"%{search}%"), Entity.email.ilike(f"%{search}%")))
+    total = db.session.scalar(count_stmt)
     rows = db.session.execute(stmt.offset((page - 1) * per_page).limit(per_page)).all()
 
     return jsonify({

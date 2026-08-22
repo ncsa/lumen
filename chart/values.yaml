@@ -71,6 +71,10 @@ config:
   encryptionKey: ""
   # -- Enable Flask debug mode (never true in production)
   debug: false
+  # -- Enable stack-capturing DB/context diagnostics (pool checkout tracking and
+  # app-context probes surfaced via /metrics/debug). Set false to remove the
+  # per-request capture overhead.
+  diagnostics: true
   # -- Application display name
   name: "Lumen"
   # -- Application tagline shown in the UI
@@ -159,20 +163,6 @@ config:
     # retried: a retry restarts the whole generation while the first attempt may
     # still be draining upstream.
     maxRetries: 1
-  # -- DEPRECATED: group auto-join rules are managed in the app (each group's
-  # Rules tab). Anything set here is imported into the database once at startup
-  # (creating missing groups with their rules) and should then be removed.
-  # Mapping of group name -> list of rules; users matching ALL rules are added
-  # at login. Supported fields: affiliation, idp, email.
-  # Example:
-  # groupRules:
-  #   uiuc-staff:
-  #     - field: affiliation
-  #       contains: staff@illinois.edu
-  #     - field: idp
-  #       equals: urn:mace:incommon:uiuc.edu
-  groupRules: {}
-
   # -- Raw YAML appended verbatim to config.yaml (for settings not covered by chart values)
   extraConfig: ""
 
@@ -185,6 +175,9 @@ api:
     enabled: false
     # -- Bearer token required to scrape /metrics. Empty disables Prometheus (token is mandatory when enabled).
     token: ""
+    # -- Separate, stronger bearer token for /metrics/debug (thread dumps and
+    # deployment details). Empty means /metrics/debug uses the scrape token.
+    debugToken: ""
     # -- Path for multi-worker metric aggregation (mount a shared volume here for multiple replicas)
     multiprocDir: ""
   monitoring:
@@ -204,8 +197,6 @@ serviceMonitor:
   interval: "30s"
   # -- Scrape timeout
   scrapeTimeout: "10s"
-
-
 ## OAuth2 / OIDC --------------------------------------------------------------------
 
 oauth2:

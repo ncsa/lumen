@@ -54,6 +54,7 @@
         "secretKey": { "type": "string" },
         "encryptionKey": { "type": "string" },
         "debug": { "type": "boolean" },
+        "diagnostics": { "type": "boolean" },
         "configEditor": { "type": "boolean" },
         "defaults": {
           "type": "object",
@@ -130,27 +131,6 @@
             "readTimeout": { "type": "number", "exclusiveMinimum": 0 },
             "requestTimeout": { "type": "number", "exclusiveMinimum": 0 },
             "maxRetries": { "type": "integer", "minimum": 0 }
-          }
-        },
-        "groupRules": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": ["field"],
-              "additionalProperties": true,
-              "properties": {
-                "field": { "type": "string" },
-                "contains": { "type": "string" },
-                "equals": { "type": "string" }
-              },
-              "oneOf": [
-                { "required": ["contains"] },
-                { "required": ["equals"] }
-              ]
-            }
-
           }
         },
         "extraConfig": { "type": "string" }
@@ -276,6 +256,7 @@
           "properties": {
             "enabled": { "type": "boolean" },
             "token": { "type": "string" },
+            "debugToken": { "type": "string" },
             "multiprocDir": { "type": "string" }
           }
         },
@@ -297,7 +278,6 @@
         "scrapeTimeout": { "type": "string" }
       }
     },
-
     "models": {
       "type": "array",
       "items": {

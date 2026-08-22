@@ -29,6 +29,7 @@ from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_group_access import ModelGroupAccess
 from lumen.models.model_stat import ModelStat
 from lumen.models.request_log import RequestLog
+from lumen.services.cost import calculate_cost
 from lumen.services.crypto import cache_salt_for_entity
 from lumen.services.wsgi_disconnect import (
     SEND_BLOCKED_ENVIRON_KEY,
@@ -75,6 +76,7 @@ def _least_default(element, compiler, **kw):
 @compiles(_least, "sqlite")
 def _least_sqlite(element, compiler, **kw):
     return "min(%s)" % compiler.process(element.clauses, **kw)
+
 
 #: How old ``entity_balances.last_refill_at`` must be before the refiller
 #: credits that balance again — the cutoff in ``token_refill.refill_coin_balances``,
@@ -417,22 +419,6 @@ def get_effective_limit(entity_id: int, model_config_id: int, require_consent: b
     if not get_model_access(entity_id, model_config_id, require_consent=require_consent):
         return None
     return get_pool_limit(entity_id)
-
-
-def get_coin_balance(entity_id: int, model_config_id: int):
-    """Return coins_left for entity's pool, or None if unlimited or blocked."""
-    effective = get_effective_limit(entity_id, model_config_id)
-    if effective is None:
-        return None
-    max_coins, _, starting = effective
-    if max_coins == -2:
-        return None
-
-    balance = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()
-    if balance is None:
-        return float(starting)
-
-    return float(balance.coins_left)
 
 
 def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float, effective=_UNSET):
@@ -1034,7 +1020,7 @@ def _send_message_stream(app, messages, model, entity_id, source, effective, dis
             or getattr(usage, "reasoning_tokens", None)
         ) if usage else None
 
-        cost = round(input_tokens * mc_in_cost / 1_000_000 + output_tokens * mc_out_cost / 1_000_000, 6)
+        cost = calculate_cost(input_tokens, output_tokens, mc_in_cost, mc_out_cost)
         output_speed = output_tokens / duration if duration > 0 else 0.0
 
         if entity_id is not None:

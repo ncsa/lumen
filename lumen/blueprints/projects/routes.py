@@ -183,7 +183,14 @@ def data():
     direction = sort_col.desc().nullslast() if order == "desc" else sort_col.asc().nullslast()
     stmt = stmt.order_by(direction)
 
-    total = db.session.scalar(select(func.count()).select_from(stmt.subquery()))
+    # Count from the base Entity filters only: the outer joins are at most 1:1
+    # and cannot change the row count — re-running them for the count is pure waste.
+    count_stmt = select(func.count()).select_from(Entity).where(Entity.entity_type == "project")
+    if not admin:
+        count_stmt = count_stmt.where(Entity.id.in_(managed_ids))
+    if search:
+        count_stmt = count_stmt.where(Entity.name.ilike(f"%{search}%"))
+    total = db.session.scalar(count_stmt)
     rows = db.session.execute(stmt.offset((page - 1) * per_page).limit(per_page)).all()
 
     # Per-row data for the inline edit dialog: whether the caller owns the
@@ -249,7 +256,7 @@ def detail(sid):
     entity = db.session.get(Entity, entity_id)
     can_manage = is_admin(entity) or (owner_id == entity_id)
 
-    h = hashlib.md5(project.name.strip().lower().encode()).hexdigest()
+    h = hashlib.md5(project.name.strip().lower().encode(), usedforsecurity=False).hexdigest()
     gravatar_url = f"https://www.gravatar.com/avatar/{h}?s=230&d=identicon&f=y"
 
     # The project's own limit row (not an inherited group/default pool), used to

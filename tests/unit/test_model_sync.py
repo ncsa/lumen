@@ -220,11 +220,17 @@ def test_price_untouched_without_dev_match(monkeypatch):
 class _Resp:
     def __init__(self, payload, ok=True):
         self._p = payload
-        self.ok = ok
+        self.status = 200 if ok else 404
     def json(self):
-        if not self.ok:
+        if self.status != 200:
             raise ValueError("http error")
         return self._p
+
+
+def _patch_probe(monkeypatch, fake_get):
+    """Route the pinned probe through fake_get and skip real DNS validation."""
+    monkeypatch.setattr(model_sync, "_validate_endpoint_url", lambda url: "93.184.216.34")
+    monkeypatch.setattr(model_sync, "_pinned_get", lambda url, ip, headers: fake_get(url))
 
 
 def test_sglang_server_info_preferred_over_v1_models(monkeypatch):
@@ -237,7 +243,7 @@ def test_sglang_server_info_preferred_over_v1_models(monkeypatch):
             return _Resp({"max_req_input_len": 500410, "served_model_name": "zai-org/GLM-5.2-FP8",
                           "is_embedding": False, "enable_multimodal": None})
         return _Resp({"data": [{"id": "zai-org/GLM-5.2-FP8", "max_model_len": 1048576}]})
-    monkeypatch.setattr(model_sync.requests, "get", fake_get)
+    _patch_probe(monkeypatch, fake_get)
     r = model_sync.fetch_endpoint_model({"url": "http://x", "api_key": "k"})
     assert r["max_model_len"] == 500410
     assert r["id"] == "zai-org/GLM-5.2-FP8"
@@ -261,7 +267,7 @@ def test_sglang_management_endpoints_probed_at_root_not_v1(monkeypatch):
             return _Resp({"max_req_input_len": 500410, "served_model_name": "zai-org/GLM-5.2-FP8",
                           "is_embedding": False, "enable_multimodal": None})
         return _Resp({}, ok=False)
-    monkeypatch.setattr(model_sync.requests, "get", fake_get)
+    _patch_probe(monkeypatch, fake_get)
     r = model_sync.fetch_endpoint_model({"url": "http://x/v1", "api_key": "k"})
     assert r["max_model_len"] == 500410
     assert r["backend"] == "sglang"
@@ -279,7 +285,7 @@ def test_sglang_server_info_without_max_req_input_len_preserves_flags(monkeypatc
         if url.endswith("/models"):
             return _Resp({"data": [{"id": "m", "max_model_len": 8192}]})
         return _Resp({}, ok=False)
-    monkeypatch.setattr(model_sync.requests, "get", fake_get)
+    _patch_probe(monkeypatch, fake_get)
     r = model_sync.fetch_endpoint_model({"url": "http://x", "api_key": "k"})
     assert r["backend"] == "sglang"
     assert r["is_embedding"] is True
@@ -295,7 +301,7 @@ def test_sglang_flags_returned_even_without_any_context_length(monkeypatch):
         if url.endswith("/models"):
             return _Resp({"data": [{"id": "m"}]})  # no max_model_len
         return _Resp({}, ok=False)  # /get_model_info 404
-    monkeypatch.setattr(model_sync.requests, "get", fake_get)
+    _patch_probe(monkeypatch, fake_get)
     r = model_sync.fetch_endpoint_model({"url": "http://x", "api_key": "k"})
     assert r["backend"] == "sglang"
     assert r["enable_multimodal"] is True
@@ -310,7 +316,7 @@ def test_vllm_used_when_server_info_absent(monkeypatch):
         if url.endswith("/models"):
             return _Resp({"data": [{"id": "m", "max_model_len": 32768}]})
         return _Resp({}, ok=False)
-    monkeypatch.setattr(model_sync.requests, "get", fake_get)
+    _patch_probe(monkeypatch, fake_get)
     r = model_sync.fetch_endpoint_model({"url": "http://x", "api_key": "k"})
     assert r["max_model_len"] == 32768
     assert r["id"] == "m"
@@ -327,7 +333,7 @@ def test_proxy_200_empty_body_not_tagged_sglang(monkeypatch):
         if url.endswith("/models"):
             return _Resp({"data": [{"id": "m", "max_model_len": 32768}]})
         return _Resp({}, ok=False)
-    monkeypatch.setattr(model_sync.requests, "get", fake_get)
+    _patch_probe(monkeypatch, fake_get)
     r = model_sync.fetch_endpoint_model({"url": "http://x", "api_key": "k"})
     assert "backend" not in r  # must fall through to vLLM path
     assert r["max_model_len"] == 32768
@@ -344,7 +350,7 @@ def test_get_model_info_fallback(monkeypatch):
         if url.endswith("/get_model_info"):
             return _Resp({"context_length": 8192, "model_path": "m"})
         return _Resp({}, ok=False)
-    monkeypatch.setattr(model_sync.requests, "get", fake_get)
+    _patch_probe(monkeypatch, fake_get)
     r = model_sync.fetch_endpoint_model({"url": "http://x", "api_key": "k"})
     assert r["max_model_len"] == 8192
 
@@ -483,16 +489,18 @@ def test_validate_url_rejects_hostname_resolving_to_private_ip(monkeypatch):
         model_sync._validate_endpoint_url("http://internal.example.com/v1")
 
 
-def test_validate_url_allows_public_ip(monkeypatch):
+def test_validate_url_allows_public_ip_and_returns_pinned_ip(monkeypatch):
     import socket
 
     from lumen.services import model_sync
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: _fake_addrinfo("93.184.216.34"))
-    model_sync._validate_endpoint_url("https://api.example.com/v1")  # must not raise
+    assert model_sync._validate_endpoint_url("https://api.example.com/v1") == "93.184.216.34"
 
 
-def test_validate_url_dns_failure_passes(monkeypatch):
+def test_validate_url_dns_failure_rejected(monkeypatch):
     import socket
+
+    import pytest
 
     from lumen.services import model_sync
 
@@ -500,4 +508,5 @@ def test_validate_url_dns_failure_passes(monkeypatch):
         raise socket.gaierror("no such host")
 
     monkeypatch.setattr(socket, "getaddrinfo", boom)
-    model_sync._validate_endpoint_url("https://does-not-resolve.example/v1")  # must not raise
+    with pytest.raises(ValueError, match="does not resolve"):
+        model_sync._validate_endpoint_url("https://does-not-resolve.example/v1")

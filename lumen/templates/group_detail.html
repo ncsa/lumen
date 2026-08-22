@@ -49,11 +49,7 @@
           <div class="col-4">
             <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Members</div>
-              {% if show_members %}
               <div class="fw-bold fs-5">{{ "{:,}".format(member_count) }}</div>
-              {% else %}
-              <div class="fw-bold fs-5 text-muted">—</div>
-              {% endif %}
             </div>
           </div>
           <div class="col-4">

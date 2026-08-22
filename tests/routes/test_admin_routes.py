@@ -260,7 +260,7 @@ def test_config_post_backs_up_previous_config(app, admin_client, tmp_path):
     original = app.config["CONFIG_YAML"]
     app.config["CONFIG_YAML"] = str(cfg)
     try:
-        resp = admin_client.post("/admin/api/config", json={"app": {"name": "Updated"}})
+        resp = admin_client.post("/admin/api/config", json={"version": 3, "app": {"name": "Updated"}})
         assert resp.status_code == HTTPStatus.OK
         bak = tmp_path / "config.yaml.bak"
         assert bak.exists()
@@ -279,7 +279,7 @@ def test_config_post_succeeds_when_backup_unwritable(app, admin_client, tmp_path
     app.config["CONFIG_YAML"] = str(cfg)
     try:
         with patch("lumen.commands.shutil.copy2", side_effect=PermissionError(13, "Permission denied")):
-            resp = admin_client.post("/admin/api/config", json={"app": {"name": "Updated"}})
+            resp = admin_client.post("/admin/api/config", json={"version": 3, "app": {"name": "Updated"}})
         assert resp.status_code == HTTPStatus.OK
         assert "Updated" in cfg.read_text()
         assert not (tmp_path / "config.yaml.bak").exists()
@@ -296,7 +296,7 @@ def test_config_post_forbidden_when_editor_disabled(app, admin_client, tmp_path)
     app.config["CONFIG_YAML"] = str(cfg)
     app.config["CONFIG_EDITOR"] = False
     try:
-        resp = admin_client.post("/admin/api/config", json={"app": {"name": "Updated"}})
+        resp = admin_client.post("/admin/api/config", json={"version": 3, "app": {"name": "Updated"}})
         assert resp.status_code == HTTPStatus.FORBIDDEN
         # The file must be untouched when the editor is disabled.
         assert "Original" in cfg.read_text()
@@ -307,6 +307,7 @@ def test_config_post_forbidden_when_editor_disabled(app, admin_client, tmp_path)
 
 # A config with every secret-bearing path populated, for mask/restore tests.
 _FULL_SECRET_CONFIG = """\
+version: 3
 app:
   name: Lumen
   secret_key: real-secret-key
@@ -325,6 +326,8 @@ rate_limiting:
   storage_url: redis://:realredis@host:6379/0
 models:
   - name: gpt-4o
+    input_cost_per_million: 1
+    output_cost_per_million: 1
     active: true
     endpoints:
       - url: https://api.openai.com/v1
@@ -455,6 +458,8 @@ def test_config_post_preserves_endpoint_api_keys(app, admin_client, tmp_path):
     """Endpoint api_keys survive a masked round-trip across multiple models/endpoints."""
     original, cfg = _use_config(app, tmp_path, _FULL_SECRET_CONFIG + """\
   - name: claude-3
+    input_cost_per_million: 1
+    output_cost_per_million: 1
     active: true
     endpoints:
       - url: https://api.anthropic.com/v1
@@ -478,11 +483,14 @@ def test_config_post_preserves_endpoint_api_keys(app, admin_client, tmp_path):
 def test_config_post_preserves_duplicate_url_endpoints(app, admin_client, tmp_path):
     """Two endpoints sharing a URL (documented round-robin multi-key) round-trip by position."""
     config = """\
+version: 3
 app:
   name: Lumen
   secret_key: real-secret
 models:
   - name: gpt-4o
+    input_cost_per_million: 1
+    output_cost_per_million: 1
     active: true
     endpoints:
       - url: https://api.openai.com/v1
@@ -510,15 +518,20 @@ models:
 def test_config_post_rejects_duplicate_model_names(app, admin_client, tmp_path):
     """Duplicate model names on disk → ambiguous restore → 400, no silent key swap."""
     config = """\
+version: 3
 app:
   name: Lumen
   secret_key: real-secret
 models:
   - name: gpt-4o
+    input_cost_per_million: 1
+    output_cost_per_million: 1
     endpoints:
       - url: https://api.openai.com/v1
         api_key: sk-first
   - name: gpt-4o
+    input_cost_per_million: 1
+    output_cost_per_million: 1
     endpoints:
       - url: https://api.openai.com/v1
         api_key: sk-second
@@ -537,11 +550,14 @@ models:
 def test_config_post_remove_endpoint_preserves_remaining_key(app, admin_client, tmp_path):
     """Removing an endpoint restores the remaining endpoint's OWN key, not the deleted one's."""
     config = """\
+version: 3
 app:
   name: Lumen
   secret_key: real-secret
 models:
   - name: gpt-4o
+    input_cost_per_million: 1
+    output_cost_per_million: 1
     active: true
     endpoints:
       - url: https://api.openai.com/v1
@@ -568,11 +584,14 @@ models:
 def test_config_post_reorder_endpoints_preserves_keys(app, admin_client, tmp_path):
     """Reordering endpoints restores each to its OWN key by URL, not by position."""
     config = """\
+version: 3
 app:
   name: Lumen
   secret_key: real-secret
 models:
   - name: gpt-4o
+    input_cost_per_million: 1
+    output_cost_per_million: 1
     active: true
     endpoints:
       - url: https://api.openai.com/v1
@@ -600,11 +619,14 @@ models:
 def test_config_post_duplicate_url_count_mismatch_rejects(app, admin_client, tmp_path):
     """Adding/removing within a duplicate-URL group → 400, not silent corruption."""
     config = """\
+version: 3
 app:
   name: Lumen
   secret_key: real-secret
 models:
   - name: gpt-4o
+    input_cost_per_million: 1
+    output_cost_per_million: 1
     active: true
     endpoints:
       - url: https://api.openai.com/v1

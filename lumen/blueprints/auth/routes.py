@@ -18,7 +18,7 @@ auth_bp = Blueprint("auth", __name__)
 
 
 def gravatar_md5(email: str) -> str:
-    return hashlib.md5(email.strip().lower().encode()).hexdigest()
+    return hashlib.md5(email.strip().lower().encode(), usedforsecurity=False).hexdigest()
 
 
 def make_initials(name: str) -> str:

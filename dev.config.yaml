@@ -44,20 +44,6 @@ defaults:
     refresh: 0.1
     starting: 50
 
-# DEPRECATED: auto-join rules live in the database and are edited on each
-# group's page (admin-only Rules tab). This section is imported into the
-# database once by the upgrade migration and ignored afterwards (a startup
-# warning nags until it is removed). Dev note: the SQLite dev flow
-# (create_all + stamp) skips migrations, so create dev groups in the UI.
-group_rules:
-  staff:
-  - field: affiliation
-    contains: staff@example.edu
-  students:
-  - field: affiliation
-    contains: student@example.edu
-  # A small group to grant owned models to; add it to a model on its detail page.
-  granite-testers: []
 
 models:
 # The only model with a live backend (uv run dummy). No owner -> available to everyone.

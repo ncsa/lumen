@@ -20,7 +20,7 @@ from lumen.models.entity import Entity
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.request_log import RequestLog
-from lumen.services.cost import calculate_audio_cost
+from lumen.services.cost import calculate_audio_cost, calculate_cost
 from lumen.services.crypto import cache_salt_for_entity, hash_api_key
 from lumen.services.live_state import get_live_state
 from lumen.services.llm import (
@@ -433,7 +433,7 @@ def _complete_and_bill(model_name: str, messages: list, **kwargs):
         else:
             usage_prompt, usage_completion = usage.prompt_tokens, usage.completion_tokens
 
-        cost = round(usage_prompt * mc_in_cost / 1_000_000 + usage_completion * mc_out_cost / 1_000_000, 6)
+        cost = calculate_cost(usage_prompt, usage_completion, mc_in_cost, mc_out_cost)
         subtract_coins(entity_id, mc_id, cost, effective=effective)
         update_stats(entity_id, mc_id, "api", usage_prompt, usage_completion, cost,
                      endpoint_id=ep_id, duration=duration,
@@ -595,10 +595,9 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                 if not aborted:
                     duration = _time.monotonic() - t0
                     if usage is not None:
-                        cost = round(
-                            usage.prompt_tokens * mc_in_cost / 1_000_000
-                            + usage.completion_tokens * mc_out_cost / 1_000_000,
-                            6,
+                        cost = calculate_cost(
+                            usage.prompt_tokens, usage.completion_tokens,
+                            mc_in_cost, mc_out_cost,
                         )
                         phase = "billing"
                         with app.app_context():

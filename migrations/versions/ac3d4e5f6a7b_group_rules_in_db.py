@@ -4,12 +4,12 @@ Revision ID: ac3d4e5f6a7b
 Revises: ab2c3d4e5f6a
 Create Date: 2026-08-19 00:00:00.000000
 
-Group auto-join rules move from config.yaml's group_rules section into a new
-group_rules table, edited on the group detail page. groups.auto_join replaces
-groups.config_managed: the old flag meant "auto-created because a config.yaml
-rule names this group", which is carried over as auto_join=true; the rules
-themselves are imported from config.yaml at the next startup (deprecated
-one-time import in lumen.commands.import_group_rules_from_yaml).
+Group auto-join rules live in a new group_rules table, edited on the group
+detail page (config.yaml's group_rules section is not read — Lumen 2.0
+removed it). groups.auto_join replaces groups.config_managed: the old flag
+meant "auto-created because a config.yaml rule names this group", which is
+carried over as auto_join=true; af6a7b8c9d0e later clears it on groups that
+end up with no rules.
 
 SQLite dev uses ``create_all`` + stamp head and never runs this chain, so
 only the PostgreSQL path needs to be correct.

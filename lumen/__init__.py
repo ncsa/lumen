@@ -131,7 +131,6 @@ def _loaded_by_non_serving_cli():
     return ctx.info_name != "run"
 
 
-
 def create_app():
     app = Flask(__name__)
     app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
@@ -390,8 +389,12 @@ def create_app():
     from .extensions import db, limiter, migrate, oauth
     from .services.ctx_probe import install_ctx_probe
     from .services.pool_tracker import init_pool_tracking, record_teardown
-    init_pool_tracking()
-    install_ctx_probe()
+    # Stack-capturing DB/context diagnostics (pool checkout tracking and app-context
+    # push/pop probes, surfaced via /metrics/debug). On by default; app.diagnostics:
+    # false disables them for deployments that don't want the per-request overhead.
+    if app_cfg.get("diagnostics", True):
+        init_pool_tracking()
+        install_ctx_probe()
     db.init_app(app)
     migrate.init_app(app, db)
     oauth.init_app(app)
@@ -602,7 +605,6 @@ def create_app():
                 .where(
                     Entity.id.in_(project_ids),
                     Entity.entity_type == "project",
-
                 )
                 .order_by(Entity.name)
             ).scalars().all()
@@ -626,12 +628,13 @@ def create_app():
 
     app.jinja_env.filters["markdown"] = _md_filter
 
-    # Sync models from yaml on every startup. group_rules is no longer read at
-    # runtime: migration af6a7b8c9d0e imported it into the database once, and
-    # rules are managed on each group's page.
+    # Sync models from yaml on every startup. group_rules is never read from
+    # config.yaml: auto-join rules are database rows managed on each group's
+    # Rules tab.
     if yaml_data.get("group_rules"):
-        print("WARNING: config.yaml group_rules is deprecated and ignored — auto-join rules "
-              "live in the database (each group's Rules tab); remove the section from config.yaml.",
+        print("WARNING: config.yaml group_rules is not supported — auto-join rules are managed "
+              "in the database (each group's Rules tab); remove the section from config.yaml "
+              "and recreate any rules you still want in the UI.",
               file=sys.stderr)
     from lumen.commands import sync_models_from_yaml
 
@@ -652,7 +655,6 @@ def create_app():
             except Exception as e:
                 print(f"WARNING: Could not prime the metrics snapshot (run 'flask db upgrade' first): {e}",
                       file=sys.stderr)
-
 
     # Start background threads once per serving process.
     # - Werkzeug dev server: double-imports the app; only run in the child (WERKZEUG_RUN_MAIN=true).

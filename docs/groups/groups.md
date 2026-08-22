@@ -24,16 +24,16 @@ Anyone signed in can create a group, so the Groups page is always available.
 
 ### Groups with no owner
 
-A group with no owner has nobody accountable for its membership — typically one
-created automatically by a `group_rules` entry in `config.yaml`. For those groups
-the **member list and all usage totals are hidden from everyone except
-administrators**, and they are left out of the summary cards. Members, Requests,
-Tokens and Coins Spent show a dash. This stops a large auto-assigned group from
-becoming a way for any member to browse the whole user directory.
+A group with no owner has nobody accountable for its membership — typically a
+large auto-join group populated by login rules. For those groups the **member
+list and all usage totals are hidden from everyone except administrators**, and
+their usage is left out of the summary cards. Requests, Tokens and Coins Spent
+show a dash. This stops a large auto-assigned group from becoming a way for any
+member to browse the whole user directory.
 
 Everything that affects you as a member stays visible: the group's name, whether
-it is active, its coin policy, and the models it grants you. Assigning an owner
-makes the hidden columns visible to members again.
+it is active, how many members it has, its coin policy, and the models it grants
+you. Assigning an owner makes the hidden columns visible to members again.
 
 ## Summary Cards
 

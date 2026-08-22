@@ -24,6 +24,7 @@ from lumen.services.config_watcher import (
     _find_unrestorable_masks,
     mask_config_secrets,
     restore_config_secrets,
+    validate_config_structure,
 )
 from lumen.services.llm import best_group_pool_limit, get_pool_limit
 from lumen.timeutils import utcnow
@@ -409,7 +410,12 @@ def api_users():
     direction = sort_col.desc().nullslast() if order == "desc" else sort_col.asc().nullslast()
     stmt = stmt.order_by(direction)
 
-    total = db.session.scalar(select(func.count()).select_from(stmt.subquery()))
+    # Count from the base Entity filters only: the outer joins are at most 1:1
+    # and cannot change the row count — re-running them for the count is pure waste.
+    count_stmt = select(func.count()).select_from(Entity).where(Entity.entity_type == "user")
+    if search:
+        count_stmt = count_stmt.where(Entity.name.ilike(like) | Entity.email.ilike(like))
+    total = db.session.scalar(count_stmt)
     rows = db.session.execute(stmt.offset((page - 1) * per_page).limit(per_page)).all()
 
     # The user's own coin limit (None = inherited pool), for the edit dialog.
@@ -657,6 +663,12 @@ def config_api_post():
             "error": "Could not restore masked secret(s) — the model/url may have "
                      "changed. Re-enter: " + ", ".join(unrestorable),
         }), HTTPStatus.BAD_REQUEST
+    # Reject structurally broken configs (missing model name/costs/endpoint url)
+    # before they reach disk — they pass the version check but break the next
+    # model sync or startup.
+    structure_errors = validate_config_structure(data)
+    if structure_errors:
+        return jsonify({"error": "Invalid config: " + "; ".join(structure_errors)}), HTTPStatus.BAD_REQUEST
     try:
         write_config_yaml(config_path, data)
     except OSError as e:

@@ -354,7 +354,7 @@ Backend endpoint(s) for a model. A single `model_config` can fan out to multiple
 | `id` | Integer | NO | Primary key |
 | `model_config_id` | Integer (FK → model_configs) | NO | The model this endpoint serves. Cascades on delete. |
 | `url` | String(256) | NO | Base URL of the backend (e.g., `https://api.openai.com/v1`) |
-| `api_key` | String(256) | NO | Credential used when forwarding requests to this endpoint |
+| `api_key` | Text | NO | Credential used when forwarding requests to this endpoint. Encrypted at rest with the app encryption key (`enc:`-prefixed Fernet ciphertext); the ORM decrypts transparently. |
 | `model_name` | String(128) | YES | Override model name sent to this endpoint. When set, Lumen substitutes this value for `model_config.model_name` in upstream requests, enabling one Lumen model to map to differently-named backend models. |
 | `healthy` | Boolean | NO | Last known health status; updated by the health-check background task |
 | `last_checked_at` | DateTime | YES | UTC timestamp of the most recent health check; null if never checked |

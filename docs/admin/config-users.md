@@ -48,7 +48,7 @@ Rules can use two matcher types:
 | `contains` | Case-sensitive substring match | `contains: staff@illinois.edu` |
 | `equals` | Exact match | `equals: urn:mace:incommon:uiuc.edu` |
 
-**Deprecated:** a top-level `group_rules:` section in `config.yaml` is imported into the database once at startup — missing groups are created with their rules and auto-join enabled; groups that already have rules in the database are left alone. Remove the section after upgrading.
+There is no `group_rules:` section in `config.yaml` — rules exist only in the database. A leftover section from an older config is ignored with a startup warning; remove it and recreate the rules on each group's Rules tab.
 
 ## Everything Else Lives in the Database
 

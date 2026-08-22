@@ -219,7 +219,7 @@ Lifetime totals in `entity_stats`/`model_stats` are cumulative and survive reten
 
 ## Configuration Reference (`config.yaml`)
 
-The config file must declare `version: 3` at the top level — the app refuses to start on older config versions. Version 3 removed the `users:`, `projects:`, `clients:`, and `groups:` sections: groups, memberships, and coin pools are managed in the database, model access is ownership-based (managed on each model's detail page), and OAuth auto-assignment rules moved to a top-level `group_rules:` section (see below).
+The config file must declare `version: 3` at the top level — the app refuses to start on older config versions. Version 3 removed the `users:`, `projects:`, `clients:`, and `groups:` sections: groups, memberships, and coin pools are managed in the database, model access is ownership-based (managed on each model's detail page), and OAuth auto-assignment rules are managed in the database on each group's Rules tab (there is no `group_rules:` config section).
 
 ### App settings
 
@@ -249,7 +249,7 @@ The following secrets can be supplied via environment variables, which take prec
 | `OAUTH2_REDIRECT_URI` | `oauth2.redirect_uri` |
 | `OAUTH2_SCOPES` | `oauth2.scopes` |
 
-> **Warning:** Rotating `encryption_key` (or `LUMEN_ENCRYPTION_KEY`) invalidates all existing user API keys — users will need to generate new ones.
+> **Warning:** Rotating `encryption_key` (or `LUMEN_ENCRYPTION_KEY`) invalidates all existing user API keys — users will need to generate new ones. It also makes the endpoint API keys encrypted in the database unreadable until the next startup, when they are re-synced (re-encrypted) from `config.yaml`.
 
 ### Authentication
 
@@ -327,18 +327,7 @@ Groups control how many coins users can spend. Coins map to cost in USD (e.g. 1 
 
 #### Auto-assignment rules
 
-The top-level `group_rules:` section automatically adds users to a group at login based on their CILogon attributes (requires the `org.cilogon.userinfo` scope). A user must match **all** rules of a group to be added; a group named here is created automatically if it does not exist yet.
-
-```yaml
-group_rules:
-  staff:
-    - field: affiliation
-      contains: staff@illinois.edu   # substring match
-    - field: idp
-      equals: urn:mace:incommon:uiuc.edu   # exact match
-```
-
-Supported fields: `affiliation`, `member_of`, `idp`, `ou`. Groups assigned by rules are automatically removed if the rule no longer matches on next login.
+Auto-join rules add users to a group at login based on their CILogon attributes (requires the `org.cilogon.userinfo` scope). Rules live in the database and are edited on each group's admin-only **Rules** tab — field, contains/equals matcher, and value. A user must match **all** rules of a group to be added, and is removed again when they stop matching on a later login. There is no `group_rules:` config section.
 
 ### Chat settings
 

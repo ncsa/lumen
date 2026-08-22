@@ -787,7 +787,8 @@ def test_auto_join_group_admin_can_grant_models(admin_client, app, config_group,
 
 
 # ---------------------------------------------------------------------------
-# Ownerless groups withhold members and rolled-up stats from non-admins
+# Ownerless groups withhold the member list and rolled-up stats from
+# non-admins; the member count alone is not sensitive and stays visible
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -806,11 +807,11 @@ def ownerless_group(app, test_user, second_user):
     return gid
 
 
-def test_ownerless_group_hides_members_and_stats_in_list(auth_client, ownerless_group):
+def test_ownerless_group_hides_stats_but_shows_member_count_in_list(auth_client, ownerless_group):
     row = next(g for g in auth_client.get("/groups/data").get_json()["groups"]
                if g["id"] == ownerless_group)
     assert row["has_owner"] is False
-    assert row["members"] is None
+    assert row["members"] == 2
     assert row["requests"] is None
     assert row["tokens"] is None
     assert row["cost"] is None
@@ -869,18 +870,20 @@ def test_ownerless_group_detail_shows_members_tab_to_admin(admin_client, ownerle
     assert b'id="tab-members"' in resp.data
 
 
-def test_ownerless_group_excluded_from_summary_cards(auth_client, app, ownerless_group, test_user):
-    """Withheld groups must not silently inflate the totals either."""
+def test_ownerless_group_excluded_from_usage_summary_cards(auth_client, app, ownerless_group, test_user):
+    """Withheld usage must not silently inflate the totals; the membership
+    count covers every visible group."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_stat import EntityStat
         st = db.session.get(EntityStat, test_user["id"])
         st.requests = 7
         db.session.commit()
-    # Total Members / Total Requests come only from owned groups (none here).
-    assert _summary_cards(auth_client) == {"Total Members": 0, "Total Requests": 0}
+    # Total Requests comes only from owned groups (none here); Total Members
+    # counts every visible group's memberships.
+    assert _summary_cards(auth_client) == {"Total Members": 2, "Total Requests": 0}
     data = auth_client.get("/groups/data").get_json()
-    assert all(g["members"] is None for g in data["groups"])
+    assert all(isinstance(g["members"], int) for g in data["groups"])
 
 
 def test_summary_cards_count_ownerless_group_for_admin(admin_client, app, ownerless_group, test_user):

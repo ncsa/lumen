@@ -318,16 +318,7 @@ For local development, set `app.dev_user.email` in `config.yaml` to bypass OAuth
 
 ### Group Auto-Assignment
 
-Auto-join rules live in the database (`group_rules` table, edited on each group's Rules tab) and are evaluated against OAuth claims at every login (matching lives in `lumen/blueprints/auth/routes.py`). The deprecated `group_rules:` config section is imported once by migration `af6a7b8c9d0e` and then ignored. The old yaml shape, for reference:
-
-```yaml
-group_rules:
-  uiuc-staff:
-    - field: affiliation
-      contains: staff@illinois.edu
-    - field: idp
-      equals: urn:mace:incommon:uiuc.edu
-```
+Auto-join rules live in the database (`group_rules` table, edited on each group's Rules tab) and are evaluated against OAuth claims at every login (matching lives in `lumen/blueprints/auth/routes.py`). There is no `group_rules:` config section — a leftover one from an older config is ignored with a startup warning.
 
 A user is added to a group if the group is active, has auto-join enabled, and **all** of its rules match; the assignment runs on every login, so rule-based memberships stay in sync with IdP claims (and are removed when they stop matching). Groups themselves (pools, memberships, model grants, rules) are entirely DB-managed.
 
@@ -384,7 +375,7 @@ Coin values use sentinel semantics: `-2` = unlimited, `0` = blocked, positive = 
 
 ## Configuration Management
 
-`config.yaml` is the single source of truth for runtime configuration (version 3 required — older files are rejected at startup). On each `create_app` call, models are synced to the database. Groups — memberships, coin pools, model grants, and auto-join rules — are DB-managed and never touched by config sync (a leftover `group_rules:` section only triggers a deprecation warning).
+`config.yaml` is the single source of truth for runtime configuration (version 3 required — older files are rejected at startup). On each `create_app` call, models are synced to the database. Groups — memberships, coin pools, model grants, and auto-join rules — are DB-managed and never touched by config sync (a leftover `group_rules:` section only triggers a startup warning).
 
 | Section | Controls |
 |---|---|
