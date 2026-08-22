@@ -121,21 +121,10 @@ rate_limiting:
   limit: "30 per minute"  # applies to every endpoint, keyed by authenticated user identity
 
 # Groups — memberships, coin pools, model grants, and auto-join rules — are
-# managed in the app (each group's page), not here. Auto-join rules match
+# managed in the app (each group's page), not here. There is no group_rules
+# config section. Auto-join rules match
 # CILogon userinfo fields at login (requires org.cilogon.userinfo scope).
-# DEPRECATED: a group_rules section here is imported into the database once by
-# the upgrade migration (creating missing groups with their rules) and is
-# ignored afterwards — remove it once upgraded.
 # Model access is ownership-based and managed on each model's detail page.
-group_rules: {}
-  # aifarms:
-  #   - field: member_of
-  #     contains: icc-grp-aifarms   # substring match against the member_of field
-  # staff:
-  #   - field: affiliation
-  #     contains: staff@illinois.edu
-  #   - field: idp
-  #     equals: urn:mace:incommon:uiuc.edu   # exact match
 
 models:
   # The top-level "name" is Lumen's internal model identifier — what callers use in API requests.

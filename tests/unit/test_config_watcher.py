@@ -93,6 +93,10 @@ def test_restart_keys_covered():
     assert ("app", "secret_key") in keys
     assert ("app", "database") in keys
     assert ("api", "prometheus", "enabled") in keys
+    # Both are read once in create_app and never re-read by apply_hot_config, so
+    # without an entry here the editor accepts a change that silently does nothing.
+    assert ("app", "encryption_key") in keys
+    assert ("app", "logs", "level") in keys
 
 
 def test_start_config_watcher_creates_daemon_thread(app, tmp_path):

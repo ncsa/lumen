@@ -45,6 +45,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Fixed
 
+- Version 3 configuration examples and access-control documentation match runtime behavior.
 - The test suite was silently running against the developer database: `tests/fixtures/test_config.yaml` used a `database_url:` key the app never reads, so the test app fell back to the default `sqlite:///lumen_dev.db` and the suite's teardown dropped every table in it on each run. The fixture now uses the real `app.database.url` key (`test_lumen.db`), and the cleanup path points at the instance directory where Flask-SQLAlchemy actually puts relative SQLite paths.
 - All data tables now consistently draw cell borders: the API keys, projects, and models tables on the profile page, the managers/keys/models tables on the project detail page, the projects list, and the admin users table gained the borders that the models dashboard and Web Chat table already had.
 - Model sync endpoint probes are hardened against SSRF: endpoint URLs must be http/https, hostnames that resolve to private, loopback, link-local, multicast, or reserved IP ranges are refused, and the probes no longer follow redirects — so the admin "Update from endpoint" feature cannot be used to reach internal services.
