@@ -15,23 +15,18 @@ All notable changes to Lumen will be documented in this file.
 ### Security
 
 - Upstream endpoint API keys are encrypted at rest with `app.encryption_key`. (PR #41)
-- Model endpoint probes pin validated DNS resolutions to prevent DNS rebinding. (PR #41)
+- Model endpoint probes reject unsafe or internal targets, redirects, and DNS rebinding. (PR #41)
+- Request bodies are capped before oversized uploads are buffered. (PR #41)
 - `/metrics/debug` supports a separate bearer token via `api.prometheus.debug_token`. (PR #41)
 - The config editor rejects structurally invalid version 3 configurations before saving. (PR #41)
-- Gravatar hashing works on FIPS-enabled Python builds. (PR #41)
 
 ### Changed
 
 - Database and app-context diagnostics can be disabled with `app.diagnostics: false`. (PR #41)
-- API and web-chat paths use one shared cost calculation. (PR #41)
-- Admin user, project, and group-member pagination uses leaner count queries. (PR #41)
-- Obsolete client-blueprint and unused config and balance helpers are removed. (PR #41)
 - The implicit `default` group is removed; users without a group pool continue to use `defaults.tokens`. (PR #41)
 - Project ownership transfers use a Change Owner dialog and require the new owner to already be a manager. (PR #41)
-- Non-serving CLI commands no longer start background workers. (PR #41)
-- CI enforces Python, YAML, and Helm linting. (PR #41)
 - **Breaking:** Config version 3 removes user, project, client, group, and auto-join sections from config and Helm values; migrate old values files. (PR #41)
-- **Breaking:** Model access is database-managed: unowned models are public; owned models are limited to their owner and granted groups. Back up the database and assign owners to restricted models when upgrading. (PR #41)
+- **Breaking:** Model access is database-managed: unowned models are public; owned models are limited to their owner and granted groups. Back up the database and assign restricted-model owners when upgrading. (PR #41)
 - **Breaking:** Project settings and per-user coin pools move from config to database-backed UI, preserving existing database values. (PR #41)
 - Project detail pages use the profile-card and tabbed layout. (PR #41)
 - Native browser dialogs are replaced with accessible application modals. (PR #41)
@@ -43,17 +38,11 @@ All notable changes to Lumen will be documented in this file.
 
 ### Fixed
 
-- Version 3 configuration examples and access-control documentation match runtime behavior. (PR #41)
-- Tests use their isolated SQLite database instead of the developer database. (PR #41)
+- Non-serving CLI commands no longer start background workers during migrations and other maintenance commands. (PR #41)
 - Data tables consistently render cell borders. (PR #41)
-- Model endpoint probes reject unsafe URLs, private addresses, and redirects. (PR #41)
-- Request bodies are capped before oversized uploads are buffered. (PR #41)
 - Models.dev knowledge cutoffs are normalized to `YYYY-MM`. (PR #41)
 - Config-editor saves tolerate unwritable backup paths. (PR #41)
-- Resetting coins uses the latest configured maximum. (PR #41)
-- Clearing Max Coins removes the entity pool and restores inherited limits. (PR #41)
-- Project manager ownership and removal actions handle quoted names correctly. (PR #41)
-- Tests and dependency floors support OpenAI 3.x and `httpx2`. (PR #41)
+- Gravatar hashing works on FIPS-enabled Python builds. (PR #41)
 
 ## [1.26.0] - 2026-08-22
 
