@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [1.26.0] - 2026-08-22
+
 ### Fixed
 
 - The load test served the bare Flask app, so it measured a gateway that does not exist in production and could not see its own bottleneck. `loadtesting/run_loadtest.sh` ran `uvicorn run:app --interface wsgi`, and `run.py` exposes the unwrapped WSGI callable — so uvicorn wrapped it in its own deprecated `_WSGIMiddleware` instead of `asgi.py`'s `DisconnectAwareWSGIMiddleware`. Nothing stamped `lumen.t0_monotonic`, so `request_logs.queue_wait`, `preflight`, `started_at` and `send_blocked` were NULL on every row; client disconnects were undetectable; `LUMEN_WSGI_SEND_TIMEOUT` was not enforced; and the thread pool was uvicorn's hard-coded 10 per process, ignoring `LUMEN_WSGI_WORKERS`. A 500-user run consequently plateaued at exactly 40 concurrent requests (4 processes × 10 threads) while Locust reported 45–70 s response times against a recorded median upstream call of 1.25 s — the missing minute was queueing in a queue Lumen was blind to, and the 2,753 rows it wrote said nothing about it. The harness now serves `asgi:app` with `WEB_CONCURRENCY`, `LUMEN_WSGI_WORKERS` and `WSGI_WORKERS`/`WORKERS` overrides, so the ceiling is `--workers × LUMEN_WSGI_WORKERS` and both halves are configurable.
