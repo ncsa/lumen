@@ -212,26 +212,18 @@ def test_delete_key_requires_login(client):
 # user_consent
 # ---------------------------------------------------------------------------
 
-def _make_graylist_model(app, entity_id, model_name="graylist-model"):
-    """Create a needs_ack model the given entity is allowed to access."""
+def _make_needs_ack_model(app, entity_id, model_name="ack-model"):
+    """Create a public needs_ack model (visible to the entity)."""
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
         from lumen.models.model_config import ModelConfig
         mc = ModelConfig(
             model_name=model_name,
             input_cost_per_million=1.0,
             output_cost_per_million=2.0,
-            access="allowed",
             needs_ack=True,
         )
         db.session.add(mc)
-        db.session.flush()
-        db.session.add(EntityModelAccess(
-            entity_id=entity_id,
-            model_config_id=mc.id,
-            access_type="allowed",
-        ))
         db.session.commit()
         db.session.refresh(mc)
         return {"id": mc.id, "model_name": mc.model_name}
@@ -247,15 +239,15 @@ def test_user_consent_model_not_found(auth_client):
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
-def test_user_consent_not_graylisted(app, auth_client, test_model):
-    """Posting consent for a non-graylisted model returns 400."""
+def test_user_consent_no_ack_required(app, auth_client, test_model):
+    """Posting consent for a model with no acknowledgement requirement returns 400."""
     resp = auth_client.post(f"/profile/consent/{test_model['model_name']}")
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
 def test_user_consent_success(app, auth_client, test_user):
-    """Posting consent for a graylisted model records it and returns 200."""
-    gm = _make_graylist_model(app, test_user["id"])
+    """Posting consent for a needs_ack model records it and returns 200."""
+    gm = _make_needs_ack_model(app, test_user["id"])
     resp = auth_client.post(f"/profile/consent/{gm['model_name']}")
     assert resp.status_code == HTTPStatus.OK
     assert resp.get_json()["ok"] is True
@@ -268,7 +260,7 @@ def test_user_consent_success(app, auth_client, test_user):
 
 def test_user_consent_idempotent(app, auth_client, test_user):
     """Posting consent twice is idempotent — second call still returns 200."""
-    gm = _make_graylist_model(app, test_user["id"], model_name="graylist-model-2")
+    gm = _make_needs_ack_model(app, test_user["id"], model_name="ack-model-2")
     auth_client.post(f"/profile/consent/{gm['model_name']}")
     resp = auth_client.post(f"/profile/consent/{gm['model_name']}")
     assert resp.status_code == HTTPStatus.OK
@@ -402,8 +394,8 @@ def test_profile_projects_section_shows_managed_project(app, auth_client, test_u
     assert "my-client-svc" in body
 
 
-def test_profile_projects_section_excludes_inactive(app, auth_client, test_user):
-    """An inactive managed project is not shown (query filters active==True)."""
+def test_profile_projects_section_includes_inactive(app, auth_client, test_user):
+    """An inactive managed project is still shown so the manager can reach and re-enable it."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity import Entity
@@ -417,8 +409,8 @@ def test_profile_projects_section_excludes_inactive(app, auth_client, test_user)
     resp = auth_client.get("/profile")
     assert resp.status_code == HTTPStatus.OK
     body = resp.get_data(as_text=True)
-    assert 'id="project-table"' not in body
-    assert "inactive-client" not in body
+    assert 'id="project-table"' in body
+    assert "inactive-client" in body
 
 
 def test_admin_user_profile_shows_projects_section(app, admin_client, test_user):
@@ -684,3 +676,89 @@ def test_project_detail_page_does_not_render_projects_section(app, auth_client, 
     body = resp.get_data(as_text=True)
     assert 'id="project-table"' not in body
 
+
+
+# ---------------------------------------------------------------------------
+# user_consent — early access / per-requirement acknowledgement
+# ---------------------------------------------------------------------------
+
+def _make_ack_model(app, entity_id, model_name, needs_ack=False, early_access=False, end_date=None):
+    """Create a public model with the given acknowledgement requirements."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        mc = ModelConfig(
+            model_name=model_name,
+            input_cost_per_million=1.0,
+            output_cost_per_million=2.0,
+            needs_ack=needs_ack,
+            early_access=early_access,
+            end_date=end_date,
+        )
+        db.session.add(mc)
+        db.session.commit()
+        db.session.refresh(mc)
+        return {"id": mc.id, "model_name": mc.model_name}
+
+
+def _consent_row(app, entity_id, model_id):
+    with app.app_context():
+        from sqlalchemy import select
+
+        from lumen.extensions import db
+        from lumen.models.entity_model_consent import EntityModelConsent
+        row = db.session.execute(
+            select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=model_id)
+        ).scalar_one_or_none()
+        return None if row is None else {"consented_at": row.consented_at, "early_access_at": row.early_access_at}
+
+
+def test_user_consent_needs_ack_only_sets_consented_at(app, auth_client, test_user):
+    m = _make_ack_model(app, test_user["id"], "ack-only-model", needs_ack=True)
+    assert auth_client.post(f"/profile/consent/{m['model_name']}").status_code == HTTPStatus.OK
+    row = _consent_row(app, test_user["id"], m["id"])
+    assert row["consented_at"] is not None
+    assert row["early_access_at"] is None
+
+
+def test_user_consent_early_only_sets_early_access_at(app, auth_client, test_user):
+    m = _make_ack_model(app, test_user["id"], "early-only-model", early_access=True)
+    assert auth_client.post(f"/profile/consent/{m['model_name']}").status_code == HTTPStatus.OK
+    row = _consent_row(app, test_user["id"], m["id"])
+    assert row["consented_at"] is None
+    assert row["early_access_at"] is not None
+
+
+def test_user_consent_both_sets_both(app, auth_client, test_user):
+    m = _make_ack_model(app, test_user["id"], "both-ack-model", needs_ack=True, early_access=True)
+    assert auth_client.post(f"/profile/consent/{m['model_name']}").status_code == HTTPStatus.OK
+    row = _consent_row(app, test_user["id"], m["id"])
+    assert row["consented_at"] is not None
+    assert row["early_access_at"] is not None
+
+
+def test_user_consent_fills_only_missing_requirement(app, auth_client, test_user):
+    """A model gaining early_access after consent re-prompts; the second POST
+    fills only early_access_at and preserves the original consented_at."""
+    m = _make_ack_model(app, test_user["id"], "gains-early-model", needs_ack=True)
+    auth_client.post(f"/profile/consent/{m['model_name']}")
+    first = _consent_row(app, test_user["id"], m["id"])
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        db.session.get(ModelConfig, m["id"]).early_access = True
+        db.session.commit()
+    assert auth_client.post(f"/profile/consent/{m['model_name']}").status_code == HTTPStatus.OK
+    row = _consent_row(app, test_user["id"], m["id"])
+    assert row["consented_at"] == first["consented_at"]
+    assert row["early_access_at"] is not None
+
+
+def test_user_consent_expired_model_404(app, auth_client, test_user):
+    from datetime import timedelta
+
+    from lumen.timeutils import utcnow
+    m = _make_ack_model(app, test_user["id"], "expired-ack-model", needs_ack=True,
+                        end_date=utcnow() - timedelta(days=1))
+    resp = auth_client.post(f"/profile/consent/{m['model_name']}")
+    assert resp.status_code == HTTPStatus.NOT_FOUND

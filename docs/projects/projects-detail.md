@@ -2,20 +2,26 @@
 
 This page is for people managing Lumen-based services and tools. For details on what a project is, start with the [Projects overview](./projects.md).
 
-The project detail page (`/projects/<id>`) is where you manage a specific project: view usage, assign managers, create API keys, and check model access.
+The project detail page (`/projects/<id>`) is where you manage a specific project: view usage, assign managers, create API keys, and check model access. It is laid out like the [Profile page](../guides/profile.md): a header card at the top, followed by **Managers**, **API Keys**, and **Models** tabs.
 
 ![Project detail page](../img/project-detail.png)
 
-## Usage Cards
+## Header Card
 
-The top row shows the project's activity and budget:
+The left side of the card shows the project's auto-generated avatar, its name, the creation date, and — for the owner or an admin — the **Deactivate**/**Activate** button. The right side shows the project's activity and budget:
 
 | Card | Description |
 |------|-------------|
-| **Total Tokens Used** | All input + output tokens this project has consumed |
-| **Coins Spent** | Total coins spent by this project |
-| **Coin Pool** | Current balance (or **Unlimited** / **Not configured**) |
-| **Coin Refill** | Auto-refill rate and countdown to next refill |
+| **Managers** | Number of users managing this project |
+| **Coins Used** | Total coins spent by this project |
+| **Tokens Used** | All input + output tokens this project has consumed |
+| **Favorite Model** | The model this project has sent the most requests to |
+| **Coins Available** | Current balance (or **Unlimited** / not configured) |
+| **Refill Rate** | Auto-refill rate and countdown to next refill |
+
+### Editing the Project
+
+The owner and admins see an **Edit** button above the stat cards. It opens a dialog where the owner or an admin can change the project's **name** and **Active** flag. Admins additionally see the project's coin pool: **Max Coins** (`-2` = unlimited, `0` = blocked) and **Refill Rate** (coins added per hour). Clearing Max Coins removes the project's own pool so it falls back to its groups or the global defaults; lowering Max Coins clamps the current balance to the new cap.
 
 ## Managers
 
@@ -36,7 +42,7 @@ Click **Remove** next to any manager in the table. The owner cannot be removed d
 
 ### Transferring Ownership (admin or owner)
 
-Click **Make Owner** next to a non-owner manager to transfer ownership. The previous owner becomes a regular manager. If you are the current owner, transferring ownership means you will no longer be able to manage managers or toggle the project.
+Click **Change Owner** (next to **+ Add Manager**), search for the new owner by name or email, pick them from the list, and confirm. Only existing **managers** of the project are offered — add the person as a manager first if needed. The previous owner becomes a regular manager; their **Remove** button is disabled until ownership has moved. If you are the current owner, transferring ownership means you will no longer be able to manage managers or toggle the project.
 
 ### What Managers Can Do
 
@@ -49,6 +55,8 @@ Click **Make Owner** next to a non-owner manager to transfer ownership. The prev
 | Add / remove managers | — | ✓ | ✓ |
 | Transfer ownership | — | ✓ | ✓ |
 | Activate / deactivate the project | — | ✓ | ✓ |
+| Rename the project | — | ✓ | ✓ |
+| Change the coin pool (Max Coins / Refill Rate) | — | — | ✓ |
 
 ## API Keys
 

@@ -1,0 +1,16 @@
+# Relaxed profile: this repo's YAML is configuration and Kubernetes manifests,
+# not hand-formatted prose, so only real problems (syntax errors, duplicate
+# keys, broken indentation, trailing whitespace) should fail a build.
+extends: relaxed
+
+# Skip anything git ignores (local worktrees, scratch manifests, .venv) plus the
+# paths in .yamllintignore — Helm templates are Go templates, not valid YAML
+# until rendered, so `helm lint` covers those instead.
+ignore-from-file: [.gitignore, .yamllintignore]
+
+rules:
+  # Config files and chart values legitimately carry long single-line values
+  # (URLs, notices, connection strings).
+  line-length: disable
+  # Neither our config files nor the Helm values start with `---`.
+  document-start: disable

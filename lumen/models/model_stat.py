@@ -5,6 +5,7 @@ from typing import Optional
 from sqlalchemy.orm import Mapped, mapped_column
 
 from lumen.timeutils import utcnow
+
 from ..extensions import db
 
 

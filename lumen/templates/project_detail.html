@@ -1,110 +1,156 @@
 {% extends "base.html" %}
 {% from "_user_search_modal.html" import user_search_modal %}
+{% from "_entity_search_modal.html" import entity_search_modal %}
 {% block title %}{{ project.name }} — {{ app_name }}{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-1">
+<div class="mb-4 d-flex justify-content-between align-items-center">
   <a href="{{ url_for('projects.index') }}" class="btn btn-sm btn-outline-secondary">← Projects</a>
   {% if can_manage %}
-  {% if project.active %}
-  <button class="btn btn-sm btn-outline-danger"
-          onclick="toggleProject({{ project.id }}, true)">
-    <i class="bi bi-pause-circle" aria-hidden="true"></i> Deactivate
+  <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editProjectModal">
+    <i class="bi bi-pencil" aria-hidden="true"></i> Edit
   </button>
-  {% else %}
-  <button class="btn btn-sm btn-outline-success"
-          onclick="toggleProject({{ project.id }}, false)">
-    <i class="bi bi-play-circle" aria-hidden="true"></i> Activate
-  </button>
-  {% endif %}
   {% endif %}
 </div>
-<h1 class="mb-0">{{ project.name }}</h1>
-<p class="text-muted small mb-3">
-  {% if project.active %}<span class="badge bg-success me-1">Active</span>
-  {% else %}<span class="badge bg-secondary me-1">Inactive</span>{% endif %}
-  Created:
-  {% if project.created_at %}
-  <span class="local-datetime" data-utc="{{ project.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
-  {% else %}—{% endif %}
-</p>
 <ilw-content>
 
-<!-- Stat cards -->
-<div class="row g-3 mb-4">
-  <div class="col-sm-6 col-lg-3">
-    <div class="card h-100">
-      <div class="card-body">
-        <div class="text-muted small mb-1">Total Tokens Used</div>
-        <div class="fs-4 fw-semibold">{{ "{:,}".format(status.total_tokens_used) }}</div>
-        <div class="text-muted small">input + output (all time)</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-sm-6 col-lg-3">
-    <div class="card h-100">
-      <div class="card-body">
-        <div class="text-muted small mb-1">Coins Spent</div>
-        <div class="fs-4 fw-semibold">{{ "%.2f"|format(status.total_cost) }}</div>
-        <div class="text-muted small">all time</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-sm-6 col-lg-3">
-    <div class="card h-100">
-      <div class="card-body">
-        <div class="text-muted small mb-1">Coin Pool</div>
-        {% if coin_pool is none %}
-        <div class="fs-4 fw-semibold text-muted">—</div>
-        <div class="text-muted small">not configured</div>
-        {% elif coin_pool.coin_limit == -2 %}
-        <div class="fs-4 fw-semibold text-success">Unlimited</div>
+<!-- Profile card -->
+{%- set fav_models = model_usage | selectattr("requests", "gt", 0) | list | sort(attribute="requests", reverse=True) %}
+{%- set fav_model = fav_models[0].model_name if fav_models else none %}
+<div class="card profile-card mb-4">
+  <div class="card-body p-4">
+    <div class="row g-4 align-items-center">
+
+      <!-- Col 1: avatar + name + status, centred -->
+      <div class="col-12 col-md-3 text-center profile-col-identity">
+        <img src="{{ gravatar_url }}" width="115" height="115"
+             class="rounded-circle profile-avatar-img" alt="Avatar for {{ project.name }}">
+        <h2 class="profile-name mt-0 mb-0">{{ project.name }}</h2>
+        <p class="text-muted small mt-0 mb-0">
+          Created:
+          {% if project.created_at %}
+          <span class="local-datetime" data-utc="{{ project.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
+          {% else %}—{% endif %}
+        </p>
+        {% if can_manage %}
+        {% if project.active %}
+        <button class="btn btn-sm btn-outline-danger"
+                onclick="toggleProject({{ project.id }}, true)">
+          <i class="bi bi-pause-circle" aria-hidden="true"></i> Deactivate
+        </button>
         {% else %}
-        <div class="fs-4 fw-semibold">{{ "%.2f"|format(coin_pool.coins_left) }}</div>
-        <div class="text-muted small">of {{ "%.2f"|format(coin_pool.coin_limit) }} max</div>
-        {% if coin_pool.coin_limit > 0 %}
-        {% set pct = [(coin_pool.coins_left / coin_pool.coin_limit * 100)|int, 100]|min %}
-        <div class="progress mt-2" style="height:4px">
-          <div class="progress-bar" role="progressbar"
-               aria-label="Coin pool balance"
-               style="width:{{ pct }}%"
-               aria-valuenow="{{ coin_pool.coins_left }}"
-               aria-valuemin="0" aria-valuemax="{{ coin_pool.coin_limit }}"></div>
-        </div>
+        <button class="btn btn-sm btn-outline-success"
+                onclick="toggleProject({{ project.id }}, false)">
+          <i class="bi bi-play-circle" aria-hidden="true"></i> Activate
+        </button>
         {% endif %}
         {% endif %}
       </div>
-    </div>
-  </div>
-  <div class="col-sm-6 col-lg-3">
-    <div class="card h-100">
-      <div class="card-body">
-        <div class="text-muted small mb-1">Coin Refill</div>
-        {% if coin_pool is none or coin_pool.coins_per_hour == 0 %}
-        <div class="fs-4 fw-semibold text-muted">—</div>
-        <div class="text-muted small">no refill configured</div>
-        {% else %}
-        <div class="fs-4 fw-semibold">+{{ "%.2f"|format(coin_pool.coins_per_hour) }}</div>
-        <div class="text-muted small">
-          per hour{% if coin_pool.next_refill %}, next <span class="local-time" data-utc="{{ coin_pool.next_refill.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>{% endif %}
+
+      <!-- Col 2: all info cards in a 2-column grid -->
+      <div class="col-12 col-md-9 profile-col-meta">
+        <div class="row g-2">
+          <!-- Row 1: Managers | Coins Used | Tokens Used -->
+          <div class="col-4">
+            <div class="profile-stat-card p-3 rounded border h-100">
+              <div class="text-muted small mb-1">Managers</div>
+              <div class="fw-bold fs-5">{{ managers | length }}</div>
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="profile-stat-card p-3 rounded border h-100">
+              <div class="text-muted small mb-1">Coins Used</div>
+              <div class="fw-bold fs-5">{{ "%.2f"|format(status.total_cost) }}</div>
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="profile-stat-card p-3 rounded border h-100">
+              <div class="text-muted small mb-1">Tokens Used</div>
+              <div class="fw-bold fs-5">{{ "{:,}".format(status.total_tokens_used) }}</div>
+            </div>
+          </div>
+          <!-- Row 2: Favorite Model | Coins Available | Refill Rate -->
+          <div class="col-4">
+            <div class="profile-stat-card p-3 rounded border h-100">
+              <div class="text-muted small mb-1">Favorite Model</div>
+              <div class="fw-semibold small">{% if fav_model %}{{ fav_model }}{% else %}<span class="text-muted">—</span>{% endif %}</div>
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="profile-stat-card p-3 rounded border h-100">
+              <div class="text-muted small mb-1">Coins Available</div>
+              {% if coin_pool is none %}
+                <div class="fw-bold fs-5 text-muted">—</div>
+              {% elif coin_pool.coin_limit == -2 %}
+                <div class="fw-bold fs-5 text-success">Unlimited</div>
+              {% else %}
+                <div class="fw-bold fs-5 mb-2">{{ "%.2f"|format(coin_pool.coins_left) }}{% if coin_pool.coin_limit > 0 %}<span class="text-muted fw-normal fs-6"> / {{ "%.2f"|format(coin_pool.coin_limit) }}</span>{% endif %}</div>
+                {% if coin_pool.coin_limit > 0 %}
+                {%- set pct = [(coin_pool.coins_left / coin_pool.coin_limit * 100)|int, 100]|min %}
+                <div class="progress" style="height:8px">
+                  <div class="progress-bar" role="progressbar"
+                       aria-label="Coin pool balance"
+                       style="width:{{ pct }}%"
+                       aria-valuenow="{{ coin_pool.coins_left }}"
+                       aria-valuemin="0" aria-valuemax="{{ coin_pool.coin_limit }}"></div>
+                </div>
+                {% endif %}
+              {% endif %}
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="profile-stat-card p-3 rounded border h-100">
+              <div class="text-muted small mb-1">Refill Rate</div>
+              {% if coin_pool is not none and coin_pool.coin_limit != -2 and coin_pool.coins_per_hour > 0 %}
+                <div class="fw-bold fs-5">+{{ "%.2f"|format(coin_pool.coins_per_hour) }}<span class="text-muted fw-normal fs-6">/hr</span></div>
+                {% if coin_pool.next_refill %}<div class="text-muted small">next <span class="local-time" data-utc="{{ coin_pool.next_refill.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span></div>
+                {% else %}<div class="text-muted small">next after first use</div>{% endif %}
+              {% else %}
+                <div class="fw-bold fs-5 text-muted">—</div>
+              {% endif %}
+            </div>
+          </div>
         </div>
-        {% endif %}
       </div>
+
     </div>
   </div>
 </div>
 
 
+<!-- Tabs -->
+<ul class="nav nav-tabs mt-4" id="project-tabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="tab-managers" data-bs-toggle="tab" data-bs-target="#pane-managers"
+            type="button" role="tab" aria-controls="pane-managers" aria-selected="true">Managers</button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="tab-keys" data-bs-toggle="tab" data-bs-target="#pane-keys"
+            type="button" role="tab" aria-controls="pane-keys" aria-selected="false">API Keys</button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="tab-models" data-bs-toggle="tab" data-bs-target="#pane-models"
+            type="button" role="tab" aria-controls="pane-models" aria-selected="false">Models</button>
+  </li>
+</ul>
+<div class="tab-content border border-top-0 rounded-bottom p-3 mb-4">
+
+<div class="tab-pane fade show active" id="pane-managers" role="tabpanel" aria-labelledby="tab-managers">
+
 <!-- Managers -->
-<div class="d-flex justify-content-between align-items-center mt-4 mb-0">
+<div class="d-flex justify-content-between align-items-center mt-0 mb-0">
   <h2 class="mb-0">Managers</h2>
   {% if can_manage %}
-  <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addManagerModal"
-          aria-haspopup="dialog">+ Add Manager</button>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#changeOwnerModal"
+            aria-haspopup="dialog">Change Owner</button>
+    <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addManagerModal"
+            aria-haspopup="dialog">+ Add Manager</button>
+  </div>
   {% endif %}
 </div>
 <div class="table-responsive mt-2">
-  <table class="table table-striped table-hover align-middle mb-0">
+  <table class="table table-bordered table-striped table-hover align-middle mb-0">
     <caption class="visually-hidden">Users who manage this project</caption>
     <thead class="table-light">
       <tr>
@@ -132,11 +178,8 @@
             </span>
             {% else %}
             <button class="btn btn-sm btn-outline-danger"
-                    onclick="removeManager({{ project.id }}, {{ mgr.id }}, {{ mgr.name | tojson }})"
+                    onclick='removeManager({{ project.id }}, {{ mgr.id }}, {{ mgr.name | tojson }})'
                     aria-label="Remove {{ mgr.name }}">Remove</button>
-            <button class="btn btn-sm btn-outline-primary"
-                    onclick="makeOwner({{ project.id }}, {{ mgr.id }}, {{ mgr.name | tojson }})"
-                    aria-label="Make {{ mgr.name }} the owner">Make Owner</button>
             {% endif %}
           </div>
         </td>
@@ -148,10 +191,11 @@
     </tbody>
   </table>
 </div>
-
+</div>
 
 <!-- API Keys -->
-<div class="d-flex justify-content-between align-items-center mt-4 mb-0">
+<div class="tab-pane fade" id="pane-keys" role="tabpanel" aria-labelledby="tab-keys">
+<div class="d-flex justify-content-between align-items-center mt-0 mb-0">
   <h2 class="mb-0">API Keys</h2>
   <div class="d-flex gap-2">
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('connect.index') }}">Usage examples</a>
@@ -171,7 +215,7 @@
   </div>
 </div>
 <div class="table-responsive">
-  <table class="table table-striped table-hover align-middle mb-0" id="key-table">
+  <table class="table table-bordered table-striped table-hover align-middle mb-0" id="key-table">
     <caption class="visually-hidden">API keys for this project</caption>
     <thead class="table-light">
       <tr>
@@ -189,10 +233,11 @@
   </table>
 </div>
 <p id="key-empty" class="text-muted" hidden>No API keys match your filter.</p>
-
+</div>
 
 <!-- Model Access -->
-<div class="d-flex justify-content-between align-items-center mt-4 mb-0">
+<div class="tab-pane fade" id="pane-models" role="tabpanel" aria-labelledby="tab-models">
+<div class="d-flex justify-content-between align-items-center mt-0 mb-0">
   <h2 class="mb-0">Model Access</h2>
 </div>
 <div class="d-flex justify-content-between align-items-center mt-2 mb-1">
@@ -207,7 +252,7 @@
   </div>
 </div>
 <div class="table-responsive">
-  <table class="table table-striped table-hover align-middle mb-0" id="model-table">
+  <table class="table table-bordered table-striped table-hover align-middle mb-0" id="model-table">
     <caption class="visually-hidden">Models this project can access</caption>
     <thead class="table-light">
       <tr>
@@ -226,6 +271,9 @@
   </table>
 </div>
 <p id="model-empty" class="text-muted" hidden>No models match your filter.</p>
+</div>
+
+</div>
 
 
 <!-- New API Key Modal -->
@@ -263,40 +311,66 @@
 </div>
 
 {% if can_manage %}
-<!-- Add Manager Modal -->
-{{ user_search_modal('addManagerModal', 'Add Manager', 'add-manager-email', 'manager-suggestions', 'add-manager-btn', 'Add Manager',
-   'Search for a user by name or email address.') }}
-{% endif %}
-
-<!-- Graylist Consent Modal -->
-<div class="modal fade" id="graylistModal" tabindex="-1" aria-labelledby="graylistModalLabel">
-  <div class="modal-dialog modal-lg">
+<!-- Edit Project Modal -->
+<div class="modal fade" id="editProjectModal" tabindex="-1" aria-labelledby="editProjectModalLabel">
+  <div class="modal-dialog">
     <div class="modal-content">
-      <div class="modal-header border-warning bg-warning bg-opacity-10">
-        <h2 class="modal-title h5" id="graylistModalLabel">Access Acknowledgment</h2>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="editProjectModalLabel">Edit Project</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close Edit Project dialog"></button>
       </div>
       <div class="modal-body">
-        <div id="graylist-notice-section" class="mb-3" hidden>
-          <h3 class="h6 fw-semibold text-warning-emphasis">
-            <span role="img" aria-label="warning">⚠</span> Notice
-          </h3>
-          <div id="graylist-notice-body" aria-live="polite"></div>
+        <div class="mb-3">
+          <label class="form-label" for="edit-project-name">Project Name</label>
+          <input type="text" id="edit-project-name" class="form-control" value="{{ project.name }}">
         </div>
-        <p class="mb-0 small">
-          This model requires acknowledgment before use. By enabling access you confirm you have read
-          any notices above and accept responsibility for appropriate use of this project.
-        </p>
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" role="switch" id="edit-project-active"
+                 {% if project.active %}checked{% endif %}>
+          <label class="form-check-label" for="edit-project-active">Active</label>
+        </div>
+        {% if is_admin %}
+        <div class="mb-3">
+          <label class="form-label" for="edit-project-max">Max Coins</label>
+          <input type="number" id="edit-project-max" class="form-control" step="0.01"
+                 value="{{ "%.2f"|format(project_limit.max_coins) if project_limit is not none else '' }}">
+          <div class="form-text">-2 = unlimited, 0 = blocked. Clear Max Coins to use the inherited group/default pool.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="edit-project-refresh">Refill Rate (coins/hour)</label>
+          <input type="number" id="edit-project-refresh" class="form-control" step="0.01" min="0"
+                 value="{{ "%.2f"|format(project_limit.refresh_coins) if project_limit is not none else '' }}">
+        </div>
+        {% endif %}
+        <div id="edit-project-error" class="text-danger small" role="alert" aria-live="assertive" hidden></div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-warning" id="graylist-accept-btn">Accept &amp; Enable</button>
+        <button class="btn btn-primary" id="edit-project-save-btn">Save</button>
       </div>
     </div>
   </div>
 </div>
 
+<!-- Add Manager Modal -->
+{{ user_search_modal('addManagerModal', 'Add Manager', 'add-manager-email', 'manager-suggestions', 'add-manager-btn', 'Add Manager',
+   'Search for a user by name or email address.') }}
+
+<!-- Change Owner Modal -->
+{{ entity_search_modal('changeOwnerModal', 'Change Owner', 'change-owner-name', 'owner-suggestions', 'change-owner-id',
+   'change-owner-btn', 'Change Owner', 'Search for a project manager by name or email. The new owner must already be a manager; the current owner becomes a regular manager.') }}
+{% endif %}
+
+<!-- Ack Consent Modal (shared) -->
+{% include '_ack_modal.html' %}
+
 <style>
+.profile-avatar-img { border: 1px solid rgba(0,0,0,.1); }
+.profile-name { font-size: 1.25rem; font-weight: 600; line-height: 1.25; }
+.profile-stat-card { background: var(--bs-light, #f8f9fa); }
+@media (min-width: 768px) {
+  .profile-col-meta { border-left: 1px solid var(--bs-border-color, #dee2e6); padding-left: 1.5rem !important; }
+}
 .sort-header { cursor: pointer; user-select: none; white-space: nowrap; }
 .sort-arrows { display: inline-flex; flex-direction: column; font-size: 0.6em; line-height: 1.1; float: right; margin-left: 6px; margin-top: 2px; }
 .sa-up, .sa-dn { color: #adb5bd; }
@@ -311,6 +385,8 @@
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
 <script src="{{ url_for('static', filename='js/user-search.js') }}"></script>
+<script src="{{ url_for('static', filename='js/entity-search.js') }}"></script>
+<script src="{{ url_for('static', filename='js/ack-consent.js') }}"></script>
 <script>
 const PROJECT_ID = {{ project.id }};
 
@@ -319,8 +395,17 @@ document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootst
 
 // Show next refill as "in X minutes"
 document.querySelectorAll(".local-time[data-utc]").forEach(el => {
-  const mins = Math.max(0, Math.round((new Date(el.dataset.utc) - Date.now()) / 60000));
-  el.textContent = mins <= 1 ? "in seconds" : `in ${mins} minutes`;
+  const d = new Date(el.dataset.utc);
+  const mins = Math.max(0, Math.round((d - Date.now()) / 60000));
+  const at = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  el.textContent = (mins <= 1 ? "in seconds" : `in ${mins} minutes`) + ` (${at})`;
+});
+
+// ── Tab ↔ URL hash sync (#managers / #keys / #models) ────────────────────
+const hashTabBtn = location.hash && document.getElementById('tab-' + location.hash.slice(1));
+if (hashTabBtn && hashTabBtn.closest('#project-tabs')) bootstrap.Tab.getOrCreateInstance(hashTabBtn).show();
+document.querySelectorAll('#project-tabs [data-bs-toggle="tab"]').forEach(btn => {
+  btn.addEventListener('shown.bs.tab', () => history.replaceState(null, '', '#' + btn.id.slice(4)));
 });
 
 // ── Shared sort/filter helpers ────────────────────────────────────────────
@@ -413,10 +498,10 @@ function renderKeys() {
     keyTbody.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
     keyTbody.querySelectorAll('.delete-key-btn').forEach(btn => {
       btn.addEventListener('click', async function () {
-        if (!confirm("Delete this API key? Usage history is kept.")) return;
+        if (!await appConfirm("Delete this API key? Usage history is kept.", { title: "Delete API Key", okLabel: "Delete", okClass: "btn-danger" })) return;
         const resp = await fetch("/projects/" + PROJECT_ID + "/keys/" + this.dataset.id, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } });
         if (resp.ok) location.reload();
-        else alert("Failed to delete key.");
+        else appAlert("Failed to delete key.");
       });
     });
   }
@@ -446,6 +531,7 @@ const MODEL_ROWS = [
     consented: {{ row.consented | tojson }},
     model_status: {{ row.model_status | tojson }},
     notice: {{ row.notice | tojson if row.notice else 'null' }},
+    early_notice: {{ row.early_notice | tojson if row.early_notice else 'null' }},
   },
   {% endfor %}
 ];
@@ -497,7 +583,7 @@ function renderModels() {
       } else if (r.access_status === 'needs_ack' && r.consented) {
         accessCell = `<span class="badge bg-success"><span role="img" aria-label="check">✓</span> Consented</span>`;
       } else {
-        accessCell = `<button class="btn btn-sm btn-warning graylist-btn" data-name="${escHtml(r.model_name)}" data-notice="${escHtml(r.notice || '')}" aria-haspopup="dialog"><span role="img" aria-label="warning">⚠</span> Needs consent</button>`;
+        accessCell = `<button class="btn btn-sm btn-warning ack-btn" data-name="${escHtml(r.model_name)}" data-notice="${escHtml(r.notice || '')}" data-early-notice="${escHtml(r.early_notice || '')}" aria-haspopup="dialog"><span role="img" aria-label="warning">⚠</span> Needs consent</button>`;
       }
       const statusBadge = r.model_status === 'ok'
         ? `<span class="badge bg-success">ok</span>`
@@ -516,8 +602,8 @@ function renderModels() {
         <td>${statusBadge}</td>
       </tr>`;
     }).join('');
-    modelTbody.querySelectorAll('.graylist-btn').forEach(btn => {
-      btn.addEventListener('click', () => openGraylistModal(btn.dataset.name, btn.dataset.notice || null));
+    modelTbody.querySelectorAll('.ack-btn').forEach(btn => {
+      btn.addEventListener('click', () => openAckModal(btn.dataset.name, btn.dataset.notice || null, btn.dataset.earlyNotice || null));
     });
   }
 }
@@ -572,7 +658,7 @@ document.getElementById("save-key-btn").addEventListener("click", async function
     location.reload();
   } else {
     const data = await resp.json();
-    alert("Error: " + (data.error || "Unknown"));
+    appAlert("Error: " + (data.error || "Unknown"));
   }
 });
 
@@ -608,69 +694,99 @@ async function addManager() {
     managerSearch && managerSearch.clear();
     setTimeout(() => location.reload(), 800);
   } else {
-    el.innerHTML = `<div class="alert alert-danger py-1">${escHtml(data.error) || "Error"}</div>`;
+    el.innerHTML = `<div class="alert alert-danger py-1">${data.error ? escHtml(data.error) : "Error"}</div>`;
   }
 }
 document.getElementById("add-manager-btn").addEventListener("click", addManager);
 
 // Remove manager
-function removeManager(sid, uid, name) {
-  if (!confirm(`Remove ${name} as manager?`)) return;
+async function removeManager(sid, uid, name) {
+  if (!await appConfirm(`Remove ${name} as manager?`, { title: "Remove Manager", okLabel: "Remove", okClass: "btn-danger" })) return;
   fetch("/projects/" + sid + "/users/" + uid, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } })
-    .then(r => { if (r.ok) location.reload(); else alert("Failed to remove manager."); });
+    .then(r => { if (r.ok) location.reload(); else appAlert("Failed to remove manager."); });
 }
 
-// Transfer ownership
-function makeOwner(sid, uid, name) {
-  if (!confirm(`Transfer ownership to ${name}? You will no longer be able to manage managers for this project.`)) return;
-  fetch("/projects/" + sid + "/owner", {
+// ── Change owner (searches existing managers only) ────────────────────────
+const CALLER_IS_OWNER = {{ (owner_id == session['entity_id']) | tojson }};
+const ownerSearch = initEntitySearch({
+  inputId: "change-owner-name",
+  listId: "owner-suggestions",
+  hiddenId: "change-owner-id",
+  searchUrl: `/projects/${PROJECT_ID}/owner/search?q=`,
+  onEnter: () => changeOwner(),
+});
+
+const changeOwnerModalEl = document.getElementById("changeOwnerModal");
+changeOwnerModalEl.addEventListener("hidden.bs.modal", () => {
+  ownerSearch && ownerSearch.clear();
+  document.getElementById("change-owner-name-result").innerHTML = "";
+});
+changeOwnerModalEl.addEventListener("shown.bs.modal", () => ownerSearch && ownerSearch.focus());
+
+async function changeOwner() {
+  const el = document.getElementById("change-owner-name-result");
+  const userId = ownerSearch && ownerSearch.selectedId();
+  if (!userId) {
+    el.innerHTML = `<div class="alert alert-danger py-1">Pick a manager from the list.</div>`;
+    return;
+  }
+  const name = document.getElementById("change-owner-name").value;
+  const consequence = CALLER_IS_OWNER
+    ? "You will no longer be able to manage managers for this project."
+    : "The current owner will become a regular manager.";
+  if (!await appConfirm(`Transfer ownership to ${name}? ${consequence}`, { title: "Change Owner", okLabel: "Transfer" })) return;
+  const resp = await fetch("/projects/" + PROJECT_ID + "/owner", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
-    body: JSON.stringify({ user_id: uid }),
-  })
-    .then(r => { if (r.ok) location.reload(); else r.json().then(d => alert(d.error || "Failed to transfer ownership.")); })
-    .catch(() => alert("Failed to transfer ownership."));
+    body: JSON.stringify({ user_id: parseInt(userId) }),
+  });
+  if (resp.ok) { location.reload(); return; }
+  const d = await resp.json().catch(() => ({}));
+  el.innerHTML = `<div class="alert alert-danger py-1">${d.error ? escHtml(d.error) : "Failed to transfer ownership."}</div>`;
 }
+document.getElementById("change-owner-btn").addEventListener("click", changeOwner);
 
 // Toggle project active state
 function toggleProject(sid, currentActive) {
   fetch("/projects/" + sid + "/toggle", { method: "POST", headers: { "X-CSRFToken": csrfToken } })
     .then(r => r.json())
     .then(() => location.reload())
-    .catch(() => alert("Failed to update project."));
+    .catch(() => appAlert("Failed to update project."));
 }
+
+// Edit project modal
+const editProjectModal = document.getElementById("editProjectModal");
+editProjectModal.addEventListener("shown.bs.modal", () => document.getElementById("edit-project-name").focus());
+document.getElementById("edit-project-save-btn").addEventListener("click", async () => {
+  const errEl = document.getElementById("edit-project-error");
+  errEl.hidden = true;
+  const payload = {
+    name: document.getElementById("edit-project-name").value,
+    active: document.getElementById("edit-project-active").checked,
+  };
+  const maxEl = document.getElementById("edit-project-max");
+  const refreshEl = document.getElementById("edit-project-refresh");
+  if (maxEl && refreshEl) {
+    // Blank Max Coins to clear the project's own pool (revert to inherited).
+    payload.max_coins = maxEl.value;
+    payload.refresh_coins = refreshEl.value;
+  }
+  const resp = await fetch("/projects/" + PROJECT_ID, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+    body: JSON.stringify(payload),
+  });
+  if (resp.ok) { location.reload(); return; }
+  const data = await resp.json().catch(() => ({}));
+  errEl.textContent = data.error || "Failed to save changes.";
+  errEl.hidden = false;
+});
 {% endif %}
 
-// Graylist consent modal
-let graylistModelName = null;
-
-function openGraylistModal(modelName, notice) {
-  graylistModelName = modelName;
-  document.getElementById("graylistModalLabel").textContent = "Access Acknowledgment: " + modelName;
-  const noticeSection = document.getElementById("graylist-notice-section");
-  const noticeBody = document.getElementById("graylist-notice-body");
-  if (notice) {
-    noticeBody.innerHTML = DOMPurify.sanitize(marked.parse(notice));
-    noticeSection.hidden = false;
-  } else {
-    noticeSection.hidden = true;
-  }
-  new bootstrap.Modal(document.getElementById("graylistModal")).show();
-}
-
-document.getElementById("graylist-accept-btn").addEventListener("click", async function () {
-  if (!graylistModelName) return;
-  const resp = await fetch("/projects/" + PROJECT_ID + "/consent/" + encodeURIComponent(graylistModelName), {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
-  });
-  if (resp.ok) {
-    bootstrap.Modal.getInstance(document.getElementById("graylistModal")).hide();
-    location.reload();
-  } else {
-    const data = await resp.json();
-    alert("Error: " + (data.error || "Unknown"));
-  }
-});
+// Ack consent modal (shared _ack_modal.html + ack-consent.js, posting to the project endpoint)
+const openAckModal = initAckConsent(
+  () => location.reload(),
+  name => "/projects/" + PROJECT_ID + "/consent/" + encodeURIComponent(name),
+);
 </script>
 {% endblock %}

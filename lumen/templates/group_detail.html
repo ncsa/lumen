@@ -1,0 +1,787 @@
+{% extends "base.html" %}
+{% from "_entity_search_modal.html" import entity_search_modal %}
+{% block title %}{{ group.name }} — {{ app_name }}{% endblock %}
+
+{% block content %}
+<div class="mb-4 d-flex justify-content-between align-items-center">
+  <a href="{{ url_for('groups.index') }}" class="btn btn-sm btn-outline-secondary">← Groups</a>
+  {% if can_manage %}
+  <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editGroupModal">
+    <i class="bi bi-pencil" aria-hidden="true"></i> Edit
+  </button>
+  {% endif %}
+</div>
+<ilw-content>
+
+<!-- Profile card -->
+<div class="card profile-card mb-4">
+  <div class="card-body p-4">
+    <div class="row g-4 align-items-center">
+
+      <!-- Col 1: avatar + name + status, centred -->
+      <div class="col-12 col-md-3 text-center profile-col-identity">
+        <img src="{{ gravatar_url }}" width="115" height="115"
+             class="rounded-circle profile-avatar-img" alt="Avatar for {{ group.name }}">
+        <h2 class="profile-name mt-0 mb-0">{{ group.name }}</h2>
+        {% if group.description %}<p class="text-muted small mt-1 mb-0">{{ group.description }}</p>{% endif %}
+        <p class="text-muted small mt-0 mb-0">
+          Created:
+          {% if group.created_at %}
+          <span class="local-datetime" data-utc="{{ group.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
+          {% else %}—{% endif %}
+        </p>
+        {% if can_manage %}
+        {% if group.active %}
+        <button class="btn btn-sm btn-outline-danger" id="toggle-group-btn">
+          <i class="bi bi-pause-circle" aria-hidden="true"></i> Deactivate
+        </button>
+        {% else %}
+        <button class="btn btn-sm btn-outline-success" id="toggle-group-btn">
+          <i class="bi bi-play-circle" aria-hidden="true"></i> Activate
+        </button>
+        {% endif %}
+        {% endif %}
+      </div>
+
+      <!-- Col 2: all info cards in a 2-column grid -->
+      <div class="col-12 col-md-9 profile-col-meta">
+        <div class="row g-2">
+          <div class="col-4">
+            <div class="profile-stat-card p-3 rounded border h-100">
+              <div class="text-muted small mb-1">Members</div>
+              {% if show_members %}
+              <div class="fw-bold fs-5">{{ "{:,}".format(member_count) }}</div>
+              {% else %}
+              <div class="fw-bold fs-5 text-muted">—</div>
+              {% endif %}
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="profile-stat-card p-3 rounded border h-100">
+              <div class="text-muted small mb-1">Models Granted</div>
+              <div class="fw-bold fs-5">{{ granted_models | length }}</div>
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="profile-stat-card p-3 rounded border h-100">
+              <div class="text-muted small mb-1">Tokens Used</div>
+              {% if show_members %}
+              <div class="fw-bold fs-5">{{ "{:,}".format(total_tokens) }}</div>
+              {% else %}
+              <div class="fw-bold fs-5 text-muted">—</div>
+              {% endif %}
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="profile-stat-card p-3 rounded border h-100">
+              <div class="text-muted small mb-1">Coins Used</div>
+              {% if show_members %}
+              <div class="fw-bold fs-5">{{ "%.2f"|format(total_cost) }}</div>
+              {% else %}
+              <div class="fw-bold fs-5 text-muted">—</div>
+              {% endif %}
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="profile-stat-card p-3 rounded border h-100">
+              <div class="text-muted small mb-1">Max Coins</div>
+              {% if group_limit is none %}
+                <div class="fw-bold fs-5 text-muted">—</div>
+              {% elif group_limit.max_coins == -2 %}
+                <div class="fw-bold fs-5 text-success">Unlimited</div>
+              {% else %}
+                <div class="fw-bold fs-5">{{ "%.2f"|format(group_limit.max_coins) }}</div>
+              {% endif %}
+              <div class="text-muted small">per member</div>
+            </div>
+          </div>
+          <div class="col-4">
+            <div class="profile-stat-card p-3 rounded border h-100">
+              <div class="text-muted small mb-1">Refill Rate</div>
+              {% if group_limit is not none and group_limit.max_coins != -2 and group_limit.refresh_coins > 0 %}
+                <div class="fw-bold fs-5">+{{ "%.2f"|format(group_limit.refresh_coins) }}<span class="text-muted fw-normal fs-6">/hr</span></div>
+              {% else %}
+                <div class="fw-bold fs-5 text-muted">—</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+
+<!-- Tabs -->
+<ul class="nav nav-tabs mt-4" id="group-tabs" role="tablist">
+  {% if show_members %}
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="tab-members" data-bs-toggle="tab" data-bs-target="#pane-members"
+            type="button" role="tab" aria-controls="pane-members" aria-selected="true">Members</button>
+  </li>
+  {% endif %}
+  <li class="nav-item" role="presentation">
+    <button class="nav-link{% if not show_members %} active{% endif %}" id="tab-models" data-bs-toggle="tab" data-bs-target="#pane-models"
+            type="button" role="tab" aria-controls="pane-models" aria-selected="{{ 'false' if show_members else 'true' }}">Models</button>
+  </li>
+  {% if is_admin %}
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="tab-rules" data-bs-toggle="tab" data-bs-target="#pane-rules"
+            type="button" role="tab" aria-controls="pane-rules" aria-selected="false">Rules</button>
+  </li>
+  {% endif %}
+</ul>
+<div class="tab-content border border-top-0 rounded-bottom p-3 mb-4">
+
+<!-- Members -->
+{% if show_members %}
+<div class="tab-pane fade show active" id="pane-members" role="tabpanel" aria-labelledby="tab-members">
+<div class="d-flex justify-content-between align-items-center mt-0 mb-0">
+  <h2 class="mb-0">Members</h2>
+  {% if can_manage and not group.auto_join %}
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#changeOwnerModal"
+            aria-haspopup="dialog">Change Owner</button>
+    <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addMemberModal"
+            aria-haspopup="dialog">+ Add Member</button>
+  </div>
+  {% endif %}
+</div>
+{% if group.auto_join %}
+<p class="text-muted small mb-1" role="note">
+  Membership is managed by this group's auto-join rules: matching users are added at
+  sign-in and removed when they stop matching. Members cannot be added or removed by hand.
+</p>
+{% endif %}
+<div class="d-flex justify-content-between align-items-center mt-2 mb-1 flex-wrap gap-2">
+  <div class="d-flex align-items-center gap-2">
+    <label for="member-per-page" class="text-muted small mb-0">Display</label>
+    <select id="member-per-page" class="form-select form-select-sm" style="width:auto">
+      <option value="25">25</option>
+      <option value="50">50</option>
+      <option value="100">100</option>
+      <option value="200">200</option>
+    </select>
+    <span class="text-muted small mb-0">results</span>
+  </div>
+  <div class="d-flex align-items-center gap-2">
+    <label for="member-search" class="text-muted small mb-0">Search:</label>
+    <input id="member-search" type="search" class="form-control form-control-sm" style="width:200px"
+           placeholder="Filter by name…" aria-label="Filter members by name or email">
+  </div>
+</div>
+<div class="table-responsive">
+  <table class="table table-bordered table-striped table-hover align-middle mb-0" id="member-table">
+    <caption class="visually-hidden">Members of this group</caption>
+    <thead class="table-light">
+      <tr>
+        <th scope="col" class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="email">Email <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="type">Type <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="joined">Joined <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        {% if can_manage and not group.auto_join %}<th><span class="visually-hidden">Actions</span></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody id="member-tbody">
+      <tr><td colspan="{{ 5 if can_manage and not group.auto_join else 4 }}" class="text-muted text-center">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="d-flex justify-content-between align-items-center mt-2 flex-wrap gap-2">
+  <span id="member-range" class="text-muted small"></span>
+  <div id="member-pagination" class="d-flex gap-1 flex-wrap"></div>
+</div>
+</div>
+{% endif %}
+
+<!-- Models -->
+<div class="tab-pane fade{% if not show_members %} show active{% endif %}" id="pane-models" role="tabpanel" aria-labelledby="tab-models">
+{% if not show_members %}
+<p class="text-muted small mb-3" role="note">
+  This group has no owner, so its member list and usage totals are not shown.
+  An administrator can assign an owner to make them visible.
+</p>
+{% endif %}
+<div class="d-flex justify-content-between align-items-center mt-0 mb-0">
+  <h2 class="mb-0">Models</h2>
+  {% if can_manage %}
+  {% if addable_model_count %}
+  <button class="btn btn-sm btn-primary" id="add-model-open-btn" data-bs-toggle="modal" data-bs-target="#addModelModal"
+          aria-haspopup="dialog">+ Add Model</button>
+  {% else %}
+  <span class="d-inline-block" tabindex="0" data-bs-toggle="tooltip"
+        data-bs-title="You have no models of your own left to grant to this group">
+    <button class="btn btn-sm btn-primary" disabled
+            aria-label="Add Model (you have no models of your own left to grant)">+ Add Model</button>
+  </span>
+  {% endif %}
+  {% endif %}
+</div>
+<div class="table-responsive mt-2">
+  <table class="table table-bordered table-striped table-hover align-middle mb-0">
+    <caption class="visually-hidden">Models granted to this group</caption>
+    <thead class="table-light">
+      <tr>
+        <th scope="col">Model</th>
+        <th scope="col">Owner</th>
+        {% if can_manage %}<th><span class="visually-hidden">Actions</span></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in granted_models %}
+      <tr>
+        <td><a href="{{ m.url }}">{{ m.model_name }}</a></td>
+        <td>{{ m.owner_name }}</td>
+        {% if can_manage %}
+        <td>
+          <button class="btn btn-sm btn-outline-danger remove-model-btn"
+                  data-id="{{ m.id }}" data-name="{{ m.model_name }}"
+                  aria-label="Remove {{ m.model_name }} from this group">
+            <i class="bi bi-trash" aria-hidden="true"></i>
+          </button>
+        </td>
+        {% endif %}
+      </tr>
+      {% else %}
+      <tr><td colspan="{{ 3 if can_manage else 2 }}" class="text-muted text-center">No models granted to this group.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+</div>
+
+{% if is_admin %}
+<!-- Auto-join rules (admin only: rules pull members in from login claims) -->
+<div class="tab-pane fade" id="pane-rules" role="tabpanel" aria-labelledby="tab-rules">
+<div class="d-flex justify-content-between align-items-center mt-0 mb-2">
+  <h2 class="mb-0">Auto-join Rules</h2>
+  <button class="btn btn-sm btn-primary" id="save-rules-btn">Save Rules</button>
+</div>
+<p class="text-muted small">
+  When auto-join is on, anyone whose login claims match <strong>all</strong> rules below is added to
+  this group at sign-in (and removed again when they stop matching). Members added by hand are unaffected.
+</p>
+<div class="form-check form-switch mb-3">
+  <input class="form-check-input" type="checkbox" role="switch" id="rules-auto-join"
+         {% if group.auto_join %}checked{% endif %}>
+  <label class="form-check-label" for="rules-auto-join">Auto-join enabled</label>
+</div>
+<div id="rules-rows" class="vstack gap-2 mb-2">
+  {% for rule in group.rules %}
+  <div class="d-flex gap-2 align-items-center rule-row">
+    <label class="visually-hidden" for="rule-field-{{ loop.index }}">Field</label>
+    <input type="text" id="rule-field-{{ loop.index }}" class="form-control form-control-sm rule-field"
+           placeholder="field (e.g. affiliation)" value="{{ rule.field }}">
+    <label class="visually-hidden" for="rule-match-{{ loop.index }}">Match type</label>
+    <select id="rule-match-{{ loop.index }}" class="form-select form-select-sm rule-match" style="width:auto">
+      <option value="contains" {% if rule.match == 'contains' %}selected{% endif %}>contains</option>
+      <option value="equals" {% if rule.match == 'equals' %}selected{% endif %}>equals</option>
+    </select>
+    <label class="visually-hidden" for="rule-value-{{ loop.index }}">Value</label>
+    <input type="text" id="rule-value-{{ loop.index }}" class="form-control form-control-sm rule-value"
+           placeholder="value" value="{{ rule.value }}">
+    <button class="btn btn-sm btn-outline-danger rule-remove" aria-label="Remove rule">
+      <i class="bi bi-trash" aria-hidden="true"></i>
+    </button>
+  </div>
+  {% endfor %}
+</div>
+<button class="btn btn-sm btn-outline-secondary" id="add-rule-btn">+ Add Rule</button>
+<div id="rules-error" class="text-danger small mt-2" role="alert" aria-live="assertive" hidden></div>
+</div>
+{% endif %}
+
+</div>
+
+
+{% if can_manage %}
+<!-- Edit Group Modal -->
+<div class="modal fade" id="editGroupModal" tabindex="-1" aria-labelledby="editGroupModalLabel">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="editGroupModalLabel">Edit Group</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close Edit Group dialog"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label" for="edit-group-name">Group Name</label>
+          <input type="text" id="edit-group-name" class="form-control" value="{{ group.name }}">
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="edit-group-description">Description</label>
+          <input type="text" id="edit-group-description" class="form-control" value="{{ group.description or '' }}">
+        </div>
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" role="switch" id="edit-group-active"
+                 {% if group.active %}checked{% endif %}>
+          <label class="form-check-label" for="edit-group-active">Active</label>
+        </div>
+        {% if is_admin %}
+        <div class="mb-3">
+          <label class="form-label" for="edit-group-max">Max Coins</label>
+          <input type="number" id="edit-group-max" class="form-control" step="0.01"
+                 value="{{ group_limit.max_coins|float if group_limit is not none else '' }}">
+          <div class="form-text">-2 = unlimited, 0 = blocked. Clear Max Coins to remove the group pool.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="edit-group-refresh">Refill Rate (coins/hour)</label>
+          <input type="number" id="edit-group-refresh" class="form-control" step="0.01" min="0"
+                 value="{{ group_limit.refresh_coins|float if group_limit is not none else '' }}">
+        </div>
+        {% endif %}
+        <div id="edit-group-error" class="text-danger small" role="alert" aria-live="assertive" hidden></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="edit-group-save-btn">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if not group.auto_join %}
+<!-- Add Member Modal -->
+{{ entity_search_modal('addMemberModal', 'Add Member', 'add-member-name', 'member-suggestions', 'add-member-id',
+   'add-member-btn', 'Add Member', 'Search for a user or project by name.') }}
+
+<!-- Change Owner Modal -->
+{{ entity_search_modal('changeOwnerModal', 'Change Owner', 'change-owner-name', 'owner-suggestions', 'change-owner-id',
+   'change-owner-btn', 'Change Owner', 'Search for a group member by name or email. The new owner must already be a member of this group; the current owner becomes a regular member.') }}
+{% endif %}
+
+<!-- Add Model Modal -->
+<div class="modal fade" id="addModelModal" tabindex="-1" aria-labelledby="addModelModalLabel">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="addModelModalLabel">Add Model</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close Add Model dialog"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small">Grant a model you own to every member of this group.</p>
+        <label class="form-label" for="add-model-select">Model</label>
+        <select id="add-model-select" class="form-select">
+          <option value="">Loading…</option>
+        </select>
+        <div id="add-model-error" class="text-danger small mt-2" role="alert" aria-live="assertive" hidden></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="add-model-btn">Add Model</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<style>
+.profile-avatar-img { border: 1px solid rgba(0,0,0,.1); }
+.profile-name { font-size: 1.25rem; font-weight: 600; line-height: 1.25; }
+.profile-stat-card { background: var(--bs-light, #f8f9fa); }
+@media (min-width: 768px) {
+  .profile-col-meta { border-left: 1px solid var(--bs-border-color, #dee2e6); padding-left: 1.5rem !important; }
+}
+.sort-header { cursor: pointer; user-select: none; white-space: nowrap; }
+.sort-arrows { display: inline-flex; flex-direction: column; font-size: 0.6em; line-height: 1.1; float: right; margin-left: 6px; margin-top: 2px; }
+.sa-up, .sa-dn { color: #adb5bd; }
+.sort-asc .sa-up { color: #212529; font-weight: 700; }
+.sort-desc .sa-dn { color: #212529; font-weight: 700; }
+</style>
+
+</ilw-content>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/entity-search.js') }}"></script>
+<script>
+const GROUP_ID = {{ group.id }};
+const CAN_MANAGE = {{ can_manage | tojson }};
+// Auto-join groups are rule-driven: no manual member actions, even for admins.
+const MEMBER_ACTIONS = CAN_MANAGE && !{{ group.auto_join | tojson }};
+const OWNER_ID = {{ owner_id | tojson }};
+const CALLER_IS_OWNER = {{ (owner_id == session['entity_id']) | tojson }};
+
+document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
+
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Tab ↔ URL hash sync (#members / #models / #rules) ────────────────────
+const hashTabBtn = location.hash && document.getElementById('tab-' + location.hash.slice(1));
+if (hashTabBtn && hashTabBtn.closest('#group-tabs')) bootstrap.Tab.getOrCreateInstance(hashTabBtn).show();
+document.querySelectorAll('#group-tabs [data-bs-toggle="tab"]').forEach(btn => {
+  btn.addEventListener('shown.bs.tab', () => history.replaceState(null, '', '#' + btn.id.slice(4)));
+});
+
+{% if is_admin %}
+// ── Auto-join rules editor (admin only) ───────────────────────────────────
+(function () {
+  const rowsEl = document.getElementById('rules-rows');
+  const errEl = document.getElementById('rules-error');
+
+  function makeRow(field, match, value) {
+    const idx = 'r' + Math.random().toString(36).slice(2, 8);
+    const div = document.createElement('div');
+    div.className = 'd-flex gap-2 align-items-center rule-row';
+    div.innerHTML = `
+      <label class="visually-hidden" for="rule-field-${idx}">Field</label>
+      <input type="text" id="rule-field-${idx}" class="form-control form-control-sm rule-field" placeholder="field (e.g. affiliation)">
+      <label class="visually-hidden" for="rule-match-${idx}">Match type</label>
+      <select id="rule-match-${idx}" class="form-select form-select-sm rule-match" style="width:auto">
+        <option value="contains">contains</option>
+        <option value="equals">equals</option>
+      </select>
+      <label class="visually-hidden" for="rule-value-${idx}">Value</label>
+      <input type="text" id="rule-value-${idx}" class="form-control form-control-sm rule-value" placeholder="value">
+      <button class="btn btn-sm btn-outline-danger rule-remove" aria-label="Remove rule"><i class="bi bi-trash" aria-hidden="true"></i></button>`;
+    div.querySelector('.rule-field').value = field || '';
+    div.querySelector('.rule-match').value = match || 'contains';
+    div.querySelector('.rule-value').value = value || '';
+    rowsEl.appendChild(div);
+  }
+
+  rowsEl.addEventListener('click', e => {
+    const btn = e.target.closest('.rule-remove');
+    if (btn) {
+      btn.closest('.rule-row').remove();
+      // The focused button just vanished; land focus somewhere sensible.
+      document.getElementById('add-rule-btn').focus();
+    }
+  });
+  document.getElementById('add-rule-btn').addEventListener('click', () => makeRow());
+
+  document.getElementById('save-rules-btn').addEventListener('click', async () => {
+    errEl.hidden = true;
+    const rules = [...rowsEl.querySelectorAll('.rule-row')].map(row => ({
+      field: row.querySelector('.rule-field').value.trim(),
+      match: row.querySelector('.rule-match').value,
+      value: row.querySelector('.rule-value').value.trim(),
+    })).filter(r => r.field || r.value);  // ignore fully empty rows
+    const autoJoin = document.getElementById('rules-auto-join').checked;
+    if (autoJoin && !rules.length) {
+      errEl.textContent = 'Auto-join requires at least one rule.';
+      errEl.hidden = false;
+      return;
+    }
+    const resp = await fetch(`/groups/${GROUP_ID}/rules`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+      body: JSON.stringify({ auto_join: autoJoin, rules }),
+    });
+    if (resp.ok) { location.reload(); return; }
+    const d = await resp.json().catch(() => ({}));
+    errEl.textContent = d.error || 'Failed to save rules.';
+    errEl.hidden = false;
+  });
+})();
+{% endif %}
+
+// ── Members table (server-side sort + pagination) ─────────────────────────
+// Only rendered when show_members is true; an ownerless group hides the whole
+// tab for non-admins, so none of these elements exist.
+{% if show_members %}
+(function () {
+  let page = 1, perPage = 25, sort = 'name', order = 'asc', search = '', debounceTimer;
+  const tbody = document.getElementById('member-tbody');
+  const paginationEl = document.getElementById('member-pagination');
+  const rangeLabel = document.getElementById('member-range');
+  const searchInput = document.getElementById('member-search');
+  const perPageSel = document.getElementById('member-per-page');
+  const colCount = MEMBER_ACTIONS ? 5 : 4;
+
+  function updateSortHeaders() {
+    document.querySelectorAll('#member-table .sort-header').forEach(th => {
+      th.classList.remove('sort-asc', 'sort-desc');
+      if (th.dataset.col === sort) {
+        th.classList.add(order === 'asc' ? 'sort-asc' : 'sort-desc');
+        th.setAttribute('aria-sort', order === 'asc' ? 'ascending' : 'descending');
+      } else {
+        th.removeAttribute('aria-sort');
+      }
+    });
+  }
+
+  function renderPagination(total, currentPage, pp) {
+    const pages = Math.ceil(total / pp);
+    if (pages <= 1) { paginationEl.innerHTML = ''; return; }
+    const btn = (p, label, active) =>
+      `<button class="btn btn-sm ${active ? 'btn-primary' : 'btn-outline-secondary'}" data-page="${p}" aria-label="Page ${label}">${label}</button>`;
+    let html = `<button class="btn btn-sm btn-outline-secondary" ${currentPage === 1 ? 'disabled' : ''} data-page="${currentPage - 1}" aria-label="Previous page">&laquo;</button>`;
+    let start = Math.max(1, currentPage - 3);
+    let end = Math.min(pages, currentPage + 3);
+    if (start > 1) { html += btn(1, '1', false); if (start > 2) html += '<span class="px-1 text-muted">…</span>'; }
+    for (let p = start; p <= end; p++) html += btn(p, p, p === currentPage);
+    if (end < pages) { if (end < pages - 1) html += '<span class="px-1 text-muted">…</span>'; html += btn(pages, pages, false); }
+    html += `<button class="btn btn-sm btn-outline-secondary" ${currentPage === pages ? 'disabled' : ''} data-page="${currentPage + 1}" aria-label="Next page">&raquo;</button>`;
+    paginationEl.innerHTML = html;
+    paginationEl.querySelectorAll('button[data-page]').forEach(b => {
+      b.addEventListener('click', () => { page = parseInt(b.dataset.page); fetchMembers(); });
+    });
+  }
+
+  function fetchMembers() {
+    updateSortHeaders();
+    const qs = new URLSearchParams({ page, per_page: perPage, sort, order });
+    if (search) qs.set('search', search);
+    tbody.innerHTML = `<tr><td colspan="${colCount}" class="text-muted text-center py-3">Loading…</td></tr>`;
+
+    fetch(`/groups/${GROUP_ID}/members/data?` + qs.toString())
+      .then(r => r.json())
+      .then(data => {
+        const start = (data.page - 1) * data.per_page + 1;
+        const end = Math.min(data.page * data.per_page, data.total);
+        rangeLabel.textContent = data.total
+          ? `Showing ${start.toLocaleString()} to ${end.toLocaleString()} of ${data.total.toLocaleString()} entries`
+          : 'No entries found';
+
+        if (!data.members.length) {
+          tbody.innerHTML = `<tr><td colspan="${colCount}" class="text-muted text-center py-3">No members yet.</td></tr>`;
+          paginationEl.innerHTML = '';
+          return;
+        }
+
+        tbody.innerHTML = data.members.map(m => {
+          const nameEsc = escHtml(m.name);
+          const ownerBadge = m.is_owner ? ' <span class="badge bg-primary ms-1">Owner</span>' : '';
+          let actions = '';
+          if (MEMBER_ACTIONS) {
+            if (m.is_owner) {
+              actions = `<span class="d-inline-block" tabindex="0" data-bs-toggle="tooltip" data-bs-title="Transfer ownership before removing">
+                  <button class="btn btn-sm btn-outline-danger" disabled aria-label="Cannot remove owner ${nameEsc}">Remove</button></span>`;
+            } else {
+              actions = `<button class="btn btn-sm btn-outline-danger remove-member-btn" data-id="${m.id}" data-name="${nameEsc}" aria-label="Remove ${nameEsc}">Remove</button>`;
+            }
+            actions = `<div class="d-flex gap-1 align-items-center">${actions}</div>`;
+          }
+          const joined = m.joined
+            ? new Date(m.joined).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+            : '—';
+          return `<tr>
+            <td>${nameEsc}${ownerBadge}</td>
+            <td>${m.email ? escHtml(m.email) : '—'}</td>
+            <td><span class="badge bg-secondary">${escHtml(m.type)}</span></td>
+            <td>${joined}</td>
+            ${MEMBER_ACTIONS ? `<td>${actions}</td>` : ''}
+          </tr>`;
+        }).join('');
+
+        tbody.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
+        tbody.querySelectorAll('.remove-member-btn').forEach(b =>
+          b.addEventListener('click', () => removeMember(b.dataset.id, b.dataset.name)));
+
+        renderPagination(data.total, data.page, data.per_page);
+      })
+      .catch(() => {
+        tbody.innerHTML = `<tr><td colspan="${colCount}" class="text-danger text-center py-3">Failed to load members.</td></tr>`;
+      });
+  }
+
+  const DESC_COLS = new Set(['joined']);
+  document.querySelectorAll('#member-table .sort-header').forEach(th => {
+    th.setAttribute('tabindex', '0');
+    const activate = () => {
+      const col = th.dataset.col;
+      if (sort === col) { order = order === 'asc' ? 'desc' : 'asc'; }
+      else { sort = col; order = DESC_COLS.has(col) ? 'desc' : 'asc'; }
+      page = 1;
+      fetchMembers();
+    };
+    th.addEventListener('click', activate);
+    th.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
+  });
+
+  searchInput.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => { search = searchInput.value.trim(); page = 1; fetchMembers(); }, 300);
+  });
+  perPageSel.addEventListener('change', () => { perPage = parseInt(perPageSel.value); page = 1; fetchMembers(); });
+
+  window.reloadMembers = fetchMembers;
+  fetchMembers();
+})();
+{% else %}
+window.reloadMembers = () => {};
+{% endif %}
+
+async function removeMember(eid, name) {
+  if (!await appConfirm(`Remove ${name} from this group?`, { title: "Remove Member", okLabel: "Remove", okClass: "btn-danger" })) return;
+  const resp = await fetch(`/groups/${GROUP_ID}/members/${eid}`, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } });
+  if (resp.ok) { window.reloadMembers(); document.getElementById('member-search').focus(); }
+  else { const d = await resp.json().catch(() => ({})); appAlert(d.error || "Failed to remove member."); }
+}
+
+
+{% if can_manage %}
+{% if not group.auto_join %}
+// ── Add member (manual groups only; auto-join groups are rule-driven) ─────
+const memberSearch = initEntitySearch({
+  inputId: "add-member-name",
+  listId: "member-suggestions",
+  hiddenId: "add-member-id",
+  searchUrl: `/groups/${GROUP_ID}/members/search?q=`,
+  onEnter: () => addMember(),
+});
+
+const addMemberModalEl = document.getElementById("addMemberModal");
+addMemberModalEl.addEventListener("hidden.bs.modal", () => {
+  memberSearch && memberSearch.clear();
+  document.getElementById("add-member-name-result").innerHTML = "";
+});
+addMemberModalEl.addEventListener("shown.bs.modal", () => memberSearch && memberSearch.focus());
+
+async function addMember() {
+  const el = document.getElementById("add-member-name-result");
+  const entityId = memberSearch && memberSearch.selectedId();
+  if (!entityId) {
+    el.innerHTML = `<div class="alert alert-danger py-1">Pick a user or project from the list.</div>`;
+    return;
+  }
+  const resp = await fetch(`/groups/${GROUP_ID}/members`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+    body: JSON.stringify({ entity_id: parseInt(entityId) }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (resp.ok) {
+    el.innerHTML = `<div class="alert alert-success py-1">Added ${escHtml(data.name)}</div>`;
+    memberSearch && memberSearch.clear();
+    window.reloadMembers();
+  } else {
+    el.innerHTML = `<div class="alert alert-danger py-1">${data.error ? escHtml(data.error) : "Error"}</div>`;
+  }
+}
+document.getElementById("add-member-btn").addEventListener("click", addMember);
+
+// ── Change owner (searches existing user members only) ────────────────────
+const ownerSearch = initEntitySearch({
+  inputId: "change-owner-name",
+  listId: "owner-suggestions",
+  hiddenId: "change-owner-id",
+  searchUrl: `/groups/${GROUP_ID}/owner/search?q=`,
+  onEnter: () => changeOwner(),
+});
+
+const changeOwnerModalEl = document.getElementById("changeOwnerModal");
+changeOwnerModalEl.addEventListener("hidden.bs.modal", () => {
+  ownerSearch && ownerSearch.clear();
+  document.getElementById("change-owner-name-result").innerHTML = "";
+});
+changeOwnerModalEl.addEventListener("shown.bs.modal", () => ownerSearch && ownerSearch.focus());
+
+async function changeOwner() {
+  const el = document.getElementById("change-owner-name-result");
+  const entityId = ownerSearch && ownerSearch.selectedId();
+  if (!entityId) {
+    el.innerHTML = `<div class="alert alert-danger py-1">Pick a group member from the list.</div>`;
+    return;
+  }
+  const name = document.getElementById("change-owner-name").value;
+  const consequence = CALLER_IS_OWNER
+    ? "You will no longer be able to manage this group."
+    : "The current owner will become a regular member.";
+  if (!await appConfirm(`Transfer ownership to ${name}? ${consequence}`, { title: "Change Owner", okLabel: "Transfer" })) return;
+  const resp = await fetch(`/groups/${GROUP_ID}/owner`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+    body: JSON.stringify({ entity_id: parseInt(entityId) }),
+  });
+  if (resp.ok) { location.reload(); return; }
+  const d = await resp.json().catch(() => ({}));
+  el.innerHTML = `<div class="alert alert-danger py-1">${d.error ? escHtml(d.error) : "Failed to transfer ownership."}</div>`;
+}
+document.getElementById("change-owner-btn").addEventListener("click", changeOwner);
+{% endif %}
+
+// ── Add / remove model grants ─────────────────────────────────────────────
+const addModelModalEl = document.getElementById("addModelModal");
+if (addModelModalEl) {
+  addModelModalEl.addEventListener("show.bs.modal", async () => {
+    const sel = document.getElementById("add-model-select");
+    document.getElementById("add-model-error").hidden = true;
+    sel.innerHTML = '<option value="">Loading…</option>';
+    const resp = await fetch(`/groups/${GROUP_ID}/models`);
+    const data = await resp.json().catch(() => ({ models: [] }));
+    sel.innerHTML = data.models.length
+      ? data.models.map(m => `<option value="${m.id}">${escHtml(m.model_name)}</option>`).join('')
+      : '<option value="">No models available</option>';
+  });
+  addModelModalEl.addEventListener("shown.bs.modal", () => document.getElementById("add-model-select").focus());
+
+  document.getElementById("add-model-btn").addEventListener("click", async () => {
+    const errEl = document.getElementById("add-model-error");
+    errEl.hidden = true;
+    const mid = document.getElementById("add-model-select").value;
+    if (!mid) { errEl.textContent = "Pick a model."; errEl.hidden = false; return; }
+    const resp = await fetch(`/groups/${GROUP_ID}/models`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+      body: JSON.stringify({ model_config_id: parseInt(mid) }),
+    });
+    if (resp.ok) { location.reload(); return; }
+    const d = await resp.json().catch(() => ({}));
+    errEl.textContent = d.error || "Failed to add model.";
+    errEl.hidden = false;
+  });
+}
+
+document.querySelectorAll('.remove-model-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const name = btn.dataset.name;
+    if (!await appConfirm(`Remove ${name} from this group?`, { title: "Remove Model", okLabel: "Remove", okClass: "btn-danger" })) return;
+    const resp = await fetch(`/groups/${GROUP_ID}/models/${btn.dataset.id}`, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } });
+    if (resp.ok) location.reload();
+    else appAlert("Failed to remove model.");
+  });
+});
+
+// ── Toggle active ─────────────────────────────────────────────────────────
+const toggleBtn = document.getElementById("toggle-group-btn");
+if (toggleBtn) {
+  toggleBtn.addEventListener("click", () => {
+    fetch(`/groups/${GROUP_ID}/toggle`, { method: "POST", headers: { "X-CSRFToken": csrfToken } })
+      .then(async r => {
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          appAlert(d.error || "Failed to update group.");
+          return;
+        }
+        location.reload();
+      })
+      .catch(() => appAlert("Failed to update group."));
+  });
+}
+
+// ── Edit group modal ──────────────────────────────────────────────────────
+const editGroupModal = document.getElementById("editGroupModal");
+editGroupModal.addEventListener("shown.bs.modal", () => document.getElementById("edit-group-name").focus());
+document.getElementById("edit-group-save-btn").addEventListener("click", async () => {
+  const errEl = document.getElementById("edit-group-error");
+  errEl.hidden = true;
+  const payload = {
+    name: document.getElementById("edit-group-name").value,
+    description: document.getElementById("edit-group-description").value,
+    active: document.getElementById("edit-group-active").checked,
+  };
+  const maxEl = document.getElementById("edit-group-max");
+  const refreshEl = document.getElementById("edit-group-refresh");
+  if (maxEl && refreshEl) {
+    // Blank Max Coins removes the group's coin pool.
+    payload.max_coins = maxEl.value;
+    payload.refresh_coins = refreshEl.value;
+  }
+  const resp = await fetch("/groups/" + GROUP_ID, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+    body: JSON.stringify(payload),
+  });
+  if (resp.ok) { location.reload(); return; }
+  const data = await resp.json().catch(() => ({}));
+  errEl.textContent = data.error || "Failed to save changes.";
+  errEl.hidden = false;
+});
+{% endif %}
+</script>
+{% endblock %}

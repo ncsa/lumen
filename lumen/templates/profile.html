@@ -3,9 +3,16 @@
 
 {% block content %}
 <ilw-content>
-{% if viewing_user %}
-<div class="mb-4">
+{% if viewing_user or (is_admin and profile_entity) %}
+<div class="mb-4 d-flex justify-content-between align-items-center">
+  {% if viewing_user %}
   <a href="{{ url_for('admin.users') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
+  {% else %}<span></span>{% endif %}
+  {% if is_admin and profile_entity %}
+  <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editUserModal">
+    <i class="bi bi-pencil" aria-hidden="true"></i> Edit
+  </button>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -47,13 +54,13 @@
             </div>
           </div>
           <div class="col-4">
-            <div class="profile-stat-card p-3 rounded border">
+            <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Coins Used</div>
               <div class="fw-bold fs-5">{{ "%.2f"|format(status.total_cost) }}</div>
             </div>
           </div>
           <div class="col-4">
-            <div class="profile-stat-card p-3 rounded border">
+            <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Tokens Used</div>
               <div class="fw-bold fs-5">{{ "{:,}".format(status.total_tokens_used) }}</div>
             </div>
@@ -88,11 +95,12 @@
             </div>
           </div>
           <div class="col-4">
-            <div class="profile-stat-card p-3 rounded border">
+            <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Refill Rate</div>
               {% if coin_pool is not none and coin_pool.coin_limit != -2 and coin_pool.coins_per_hour > 0 %}
                 <div class="fw-bold fs-5">+{{ "%.2f"|format(coin_pool.coins_per_hour) }}<span class="text-muted fw-normal fs-6">/hr</span></div>
-                {% if coin_pool.next_refill %}<div class="text-muted small">next <span class="local-time" data-utc="{{ coin_pool.next_refill.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span></div>{% endif %}
+                {% if coin_pool.next_refill %}<div class="text-muted small">next <span class="local-time" data-utc="{{ coin_pool.next_refill.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span></div>
+                {% else %}<div class="text-muted small">next after first use</div>{% endif %}
               {% else %}
                 <div class="fw-bold fs-5 text-muted">—</div>
               {% endif %}
@@ -199,7 +207,7 @@
   </div>
 </div>
 <div class="table-responsive">
-  <table class="table table-striped table-hover align-middle mb-0" id="key-table">
+  <table class="table table-bordered table-striped table-hover align-middle mb-0" id="key-table">
     <caption class="visually-hidden">Your API keys</caption>
     <thead class="table-light">
       <tr>
@@ -235,7 +243,7 @@
   </div>
 </div>
 <div class="table-responsive">
-  <table class="table table-striped table-hover align-middle mb-0" id="project-table">
+  <table class="table table-bordered table-striped table-hover align-middle mb-0" id="project-table">
     <caption class="visually-hidden">Projects you can access</caption>
     <thead class="table-light">
       <tr>
@@ -273,7 +281,7 @@
   </div>
 </div>
 <div class="table-responsive">
-  <table class="table table-striped table-hover align-middle mb-0" id="model-table">
+  <table class="table table-bordered table-striped table-hover align-middle mb-0" id="model-table">
     <caption class="visually-hidden">Models you can access</caption>
     <thead class="table-light">
       <tr>
@@ -352,7 +360,44 @@
 </div>
 
 {% endif %}
-{% if not viewing_user %}{% include '_graylist_modal.html' %}{% endif %}
+{% if not viewing_user %}{% include '_ack_modal.html' %}{% endif %}
+
+{% if is_admin and profile_entity %}
+<!-- Edit User Modal -->
+<div class="modal fade" id="editUserModal" tabindex="-1" aria-labelledby="editUserModalLabel">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="editUserModalLabel">Edit User</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close Edit User dialog"></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" role="switch" id="edit-user-active"
+                 {% if profile_entity.active %}checked{% endif %}>
+          <label class="form-check-label" for="edit-user-active">Active</label>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="edit-user-max">Max Coins</label>
+          <input type="number" id="edit-user-max" class="form-control" step="0.01"
+                 value="{{ "%.2f"|format(user_limit.max_coins) if user_limit is not none else '' }}">
+          <div class="form-text">-2 = unlimited, 0 = blocked. Clear Max Coins to use the inherited group/default pool.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="edit-user-refresh">Refill Rate (coins/hour)</label>
+          <input type="number" id="edit-user-refresh" class="form-control" step="0.01" min="0"
+                 value="{{ "%.2f"|format(user_limit.refresh_coins) if user_limit is not none else '' }}">
+        </div>
+        <div id="edit-user-error" class="text-danger small" role="alert" aria-live="assertive" hidden></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="edit-user-save-btn">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 <style>
 .profile-avatar-img { border: 1px solid rgba(0,0,0,.1); }
@@ -374,7 +419,7 @@
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
-<script src="{{ url_for('static', filename='js/graylist-consent.js') }}"></script>
+<script src="{{ url_for('static', filename='js/ack-consent.js') }}"></script>
 <script>
 const IS_ADMIN_VIEW = {{ (viewing_user is defined and viewing_user is not none) | tojson }};
 
@@ -383,11 +428,13 @@ document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootst
 
 // Show next refill as "in X minutes"
 document.querySelectorAll(".local-time[data-utc]").forEach(el => {
-  const mins = Math.max(0, Math.round((new Date(el.dataset.utc) - Date.now()) / 60000));
-  el.textContent = mins <= 1 ? "in seconds" : `in ${mins} minutes`;
+  const d = new Date(el.dataset.utc);
+  const mins = Math.max(0, Math.round((d - Date.now()) / 60000));
+  const at = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  el.textContent = (mins <= 1 ? "in seconds" : `in ${mins} minutes`) + ` (${at})`;
 });
 
-let openGraylistModal = () => {};
+let openAckModal = () => {};
 
 // ── Tab ↔ URL hash sync (#chat / #projects / #models) ────────────────────
 const hashTabBtn = location.hash && document.getElementById('tab-' + location.hash.slice(1));
@@ -395,6 +442,40 @@ if (hashTabBtn && hashTabBtn.closest('#profile-tabs')) bootstrap.Tab.getOrCreate
 document.querySelectorAll('#profile-tabs [data-bs-toggle="tab"]').forEach(btn => {
   btn.addEventListener('shown.bs.tab', () => history.replaceState(null, '', '#' + btn.id.slice(4)));
 });
+
+{% if is_admin and profile_entity %}
+// ── Edit user modal (rendered only for admins)
+{
+  const editUserModal = document.getElementById("editUserModal");
+  const EDIT_USER_ID = {{ profile_entity.id }};
+  editUserModal.addEventListener("shown.bs.modal", () => document.getElementById("edit-user-active").focus());
+  document.getElementById("edit-user-save-btn").addEventListener("click", async () => {
+    const errEl = document.getElementById("edit-user-error");
+    errEl.hidden = true;
+    const active = document.getElementById("edit-user-active").checked;
+    if (!active && !IS_ADMIN_VIEW) {
+      const ok = await appConfirm("Deactivating your own account will block your requests and log you out. Continue?",
+        { title: "Deactivate Account", okLabel: "Deactivate", okClass: "btn-danger" });
+      if (!ok) return;
+    }
+    // Blank Max Coins to clear the user's own pool (revert to inherited).
+    const payload = {
+      active,
+      max_coins: document.getElementById("edit-user-max").value,
+      refresh_coins: document.getElementById("edit-user-refresh").value,
+    };
+    const resp = await fetch("/admin/users/" + EDIT_USER_ID, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+      body: JSON.stringify(payload),
+    });
+    if (resp.ok) { location.reload(); return; }
+    const data = await resp.json().catch(() => ({}));
+    errEl.textContent = data.error || "Failed to save changes.";
+    errEl.hidden = false;
+  });
+}
+{% endif %}
 
 // ── Admin mode toggle (only rendered for eligible admins on their own profile)
 const adminModeToggle = document.getElementById("admin-mode-toggle");
@@ -502,10 +583,10 @@ function renderKeys() {
     keyTbody.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
     keyTbody.querySelectorAll('.delete-key-btn').forEach(btn => {
       btn.addEventListener('click', async function () {
-        if (!confirm("Delete this API key? Usage history is kept.")) return;
+        if (!await appConfirm("Delete this API key? Usage history is kept.", { title: "Delete API Key", okLabel: "Delete", okClass: "btn-danger" })) return;
         const resp = await fetch("/profile/keys/" + this.dataset.id, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } });
         if (resp.ok) location.reload();
-        else alert("Failed to delete key.");
+        else appAlert("Failed to delete key.");
       });
     });
   }
@@ -594,6 +675,7 @@ const MODEL_ROWS = [
     consented_at: {{ row.consent_at.strftime('%Y-%m-%dT%H:%M:%SZ') | tojson if row.consent_at else 'null' }},
     model_status: {{ row.model_status | tojson }},
     notice: {{ row.notice | tojson if row.notice else 'null' }},
+    early_notice: {{ row.early_notice | tojson if row.early_notice else 'null' }},
   },
   {% endfor %}
 ];
@@ -643,11 +725,11 @@ function renderModels() {
       } else if (r.access_status === 'allowed') {
         accessCell = `<span class="badge bg-success"><span role="img" aria-label="check">✓</span> Allowed</span>`;
       } else if (r.access_status === 'needs_ack' && r.consented) {
-        accessCell = `<button class="badge bg-success border-0 consent-info-btn" data-name="${escHtml(r.model_name)}" data-notice="${escHtml(r.notice || '')}" data-consented-at="${escHtml(r.consented_at || '')}" aria-label="Acknowledged – click for details" title="Acknowledged – click for details"><span role="img" aria-label="check">✓</span> Consented</button>`;
+        accessCell = `<button class="badge bg-success border-0 consent-info-btn" data-name="${escHtml(r.model_name)}" data-notice="${escHtml(r.notice || '')}" data-early-notice="${escHtml(r.early_notice || '')}" data-consented-at="${escHtml(r.consented_at || '')}" aria-label="Acknowledged – click for details" title="Acknowledged – click for details"><span role="img" aria-label="check">✓</span> Consented</button>`;
       } else {
         accessCell = IS_ADMIN_VIEW
           ? `<span class="badge bg-warning text-dark"><span role="img" aria-label="warning">⚠</span> Needs consent</span>`
-          : `<button class="badge bg-warning text-dark border-0 graylist-btn" data-name="${escHtml(r.model_name)}" data-notice="${escHtml(r.notice || '')}" aria-haspopup="dialog"><span role="img" aria-label="warning">⚠</span> Needs consent</button>`;
+          : `<button class="badge bg-warning text-dark border-0 ack-btn" data-name="${escHtml(r.model_name)}" data-notice="${escHtml(r.notice || '')}" data-early-notice="${escHtml(r.early_notice || '')}" aria-haspopup="dialog"><span role="img" aria-label="warning">⚠</span> Needs consent</button>`;
       }
       const statusBadge = r.model_status === 'ok'
         ? `<span class="badge bg-success">ok</span>`
@@ -666,8 +748,8 @@ function renderModels() {
         <td>${statusBadge}</td>
       </tr>`;
     }).join('');
-    modelTbody.querySelectorAll('.graylist-btn').forEach(btn => {
-      btn.addEventListener('click', () => openGraylistModal(btn.dataset.name, btn.dataset.notice || null));
+    modelTbody.querySelectorAll('.ack-btn').forEach(btn => {
+      btn.addEventListener('click', () => openAckModal(btn.dataset.name, btn.dataset.notice || null, btn.dataset.earlyNotice || null));
     });
   }
 }
@@ -683,8 +765,10 @@ modelTbody.addEventListener('click', function (e) {
   if (!btn) return;
   if (_profileConsentPopover) { dismissProfileConsentPopover(); return; }
   const notice = btn.dataset.notice || '';
+  const earlyNotice = btn.dataset.earlyNotice || '';
   const consentedAt = btn.dataset.consentedAt || '';
   let content = notice ? DOMPurify.sanitize(marked.parse(notice)) : '';
+  if (earlyNotice) content += DOMPurify.sanitize(marked.parse(earlyNotice));
   if (consentedAt) {
     const dt = new Date(consentedAt);
     content += `<p class="mb-0${notice ? ' mt-1' : ''}"><strong>Access enabled.</strong> You acknowledged this model on ${dt.toLocaleString()}.</p>`;
@@ -760,7 +844,7 @@ document.getElementById("save-key-btn").addEventListener("click", async function
     location.reload();
   } else {
     const data = await resp.json();
-    alert("Error: " + (data.error || "Unknown"));
+    appAlert("Error: " + (data.error || "Unknown"));
   }
 });
 } // end if (!IS_ADMIN_VIEW)
@@ -834,9 +918,9 @@ purgeModalEl.addEventListener("hidden.bs.modal", () => {
 });
 } // end if (!IS_ADMIN_VIEW)
 
-// ── Graylist consent modal ────────────────────────────────────────────────
+// ── Ack consent modal ────────────────────────────────────────────────
 if (!IS_ADMIN_VIEW) {
-  openGraylistModal = initGraylistConsent((modelName) => {
+  openAckModal = initAckConsent((modelName) => {
     const row = MODEL_ROWS.find(r => r.model_name === modelName);
     if (row) { row.consented = true; renderModels(); }
   });

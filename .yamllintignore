@@ -1,0 +1,4 @@
+# Helm templates are Go templates, not valid YAML until rendered — `helm lint`
+# validates those instead (see the helm job in .github/workflows/lint.yml).
+chart/templates/
+models/

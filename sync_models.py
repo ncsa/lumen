@@ -258,6 +258,19 @@ def _server_modalities(ep_model: dict, pending_in, current_in) -> tuple:
 # Change computation
 # ---------------------------------------------------------------------------
 
+def _normalize_knowledge(value):
+    """Clamp a models.dev knowledge cutoff to YYYY-MM (the DB column is String(7)).
+
+    models.dev sometimes reports YYYY-MM-DD; keep just the year-month. Other
+    values that cannot fit the column are dropped."""
+    if not value:
+        return None
+    value = str(value)
+    if re.match(r"^\d{4}-\d{2}", value):
+        return value[:7]
+    return value if len(value) <= 7 else None
+
+
 def compute_changes(
     model_def: dict, ep_model: dict | None, dev_model: dict | None,
     price_index: dict[str, list[dict]] | None = None,
@@ -275,7 +288,7 @@ def compute_changes(
 
     if dev_model:
         for field, new_val in [
-            ("knowledge_cutoff",   dev_model.get("knowledge")),
+            ("knowledge_cutoff",   _normalize_knowledge(dev_model.get("knowledge"))),
             ("supports_reasoning", dev_model.get("reasoning")),
             ("input_modalities",   (dev_model.get("modalities") or {}).get("input")),
             ("output_modalities",  (dev_model.get("modalities") or {}).get("output")),

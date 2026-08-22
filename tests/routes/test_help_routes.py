@@ -40,8 +40,7 @@ def test_help_all_nav_slugs(client):
 
 
 def test_rewrite_md_links_image():
-    from pathlib import Path
-    from lumen.blueprints.help.routes import _rewrite_md_links, DOCS_DIR
+    from lumen.blueprints.help.routes import DOCS_DIR, _rewrite_md_links
 
     intro = DOCS_DIR / "introduction.md"
     # Inline an img reference that points into docs/img/
@@ -51,7 +50,7 @@ def test_rewrite_md_links_image():
 
 
 def test_rewrite_md_links_md_to_slug():
-    from lumen.blueprints.help.routes import _rewrite_md_links, DOCS_DIR
+    from lumen.blueprints.help.routes import DOCS_DIR, _rewrite_md_links
 
     intro = DOCS_DIR / "introduction.md"
     content = "[Chat](guides/chat.md)"
@@ -60,7 +59,7 @@ def test_rewrite_md_links_md_to_slug():
 
 
 def test_read_markdown_no_frontmatter():
-    from lumen.blueprints.help.routes import _read_markdown, DOCS_DIR
+    from lumen.blueprints.help.routes import DOCS_DIR, _read_markdown
 
     intro = DOCS_DIR / "introduction.md"
     title, content = _read_markdown(intro)

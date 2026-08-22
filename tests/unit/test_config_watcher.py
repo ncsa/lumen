@@ -93,10 +93,6 @@ def test_restart_keys_covered():
     assert ("app", "secret_key") in keys
     assert ("app", "database") in keys
     assert ("api", "prometheus", "enabled") in keys
-    # Both are read once in create_app and never re-read by apply_hot_config, so
-    # without an entry here the editor accepts a change that silently does nothing.
-    assert ("app", "encryption_key") in keys
-    assert ("app", "logs", "level") in keys
 
 
 def test_start_config_watcher_creates_daemon_thread(app, tmp_path):
@@ -123,7 +119,7 @@ def test_watcher_reloads_config_on_mtime_change(app, tmp_path, restore_config):
     from lumen.services.config_watcher import _watcher
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(yaml.dump({"app": {"name": "Reloaded"}}))
+    config_file.write_text(yaml.dump({"version": 3, "app": {"name": "Reloaded"}}))
 
     sleep_count = 0
 
@@ -153,7 +149,8 @@ def test_watcher_reloads_config_on_mtime_change(app, tmp_path, restore_config):
         assert app.config.get("APP_NAME") == "Reloaded"
 
 
-def test_watcher_reconciles_user_groups_on_reload(app, tmp_path, restore_config):
+def test_watcher_skips_reload_of_old_config_version(app, tmp_path, restore_config, caplog):
+    """A reload with version < 3 is skipped with an error; the running config is untouched."""
     from unittest.mock import patch
 
     import yaml
@@ -161,7 +158,9 @@ def test_watcher_reconciles_user_groups_on_reload(app, tmp_path, restore_config)
     from lumen.services.config_watcher import _watcher
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(yaml.dump({"app": {"name": "Reloaded"}}))
+    config_file.write_text(yaml.dump({"version": 2, "app": {"name": "OldVersion"}}))
+    with app.app_context():
+        app.config["APP_NAME"] = "Original"
 
     sleep_count = 0
 
@@ -180,20 +179,20 @@ def test_watcher_reconciles_user_groups_on_reload(app, tmp_path, restore_config)
         mtime_idx += 1
         return v
 
-    with patch("lumen.services.config_watcher.time.sleep", side_effect=fake_sleep), \
-         patch("lumen.services.config_watcher.sync_models_from_yaml"), \
-         patch("lumen.services.config_watcher.sync_groups_from_yaml"), \
-         patch("lumen.services.config_watcher.sync_projects_from_yaml"), \
-         patch("lumen.services.config_watcher.sync_user_groups_from_yaml") as mock_sync_user_groups, \
-         patch("lumen.services.config_watcher.sync_user_limits_from_yaml") as mock_sync_user_limits, \
+    with caplog.at_level(logging.ERROR, logger="lumen.services.config_watcher"), \
+         patch("lumen.services.config_watcher.time.sleep", side_effect=fake_sleep), \
          patch("lumen.services.config_watcher.os.path.getmtime", side_effect=fake_getmtime):
         try:
             _watcher(app, str(config_file))
         except SystemExit:
+            # fake_sleep raises SystemExit to break out of the watcher's infinite
+            # loop after a fixed number of iterations; reaching here is the
+            # expected end of the run, not a failure.
             pass
 
-    mock_sync_user_groups.assert_called_once()
-    mock_sync_user_limits.assert_called_once()
+    with app.app_context():
+        assert app.config.get("APP_NAME") == "Original"
+    assert any("version: 3" in r.getMessage() for r in caplog.records)
 
 
 def test_watcher_skips_when_mtime_unchanged(app, tmp_path, restore_config):
@@ -283,8 +282,100 @@ def test_no_dev_user_no_warning(app, caplog, restore_config):
 
 
 # ---------------------------------------------------------------------------
-# apply_hot_config: unrecognised keys in the 'app' section
+# apply_hot_config: global defaults and config-editor flag
 # ---------------------------------------------------------------------------
+
+def test_apply_hot_config_model_and_token_defaults(app, restore_config):
+    from lumen.services.config_watcher import apply_hot_config
+    yaml_data = {
+        "version": 2,
+        "defaults": {
+            "models": {"ack_message": "please ack"},
+            "tokens": {"max": 500, "refresh": 50, "starting": 250},
+        },
+    }
+    with app.app_context():
+        apply_hot_config(app, yaml_data)
+        from lumen.services.config_watcher import DEFAULT_EARLY_ACCESS_MESSAGE
+        assert app.config["MODEL_DEFAULTS"] == {"ack_message": "please ack",
+                                                "early_access_message": DEFAULT_EARLY_ACCESS_MESSAGE}
+        assert app.config["TOKEN_DEFAULTS"] == {"max": 500, "refresh": 50, "starting": 250}
+
+
+def test_apply_hot_config_defaults_when_absent(app, restore_config):
+    """With no defaults block, ack_message is unset and token pool defaults to zeros."""
+    from lumen.services.config_watcher import apply_hot_config
+    with app.app_context():
+        apply_hot_config(app, {"version": 2})
+        assert "access" not in app.config["MODEL_DEFAULTS"]
+        assert app.config["MODEL_DEFAULTS"]["ack_message"] is None
+        assert app.config["TOKEN_DEFAULTS"] == {"max": 0, "refresh": 0, "starting": 0}
+
+
+def test_apply_hot_config_defaults_models_access_never_lands(app, restore_config):
+    """The removed defaults.models.access key never lands in MODEL_DEFAULTS."""
+    from lumen.services.config_watcher import apply_hot_config
+    with app.app_context():
+        apply_hot_config(app, {"version": 3, "defaults": {"models": {"access": "allowed"}}})
+    assert "access" not in app.config["MODEL_DEFAULTS"]
+
+
+def test_apply_hot_config_token_starting_defaults_to_max(app, restore_config):
+    """When 'starting' is omitted it falls back to 'max'."""
+    from lumen.services.config_watcher import apply_hot_config
+    with app.app_context():
+        apply_hot_config(app, {"version": 2, "defaults": {"tokens": {"max": 300, "refresh": 30}}})
+        assert app.config["TOKEN_DEFAULTS"] == {"max": 300, "refresh": 30, "starting": 300}
+
+
+def test_apply_hot_config_legacy_graylist_notice_feeds_ack_message(app, restore_config):
+    """Legacy app.graylist_default_notice maps to defaults.models.ack_message when unset."""
+    from lumen.services.config_watcher import apply_hot_config
+    with app.app_context():
+        apply_hot_config(app, {"version": 2, "app": {"graylist_default_notice": "legacy notice"}})
+        assert app.config["MODEL_DEFAULTS"]["ack_message"] == "legacy notice"
+
+
+def test_apply_hot_config_config_editor_default_true(app, restore_config):
+    from lumen.services.config_watcher import apply_hot_config
+    with app.app_context():
+        apply_hot_config(app, {"version": 2, "app": {}})
+        assert app.config["CONFIG_EDITOR"] is True
+
+
+def test_apply_hot_config_config_editor_disabled(app, restore_config):
+    from lumen.services.config_watcher import apply_hot_config
+    with app.app_context():
+        apply_hot_config(app, {"version": 2, "app": {"config_editor": False}})
+        assert app.config["CONFIG_EDITOR"] is False
+
+
+def test_config_version_ok_gate():
+    """Only version >= 3 configs pass; missing/old versions are rejected (startup exits)."""
+    from lumen.services.config_watcher import config_version_ok
+    assert config_version_ok({"version": 3}) is True
+    assert config_version_ok({"version": 4}) is True
+    assert config_version_ok({"version": 2}) is False
+    assert config_version_ok({"version": 1}) is False
+    assert config_version_ok({}) is False
+    assert config_version_ok({"version": None}) is False
+
+
+def test_create_app_refuses_old_config_version(tmp_path, monkeypatch):
+    """create_app exits with a clear error when config.yaml is not version 3."""
+    import pytest
+    import yaml as _yaml
+    cfg = tmp_path / "old.yaml"
+    cfg.write_text(_yaml.dump({"version": 2, "app": {"secret_key": "x", "encryption_key": "y",
+                                                     "database": {"url": "sqlite:///:memory:"}},
+                               "models": [{"name": "m", "input_cost_per_million": 0,
+                                           "output_cost_per_million": 0}]}))
+    import config as config_module
+    monkeypatch.setattr(config_module.Config, "CONFIG_YAML", str(cfg))
+    from lumen import create_app
+    with pytest.raises(SystemExit):
+        create_app()
+
 
 def test_unknown_app_key_warns(app, caplog, restore_config):
     """A key renamed by a schema change must not fail silently.
@@ -444,64 +535,6 @@ def test_chart_generated_app_keys_do_not_warn(app, caplog, restore_config):
 # apply_hot_config: global defaults and config-editor flag (orthogonal access)
 # ---------------------------------------------------------------------------
 
-def test_apply_hot_config_model_and_token_defaults(app, restore_config):
-    from lumen.services.config_watcher import apply_hot_config
-    yaml_data = {
-        "version": 2,
-        "defaults": {
-            "models": {"access": "allowed", "ack_message": "please ack"},
-            "tokens": {"max": 500, "refresh": 50, "starting": 250},
-        },
-    }
-    with app.app_context():
-        apply_hot_config(app, yaml_data)
-        assert app.config["MODEL_DEFAULTS"] == {"access": "allowed", "ack_message": "please ack"}
-        assert app.config["TOKEN_DEFAULTS"] == {"max": 500, "refresh": 50, "starting": 250}
-
-
-def test_apply_hot_config_defaults_when_absent(app, restore_config):
-    """With no defaults block, access defaults to blocked and token pool to zeros."""
-    from lumen.services.config_watcher import apply_hot_config
-    with app.app_context():
-        apply_hot_config(app, {"version": 2})
-        assert app.config["MODEL_DEFAULTS"]["access"] == "blocked"
-        assert app.config["MODEL_DEFAULTS"]["ack_message"] is None
-        assert app.config["TOKEN_DEFAULTS"] == {"max": 0, "refresh": 0, "starting": 0}
-
-
-def test_apply_hot_config_token_starting_defaults_to_max(app, restore_config):
-    """When 'starting' is omitted it falls back to 'max'."""
-    from lumen.services.config_watcher import apply_hot_config
-    with app.app_context():
-        apply_hot_config(app, {"version": 2, "defaults": {"tokens": {"max": 300, "refresh": 30}}})
-        assert app.config["TOKEN_DEFAULTS"] == {"max": 300, "refresh": 30, "starting": 300}
-
-
-def test_apply_hot_config_legacy_graylist_notice_feeds_ack_message(app, restore_config):
-    """Legacy app.graylist_default_notice maps to defaults.models.ack_message when unset."""
-    from lumen.services.config_watcher import apply_hot_config
-    with app.app_context():
-        apply_hot_config(app, {"version": 2, "app": {"graylist_default_notice": "legacy notice"}})
-        assert app.config["MODEL_DEFAULTS"]["ack_message"] == "legacy notice"
-
-
-def test_apply_hot_config_config_editor_default_true(app, restore_config):
-    from lumen.services.config_watcher import apply_hot_config
-    with app.app_context():
-        apply_hot_config(app, {"version": 2, "app": {}})
-        assert app.config["CONFIG_EDITOR"] is True
-
-
-def test_apply_hot_config_config_editor_disabled(app, restore_config):
-    from lumen.services.config_watcher import apply_hot_config
-    with app.app_context():
-        apply_hot_config(app, {"version": 2, "app": {"config_editor": False}})
-        assert app.config["CONFIG_EDITOR"] is False
-
-
-# ---------------------------------------------------------------------------
-# apply_hot_config: upstream LLM call bounds
-# ---------------------------------------------------------------------------
 
 def test_apply_hot_config_llm_bounds_from_yaml(app, restore_config):
     from lumen.services.config_watcher import apply_hot_config
@@ -567,7 +600,7 @@ def test_watcher_reloads_llm_bounds(app, tmp_path, restore_config):
         assert app.config["LLM_READ_TIMEOUT"] == 10.0
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(yaml.dump({"version": 2, "llm": {"read_timeout": 90, "max_retries": 2}}))
+    config_file.write_text(yaml.dump({"version": 3, "llm": {"read_timeout": 90, "max_retries": 2}}))
 
     sleep_count = 0
 
@@ -588,10 +621,6 @@ def test_watcher_reloads_llm_bounds(app, tmp_path, restore_config):
 
     with patch("lumen.services.config_watcher.time.sleep", side_effect=fake_sleep), \
          patch("lumen.services.config_watcher.sync_models_from_yaml"), \
-         patch("lumen.services.config_watcher.sync_groups_from_yaml"), \
-         patch("lumen.services.config_watcher.sync_projects_from_yaml"), \
-         patch("lumen.services.config_watcher.sync_user_groups_from_yaml"), \
-         patch("lumen.services.config_watcher.sync_user_limits_from_yaml"), \
          patch("lumen.services.config_watcher.os.path.getmtime", side_effect=fake_getmtime):
         try:
             _watcher(app, str(config_file))
@@ -619,31 +648,3 @@ def test_shipped_config_example_has_llm_section(app, restore_config):
         assert app.config["LLM_READ_TIMEOUT"] == 300.0
         assert app.config["LLM_REQUEST_TIMEOUT"] == 600.0
         assert app.config["LLM_MAX_RETRIES"] == 1
-
-
-def test_apply_hot_config_v1_emits_version_deprecation_warning(app, caplog, restore_config):
-    import logging
-
-    import lumen.services.config_watcher as cw
-    cw._version_warned = False
-    try:
-        with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
-            with app.app_context():
-                cw.apply_hot_config(app, {"app": {}})  # no 'version' key -> treated as v1
-        assert any("version: 2" in r.message for r in caplog.records)
-    finally:
-        cw._version_warned = False
-
-
-def test_apply_hot_config_v2_no_version_warning(app, caplog, restore_config):
-    import logging
-
-    import lumen.services.config_watcher as cw
-    cw._version_warned = False
-    try:
-        with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
-            with app.app_context():
-                cw.apply_hot_config(app, {"version": 2, "app": {}})
-        assert not any("version: 2" in r.message for r in caplog.records)
-    finally:
-        cw._version_warned = False

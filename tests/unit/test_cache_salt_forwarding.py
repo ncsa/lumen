@@ -11,7 +11,6 @@ Covers two guarantees:
 """
 import hashlib
 import hmac
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -148,8 +147,8 @@ def test_client_extra_body_cannot_suppress_usage_or_swap_model(app, client, test
     with app.app_context():
         assert kwargs["extra_body"]["cache_salt"] == _expected_salt(app, test_user["id"])
         # Billing happened despite the suppression attempt.
-        from lumen.models.model_stat import ModelStat
         from lumen.extensions import db
+        from lumen.models.model_stat import ModelStat
         total = db.session.scalar(select(func.sum(ModelStat.requests)).filter_by(entity_id=test_user["id"]))
     assert total == 1
 
@@ -160,7 +159,8 @@ def test_client_extra_body_cannot_suppress_usage_or_swap_model(app, client, test
 
 def _mock_openai_capture():
     """openai.OpenAI mock that records the create() kwargs and yields one usage chunk."""
-    from tests.unit.test_llm_functions import _Chunk, _Usage as _U
+    from tests.unit.test_llm_functions import _Chunk
+    from tests.unit.test_llm_functions import _Usage as _U
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = iter([_Chunk(usage=_U())])
     mock_client.__enter__ = MagicMock(return_value=mock_client)

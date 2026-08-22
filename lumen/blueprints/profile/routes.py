@@ -3,7 +3,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 
-from flask import Blueprint, abort, current_app, g, jsonify, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, g, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy import delete, func, select, text
 
 from lumen.decorators import is_admin as _is_admin
@@ -13,6 +13,7 @@ from lumen.models.api_key import APIKey
 from lumen.models.conversation import Conversation
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
+from lumen.models.entity_limit import EntityLimit
 from lumen.models.entity_manager import get_managed_projects
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.entity_stat import EntityStat
@@ -23,7 +24,7 @@ from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
 from lumen.services.crypto import hash_api_key
-from lumen.services.llm import bulk_model_access_info, get_model_access_status, get_pool_limit, has_model_consent
+from lumen.services.llm import bulk_model_access_info, get_model_access_status, get_pool_limit, model_notices
 from lumen.timeutils import utcnow
 
 profile_bp = Blueprint("profile", __name__)
@@ -37,7 +38,7 @@ def _gravatar_url(email: str, size: int = 80) -> str:
 def _entity_groups(eid: int) -> list:
     return db.session.execute(
         select(Group).join(GroupMember, Group.id == GroupMember.group_id)
-        .where(GroupMember.entity_id == eid, Group.name != "default")
+        .where(GroupMember.entity_id == eid)
         .order_by(Group.name)
     ).scalars().all()
 
@@ -72,17 +73,18 @@ def _fetch_model_context(eid: int):
 
 def _build_model_access_list(usage_by_model, all_models, eps_by_model, access_statuses, consent_map) -> list:
     """Merge access status, model health, and usage stats for every model."""
-    default_ack = current_app.config.get("MODEL_DEFAULTS", {}).get("ack_message")
     result = []
     for mc in all_models:
         access_status = access_statuses.get(mc.id, "allowed")
         consented = (mc.id in consent_map) if access_status == "needs_ack" else None
         u = usage_by_model.get(mc.model_name, {})
         model_status = "disabled" if not mc.active else _endpoint_status(eps_by_model.get(mc.id, []))
+        notice, early_notice = model_notices(mc) if access_status == "needs_ack" else (None, None)
         result.append({
             "model_name": mc.model_name,
             "model_url": url_for("models_page.detail", model_name=mc.model_name),
-            "notice": (mc.ack_message or default_ack) if access_status == "needs_ack" else None,
+            "notice": notice,
+            "early_notice": early_notice,
             "consent_at": consent_map.get(mc.id) if access_status == "needs_ack" else None,
             "access_status": access_status,
             "consented": consented,
@@ -238,6 +240,11 @@ def index():
     data = _get_profile_data(entity_id)
 
     profile_entity = db.session.get(Entity, entity_id)
+    # The user's own limit row (not an inherited group/default pool), used to
+    # prefill the admin edit dialog without materializing inherited values.
+    user_limit = db.session.execute(
+        select(EntityLimit).filter_by(entity_id=entity_id)
+    ).scalar_one_or_none()
     return render_template(
         "profile.html", **data,
         profile_entity=profile_entity,
@@ -245,6 +252,7 @@ def index():
         profile_groups=_entity_groups(entity_id),
         admin_eligible=is_admin_eligible(profile_entity),
         admin_mode=bool(session.get("admin_mode")),
+        user_limit=user_limit,
     )
 
 
@@ -362,13 +370,18 @@ def user_consent(model_name):
     if get_model_access_status(entity_id, config.id) != "needs_ack":
         return jsonify({"error": "Model does not require acknowledgement for this user"}), HTTPStatus.BAD_REQUEST
 
-    if not has_model_consent(entity_id, config.id):
-        db.session.add(EntityModelConsent(
-            entity_id=entity_id,
-            model_config_id=config.id,
-            consented_at=utcnow(),
-        ))
-        db.session.commit()
+    row = db.session.execute(
+        select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=config.id)
+    ).scalar_one_or_none()
+    if row is None:
+        row = EntityModelConsent(entity_id=entity_id, model_config_id=config.id)
+        db.session.add(row)
+    now = utcnow()
+    if config.needs_ack and row.consented_at is None:
+        row.consented_at = now
+    if config.early_access and row.early_access_at is None:
+        row.early_access_at = now
+    db.session.commit()
 
     return jsonify({"ok": True}), HTTPStatus.OK
 

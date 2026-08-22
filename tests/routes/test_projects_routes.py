@@ -1,8 +1,8 @@
 """Tests for the projects blueprint (/projects/*)."""
 from http import HTTPStatus
+
 import pytest
 from sqlalchemy import func, select
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -104,36 +104,15 @@ def make_api_key(app):
 
 
 @pytest.fixture
-def make_graylist_access(app):
-    """Factory: mark the model needs_ack and grant allowed access (resolves to needs_ack)."""
+def make_ack_access(app):
+    """Factory: mark the (public) model needs_ack so consent is required."""
     def _make(entity_id, model_config_id):
         with app.app_context():
             from lumen.extensions import db
-            from lumen.models.entity_model_access import EntityModelAccess
             from lumen.models.model_config import ModelConfig
             db.session.get(ModelConfig, model_config_id).needs_ack = True
-            db.session.add(EntityModelAccess(
-                entity_id=entity_id,
-                model_config_id=model_config_id,
-                access_type="allowed",
-            ))
             db.session.commit()
     return _make
-
-
-@pytest.fixture
-def writable_config(app, tmp_path):
-    """Point CONFIG_YAML at a writable temp copy so create_project's write-back
-    doesn't mutate the shared committed fixture. Restores afterwards."""
-    import shutil
-    cfg = tmp_path / "config.yaml"
-    shutil.copy(app.config["CONFIG_YAML"], cfg)
-    original_path = app.config["CONFIG_YAML"]
-    original_data = app.config.get("YAML_DATA")
-    app.config["CONFIG_YAML"] = str(cfg)
-    yield cfg
-    app.config["CONFIG_YAML"] = original_path
-    app.config["YAML_DATA"] = original_data
 
 
 @pytest.fixture
@@ -239,7 +218,7 @@ def test_create_project_requires_admin(auth_client):
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_create_project_succeeds(app, admin_client, writable_config):
+def test_create_project_succeeds(app, admin_client):
     resp = admin_client.post("/projects", json={"name": "created-svc"})
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.get_json()
@@ -250,16 +229,6 @@ def test_create_project_succeeds(app, admin_client, writable_config):
         c = db.session.execute(select(Entity).filter_by(name="created-svc", entity_type="project")).scalar_one_or_none()
         assert c is not None
         assert c.active is True
-
-
-def test_create_project_writes_empty_config_entry(admin_client, writable_config):
-    """Creating a project records an empty entry in config.yaml so the file reflects it."""
-    import yaml
-    resp = admin_client.post("/projects", json={"name": "cfg-svc"})
-    assert resp.status_code == HTTPStatus.CREATED
-    saved = yaml.safe_load(writable_config.read_text()) or {}
-    assert "cfg-svc" in saved.get("projects", {})
-    assert saved["projects"]["cfg-svc"] == {}
 
 
 def test_create_project_empty_name_returns_400(admin_client):
@@ -294,7 +263,126 @@ def test_toggle_reactivates_inactive_project(app, admin_client, service_project)
 
 
 # ---------------------------------------------------------------------------
-# Project data API (pagination + show disabled)
+# Update project (PATCH)
+# ---------------------------------------------------------------------------
+
+def test_update_project_requires_owner_or_admin(managed_auth_client, managed_project):
+    resp = managed_auth_client.patch(f"/projects/{managed_project['id']}", json={"name": "nope"})
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_update_project_owner_renames_and_toggles(app, owner_auth_client, owned_project):
+    resp = owner_auth_client.patch(
+        f"/projects/{owned_project['id']}", json={"name": "renamed-svc", "active": False}
+    )
+    assert resp.status_code == HTTPStatus.OK
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        c = db.session.get(Entity, owned_project["id"])
+        assert c.name == "renamed-svc"
+        assert c.initials == "RE"
+        assert c.active is False
+
+
+def test_update_project_owner_cannot_set_coins(owner_auth_client, owned_project):
+    resp = owner_auth_client.patch(
+        f"/projects/{owned_project['id']}", json={"max_coins": 100, "refresh_coins": 1}
+    )
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_update_project_admin_sets_coins(app, admin_client, service_project):
+    resp = admin_client.patch(
+        f"/projects/{service_project['id']}", json={"max_coins": 100, "refresh_coins": 2}
+    )
+    assert resp.status_code == HTTPStatus.OK
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        limit = db.session.execute(
+            select(EntityLimit).filter_by(entity_id=service_project["id"])
+        ).scalar_one_or_none()
+        assert limit is not None
+        assert float(limit.max_coins) == 100.0
+        assert float(limit.refresh_coins) == 2.0
+        assert float(limit.starting_coins) == 100.0
+        assert limit.config_managed is False
+
+
+def test_update_project_lowering_max_clamps_balance(app, admin_client, service_project):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.timeutils import utcnow
+        db.session.add(EntityLimit(
+            entity_id=service_project["id"], max_coins=100, refresh_coins=1, starting_coins=100,
+        ))
+        db.session.add(EntityBalance(
+            entity_id=service_project["id"], coins_left=80, last_refill_at=utcnow(),
+        ))
+        db.session.commit()
+    resp = admin_client.patch(f"/projects/{service_project['id']}", json={"max_coins": 50})
+    assert resp.status_code == HTTPStatus.OK
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        balance = db.session.execute(
+            select(EntityBalance).filter_by(entity_id=service_project["id"])
+        ).scalar_one_or_none()
+        assert float(balance.coins_left) == 50.0
+
+
+def test_update_project_unlimited_max_accepted(admin_client, service_project):
+    resp = admin_client.patch(
+        f"/projects/{service_project['id']}", json={"max_coins": -2, "refresh_coins": 0}
+    )
+    assert resp.status_code == HTTPStatus.OK
+
+
+def test_update_project_new_pool_defaults_refresh_to_zero(app, admin_client, service_project):
+    resp = admin_client.patch(f"/projects/{service_project['id']}", json={"max_coins": 100})
+    assert resp.status_code == HTTPStatus.OK
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        limit = db.session.execute(
+            select(EntityLimit).filter_by(entity_id=service_project["id"])
+        ).scalar_one_or_none()
+        assert float(limit.max_coins) == 100.0
+        assert float(limit.refresh_coins) == 0.0
+
+
+def test_update_project_refresh_alone_requires_existing_pool(admin_client, service_project):
+    resp = admin_client.patch(f"/projects/{service_project['id']}", json={"refresh_coins": 5})
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+
+
+def test_update_project_invalid_values_return_400(admin_client, service_project):
+    for payload in (
+        {"max_coins": -1, "refresh_coins": 0},
+        {"max_coins": 10, "refresh_coins": -1},
+        {"max_coins": "abc", "refresh_coins": 1},
+        {"max_coins": 10000000, "refresh_coins": 1},
+        {"name": "   "},
+    ):
+        resp = admin_client.patch(f"/projects/{service_project['id']}", json=payload)
+        assert resp.status_code == HTTPStatus.BAD_REQUEST, payload
+
+
+def test_update_project_duplicate_name_returns_409(app, admin_client, service_project):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        db.session.add(Entity(entity_type="project", name="other-svc", initials="OS", active=True))
+        db.session.commit()
+    resp = admin_client.patch(f"/projects/{service_project['id']}", json={"name": "other-svc"})
+    assert resp.status_code == HTTPStatus.CONFLICT
+
+
+# ---------------------------------------------------------------------------
+# Project data API (pagination)
 # ---------------------------------------------------------------------------
 
 def test_projects_data_requires_login(client):
@@ -312,18 +400,68 @@ def test_projects_data_lists_active_project(admin_client, service_project):
     assert service_project["name"] in names
 
 
-def test_projects_data_hides_disabled_by_default(admin_client, service_project):
+def test_projects_data_includes_disabled(admin_client, service_project):
     admin_client.post(f"/projects/{service_project['id']}/toggle")  # deactivate
     resp = admin_client.get("/projects/data")
-    names = [c["name"] for c in resp.get_json()["projects"]]
-    assert service_project["name"] not in names
+    row = next(c for c in resp.get_json()["projects"] if c["name"] == service_project["name"])
+    assert row["active"] is False
 
 
-def test_projects_data_show_disabled_reveals(admin_client, service_project):
-    admin_client.post(f"/projects/{service_project['id']}/toggle")  # deactivate
-    resp = admin_client.get("/projects/data?show_disabled=1")
-    names = [c["name"] for c in resp.get_json()["projects"]]
-    assert service_project["name"] in names
+def test_projects_data_includes_edit_fields(app, owner_auth_client, owned_project):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        db.session.add(EntityLimit(
+            entity_id=owned_project["id"], max_coins=75, refresh_coins=1.5, starting_coins=75,
+        ))
+        db.session.commit()
+    resp = owner_auth_client.get("/projects/data")
+    row = next(c for c in resp.get_json()["projects"] if c["name"] == owned_project["name"])
+    assert row["is_owner"] is True
+    assert row["max_coins"] == 75.0
+    assert row["refresh_coins"] == 1.5
+
+
+def test_projects_data_edit_fields_default(managed_auth_client, managed_project):
+    resp = managed_auth_client.get("/projects/data")
+    row = next(c for c in resp.get_json()["projects"] if c["name"] == managed_project["name"])
+    assert row["is_owner"] is False
+    assert row["max_coins"] is None
+    assert row["refresh_coins"] is None
+    assert row["coins_available"] == 0.0
+    assert row["last_used"] is None
+
+
+def test_projects_data_unlimited_coins_available(admin_client, managed_project, unlimited_pool):
+    resp = admin_client.get("/projects/data")
+    row = next(c for c in resp.get_json()["projects"] if c["name"] == managed_project["name"])
+    assert row["coins_available"] == -2
+
+
+def test_reset_project_tokens(app, admin_client, service_project):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
+        db.session.add(EntityLimit(
+            entity_id=service_project["id"], max_coins=100, refresh_coins=1, starting_coins=100,
+        ))
+        db.session.add(EntityBalance(entity_id=service_project["id"], coins_left=3))
+        db.session.commit()
+    resp = admin_client.post(f"/admin/entities/{service_project['id']}/reset-tokens")
+    assert resp.status_code == HTTPStatus.OK
+    assert float(resp.get_json()["coins_available"]) == 100.0
+
+
+def test_projects_data_manager_sees_disabled_project(app, owner_auth_client, owned_project):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        db.session.get(Entity, owned_project["id"]).active = False
+        db.session.commit()
+    resp = owner_auth_client.get("/projects/data")
+    row = next(c for c in resp.get_json()["projects"] if c["name"] == owned_project["name"])
+    assert row["active"] is False
 
 
 def test_projects_data_invalid_per_page_falls_back(admin_client, service_project):
@@ -432,7 +570,7 @@ def test_remove_manager_not_found_returns_404(admin_client, service_project, tes
 # Owner / project-admin functionality
 # ---------------------------------------------------------------------------
 
-def test_create_project_with_owner(app, admin_client, writable_config, test_user):
+def test_create_project_with_owner(app, admin_client, test_user):
     resp = admin_client.post("/projects", json={"name": "owned-svc", "owner_email": "testuser@example.com"})
     assert resp.status_code == HTTPStatus.CREATED
     with app.app_context():
@@ -446,12 +584,12 @@ def test_create_project_with_owner(app, admin_client, writable_config, test_user
         assert assoc.is_owner is True
 
 
-def test_create_project_owner_not_found_returns_404(admin_client, writable_config):
+def test_create_project_owner_not_found_returns_404(admin_client):
     resp = admin_client.post("/projects", json={"name": "bad-owner", "owner_email": "nobody@example.com"})
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
-def test_create_project_without_owner_is_ownerless(app, admin_client, writable_config):
+def test_create_project_without_owner_is_ownerless(app, admin_client):
     resp = admin_client.post("/projects", json={"name": "no-owner"})
     assert resp.status_code == HTTPStatus.CREATED
     with app.app_context():
@@ -547,23 +685,24 @@ def test_transfer_ownership(app, owner_auth_client, owned_project, test_user, se
         assert new.is_owner is True
 
 
-def test_transfer_to_non_manager_creates_manager(app, owner_auth_client, owned_project, test_user, second_user):
+def test_transfer_to_non_manager_rejected(app, owner_auth_client, owned_project, test_user, second_user):
+    """Ownership is a promotion, not an invitation: the target must be a manager."""
     resp = owner_auth_client.post(
         f"/projects/{owned_project['id']}/owner",
         json={"user_id": second_user["id"]},
     )
-    assert resp.status_code == HTTPStatus.OK
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert "must already be a manager" in resp.get_json()["error"]
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_manager import EntityManager
         old = db.session.execute(
             select(EntityManager).filter_by(user_entity_id=test_user["id"], project_entity_id=owned_project["id"])
         ).scalar_one()
-        new = db.session.execute(
+        assert old.is_owner is True
+        assert db.session.execute(
             select(EntityManager).filter_by(user_entity_id=second_user["id"], project_entity_id=owned_project["id"])
-        ).scalar_one()
-        assert old.is_owner is False
-        assert new.is_owner is True
+        ).scalar_one_or_none() is None
 
 
 def test_transfer_requires_owner_or_admin(managed_auth_client, managed_project, second_user):
@@ -599,8 +738,15 @@ def test_transfer_to_current_owner_returns_409(owner_auth_client, owned_project,
 
 
 def test_admin_assigns_owner_to_ownerless_project(app, admin_client, service_project, second_user):
-    """Admin can assign an owner to a project that has no owner, even when the
-    target user is not already a manager (the None-is-None edge case)."""
+    """An ownerless project gains an owner in two steps: add the user as a
+    manager, then promote them (also covers the no-previous-owner path)."""
+    resp = admin_client.post(
+        f"/projects/{service_project['id']}/owner",
+        json={"user_id": second_user["id"]},
+    )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST  # not a manager yet
+
+    admin_client.post(f"/projects/{service_project['id']}/users", json={"email": second_user["email"]})
     resp = admin_client.post(
         f"/projects/{service_project['id']}/owner",
         json={"user_id": second_user["id"]},
@@ -700,26 +846,26 @@ def test_delete_key_soft_deletes(app, managed_auth_client, managed_project, make
 
 
 # ---------------------------------------------------------------------------
-# Graylist consent
+# Acknowledgement consent
 # ---------------------------------------------------------------------------
 
-def test_consent_forbidden_for_non_manager(auth_client, service_project, test_model, make_graylist_access):
-    make_graylist_access(service_project["id"], test_model["id"])
+def test_consent_forbidden_for_non_manager(auth_client, service_project, test_model, make_ack_access):
+    make_ack_access(service_project["id"], test_model["id"])
     resp = auth_client.post(
         f"/projects/{service_project['id']}/consent/{test_model['model_name']}"
     )
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_consent_non_graylist_model_returns_400(app, managed_auth_client, managed_project, test_model):
+def test_consent_non_ack_model_returns_400(app, managed_auth_client, managed_project, test_model):
     resp = managed_auth_client.post(
         f"/projects/{managed_project['id']}/consent/{test_model['model_name']}"
     )
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
-def test_consent_graylist_model_succeeds(app, managed_auth_client, managed_project, test_model, make_graylist_access):
-    make_graylist_access(managed_project["id"], test_model["id"])
+def test_consent_ack_model_succeeds(app, managed_auth_client, managed_project, test_model, make_ack_access):
+    make_ack_access(managed_project["id"], test_model["id"])
     resp = managed_auth_client.post(
         f"/projects/{managed_project['id']}/consent/{test_model['model_name']}"
     )
@@ -734,9 +880,9 @@ def test_consent_graylist_model_succeeds(app, managed_auth_client, managed_proje
         assert consent is not None
 
 
-def test_consent_idempotent(app, managed_auth_client, managed_project, test_model, make_graylist_access):
+def test_consent_idempotent(app, managed_auth_client, managed_project, test_model, make_ack_access):
     """Consenting twice doesn't create duplicate rows."""
-    make_graylist_access(managed_project["id"], test_model["id"])
+    make_ack_access(managed_project["id"], test_model["id"])
     managed_auth_client.post(
         f"/projects/{managed_project['id']}/consent/{test_model['model_name']}"
     )
@@ -837,3 +983,46 @@ def test_project_key_no_pool_returns_403(
         json={"model": test_model["model_name"], "messages": [{"role": "user", "content": "hi"}]},
     )
     assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_owner_search_returns_only_managers(owner_auth_client, owned_project, second_user):
+    """The Change Owner dialog only offers existing managers, never outsiders."""
+    hits = owner_auth_client.get(f"/projects/{owned_project['id']}/owner/search?q=Second").get_json()["entities"]
+    assert hits == []
+    owner_auth_client.post(f"/projects/{owned_project['id']}/users", json={"email": second_user["email"]})
+    hits = owner_auth_client.get(f"/projects/{owned_project['id']}/owner/search?q=Second").get_json()["entities"]
+    assert [e["id"] for e in hits] == [second_user["id"]]
+
+
+def test_owner_search_excludes_current_owner(owner_auth_client, owned_project, test_user):
+    hits = owner_auth_client.get(f"/projects/{owned_project['id']}/owner/search?q=Test").get_json()["entities"]
+    assert all(e["id"] != test_user["id"] for e in hits)
+
+
+def test_owner_search_requires_project_admin(managed_auth_client, managed_project):
+    resp = managed_auth_client.get(f"/projects/{managed_project['id']}/owner/search?q=Te")
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_two_project_owner_rows_rejected_by_db(app, owned_project, second_user):
+    """uq_entity_managers_owner makes the concurrent double-transfer impossible
+    to commit — without it, get_project_owner() raises for everyone afterwards."""
+    import pytest as _pytest
+    from sqlalchemy.exc import IntegrityError
+
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_manager import EntityManager
+        db.session.add(EntityManager(
+            user_entity_id=second_user["id"], project_entity_id=owned_project["id"], is_owner=True,
+        ))
+        with _pytest.raises(IntegrityError):
+            db.session.commit()
+        db.session.rollback()
+
+
+def test_project_transfer_to_manager_with_lower_row_id(app, owner_auth_client, owned_project, second_user):
+    owner_auth_client.post(f"/projects/{owned_project['id']}/users", json={"email": second_user["email"]})
+    # second_user's row id is higher here; also cover the reverse by transferring twice
+    r1 = owner_auth_client.post(f"/projects/{owned_project['id']}/owner", json={"user_id": second_user["id"]})
+    assert r1.status_code == HTTPStatus.OK

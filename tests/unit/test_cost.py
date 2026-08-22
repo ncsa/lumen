@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from lumen.services.cost import calculate_cost, calculate_audio_cost
+from lumen.services.cost import calculate_audio_cost, calculate_cost
 
 
 def make_config(input_cost, output_cost):

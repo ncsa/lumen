@@ -5,9 +5,9 @@
 #   CONFIG_YAML=./dev.config.yaml uv run lumen
 #
 # Then open http://localhost:5001 — you're auto-logged in as the dev_user (an admin),
-# so /admin/config is reachable to exercise the model-access editor.
+# so /admin/config is reachable to exercise the config editor.
 
-version: 2
+version: 3
 
 app:
   name: Lumen (dev)
@@ -19,11 +19,13 @@ app:
   logs:
     level: info
   # Bypasses OAuth: every visit logs in as this user. Added to `admins` below so the
-  # config editor is reachable. dev_user groups are merged with the `users:` entry.
+  # config editor is reachable. dev_user groups are applied at login; names that
+  # don't match an existing group are ignored.
   dev_user:
     email: dev@example.com
     groups:
     - staff
+    - granite-testers
 
 admins:
 - dev@example.com
@@ -31,64 +33,34 @@ admins:
 rate_limiting:
   limit: 200 per minute
 
-# Global fallbacks. A model with no `access` and a user in no group resolves to blocked;
-# token pool falls back here when no group/user sets one.
+# Global fallbacks. Token pool falls back here when no group/user sets one.
+# Model visibility is ownership-based: a model with no owner is available to everyone;
+# owners and group grants are managed on the model's detail page, not in this file.
 defaults:
   models:
-    access: blocked
     ack_message: This model was trained outside the U.S. and may contain biases — use with awareness.
   tokens:
     max: 50
     refresh: 0.1
     starting: 50
 
-groups:
-  # Auto-assigned at login for the dev_user (and via the rule below, were OAuth real).
+# DEPRECATED: auto-join rules live in the database and are edited on each
+# group's page (admin-only Rules tab). This section is imported into the
+# database once by the upgrade migration and ignored afterwards (a startup
+# warning nags until it is removed). Dev note: the SQLite dev flow
+# (create_all + stamp) skips migrations, so create dev groups in the UI.
+group_rules:
   staff:
-    max: 50
-    refresh: 0.1
-    starting: 50
-    model_access:
-      default: allowed          # staff get everything except models blocked at the model level
-    rules:
-    - field: affiliation
-      contains: staff@example.edu
+  - field: affiliation
+    contains: staff@example.edu
   students:
-    max: 10
-    refresh: 0.02
-    starting: 10
-    model_access:
-      default: blocked          # students only get explicitly-allowed models
-      allowed:
-      - dummy
-    rules:
-    - field: affiliation
-      contains: student@example.edu
-  # A small group used to grant a blocked-by-default model to test users.
-  granite-testers:
-    model_access:
-      allowed:
-      - granite-speech
-
-projects:
-  default:
-    max: 100
-    refresh: 0.05
-    starting: 100
-    model_access:
-      default: blocked
-      allowed:
-      - dummy
-
-# Per-user overrides. The dev user is added to granite-testers so they can use the
-# blocked-by-default `granite-speech` model — exercising the per-user editor + resolution.
-users:
-  dev@example.com:
-    groups:
-    - granite-testers
+  - field: affiliation
+    contains: student@example.edu
+  # A small group to grant owned models to; add it to a model on its detail page.
+  granite-testers: []
 
 models:
-# The only model with a live backend (uv run dummy). access unset -> inherits group defaults.
+# The only model with a live backend (uv run dummy). No owner -> available to everyone.
 - name: dummy
   description: Local echo backend for development.
   input_cost_per_million: 0
@@ -111,10 +83,9 @@ models:
     api_key: dummy
     model: dummy
 
-# Blocked by default at the model level; granted only via the granite-testers group.
+# Candidate for ownership testing: set an owner on its detail page, then grant granite-testers.
 - name: granite-speech
-  description: Blocked by default; enabled for granite-testers.
-  access: blocked
+  description: Test model for ownership and group grants.
   input_cost_per_million: 0.1
   output_cost_per_million: 0.2
   endpoints:
@@ -122,7 +93,7 @@ models:
     api_key: dummy
     model: dummy
 
-# Disabled — hidden everywhere and excluded from the access editor's model list.
+# Disabled — hidden everywhere.
 - name: retired-model
   disabled: true
   input_cost_per_million: 0

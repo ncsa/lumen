@@ -121,17 +121,17 @@ def test_chat_stream_unknown_model(auth_client):
 
 # ── Access control ────────────────────────────────────────────────────────────
 
-def test_chat_stream_blacklisted_model_403(app, auth_client, test_user, test_model):
+def test_chat_stream_owned_model_403(app, auth_client, test_user, test_model):
+    """A model owned by another user is blocked for the non-owner."""
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
+        from lumen.models.entity import Entity
+        from tests.conftest import set_model_owner
         _grant_unlimited_pool(app, test_user["id"])
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"],
-            model_config_id=test_model["id"],
-            access_type="blocked",
-        ))
+        owner = Entity(entity_type="user", email="owner@example.com", name="Owner", active=True)
+        db.session.add(owner)
         db.session.commit()
+        set_model_owner(test_model["id"], owner.id)
 
     resp = auth_client.post("/chat/stream", json={
         "messages": [{"role": "user", "content": "hi"}],
@@ -140,18 +140,12 @@ def test_chat_stream_blacklisted_model_403(app, auth_client, test_user, test_mod
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_chat_stream_graylist_no_consent_403(app, auth_client, test_user, test_model):
+def test_chat_stream_ack_no_consent_403(app, auth_client, test_user, test_model):
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
         from lumen.models.model_config import ModelConfig
         _grant_unlimited_pool(app, test_user["id"])
         db.session.get(ModelConfig, test_model["id"]).needs_ack = True
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"],
-            model_config_id=test_model["id"],
-            access_type="allowed",
-        ))
         db.session.commit()
 
     resp = auth_client.post("/chat/stream", json={
@@ -161,7 +155,7 @@ def test_chat_stream_graylist_no_consent_403(app, auth_client, test_user, test_m
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_chat_stream_graylist_with_consent_passes_access(
+def test_chat_stream_ack_with_consent_passes_access(
     app, auth_client, test_user, test_model,
 ):
     """needs_ack + consent clears the access gate (stream starts, fails at LLM level).
@@ -173,16 +167,10 @@ def test_chat_stream_graylist_with_consent_passes_access(
     """
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
         from lumen.models.entity_model_consent import EntityModelConsent
         from lumen.models.model_config import ModelConfig
         _grant_unlimited_pool(app, test_user["id"])
         db.session.get(ModelConfig, test_model["id"]).needs_ack = True
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"],
-            model_config_id=test_model["id"],
-            access_type="allowed",
-        ))
         db.session.add(EntityModelConsent(
             entity_id=test_user["id"],
             model_config_id=test_model["id"],
@@ -440,29 +428,54 @@ def test_chat_stream_counts_conversation_when_storing_disabled(app, auth_client,
         assert db.session.scalar(select(func.count(Conversation.id))) == 0
 
 
-def test_chat_stream_whitelist_passes_access(app, auth_client, test_user, test_model):
-    """Whitelist clears the access gate (stream starts, fails at LLM level).
-
-    Asserted as OK rather than "not FORBIDDEN" — see
-    ``test_chat_stream_graylist_with_consent_passes_access``.
-    """
+def test_chat_stream_group_grant_passes_access(app, auth_client, test_user, test_model):
+    """A group grant on an owned model clears the access gate (stream starts, fails at LLM level)."""
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
+        from lumen.models.entity import Entity
+        from tests.conftest import grant_model_to_group, make_group_with_member, set_model_owner
         _grant_unlimited_pool(app, test_user["id"])
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"],
-            model_config_id=test_model["id"],
-            access_type="allowed",
-        ))
+        owner = Entity(entity_type="user", email="owner@example.com", name="Owner", active=True)
+        db.session.add(owner)
         db.session.commit()
+        set_model_owner(test_model["id"], owner.id)
+        group_id = make_group_with_member(test_user["id"])
+        grant_model_to_group(test_model["id"], group_id)
 
     resp = auth_client.post("/chat/stream", json={
         "messages": [{"role": "user", "content": "hi"}],
         "model": test_model["model_name"],
     })
+    assert resp.status_code != HTTPStatus.FORBIDDEN
+
+
+def test_chat_stream_expired_model_rejected(app, auth_client, test_user, test_model):
+    """A model past its end_date is treated like an unknown model on /chat/stream."""
+    from datetime import timedelta
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        from lumen.timeutils import utcnow
+        db.session.get(ModelConfig, test_model["id"]).end_date = utcnow() - timedelta(days=1)
+        db.session.commit()
+    resp = auth_client.post("/chat/stream", json={
+        "messages": [{"role": "user", "content": "hi"}],
+        "model": test_model["model_name"],
+    })
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+
+
+def test_chat_page_excludes_expired_model(app, auth_client, test_user, test_model, test_model_endpoint):
+    from datetime import timedelta
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        from lumen.timeutils import utcnow
+        db.session.get(ModelConfig, test_model["id"]).end_date = utcnow() - timedelta(days=1)
+        db.session.commit()
+    resp = auth_client.get("/chat")
     assert resp.status_code == HTTPStatus.OK
-    resp.close()
+    assert test_model["model_name"].encode() not in resp.data
 
 
 def test_chat_stream_disconnect_is_not_reported_as_empty_response(
@@ -562,14 +575,7 @@ def _fake_openai(chunks):
 
 def _allow_model(app, test_user, test_model):
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
         _grant_unlimited_pool(app, test_user["id"])
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"], model_config_id=test_model["id"],
-            access_type="allowed",
-        ))
-        db.session.commit()
 
 
 def _only_log(app):
@@ -994,14 +1000,13 @@ def test_rejected_chat_stream_is_never_admitted(
     from lumen.blueprints.chat import routes as chat_routes
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
+        from lumen.models.entity import Entity
+        from tests.conftest import set_model_owner
         _grant_unlimited_pool(app, test_user["id"])
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"],
-            model_config_id=test_model["id"],
-            access_type="blocked",
-        ))
+        owner = Entity(entity_type="user", email="rejected-owner@example.com", name="Owner", active=True)
+        db.session.add(owner)
         db.session.commit()
+        set_model_owner(test_model["id"], owner.id)
     state = _recording_live_state(monkeypatch, chat_routes)
 
     resp = _post_stream(auth_client, test_model)

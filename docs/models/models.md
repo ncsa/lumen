@@ -1,6 +1,6 @@
 # Models
 
-The **Models** page (`/models`) shows every AI model available in your Lumen instance, along with its pricing and current health.
+The **Models** page (`/models`) shows every AI model available to you in your Lumen instance, along with its pricing and current health. Models that are owned by another user and not granted to any of your groups are not listed.
 
 ![Models dashboard](../img/models.png)
 
@@ -25,6 +25,8 @@ The **Models** page (`/models`) shows every AI model available in your Lumen ins
 | **down** (red) | No backends are reachable — model is temporarily unavailable |
 | **disabled** (gray) | Model has been turned off |
 | **no endpoints** (gray) | No backends have been set up for this model |
+
+Models that require a one-time acknowledgment show a **required** badge, and early-access models show an **early access** badge — these models may change or be removed at any time, and you must acknowledge that before using them. A model with an end date disappears from this page once the date passes.
 
 ## Understanding Pricing
 

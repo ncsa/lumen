@@ -26,15 +26,26 @@ class EntityManager(db.Model):
     __table_args__ = (
         db.UniqueConstraint("user_entity_id", "project_entity_id"),
         db.Index("ix_entity_managers_project_entity_id", "project_entity_id"),
+        # At most one owner per project, enforced in the database: two
+        # concurrent ownership transfers would otherwise both commit
+        # is_owner=True, after which get_project_owner() raises for everyone.
+        db.Index(
+            "uq_entity_managers_owner",
+            "project_entity_id",
+            unique=True,
+            postgresql_where=db.text("is_owner"),
+            sqlite_where=db.text("is_owner"),
+        ),
         {"comment": "Maps users to project entities they are permitted to manage"},
     )
 
 
 def get_managed_projects(user_entity_id: int):
-    """Active project entities this user manages, ordered by name.
+    """Project entities this user manages (active or not), ordered by name.
 
-    Single join over EntityManager → Entity; returns Entity rows.
-    Shared by the projects blueprint (access scoping) and the profile
+    Deactivated projects are included so a manager can still reach them
+    and re-enable. Single join over EntityManager → Entity; returns Entity
+    rows. Shared by the projects blueprint (access scoping) and the profile
     blueprint (Projects section).
     """
     return db.session.execute(
@@ -43,7 +54,6 @@ def get_managed_projects(user_entity_id: int):
         .where(
             EntityManager.user_entity_id == user_entity_id,
             Entity.entity_type == "project",
-            Entity.active == True,
         )
         .order_by(Entity.name)
     ).scalars().all()
@@ -56,7 +66,7 @@ def get_project_owner(project_entity_id: int):
         .join(EntityManager, EntityManager.user_entity_id == Entity.id)
         .where(
             EntityManager.project_entity_id == project_entity_id,
-            EntityManager.is_owner == True,
+            EntityManager.is_owner == True,  # noqa: E712 — SQL comparison, not a truth check
         )
     ).scalar_one_or_none()
 

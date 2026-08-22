@@ -63,8 +63,8 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "access": { "type": "string", "enum": ["allowed", "blocked"] },
-                "ackMessage": { "type": "string" }
+                "ackMessage": { "type": "string" },
+                "earlyAccessMessage": { "type": "string" }
               }
             },
             "tokens": {
@@ -130,6 +130,27 @@
             "readTimeout": { "type": "number", "exclusiveMinimum": 0 },
             "requestTimeout": { "type": "number", "exclusiveMinimum": 0 },
             "maxRetries": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "groupRules": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["field"],
+              "additionalProperties": true,
+              "properties": {
+                "field": { "type": "string" },
+                "contains": { "type": "string" },
+                "equals": { "type": "string" }
+              },
+              "oneOf": [
+                { "required": ["contains"] },
+                { "required": ["equals"] }
+              ]
+            }
+
           }
         },
         "extraConfig": { "type": "string" }
@@ -276,40 +297,7 @@
         "scrapeTimeout": { "type": "string" }
       }
     },
-    "groups": {
-      "type": "object",
-      "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "rules": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": ["field"],
-              "properties": {
-                "field": { "type": "string" },
-                "contains": { "type": "string" },
-                "equals": { "type": "string" }
-              }
-            }
-          },
-          "max": { "type": "number", "minimum": 0 },
-          "refresh": { "type": "number", "minimum": 0 },
-          "starting": { "type": "number", "minimum": 0 },
-          "modelAccess": {
-            "type": "object",
-            "properties": {
-              "default": { "type": "string", "enum": ["allowed", "blocked", "whitelist", "blacklist", "graylist"] },
-              "allowed": { "type": "array", "items": { "type": "string" } },
-              "blocked": { "type": "array", "items": { "type": "string" } },
-              "blacklist": { "type": "array", "items": { "type": "string" } },
-              "graylist": { "type": "array", "items": { "type": "string" } },
-              "whitelist": { "type": "array", "items": { "type": "string" } }
-            }
-          }
-        }
-      }
-    },
+
     "models": {
       "type": "array",
       "items": {
@@ -402,8 +390,9 @@
             "type": "object",
             "properties": {
               "active": { "type": "boolean" },
-              "access": { "type": "string", "enum": ["allowed", "blocked"] },
               "needsAck": { "type": "boolean" },
+              "earlyAccess": { "type": "boolean" },
+              "endDate": { "type": "string" },
               "disabled": { "type": "boolean" },
               "ackMessage": { "type": "string" },
               "inputCostPerMillion": { "type": "number", "minimum": 0 },

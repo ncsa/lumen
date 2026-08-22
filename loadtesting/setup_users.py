@@ -39,12 +39,12 @@ def main():
     from lumen.models.api_key import APIKey
     from lumen.models.entity import Entity
     from lumen.models.entity_balance import EntityBalance
-    from lumen.models.entity_model_consent import EntityModelConsent
     from lumen.models.entity_limit import EntityLimit
-    from lumen.models.entity_model_access import EntityModelAccess
+    from lumen.models.entity_model_consent import EntityModelConsent
     from lumen.models.group import Group
     from lumen.models.group_member import GroupMember
     from lumen.models.model_config import ModelConfig
+    from lumen.models.model_group_access import ModelGroupAccess
     from lumen.services.crypto import hash_api_key
     from lumen.timeutils import utcnow
 
@@ -64,6 +64,21 @@ def main():
             group = db.session.execute(select(Group).filter_by(name=args.group)).scalar_one_or_none()
             if group is None:
                 print(f"ERROR: No group named '{args.group}' found in the database.", file=sys.stderr)
+                sys.exit(1)
+
+        if model_config.owner_entity_id is not None:
+            granted = group is not None and db.session.execute(
+                select(ModelGroupAccess.id).where(
+                    ModelGroupAccess.model_config_id == model_config.id,
+                    ModelGroupAccess.group_id == group.id,
+                )
+            ).scalar_one_or_none() is not None
+            if not granted:
+                print(
+                    f"ERROR: Model '{args.model}' is owned. Pass --group for a group already "
+                    "granted access to that model.",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
 
         raw_keys = []
@@ -103,17 +118,6 @@ def main():
                 coins_left=args.coins,
             )
             db.session.add(balance)
-
-            access = EntityModelAccess(
-                # Must be "allowed", not the legacy "whitelist": _resolve_allow_block
-                # treats any entity rule that is not exactly "allowed" as blocked, and
-                # the entity rule is the highest-precedence scope -- so "whitelist"
-                # actively denied the model and every request 403'd.
-                entity_id=entity.id,
-                model_config_id=model_config.id,
-                access_type="allowed",
-            )
-            db.session.add(access)
 
             if model_config.needs_ack:
                 db.session.add(EntityModelConsent(

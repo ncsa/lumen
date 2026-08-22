@@ -72,3 +72,15 @@ chart/phoenix.yaml
 
 # Load-test run data and summaries (local only)
 loadtesting/results/
+
+# Local scratch and machine-specific files (never commit these)
+.worktreeinclude
+code-review.md
+config.yaml.pre-v3.bak
+config.yaml.bak
+docker-compose.glitchtip.yml
+docs/lumen-story.html
+open_weights_models.csv
+reload.sh
+strix.sh
+strix_runs/

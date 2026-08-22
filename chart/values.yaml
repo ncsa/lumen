@@ -85,13 +85,13 @@ config:
   # -- Global fallbacks for models and token pools.
   defaults:
     models:
-      # -- Baseline access for models that omit lumen.access: allowed|blocked
-      access: blocked
       # -- Global acknowledgement message for needs_ack models without their own
       # ackMessage (replaces the old graylist default notice). Empty = none.
       ackMessage: ""
+      # -- Global acknowledgement message for earlyAccess models. Empty = built-in default.
+      earlyAccessMessage: ""
     tokens:
-      # -- Fallback coin pool. Groups/projects override only the fields that differ.
+      # -- Fallback coin pool for entities with no UI-set limit and no group pool.
       max: 0
       refresh: 0
       starting: 0
@@ -159,6 +159,20 @@ config:
     # retried: a retry restarts the whole generation while the first attempt may
     # still be draining upstream.
     maxRetries: 1
+  # -- DEPRECATED: group auto-join rules are managed in the app (each group's
+  # Rules tab). Anything set here is imported into the database once at startup
+  # (creating missing groups with their rules) and should then be removed.
+  # Mapping of group name -> list of rules; users matching ALL rules are added
+  # at login. Supported fields: affiliation, idp, email.
+  # Example:
+  # groupRules:
+  #   uiuc-staff:
+  #     - field: affiliation
+  #       contains: staff@illinois.edu
+  #     - field: idp
+  #       equals: urn:mace:incommon:uiuc.edu
+  groupRules: {}
+
   # -- Raw YAML appended verbatim to config.yaml (for settings not covered by chart values)
   extraConfig: ""
 
@@ -191,35 +205,6 @@ serviceMonitor:
   # -- Scrape timeout
   scrapeTimeout: "10s"
 
-## Groups ---------------------------------------------------------------------------
-# Each key is the group name. Groups are matched in order; the first match wins.
-# Rules are ANDed together. Supported fields: affiliation, idp, email.
-# modelAccess sets only the allow/block axis. default: allowed|blocked, plus
-# optional allowed: / blocked: model-name lists. Acknowledgement is a model
-# property (see models[].lumen.needsAck), not a group setting.
-# max/refresh/starting fall back to config.defaults.tokens when omitted.
-# Example:
-# groups:
-#   default:
-#     max: 0
-#     refresh: 0
-#     starting: 0
-#     modelAccess:
-#       default: blocked
-#       allowed: [dummy]
-#   uiuc-staff:
-#     rules:
-#       - field: affiliation
-#         contains: staff@illinois.edu
-#       - field: idp
-#         equals: urn:mace:incommon:uiuc.edu
-#     max: 20.0
-#     refresh: 0.05
-#     starting: 20.0
-#     modelAccess:
-#       default: allowed
-#       blocked: [deprecated-model]
-groups: {}
 
 ## OAuth2 / OIDC --------------------------------------------------------------------
 
@@ -372,8 +357,9 @@ models: []
 #   lumen:
 #     description: "This is for testing purposes"
 #     url: "https://huggingface.co/google/gemma-4-31B-it"
-#     access: allowed           # allowed|blocked baseline (overridable per group/project/user)
 #     needsAck: false           # true = require one-time user acknowledgement (model-level, sticky)
+#     earlyAccess: false        # true = early-access model; users must acknowledge it may change or be removed
+#     endDate: ""               # optional ISO date/datetime (UTC); model hidden and rejected after this (exclusive)
 #     disabled: false           # true = hard off: hidden everywhere, not overridable by any scope
 #     ackMessage: ""            # optional; overrides config.defaults.models.ackMessage when needsAck
 #     inputCostPerMillion: 0.05
@@ -396,7 +382,6 @@ models: []
 #     inputCostPerMillion: 2.5
 #     outputCostPerMillion: 10.0
 #     contextWindow: 128000
-#     access: allowed
 #
 # Example — in-cluster vLLM deployment (replicas>0):
 # - name: llama3-8b
@@ -449,7 +434,6 @@ models: []
 #     inputCostPerMillion: 0.1
 #     outputCostPerMillion: 0.3
 #     contextWindow: 8192
-#     access: allowed
 #
 # Example — in-cluster SGLang deployment:
 # - name: qwen3-8b
@@ -480,4 +464,3 @@ models: []
 #     inputCostPerMillion: 0.05
 #     outputCostPerMillion: 0.10
 #     contextWindow: 32768
-#     access: allowed

@@ -1,6 +1,7 @@
 """Dummy OpenAI-compatible backend for load testing Lumen without hitting real models."""
 import json
 import time
+
 from flask import Flask, Response, jsonify, request
 
 app = Flask(__name__)

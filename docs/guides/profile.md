@@ -25,6 +25,10 @@ The right side shows six stat tiles:
 | **Coins Available** | Your current pool balance with a progress bar (when a limit is set) |
 | **Refill Rate** | Auto-refill rate per hour and a countdown to the next refill |
 
+### Editing a User (admins)
+
+Admins in admin mode see an **Edit** button above the stat tiles — on their own profile and when viewing another user's profile from the admin Users page. It opens a dialog to enable/disable the account (**Active**) and set the user's coin pool: **Max Coins** (`-2` = unlimited, `0` = blocked) and **Refill Rate** (coins added per hour). Clearing Max Coins removes the user's own pool so it falls back to their groups or the global defaults; lowering Max Coins clamps the current balance. A user's name cannot be edited here — it comes from the login provider.
+
 ### Coin Pool Values
 
 | Value | Meaning |

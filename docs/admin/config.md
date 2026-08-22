@@ -11,10 +11,20 @@ Lumen is configured entirely through a single file: `config.yaml`. You place thi
 The config file declares its schema version at the top:
 
 ```yaml
-version: 2
+version: 3
 ```
 
-Version 2 introduced the orthogonal model-access model (`access` / `needs_ack` / `disabled` per model, and `allowed`/`blocked` allow-lists per scope) and the top-level `defaults` block. Legacy version-1 keys (`whitelist`/`blacklist`/`graylist`, `active:` on models, `app.graylist_default_notice`) are still accepted as input with a deprecation warning, but new configs should use the version-2 forms.
+Lumen 2.0 requires **version 3** and refuses to start on anything older — the startup error names the removed sections so you know what to migrate. A hot reload of an older-version file is skipped with a logged error. Version 3 removes from `config.yaml`:
+
+| Removed | Where it went |
+|---------|---------------|
+| `users:` | Explicit group memberships and per-user coin pools live in the database (edited from the user's profile page). For auto-assignment at login, use each group's Rules tab |
+| `projects:` | Projects live entirely in the database (see [Configuring Projects](config-projects.md)) |
+| `clients:` | Same as projects |
+| `groups:` | Groups — coin pools, memberships, model grants, and login auto-join rules — live in the database, managed on the Groups pages (a leftover `group_rules:` section is imported into the database once by the upgrade migration, then ignored with a startup warning; remove it) |
+| `access:` on a model, `model_access` on groups/users, `defaults.models.access`, legacy `whitelist`/`blacklist`/`graylist` | DB-managed model ownership (see [Model Access Resolution](#model-access-resolution)) |
+
+Existing database rows created by older config syncs (groups, memberships, pools) keep working and are fully manageable on the Groups pages. Login auto-join rules are edited per group on its Rules tab — see [User Groups and Access Control](config-users.md#auto-join-rules).
 
 ## Global Defaults
 
@@ -23,52 +33,40 @@ The top-level `defaults` block sets fallbacks used when a model or scope omits a
 ```yaml
 defaults:
   models:
-    access: blocked            # baseline for models that omit `access:`
     ack_message: "This model was trained outside the U.S. — use with awareness."
+    early_access_message: "This model is an early-access preview and may change or be removed."
   tokens:
-    max: 0                     # fallback coin pool for groups/projects
+    max: 0                     # fallback coin pool for users/projects without their own
     refresh: 0
     starting: 0
 ```
 
 | Field | Description |
 |-------|-------------|
-| `defaults.models.access` | Baseline allow/block state for any model that does not set its own `access`. |
 | `defaults.models.ack_message` | Global acknowledgement message shown for `needs_ack` models that don't set their own `ack_message`. (Replaces the old `app.graylist_default_notice`, which is still accepted as input.) |
+| `defaults.models.early_access_message` | Warning shown when acknowledging an `early_access` model. When unset, a built-in default message is used. |
 | `defaults.tokens.max` / `refresh` / `starting` | Fallback coin-pool values. A group or project only needs to set the fields that differ from these; omitted token fields are filled from `defaults.tokens`. |
 
 ## Model Access Resolution
 
-The allow/block decision for an entity and a model is resolved in this order — **explicit rules always beat defaults**, and a model's own `access` beats group/entity *defaults* but is itself overridden by an explicit per-scope rule:
+Model access is based on **ownership** and lives in the database — it is not configured in `config.yaml`. A model may have an owner (a user); ownership and group grants are edited by admins via the **Access** card on the model detail page (`/models/<name>`). For an entity (user or project) and a model, access resolves in this order:
 
-1. **Entity rule** — an `allowed`/`blocked` entry in the user's or project's own `model_access`.
-2. **Group rule** — an `allowed`/`blocked` entry in any of the user's groups (a `blocked` in any group beats an `allowed`).
-3. **Model `access`** — the model's own `access` field, when set (`allowed`/`blocked`). This lets a model be blocked-by-default even for groups whose `default` is `allowed`, while still being grant-able via an explicit group/user `allowed` rule (tiers 1–2).
-4. **Group default** — `model_access.default` of the user's groups.
-5. **Entity default** — the entity's own `model_access.default`.
-6. **Global default** — `defaults.models.access` (used when the model leaves `access` unset and no scope default applies).
+1. **Disabled or expired** — `disabled: true` or a past `end_date` → blocked, for everyone, not overridable.
+2. **No owner** — the model is **public**: available to every user and project.
+3. **Owner** — the entity is the model's owner → allowed.
+4. **Granted group** — the entity is a member of an active group the model has been granted to → allowed.
+5. **Otherwise** → blocked.
 
-Two model-level properties sit outside this chain:
+Two model-level properties sit outside this chain and remain config keys:
 
-- **`disabled: true`** short-circuits the whole resolution to blocked — it is never overridable by any scope.
-- **`needs_ack: true`** does not affect allow/block; it adds the one-time acknowledgement gate (the existing consent flow) for any user who is allowed the model.
+- **`needs_ack: true`** does not affect access; it adds the one-time acknowledgement gate (the existing consent flow) for any user who has access to the model. `early_access` works the same way.
+- **`disabled: true`** takes the model offline for everyone (step 1 above).
 
-### Worked example: `model-a`
+Config sync never touches owners or grants; the config keys that used to control access (`access:` on a model, `model_access` on groups or users, `defaults.models.access`) were removed in version 3 — a config that still contains them is rejected at startup. Deleting the owner user makes the model public again; deleting a granted group removes the grant.
 
-Suppose a user is a member of the group **`students`**, whose `model_access.default` is `allowed`. The table shows how `model-a` resolves for that user under different settings (top rows win):
+So to **restrict `model-a` to a small set of test users**: assign `model-a` an owner from its detail page, put the test users in a group, and grant that group access to the model.
 
-| `model-a` setting | A group/user explicit rule for `model-a`? | Result for the user | Why |
-|-------------------|--------------------------------------------|---------------------|-----|
-| `disabled: true` | user `allowed: [model-a]` | **Blocked** | `disabled` short-circuits everything — not overridable (tier 0) |
-| `access: blocked` | user `model_access.allowed: [model-a]` | **Allowed** | entity rule (tier 1) beats the model's `access` |
-| `access: blocked` | group `model_access.allowed: [model-a]` | **Allowed** | explicit group rule (tier 2) beats the model's `access` — *this is the "blocked by default, enabled for a test group" pattern* |
-| `access: blocked` | none | **Blocked** | model `access` (tier 3) beats the group's `default: allowed` (tier 4) |
-| `access: allowed` | none | **Allowed** | model `access` (tier 3) |
-| `access` unset | none | **Allowed** | inherits the `students` group `default: allowed` (tier 4) |
-| `access` unset | none, **and user is in no group** | **Blocked** | falls through to the global `defaults.models.access: blocked` (tier 6) |
-| `access: allowed` + `needs_ack: true` | none | **Allowed, after the user acknowledges it once** | `needs_ack` adds the consent gate on top of an allowed result |
-
-So to **block `model-a` for everyone but a small set of test users**: set `access: blocked` on the model, then add those users (or a group they're in) with an explicit `model_access.allowed: [model-a]`.
+> **Upgrading:** after upgrading from the config-based allow/block system, all non-disabled models are **public** until an admin assigns owners. This is a breaking change — assign owners before inviting users if some models should be restricted.
 
 ## Where to Find It
 
@@ -86,13 +84,9 @@ When running, Lumen watches `config.yaml` for changes and automatically reloads 
 
 | Setting | Effect |
 |---------|--------|
-| `models[*].access` / `disabled` | Allow/block a model or take it fully offline |
+| `models[*].disabled` | Take a model fully offline |
 | `models[*].endpoints` | Add, remove, or move model backend servers |
 | `models[*].input_cost_per_million` / `output_cost_per_million` | Change pricing |
-| `groups[*]` | Add, edit, or remove user groups |
-| `groups[*].model_access` | Override model access rules per group |
-| `projects.default` | Change default coin pool for new projects |
-| `projects[*]` | Configure individual project budgets and access |
 | `admins` | Update the list of administrator email addresses |
 | `chat.remove` | Change conversation soft-delete vs hard-delete mode |
 | `chat.upload` | Adjust upload file size limits and allowed file types |
@@ -120,7 +114,7 @@ Some settings are read only at startup and cannot be hot-reloaded. Lumen logs a 
 
 On startup, Lumen validates `config.yaml` and loads it into memory. While running, a background thread checks the file's modification time every 5 seconds. When a change is detected, it re-parses the YAML, applies the differences, and logs `config.yaml reloaded`. If a restart-required setting changed, it also emits a warning.
 
-The `init-db` command syncs config changes to the database (models, groups, model access, projects) without waiting for the watcher or restarting. It does not update in-memory settings like `APP_NAME` or `CHAT_CONVERSATION_REMOVE_MODE` — those only update when the watcher picks up the change or the app restarts.
+The `init-db` command syncs model config changes to the database without waiting for the watcher or restarting. It does not update in-memory settings like `APP_NAME` or `CHAT_CONVERSATION_REMOVE_MODE` — those only update when the watcher picks up the change or the app restarts.
 
 ```bash
 uv run flask init-db
