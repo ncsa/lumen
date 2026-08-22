@@ -132,8 +132,22 @@ Flask dev server:
 
 ```bash
 ulimit -n 65536
-uv run uvicorn run:app --host 127.0.0.1 --port 5001 --workers 4 --interface wsgi
+WEB_CONCURRENCY=4 LUMEN_WSGI_WORKERS=10 \
+  uv run uvicorn asgi:app --host 127.0.0.1 --port 5001 --workers 4
 ```
+
+Serve **`asgi:app`**, never `run:app --interface wsgi`. `asgi.py` is the only place
+`DisconnectAwareWSGIMiddleware` is installed, and that bridge is what stamps the timing marks into
+the WSGI environ. Without it, `request_logs.queue_wait`, `preflight`, `started_at` and `send_blocked`
+are all NULL, client disconnects are never detected, `LUMEN_WSGI_SEND_TIMEOUT` is not enforced, and
+the thread pool is uvicorn's hard-coded 10 per process regardless of `LUMEN_WSGI_WORKERS`.
+
+**The concurrency ceiling is `--workers` × `LUMEN_WSGI_WORKERS`.** With the defaults above that is
+4 × 10 = 40 concurrent requests; everything beyond that queues, and the queue time shows up in the
+client's response time but only appears server-side in `queue_wait`. Raising the thread count also
+needs DB pool headroom — if `(pool_size + max_overflow) × workers × replicas` exceeds 80% of
+Postgres's `max_connections`, `build_engine_options()` silently falls back to a smaller auto-sized
+pool and the threads just wait on `pool_timeout` instead.
 
 ## Files
 

@@ -69,3 +69,6 @@ restore.sh
 # model setup
 /models/
 chart/phoenix.yaml
+
+# Load-test run data and summaries (local only)
+loadtesting/results/
