@@ -473,6 +473,18 @@ def test_projects_data_unlimited_coins_available(admin_client, managed_project, 
     assert row["coins_available"] == -2
 
 
+def test_projects_data_shows_default_inherited_unlimited_pool(app, admin_client, managed_project):
+    previous_defaults = app.config.get("TOKEN_DEFAULTS")
+    app.config["TOKEN_DEFAULTS"] = {"max": -2, "refresh": 0, "starting": 0}
+    try:
+        resp = admin_client.get("/projects/data")
+    finally:
+        app.config["TOKEN_DEFAULTS"] = previous_defaults
+    row = next(c for c in resp.get_json()["projects"] if c["name"] == managed_project["name"])
+    assert row["max_coins"] is None
+    assert row["coins_available"] == -2
+
+
 def test_reset_project_tokens(app, admin_client, service_project):
     with app.app_context():
         from lumen.extensions import db

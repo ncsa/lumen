@@ -35,7 +35,7 @@ The remaining per-model fields below stay in `config.yaml`. They control acknowl
 |-------|---------|-------------|
 | `needs_ack` | `false` | When `true`, a user must acknowledge the model before using it. This is a **sticky, model-level property** — no group, project, or user scope can add or remove it. It only triggers the consent gate; it does not by itself grant or deny access. |
 | `early_access` | `false` | When `true`, the model is an early-access preview: users must acknowledge that it may change or be removed at any time before using it. Works like `needs_ack` (sticky, model-level) and can be combined with it — one dialog acknowledges both at once. The warning text comes from `defaults.models.early_access_message` (a built-in default is used when unset). If a model gains `early_access` (or `needs_ack`) after a user already acknowledged it, the user is prompted once more for the new requirement. |
-| `end_date` | unset | Date or datetime (UTC) after which the model is hidden everywhere and rejected, exactly like `disabled`. The comparison is exclusive: `end_date: 2026-09-01` means the model is usable through the end of August 31 UTC. Leave unset for no end date. |
+| `end_date` | unset | Date or datetime (UTC) after which the model is hidden everywhere and rejected, exactly like `disabled`. A bare date includes that entire UTC day: `end_date: 2026-09-01` remains usable through September 1 and expires at midnight starting September 2. An explicit datetime is the exact exclusive cutoff. Leave unset for no end date. |
 | `disabled` | `false` | **Hard off.** The model is hidden everywhere and cannot be used. This is **not overridable** by any scope — it always wins. Use it to take a model offline without deleting it. |
 | `ack_message` | unset | Optional acknowledgement message shown when `needs_ack` is `true`. Overrides the global `defaults.models.ack_message`. |
 
@@ -45,7 +45,7 @@ models:
     needs_ack: true       # require acknowledgement (model-level, sticky)
     ack_message: "This model was trained outside the U.S. — use with awareness."
     early_access: true    # preview model; users must acknowledge it may change or be removed
-    end_date: 2026-12-31  # hidden and rejected after this date (UTC, exclusive); omit for no end date
+    end_date: 2026-12-31  # usable through this UTC date; omit for no end date
     input_cost_per_million: 0.5
     output_cost_per_million: 1.0
     endpoints:

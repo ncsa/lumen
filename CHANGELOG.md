@@ -39,6 +39,10 @@ All notable changes to Lumen will be documented in this file.
 ### Fixed
 
 - Blocked, disabled, and expired models no longer expose metadata through detail, profile, or project pages. (PR #41)
+- Bare model end dates keep models available through the named UTC date. (PR #41)
+- Admin user and project tables show unlimited pools inherited from groups or global defaults. (PR #41)
+- Invalid config-version values fail with the normal migration error instead of a traceback. (PR #41)
+- Chat hides acknowledgement-required models when the entity has no coin pool. (PR #41)
 - Non-serving CLI commands no longer start background workers during migrations and other maintenance commands. (PR #41)
 - Data tables consistently render cell borders. (PR #41)
 - Models.dev knowledge cutoffs are normalized to `YYYY-MM`. (PR #41)

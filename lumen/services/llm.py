@@ -409,6 +409,43 @@ def get_pool_limit(entity_id: int):
     return None
 
 
+def entity_has_unlimited_pool(entity_id_column):
+    """SQL expression matching ``get_pool_limit`` when its result is unlimited.
+
+    Used by paginated tables so inherited unlimited pools sort and render
+    correctly without resolving each row in Python.
+    """
+    own_limit_exists = select(EntityLimit.id).where(
+        EntityLimit.entity_id == entity_id_column
+    ).exists()
+    own_unlimited_exists = select(EntityLimit.id).where(
+        EntityLimit.entity_id == entity_id_column,
+        EntityLimit.max_coins == -2,
+    ).exists()
+    active_group_limit = (
+        select(GroupMember.id)
+        .join(Group, Group.id == GroupMember.group_id)
+        .join(GroupLimit, GroupLimit.group_id == GroupMember.group_id)
+        .where(
+            GroupMember.entity_id == entity_id_column,
+            Group.active == True,  # noqa: E712
+        )
+    )
+    unlimited_group_exists = active_group_limit.where(
+        GroupLimit.max_coins == -2
+    ).exists()
+    usable_group_exists = active_group_limit.where(
+        GroupLimit.max_coins != 0
+    ).exists()
+
+    defaults = current_app.config.get("TOKEN_DEFAULTS") or {}
+    default_unlimited = float(defaults.get("max", 0)) == -2
+    inherited_unlimited = unlimited_group_exists
+    if default_unlimited:
+        inherited_unlimited = inherited_unlimited | ~usable_group_exists
+    return own_unlimited_exists | (~own_limit_exists & inherited_unlimited)
+
+
 def get_effective_limit(entity_id: int, model_config_id: int, require_consent: bool = True):
     """
     Return (max_coins, refresh_coins, starting_coins) or None if blocked/no access.

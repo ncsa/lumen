@@ -110,9 +110,9 @@ def chat_page():
     # Pool limit is entity-level; fetch once rather than once per model via get_effective_limit
     pool = get_pool_limit(entity_id)
 
-    # Include models that are accessible (not blocked) and have healthy endpoints.
-    # Models that require acknowledgement without consent are shown with a warning so the
-    # user can navigate to the model detail page to acknowledge them.
+    # Include models that are accessible, funded, and have healthy endpoints.
+    # Models that require acknowledgement remain visible only when the entity
+    # has a coin pool and can use them after acknowledging.
     available_models = []
     for m in all_models:
         if healthy_counts.get(m.id, 0) == 0:
@@ -120,7 +120,7 @@ def chat_page():
         status = access_statuses.get(m.id, "allowed")
         if status == "blocked":
             continue
-        if pool is None and status != "needs_ack":
+        if pool is None:
             continue
         consented = (m.id in consent_map) if status == "needs_ack" else True
         consent_at = consent_map.get(m.id) if status == "needs_ack" else None

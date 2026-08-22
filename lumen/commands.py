@@ -3,7 +3,7 @@ import re
 import shutil
 import tempfile
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
 
@@ -90,9 +90,9 @@ def _normalize_model_url(url):
 def _normalize_end_date(value, model_name=None):
     """Coerce a config end_date (date, datetime, or ISO string) to naive-UTC datetime.
 
-    A bare date means midnight UTC of that day (exclusive), i.e. the model is
-    usable through the end of the previous day. Unparseable values are dropped
-    with a warning."""
+    A bare date is stored as midnight UTC at the start of the following day, so
+    the model remains usable throughout the named date. Explicit datetimes stay
+    exact. Unparseable values are dropped with a warning."""
     if value is None or value == "":
         return None
     if isinstance(value, datetime):
@@ -100,19 +100,25 @@ def _normalize_end_date(value, model_name=None):
             return value.astimezone(timezone.utc).replace(tzinfo=None)
         return value
     if isinstance(value, date):
-        return datetime(value.year, value.month, value.day)
+        return datetime(value.year, value.month, value.day) + timedelta(days=1)
+    text_value = str(value)
+    bare_iso_date = re.fullmatch(r"\d{4}-\d{2}-\d{2}", text_value) is not None
+    parsed_rfc822_date = False
     try:
-        parsed = datetime.fromisoformat(str(value))
+        parsed = datetime.fromisoformat(text_value)
     except ValueError:
         # The admin config editor round-trips YAML dates through JSON, which
         # Flask serializes in RFC 822 form ("Thu, 31 Dec 2026 00:00:00 GMT").
         try:
-            parsed = parsedate_to_datetime(str(value))
+            parsed = parsedate_to_datetime(text_value)
+            parsed_rfc822_date = parsed.hour == parsed.minute == parsed.second == parsed.microsecond == 0
         except ValueError:
             _warn_once(("end-date", model_name), "invalid end_date '%s' on model '%s'; ignoring", value, model_name)
             return None
     if parsed.tzinfo is not None:
         parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    if bare_iso_date or parsed_rfc822_date:
+        parsed += timedelta(days=1)
     return parsed
 
 

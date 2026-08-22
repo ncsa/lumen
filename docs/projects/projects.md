@@ -48,7 +48,7 @@ At the top of the page, four cards summarize the projects you can see:
 | **Last Used** | When the project last made a request |
 | **Requests** | Total API requests |
 | **Tokens** | Total input + output tokens |
-| **Coins Left** | Current balance (∞ = unlimited) |
+| **Coins Left** | Current balance (∞ = unlimited), including unlimited pools inherited from a group or the global default |
 | **Coins Spent** | Total coins spent |
 
 Click any column header to sort. Use the search box to filter by name.

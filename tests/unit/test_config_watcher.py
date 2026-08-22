@@ -363,6 +363,8 @@ def test_config_version_ok_gate():
     assert config_version_ok({"version": 1}) is False
     assert config_version_ok({}) is False
     assert config_version_ok({"version": None}) is False
+    assert config_version_ok({"version": "three"}) is False
+    assert config_version_ok({"version": []}) is False
 
 
 def test_create_app_refuses_old_config_version(tmp_path, monkeypatch):
@@ -379,6 +381,35 @@ def test_create_app_refuses_old_config_version(tmp_path, monkeypatch):
     from lumen import create_app
     with pytest.raises(SystemExit):
         create_app()
+
+
+def test_create_app_refuses_non_numeric_config_version(tmp_path, monkeypatch, capsys):
+    """Malformed version values use the normal startup error instead of traceback."""
+    import pytest
+    import yaml as _yaml
+
+    cfg = tmp_path / "malformed-version.yaml"
+    cfg.write_text(_yaml.dump({
+        "version": "three",
+        "app": {
+            "secret_key": "x",
+            "encryption_key": "y",
+            "database": {"url": "sqlite:///:memory:"},
+        },
+        "models": [{
+            "name": "m",
+            "input_cost_per_million": 0,
+            "output_cost_per_million": 0,
+        }],
+    }))
+    import config as config_module
+
+    monkeypatch.setattr(config_module.Config, "CONFIG_YAML", str(cfg))
+    from lumen import create_app
+
+    with pytest.raises(SystemExit):
+        create_app()
+    assert "config.yaml must declare 'version: 3'" in capsys.readouterr().err
 
 
 def test_unknown_app_key_warns(app, caplog, restore_config):

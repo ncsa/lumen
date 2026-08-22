@@ -212,6 +212,52 @@ def test_api_users_includes_limit_fields(app, admin_client, test_user):
     assert row["refresh_coins"] == 2.0
 
 
+def test_api_users_shows_group_inherited_unlimited_pool(app, admin_client, test_user):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.group import Group
+        from lumen.models.group_limit import GroupLimit
+        from lumen.models.group_member import GroupMember
+
+        group = Group(name="unlimited-users", active=True)
+        db.session.add(group)
+        db.session.flush()
+        db.session.add_all([
+            GroupMember(entity_id=test_user["id"], group_id=group.id),
+            GroupLimit(group_id=group.id, max_coins=-2, refresh_coins=0, starting_coins=0),
+        ])
+        db.session.commit()
+
+    resp = admin_client.get("/admin/api/users")
+    row = next(u for u in resp.get_json()["users"] if u["id"] == test_user["id"])
+    assert row["max_coins"] is None
+    assert row["coins_available"] == -2
+
+
+def test_api_users_own_pool_overrides_group_unlimited(app, admin_client, test_user):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.models.group import Group
+        from lumen.models.group_limit import GroupLimit
+        from lumen.models.group_member import GroupMember
+
+        group = Group(name="overridden-unlimited-users", active=True)
+        db.session.add(group)
+        db.session.flush()
+        db.session.add_all([
+            GroupMember(entity_id=test_user["id"], group_id=group.id),
+            GroupLimit(group_id=group.id, max_coins=-2, refresh_coins=0, starting_coins=0),
+            EntityLimit(entity_id=test_user["id"], max_coins=100, refresh_coins=1, starting_coins=100),
+        ])
+        db.session.commit()
+
+    resp = admin_client.get("/admin/api/users")
+    row = next(u for u in resp.get_json()["users"] if u["id"] == test_user["id"])
+    assert row["max_coins"] == 100
+    assert row["coins_available"] == 0
+
+
 def test_api_users_returns_zeros_without_usage(admin_client, test_user):
     resp = admin_client.get("/admin/api/users")
     assert resp.status_code == HTTPStatus.OK

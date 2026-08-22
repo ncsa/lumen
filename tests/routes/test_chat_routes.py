@@ -478,6 +478,37 @@ def test_chat_page_excludes_expired_model(app, auth_client, test_user, test_mode
     assert test_model["model_name"].encode() not in resp.data
 
 
+def test_chat_page_excludes_needs_ack_model_without_coin_pool(
+    app, auth_client, test_model, test_model_endpoint,
+):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+
+        db.session.get(ModelConfig, test_model["id"]).needs_ack = True
+        db.session.commit()
+
+    resp = auth_client.get("/chat")
+    assert resp.status_code == HTTPStatus.OK
+    assert test_model["model_name"].encode() not in resp.data
+
+
+def test_chat_page_shows_needs_ack_model_with_coin_pool(
+    app, auth_client, test_user, test_model, test_model_endpoint,
+):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+
+        _grant_unlimited_pool(app, test_user["id"])
+        db.session.get(ModelConfig, test_model["id"]).needs_ack = True
+        db.session.commit()
+
+    resp = auth_client.get("/chat")
+    assert resp.status_code == HTTPStatus.OK
+    assert test_model["model_name"].encode() in resp.data
+
+
 def test_chat_stream_disconnect_is_not_reported_as_empty_response(
     app, auth_client, test_user, test_model, monkeypatch,
 ):

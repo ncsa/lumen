@@ -32,7 +32,11 @@ CONFIG_VERSION_ERROR = (
 
 def config_version_ok(yaml_data: dict) -> bool:
     """True if the config declares the required version."""
-    return int(yaml_data.get("version", 1) or 1) >= REQUIRED_CONFIG_VERSION
+    try:
+        version = int(yaml_data.get("version", 1) or 1)
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return version >= REQUIRED_CONFIG_VERSION
 
 
 def validate_config_structure(data) -> list:

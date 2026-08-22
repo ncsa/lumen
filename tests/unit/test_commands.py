@@ -208,7 +208,7 @@ def test_normalize_end_date_from_date(app):
 
     from lumen.commands import _normalize_end_date
     with app.app_context():
-        assert _normalize_end_date(date(2026, 9, 1)) == datetime(2026, 9, 1)
+        assert _normalize_end_date(date(2026, 9, 1)) == datetime(2026, 9, 2)
 
 
 def test_normalize_end_date_naive_datetime_passthrough(app):
@@ -230,7 +230,7 @@ def test_normalize_end_date_aware_datetime_to_naive_utc(app):
 def test_normalize_end_date_from_iso_string(app):
     from lumen.commands import _normalize_end_date
     with app.app_context():
-        assert _normalize_end_date("2026-09-01") == datetime(2026, 9, 1)
+        assert _normalize_end_date("2026-09-01") == datetime(2026, 9, 2)
         assert _normalize_end_date("2026-09-01T08:15:00") == datetime(2026, 9, 1, 8, 15)
 
 
@@ -267,7 +267,7 @@ def test_apply_model_fields_sets_early_access_and_end_date(app):
             "knowledge_cutoff": "2024-06-15",
         })
         assert mc.early_access is True
-        assert mc.end_date == datetime(2026, 12, 31)
+        assert mc.end_date == datetime(2027, 1, 1)
         assert mc.knowledge_cutoff == "2024-06"
 
 
@@ -275,7 +275,7 @@ def test_normalize_end_date_rfc822_from_config_editor(app):
     """The admin config editor round-trips YAML dates through JSON as RFC 822."""
     from lumen.commands import _normalize_end_date
     with app.app_context():
-        assert _normalize_end_date("Thu, 31 Dec 2026 00:00:00 GMT") == datetime(2026, 12, 31)
+        assert _normalize_end_date("Thu, 31 Dec 2026 00:00:00 GMT") == datetime(2027, 1, 1)
 
 
 def test_backfill_aggregate_is_a_clean_noop_on_sqlite(app):

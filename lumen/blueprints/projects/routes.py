@@ -23,7 +23,7 @@ from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.entity_stat import EntityStat
 from lumen.models.model_config import ModelConfig
 from lumen.services.crypto import hash_api_key
-from lumen.services.llm import get_model_access_status
+from lumen.services.llm import entity_has_unlimited_pool, get_model_access_status
 from lumen.timeutils import utcnow
 
 projects_bp = Blueprint("projects", __name__)
@@ -129,15 +129,8 @@ def data():
         .subquery()
     )
 
-    unlimited_sq = (
-        select(EntityLimit.entity_id)
-        .where(EntityLimit.max_coins == -2)
-        .distinct()
-        .subquery()
-    )
-
     coins_avail_sort = case(
-        (unlimited_sq.c.entity_id != None, _BIGINT_MAX),  # noqa: E711
+        (entity_has_unlimited_pool(Entity.id), _BIGINT_MAX),
         else_=func.coalesce(balance_sq.c.coins_available, 0),
     )
 
@@ -155,7 +148,6 @@ def data():
         .outerjoin(EntityStat, Entity.id == EntityStat.entity_id)
         .outerjoin(mgr_sq, Entity.id == mgr_sq.c.project_id)
         .outerjoin(balance_sq, Entity.id == balance_sq.c.entity_id)
-        .outerjoin(unlimited_sq, Entity.id == unlimited_sq.c.entity_id)
     )
 
     # Everyone sees disabled projects: admins see all, managers see theirs —

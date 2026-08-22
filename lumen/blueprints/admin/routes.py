@@ -26,7 +26,7 @@ from lumen.services.config_watcher import (
     restore_config_secrets,
     validate_config_structure,
 )
-from lumen.services.llm import best_group_pool_limit, get_pool_limit
+from lumen.services.llm import best_group_pool_limit, entity_has_unlimited_pool, get_pool_limit
 from lumen.timeutils import utcnow
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
@@ -365,15 +365,8 @@ def api_users():
         .subquery()
     )
 
-    unlimited_sq = (
-        select(EntityLimit.entity_id)
-        .where(EntityLimit.max_coins == -2)
-        .distinct()
-        .subquery()
-    )
-
     coins_avail_sort = case(
-        (unlimited_sq.c.entity_id != None, _BIGINT_MAX),  # noqa: E711
+        (entity_has_unlimited_pool(Entity.id), _BIGINT_MAX),
         else_=func.coalesce(balance_sq.c.coins_available, 0),
     )
 
@@ -389,7 +382,6 @@ def api_users():
         .where(Entity.entity_type == "user")
         .outerjoin(EntityStat, Entity.id == EntityStat.entity_id)
         .outerjoin(balance_sq, Entity.id == balance_sq.c.entity_id)
-        .outerjoin(unlimited_sq, Entity.id == unlimited_sq.c.entity_id)
     )
 
     if search:
