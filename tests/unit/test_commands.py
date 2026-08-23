@@ -247,6 +247,8 @@ def test_normalize_knowledge_cutoff_truncates(app):
         assert _normalize_knowledge_cutoff("2024-06") == "2024-06"
         assert _normalize_knowledge_cutoff(None) is None
         assert _normalize_knowledge_cutoff("not-a-real-date", "m") is None
+        assert _normalize_knowledge_cutoff("2024", "m") is None
+        assert _normalize_knowledge_cutoff("2024-13", "m") is None
 
 
 def test_apply_model_fields_sets_early_access_and_end_date(app):

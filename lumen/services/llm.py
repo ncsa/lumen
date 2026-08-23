@@ -340,11 +340,13 @@ def _consent_satisfied(row, needs_ack: bool, early_access: bool) -> bool:
 
 def has_model_consent(entity_id: int, model_config_id: int) -> bool:
     """Return True if the entity has satisfied all of the model's acknowledgement requirements."""
+    mc = db.session.get(ModelConfig, model_config_id)
+    if mc is None:
+        return False
     row = db.session.execute(
         select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=model_config_id)
     ).scalar_one_or_none()
-    mc = db.session.get(ModelConfig, model_config_id)
-    return _consent_satisfied(row, mc.needs_ack if mc else False, mc.early_access if mc else False)
+    return _consent_satisfied(row, mc.needs_ack, mc.early_access)
 
 
 def model_notices(mc) -> tuple:
@@ -366,13 +368,14 @@ def get_model_access(entity_id: int, model_config_id: int, require_consent: bool
     For models that require acknowledgement, requires prior consent (EntityModelConsent)
     unless require_consent is False (used to exempt API requests from the consent gate).
     """
-    status = get_model_access_status(entity_id, model_config_id)
+    access_statuses, consent_map = bulk_model_access_info(entity_id, [model_config_id])
+    status = access_statuses[model_config_id]
     if status == "blocked":
         return False
     if status == "needs_ack":
         if not require_consent:
             return True
-        return has_model_consent(entity_id, model_config_id)
+        return model_config_id in consent_map
     return True
 
 

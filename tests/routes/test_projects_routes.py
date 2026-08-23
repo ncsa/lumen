@@ -271,6 +271,12 @@ def test_create_project_empty_name_returns_400(admin_client):
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
+def test_create_project_duplicate_name_returns_409(admin_client, service_project):
+    resp = admin_client.post("/projects", json={"name": service_project["name"]})
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert resp.get_json()["error"] == "A project with this name already exists"
+
+
 # ---------------------------------------------------------------------------
 # Toggle project
 # ---------------------------------------------------------------------------

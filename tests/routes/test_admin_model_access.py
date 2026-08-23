@@ -130,6 +130,37 @@ def test_patch_unknown_group_id_400(app, admin_client, test_model, test_user):
     db.session.rollback()
 
 
+def test_patch_cannot_add_inactive_group_grant(admin_client, test_model, test_user, group_id):
+    toggle = admin_client.post(f"/groups/{group_id}/toggle")
+    assert toggle.status_code == HTTPStatus.OK
+
+    resp = admin_client.patch(
+        f"/admin/api/models/{test_model['id']}/access",
+        json={"owner_email": "testuser@example.com", "group_ids": [group_id]},
+    )
+
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json()["error"] == f"inactive group id(s): {group_id}"
+
+
+def test_patch_preserves_existing_inactive_group_grant(app, admin_client, test_model, test_user, group_id):
+    initial = admin_client.patch(
+        f"/admin/api/models/{test_model['id']}/access",
+        json={"owner_email": "testuser@example.com", "group_ids": [group_id]},
+    )
+    assert initial.status_code == HTTPStatus.OK
+    toggle = admin_client.post(f"/groups/{group_id}/toggle")
+    assert toggle.status_code == HTTPStatus.OK
+
+    resp = admin_client.patch(
+        f"/admin/api/models/{test_model['id']}/access",
+        json={"group_ids": [group_id]},
+    )
+
+    assert resp.status_code == HTTPStatus.OK
+    assert _grant_group_ids(app, test_model["id"]) == [group_id]
+
+
 def test_patch_group_ids_ignored_without_owner(app, admin_client, test_model, group_id):
     """group_ids on a public model are ignored — a public model carries no grants."""
     resp = admin_client.patch(

@@ -14,7 +14,7 @@ The config file declares its schema version at the top:
 version: 3
 ```
 
-Lumen 2.0 requires **version 3** and refuses to start on anything older or non-numeric — the startup error names the removed sections so you know what to migrate. A hot reload of an invalid-version file is skipped with a logged error. Version 3 removes from `config.yaml`:
+Lumen 2.0 requires the integer **version 3** and refuses to start on any other value, including unknown future versions — the startup error names the removed sections so you know what to migrate. A hot reload of an invalid-version file is skipped with a logged error. Version 3 removes from `config.yaml`:
 
 | Removed | Where it went |
 |---------|---------------|

@@ -300,7 +300,7 @@ All three workers are daemon threads started inside `create_app`. A `SERVER_IS_M
 |---|---|---|---|
 | Health checker | `services/health.py` | 60 s | Polls each `ModelEndpoint` via OpenAI `models.list()`; sets `healthy` flag |
 | Token refiller | `services/token_refill.py` | 60 s poll, hourly effective | Increments `EntityBalance` by `refresh_coins`, capped at `max_coins` |
-| Config watcher | `services/config_watcher.py` | 5 s | Hot-reloads models and group-rule groups from `config.yaml` (skips files older than version 3 with a logged error); warns on restart-required changes |
+| Config watcher | `services/config_watcher.py` | 5 s | Hot-reloads models from `config.yaml` (skips files whose version is not exactly 3 with a logged error); warns on restart-required changes |
 
 ---
 
@@ -375,7 +375,7 @@ Coin values use sentinel semantics: `-2` = unlimited, `0` = blocked, positive = 
 
 ## Configuration Management
 
-`config.yaml` is the single source of truth for runtime configuration (version 3 required — older files are rejected at startup). On each `create_app` call, models are synced to the database. Groups — memberships, coin pools, model grants, and auto-join rules — are DB-managed and never touched by config sync (a leftover `group_rules:` section only triggers a startup warning).
+`config.yaml` is the single source of truth for runtime configuration (integer version 3 is required; every other value is rejected at startup). On each `create_app` call, models are synced to the database. Groups — memberships, coin pools, model grants, and auto-join rules — are DB-managed and never touched by config sync (a leftover `group_rules:` section only triggers a startup warning).
 
 | Section | Controls |
 |---|---|

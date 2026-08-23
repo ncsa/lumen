@@ -125,18 +125,16 @@ def _normalize_end_date(value, model_name=None):
 def _normalize_knowledge_cutoff(value, model_name=None):
     """Clamp a knowledge cutoff to YYYY-MM (the column is String(7)).
 
-    models.dev sometimes reports YYYY-MM-DD; keep just the year-month. Other
-    values longer than 7 characters are dropped with a warning."""
+    models.dev sometimes reports YYYY-MM-DD; keep just the year-month. Values
+    that are not YYYY-MM or YYYY-MM-DD are dropped with a warning."""
     if not value:
         return None
     value = str(value)
-    if re.match(r"^\d{4}-\d{2}", value):
+    if re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])(?:-\d{2})?", value):
         return value[:7]
-    if len(value) > 7:
-        _warn_once(("knowledge-cutoff", model_name),
-                   "invalid knowledge_cutoff '%s' on model '%s'; expected YYYY-MM, ignoring", value, model_name)
-        return None
-    return value
+    _warn_once(("knowledge-cutoff", model_name),
+               "invalid knowledge_cutoff '%s' on model '%s'; expected YYYY-MM, ignoring", value, model_name)
+    return None
 
 
 def _apply_model_fields(config, model_def):

@@ -5,6 +5,7 @@ from lumen.services.llm import (
     get_model_access,
     get_model_access_status,
     get_pool_limit,
+    has_model_consent,
 )
 from tests.conftest import grant_model_to_group, make_group_with_member, set_model_owner
 
@@ -267,6 +268,29 @@ def test_blocked_model_still_blocked_when_require_consent_false(app, ids):
         assert get_model_access(entity_id, model_id, require_consent=False) is False
 
 
+def test_has_model_consent_unknown_model_fails_closed(app, ids):
+    entity_id, _ = ids
+    with app.app_context():
+        assert has_model_consent(entity_id, 999999) is False
+
+
+def test_get_model_access_reuses_bulk_consent_result(monkeypatch):
+    entity_id, model_id = 1, 7
+    monkeypatch.setattr(
+        "lumen.services.llm.bulk_model_access_info",
+        lambda *_args, **_kwargs: ({model_id: "needs_ack"}, {model_id: object()}),
+    )
+
+    def unexpected_second_consent_lookup(*_args, **_kwargs):
+        raise AssertionError("get_model_access performed a second consent lookup")
+
+    monkeypatch.setattr(
+        "lumen.services.llm.has_model_consent",
+        unexpected_second_consent_lookup,
+    )
+    assert get_model_access(entity_id, model_id) is True
+
+
 # ---------------------------------------------------------------------------
 # early_access consent — second acknowledgement requirement, per-requirement
 # ---------------------------------------------------------------------------
@@ -296,7 +320,6 @@ def test_needs_ack_consent_does_not_cover_later_early_access(app, ids):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_model_consent import EntityModelConsent
-        from lumen.services.llm import has_model_consent
         from lumen.timeutils import utcnow
         _set_needs_ack(app, model_id)
         db.session.add(EntityModelConsent(entity_id=entity_id, model_config_id=model_id, consented_at=utcnow()))
@@ -313,7 +336,6 @@ def test_both_requirements_satisfied(app, ids):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_model_consent import EntityModelConsent
-        from lumen.services.llm import has_model_consent
         from lumen.timeutils import utcnow
         _set_needs_ack(app, model_id)
         _set_early_access(app, model_id)

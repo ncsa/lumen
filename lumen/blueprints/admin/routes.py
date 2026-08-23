@@ -555,17 +555,25 @@ def apply_model_access_edit(mc, data):
         if not isinstance(raw_ids, list) or not all(isinstance(g, int) for g in raw_ids):
             return "group_ids must be a list of group ids"
         desired = set(raw_ids)
-        existing_ids = {
-            g.id for g in db.session.execute(select(Group).where(Group.id.in_(desired))).scalars().all()
-        } if desired else set()
-        unknown = desired - existing_ids
-        if unknown:
-            return "unknown group id(s): " + ", ".join(str(g) for g in sorted(unknown))
         current = {
             row.group_id: row for row in db.session.execute(
                 select(ModelGroupAccess).filter_by(model_config_id=mc.id)
             ).scalars().all()
         }
+        groups_by_id = {
+            group.id: group for group in db.session.execute(
+                select(Group).where(Group.id.in_(desired))
+            ).scalars().all()
+        } if desired else {}
+        unknown = desired - groups_by_id.keys()
+        if unknown:
+            return "unknown group id(s): " + ", ".join(str(g) for g in sorted(unknown))
+        inactive_new = sorted(
+            group_id for group_id in desired - current.keys()
+            if not groups_by_id[group_id].active
+        )
+        if inactive_new:
+            return "inactive group id(s): " + ", ".join(str(g) for g in inactive_new)
         for group_id, row in current.items():
             if group_id not in desired:
                 db.session.delete(row)

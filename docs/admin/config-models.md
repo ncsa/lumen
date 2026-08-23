@@ -39,6 +39,11 @@ The remaining per-model fields below stay in `config.yaml`. They control acknowl
 | `disabled` | `false` | **Hard off.** The model is hidden everywhere and cannot be used. This is **not overridable** by any scope — it always wins. Use it to take a model offline without deleting it. |
 | `ack_message` | unset | Optional acknowledgement message shown when `needs_ack` is `true`. Overrides the global `defaults.models.ack_message`. |
 
+Acknowledgements track which requirement types a user accepted, not the exact
+message text. Editing a model's `ack_message` or the global acknowledgement and
+early-access messages does not prompt users who already accepted those same
+requirements to acknowledge them again.
+
 ```yaml
 models:
   - name: my-model

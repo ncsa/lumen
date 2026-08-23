@@ -40,6 +40,12 @@ All notable changes to Lumen will be documented in this file.
 
 ### Fixed
 
+- Config validation rejects unknown future schema versions. (PR #41)
+- Model endpoint probes reject carrier-grade NAT and unspecified IP addresses. (PR #41)
+- New model grants cannot target inactive groups. (PR #41)
+- Project creation rejects duplicate project names. (PR #41)
+- Model consent checks fail closed for deleted models and avoid duplicate lookups. (PR #41)
+- Knowledge cutoffs reject values outside `YYYY-MM` and `YYYY-MM-DD` formats. (PR #41)
 - PR #41 tests satisfy automated code-quality checks.
 - Illinois-theme tables use consistent light-gray borders. (PR #41)
 - Blocked, disabled, and expired models no longer expose metadata through detail, profile, or project pages. (PR #41)

@@ -325,6 +325,14 @@ def create_project():
     name = (data.get("name") or "").strip()
     if not name:
         return jsonify({"error": "Project name required"}), HTTPStatus.BAD_REQUEST
+    duplicate_id = db.session.scalar(
+        select(Entity.id).where(
+            Entity.entity_type == "project",
+            Entity.name == name,
+        ).limit(1)
+    )
+    if duplicate_id is not None:
+        return jsonify({"error": "A project with this name already exists"}), HTTPStatus.CONFLICT
 
     owner_email = (data.get("owner_email") or "").strip()
     owner_user = None

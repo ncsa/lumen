@@ -22,6 +22,7 @@ MODELSDEV_TIMEOUT = 15
 OBSOLETE_FIELDS = ["supports_vision"]
 
 _TTL = 600  # 10 minutes
+_CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 
 _cache: dict = {"data": None, "ts": 0.0, "index": {}}
 
@@ -29,14 +30,14 @@ _cache: dict = {"data": None, "ts": 0.0, "index": {}}
 def _normalize_knowledge(value):
     """Clamp a models.dev knowledge cutoff to YYYY-MM (the DB column is String(7)).
 
-    models.dev sometimes reports YYYY-MM-DD; keep just the year-month. Other
-    values that cannot fit the column are dropped."""
+    models.dev sometimes reports YYYY-MM-DD; keep just the year-month. Values
+    that are not YYYY-MM or YYYY-MM-DD are dropped."""
     if not value:
         return None
     value = str(value)
-    if re.match(r"^\d{4}-\d{2}", value):
+    if re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])(?:-\d{2})?", value):
         return value[:7]
-    return value if len(value) <= 7 else None
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -88,10 +89,10 @@ def _validate_endpoint_url(url: str) -> str:
 
     Only http/https schemes are allowed. The hostname is resolved and every
     resolved IP is checked against private, loopback, link-local, multicast,
-    and reserved ranges. Returns the first validated IP; the probes connect to
-    that exact IP (see :func:`_pinned_get`) rather than resolving again, so a
-    DNS-rebinding flip between validation and fetch cannot redirect the request
-    to an internal address.
+    reserved, unspecified, and carrier-grade NAT ranges. Returns the first
+    validated IP; the probes connect to that exact IP (see :func:`_pinned_get`)
+    rather than resolving again, so a DNS-rebinding flip between validation and
+    fetch cannot redirect the request to an internal address.
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
@@ -104,7 +105,8 @@ def _validate_endpoint_url(url: str) -> str:
         raise ValueError(f"Blocked: hostname '{parsed.hostname}' does not resolve")
     for _, _, _, _, sockaddr in infos:
         ip = ipaddress.ip_address(sockaddr[0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast
+                or ip.is_reserved or ip.is_unspecified or ip in _CGNAT_NETWORK):
             raise ValueError(f"Blocked: hostname resolves to private/reserved IP {ip}")
     return infos[0][4][0]
 

@@ -355,12 +355,14 @@ def test_apply_hot_config_config_editor_disabled(app, restore_config):
 
 
 def test_config_version_ok_gate():
-    """Only version >= 3 configs pass; missing/old versions are rejected (startup exits)."""
+    """Only integer version 3 configs pass; other versions are rejected."""
     from lumen.services.config_watcher import config_version_ok
     assert config_version_ok({"version": 3}) is True
-    assert config_version_ok({"version": 4}) is True
+    assert config_version_ok({"version": 4}) is False
     assert config_version_ok({"version": 2}) is False
     assert config_version_ok({"version": 1}) is False
+    assert config_version_ok({"version": 3.0}) is False
+    assert config_version_ok({"version": "3"}) is False
     assert config_version_ok({}) is False
     assert config_version_ok({"version": None}) is False
     assert config_version_ok({"version": "three"}) is False

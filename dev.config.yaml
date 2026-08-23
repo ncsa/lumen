@@ -1,4 +1,4 @@
-# Local development config (v2) — no OAuth, no Postgres, no real LLM.
+# Local development config (v3) — no OAuth, no Postgres, no real LLM.
 #
 #   uv run dummy                              # echo backend on :9999 (separate terminal)
 #   CONFIG_YAML=./dev.config.yaml uv run flask db upgrade

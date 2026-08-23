@@ -430,6 +430,18 @@ def test_normalize_knowledge_empty_is_none():
 
 def test_normalize_knowledge_drops_long_garbage():
     assert model_sync._normalize_knowledge("not-a-date-at-all") is None
+    assert model_sync._normalize_knowledge("2024") is None
+    assert model_sync._normalize_knowledge("2024-13") is None
+
+
+def test_validate_url_rejects_cgnat_and_unspecified_ips():
+    for url in ("http://100.64.0.1/v1", "http://0.0.0.0/v1", "http://[::]/v1"):
+        try:
+            model_sync._validate_endpoint_url(url)
+        except ValueError as exc:
+            assert "private/reserved" in str(exc)
+        else:
+            raise AssertionError(f"unsafe endpoint accepted: {url}")
 
 
 def test_sync_model_truncates_dev_knowledge_date(monkeypatch):
