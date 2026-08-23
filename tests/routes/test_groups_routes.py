@@ -433,7 +433,8 @@ def test_owner_can_soft_delete(auth_client, app, owned_group):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.group import Group
-        assert db.session.get(Group, owned_group).active is False
+        group = db.session.get(Group, owned_group)
+        assert group.active is False
 
 
 def test_plain_member_cannot_delete(auth_client, member_group):

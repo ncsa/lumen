@@ -40,6 +40,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Fixed
 
+- PR #41 tests satisfy automated code-quality checks.
 - Illinois-theme tables use consistent light-gray borders. (PR #41)
 - Blocked, disabled, and expired models no longer expose metadata through detail, profile, or project pages. (PR #41)
 - Bare model end dates keep models available through the named UTC date. (PR #41)

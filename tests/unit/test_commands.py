@@ -1,8 +1,11 @@
 """Tests for YAML sync functions in lumen/commands.py."""
+import sys
 from datetime import datetime
+from pathlib import Path
 
 from sqlalchemy import select
 
+from lumen.commands import __file__ as commands_file
 from lumen.commands import backfill_aggregate_cmd, enable_retention_cmd, sync_models_from_yaml
 
 
@@ -111,13 +114,8 @@ def test_no_runtime_group_rules_import():
     on each group's Rules tab). If this fails, someone reintroduced a
     startup/reload import — which resurrected deleted rules and re-enabled
     auto_join every restart."""
-    from pathlib import Path
-
-    import lumen.commands
-    import lumen.services.config_watcher
-
-    assert not hasattr(lumen.commands, "import_group_rules_from_yaml")
-    root = Path(lumen.commands.__file__).resolve().parent
+    assert not hasattr(sys.modules["lumen.commands"], "import_group_rules_from_yaml")
+    root = Path(commands_file).resolve().parent
     for rel in ("__init__.py", "services/config_watcher.py", "commands.py"):
         source = (root / rel).read_text()
         assert "import_group_rules_from_yaml" not in source, rel
