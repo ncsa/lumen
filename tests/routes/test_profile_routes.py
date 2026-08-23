@@ -245,6 +245,26 @@ def test_user_consent_no_ack_required(app, auth_client, test_model):
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
+def test_user_consent_blocked_model_matches_not_found(app, auth_client, test_model):
+    from tests.conftest import set_model_owner
+
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+
+        owner = Entity(
+            entity_type="user", email="model-owner@example.com", name="Model Owner", active=True
+        )
+        db.session.add(owner)
+        db.session.commit()
+        set_model_owner(test_model["id"], owner.id)
+
+    blocked = auth_client.post(f"/profile/consent/{test_model['model_name']}")
+    unknown = auth_client.post("/profile/consent/nonexistent-model-xyz")
+    assert blocked.status_code == unknown.status_code == HTTPStatus.NOT_FOUND
+    assert blocked.data == unknown.data
+
+
 def test_user_consent_success(app, auth_client, test_user):
     """Posting consent for a needs_ack model records it and returns 200."""
     gm = _make_needs_ack_model(app, test_user["id"])

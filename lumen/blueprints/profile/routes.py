@@ -371,7 +371,10 @@ def user_consent(model_name):
     entity_id = session["entity_id"]
     config = db.first_or_404(select(ModelConfig).where(ModelConfig.model_name == model_name, ModelConfig.active))
 
-    if get_model_access_status(entity_id, config.id) != "needs_ack":
+    access_status = get_model_access_status(entity_id, config.id)
+    if access_status == "blocked":
+        abort(HTTPStatus.NOT_FOUND)
+    if access_status != "needs_ack":
         return jsonify({"error": "Model does not require acknowledgement for this user"}), HTTPStatus.BAD_REQUEST
 
     row = db.session.execute(

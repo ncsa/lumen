@@ -601,7 +601,10 @@ def project_consent(sid, model_name):
 
     config = db.first_or_404(select(ModelConfig).where(ModelConfig.model_name == model_name, ModelConfig.active))
 
-    if get_model_access_status(sid, config.id) != "needs_ack":
+    access_status = get_model_access_status(sid, config.id)
+    if access_status == "blocked":
+        abort(HTTPStatus.NOT_FOUND)
+    if access_status != "needs_ack":
         return jsonify({"error": "Model does not require acknowledgement for this project"}), HTTPStatus.BAD_REQUEST
 
     row = db.session.execute(

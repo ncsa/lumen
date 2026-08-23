@@ -50,6 +50,7 @@ All notable changes to Lumen will be documented in this file.
 - PR #41 tests satisfy automated code-quality checks.
 - Illinois-theme tables use consistent light-gray borders. (PR #41)
 - Blocked, disabled, and expired models no longer expose metadata through detail, profile, or project pages. (PR #41)
+- Consent endpoints hide blocked models behind the same response as unknown models. (#54)
 - Bare model end dates keep models available through the named UTC date. (PR #41)
 - Admin user and project tables show unlimited pools inherited from groups or global defaults. (PR #41)
 - Invalid config-version values fail with the normal migration error instead of a traceback. (PR #41)

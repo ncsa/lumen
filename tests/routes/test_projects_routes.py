@@ -917,6 +917,24 @@ def test_consent_non_ack_model_returns_400(app, managed_auth_client, managed_pro
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
+def test_consent_blocked_model_matches_not_found(
+    app, managed_auth_client, managed_project, test_model, test_user
+):
+    from tests.conftest import set_model_owner
+
+    with app.app_context():
+        set_model_owner(test_model["id"], test_user["id"])
+
+    blocked = managed_auth_client.post(
+        f"/projects/{managed_project['id']}/consent/{test_model['model_name']}"
+    )
+    unknown = managed_auth_client.post(
+        f"/projects/{managed_project['id']}/consent/nonexistent-model-xyz"
+    )
+    assert blocked.status_code == unknown.status_code == HTTPStatus.NOT_FOUND
+    assert blocked.data == unknown.data
+
+
 def test_consent_ack_model_succeeds(app, managed_auth_client, managed_project, test_model, make_ack_access):
     make_ack_access(managed_project["id"], test_model["id"])
     resp = managed_auth_client.post(
