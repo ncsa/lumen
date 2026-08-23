@@ -1,20 +1,20 @@
-from .entity import Entity
-from .entity_manager import EntityManager
 from .api_key import APIKey
-from .model_config import ModelConfig
-from .model_endpoint import ModelEndpoint
-from .entity_limit import EntityLimit
+from .conversation import Conversation
+from .entity import Entity
 from .entity_balance import EntityBalance
-from .entity_model_access import EntityModelAccess
+from .entity_limit import EntityLimit
+from .entity_manager import EntityManager
 from .entity_model_consent import EntityModelConsent
 from .entity_stat import EntityStat
-from .model_stat import ModelStat
-from .conversation import Conversation
-from .message import Message
 from .group import Group
-from .group_member import GroupMember
 from .group_limit import GroupLimit
-from .group_model_access import GroupModelAccess
+from .group_member import GroupMember
+from .group_rule import GroupRule
+from .message import Message
+from .model_config import ModelConfig
+from .model_endpoint import ModelEndpoint
+from .model_group_access import ModelGroupAccess
+from .model_stat import ModelStat
 from .request_log import RequestLog
 
 __all__ = [
@@ -25,7 +25,6 @@ __all__ = [
     "ModelEndpoint",
     "EntityLimit",
     "EntityBalance",
-    "EntityModelAccess",
     "EntityModelConsent",
     "EntityStat",
     "ModelStat",
@@ -33,7 +32,8 @@ __all__ = [
     "Message",
     "Group",
     "GroupMember",
+    "GroupRule",
     "GroupLimit",
-    "GroupModelAccess",
+    "ModelGroupAccess",
     "RequestLog",
 ]

@@ -11,9 +11,10 @@ These are the core settings that make Lumen work: database, authentication, and 
 | `name` | Display name shown in the app header |
 | `tagline` | Subtitle shown next to the name |
 | `secret_key` | Flask session encryption key (see Security Notes below) |
-| `encryption_key` | Used to hash API keys stored in the database. See **Security Notes** |
+| `encryption_key` | Used to hash user API keys and encrypt upstream endpoint API keys stored in the database. See **Security Notes** |
 | `database.url` | SQLAlchemy connection URL — PostgreSQL (`postgresql://...`) in production, or SQLite (`sqlite:///lumen.db`) for local development |
 | `debug` | Enable debug mode (set to `false` in production) |
+| `diagnostics` | Optional (default: `true`) — stack-capturing DB/context diagnostics (connection-pool checkout tracking and app-context probes, surfaced via `/metrics/debug`). Set to `false` to remove the per-request capture overhead. Restart required. |
 | `theme` | Institutional theme. Themes live in `themes/<name>/`. Built-in: `default`, `illinois`, `uic`, `uis`. Falls back to `default` if not found. |
 | `github_url` | Optional — overrides the default GitHub link in the navbar |
 | `config_editor` | Optional (default: `true`) — when `false`, the `/admin/config` editor is read-only. Set this for git-managed configs that should only change through version control. The Helm chart sets it to `false`. |
@@ -189,6 +190,7 @@ api:
   prometheus:
     enabled: false
     token: ""          # set to a long random string to require Bearer token auth
+    debug_token: ""    # separate token for /metrics/debug; empty = use `token`
     multiproc_dir: ""  # path for multi-worker aggregation (e.g. /tmp/prometheus_multiproc)
 ```
 
@@ -215,11 +217,12 @@ Optional Prometheus metrics endpoint at `/metrics`:
 |-------|-------------|
 | `enabled` | Enable or disable the metrics endpoint |
 | `token` | Bearer token for auth; empty = no auth required |
+| `debug_token` | Separate, stronger bearer token required for `/metrics/debug` (it exposes thread dumps and deployment details); empty = `/metrics/debug` uses `token` |
 | `multiproc_dir` | Shared directory for multi-worker aggregation; mount a shared volume here in container deployments |
 
 > **Restart required:** Changing `api.prometheus.enabled` or `api.prometheus.multiproc_dir` requires a restart. `api.prometheus.token` is read on each request and takes effect immediately.
 
-`GET /metrics/debug` uses the same bearer token and returns a plain-text diagnostic dump: every outstanding DB connection-pool checkout (with the endpoint, thread and stack that took it) plus a stack dump of every live thread. Use it when `lumen_db_pool_connections{state="checked_out"}` or `{state="stranded"}` climbs and never falls back — whatever is still listed after several minutes is holding a connection it never returned.
+`GET /metrics/debug` uses `debug_token` when set (falling back to the scrape `token` otherwise) and returns a plain-text diagnostic dump: every outstanding DB connection-pool checkout (with the endpoint, thread and stack that took it) plus a stack dump of every live thread. Use it when `lumen_db_pool_connections{state="checked_out"}` or `{state="stranded"}` climbs and never falls back — whatever is still listed after several minutes is holding a connection it never returned.
 
 ## Environment Variables
 
@@ -239,10 +242,10 @@ All of the following environment variables take precedence over the correspondin
 | `OAUTH2_REDIRECT_URI` | `oauth2.redirect_uri` |
 | `OAUTH2_SCOPES` | `oauth2.scopes` |
 
-`app.secret_key` and `app.encryption_key` must be set either in `config.yaml` or via their environment variables — the app will not start without them.
+`app.secret_key` and `app.encryption_key` must each be a random string of at least 32 characters, set either in `config.yaml` or via their environment variables. Generate separate values (for example, with `openssl rand -hex 32`); the app will not start with missing or shorter keys.
 
 ## Security Notes
 
-- **`app.secret_key`** is used for Flask session signing. If leaked, an attacker can forge user sessions. In production, set it to a long random value and inject it via `LUMEN_SECRET_KEY`.
-- **`app.encryption_key`** is used to hash API keys stored in the database. Rotating this value invalidates **all** existing user API keys because the hashes can no longer be verified. Use `LUMEN_ENCRYPTION_KEY` to inject it at deploy time without writing it into the config file.
+- **`app.secret_key`** is used for Flask session signing. If leaked, an attacker can forge user sessions. In production, inject a randomly generated value of at least 32 characters via `LUMEN_SECRET_KEY`.
+- **`app.encryption_key`** is used to hash API keys and encrypt upstream endpoint credentials stored in the database. Rotating this value invalidates **all** existing user API keys and makes existing encrypted credentials unreadable. Inject a separate randomly generated value of at least 32 characters via `LUMEN_ENCRYPTION_KEY`.
 - Never commit `config.yaml` with real secrets to a shared repository. Use `config.yaml.example` as a template and keep your live config file in a private location or inject secrets via environment variables.

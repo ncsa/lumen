@@ -6,10 +6,15 @@ seconds so repeated calls during a config-editor session only hit the
 remote API once.
 """
 
+import ipaddress
 import re
+import socket
 import time
+from urllib.parse import urlparse
 
+import certifi
 import requests
+import urllib3
 
 MODELSDEV_URL = "https://models.dev/api.json"
 ENDPOINT_TIMEOUT = 10
@@ -17,8 +22,22 @@ MODELSDEV_TIMEOUT = 15
 OBSOLETE_FIELDS = ["supports_vision"]
 
 _TTL = 600  # 10 minutes
+_CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 
 _cache: dict = {"data": None, "ts": 0.0, "index": {}}
+
+
+def _normalize_knowledge(value):
+    """Clamp a models.dev knowledge cutoff to YYYY-MM (the DB column is String(7)).
+
+    models.dev sometimes reports YYYY-MM-DD; keep just the year-month. Values
+    that are not YYYY-MM or YYYY-MM-DD are dropped."""
+    if not value:
+        return None
+    value = str(value)
+    if re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])(?:-\d{2})?", value):
+        return value[:7]
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -65,8 +84,72 @@ def _sglang_root(base: str) -> str:
     return base[:-3] if base.lower().endswith("/v1") else base
 
 
+def _validate_endpoint_url(url: str) -> str:
+    """Validate an endpoint URL is safe to fetch (blocks SSRF) and pin its IP.
+
+    Only http/https schemes are allowed. The hostname is resolved and every
+    resolved IP is checked against private, loopback, link-local, multicast,
+    reserved, unspecified, and carrier-grade NAT ranges. Returns the first
+    validated IP; the probes connect to that exact IP (see :func:`_pinned_get`)
+    rather than resolving again, so a DNS-rebinding flip between validation and
+    fetch cannot redirect the request to an internal address.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Blocked: unsupported scheme '{parsed.scheme}'")
+    if not parsed.hostname:
+        raise ValueError("Blocked: no hostname in URL")
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, parsed.port, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        raise ValueError(f"Blocked: hostname '{parsed.hostname}' does not resolve")
+    for _, _, _, _, sockaddr in infos:
+        ip = ipaddress.ip_address(sockaddr[0])
+        policy_ip = getattr(ip, "ipv4_mapped", None) or ip
+        if (policy_ip.is_private or policy_ip.is_loopback or policy_ip.is_link_local
+                or policy_ip.is_multicast or policy_ip.is_reserved or policy_ip.is_unspecified
+                or policy_ip in _CGNAT_NETWORK):
+            raise ValueError(f"Blocked: hostname resolves to private/reserved IP {ip}")
+    return infos[0][4][0]
+
+
+def _pinned_get(url: str, ip: str, headers: dict):
+    """GET ``url`` connecting to the pre-validated ``ip`` instead of resolving DNS again.
+
+    TLS still verifies against the URL's hostname (SNI and certificate check via
+    server_hostname/assert_hostname), and the Host header carries the original
+    hostname, so the upstream sees a normal request. Redirects are not followed —
+    a redirect target would be an unvalidated URL.
+    """
+    parsed = urlparse(url)
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    path = parsed.path or "/"
+    if parsed.query:
+        path += "?" + parsed.query
+    host_header = parsed.hostname + (f":{parsed.port}" if parsed.port else "")
+    if parsed.scheme == "https":
+        pool = urllib3.HTTPSConnectionPool(
+            ip, port,
+            server_hostname=parsed.hostname,
+            assert_hostname=parsed.hostname,
+            ca_certs=certifi.where(),
+            timeout=ENDPOINT_TIMEOUT,
+            retries=False,
+        )
+    else:
+        pool = urllib3.HTTPConnectionPool(ip, port, timeout=ENDPOINT_TIMEOUT, retries=False)
+    try:
+        return pool.request("GET", path, headers={**headers, "Host": host_header}, redirect=False)
+    finally:
+        pool.close()
+
+
 def fetch_endpoint_model(endpoint: dict) -> dict | None:
     base = endpoint["url"].rstrip("/")
+    try:
+        pinned_ip = _validate_endpoint_url(base)
+    except ValueError:
+        return None
     root = _sglang_root(base)
     headers = {"Authorization": f"Bearer {endpoint.get('api_key', '')}"}
 
@@ -79,8 +162,8 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
     # The endpoint is served at the server root (see _sglang_root), not /v1.
     sglang_flags: dict = {}
     try:
-        r = requests.get(f"{root}/get_server_info", headers=headers, timeout=ENDPOINT_TIMEOUT)
-        if r.ok:
+        r = _pinned_get(f"{root}/get_server_info", pinned_ip, headers)
+        if 200 <= r.status < 300:
             info = r.json()
             if any(k in info for k in ("max_req_input_len", "is_embedding", "enable_multimodal")):
                 sglang_flags = {
@@ -97,7 +180,7 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
     # vLLM (or SGLang without max_req_input_len): /v1/models gives id + max_model_len.
     model_id = None
     try:
-        r = requests.get(f"{base}/models", headers=headers, timeout=ENDPOINT_TIMEOUT)
+        r = _pinned_get(f"{base}/models", pinned_ip, headers)
         models = r.json().get("data", [])
         if models:
             model_id = models[0].get("id")
@@ -109,7 +192,7 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
 
     # Older SGLang: /get_model_info returns context_length. Also at the root.
     try:
-        r = requests.get(f"{root}/get_model_info", headers=headers, timeout=ENDPOINT_TIMEOUT)
+        r = _pinned_get(f"{root}/get_model_info", pinned_ip, headers)
         info = r.json()
         if "context_length" in info:
             return {"id": model_id or info.get("model_path", ""), "max_model_len": info["context_length"], **sglang_flags}
@@ -303,7 +386,7 @@ def sync_model(model_def: dict) -> dict:
     # is no match, nothing here is touched, so operator-set values are preserved.
     if dev_match:
         for field, new_val in [
-            ("knowledge_cutoff",   dev_match.get("knowledge")),
+            ("knowledge_cutoff",   _normalize_knowledge(dev_match.get("knowledge"))),
             ("supports_reasoning", dev_match.get("reasoning")),
             ("input_modalities",   (dev_match.get("modalities") or {}).get("input")),
             ("output_modalities",  (dev_match.get("modalities") or {}).get("output")),

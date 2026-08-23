@@ -37,7 +37,6 @@ def test_connect_surfaces_model_limits_and_cost(app, auth_client):
             max_output_tokens=32768,
             input_cost_per_million=5.0,
             output_cost_per_million=15.0,
-            access="allowed",
         ))
         db.session.commit()
 
@@ -52,13 +51,12 @@ def test_connect_surfaces_model_limits_and_cost(app, auth_client):
 def test_connect_excludes_blocked_model(app, auth_client, test_model, test_user):
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"],
-            model_config_id=test_model["id"],
-            access_type="blocked",
-        ))
+        from lumen.models.entity import Entity
+        from tests.conftest import set_model_owner
+        owner = Entity(entity_type="user", email="owner@example.com", name="Owner", active=True)
+        db.session.add(owner)
         db.session.commit()
+        set_model_owner(test_model["id"], owner.id)
 
     resp = auth_client.get("/connect")
     ids = [m["id"] for m in _connect_data(resp.data)["models"]]

@@ -60,6 +60,134 @@ def test_reset_tokens_resets_balance(app, admin_client, test_user):
         assert float(bal.coins_left) == 500.0
 
 
+def test_update_user_requires_admin(auth_client, test_user):
+    resp = auth_client.patch(f"/admin/users/{test_user['id']}", json={"active": False})
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_update_user_sets_active_and_coins(app, admin_client, test_user):
+    resp = admin_client.patch(
+        f"/admin/users/{test_user['id']}", json={"active": False, "max_coins": 200, "refresh_coins": 5}
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.get_json()["active"] is False
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.entity_limit import EntityLimit
+        assert db.session.get(Entity, test_user["id"]).active is False
+        limit = db.session.execute(
+            select(EntityLimit).filter_by(entity_id=test_user["id"])
+        ).scalar_one_or_none()
+        assert float(limit.max_coins) == 200.0
+        assert float(limit.refresh_coins) == 5.0
+        assert limit.config_managed is False
+
+
+def test_update_user_updates_existing_limit(app, admin_client, test_user):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        db.session.add(EntityLimit(
+            entity_id=test_user["id"], max_coins=100, refresh_coins=1, starting_coins=100,
+            config_managed=True,
+        ))
+        db.session.commit()
+    resp = admin_client.patch(f"/admin/users/{test_user['id']}", json={"refresh_coins": 3})
+    assert resp.status_code == HTTPStatus.OK
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        limit = db.session.execute(
+            select(EntityLimit).filter_by(entity_id=test_user["id"])
+        ).scalar_one_or_none()
+        assert float(limit.max_coins) == 100.0
+        assert float(limit.refresh_coins) == 3.0
+        # Editing only refresh leaves starting untouched.
+        assert float(limit.starting_coins) == 100.0
+        assert limit.config_managed is False
+
+
+def test_update_user_max_updates_starting_for_reset(app, admin_client, test_user):
+    """Raising Max Coins must also raise what reset-tokens refills to."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        db.session.add(EntityLimit(
+            entity_id=test_user["id"], max_coins=100, refresh_coins=1, starting_coins=100,
+        ))
+        db.session.commit()
+    resp = admin_client.patch(f"/admin/users/{test_user['id']}", json={"max_coins": 500})
+    assert resp.status_code == HTTPStatus.OK
+
+    resp = admin_client.post(f"/admin/users/{test_user['id']}/reset-tokens")
+    assert resp.status_code == HTTPStatus.OK
+    assert float(resp.get_json()["coins_available"]) == 500.0
+
+
+def test_update_user_blank_coins_clears_limit(app, admin_client, test_user):
+    """Blanking both coin fields removes the user's own pool (falls back to defaults)."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        db.session.add(EntityLimit(
+            entity_id=test_user["id"], max_coins=100, refresh_coins=1, starting_coins=100,
+        ))
+        db.session.commit()
+    resp = admin_client.patch(
+        f"/admin/users/{test_user['id']}", json={"max_coins": "", "refresh_coins": ""}
+    )
+    assert resp.status_code == HTTPStatus.OK
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        limit = db.session.execute(
+            select(EntityLimit).filter_by(entity_id=test_user["id"])
+        ).scalar_one_or_none()
+        assert limit is None
+
+
+def test_update_user_blank_max_alone_clears_limit(app, admin_client, test_user):
+    """A blank Max Coins clears the pool even when a refresh value is sent along."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        db.session.add(EntityLimit(
+            entity_id=test_user["id"], max_coins=100, refresh_coins=1, starting_coins=100,
+        ))
+        db.session.commit()
+    resp = admin_client.patch(
+        f"/admin/users/{test_user['id']}", json={"max_coins": "", "refresh_coins": 5}
+    )
+    assert resp.status_code == HTTPStatus.OK
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        limit = db.session.execute(
+            select(EntityLimit).filter_by(entity_id=test_user["id"])
+        ).scalar_one_or_none()
+        assert limit is None
+
+
+def test_update_user_invalid_coins_return_400(admin_client, test_user):
+    for payload in (
+        {"max_coins": -1, "refresh_coins": 0},
+        {"max_coins": 10, "refresh_coins": -1},
+        {"max_coins": "abc", "refresh_coins": 1},
+    ):
+        resp = admin_client.patch(f"/admin/users/{test_user['id']}", json=payload)
+        assert resp.status_code == HTTPStatus.BAD_REQUEST, payload
+
+
+def test_update_user_ignores_name(app, admin_client, test_user):
+    resp = admin_client.patch(f"/admin/users/{test_user['id']}", json={"name": "New Name", "active": True})
+    assert resp.status_code == HTTPStatus.OK
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        assert db.session.get(Entity, test_user["id"]).name == test_user["name"]
+
+
 def test_admin_user_profile_page(admin_client, test_user):
     resp = admin_client.get(f"/admin/users/{test_user['id']}/profile")
     assert resp.status_code == HTTPStatus.OK
@@ -69,6 +197,66 @@ def test_admin_user_profile_page(admin_client, test_user):
 # ---------------------------------------------------------------------------
 # /api/users — entity_stats integration
 # ---------------------------------------------------------------------------
+
+def test_api_users_includes_limit_fields(app, admin_client, test_user):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        db.session.add(EntityLimit(
+            entity_id=test_user["id"], max_coins=300, refresh_coins=2, starting_coins=300,
+        ))
+        db.session.commit()
+    resp = admin_client.get("/admin/api/users")
+    row = next(u for u in resp.get_json()["users"] if u["id"] == test_user["id"])
+    assert row["max_coins"] == 300.0
+    assert row["refresh_coins"] == 2.0
+
+
+def test_api_users_shows_group_inherited_unlimited_pool(app, admin_client, test_user):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.group import Group
+        from lumen.models.group_limit import GroupLimit
+        from lumen.models.group_member import GroupMember
+
+        group = Group(name="unlimited-users", active=True)
+        db.session.add(group)
+        db.session.flush()
+        db.session.add_all([
+            GroupMember(entity_id=test_user["id"], group_id=group.id),
+            GroupLimit(group_id=group.id, max_coins=-2, refresh_coins=0, starting_coins=0),
+        ])
+        db.session.commit()
+
+    resp = admin_client.get("/admin/api/users")
+    row = next(u for u in resp.get_json()["users"] if u["id"] == test_user["id"])
+    assert row["max_coins"] is None
+    assert row["coins_available"] == -2
+
+
+def test_api_users_own_pool_overrides_group_unlimited(app, admin_client, test_user):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.models.group import Group
+        from lumen.models.group_limit import GroupLimit
+        from lumen.models.group_member import GroupMember
+
+        group = Group(name="overridden-unlimited-users", active=True)
+        db.session.add(group)
+        db.session.flush()
+        db.session.add_all([
+            GroupMember(entity_id=test_user["id"], group_id=group.id),
+            GroupLimit(group_id=group.id, max_coins=-2, refresh_coins=0, starting_coins=0),
+            EntityLimit(entity_id=test_user["id"], max_coins=100, refresh_coins=1, starting_coins=100),
+        ])
+        db.session.commit()
+
+    resp = admin_client.get("/admin/api/users")
+    row = next(u for u in resp.get_json()["users"] if u["id"] == test_user["id"])
+    assert row["max_coins"] == 100
+    assert row["coins_available"] == 0
+
 
 def test_api_users_returns_zeros_without_usage(admin_client, test_user):
     resp = admin_client.get("/admin/api/users")
@@ -118,12 +306,29 @@ def test_config_post_backs_up_previous_config(app, admin_client, tmp_path):
     original = app.config["CONFIG_YAML"]
     app.config["CONFIG_YAML"] = str(cfg)
     try:
-        resp = admin_client.post("/admin/api/config", json={"app": {"name": "Updated"}})
+        resp = admin_client.post("/admin/api/config", json={"version": 3, "app": {"name": "Updated"}})
         assert resp.status_code == HTTPStatus.OK
         bak = tmp_path / "config.yaml.bak"
         assert bak.exists()
         assert "Original" in bak.read_text()
         assert "Updated" in cfg.read_text()
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
+def test_config_post_succeeds_when_backup_unwritable(app, admin_client, tmp_path):
+    """A failed .bak copy (e.g. read-only dir in a container) must not block the save."""
+    from unittest.mock import patch
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("app:\n  name: Original\n")
+    original = app.config["CONFIG_YAML"]
+    app.config["CONFIG_YAML"] = str(cfg)
+    try:
+        with patch("lumen.commands.shutil.copy2", side_effect=PermissionError(13, "Permission denied")):
+            resp = admin_client.post("/admin/api/config", json={"version": 3, "app": {"name": "Updated"}})
+        assert resp.status_code == HTTPStatus.OK
+        assert "Updated" in cfg.read_text()
+        assert not (tmp_path / "config.yaml.bak").exists()
     finally:
         app.config["CONFIG_YAML"] = original
 
@@ -137,7 +342,7 @@ def test_config_post_forbidden_when_editor_disabled(app, admin_client, tmp_path)
     app.config["CONFIG_YAML"] = str(cfg)
     app.config["CONFIG_EDITOR"] = False
     try:
-        resp = admin_client.post("/admin/api/config", json={"app": {"name": "Updated"}})
+        resp = admin_client.post("/admin/api/config", json={"version": 3, "app": {"name": "Updated"}})
         assert resp.status_code == HTTPStatus.FORBIDDEN
         # The file must be untouched when the editor is disabled.
         assert "Original" in cfg.read_text()
@@ -148,6 +353,7 @@ def test_config_post_forbidden_when_editor_disabled(app, admin_client, tmp_path)
 
 # A config with every secret-bearing path populated, for mask/restore tests.
 _FULL_SECRET_CONFIG = """\
+version: 3
 app:
   name: Lumen
   secret_key: real-secret-key
@@ -166,6 +372,8 @@ rate_limiting:
   storage_url: redis://:realredis@host:6379/0
 models:
   - name: gpt-4o
+    input_cost_per_million: 1
+    output_cost_per_million: 1
     active: true
     endpoints:
       - url: https://api.openai.com/v1
@@ -296,6 +504,8 @@ def test_config_post_preserves_endpoint_api_keys(app, admin_client, tmp_path):
     """Endpoint api_keys survive a masked round-trip across multiple models/endpoints."""
     original, cfg = _use_config(app, tmp_path, _FULL_SECRET_CONFIG + """\
   - name: claude-3
+    input_cost_per_million: 1
+    output_cost_per_million: 1
     active: true
     endpoints:
       - url: https://api.anthropic.com/v1
@@ -319,11 +529,14 @@ def test_config_post_preserves_endpoint_api_keys(app, admin_client, tmp_path):
 def test_config_post_preserves_duplicate_url_endpoints(app, admin_client, tmp_path):
     """Two endpoints sharing a URL (documented round-robin multi-key) round-trip by position."""
     config = """\
+version: 3
 app:
   name: Lumen
   secret_key: real-secret
 models:
   - name: gpt-4o
+    input_cost_per_million: 1
+    output_cost_per_million: 1
     active: true
     endpoints:
       - url: https://api.openai.com/v1
@@ -351,15 +564,20 @@ models:
 def test_config_post_rejects_duplicate_model_names(app, admin_client, tmp_path):
     """Duplicate model names on disk → ambiguous restore → 400, no silent key swap."""
     config = """\
+version: 3
 app:
   name: Lumen
   secret_key: real-secret
 models:
   - name: gpt-4o
+    input_cost_per_million: 1
+    output_cost_per_million: 1
     endpoints:
       - url: https://api.openai.com/v1
         api_key: sk-first
   - name: gpt-4o
+    input_cost_per_million: 1
+    output_cost_per_million: 1
     endpoints:
       - url: https://api.openai.com/v1
         api_key: sk-second
@@ -378,11 +596,14 @@ models:
 def test_config_post_remove_endpoint_preserves_remaining_key(app, admin_client, tmp_path):
     """Removing an endpoint restores the remaining endpoint's OWN key, not the deleted one's."""
     config = """\
+version: 3
 app:
   name: Lumen
   secret_key: real-secret
 models:
   - name: gpt-4o
+    input_cost_per_million: 1
+    output_cost_per_million: 1
     active: true
     endpoints:
       - url: https://api.openai.com/v1
@@ -409,11 +630,14 @@ models:
 def test_config_post_reorder_endpoints_preserves_keys(app, admin_client, tmp_path):
     """Reordering endpoints restores each to its OWN key by URL, not by position."""
     config = """\
+version: 3
 app:
   name: Lumen
   secret_key: real-secret
 models:
   - name: gpt-4o
+    input_cost_per_million: 1
+    output_cost_per_million: 1
     active: true
     endpoints:
       - url: https://api.openai.com/v1
@@ -441,11 +665,14 @@ models:
 def test_config_post_duplicate_url_count_mismatch_rejects(app, admin_client, tmp_path):
     """Adding/removing within a duplicate-URL group → 400, not silent corruption."""
     config = """\
+version: 3
 app:
   name: Lumen
   secret_key: real-secret
 models:
   - name: gpt-4o
+    input_cost_per_million: 1
+    output_cost_per_million: 1
     active: true
     endpoints:
       - url: https://api.openai.com/v1

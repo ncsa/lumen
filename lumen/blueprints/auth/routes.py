@@ -1,27 +1,24 @@
 import hashlib
 from http import HTTPStatus
 
-from flask import Blueprint, abort, redirect, url_for, session, render_template, current_app, jsonify
+from flask import Blueprint, abort, current_app, jsonify, redirect, render_template, session, url_for
 from flask_wtf.csrf import generate_csrf
-from sqlalchemy import delete, select
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from lumen.extensions import db, oauth
-from lumen.timeutils import utcnow
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
-from lumen.models.entity_limit import EntityLimit
-from lumen.models.entity_model_access import EntityModelAccess
-from lumen.models.model_config import ModelConfig
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
 from lumen.services.llm import get_pool_limit
-from lumen.commands import _token_fields, _parse_scope_access, _desired_groups_from_config
+from lumen.timeutils import utcnow
 
 auth_bp = Blueprint("auth", __name__)
 
 
 def gravatar_md5(email: str) -> str:
-    return hashlib.md5(email.strip().lower().encode()).hexdigest()
+    return hashlib.md5(email.strip().lower().encode(), usedforsecurity=False).hexdigest()
 
 
 def make_initials(name: str) -> str:
@@ -33,22 +30,46 @@ def make_initials(name: str) -> str:
     return "??"
 
 
-def _groups_from_userinfo_rules(userinfo: dict, yaml_data: dict, existing: list[str]) -> list[str]:
-    """Return additional group names matched by CILogon attribute rules, excluding already-desired ones."""
-    added: list[str] = []
-    for group_name, group_def in yaml_data.get("groups", {}).items():
-        if group_name in existing or group_name in added:
-            continue
-        rules = (group_def or {}).get("rules", [])
-        if rules and all(
-            (rule.get("contains") or "") in (userinfo.get(rule.get("field")) or "")
-            if "contains" in rule
-            else (userinfo.get(rule.get("field")) or "") == rule.get("equals", "")
-            for rule in rules
-            if rule.get("field")
-        ):
-            added.append(group_name)
-    return added
+def _group_ids_from_rules(userinfo: dict) -> set:
+    """Group ids whose auto-join rules all match this login's userinfo claims.
+
+    Rules live in the database (group_rules table) and are edited on the group
+    detail page. A group matches only when it is active AND auto_join is set
+    AND it has at least one rule AND every rule matches — an empty rule set
+    fails closed, since matching it would silently add every user to the
+    group. Deactivating a group pauses its auto-join: it stops matching here,
+    so the reconciler removes its auto-memberships at each member's next
+    login (and re-adds them after reactivation).
+    """
+
+    def _rule_matches(rule):
+        # Claims are provider-controlled and not always strings: booleans
+        # (email_verified), numbers, or lists (CILogon's is_member_of). Match
+        # against the string form of each element so a misconfigured rule can
+        # never raise inside the login callback and take out every sign-in.
+        raw = userinfo.get(rule.field)
+        if raw is None:
+            values = [""]
+        elif isinstance(raw, (list, tuple)):
+            values = [str(v) for v in raw]
+        else:
+            values = [str(raw)]
+        if rule.match == "contains":
+            return any(rule.value in v for v in values)
+        if rule.match == "equals":
+            return any(v == rule.value for v in values)
+        return False
+
+    matched = set()
+    groups = db.session.execute(
+        select(Group)
+        .options(selectinload(Group.rules))  # login is hot; avoid a lazy load per group
+        .where(Group.auto_join == True, Group.active == True)  # noqa: E712 — SQL comparison, not a truth check
+    ).scalars().all()
+    for group in groups:
+        if group.rules and all(_rule_matches(rule) for rule in group.rules):
+            matched.add(group.id)
+    return matched
 
 
 def _reconcile_group_memberships(entity: Entity, desired_ids: set) -> None:
@@ -63,71 +84,29 @@ def _reconcile_group_memberships(entity: Entity, desired_ids: set) -> None:
             db.session.add(GroupMember(group_id=group_id, entity_id=entity.id, config_managed=True))
 
 
-def _apply_user_model_overrides(entity: Entity, email: str, yaml_data: dict) -> None:
-    """Reconcile per-user coin pool limits and per-user allowed-model lists from yaml. Does not commit."""
-    user_cfg = yaml_data.get("users", {}).get(email, {})
+def sync_auto_memberships(entity: Entity, userinfo=None, extra_groups=None):
+    """Reconcile auto-assigned group memberships at login. Does not commit.
 
-    # Coin pool — missing fields fall back to defaults.tokens via _token_fields.
-    pool_src = user_cfg.get("pool") or user_cfg
-    pool = _token_fields(pool_src) if isinstance(pool_src, dict) else None
-    if pool:
-        max_coins, refresh_coins, starting_coins = pool
-        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=entity.id)).scalar_one_or_none()
-        if limit and limit.config_managed:
-            limit.max_coins = max_coins
-            limit.refresh_coins = refresh_coins
-            limit.starting_coins = starting_coins
-        elif not limit:
-            db.session.add(EntityLimit(
-                entity_id=entity.id,
-                max_coins=max_coins,
-                refresh_coins=refresh_coins,
-                starting_coins=starting_coins,
-                config_managed=True,
-            ))
-    else:
-        limit = db.session.execute(select(EntityLimit).filter_by(entity_id=entity.id, config_managed=True)).scalar_one_or_none()
-        if limit:
-            db.session.delete(limit)
-
-    # Per-user model access: `model_access` {allowed/blocked/default}, or the legacy
-    # allowed-only `models:` list. Config is the only source of a user's EntityModelAccess
-    # rows, so we delete-and-recreate (consistent with sync_projects_from_yaml).
-    ma_cfg = user_cfg.get("model_access")
-    if ma_cfg is not None:
-        pairs, user_default, ack_models = _parse_scope_access(ma_cfg, context=f"user '{email}'")
-    else:
-        pairs = [(name, "allowed") for name in user_cfg.get("models", [])]
-        user_default = None
-        ack_models = []
-    entity.model_access_default = user_default
-
-    db.session.execute(delete(EntityModelAccess).where(EntityModelAccess.entity_id == entity.id))
-    for model_name, access_type in pairs:
-        mc = db.session.execute(select(ModelConfig).filter_by(model_name=model_name)).scalar_one_or_none()
-        if mc is None:
-            continue
-        # Legacy per-user graylist keeps the model requiring acknowledgement (model property now).
-        if model_name in ack_models and not mc.needs_ack:
-            mc.needs_ack = True
-        db.session.add(EntityModelAccess(entity_id=entity.id, model_config_id=mc.id, access_type=access_type))
-
-
-def sync_user_from_yaml(entity: Entity, email: str, yaml_data: dict, userinfo=None):
-    """Sync group memberships and per-user model limits from yaml_data. Does not commit."""
+    Desired memberships are: any extra_groups (dev login) and groups whose
+    auto-join rules all match userinfo. Names that don't resolve to an
+    existing group are ignored — nothing here creates groups. Explicit
+    membership is managed on the group pages and is untouched.
+    """
     session.pop("_nav", None)
-    desired_names = _desired_groups_from_config(email, yaml_data)
-    if userinfo:
-        desired_names += _groups_from_userinfo_rules(userinfo, yaml_data, desired_names)
+    desired_names = []
+    for name in extra_groups or []:
+        if name not in desired_names:
+            desired_names.append(name)
 
     desired_ids = set()
     for name in desired_names:
-        group = db.session.execute(select(Group).filter_by(name=name)).scalar_one_or_none()
+        group = db.session.execute(select(Group).filter_by(name=name, active=True)).scalar_one_or_none()
         if group:
             desired_ids.add(group.id)
+    if userinfo:
+        desired_ids |= _group_ids_from_rules(userinfo)
 
     _reconcile_group_memberships(entity, desired_ids)
-    _apply_user_model_overrides(entity, email, yaml_data)
 
     # Initialize coin balance on first login so usage page shows starting coins immediately
     balance = db.session.execute(select(EntityBalance).filter_by(entity_id=entity.id)).scalar_one_or_none()
@@ -169,18 +148,7 @@ def devlogin():
     # which a co-located reverse proxy can mask as localhost.
     if not current_app.debug:
         abort(HTTPStatus.NOT_FOUND)
-    yaml_data = current_app.config.get("YAML_DATA", {})
     dev_groups = current_app.config.get("DEV_USER_GROUPS", [])
-    if dev_groups:
-        users = dict(yaml_data.get("users") or {})
-        entry = dict(users.get(email) or {})
-        existing = list(entry.get("groups") or [])
-        for g in dev_groups:
-            if g not in existing:
-                existing.append(g)
-        entry["groups"] = existing
-        users[email] = entry
-        yaml_data = {**yaml_data, "users": users}
     name = email.split("@")[0]
 
     entity = db.session.execute(select(Entity).filter_by(email=email, entity_type="user")).scalar_one_or_none()
@@ -196,7 +164,7 @@ def devlogin():
         db.session.add(entity)
         db.session.flush()
 
-    sync_user_from_yaml(entity, email, yaml_data)
+    sync_auto_memberships(entity, extra_groups=dev_groups)
     db.session.commit()
 
     session["entity_id"] = entity.id
@@ -225,8 +193,6 @@ def callback():
 
     name = userinfo.get("name") or userinfo.get("given_name") or email.split("@")[0]
 
-    yaml_data = current_app.config.get("YAML_DATA", {})
-
     entity = db.session.execute(select(Entity).filter_by(email=email, entity_type="user")).scalar_one_or_none()
     if not entity:
         entity = Entity(
@@ -245,7 +211,7 @@ def callback():
         entity.name = name
         entity.initials = make_initials(name)
 
-    sync_user_from_yaml(entity, email, yaml_data, userinfo=userinfo)
+    sync_auto_memberships(entity, userinfo=userinfo)
     db.session.commit()
 
     session["entity_id"] = entity.id

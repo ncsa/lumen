@@ -567,13 +567,13 @@ def test_a_broken_counter_never_turns_a_403_into_a_500(
     token, _ = api_key
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
+        from lumen.models.entity import Entity
+        from tests.conftest import set_model_owner
         _grant_finite_pool(app, test_user["id"])
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"], model_config_id=test_model["id"],
-            access_type="blocked",
-        ))
+        owner = Entity(entity_type="user", email="audio-owner@example.com", name="Owner", active=True)
+        db.session.add(owner)
         db.session.commit()
+        set_model_owner(test_model["id"], owner.id)
 
     assert _transcribe(client, token).status_code == HTTPStatus.FORBIDDEN
 

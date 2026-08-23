@@ -10,11 +10,12 @@
         {% if is_logged_in %}
         <a href="{{ url_for('chat.chat_page') }}" class="uis-nav-link">Chat</a>
         <a href="{{ url_for('profile.index') }}" class="uis-nav-link">Profile</a>
-        <a href="{{ url_for('models_page.index') }}" class="uis-nav-link">Models</a>
-        <a href="{{ url_for('profile.usage') }}" class="uis-nav-link">Usage</a>
         {% if is_admin or nav_projects %}
         <a href="{{ url_for('projects.index') }}" class="uis-nav-link">Projects</a>
         {% endif %}
+        <a href="{{ url_for('groups.index') }}" class="uis-nav-link">Groups</a>
+        <a href="{{ url_for('models_page.index') }}" class="uis-nav-link">Models</a>
+        <a href="{{ url_for('profile.usage') }}" class="uis-nav-link">Usage</a>
         {% if is_admin %}
         <a href="{{ url_for('admin.users') }}" class="uis-nav-link">Users</a>
         <a href="{{ url_for('admin.config_editor') }}" class="uis-nav-link">Config</a>

@@ -51,9 +51,16 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "secretKey": { "type": "string" },
-        "encryptionKey": { "type": "string" },
+        "secretKey": {
+          "type": "string",
+          "anyOf": [{ "const": "" }, { "minLength": 32 }]
+        },
+        "encryptionKey": {
+          "type": "string",
+          "anyOf": [{ "const": "" }, { "minLength": 32 }]
+        },
         "debug": { "type": "boolean" },
+        "diagnostics": { "type": "boolean" },
         "configEditor": { "type": "boolean" },
         "defaults": {
           "type": "object",
@@ -63,8 +70,8 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "access": { "type": "string", "enum": ["allowed", "blocked"] },
-                "ackMessage": { "type": "string" }
+                "ackMessage": { "type": "string" },
+                "earlyAccessMessage": { "type": "string" }
               }
             },
             "tokens": {
@@ -255,6 +262,7 @@
           "properties": {
             "enabled": { "type": "boolean" },
             "token": { "type": "string" },
+            "debugToken": { "type": "string" },
             "multiprocDir": { "type": "string" }
           }
         },
@@ -274,40 +282,6 @@
         "enabled": { "type": "boolean" },
         "interval": { "type": "string" },
         "scrapeTimeout": { "type": "string" }
-      }
-    },
-    "groups": {
-      "type": "object",
-      "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "rules": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": ["field"],
-              "properties": {
-                "field": { "type": "string" },
-                "contains": { "type": "string" },
-                "equals": { "type": "string" }
-              }
-            }
-          },
-          "max": { "type": "number", "minimum": 0 },
-          "refresh": { "type": "number", "minimum": 0 },
-          "starting": { "type": "number", "minimum": 0 },
-          "modelAccess": {
-            "type": "object",
-            "properties": {
-              "default": { "type": "string", "enum": ["allowed", "blocked", "whitelist", "blacklist", "graylist"] },
-              "allowed": { "type": "array", "items": { "type": "string" } },
-              "blocked": { "type": "array", "items": { "type": "string" } },
-              "blacklist": { "type": "array", "items": { "type": "string" } },
-              "graylist": { "type": "array", "items": { "type": "string" } },
-              "whitelist": { "type": "array", "items": { "type": "string" } }
-            }
-          }
-        }
       }
     },
     "models": {
@@ -402,8 +376,9 @@
             "type": "object",
             "properties": {
               "active": { "type": "boolean" },
-              "access": { "type": "string", "enum": ["allowed", "blocked"] },
               "needsAck": { "type": "boolean" },
+              "earlyAccess": { "type": "boolean" },
+              "endDate": { "type": "string" },
               "disabled": { "type": "boolean" },
               "ackMessage": { "type": "string" },
               "inputCostPerMillion": { "type": "number", "minimum": 0 },

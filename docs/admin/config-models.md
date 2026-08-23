@@ -11,7 +11,6 @@ Every model starts with a name and an `endpoints` list:
 ```yaml
 models:
   - name: my-model
-    access: allowed
     input_cost_per_million: 0.5
     output_cost_per_million: 1.0
     endpoints:
@@ -23,25 +22,35 @@ models:
 |-------|----------|-------------|
 | `name` | Yes | Lumen's internal identifier for the model. This is what appears in the chat UI and must be unique within your config. |
 | `endpoints` | Yes | One or more back-end servers that provide this model |
-| `access` | No (default: inherit) | The model's own default: `allowed` or `blocked`. Leave it **unset** to inherit each scope's `model_access.default` (then `defaults.models.access`). When set, it beats group/user *defaults* but is still overridden by an explicit per-scope `allowed`/`blocked` rule. |
 
 ## Access Control
 
-Model access is **orthogonal**: three independent per-model fields control it, instead of a single status. Each axis answers a different question.
+Who may use a model is **not** configured in `config.yaml`. A model may have an **owner** (a user): a model with no owner is available to everyone (users and projects), while an owned model is available only to its owner and to members of groups the model has been explicitly granted to. Other users and projects cannot list the model or retrieve its detail-page or README metadata. Models awaiting acknowledgment remain visible because acknowledgment is a consent requirement, not an access grant. Ownership and group grants live in the database and are edited by admins via the **Access** card on the model detail page (`/models/<name>`) — see [Model Detail](../models/model-detail.md#access-admin-only). Config sync never touches them; the per-model `access:` key was removed in config version 3. If it remains in a config, Lumen ignores it and it does not restrict access; assign an owner and group grants in the UI instead.
+
+> **Upgrading:** after upgrading from a version that used the config-based allow/block system, all non-disabled models are **public** until an admin assigns owners.
+
+The remaining per-model fields below stay in `config.yaml`. They control acknowledgement and lifecycle, not who has access.
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `access` | inherit | The model's own allow/block default. Leave unset to inherit scope defaults (`model_access.default`, then `defaults.models.access`). When set, it ranks above group/user *defaults* but below an explicit per-scope `allowed`/`blocked` rule — so a model can be blocked-by-default yet enabled for a specific group/user (see [User Groups](config-users.md) and [Projects](config-projects.md)). |
 | `needs_ack` | `false` | When `true`, a user must acknowledge the model before using it. This is a **sticky, model-level property** — no group, project, or user scope can add or remove it. It only triggers the consent gate; it does not by itself grant or deny access. |
+| `early_access` | `false` | When `true`, the model is an early-access preview: users must acknowledge that it may change or be removed at any time before using it. Works like `needs_ack` (sticky, model-level) and can be combined with it — one dialog acknowledges both at once. The warning text comes from `defaults.models.early_access_message` (a built-in default is used when unset). If a model gains `early_access` (or `needs_ack`) after a user already acknowledged it, the user is prompted once more for the new requirement. |
+| `end_date` | unset | Date or datetime (UTC) after which the model is hidden everywhere and rejected, exactly like `disabled`. A bare date includes that entire UTC day: `end_date: 2026-09-01` remains usable through September 1 and expires at midnight starting September 2. An explicit datetime is the exact exclusive cutoff. Leave unset for no end date. |
 | `disabled` | `false` | **Hard off.** The model is hidden everywhere and cannot be used. This is **not overridable** by any scope — it always wins. Use it to take a model offline without deleting it. |
 | `ack_message` | unset | Optional acknowledgement message shown when `needs_ack` is `true`. Overrides the global `defaults.models.ack_message`. |
+
+Acknowledgements track which requirement types a user accepted, not the exact
+message text. Editing a model's `ack_message` or the global acknowledgement and
+early-access messages does not prompt users who already accepted those same
+requirements to acknowledge them again.
 
 ```yaml
 models:
   - name: my-model
-    access: allowed       # baseline; overridable per group/project/user
     needs_ack: true       # require acknowledgement (model-level, sticky)
     ack_message: "This model was trained outside the U.S. — use with awareness."
+    early_access: true    # preview model; users must acknowledge it may change or be removed
+    end_date: 2026-12-31  # usable through this UTC date; omit for no end date
     input_cost_per_million: 0.5
     output_cost_per_million: 1.0
     endpoints:
@@ -51,13 +60,13 @@ models:
 
 ### `disabled` is a hard off
 
-Setting `disabled: true` short-circuits all access resolution to blocked — the model disappears from the chat UI, the API, and every scope's allow list. No group, project, or user override can bring it back. This replaces the old `active: false`. To **permanently** remove a model, delete its entry from `config.yaml` entirely.
+Setting `disabled: true` blocks the model for everyone — it disappears from the chat UI and the API, regardless of ownership or group grants. This replaces the old `active: false`. To **permanently** remove a model, delete its entry from `config.yaml` entirely.
 
 > The legacy `active:` key is still accepted as input (with a deprecation warning): `active: false` maps to `disabled: true`. Prefer `disabled` in new configs.
 
 ### `needs_ack` lives on the model
 
-Acknowledgement is a property of the model, not of any group or scope. There is no per-scope graylist anymore — set `needs_ack: true` on the model and every user who is allowed the model must acknowledge it once before using it.
+Acknowledgement is a property of the model, not of any group or scope. Set `needs_ack: true` on the model and every user who has access to the model must acknowledge it once before using it.
 
 ## Pricing
 
@@ -80,7 +89,7 @@ These fields tell the UI what the model can do and help users pick the right one
 | `url` | Link to the model's documentation page. A bare HuggingFace repo id (e.g. `meta-models/Muse-Glimmer-30B`) expands to `https://huggingface.co/<id>`, and HuggingFace host variants (`huggingface.com`, `www.`) are rewritten to `huggingface.co`; any other full URL is used as given. `huggingface.co` URLs also show the model's README on the detail page |
 | `context_window` | Maximum total tokens for input + output in one request |
 | `max_output_tokens` | Maximum tokens the model can generate in a single reply |
-| `knowledge_cutoff` | Month the model's training data extends to, e.g. `"2025-04"` |
+| `knowledge_cutoff` | Month the model's training data extends to, e.g. `"2025-04"`. Full dates (`"2025-04-15"`) are truncated to the month. |
 | `supports_reasoning` | Whether the model can show step-by-step thinking |
 | `supports_function_calling` | Whether the model supports tool/function calling via the API |
 | `input_modalities` | What the model accepts: `["text"]`, `["text", "image"]`, `["text", "image", "video"]`, `["text", "image", "video", "audio"]` |
@@ -109,7 +118,6 @@ You can configure multiple endpoints for one model to distribute load:
 
 ```yaml
   - name: phi3
-    access: allowed
     input_cost_per_million: 0.0
     output_cost_per_million: 0.0
     endpoints:
@@ -132,7 +140,6 @@ Ollama runs on your own hardware. It uses an OpenAI-compatible API at `http://lo
 
 ```yaml
   - name: llama3.2
-    access: allowed
     input_cost_per_million: 0.0
     output_cost_per_million: 0.0
     supports_reasoning: true

@@ -62,12 +62,6 @@
       <option value="200">200</option>
     </select>
     <span class="text-muted small mb-0">results</span>
-    {% if is_admin %}
-    <div class="form-check ms-2 mb-0">
-      <input class="form-check-input" type="checkbox" id="project-show-disabled">
-      <label class="form-check-label text-muted small" for="project-show-disabled">Show disabled</label>
-    </div>
-    {% endif %}
   </div>
   <div class="d-flex align-items-center gap-2">
     <label for="project-search" class="text-muted small mb-0">Search:</label>
@@ -77,22 +71,24 @@
 </div>
 
 <div class="table-responsive">
-  <table class="table table-striped table-hover align-middle" id="project-table">
+  <table class="table table-bordered table-striped table-hover align-middle" id="project-table">
     <caption class="visually-hidden">Project accounts list</caption>
     <thead class="table-light">
       <tr>
         <th scope="col" class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th scope="col" class="sort-header text-center" data-col="managers">Managers <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th scope="col" class="sort-header text-center" data-col="active">Active <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th scope="col" class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th scope="col" class="sort-header text-end" data-col="tokens">Tokens Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th scope="col" class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th scope="col" class="sort-header" data-col="created">Created <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-center" data-col="active">Active <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header text-end" data-col="tokens">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header wrap text-end" data-col="coins_available">Coins<br>Left <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header wrap text-end" data-col="cost">Coins<br>Spent <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th><span class="visually-hidden">Actions</span></th>
       </tr>
     </thead>
     <tbody id="project-tbody">
-      <tr><td colspan="8" class="text-center text-muted py-3">Loading…</td></tr>
+      <tr><td colspan="10" class="text-center text-muted py-3">Loading…</td></tr>
     </tbody>
   </table>
 </div>
@@ -130,10 +126,49 @@
   </div>
 </div>
 {% endif %}
+
+<!-- Edit Project Modal (opened from a row's pencil button; owner or admin) -->
+<div class="modal fade" id="editProjectModal" tabindex="-1" aria-labelledby="editProjectModalLabel">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="editProjectModalLabel">Edit Project</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close Edit Project dialog"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label" for="edit-project-name">Project Name</label>
+          <input type="text" id="edit-project-name" class="form-control">
+        </div>
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" role="switch" id="edit-project-active">
+          <label class="form-check-label" for="edit-project-active">Active</label>
+        </div>
+        {% if is_admin %}
+        <div class="mb-3">
+          <label class="form-label" for="edit-project-max">Max Coins</label>
+          <input type="number" id="edit-project-max" class="form-control" step="0.01">
+          <div class="form-text">-2 = unlimited, 0 = blocked. Clear Max Coins to use the inherited group/default pool.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label" for="edit-project-refresh">Refill Rate (coins/hour)</label>
+          <input type="number" id="edit-project-refresh" class="form-control" step="0.01" min="0">
+        </div>
+        {% endif %}
+        <div id="edit-project-error" class="text-danger small" role="alert" aria-live="assertive" hidden></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="edit-project-save-btn">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
 </ilw-content>
 
 <style>
 .sort-header { cursor: pointer; user-select: none; white-space: nowrap; }
+.sort-header.wrap { white-space: normal; }
 .sort-arrows { display: inline-flex; flex-direction: column; font-size: 0.6em; line-height: 1.1; float: right; margin-left: 6px; margin-top: 2px; }
 .sa-up, .sa-dn { color: #adb5bd; }
 .sort-asc .sa-up { color: #212529; font-weight: 700; }
@@ -149,10 +184,9 @@
   const params = new URLSearchParams(location.search);
   let page = parseInt(params.get('page') || '1');
   let perPage = parseInt(params.get('per_page') || '25');
-  let sort = params.get('sort') || 'name';
-  let order = params.get('order') || 'asc';
+  let sort = params.get('sort') || 'last_used';
+  let order = params.get('order') || 'desc';
   let search = params.get('search') || '';
-  let showDisabled = params.get('show_disabled') === '1';
   let debounceTimer;
 
   const tbody = document.getElementById('project-tbody');
@@ -160,11 +194,9 @@
   const rangeLabel = document.getElementById('project-range');
   const searchInput = document.getElementById('project-search');
   const perPageSel = document.getElementById('project-per-page');
-  const showDisabledChk = document.getElementById('project-show-disabled');
 
   searchInput.value = search;
   perPageSel.value = String(perPage);
-  if (showDisabledChk) showDisabledChk.checked = showDisabled;
 
   function escHtml(s) {
     return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -191,7 +223,6 @@
   function syncUrl() {
     const p = new URLSearchParams({ page, per_page: perPage, sort, order });
     if (search) p.set('search', search);
-    if (showDisabled) p.set('show_disabled', '1');
     history.replaceState(null, '', '?' + p.toString());
   }
 
@@ -221,9 +252,8 @@
     syncUrl();
     const qs = new URLSearchParams({ page, per_page: perPage, sort, order });
     if (search) qs.set('search', search);
-    if (showDisabled) qs.set('show_disabled', '1');
 
-    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">Loading…</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-3">Loading…</td></tr>';
 
     fetch('/projects/data?' + qs.toString())
       .then(r => r.json())
@@ -235,30 +265,46 @@
           : 'No entries found';
 
         if (!data.projects.length) {
-          tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No projects found.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-3">No projects found.</td></tr>';
           paginationEl.innerHTML = '';
           return;
         }
+
+        const rowById = new Map(data.projects.map(c => [String(c.id), c]));
 
         tbody.innerHTML = data.projects.map(c => {
           const activeIcon = c.active
             ? '<span role="img" aria-label="Active">✓</span>'
             : '<span role="img" aria-label="Inactive" class="text-danger">✗</span>';
-          let actions = `<a href="${escHtml(c.detail_url)}" class="btn btn-sm btn-outline-primary" title="Details" aria-label="Details for ${escHtml(c.name)}"><i class="bi bi-sliders" aria-hidden="true"></i></a>`;
+          const coinsAvail = c.coins_available === -2 ? '∞' : parseFloat(c.coins_available).toFixed(2);
+          const nameEsc = escHtml(c.name);
+          let actions = '';
+          if (IS_ADMIN) {
+            actions += `<a href="/usage?entity_id=${c.id}&user_name=${encodeURIComponent(c.name)}" class="btn btn-sm btn-outline-primary" title="View usage" aria-label="View usage for ${nameEsc}"><i class="bi bi-bar-chart" aria-hidden="true"></i></a> `;
+          }
+          if (IS_ADMIN || c.is_owner) {
+            actions += `<button class="btn btn-sm btn-outline-primary edit-btn" data-id="${c.id}" title="Edit" aria-label="Edit ${nameEsc}"><i class="bi bi-pencil" aria-hidden="true"></i></button>`;
+          } else {
+            actions += `<span class="d-inline-block" tabindex="0" data-bs-toggle="tooltip" data-bs-title="Only the project owner or an admin can edit this project">` +
+              `<button class="btn btn-sm btn-outline-secondary" disabled aria-label="Edit ${nameEsc} (only the project owner or an admin can edit)"><i class="bi bi-pencil" aria-hidden="true"></i></button></span>`;
+          }
           if (IS_ADMIN) {
             const toggleIcon = c.active ? 'bi-pause-circle' : 'bi-play-circle';
             const toggleClass = c.active ? 'btn-outline-danger' : 'btn-outline-success';
             const toggleLabel = c.active ? 'Deactivate' : 'Activate';
-            actions += ` <button class="btn btn-sm ${toggleClass} toggle-btn" data-id="${c.id}" title="${toggleLabel}" aria-label="${toggleLabel} ${escHtml(c.name)}"><i class="bi ${toggleIcon}" aria-hidden="true"></i></button>`;
+            actions += ` <button class="btn btn-sm btn-outline-secondary reset-btn" data-id="${c.id}" data-unlimited="${c.coins_available === -2}" title="Reset coins" aria-label="Reset coins for ${nameEsc}"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i></button>`;
+            actions += ` <button class="btn btn-sm ${toggleClass} toggle-btn" data-id="${c.id}" title="${toggleLabel}" aria-label="${toggleLabel} ${nameEsc}"><i class="bi ${toggleIcon}" aria-hidden="true"></i></button>`;
           }
           return `<tr id="project-row-${c.id}">
-            <td><a href="${escHtml(c.detail_url)}">${escHtml(c.name)}</a></td>
+            <td><a href="${escHtml(c.detail_url)}">${nameEsc}</a></td>
             <td class="text-center">${c.managers}</td>
+            <td>${fmtDate(c.created)}</td>
             <td class="text-center">${activeIcon}</td>
+            <td>${fmtDate(c.last_used)}</td>
             <td class="text-end">${c.requests.toLocaleString()}</td>
             <td class="text-end">${c.tokens.toLocaleString()}</td>
+            <td class="text-end">${coinsAvail}</td>
             <td class="text-end">${parseFloat(c.cost).toFixed(2)}</td>
-            <td>${fmtDate(c.created)}</td>
             <td class="text-nowrap">${actions}</td>
           </tr>`;
         }).join('');
@@ -267,12 +313,19 @@
           tbody.querySelectorAll('.toggle-btn').forEach(btn => {
             btn.addEventListener('click', () => toggleProject(btn));
           });
+          tbody.querySelectorAll('.reset-btn').forEach(btn => {
+            btn.addEventListener('click', () => resetCoins(btn));
+          });
         }
+        tbody.querySelectorAll('.edit-btn').forEach(btn => {
+          btn.addEventListener('click', () => openEditModal(rowById.get(btn.dataset.id)));
+        });
+        tbody.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
 
         renderPagination(data.total, data.page, data.per_page);
       })
       .catch(() => {
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-3">Failed to load projects.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center text-danger py-3">Failed to load projects.</td></tr>';
       });
   }
 
@@ -281,12 +334,31 @@
     btn.disabled = true;
     fetch(`/projects/${id}/toggle`, { method: 'POST', headers: { "X-CSRFToken": csrfToken } })
       .then(r => r.json())
-      // Re-fetch so a project that was just disabled drops out unless "Show disabled" is on.
       .then(() => fetchProjects())
       .catch(() => { btn.disabled = false; });
   }
 
-  const DESC_COLS = new Set(['managers', 'requests', 'tokens', 'cost', 'created']);
+  function resetCoins(btn) {
+    const id = btn.dataset.id;
+    if (btn.dataset.unlimited === 'true') {
+      appAlert('This project has unlimited coins.');
+      return;
+    }
+    btn.disabled = true;
+    fetch(`/admin/entities/${id}/reset-tokens`, { method: 'POST', headers: { "X-CSRFToken": csrfToken } })
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) {
+          appAlert(data.error);
+          btn.disabled = false;
+        } else {
+          fetchProjects();
+        }
+      })
+      .catch(() => { btn.disabled = false; });
+  }
+
+  const DESC_COLS = new Set(['managers', 'requests', 'tokens', 'cost', 'created', 'last_used', 'coins_available']);
   document.querySelectorAll('.sort-header').forEach(th => {
     th.setAttribute('tabindex', '0');
     const activate = () => {
@@ -315,13 +387,49 @@
     fetchProjects();
   });
 
-  if (showDisabledChk) {
-    showDisabledChk.addEventListener('change', () => {
-      showDisabled = showDisabledChk.checked;
-      page = 1;
-      fetchProjects();
-    });
+  // ── Edit project modal (opened from a row's pencil; owner or admin) ──────
+  let editingId = null;
+  const editModalEl = document.getElementById('editProjectModal');
+  const editModal = new bootstrap.Modal(editModalEl);
+  editModalEl.addEventListener('shown.bs.modal', () => document.getElementById('edit-project-name').focus());
+
+  function openEditModal(c) {
+    editingId = c.id;
+    document.getElementById('edit-project-name').value = c.name;
+    document.getElementById('edit-project-active').checked = c.active;
+    const maxEl = document.getElementById('edit-project-max');
+    if (maxEl) {
+      maxEl.value = c.max_coins === null ? '' : c.max_coins.toFixed(2);
+      document.getElementById('edit-project-refresh').value = c.refresh_coins === null ? '' : c.refresh_coins.toFixed(2);
+    }
+    document.getElementById('edit-project-error').hidden = true;
+    editModal.show();
   }
+
+  document.getElementById('edit-project-save-btn').addEventListener('click', async () => {
+    const errEl = document.getElementById('edit-project-error');
+    errEl.hidden = true;
+    const payload = {
+      name: document.getElementById('edit-project-name').value,
+      active: document.getElementById('edit-project-active').checked,
+    };
+    const maxEl = document.getElementById('edit-project-max');
+    const refreshEl = document.getElementById('edit-project-refresh');
+    if (maxEl && refreshEl) {
+      // Blank Max Coins to clear the project's own pool (revert to inherited).
+      payload.max_coins = maxEl.value;
+      payload.refresh_coins = refreshEl.value;
+    }
+    const resp = await fetch('/projects/' + editingId, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+      body: JSON.stringify(payload),
+    });
+    if (resp.ok) { editModal.hide(); fetchProjects(); return; }
+    const data = await resp.json().catch(() => ({}));
+    errEl.textContent = data.error || 'Failed to save changes.';
+    errEl.hidden = false;
+  });
 
   fetchProjects();
 })();
@@ -343,7 +451,7 @@ document.getElementById("create-project-btn").addEventListener("click", async fu
     window.location.href = "/projects/" + data.id;
   } else {
     const data = await resp.json();
-    alert("Error: " + (data.error || "Unknown error"));
+    appAlert("Error: " + (data.error || "Unknown error"));
   }
 });
 {% endif %}

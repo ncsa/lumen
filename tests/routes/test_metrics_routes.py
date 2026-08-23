@@ -87,6 +87,31 @@ def test_metrics_debug_requires_token(app, client):
         app.config["YAML_DATA"] = original
 
 
+def test_metrics_debug_uses_debug_token_when_configured(app, client):
+    """With debug_token set, /metrics/debug rejects the scrape token and accepts debug_token;
+    /metrics keeps using the scrape token."""
+    original = _set_prometheus(app, {"enabled": True, "token": "secret", "debug_token": "stronger"})
+    try:
+        assert client.get("/metrics/debug",
+                          headers={"Authorization": "Bearer secret"}).status_code == HTTPStatus.UNAUTHORIZED
+        assert client.get("/metrics/debug",
+                          headers={"Authorization": "Bearer stronger"}).status_code == HTTPStatus.OK
+        assert client.get("/metrics",
+                          headers={"Authorization": "Bearer secret"}).status_code == HTTPStatus.OK
+    finally:
+        app.config["YAML_DATA"] = original
+
+
+def test_metrics_debug_falls_back_to_scrape_token(app, client):
+    """Without debug_token, /metrics/debug accepts the scrape token as before."""
+    original = _set_prometheus(app, {"enabled": True, "token": "secret"})
+    try:
+        assert client.get("/metrics/debug",
+                          headers={"Authorization": "Bearer secret"}).status_code == HTTPStatus.OK
+    finally:
+        app.config["YAML_DATA"] = original
+
+
 def test_metrics_debug_returns_checkouts_and_thread_dump(app, client):
     original = _set_prometheus(app, {"enabled": True, "token": "secret"})
     try:

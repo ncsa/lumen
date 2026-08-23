@@ -1,7 +1,9 @@
+version: 3
+
 app:
   name: Test Lumen
-  secret_key: test-secret-key-for-tests-only
-  encryption_key: test-enc-key-for-tests-only
+  secret_key: test-secret-key-for-tests-only-0001
+  encryption_key: test-encryption-key-for-tests-only-0001
   dev_user: testuser@example.com
   debug: true
   database:

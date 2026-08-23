@@ -3,7 +3,7 @@ import re
 from http import HTTPStatus
 from pathlib import Path
 
-from flask import Blueprint, abort, redirect, render_template, send_from_directory, url_for
+from flask import Blueprint, abort, render_template, send_from_directory
 
 help_bp = Blueprint("help_bp", __name__, url_prefix="/help")
 

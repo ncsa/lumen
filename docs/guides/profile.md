@@ -25,6 +25,10 @@ The right side shows six stat tiles:
 | **Coins Available** | Your current pool balance with a progress bar (when a limit is set) |
 | **Refill Rate** | Auto-refill rate per hour and a countdown to the next refill |
 
+### Editing a User (admins)
+
+Admins in admin mode see an **Edit** button above the stat tiles — on their own profile and when viewing another user's profile from the admin Users page. It opens a dialog to enable/disable the account (**Active**) and set the user's coin pool: **Max Coins** (`-2` = unlimited, `0` = blocked) and **Refill Rate** (coins added per hour). Clearing Max Coins removes the user's own pool so it falls back to their groups or the global defaults; lowering Max Coins clamps the current balance. A user's name cannot be edited here — it comes from the login provider.
+
 ### Coin Pool Values
 
 | Value | Meaning |
@@ -104,7 +108,7 @@ If you can access any projects, a **Projects** tab lists them with their usage (
 
 ## Model Access
 
-The **Models** tab lists every model available in Lumen and your access status for each.
+The **Models** tab lists models available to you, including models that still need your acknowledgment. Models owned by someone else without a grant to one of your active groups are blocked and omitted completely. Disabled, expired, and deleted models are also omitted, even when you have historical usage for them.
 
 | Column | Description |
 |--------|------------|
@@ -120,7 +124,6 @@ The **Models** tab lists every model available in Lumen and your access status f
 | **Need Consent** (warning) | Model requires a one-time acknowledgment — click to enable it |
 | **Consented** (green) | You have acknowledged this model and can use it |
 | **Allowed** (green) | Model is fully available to you |
-| **Blocked** (red) | Model is not available to you |
 
 ### Model Status
 
@@ -129,6 +132,5 @@ The **Models** tab lists every model available in Lumen and your access status f
 | **ok** (green) | All backends healthy |
 | **degraded** (yellow) | Some backends are down but at least one is working |
 | **down** (red) | No healthy backends |
-| **disabled** (gray) | Model is currently turned off |
 
-Click any column header to sort the table. Use the search box to filter by model name. Check **Show disabled** to include currently disabled models.
+Click any column header to sort the table. Use the search box to filter by model name.

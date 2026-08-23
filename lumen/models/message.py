@@ -3,9 +3,8 @@ from typing import Optional
 
 from sqlalchemy.orm import Mapped, mapped_column
 
-from lumen.timeutils import utcnow
-
 from lumen.extensions import db
+from lumen.timeutils import utcnow
 
 
 class Message(db.Model):

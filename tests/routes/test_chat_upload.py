@@ -3,7 +3,6 @@ import base64
 import io
 from http import HTTPStatus
 
-
 # 1x1 transparent PNG (67 bytes).
 _PNG_1x1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="

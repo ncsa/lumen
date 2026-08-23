@@ -283,16 +283,12 @@ def _stream_then_hangup(port, path, headers, payload):
 # ---------------------------------------------------------------------------
 
 def _grant_access(app, entity_id, model_config_id):
-    """Unlimited coin pool plus an explicit allow for the model."""
+    """Give the entity an unlimited coin pool; ownerless models are public."""
     from lumen.extensions import db
     from lumen.models.entity_limit import EntityLimit
-    from lumen.models.entity_model_access import EntityModelAccess
     with app.app_context():
         db.session.add(EntityLimit(
             entity_id=entity_id, max_coins=-2, refresh_coins=0, starting_coins=0,
-        ))
-        db.session.add(EntityModelAccess(
-            entity_id=entity_id, model_config_id=model_config_id, access_type="allowed",
         ))
         db.session.commit()
 

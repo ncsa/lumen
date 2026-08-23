@@ -26,23 +26,32 @@ logger = logging.getLogger(__name__)
 metrics_bp = Blueprint("metrics", __name__)
 
 
-def _metrics_auth_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        yaml_data = current_app.config.get("YAML_DATA", {})
-        prom_cfg = yaml_data.get("api", {}).get("prometheus", {})
-        if not prom_cfg.get("enabled", False):
-            return Response("Not found", status=HTTPStatus.NOT_FOUND)
-        token = prom_cfg.get("token", "")
-        if not token:
-            return Response("Unauthorized", status=HTTPStatus.UNAUTHORIZED, headers={"WWW-Authenticate": "Bearer"})
-        import hmac as _hmac
-        auth = request.headers.get("Authorization", "")
-        bearer = auth[7:].strip() if auth.startswith("Bearer ") else ""
-        if not bearer or not _hmac.compare_digest(bearer, token):
-            return Response("Unauthorized", status=HTTPStatus.UNAUTHORIZED, headers={"WWW-Authenticate": "Bearer"})
-        return f(*args, **kwargs)
-    return decorated
+def _metrics_auth_required(*token_keys):
+    """Require a bearer token from ``api.prometheus`` config.
+
+    ``token_keys`` are tried in order; the first key with a value configured is
+    the one the request must match. This lets /metrics/debug demand a separate,
+    stronger ``debug_token`` when one is configured (it exposes thread dumps and
+    deployment details) while falling back to the scrape ``token`` otherwise.
+    """
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            yaml_data = current_app.config.get("YAML_DATA", {})
+            prom_cfg = yaml_data.get("api", {}).get("prometheus", {})
+            if not prom_cfg.get("enabled", False):
+                return Response("Not found", status=HTTPStatus.NOT_FOUND)
+            token = next((prom_cfg.get(k) for k in token_keys if prom_cfg.get(k)), "")
+            if not token:
+                return Response("Unauthorized", status=HTTPStatus.UNAUTHORIZED, headers={"WWW-Authenticate": "Bearer"})
+            import hmac as _hmac
+            auth = request.headers.get("Authorization", "")
+            bearer = auth[7:].strip() if auth.startswith("Bearer ") else ""
+            if not bearer or not _hmac.compare_digest(bearer, token):
+                return Response("Unauthorized", status=HTTPStatus.UNAUTHORIZED, headers={"WWW-Authenticate": "Bearer"})
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
 
 
 class LumenDBCollector:
@@ -170,7 +179,7 @@ class LumenDBCollector:
 
 
 @metrics_bp.route("/metrics")
-@_metrics_auth_required
+@_metrics_auth_required("token")
 def metrics():
     # DB metrics — always globally accurate, queries the shared database
     db_output = generate_latest(current_app.config["PROMETHEUS_REGISTRY"])
@@ -264,14 +273,15 @@ def _format_pool_status() -> str:
 
 
 @metrics_bp.route("/metrics/debug")
-@_metrics_auth_required
+@_metrics_auth_required("debug_token", "token")
 def metrics_debug():
     """Outstanding DB pool checkouts and a stack dump of every live thread.
 
     Two things the gauges can't show: which call site is holding a connection it
     never returned, and whether a WSGI worker thread is wedged mid-request (the
     a2wsgi thread pool is small, so a few stuck threads stop the app serving).
-    Authenticated with the same bearer token as /metrics.
+    Authenticated with api.prometheus.debug_token when configured (this endpoint
+    exposes more than the gauges do), else the same bearer token as /metrics.
     """
     body = (
         "=== deployment ===\n"

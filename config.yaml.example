@@ -1,10 +1,14 @@
+version: 3
+
 app:
   name: Lumen
   tagline: Illuminating AI access
+  # Required: generate a random value of at least 32 characters (for example, `openssl rand -hex 32`).
   secret_key: ""
   # Dedicated secret for hashing API keys stored in the database.
   # WARNING: rotating this value invalidates ALL existing user API keys.
   # Can be overridden at runtime with the LUMEN_ENCRYPTION_KEY environment variable.
+  # Required: generate a separate random value of at least 32 characters.
   encryption_key: ""
   database:
     url: postgresql://lumen:lumen@localhost:5678/lumen  # TimescaleDB (started by dev.sh)
@@ -31,7 +35,6 @@ app:
   #   "@illinois.edu": illinois
   #   someone@example.com: uic
   # announcement: ""  # WARNING: rendered as raw HTML — trusted operator input only; never accept user content here.
-  # graylist_default_notice: "..."  # fallback notice shown for any graylisted model with no per-model notice set
   # theme: illinois  # Theme to use; themes live in themes/<name>/. Built-in: default, illinois, uic, uis
   # dev_user: dev@example.com  # Allows bypass of OAuth; can log in as this email directly
   # dev_user:                  # Extended form: also assigns group memberships on every login
@@ -60,7 +63,7 @@ admins:
   - admin@example.com
 
 api:
-  consent: true  # set to false to exempt API requests from the graylist model-consent requirement
+  consent: true  # set to false to exempt API requests from the model acknowledgement (needs_ack) requirement
 
   prometheus:
     enabled: false
@@ -119,58 +122,11 @@ rate_limiting:
   # storage_url: redis://localhost:6379/0  # omit for in-memory (single-process); requires restart to change
   limit: "30 per minute"  # applies to every endpoint, keyed by authenticated user identity
 
-groups:
-  # Groups are created/managed via the admin UI. Rules here auto-assign users at login
-  # based on CILogon userinfo fields (requires org.cilogon.userinfo scope).
-  # Supported matchers: contains (substring) or equals (exact match).
-
-  # aifarms:
-  #   rules:
-  #     - field: member_of
-  #       contains: icc-grp-aifarms   # substring match against the member_of field
-  #   max: 0
-  #   refresh: 0
-  #   model_access:
-  #     whitelist: [gpt-4o, claude-3]   # these models skip graylist for aifarms members
-  #     blacklist: [deprecated-model]
-
-  # restricted-group:
-  #   model_access:
-  #     default: blacklist    # deny everything not in whitelist for this group
-  #     whitelist: [safe-a, safe-b]
-
-  # staff:
-  #   rules:
-  #     - field: affiliation
-  #       contains: staff@illinois.edu
-  #     - field: idp
-  #       equals: urn:mace:incommon:uiuc.edu   # exact match
-  #   max: 0
-  #   refresh: 0
-
-# Project (service account) coin pool and model access.
-# 'default' applies to all projects without a named entry.
-# Named entries (by project name) override 'default' for that specific project.
-# model_access.default: whitelist|blacklist|graylist — behavior for models not explicitly listed
-# model_access.whitelist/blacklist — per-model overrides (projects cannot be assigned graylist directly;
-#   they give consent through the UI when accessing a globally-graylisted model)
-#projects:
-#  default:
-#    max: 100.0        # coin budget per project (-2 = unlimited, 0 = blocked)
-#    refresh: 0.0      # coins added per hour
-#    starting: 100.0   # coins when pool is first created
-#    model_access:
-#      default: whitelist   # allow all models not explicitly listed
-#      blacklist: []        # always deny these models for all projects
-#      whitelist: []        # always allow these models for all projects
-#
-#  research-bot:       # overrides default for this specific project
-#    max: 500.0
-#    refresh: 1.0
-#    starting: 500.0
-#    model_access:
-#      default: blacklist   # deny everything not in whitelist
-#      whitelist: [gpt-4o, llama3]
+# Groups — memberships, coin pools, model grants, and auto-join rules — are
+# managed in the app (each group's page), not here. There is no group_rules
+# config section. Auto-join rules match
+# CILogon userinfo fields at login (requires org.cilogon.userinfo scope).
+# Model access is ownership-based and managed on each model's detail page.
 
 models:
   # The top-level "name" is Lumen's internal model identifier — what callers use in API requests.
@@ -178,7 +134,6 @@ models:
   # allowing endpoints with different model identifiers to back the same Lumen model.
 
   - name: gpt-4o
-    active: true
     input_cost_per_million: 5.0     # coins per 1M input tokens
     output_cost_per_million: 15.0   # coins per 1M output tokens
     # max_input_tokens: 128000        # optional; context window size
@@ -192,7 +147,6 @@ models:
         api_key: sk-def456          # second key; round-robin between these two
 
   - name: gpt-4o-mini
-    active: true
     input_cost_per_million: 0.15
     output_cost_per_million: 0.6
     endpoints:
@@ -200,7 +154,6 @@ models:
         api_key: sk-abc123
 
   - name: claude-3-opus
-    active: true
     input_cost_per_million: 15.0
     output_cost_per_million: 75.0
     endpoints:
@@ -211,7 +164,6 @@ models:
   # Ollama — local models via OpenAI-compatible API (http://localhost:11434/v1)
   # Ollama doesn't enforce API keys; use any non-empty string.
   - name: llama3
-    active: true
     input_cost_per_million: 0.0
     output_cost_per_million: 0.0
     endpoints:
@@ -220,7 +172,6 @@ models:
         model: llama3.2             # actual tag pulled in Ollama
 
   - name: mistral
-    active: true
     input_cost_per_million: 0.0
     output_cost_per_million: 0.0
     endpoints:
@@ -231,7 +182,6 @@ models:
   # Example: same Lumen model name backed by both a cloud endpoint and a local Ollama fallback.
   # Round-robin will distribute load; the health checker will skip unhealthy ones.
   - name: phi3
-    active: true
     input_cost_per_million: 0.0
     output_cost_per_million: 0.0
     endpoints:

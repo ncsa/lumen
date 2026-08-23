@@ -16,7 +16,6 @@ erDiagram
         bool active
         bool store_conversations
         datetime created_at
-        string model_access_default
     }
 
     api_keys {
@@ -41,9 +40,11 @@ erDiagram
         numeric input_cost_per_million
         numeric output_cost_per_million
         numeric audio_cost_per_hour
-        string access
+        int owner_entity_id FK
         bool needs_ack
         text ack_message
+        bool early_access
+        datetime end_date
         bool disabled
         text description
         string url
@@ -85,18 +86,12 @@ erDiagram
         datetime last_refill_at
     }
 
-    entity_model_access {
-        int id PK
-        int entity_id FK
-        int model_config_id FK
-        string access_type
-    }
-
     entity_model_consents {
         int id PK
         int entity_id FK
         int model_config_id FK
         datetime consented_at
+        datetime early_access_at
     }
 
     groups {
@@ -104,8 +99,7 @@ erDiagram
         string name
         text description
         bool active
-        bool config_managed
-        string model_access_default
+        bool auto_join
         datetime created_at
     }
 
@@ -114,6 +108,16 @@ erDiagram
         int group_id FK
         int entity_id FK
         bool config_managed
+        bool is_owner
+        datetime joined_at
+    }
+
+    group_rules {
+        int id PK
+        int group_id FK
+        string field
+        string match
+        string value
     }
 
     group_limits {
@@ -124,11 +128,11 @@ erDiagram
         numeric starting_coins
     }
 
-    group_model_access {
+    model_group_access {
         int id PK
-        int group_id FK
         int model_config_id FK
-        string access_type
+        int group_id FK
+        datetime created_at
     }
 
     entity_managers {
@@ -211,7 +215,7 @@ erDiagram
     entities ||--o{ api_keys : "owns"
     entities ||--o| entity_limits : "has"
     entities ||--o| entity_balances : "has"
-    entities ||--o{ entity_model_access : "overrides"
+    entities ||--o{ model_configs : "owns"
     entities ||--o{ entity_model_consents : "consents"
     entities ||--o{ model_stats : "accumulates"
     entities ||--o| entity_stats : "totals"
@@ -222,13 +226,13 @@ erDiagram
     entities ||--o{ entity_managers : "managed by (project)"
 
     groups ||--o{ group_members : "contains"
+    groups ||--o{ group_rules : "auto-join rules"
     groups ||--o| group_limits : "has"
-    groups ||--o{ group_model_access : "overrides"
+    groups ||--o{ model_group_access : "granted"
 
     model_configs ||--o{ model_endpoints : "served by"
-    model_configs ||--o{ entity_model_access : "controlled by"
     model_configs ||--o{ entity_model_consents : "consented via"
-    model_configs ||--o{ group_model_access : "controlled by"
+    model_configs ||--o{ model_group_access : "granted to"
     model_configs ||--o{ model_stats : "accumulates"
     model_configs ||--o{ request_logs : "logs"
 
@@ -245,12 +249,12 @@ erDiagram
 - [model\_endpoints](#model_endpoints)
 - [entity\_limits](#entity_limits)
 - [entity\_balances](#entity_balances)
-- [entity\_model\_access](#entity_model_access)
 - [entity\_model\_consents](#entity_model_consents)
 - [groups](#groups)
 - [group\_members](#group_members)
+- [group\_rules](#group_rules)
 - [group\_limits](#group_limits)
-- [group\_model\_access](#group_model_access)
+- [model\_group\_access](#model_group_access)
 - [entity\_managers](#entity_managers)
 - [model\_stats](#model_stats)
 - [entity\_stats](#entity_stats)
@@ -277,11 +281,10 @@ Unified table for both human users (authenticated via OAuth) and programmatic pr
 | `active` | Boolean | NO | Whether the entity can make requests. Inactive entities are blocked. |
 | `store_conversations` | Boolean | NO | Whether webchat conversations are persisted for this user. Default `true`. |
 | `created_at` | DateTime | NO | UTC timestamp when the entity was created |
-| `model_access_default` | String(16) | YES | Default model access policy for models not explicitly listed: `'allowed'` or `'blocked'`. Used for project entities; users inherit from group membership. |
 
 **Notes:**
-- All foreign keys that reference `entities.id` cascade on delete.
-- `model_access_default` combined with `entity_model_access` rows implements per-entity model allow/block lists. Acknowledgement (`needs_ack`) is a property of the model, not of the entity.
+- All foreign keys that reference `entities.id` cascade on delete, except `model_configs.owner_entity_id` and the `request_logs` FKs, which use `SET NULL`.
+- Acknowledgement (`needs_ack`) is a property of the model, not of the entity.
 
 ---
 
@@ -318,9 +321,11 @@ Configuration and metadata for each AI model that Lumen can proxy. One row per l
 | `input_cost_per_million` | Numeric(12,6) | NO | USD cost per one million input tokens |
 | `output_cost_per_million` | Numeric(12,6) | NO | USD cost per one million output tokens |
 | `audio_cost_per_hour` | Numeric(12,6) | YES | USD cost per hour of audio; only set for speech-to-text (ASR) models |
-| `access` | String(8) | YES | The model's own default access: `'allowed'`, `'blocked'`, or NULL to inherit scope/global defaults. When set it ranks above group/entity *defaults* but below an explicit per-scope rule. |
+| `owner_entity_id` | Integer (FK → entities) | YES | Owning user entity; NULL = available to everyone. When set, only the owner and members of granted groups may use the model. `SET NULL` on delete — deleting the owner makes the model public again. |
 | `needs_ack` | Boolean | NO | Requires user acknowledgement before use; a sticky model-level property that no scope can add or remove. Default `false`. |
 | `ack_message` | Text | YES | Per-model acknowledgement message; overrides the global `defaults.models.ack_message`. |
+| `early_access` | Boolean | NO | Early-access model: users must acknowledge it may change or be removed before use. A sticky model-level property like `needs_ack`. Default `false`. |
+| `end_date` | DateTime | YES | Naive-UTC datetime after which the model is hidden everywhere and rejected (exclusive comparison). NULL = no end date. |
 | `disabled` | Boolean | NO | Hard off: the model is hidden everywhere and not overridable by any scope. Default `false`. |
 | `description` | Text | YES | Human-readable description shown in the UI |
 | `url` | String(512) | YES | Link to the model's documentation or provider page |
@@ -335,7 +340,8 @@ Configuration and metadata for each AI model that Lumen can proxy. One row per l
 | `created_at` | DateTime | NO | UTC timestamp when the model was registered |
 
 **Notes:**
-- `active` is a derived, read-only property (`active = not disabled`), not a stored column. It replaces the old `active` column.
+- `active` is a derived, read-only property (`active = not disabled and (end_date is null or end_date > now)`), not a stored column. It replaces the old `active` column.
+- `owner_entity_id` and the `model_group_access` grants are DB-managed (edited via the model detail page), never synced from `config.yaml`.
 
 ---
 
@@ -348,7 +354,7 @@ Backend endpoint(s) for a model. A single `model_config` can fan out to multiple
 | `id` | Integer | NO | Primary key |
 | `model_config_id` | Integer (FK → model_configs) | NO | The model this endpoint serves. Cascades on delete. |
 | `url` | String(256) | NO | Base URL of the backend (e.g., `https://api.openai.com/v1`) |
-| `api_key` | String(256) | NO | Credential used when forwarding requests to this endpoint |
+| `api_key` | Text | NO | Credential used when forwarding requests to this endpoint. Encrypted at rest with the app encryption key (`enc:`-prefixed Fernet ciphertext); the ORM decrypts transparently. |
 | `model_name` | String(128) | YES | Override model name sent to this endpoint. When set, Lumen substitutes this value for `model_config.model_name` in upstream requests, enabling one Lumen model to map to differently-named backend models. |
 | `healthy` | Boolean | NO | Last known health status; updated by the health-check background task |
 | `last_checked_at` | DateTime | YES | UTC timestamp of the most recent health check; null if never checked |
@@ -367,7 +373,7 @@ Budget configuration for a single entity. Each entity has at most one limit row.
 | `max_coins` | Numeric(12,6) | NO | Maximum coins the entity may hold at any time. `-2` = unlimited, `0` = blocked. |
 | `refresh_coins` | Numeric(12,6) | NO | Coins added at each periodic refill cycle |
 | `starting_coins` | Numeric(12,6) | NO | Coins granted when the entity is first created or reset |
-| `config_managed` | Boolean | NO | When `true`, this row is owned by `config.yaml` and must not be edited through the UI |
+| `config_managed` | Boolean | NO | Historical: `true` on rows created by the old `config.yaml` limit sync. Rows edited through the project/profile Edit dialogs are set to `false`. |
 
 ---
 
@@ -384,37 +390,17 @@ Current coin balance for each entity. Updated on every request and on each refil
 
 ---
 
-## entity_model_access
-
-Per-entity model access overrides. Each row designates a specific model as `allowed` or `blocked` for the entity. The entity's `model_access_default` handles models not listed here.
-
-| Column | Type | Nullable | Description |
-|--------|------|----------|-------------|
-| `id` | Integer | NO | Primary key |
-| `entity_id` | Integer (FK → entities) | NO | The entity the override applies to. Cascades on delete. |
-| `model_config_id` | Integer (FK → model_configs) | NO | The model being overridden. Cascades on delete. |
-| `access_type` | String(20) | NO | `'allowed'` (always allowed) or `'blocked'` (always denied) for this entity. Acknowledgement (`needs_ack`) lives on the model, not here. |
-
-**Constraints:** `UNIQUE(entity_id, model_config_id)`
-
-**Access type semantics:**
-- `allowed` — entity may use this model regardless of group or default policy.
-- `blocked` — entity is denied this model regardless of group or default policy.
-
-If the model has `needs_ack: true`, the entity must still record acknowledgement (via `entity_model_consents`) before using an allowed model.
-
----
-
 ## entity_model_consents
 
-Records that an entity has explicitly accepted the terms or notice for a model with `needs_ack: true`. A row here is required before such a model can be used.
+Records that an entity has acknowledged a model's requirements. A model can carry two acknowledgement requirements — `needs_ack` (tracked in `consented_at`) and `early_access` (tracked in `early_access_at`). A requirement is satisfied when its timestamp is set; if a model gains a requirement after the entity consented, the new requirement's timestamp is NULL and the entity is prompted to acknowledge again (a single combined dialog covers all outstanding requirements).
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `id` | Integer | NO | Primary key |
 | `entity_id` | Integer (FK → entities) | NO | The consenting entity. Cascades on delete. |
 | `model_config_id` | Integer (FK → model_configs) | NO | The model for which consent was given. Cascades on delete. |
-| `consented_at` | DateTime | NO | UTC timestamp when the entity accepted the model notice |
+| `consented_at` | DateTime | YES | UTC timestamp when the entity acknowledged the model notice (`needs_ack`); NULL if never required |
+| `early_access_at` | DateTime | YES | UTC timestamp when the entity acknowledged the early-access warning; NULL if never required |
 
 **Constraints:** `UNIQUE(entity_id, model_config_id)`
 
@@ -422,7 +408,7 @@ Records that an entity has explicitly accepted the terms or notice for a model w
 
 ## groups
 
-Named collections of entities used for bulk policy assignment. Groups can be managed manually through the admin UI or driven entirely from `config.yaml` (see `config_managed`).
+Named collections of entities used for bulk policy assignment. Groups are managed entirely in the database via the Groups pages; a group with `auto_join` assigns membership at OAuth login to users matching all of its [group\_rules](#group_rules).
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
@@ -430,8 +416,7 @@ Named collections of entities used for bulk policy assignment. Groups can be man
 | `name` | String(128) | NO | Unique group identifier (e.g., `faculty`, `students`) |
 | `description` | Text | YES | Optional human-readable description shown in the admin UI |
 | `active` | Boolean | NO | Whether the group is currently in effect |
-| `config_managed` | Boolean | NO | When `true`, group membership and settings are controlled by `config.yaml` |
-| `model_access_default` | String(20) | YES | Default model access policy for models not explicitly listed in `group_model_access`: `'allowed'` or `'blocked'` |
+| `auto_join` | Boolean | NO | When `true`, users matching all of the group's rules are added as members at OAuth login |
 | `created_at` | DateTime | NO | UTC timestamp when the group was created |
 
 ---
@@ -445,9 +430,27 @@ Association table linking entities to groups. An entity may belong to multiple g
 | `id` | Integer | NO | Primary key |
 | `group_id` | Integer (FK → groups) | NO | The group. Cascades on delete. |
 | `entity_id` | Integer (FK → entities) | NO | The entity that belongs to the group. Cascades on delete. |
-| `config_managed` | Boolean | NO | When `true`, this membership was created by `config.yaml` and must not be removed via the UI |
+| `config_managed` | Boolean | NO | When `true`, assigned automatically at login by the group's auto-join rules; reconciled (added/removed) at each login. Manual memberships are `false`. |
+| `is_owner` | Boolean | NO | True for the group owner; at most one owner per group (enforced by app logic). The owner may add/remove members, transfer ownership, grant models they own, and deactivate the group. |
+| `joined_at` | DateTime | YES | UTC timestamp when the membership was created; `NULL` for memberships that predate the column (join time unknown) |
 
 **Constraints:** `UNIQUE(group_id, entity_id)`
+
+---
+
+## group_rules
+
+Auto-join conditions per group, edited on the group detail page (admin-only Rules tab). A user matching **all** of a group's rules is added as a member at OAuth login; a group with `auto_join` but no rules matches nobody (fails closed).
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `id` | Integer | NO | Primary key |
+| `group_id` | Integer (FK → groups) | NO | The group this rule belongs to. Cascades on delete. |
+| `field` | String(128) | NO | Userinfo claim to inspect (e.g. `affiliation`, `idp`) |
+| `match` | String(8) | NO | `contains` for substring match, `equals` for exact match |
+| `value` | String(256) | NO | Value the claim is compared against |
+
+**Constraints:** index on `group_id`
 
 ---
 
@@ -465,18 +468,18 @@ Coin budget configuration for a group. Works identically to `entity_limits` but 
 
 ---
 
-## group_model_access
+## model_group_access
 
-Per-group model access overrides. Mirrors `entity_model_access` but applies to all members of the group. Entity-level overrides take precedence over group-level overrides.
+Group grants for owned models; a row gives all group members access to the model. Only meaningful for models with an `owner_entity_id` set — a model with no owner is available to everyone and needs no grants. Grants are edited by admins on the model detail page; deleting a granted group removes the grant.
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `id` | Integer | NO | Primary key |
-| `group_id` | Integer (FK → groups) | NO | The group the override applies to. Cascades on delete. |
-| `model_config_id` | Integer (FK → model_configs) | NO | The model being overridden. Cascades on delete. |
-| `access_type` | String(20) | NO | `'allowed'` or `'blocked'` — same semantics as `entity_model_access.access_type` |
+| `model_config_id` | Integer (FK → model_configs) | NO | The owned model being granted. Cascades on delete. |
+| `group_id` | Integer (FK → groups) | NO | The group whose members receive access. Cascades on delete. |
+| `created_at` | DateTime | NO | UTC timestamp when the grant was created |
 
-**Constraints:** `UNIQUE(group_id, model_config_id)`
+**Constraints:** `UNIQUE(model_config_id, group_id)` (`uq_mga_model_group`); index `ix_model_group_access_group_id` on `group_id`
 
 ---
 
@@ -742,27 +745,26 @@ groups ──< group_members >── entities ──< api_keys
   │                              │
   ├──< group_limits              ├──< entity_limits
   │                              ├──< entity_balances
-  └──< group_model_access        ├──< entity_model_access
-                                 ├──< entity_model_consents
-model_configs ──< model_endpoints├──< entity_managers (user→project)
-     │                           ├──< model_stats
-     ├──< entity_model_access    ├──< conversations ──< messages
-     ├──< group_model_access     └──< request_logs
+  └──< model_group_access        ├──< entity_model_consents
+                                 ├──< entity_managers (user→project)
+model_configs ──< model_endpoints├──< model_stats
+     │                           ├──< conversations ──< messages
+     ├──> entities (owner_entity_id, SET NULL)
+     ├──< model_group_access     └──< request_logs
      └──< model_stats / request_logs
 ```
 
 ## Access Control Evaluation Order
 
-When determining whether an entity may use a model, Lumen evaluates in this priority order:
+When determining whether an entity (user or project) may use a model, Lumen evaluates in this order:
 
-1. **Entity-level** `entity_model_access` row for the model → if present, use its `access_type` (`allowed`/`blocked`).
-2. **Group-level** `group_model_access` row for any group the entity belongs to → if found, `blocked` in any group beats `allowed`.
-3. **Model `access`** `model_configs.access` → if set (`allowed`/`blocked`), it wins over scope *defaults* (lets a model be blocked-by-default yet grant-able via tiers 1–2).
-4. **Group default** `groups.model_access_default` → if the entity belongs to groups with a default set.
-5. **Entity default** `entities.model_access_default` → if set, use it (applied only when no group default matched).
-6. **Global default** `defaults.models.access` → final fallback when the model leaves `access` unset and no scope default applies.
+1. **Disabled or expired** — `model_configs.disabled = true` or `end_date` in the past → blocked, not overridable.
+2. **No owner** — `model_configs.owner_entity_id` is NULL → allowed (the model is available to everyone).
+3. **Entity is the owner** — the entity is `owner_entity_id` → allowed.
+4. **Granted group** — the entity is a member of an **active** group that has a `model_group_access` row for the model → allowed.
+5. **Otherwise** → blocked.
 
-`disabled = true` short-circuits the whole chain to blocked and is not overridable by any scope. Independently, if the model has `needs_ack = true`, the entity must also have a row in `entity_model_consents` before using an allowed model.
+Independently, if the model has `needs_ack = true` or `early_access = true`, an allowed entity must still record acknowledgement in `entity_model_consents` before using the model ("needs_ack" until consent).
 
 ## Coin Budget Resolution Order
 

@@ -3,7 +3,8 @@ import re
 import shutil
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
 
 import click
@@ -13,33 +14,10 @@ from flask.cli import with_appcontext
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import DBAPIError
 
-from lumen.models.entity import Entity
-from lumen.models.entity_balance import EntityBalance
-from lumen.models.entity_limit import EntityLimit
-from lumen.models.entity_model_access import EntityModelAccess
-from lumen.models.group import Group
-from lumen.models.group_limit import GroupLimit
-from lumen.models.group_member import GroupMember
-from lumen.models.group_model_access import GroupModelAccess
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
-from lumen.timeutils import utcnow
 
 from .extensions import db
-
-# Maps config-input access vocabulary (new + legacy) to the stored value.
-# Acknowledgement (graylist) is a model-level property now, so legacy 'graylist'
-# at a scope only sets access to 'allowed'.
-_ACCESS_INPUT = {
-    "allowed": "allowed",
-    "blocked": "blocked",
-    "whitelist": "allowed",
-    "blacklist": "blocked",
-    "graylist": "allowed",
-}
-_LEGACY_ACCESS_TERMS = {"whitelist", "blacklist", "graylist"}
-# Recognized model_access list keys at a scope (group/project), new + legacy.
-_SCOPE_ACCESS_KEYS = ("allowed", "blocked", "whitelist", "blacklist", "graylist")
 
 # The entity-dimensioned continuous aggregate the per-entity /usage queries read.
 # `enable-retention` refuses while this is empty: dropping raw chunks then destroys
@@ -77,118 +55,20 @@ def write_config_yaml(config_path, data):
         with os.fdopen(fd, "w") as f:
             f.write("\n".join(parts))
         # Back up the current config before overwriting so a partial or
-        # malformed save can be recovered from <config>.bak.
+        # malformed save can be recovered from <config>.bak. Best-effort:
+        # in containers only config.yaml itself is bind-mounted, so the
+        # directory may not be writable — a failed backup must not block
+        # the save.
         if os.path.exists(config_path):
-            shutil.copy2(config_path, config_path + ".bak")
+            try:
+                shutil.copy2(config_path, config_path + ".bak")
+            except OSError as e:
+                current_app.logger.warning(
+                    "write_config_yaml: could not write backup %s.bak: %s", config_path, e
+                )
         shutil.copyfile(tmp_path, config_path)
     finally:
         os.unlink(tmp_path)
-
-
-def backfill_projects_to_config(yaml_data, config_path):
-    """Ensure every project entity in the DB has an entry in config.yaml.
-
-    Existing installs have projects that live only in the DB (created before project
-    creation wrote them to config); add an empty entry for each one missing from the
-    file so it reflects which projects exist. Mutates yaml_data in place and writes the
-    file only when something was added. Returns True if the file was written.
-    """
-    names = db.session.execute(
-        select(Entity.name).where(Entity.entity_type == "project")
-    ).scalars().all()
-    projects_cfg = yaml_data.setdefault("projects", {})
-    added = False
-    for name in names:
-        if name not in projects_cfg:
-            projects_cfg[name] = {}
-            added = True
-    if added:
-        write_config_yaml(config_path, yaml_data)
-    return added
-
-
-def _normalize_access(value, *, context=""):
-    """Map config access vocabulary to a stored value ('allowed' or 'blocked').
-
-    Accepts the new allowed/blocked terms and the legacy whitelist/blacklist/graylist
-    (with a deprecation warning). Returns None for unknown values.
-    """
-    if value is None:
-        return None
-    v = str(value).strip().lower()
-    if v in _LEGACY_ACCESS_TERMS:
-        if v == "graylist":
-            _warn_once(("graylist", context),
-                       "deprecated access term 'graylist'%s; acknowledgement is now a model "
-                       "property — set 'needs_ack: true' on the model instead", _ctx(context))
-        else:
-            _warn_once((v, context), "deprecated access term '%s'%s; use allowed/blocked", v, _ctx(context))
-    out = _ACCESS_INPUT.get(v)
-    if out is None:
-        _warn_once(("unknown", v, context), "unknown access value '%s'%s; ignoring", v, _ctx(context))
-    return out
-
-
-def _ctx(context):
-    return f" in {context}" if context else ""
-
-
-def _token_fields(cfg):
-    """Return (max, refresh, starting) filled from cfg + global TOKEN_DEFAULTS.
-
-    Returns None when the config block specifies no token fields at all, so the
-    caller drops the limit row and the entity falls through to the global pool.
-    """
-    if not ({"max", "refresh", "starting"} & cfg.keys()):
-        return None
-    td = current_app.config.get("TOKEN_DEFAULTS", {"max": 0, "refresh": 0, "starting": 0})
-    max_coins = cfg.get("max", td["max"])
-    refresh_coins = cfg.get("refresh", td["refresh"])
-    starting_coins = cfg.get("starting", cfg.get("max", td["starting"]))
-    return max_coins, refresh_coins, starting_coins
-
-
-def _parse_scope_access(access_cfg, context):
-    """Parse a model_access block.
-
-    Returns (pairs, default, ack_models):
-      pairs       – [(model_name, 'allowed'|'blocked'), ...]
-      default     – scope default ('allowed'/'blocked') from a 'default:' key or '*' shorthand
-      ack_models  – model names listed under a legacy 'graylist:' key. Acknowledgement is now a
-                    model property, so callers set needs_ack=True on these to preserve the old
-                    "graylisted model requires consent" behavior when loading a v1 config.
-    """
-    default = None
-    pairs = []
-    ack_models = []
-    for key in _SCOPE_ACCESS_KEYS:
-        if key not in access_cfg:
-            continue  # don't warn about a legacy key the config doesn't actually use
-        stored = _normalize_access(key, context=context)
-        if stored is None:
-            continue
-        for model_name in access_cfg.get(key, []) or []:
-            if model_name == "*":
-                default = stored
-                continue
-            pairs.append((model_name, stored))
-            if key == "graylist":
-                ack_models.append(model_name)
-    if "default" in access_cfg:
-        default = _normalize_access(access_cfg["default"], context=context)
-    return pairs, default, ack_models
-
-
-def _apply_legacy_ack(ack_models, models_by_name):
-    """Set needs_ack=True on models that a legacy scope 'graylist:' list referenced.
-
-    Acknowledgement moved from a per-scope concept to a model property, so a v1 config's
-    graylist list must keep its models requiring consent. Only ever turns needs_ack ON
-    (a v2 config has no graylist key, so this is a no-op there)."""
-    for name in ack_models:
-        mc = models_by_name.get(name)
-        if mc is not None and not mc.needs_ack:
-            mc.needs_ack = True
 
 
 def _normalize_model_url(url):
@@ -205,6 +85,56 @@ def _normalize_model_url(url):
     if parsed.netloc.lower() in ("huggingface.com", "www.huggingface.co", "www.huggingface.com"):
         url = parsed._replace(netloc="huggingface.co").geturl()
     return url
+
+
+def _normalize_end_date(value, model_name=None):
+    """Coerce a config end_date (date, datetime, or ISO string) to naive-UTC datetime.
+
+    A bare date is stored as midnight UTC at the start of the following day, so
+    the model remains usable throughout the named date. Explicit datetimes stay
+    exact. Unparseable values are dropped with a warning."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day) + timedelta(days=1)
+    text_value = str(value)
+    bare_iso_date = re.fullmatch(r"\d{4}-\d{2}-\d{2}", text_value) is not None
+    parsed_rfc822_date = False
+    try:
+        parsed = datetime.fromisoformat(text_value)
+    except ValueError:
+        # The admin config editor round-trips YAML dates through JSON, which
+        # Flask serializes in RFC 822 form ("Thu, 31 Dec 2026 00:00:00 GMT").
+        try:
+            parsed = parsedate_to_datetime(text_value)
+            parsed_rfc822_date = parsed.hour == parsed.minute == parsed.second == parsed.microsecond == 0
+        except ValueError:
+            _warn_once(("end-date", model_name), "invalid end_date '%s' on model '%s'; ignoring", value, model_name)
+            return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    if bare_iso_date or parsed_rfc822_date:
+        parsed += timedelta(days=1)
+    return parsed
+
+
+def _normalize_knowledge_cutoff(value, model_name=None):
+    """Clamp a knowledge cutoff to YYYY-MM (the column is String(7)).
+
+    models.dev sometimes reports YYYY-MM-DD; keep just the year-month. Values
+    that are not YYYY-MM or YYYY-MM-DD are dropped with a warning."""
+    if not value:
+        return None
+    value = str(value)
+    if re.fullmatch(r"\d{4}-(?:0[1-9]|1[0-2])(?:-\d{2})?", value):
+        return value[:7]
+    _warn_once(("knowledge-cutoff", model_name),
+               "invalid knowledge_cutoff '%s' on model '%s'; expected YYYY-MM, ignoring", value, model_name)
+    return None
 
 
 def _apply_model_fields(config, model_def):
@@ -229,36 +159,28 @@ def _apply_model_fields(config, model_def):
     config.context_window = model_def.get("context_window") or None
     config.max_output_tokens = model_def.get("max_output_tokens") or None
     config.supports_reasoning = model_def.get("supports_reasoning")
-    config.knowledge_cutoff = model_def.get("knowledge_cutoff") or None
+    config.knowledge_cutoff = _normalize_knowledge_cutoff(model_def.get("knowledge_cutoff"), model_def.get("name"))
     config.notice = model_def.get("notice") or None
     config.ack_message = model_def.get("ack_message") or None
+    config.end_date = _normalize_end_date(model_def.get("end_date"), model_def.get("name"))
 
 
 def _apply_model_access(config, model_def):
-    """Set config.access / needs_ack / disabled from a model definition.
+    """Set config.needs_ack / early_access / disabled from a model definition.
 
-    Honors the new orthogonal fields and bridges the legacy `active:` boolean
-    (active: false -> disabled) with a deprecation warning.
+    Bridges the legacy `active:` boolean (active: false -> disabled) with a
+    deprecation warning. Never touches owner_entity_id or group grants — model
+    ownership is DB-managed via the admin UI, not config.yaml.
     """
     config.needs_ack = bool(model_def.get("needs_ack", False))
+    config.early_access = bool(model_def.get("early_access", False))
 
     disabled = model_def.get("disabled")
-    access = model_def.get("access")
-    if disabled is None and access is None and model_def.get("active") is False:
+    if disabled is None and model_def.get("active") is False:
         _warn_once(("active", model_def.get("name")),
                    "deprecated 'active: false' on model '%s'; use 'disabled: true' instead", model_def.get("name"))
         disabled = True
     config.disabled = bool(disabled)
-
-    if access is None:
-        config.access = None  # inherit group/global defaults
-    else:
-        a = str(access).strip().lower()
-        if a not in ("allowed", "blocked"):
-            _warn_once(("model-access", a, model_def.get("name")),
-                       "invalid model access '%s' on model '%s'; ignoring (will inherit defaults)", a, model_def.get("name"))
-            a = None
-        config.access = a
 
 
 def _reconcile_endpoints(config, model_def):
@@ -316,347 +238,12 @@ def sync_models_from_yaml(yaml_data):
     db.session.commit()
 
 
-def sync_groups_from_yaml(yaml_data):
-    """Upsert Group, GroupLimit, and GroupModelAccess rows from yaml_data['groups'].
-
-    Config format per group:
-      max, refresh, starting    -> GroupLimit (token pool); missing fields fall back to defaults.tokens
-      model_access:             -> GroupModelAccess + model_access_default
-        default: allowed        -> group default for unlisted models
-        allowed: [name, ...]
-        blocked: [name, ...]
-      rules: [...]              -> auto-membership rules (handled at login, not here)
-    """
-    groups_cfg = yaml_data.get("groups", {})
-    yaml_group_names = set(groups_cfg.keys())
-
-    # Preload all models once to avoid an N+1 lookup per model_access entry
-    models_by_name = {
-        mc.model_name: mc for mc in db.session.execute(select(ModelConfig)).scalars().all()
-    }
-
-    for group_name, group_def in groups_cfg.items():
-        group = db.session.execute(select(Group).filter_by(name=group_name)).scalar_one_or_none()
-        if not group:
-            group = Group(name=group_name, config_managed=True)
-            db.session.add(group)
-            db.session.flush()
-        else:
-            group.config_managed = True
-
-        if "models" in group_def:
-            current_app.logger.warning(
-                "sync_groups_from_yaml: group '%s' uses deprecated 'models:' key; "
-                "use 'model_access.allowed:' instead. The key is ignored.",
-                group_name,
-            )
-
-        # Upsert GroupLimit (coin pool)
-        pool = _token_fields(group_def)
-        if pool is not None:
-            max_coins, refresh_coins, starting_coins = pool
-            limit = db.session.execute(select(GroupLimit).filter_by(group_id=group.id)).scalar_one_or_none()
-            if limit:
-                limit.max_coins = max_coins
-                limit.refresh_coins = refresh_coins
-                limit.starting_coins = starting_coins
-            else:
-                db.session.add(GroupLimit(
-                    group_id=group.id,
-                    max_coins=max_coins,
-                    refresh_coins=refresh_coins,
-                    starting_coins=starting_coins,
-                ))
-        else:
-            db.session.execute(delete(GroupLimit).where(GroupLimit.group_id == group.id))
-
-        # Upsert GroupModelAccess from model_access: section
-        db.session.execute(delete(GroupModelAccess).where(GroupModelAccess.group_id == group.id))
-        access_cfg = group_def.get("model_access", {})
-        pairs, group_default, ack_models = _parse_scope_access(access_cfg, context=f"group '{group_name}'")
-        _apply_legacy_ack(ack_models, models_by_name)
-        for model_name, access_type in pairs:
-            mc = models_by_name.get(model_name)
-            if mc is None:
-                current_app.logger.warning(
-                    "sync_groups_from_yaml: model '%s' not found in group '%s', skipping",
-                    model_name, group_name,
-                )
-                continue
-            db.session.add(GroupModelAccess(
-                group_id=group.id,
-                model_config_id=mc.id,
-                access_type=access_type,
-            ))
-        group.model_access_default = group_default
-
-    # Remove config_managed groups no longer in yaml
-    for group in db.session.execute(select(Group).filter_by(config_managed=True)).scalars().all():
-        if group.name not in yaml_group_names:
-            db.session.delete(group)
-
-    db.session.commit()
-
-
-def _desired_groups_from_config(email, yaml_data):
-    """Return group names from users.default.groups and users.<email>.groups."""
-    users_cfg = yaml_data.get("users", {})
-    names = ["default"]
-    for name in users_cfg.get("default", {}).get("groups", []):
-        if name not in names:
-            names.append(name)
-    for name in users_cfg.get(email, {}).get("groups", []):
-        if name not in names:
-            names.append(name)
-    return names
-
-
-def sync_user_groups_from_yaml(yaml_data):
-    """Reconcile user memberships in non-auto (explicitly assigned) groups from yaml.
-
-    Non-auto groups are those without a `rules:` key — they are assigned via
-    users.default.groups / users.<email>.groups and need no CILogon userinfo, so they can
-    be reconciled at config-reload time. Rule-based ("auto") group memberships depend on
-    login-time userinfo and are left untouched: this function only adds/removes memberships
-    whose group is in the non-auto set, so auto memberships are never deleted here.
-    """
-    groups_cfg = yaml_data.get("groups", {})
-    non_auto_names = {name for name, gdef in groups_cfg.items() if not (gdef or {}).get("rules")}
-    non_auto_names.add("default")
-
-    groups_by_name = {
-        g.name: g
-        for g in db.session.execute(select(Group).where(Group.name.in_(non_auto_names))).scalars().all()
-    }
-    non_auto_ids = {g.id for g in groups_by_name.values()}
-
-    for entity in db.session.execute(
-        select(Entity).filter_by(entity_type="user").where(Entity.email.isnot(None))
-    ).scalars().all():
-        desired_ids = {
-            groups_by_name[name].id
-            for name in _desired_groups_from_config(entity.email, yaml_data)
-            if name in groups_by_name
-        }
-        existing_by_group = {
-            m.group_id: m
-            for m in db.session.execute(select(GroupMember).filter_by(entity_id=entity.id)).scalars().all()
-        }
-        for group_id, member in existing_by_group.items():
-            if group_id in non_auto_ids and member.config_managed and group_id not in desired_ids:
-                db.session.delete(member)
-        for group_id in desired_ids:
-            if group_id not in existing_by_group:
-                db.session.add(GroupMember(group_id=group_id, entity_id=entity.id, config_managed=True))
-
-    db.session.commit()
-
-
-def sync_projects_from_yaml(yaml_data):
-    """Sync EntityLimit and EntityModelAccess for project (service) entities from yaml_data['projects'].
-
-    Config format:
-      projects:
-        default:                    <- applied to all projects without a named entry
-          max: 100
-          refresh: 0
-          starting: 100
-          model_access:
-            default: allowed        <- entity-level default for unlisted models
-            allowed: [name, ...]
-            blocked: [name, ...]
-        my-project-name:            <- overrides for a specific project
-          max: 500
-          groups: [research]        <- group memberships granting extra model access
-    """
-    projects_cfg = yaml_data.get("projects", {})
-    if not projects_cfg:
-        return
-
-    default_cfg = projects_cfg.get("default", {})
-    named_cfg = {k: v for k, v in projects_cfg.items() if k != "default"}
-
-    project_entities = db.session.execute(select(Entity).filter_by(entity_type="project")).scalars().all()
-
-    # Preload all models once to avoid an N+1 lookup per model_access entry
-    models_by_name = {
-        mc.model_name: mc for mc in db.session.execute(select(ModelConfig)).scalars().all()
-    }
-    # Preload groups by name for membership reconciliation.
-    groups_by_name = {
-        g.name: g for g in db.session.execute(select(Group)).scalars().all()
-    }
-
-    for entity in project_entities:
-        # An empty named entry (e.g. `my-project: {}`, written on project creation so the
-        # file records that the project exists) carries no settings, so fall back to the
-        # shared `default` block just as a project with no entry at all would.
-        cfg = named_cfg.get(entity.name) or default_cfg
-        if not cfg:
-            continue
-
-        # Upsert EntityLimit
-        pool = _token_fields(cfg)
-        if pool is not None:
-            max_coins, refresh_coins, starting_coins = pool
-            limit = db.session.execute(select(EntityLimit).filter_by(entity_id=entity.id)).scalar_one_or_none()
-            if limit:
-                limit.max_coins = max_coins
-                limit.refresh_coins = refresh_coins
-                limit.starting_coins = starting_coins
-                limit.config_managed = True
-            else:
-                db.session.add(EntityLimit(
-                    entity_id=entity.id,
-                    max_coins=max_coins,
-                    refresh_coins=refresh_coins,
-                    starting_coins=starting_coins,
-                    config_managed=True,
-                ))
-        else:
-            db.session.execute(delete(EntityLimit).where(EntityLimit.entity_id == entity.id, EntityLimit.config_managed == True))  # noqa: E712 — SQL comparison, not a truth check
-
-        # Sync model_access
-        access_cfg = cfg.get("model_access", {})
-        pairs, entity_default, ack_models = _parse_scope_access(access_cfg, context=f"project '{entity.name}'")
-        _apply_legacy_ack(ack_models, models_by_name)
-        entity.model_access_default = entity_default
-
-        db.session.execute(delete(EntityModelAccess).where(EntityModelAccess.entity_id == entity.id))
-        for model_name, access_type in pairs:
-            mc = models_by_name.get(model_name)
-            if mc is None:
-                current_app.logger.warning(
-                    "sync_projects_from_yaml: model '%s' not found for project '%s', skipping",
-                    model_name, entity.name,
-                )
-                continue
-            db.session.add(EntityModelAccess(
-                entity_id=entity.id,
-                model_config_id=mc.id,
-                access_type=access_type,
-            ))
-
-        # Sync config-managed group memberships. Membership can grant model access the
-        # project's own rules would otherwise block (resolved in services/llm.py).
-        desired_group_ids = set()
-        for gname in cfg.get("groups", []) or []:
-            group = groups_by_name.get(gname)
-            if group is None:
-                current_app.logger.warning(
-                    "sync_projects_from_yaml: group '%s' not found for project '%s', skipping",
-                    gname, entity.name,
-                )
-                continue
-            desired_group_ids.add(group.id)
-
-        existing_by_group = {
-            m.group_id: m
-            for m in db.session.execute(select(GroupMember).filter_by(entity_id=entity.id)).scalars().all()
-        }
-        for group_id, member in existing_by_group.items():
-            if member.config_managed and group_id not in desired_group_ids:
-                db.session.delete(member)
-        for group_id in desired_group_ids:
-            if group_id not in existing_by_group:
-                db.session.add(GroupMember(group_id=group_id, entity_id=entity.id, config_managed=True))
-
-    db.session.commit()
-
-
-def sync_user_limits_from_yaml(yaml_data):
-    """Sync per-user EntityLimit (coin pool) rows from yaml_data['users'].
-
-    Mirrors the EntityLimit upsert in sync_projects_from_yaml, but for user entities.
-    Unlike the login path (_apply_user_model_overrides in auth/routes.py), this runs on
-    every config reload so admin edits to a user's max/refresh/starting take effect
-    immediately instead of waiting for the user to log in again.
-
-    The live coin balance (EntityBalance.coins_left) is reset to the new starting value
-    only when an EXISTING per-user limit row's starting_coins actually changes. Adding a
-    first per-user block for a user on the global pool preserves their accrued balance;
-    changing only max/refresh leaves the balance untouched.
-
-    The upsert overwrites unconditionally and forces config_managed=True, diverging from
-    the login path's `if limit and limit.config_managed` guard (auth/routes.py:76). No
-    endpoint creates non-config-managed user EntityLimit rows today; a future manual-limit
-    feature would need to reconcile this.
-    """
-    users_cfg = yaml_data.get("users", {}) or {}
-    for email, cfg in users_cfg.items():
-        # A null/non-dict entry behaves like an empty block (no pool → fall through to
-        # the global pool), matching the login path where user_cfg defaults to {}.
-        if not isinstance(cfg, dict):
-            cfg = {}
-        entity = db.session.execute(
-            select(Entity).filter_by(entity_type="user", email=email)
-        ).scalar_one_or_none()
-        if entity is None:
-            # The literal "default" key and any not-yet-logged-in users resolve to no
-            # Entity; their limit row is created at login. Skip.
-            continue
-
-        # Unwrap the pool exactly as the login path does (auth/routes.py:71-72): a nested
-        # `pool:` block and the flat top-level form are both valid.
-        pool_src = cfg.get("pool") or cfg
-        pool = _token_fields(pool_src) if isinstance(pool_src, dict) else None
-
-        limit = db.session.execute(
-            select(EntityLimit).filter_by(entity_id=entity.id)
-        ).scalar_one_or_none()
-
-        if pool is None:
-            # No token fields in this user's block: drop any config-managed limit so the
-            # entity falls through to the group/global pool.
-            if limit is not None and limit.config_managed:
-                db.session.delete(limit)
-            continue
-
-        max_coins, refresh_coins, starting_coins = pool
-
-        # Capture the prior starting value BEFORE the in-place mutation below — the
-        # project-sync pattern mutates the row in place, so reading it after would always
-        # yield the new value and the balance-reset check would never fire.
-        old_starting = float(limit.starting_coins) if limit is not None else None
-
-        if limit is not None:
-            limit.max_coins = max_coins
-            limit.refresh_coins = refresh_coins
-            limit.starting_coins = starting_coins
-            limit.config_managed = True
-        else:
-            db.session.add(EntityLimit(
-                entity_id=entity.id,
-                max_coins=max_coins,
-                refresh_coins=refresh_coins,
-                starting_coins=starting_coins,
-                config_managed=True,
-            ))
-
-        # Reset the live balance only on a genuine starting change of an existing
-        # per-user limit. old_starting is None exactly when there was no prior limit row
-        # (first per-user block) — preserve the accrued balance in that case.
-        # -2 == unlimited; skip the reset (matches reset_user_tokens, admin/routes.py:78).
-        starting_changed = (old_starting is not None) and (old_starting != float(starting_coins))
-        if starting_changed and max_coins != -2:
-            balance = db.session.execute(
-                select(EntityBalance).filter_by(entity_id=entity.id)
-            ).scalar_one_or_none()
-            if balance is not None:
-                balance.coins_left = starting_coins
-                balance.last_refill_at = utcnow()
-
-    db.session.commit()
-
-
 @click.command("init-db")
 @with_appcontext
 def init_db_cmd():
-    """Sync ModelConfig, ModelEndpoint, Groups, and projects from config.yaml."""
+    """Sync ModelConfig and ModelEndpoint from config.yaml."""
     yaml_data = current_app.config["YAML_DATA"]
     sync_models_from_yaml(yaml_data)
-    sync_groups_from_yaml(yaml_data)
-    sync_projects_from_yaml(yaml_data)
     click.echo("Database synced from config.yaml.")
 
 

@@ -62,7 +62,8 @@ echo backend (`uv run dummy`) so chat renders and models read healthy without a
 GPU; the model-detail card is still fetched live from huggingface.co.
 
 ```bash
-export LUMEN_SECRET_KEY=dev LUMEN_ENCRYPTION_KEY=dev
+export LUMEN_SECRET_KEY=dev-secret-key-for-screenshots-0001
+export LUMEN_ENCRYPTION_KEY=dev-encryption-key-for-screenshots-0001
 export DATABASE_URL=postgresql://USER:PASS@HOST:5432/lumen_shots
 export CONFIG_YAML=./scripts/screenshot.config.yaml MODEL=qwen2.5-7b-instruct
 

@@ -4,6 +4,63 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+**Breaking configuration change:** Lumen 2.0 requires config version 3. The `groups`, `users`, and `clients`/`projects` sections are no longer managed in `config.yaml`; their records, memberships, limits, and access settings are now database-backed and managed through the Lumen UI. Migrate existing configuration before upgrading.
+
+### Added
+
+- Users can create and manage groups, members, and model grants through the new Groups pages; admins manage group coin policies. (PR #41)
+- Admins manage database-backed auto-join rules per group, with matching login claims keeping memberships synchronized. (PR #41)
+- Models support configurable early-access acknowledgements and badges. (PR #41)
+- Models support end dates that hide and disable expired entries. (PR #41)
+- Model detail pages show when a model was first seen. (PR #41)
+
+### Security
+
+- Startup and Helm reject session-signing and encryption keys shorter than 32 characters. (PR #50)
+- Upstream endpoint API keys are encrypted at rest with `app.encryption_key`. (PR #41)
+- Model endpoint probes reject unsafe or internal targets, redirects, and DNS rebinding. (PR #41)
+- Request bodies are capped before oversized uploads are buffered. (PR #41)
+- `/metrics/debug` supports a separate bearer token via `api.prometheus.debug_token`. (PR #41)
+- The config editor rejects structurally invalid version 3 configurations before saving. (PR #41)
+
+### Changed
+
+- Database and app-context diagnostics can be disabled with `app.diagnostics: false`. (PR #41)
+- The implicit `default` group is removed; users without a group pool continue to use `defaults.tokens`. (PR #41)
+- Project ownership transfers use a Change Owner dialog and require the new owner to already be a manager. (PR #41)
+- **Breaking:** Config version 3 removes user, project, client, group, and auto-join sections from config and Helm values; migrate old values files. (PR #41)
+- **Breaking:** Model access is database-managed: unowned models are public; owned models are limited to their owner and granted groups. Back up the database and assign restricted-model owners when upgrading. (PR #41)
+- **Breaking:** Project settings and per-user coin pools move from config to database-backed UI, preserving existing database values. (PR #41)
+- Project detail pages use the profile-card and tabbed layout. (PR #41)
+- Native browser dialogs are replaced with accessible application modals. (PR #41)
+- Projects appear between Profile and Models in navigation. (PR #41)
+- Project and admin-user tables expose usage and coin columns, newest-first last-use sorting, and inline admin actions. (PR #41)
+- Project and user settings open from inline edit buttons with role-aware access. (PR #41)
+- Deactivated projects remain visible to their administrators and managers. (PR #41)
+- Profile and project pages show the next refill time. (PR #41)
+
+### Fixed
+
+- Config validation rejects unknown future schema versions. (PR #41)
+- Model endpoint probes reject carrier-grade NAT, including IPv4-mapped IPv6, and unspecified IP addresses. (PR #53)
+- New model grants cannot target inactive groups. (PR #41)
+- Project creation rejects duplicate project names. (PR #41)
+- Model consent checks fail closed for deleted models and avoid duplicate lookups. (PR #41)
+- Knowledge cutoffs reject values outside `YYYY-MM` and `YYYY-MM-DD` formats. (PR #41)
+- PR #41 tests satisfy automated code-quality checks.
+- Illinois-theme tables use consistent light-gray borders. (PR #41)
+- Blocked, disabled, and expired models no longer expose metadata through detail, profile, or project pages. (PR #41)
+- Consent endpoints hide blocked models behind the same response as unknown models. (#54)
+- Bare model end dates keep models available through the named UTC date. (PR #41)
+- Admin user and project tables show unlimited pools inherited from groups or global defaults. (PR #41)
+- Invalid config-version values fail with the normal migration error instead of a traceback. (PR #41)
+- Chat hides acknowledgement-required models when the entity has no coin pool. (PR #41)
+- Non-serving CLI commands no longer start background workers during migrations and other maintenance commands. (PR #41)
+- Data tables consistently render cell borders. (PR #41)
+- Models.dev knowledge cutoffs are normalized to `YYYY-MM`. (PR #41)
+- Config-editor saves tolerate unwritable backup paths. (PR #41)
+- Gravatar hashing works on FIPS-enabled Python builds. (PR #41)
+
 ## [1.26.0] - 2026-08-22
 
 ### Fixed

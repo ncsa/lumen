@@ -26,30 +26,24 @@ def _extract_csrf_token(resp):
     return meta["content"]
 
 
-def _setup_graylist(app, entity_id, model_config_id):
-    """Mark the model needs_ack and grant the entity allowed access."""
+def _setup_ack(app, entity_id, model_config_id):
+    """Mark the (public) model needs_ack so the consent route applies."""
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
         from lumen.models.model_config import ModelConfig
         db.session.get(ModelConfig, model_config_id).needs_ack = True
-        db.session.add(EntityModelAccess(
-            entity_id=entity_id,
-            model_config_id=model_config_id,
-            access_type="allowed",
-        ))
         db.session.commit()
 
 
 def test_consent_rejected_without_csrf_token(app, csrf_client, test_model, test_user):
-    _setup_graylist(app, test_user["id"], test_model["id"])
+    _setup_ack(app, test_user["id"], test_model["id"])
     resp = csrf_client.post(f"/profile/consent/{test_model['model_name']}")
     assert resp.status_code == HTTPStatus.BAD_REQUEST
     assert b"CSRF" in resp.data
 
 
 def test_consent_accepted_with_csrf_token(app, csrf_client, test_model, test_user):
-    _setup_graylist(app, test_user["id"], test_model["id"])
+    _setup_ack(app, test_user["id"], test_model["id"])
     any_page = csrf_client.get("/profile")
     token = _extract_csrf_token(any_page)
     resp = csrf_client.post(
@@ -114,6 +108,31 @@ def test_set_admin_mode_rejected_without_csrf_token(csrf_client):
         json={"enabled": True},
         content_type="application/json",
     )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert b"CSRF" in resp.data
+
+
+def test_update_project_rejected_without_csrf_token(app, csrf_client, test_user):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.entity_manager import EntityManager
+        project = Entity(entity_type="project", name="csrf-svc", initials="CS", active=True)
+        db.session.add(project)
+        db.session.flush()
+        db.session.add(EntityManager(
+            user_entity_id=test_user["id"], project_entity_id=project.id, is_owner=True,
+        ))
+        db.session.commit()
+        sid = project.id
+
+    resp = csrf_client.patch(f"/projects/{sid}", json={"name": "x"})
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert b"CSRF" in resp.data
+
+
+def test_update_user_rejected_without_csrf_token(csrf_client, test_user):
+    resp = csrf_client.patch(f"/admin/users/{test_user['id']}", json={"active": True})
     assert resp.status_code == HTTPStatus.BAD_REQUEST
     assert b"CSRF" in resp.data
 

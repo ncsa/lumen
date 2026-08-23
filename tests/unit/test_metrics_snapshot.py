@@ -286,15 +286,16 @@ def _start_refresher_calls(tree):
     return found
 
 
-def test_create_app_starts_the_refresher_unconditionally():
+def test_create_app_starts_the_refresher_in_every_serving_process():
     """Two contract items in one static check.
 
-    It must start outside the ``BACKGROUND_WORKER`` guard — that switch keeps
-    extra workers from duplicating *shared* work, and the snapshot is
-    per-process in-memory state, so a guarded worker would serve an empty
-    /metrics forever. And it must not be gated on ``api.prometheus.enabled``:
-    the snapshot is the application's own cache of its own state, read by pages
-    that have nothing to do with Prometheus.
+        It must start outside the ``BACKGROUND_WORKER`` guard — that switch keeps
+        extra workers from duplicating *shared* work, and the snapshot is
+        per-process in-memory state, so a guarded worker would serve an empty
+        /metrics forever. And it must not be gated on ``api.prometheus.enabled``:
+        the snapshot is the application's own cache of its own state, read by pages
+        that have nothing to do with Prometheus. The sole exception is a Flask CLI
+        command that never serves requests and must start no background threads.
     """
     import lumen
 
@@ -303,7 +304,8 @@ def test_create_app_starts_the_refresher_unconditionally():
     assert len(calls) == 1, "expected exactly one start_snapshot_refresher() call in create_app"
     node, ancestors = calls[0]
     guards = [a for a in ancestors if isinstance(a, (ast.If, ast.Try, ast.While, ast.For))]
-    assert not guards, (
-        f"lumen/__init__.py:{node.lineno}: start_snapshot_refresher() is conditional; it must "
-        "run in every process regardless of BACKGROUND_WORKER and api.prometheus.enabled"
+    assert len(guards) == 1 and isinstance(guards[0], ast.If) \
+        and ast.unparse(guards[0].test) == "not non_serving_cli", (
+        f"lumen/__init__.py:{node.lineno}: start_snapshot_refresher() must be guarded only "
+        "for a non-serving Flask CLI, never by BACKGROUND_WORKER or api.prometheus.enabled"
     )

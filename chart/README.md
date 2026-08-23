@@ -25,8 +25,8 @@ helm install lumen chart/ \
 
 | Parameter | Description |
 |-----------|-------------|
-| `config.secretKey` | Flask session signing key (random 32-byte hex). Use `existingSecret` instead for production. |
-| `config.encryptionKey` | API key hashing secret (different from secretKey). |
+| `config.secretKey` | Flask session signing key (random string of at least 32 characters; `openssl rand -hex 32` is recommended). Use `existingSecret` instead for production. |
+| `config.encryptionKey` | API-key hashing and credential-encryption secret (a different random string of at least 32 characters). |
 | `oauth2.clientId` | OIDC client ID |
 | `oauth2.clientSecret` | OIDC client secret |
 
@@ -41,8 +41,8 @@ metadata:
   name: lumen-credentials
 type: Opaque
 stringData:
-  secret-key: "..."
-  encryption-key: "..."
+  secret-key: "<random value of at least 32 characters>"
+  encryption-key: "<different random value of at least 32 characters>"
   oauth2-client-id: "..."
   oauth2-client-secret: "..."
   database-url: "postgresql://user:pass@host:5432/lumen"  # optional
@@ -147,6 +147,10 @@ gateway:
   timeout: "600s"
 ```
 
+### Group Rules
+
+The chart emits a **version 3** `config.yaml`. Groups — memberships, coin pools, model grants, and login auto-join rules — are managed in the app (database), not in config. Auto-join rules are edited on each group's Rules tab; there is no `config.groupRules` value.
+
 ### Models
 
 Models are registered in Lumen's config regardless of `replicas`. Use `replicas: 0` for external endpoints, `replicas: 1+` to deploy an inference server in-cluster.
@@ -171,7 +175,6 @@ models:
       inputCostPerMillion: 2.5
       outputCostPerMillion: 10.0
       contextWindow: 128000
-      access: allowed
 ```
 
 #### In-cluster vLLM deployment
@@ -223,7 +226,6 @@ models:
       inputCostPerMillion: 0.1
       outputCostPerMillion: 0.3
       contextWindow: 8192
-      access: allowed
 ```
 
 #### In-cluster SGLang deployment
@@ -263,7 +265,6 @@ models:
       inputCostPerMillion: 0.05
       outputCostPerMillion: 0.10
       contextWindow: 32768
-      access: allowed
 ```
 
 ## Values Reference
@@ -281,11 +282,11 @@ models:
 | `config.secretKey` | `""` | Flask session signing key |
 | `config.encryptionKey` | `""` | API key hashing secret |
 | `config.debug` | `false` | Flask debug mode |
+| `config.diagnostics` | `true` | Stack-capturing DB/context diagnostics surfaced via `/metrics/debug`; set `false` to remove the per-request capture overhead |
 | `config.admins` | `[]` | Admin email addresses |
 | `config.configEditor` | `false` | Allow editing config.yaml from the `/admin/config` UI (read-only by default since the chart manages the config) |
-| `config.defaults.models.access` | `blocked` | Baseline access for models that omit `lumen.access` (`allowed`/`blocked`) |
 | `config.defaults.models.ackMessage` | `""` | Global acknowledgement message for `needsAck` models without their own |
-| `config.defaults.tokens.max` / `refresh` / `starting` | `0` | Fallback coin pool for groups/clients that omit these fields |
+| `config.defaults.tokens.max` / `refresh` / `starting` | `0` | Fallback coin pool for entities with no UI-set limit and no group pool |
 | `config.rateLimiting.limit` | `"30 per minute"` | Rate limit per user |
 | `config.llm.connectTimeout` | `5` | Seconds to establish the connection to a model backend |
 | `config.llm.readTimeout` | `300` | Streaming calls: maximum gap between chunks (not total duration) |

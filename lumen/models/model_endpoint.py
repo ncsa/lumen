@@ -3,7 +3,9 @@ from typing import Optional
 
 from sqlalchemy.orm import Mapped, mapped_column
 
+from lumen.services.crypto import EncryptedText
 from lumen.timeutils import utcnow
+
 from ..extensions import db
 
 
@@ -25,8 +27,9 @@ class ModelEndpoint(db.Model):
     model_config_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("model_configs.id", ondelete="CASCADE"), comment="Parent model configuration")
     # Base URL of the upstream API (e.g. https://api.openai.com/v1)
     url: Mapped[str] = mapped_column(db.String(256), comment="Base URL of the upstream API")
-    # Credential forwarded to the upstream API
-    api_key: Mapped[str] = mapped_column(db.String(256), comment="Credential forwarded to the upstream API")
+    # Credential forwarded to the upstream API; encrypted at rest with the app's
+    # encryption key (see lumen.services.crypto.EncryptedText)
+    api_key: Mapped[str] = mapped_column(EncryptedText, comment="Credential forwarded to the upstream API, encrypted at rest with the app encryption key")
     # When set, this name is sent to the endpoint instead of model_config.model_name,
     # allowing one Lumen model to fan out to endpoints that use different identifiers.
     model_name: Mapped[Optional[str]] = mapped_column(db.String(128), comment="Override model name sent upstream; null means use model_config.model_name")

@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% from "_user_search_modal.html" import user_search_modal %}
 {% block title %}Config Editor{% endblock %}
 
 {% block content %}
@@ -21,9 +20,6 @@
     </div>
   </div>
 </div>
-
-{{ user_search_modal('add-user-modal', 'Add User', 'add-user-email', 'user-suggestions', 'add-user-confirm', 'Add User',
-   'Search for an existing user by name or email, or type a new email address.') }}
 
 <style>
   .cfg-layout { display:flex; height:calc(100vh - var(--cfg-top, 200px)); margin:0 -1.5rem 0; overflow:hidden; }
@@ -76,7 +72,6 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/user-search.js') }}"></script>
 <script>
 'use strict';
 const CURRENT_EMAIL = {{ current_email | tojson }};
@@ -88,9 +83,6 @@ const state = {
   original: null,
   currentSection: null,
   selectedModelIdx: 0,
-  selectedGroupKey: null,
-  selectedProjectKey: null,
-  selectedUserKey: null,
 };
 
 const SECTIONS = [
@@ -101,9 +93,6 @@ const SECTIONS = [
   { id:'chat',          label:'Chat',           desc:'Chat interface settings' },
   { id:'rate_limiting', label:'Rate Limiting',  desc:'Request rate limits' },
   { id:'defaults',      label:'Defaults',       desc:'Global model & token defaults' },
-  { id:'groups',        label:'Groups',         desc:'User groups and access control' },
-  { id:'users',         label:'Users',          desc:'Per-user overrides (tokens & model access)' },
-  { id:'projects',      label:'Projects',       desc:'API project configurations' },
   { id:'models',        label:'Models',         desc:'AI model configurations' },
 ];
 
@@ -148,10 +137,6 @@ function card(title, body) {
 }
 function row2(...cols) { return `<div class="row g-3">${cols.map(c => `<div class="col-md-6">${c}</div>`).join('')}</div>`; }
 function row3(...cols) { return `<div class="row g-3">${cols.map(c => `<div class="col-md-4">${c}</div>`).join('')}</div>`; }
-// Entity selector order: "default" pinned to the top, the rest alphabetical.
-function orderedKeys(obj) {
-  return Object.keys(obj || {}).sort((a, b) => a === 'default' ? -1 : b === 'default' ? 1 : a.localeCompare(b));
-}
 function kvRow(k, v) {
   return `<div class="kv-row d-flex gap-2 mb-2 align-items-center">
     <input type="text" class="form-control form-control-sm kv-key" value="${esc(k)}" placeholder="key">
@@ -162,8 +147,8 @@ function kvRow(k, v) {
 }
 function addKvRow(containerId) { $(containerId).insertAdjacentHTML('beforeend', kvRow('', '')); }
 
-// Migrate legacy (v1) config forms to v2 in place, mirroring the backend's input
-// normalization, so the editor displays — and on save writes — the current vocabulary.
+// Normalize legacy per-model keys the backend still bridges, so the editor
+// displays — and on save writes — the current vocabulary.
 function normalizeLegacyConfig(data) {
   // Models: legacy `active: false` -> `disabled: true`; `active` is dropped either way.
   for (const m of data.models || []) {
@@ -176,19 +161,6 @@ function normalizeLegacyConfig(data) {
     }
     delete m.audio_cost_per_minute;
   }
-  // Scope model_access: legacy whitelist/blacklist/graylist -> allowed/blocked
-  // (graylist's per-scope ack is dropped — acknowledgement is now a model property).
-  const fixMA = ma => {
-    if (!ma || typeof ma !== 'object') return;
-    const add = (dst, src) => { if (Array.isArray(src) && src.length) ma[dst] = [...new Set([...(ma[dst] || []), ...src])]; };
-    add('allowed', ma.whitelist); add('allowed', ma.graylist); add('blocked', ma.blacklist);
-    delete ma.whitelist; delete ma.blacklist; delete ma.graylist;
-    const DEF = { whitelist: 'allowed', blacklist: 'blocked', graylist: 'allowed' };
-    if (ma.default in DEF) ma.default = DEF[ma.default];
-  };
-  for (const g of Object.values(data.groups || {})) fixMA(g && g.model_access);
-  for (const c of Object.values(data.projects || {})) fixMA(c && c.model_access);
-  for (const u of Object.values(data.users || {})) fixMA(u && u.model_access);
 }
 
 // ── API ────────────────────────────────────────────────────────────────────
@@ -292,9 +264,6 @@ function resetConfig() {
   if (!state.original) return;
   state.data = clone(state.original);
   state.selectedModelIdx = 0;
-  state.selectedGroupKey = null;
-  state.selectedProjectKey = null;
-  state.selectedUserKey = null;
   renderSection(state.currentSection);
 }
 
@@ -560,354 +529,6 @@ function collectAdmins() {
   state.data.admins = emails.length ? emails : undefined;
 }
 
-// ── Model Access widget (search-driven; shared by groups / projects / users) ──
-// One scope's form is shown at a time, so fixed element ids are safe.
-let maCtx = null;
-
-function cleanModelAccess(ma) {
-  if (!ma) return undefined;
-  const out = {};
-  if (ma.default) out.default = ma.default;
-  if (ma.allowed && ma.allowed.length) out.allowed = ma.allowed.slice();
-  if (ma.blocked && ma.blocked.length) out.blocked = ma.blocked.slice();
-  return Object.keys(out).length ? out : undefined;
-}
-
-function modelAccessCard(kind) {
-  const enabledCount = (state.data.models || []).filter(m => m && m.name && !m.disabled).length;
-  return card('Model Access', `
-    ${field('ma-default', 'Default policy', si('ma-default', 'blocked', ['allowed', 'blocked']), 'applies to every model left at Inherit')}
-    <label for="ma-search" class="form-label fw-semibold small mb-1">Set access for a model</label>
-    <div class="position-relative mb-2">
-      <input type="text" id="ma-search" class="form-control form-control-sm" placeholder="Search ${enabledCount} enabled models…"
-             role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="ma-suggest" autocomplete="off">
-      <ul id="ma-suggest" role="listbox" aria-label="Matching models" class="dropdown-menu w-100 mb-0 p-0"></ul>
-    </div>
-    <div class="table-responsive">
-      <table class="table table-sm align-middle mb-1">
-        <caption class="visually-hidden">Per-model access overrides for this ${esc(kind)}</caption>
-        <thead class="table-light"><tr>
-          <th scope="col">Model</th>
-          <th scope="col">Access for this ${esc(kind)}</th>
-          <th scope="col">Effective</th>
-        </tr></thead>
-        <tbody id="ma-rows"></tbody>
-      </table>
-    </div>
-    <p id="ma-empty" class="text-muted small mb-0" hidden>No per-model overrides — every model follows the default policy above. Use the search box to override a specific model.</p>
-  `);
-}
-
-function initModelAccess(kind, scope) {
-  // Fold a legacy user `models:` allowed list into model_access on first edit.
-  if (kind === 'user' && Array.isArray(scope.models) && !scope.model_access) {
-    scope.model_access = { allowed: scope.models.slice() };
-    delete scope.models;
-  }
-  scope.model_access = scope.model_access || {};
-  const ma = scope.model_access;
-  const enabled = (state.data.models || []).filter(m => m && m.name && !m.disabled);
-  const byName = new Map(enabled.map(m => [m.name, m]));
-  const shown = [], seen = new Set();
-  for (const n of [...(ma.allowed || []), ...(ma.blocked || [])]) {
-    if (byName.has(n) && !seen.has(n)) { seen.add(n); shown.push(n); }
-  }
-  maCtx = { kind, scope, ma, byName, enabled, shown };
-  const def = $('ma-default');
-  if (def) { def.value = ma.default || 'blocked'; def.addEventListener('change', e => { ma.default = e.target.value; renderMaRows(); }); }
-  const rows = $('ma-rows');
-  if (rows) rows.addEventListener('click', e => {
-    const btn = e.target.closest('button[data-mode]');
-    if (btn) setMaAccess(btn.closest('tr').dataset.name, btn.dataset.mode);
-  });
-  initMaSearch();
-  renderMaRows();
-}
-
-function maMode(name) {
-  if ((maCtx.ma.allowed || []).includes(name)) return 'allowed';
-  if ((maCtx.ma.blocked || []).includes(name)) return 'blocked';
-  return 'inherit';
-}
-function setMaAccess(name, mode) {
-  const ma = maCtx.ma;
-  ma.allowed = (ma.allowed || []).filter(n => n !== name);
-  ma.blocked = (ma.blocked || []).filter(n => n !== name);
-  if (mode === 'allowed') ma.allowed.push(name);
-  else if (mode === 'blocked') ma.blocked.push(name);
-  if (!maCtx.shown.includes(name)) maCtx.shown.push(name);
-  renderMaRows();
-}
-function maSeg(name) {
-  const mode = maMode(name);
-  const b = (m, label) => `<button type="button" class="btn btn-sm ${mode === m ? 'btn-primary' : 'btn-outline-secondary'}" data-mode="${m}" aria-pressed="${mode === m}">${label}</button>`;
-  return `<div class="btn-group btn-group-sm" role="group" aria-label="Access for ${esc(name)}">${b('inherit', 'Inherit')}${b('allowed', 'Allow')}${b('blocked', 'Block')}</div>`;
-}
-function maBadge(name) {
-  const m = maCtx.byName.get(name);
-  if (!m) return '<span class="text-muted small">unknown model</span>';
-  const { status, source } = effectiveAccess(maCtx.kind, maCtx.scope, m);
-  const badge = status === 'blocked'
-    ? `<span class="badge bg-danger">Blocked</span>`
-    : status === 'needs_ack'
-    ? `<span class="badge bg-warning text-dark"><span role="img" aria-label="warning">⚠</span> Allowed · needs ack</span>`
-    : `<span class="badge bg-success"><span role="img" aria-label="check">✓</span> Allowed</span>`;
-  return `${badge} <span class="text-muted small ms-1">${esc(source)}</span>`;
-}
-function renderMaRows() {
-  const tbody = $('ma-rows'); if (!tbody) return;
-  const names = maCtx.shown.filter(n => maCtx.byName.has(n));
-  $('ma-empty').hidden = names.length > 0;
-  tbody.innerHTML = names.map(n => `<tr data-name="${esc(n)}">
-    <td>${esc(n)}</td>
-    <td>${maSeg(n)}</td>
-    <td>${maBadge(n)}</td>
-  </tr>`).join('');
-}
-function initMaSearch() {
-  const input = $('ma-search'), list = $('ma-suggest'); if (!input) return;
-  const hide = () => { list.classList.remove('show'); input.setAttribute('aria-expanded', 'false'); };
-  const pick = name => { if (!maCtx.shown.includes(name)) maCtx.shown.push(name); input.value = ''; hide(); renderMaRows(); };
-  input.addEventListener('input', function () {
-    const q = this.value.trim().toLowerCase();
-    if (q.length < 1) { hide(); return; }
-    const matches = maCtx.enabled.filter(m => m.name.toLowerCase().includes(q)).slice(0, 20);
-    if (!matches.length) { hide(); return; }
-    list.innerHTML = matches.map((m, i) => `<li role="option" id="ma-opt-${i}" class="dropdown-item py-1" style="cursor:pointer" tabindex="-1" data-name="${esc(m.name)}">${esc(m.name)}</li>`).join('');
-    list.classList.add('show'); input.setAttribute('aria-expanded', 'true');
-    list.querySelectorAll('li').forEach(li => li.addEventListener('mousedown', e => { e.preventDefault(); pick(li.dataset.name); }));
-  });
-  input.addEventListener('blur', () => setTimeout(hide, 150));
-  input.addEventListener('keydown', e => {
-    const first = list.querySelector('li');
-    if (e.key === 'ArrowDown' && first) { e.preventDefault(); first.focus(); }
-    else if (e.key === 'Escape') hide();
-  });
-  list.addEventListener('keydown', e => {
-    const f = document.activeElement;
-    if (e.key === 'ArrowDown') { e.preventDefault(); f.nextElementSibling?.focus(); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); f.previousElementSibling ? f.previousElementSibling.focus() : input.focus(); }
-    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(f.dataset.name); }
-    else if (e.key === 'Escape') { hide(); input.focus(); }
-  });
-}
-
-// Mirrors lumen/services/llm.py:_resolve_allow_block precedence. Keep in sync.
-function effectiveAccess(kind, scope, model) {
-  if (model.disabled) return { status: 'blocked', source: 'model disabled' };
-  const globalDef = ((state.data.defaults || {}).models || {}).access || 'blocked';
-  const ma = scope.model_access || {};
-  const name = model.name;
-  const has = l => (l || []).includes(name);
-  let status, source;
-  if (kind === 'user') {
-    if (has(ma.allowed)) { status = 'allowed'; source = 'set on this user'; }
-    else if (has(ma.blocked)) { status = 'blocked'; source = 'set on this user'; }
-    else {
-      const groups = (scope.groups || []).map(gn => [gn, (state.data.groups || {})[gn]]).filter(([, g]) => g);
-      let gBlock = null, gAllow = null;
-      for (const [gn, g] of groups) { const gm = g.model_access || {}; if ((gm.blocked || []).includes(name)) gBlock = gn; else if ((gm.allowed || []).includes(name)) gAllow = gn; }
-      if (gBlock) { status = 'blocked'; source = `via group ${gBlock}`; }
-      else if (gAllow) { status = 'allowed'; source = `via group ${gAllow}`; }
-      else if (model.access) { status = model.access; source = 'model default'; }
-      else {
-        let defAllow = null, defBlock = null;
-        for (const [gn, g] of groups) { const d = (g.model_access || {}).default; if (d === 'allowed') defAllow = gn; else if (d === 'blocked') defBlock = gn; }
-        if (defAllow) { status = 'allowed'; source = `group ${defAllow} default`; }
-        else if (defBlock) { status = 'blocked'; source = `group ${defBlock} default`; }
-        else if (ma.default) { status = ma.default; source = 'user default'; }
-        else { status = globalDef; source = 'global default'; }
-      }
-    }
-  } else {
-    if (has(ma.allowed)) { status = 'allowed'; source = 'set here'; }
-    else if (has(ma.blocked)) { status = 'blocked'; source = 'set here'; }
-    else if (model.access) { status = model.access; source = 'model default'; }
-    else if (ma.default) { status = ma.default; source = `${kind} default`; }
-    else { status = globalDef; source = 'global default'; }
-  }
-  if (status === 'allowed' && model.needs_ack) return { status: 'needs_ack', source };
-  return { status, source };
-}
-
-// ── Groups ─────────────────────────────────────────────────────────────────
-function renderGroups() {
-  const groups = state.data.groups || {};
-  const keys = orderedKeys(groups);
-  if (!state.selectedGroupKey || !groups[state.selectedGroupKey]) state.selectedGroupKey = keys[0] || null;
-  const opts = keys.map(k => {
-    const mapped = (groups[k]?.rules || []).length ? ' [OAuth-mapped]' : '';
-    return `<option value="${esc(k)}"${k === state.selectedGroupKey ? ' selected' : ''}>${esc(k)}${mapped}</option>`;
-  }).join('');
-  $('cfg-body').innerHTML = `
-    <div class="entity-bar">
-      <label for="grp-sel" class="fw-semibold small mb-0 text-nowrap">Group:</label>
-      <select id="grp-sel" class="form-select form-select-sm" onchange="switchGroup(this.value)">${opts}</select>
-      <button class="btn btn-primary btn-sm text-nowrap" onclick="addGroup()">+ New</button>
-      <button class="btn btn-outline-danger btn-sm" onclick="deleteGroup()">Delete</button>
-    </div>
-    <div id="grp-form">${state.selectedGroupKey ? renderGroupForm(state.selectedGroupKey, groups[state.selectedGroupKey]) : ''}</div>
-  `;
-  if (state.selectedGroupKey) initModelAccess('group', groups[state.selectedGroupKey]);
-}
-
-function renderGroupForm(key, g) {
-  if (!g) return '';
-  const ma = g.model_access || {};
-  const rules = g.rules || [];
-  return `
-    ${(rules.length ? `<div class="alert alert-secondary py-2 small mb-3" role="status"><strong>OAuth-mapped:</strong> membership is auto-assigned from OAuth identity-provider profiles via the rules below.</div>` : '')}
-    ${card(`Group: ${esc(key)}`, row3(
-      field('grp-max',  'Max Coins',       ni('grp-max',   g.max),     '-2=unlimited, 0=blocked'),
-      field('grp-ref',  'Refresh (coins/hr)', ni('grp-ref', g.refresh)),
-      field('grp-start','Starting Coins',  ni('grp-start', g.starting))
-    ))}
-    ${modelAccessCard('group')}
-    ${card('Auto-Assignment Rules', `
-      <p class="text-muted small mb-2">Users are auto-added to this group only when they match <strong>all</strong> rules below (AND)</p>
-      <div id="rules-list">${rules.map((r, i) => ruleRow(r, i)).join('')}</div>
-      <button type="button" class="btn btn-outline-secondary btn-sm mt-1" onclick="addRuleRow()">+ Add Rule</button>
-    `)}
-  `;
-}
-
-function ruleRow(r, idx) {
-  const fv = r.field || 'affiliation';
-  const op = r.contains !== undefined ? 'contains' : 'equals';
-  const vs = r.contains ?? r.equals ?? '';
-  return `<div class="rule-row d-flex gap-2 mb-2 align-items-center">
-    <select class="form-select form-select-sm rule-field flex-shrink-0" style="width:140px" aria-label="Rule field ${idx + 1}">
-      ${['affiliation','member_of','idp','ou'].map(f => `<option${f === fv ? ' selected' : ''}>${f}</option>`).join('')}
-    </select>
-    <select class="form-select form-select-sm rule-op flex-shrink-0" style="width:110px" aria-label="Rule operator ${idx + 1}">
-      <option${op === 'contains' ? ' selected' : ''}>contains</option>
-      <option${op === 'equals'   ? ' selected' : ''}>equals</option>
-    </select>
-    <input class="form-control form-control-sm rule-val" type="text" value="${esc(vs)}" placeholder="value" aria-label="Rule value ${idx + 1}">
-    <button type="button" class="btn btn-outline-secondary btn-sm px-2" onclick="this.closest('.rule-row').remove()" aria-label="Remove rule">✕</button>
-  </div>`;
-}
-function addRuleRow() {
-  $('rules-list').insertAdjacentHTML('beforeend', ruleRow({}, $('rules-list').children.length));
-}
-function switchGroup(key) {
-  collectCurrentGroup();
-  state.selectedGroupKey = key;
-  const g = state.data.groups?.[key] || {};
-  $('grp-form').innerHTML = renderGroupForm(key, g);
-  initModelAccess('group', g);
-}
-function addGroup() {
-  const name = prompt('New group name:');
-  if (!name?.trim()) return;
-  const key = name.trim();
-  if (state.data.groups?.[key]) { alert('Group already exists.'); return; }
-  if (!state.data.groups) state.data.groups = {};
-  collectCurrentGroup();
-  state.data.groups[key] = { max: 0, refresh: 0, starting: 0, model_access: { default: 'blocked' } };
-  state.selectedGroupKey = key;
-  renderGroups();
-}
-function deleteGroup() {
-  if (!state.selectedGroupKey) return;
-  if (!confirm(`Delete group "${state.selectedGroupKey}"?`)) return;
-  delete state.data.groups[state.selectedGroupKey];
-  state.selectedGroupKey = null;
-  renderGroups();
-}
-function collectCurrentGroup() {
-  const key = state.selectedGroupKey;
-  if (!key || !$('grp-max')) return;
-  const prev = state.data.groups?.[key] || {};
-  const g = {};
-  const mx = numVal('grp-max');   if (mx !== undefined) g.max     = mx;
-  const rf = numVal('grp-ref');   if (rf !== undefined) g.refresh = rf;
-  const st = numVal('grp-start'); if (st !== undefined) g.starting= st;
-  g.model_access = cleanModelAccess(prev.model_access);  // widget-managed, mutated in place
-  const rules = [];
-  document.querySelectorAll('#rules-list .rule-row').forEach(row => {
-    const f = row.querySelector('.rule-field').value;
-    const op= row.querySelector('.rule-op').value;
-    const v = row.querySelector('.rule-val').value.trim();
-    if (f && v) { const r = { field: f }; r[op] = v; rules.push(r); }
-  });
-  if (rules.length) g.rules = rules;
-  if (!state.data.groups) state.data.groups = {};
-  state.data.groups[key] = g;
-}
-function collectGroups() { collectCurrentGroup(); }
-
-// ── Projects ───────────────────────────────────────────────────────────────
-function renderProjects() {
-  const projects = state.data.projects || {};
-  const keys = orderedKeys(projects);
-  if (!state.selectedProjectKey || !projects[state.selectedProjectKey]) state.selectedProjectKey = keys[0] || null;
-  const opts = keys.map(k => `<option value="${esc(k)}"${k === state.selectedProjectKey ? ' selected' : ''}>${esc(k)}</option>`).join('');
-  $('cfg-body').innerHTML = `
-    <div class="entity-bar">
-      <label for="cli-sel" class="fw-semibold small mb-0 text-nowrap">Project:</label>
-      <select id="cli-sel" class="form-select form-select-sm" onchange="switchProject(this.value)">${opts}</select>
-      <button class="btn btn-primary btn-sm text-nowrap" onclick="addProject()">+ New</button>
-      <button class="btn btn-outline-danger btn-sm" onclick="deleteProject()">Delete</button>
-    </div>
-    <div id="cli-form">${state.selectedProjectKey ? renderProjectForm(state.selectedProjectKey, projects[state.selectedProjectKey]) : ''}</div>
-  `;
-  if (state.selectedProjectKey) initModelAccess('project', projects[state.selectedProjectKey]);
-}
-function renderProjectForm(key, c) {
-  if (!c) return '';
-  return `
-    ${card(`Project: ${esc(key)}`, `
-      ${field('cli-groups','Groups',ti('cli-groups',(c.groups||[]).join(', ')),'comma-separated — grants access to group models')}
-    `)}
-    ${card('Token Pool', row3(
-      field('cli-max',  'Max Coins',          ni('cli-max',   c.max),     '-2=unlimited, 0=blocked'),
-      field('cli-ref',  'Refresh (coins/hr)', ni('cli-ref',   c.refresh)),
-      field('cli-start','Starting Coins',     ni('cli-start', c.starting))
-    ))}
-    ${modelAccessCard('project')}
-  `;
-}
-function switchProject(key) {
-  collectCurrentProject();
-  state.selectedProjectKey = key;
-  const c = state.data.projects?.[key] || {};
-  $('cli-form').innerHTML = renderProjectForm(key, c);
-  initModelAccess('project', c);
-}
-function addProject() {
-  const name = prompt('New project name:');
-  if (!name?.trim()) return;
-  const key = name.trim();
-  if (state.data.projects?.[key]) { alert('Project already exists.'); return; }
-  if (!state.data.projects) state.data.projects = {};
-  collectCurrentProject();
-  state.data.projects[key] = { max: 50, refresh: 0.1, starting: 50, model_access: { default: 'blocked' } };
-  state.selectedProjectKey = key;
-  renderProjects();
-}
-function deleteProject() {
-  if (!state.selectedProjectKey) return;
-  if (!confirm(`Delete project "${state.selectedProjectKey}"?`)) return;
-  delete state.data.projects[state.selectedProjectKey];
-  state.selectedProjectKey = null;
-  renderProjects();
-}
-function collectCurrentProject() {
-  const key = state.selectedProjectKey;
-  if (!key || !$('cli-max')) return;
-  const prev = state.data.projects?.[key] || {};
-  const c = { ...prev };  // preserve any keys this form doesn't render
-  const mx = numVal('cli-max');   if (mx !== undefined) c.max      = mx; else delete c.max;
-  const rf = numVal('cli-ref');   if (rf !== undefined) c.refresh  = rf; else delete c.refresh;
-  const st = numVal('cli-start'); if (st !== undefined) c.starting = st; else delete c.starting;
-  c.model_access = cleanModelAccess(prev.model_access);  // widget-managed, mutated in place
-  const groups = arrFromCommas('cli-groups'); if (groups.length) c.groups = groups; else delete c.groups;
-  if (!state.data.projects) state.data.projects = {};
-  state.data.projects[key] = c;
-}
-function collectProjects() { collectCurrentProject(); }
-
 // ── Models ─────────────────────────────────────────────────────────────────
 function renderModels() {
   const models = state.data.models || [];
@@ -962,12 +583,12 @@ function renderModelForm(m, idx) {
       ${field('mdl-notice','Admin Notice',      ti('mdl-notice', m.notice),'shown in UI for this model')}
     `)}
     ${card('Access', `
-      ${row2(
-        field('mdl-access','Default Access',si('mdl-access',m.access||'',[{value:'',label:'(inherit)'},'allowed','blocked']),'scopes can still override'),
-        field('mdl-disabled','',cbi('mdl-disabled',!!m.disabled,'Disabled (hard off; hidden everywhere, not overridable)'))
-      )}
+      <p class="text-muted small mb-2">Owner and group access are managed on the model's detail page.</p>
+      ${cbi('mdl-disabled', !!m.disabled, 'Disabled (hard off; hidden everywhere, not overridable)')}
       ${cbi('mdl-needsack', !!m.needs_ack, 'Requires acknowledgement before use (sticky; cannot be overridden)')}
+      ${cbi('mdl-earlyaccess', !!m.early_access, 'Early access (users must acknowledge the model may change or be removed)')}
       ${field('mdl-ackmsg','Acknowledgement Message', tai('mdl-ackmsg', m.ack_message, 2),'overrides the global defaults.models.ack_message')}
+      ${field('mdl-enddate','End Date', ti('mdl-enddate', m.end_date, 'YYYY-MM-DD'),'UTC; model is hidden and rejected after this; empty = no end date')}
     `)}
     ${card('Pricing & Limits', `
       ${row3(field('mdl-in-cost', 'Input Cost / 1M tokens ($)',  ni('mdl-in-cost',  m.input_cost_per_million)),
@@ -1020,10 +641,10 @@ function addModel() {
   state.selectedModelIdx = state.data.models.length - 1;
   renderModels();
 }
-function deleteModel() {
+async function deleteModel() {
   const idx = state.selectedModelIdx;
   if (!state.data.models?.[idx]) return;
-  if (!confirm(`Delete model "${state.data.models[idx].name || `Model ${idx}`}"?`)) return;
+  if (!await appConfirm(`Delete model "${state.data.models[idx].name || `Model ${idx}`}"?`, { title: 'Delete Model', okLabel: 'Delete', okClass: 'btn-danger' })) return;
   state.data.models.splice(idx, 1);
   state.selectedModelIdx = Math.max(0, idx - 1);
   renderModels();
@@ -1034,13 +655,14 @@ function collectCurrentModel() {
   if (idx >= state.data.models.length) return;
   const m = {};
   m.name                   = val('mdl-name')     || undefined;
-  m.access                 = val('mdl-access')   || undefined;
   m.needs_ack              = boolVal('mdl-needsack') || undefined;
+  m.early_access           = boolVal('mdl-earlyaccess') || undefined;
   m.disabled               = boolVal('mdl-disabled') || undefined;
   m.description            = val('mdl-desc')     || undefined;
   m.url                    = val('mdl-url')      || undefined;
   m.notice                 = val('mdl-notice')   || undefined;
   m.ack_message            = val('mdl-ackmsg')   || undefined;
+  m.end_date               = val('mdl-enddate')  || undefined;
   m.input_cost_per_million = numVal('mdl-in-cost');
   m.output_cost_per_million= numVal('mdl-out-cost');
   m.audio_cost_per_hour    = $('mdl-in-audio')?.checked ? numVal('mdl-audio-cost') : undefined;
@@ -1174,11 +796,11 @@ function renderDefaults() {
   const t = d.tokens || {};
   $('cfg-body').innerHTML = `
     ${card('Model Defaults', `
-      ${field('def-access','Default Access',si('def-access',m.access||'blocked',['allowed','blocked']),'baseline for models that omit access:')}
       ${field('def-ackmsg','Default Acknowledgement Message',tai('def-ackmsg',m.ack_message,2),'shown for models with needs_ack unless overridden per model')}
+      ${field('def-earlymsg','Early Access Message',tai('def-earlymsg',m.early_access_message,2),'shown for early_access models; empty = built-in default')}
     `)}
     ${card('Token Defaults', `
-      <p class="text-muted small mb-2">Fallback coin pool when a user/group/project specifies no limit. Scopes override only the fields they set.</p>
+      <p class="text-muted small mb-2">Fallback coin pool when a user or project has no limit set (via its profile/detail Edit dialog) and no group pool applies. Scopes override only the fields they set.</p>
       ${row3(
         field('def-tok-max','Max Coins',ni('def-tok-max',t.max),'-2=unlimited, 0=blocked'),
         field('def-tok-ref','Refresh (coins/hr)',ni('def-tok-ref',t.refresh)),
@@ -1188,126 +810,29 @@ function renderDefaults() {
   `;
 }
 function collectDefaults() {
-  if (!$('def-access')) return;
-  const models = { access: val('def-access') || undefined, ack_message: val('def-ackmsg') || undefined };
+  if (!$('def-ackmsg')) return;
+  const models = { ack_message: val('def-ackmsg') || undefined, early_access_message: val('def-earlymsg') || undefined };
   const mx = numVal('def-tok-max'), rf = numVal('def-tok-ref'), st = numVal('def-tok-start');
   const tokens = {};
   if (mx !== undefined) tokens.max = mx;
   if (rf !== undefined) tokens.refresh = rf;
   if (st !== undefined) tokens.starting = st;
   const d = {};
-  if (models.access || models.ack_message) d.models = models;
+  if (models.ack_message || models.early_access_message) d.models = models;
   if (Object.keys(tokens).length) d.tokens = tokens;
   if (Object.keys(d).length) state.data.defaults = d; else delete state.data.defaults;
-}
-
-// ── Users ────────────────────────────────────────────────────────────────────
-function renderUsers() {
-  const users = state.data.users || {};
-  const keys = orderedKeys(users);
-  if (state.selectedUserKey == null && keys.length) state.selectedUserKey = keys[0];
-  const opts = keys.map(k => `<option value="${esc(k)}"${k === state.selectedUserKey ? ' selected' : ''}>${esc(k)}</option>`).join('');
-  $('cfg-body').innerHTML = `
-    <p class="text-muted small mb-2">Per-user overrides. A user's allowed list can grant access to a model whose default is <code>blocked</code>, but never to a <code>disabled</code> model.</p>
-    <div class="entity-bar">
-      <label for="usr-sel" class="fw-semibold small mb-0 text-nowrap">User:</label>
-      <select id="usr-sel" class="form-select form-select-sm" onchange="switchUser(this.value)">${opts}</select>
-      <button class="btn btn-primary btn-sm text-nowrap" onclick="addUser()">+ New</button>
-      <button class="btn btn-outline-danger btn-sm" onclick="deleteUser()">Delete</button>
-    </div>
-    <div id="usr-form">${state.selectedUserKey ? renderUserForm(state.selectedUserKey, users[state.selectedUserKey]) : ''}</div>
-  `;
-  if (state.selectedUserKey) initModelAccess('user', users[state.selectedUserKey]);
-}
-function renderUserForm(key, u) {
-  if (!u) return '';
-  const mapped = Object.entries(state.data.groups || {}).filter(([, g]) => (g?.rules || []).length).map(([k]) => k);
-  const hint = mapped.length ? `comma-separated — OAuth-mapped (auto-assigned): ${mapped.join(', ')}` : 'comma-separated';
-  return `
-    ${card(`User: ${esc(key)}`, `
-      ${field('usr-groups','Groups',ti('usr-groups',(u.groups||[]).join(', ')),hint)}
-    `)}
-    ${card('Token Pool', row3(
-      field('usr-max','Max Coins',ni('usr-max',u.max),'-2=unlimited, 0=blocked'),
-      field('usr-ref','Refresh (coins/hr)',ni('usr-ref',u.refresh)),
-      field('usr-start','Starting Coins',ni('usr-start',u.starting))
-    ))}
-    ${modelAccessCard('user')}
-  `;
-}
-function switchUser(key) {
-  collectCurrentUser();
-  state.selectedUserKey = key;
-  const u = state.data.users?.[key] || {};
-  $('usr-form').innerHTML = renderUserForm(key, u);
-  initModelAccess('user', u);
-}
-let userSearch = null;
-function addUser() {
-  if (userSearch) userSearch.clear();
-  $('add-user-email-result').innerHTML = '';
-  bootstrap.Modal.getOrCreateInstance($('add-user-modal')).show();
-}
-function commitNewUser(email) {
-  const key = (email || '').trim();
-  if (!key) return;
-  if (state.data.users?.[key]) {
-    $('add-user-email-result').innerHTML = `<div class="alert alert-warning py-1 mb-0">User already exists.</div>`;
-    return;
-  }
-  if (!state.data.users) state.data.users = {};
-  collectCurrentUser();
-  state.data.users[key] = {};
-  state.selectedUserKey = key;
-  bootstrap.Modal.getInstance($('add-user-modal'))?.hide();
-  renderUsers();
-}
-function deleteUser() {
-  if (!state.selectedUserKey) return;
-  if (!confirm(`Delete user "${state.selectedUserKey}"?`)) return;
-  delete state.data.users[state.selectedUserKey];
-  state.selectedUserKey = null;
-  renderUsers();
-}
-function collectCurrentUser() {
-  const key = state.selectedUserKey;
-  if (!key || !$('usr-groups')) return;
-  const prev = state.data.users?.[key] || {};
-  const u = {};
-  const groups = arrFromCommas('usr-groups'); if (groups.length) u.groups = groups;
-  const mx = numVal('usr-max');   if (mx !== undefined) u.max      = mx;
-  const rf = numVal('usr-ref');   if (rf !== undefined) u.refresh  = rf;
-  const st = numVal('usr-start'); if (st !== undefined) u.starting = st;
-  const ma = cleanModelAccess(prev.model_access);  // widget-managed (legacy `models:` folded in on load)
-  if (ma) u.model_access = ma;
-  if (!state.data.users) state.data.users = {};
-  state.data.users[key] = u;
-}
-function collectUsers() { collectCurrentUser(); }
-
-// ── Add-User search dialog (shared typeahead; same UX as adding a project manager) ──
-function initAddUserDialog() {
-  userSearch = initUserSearch({
-    inputId: 'add-user-email',
-    listId: 'user-suggestions',
-    searchUrl: '{{ url_for("admin.users_search_api") }}?q=',
-    onEnter: (v) => commitNewUser(v),
-  });
-  $('add-user-confirm').addEventListener('click', () => commitNewUser($('add-user-email').value));
-  // Focus the search box whenever the dialog opens.
-  $('add-user-modal').addEventListener('shown.bs.modal', () => userSearch && userSearch.focus());
 }
 
 // ── Maps ───────────────────────────────────────────────────────────────────
 const COLLECTORS = {
   app: collectApp, oauth2: collectOauth2, api: collectApi, chat: collectChat,
   rate_limiting: collectRateLimiting, defaults: collectDefaults,
-  admins: collectAdmins, groups: collectGroups, projects: collectProjects, users: collectUsers, models: collectModels,
+  admins: collectAdmins, models: collectModels,
 };
 const RENDERERS = {
   app: renderApp, oauth2: renderOauth2, api: renderApi, chat: renderChat,
   rate_limiting: renderRateLimiting, defaults: renderDefaults,
-  admins: renderAdmins, groups: renderGroups, projects: renderProjects, users: renderUsers, models: renderModels,
+  admins: renderAdmins, models: renderModels,
 };
 
 // ── Boot ───────────────────────────────────────────────────────────────────
@@ -1321,7 +846,6 @@ const RENDERERS = {
     bootstrap.Modal.getInstance($('removed-fields-modal')).hide();
     await doSave();
   });
-  initAddUserDialog();
 })();
 loadConfig();
 </script>

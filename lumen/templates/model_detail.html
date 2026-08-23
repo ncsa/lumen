@@ -11,6 +11,9 @@
     <div class="col-12 col-lg-8" style="min-width:0">
       <h1 class="mb-3">
         {{ config.model_name }}
+        {% if config.early_access %}
+        <span class="badge rounded-pill bg-info text-dark fs-6 align-middle">early access</span>
+        {% endif %}
         {% if config.url %}
         <a href="{{ config.url }}" target="_blank" rel="noopener noreferrer"
            class="ms-2 fs-5 text-decoration-none align-middle"
@@ -52,19 +55,19 @@
       {% endif %}
 
       {% if access_status == 'needs_ack' %}
-      <div class="card border-warning" aria-labelledby="graylist-card-title">
-        <div class="card-header bg-warning bg-opacity-25 fw-semibold" id="graylist-card-title">
+      <div class="card border-warning" aria-labelledby="ack-card-title">
+        <div class="card-header bg-warning bg-opacity-25 fw-semibold" id="ack-card-title">
           <span role="img" aria-label="Warning">⚠</span> Access Acknowledgment Required
         </div>
         <div class="card-body">
-          {% if consent %}
+          {% if consented %}
           <p class="mb-0">
-            <strong>Access enabled.</strong> You acknowledged this model on
-            <span class="local-datetime" data-utc="{{ consent.consented_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>.
+            <strong>Access enabled.</strong> You acknowledged this model{% if consent_display_at %} on
+            <span class="local-datetime" data-utc="{{ consent_display_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>{% endif %}.
           </p>
           {% else %}
           <p class="mb-2 small">This model requires acknowledgment before use. By enabling access you confirm you have read any notices and accept responsibility for appropriate use.</p>
-          <button type="button" class="btn btn-warning w-100" id="graylist-open-btn" aria-haspopup="dialog">
+          <button type="button" class="btn btn-warning w-100" id="ack-open-btn" aria-haspopup="dialog">
             Acknowledge &amp; Enable Access
           </button>
           {% endif %}
@@ -98,6 +101,12 @@
                 <th scope="row" class="text-muted fw-normal ps-3">Endpoints</th>
                 <td class="text-end pe-3">{{ healthy_count }}/{{ endpoints | length }} healthy</td>
               </tr>
+              {% if config.end_date %}
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3">Available until</th>
+                <td class="text-end pe-3"><span class="local-datetime" data-utc="{{ config.end_date.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span></td>
+              </tr>
+              {% endif %}
               {% if is_admin %}
               {% for ep in endpoints %}
               <tr>
@@ -120,7 +129,7 @@
       </div>
 
       {% set has_details = config.url or config.context_window or config.max_output_tokens or config.input_modalities
-                           or config.output_modalities or config.knowledge_cutoff
+                           or config.output_modalities or config.knowledge_cutoff or config.created_at
                            or config.supports_reasoning is not none
                            or config.supports_function_calling is not none %}
       {% if has_details %}
@@ -183,8 +192,46 @@
                 <td class="text-end pe-3">{% if config.supports_function_calling %}<span role="img" aria-label="Supported">✓</span>{% else %}<span aria-label="Not supported">—</span>{% endif %}</td>
               </tr>
               {% endif %}
+              {% if config.created_at %}
+              <tr>
+                <th scope="row" class="text-muted fw-normal ps-3">First seen</th>
+                <td class="text-end pe-3"><span class="local-datetime" data-utc="{{ config.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span></td>
+              </tr>
+              {% endif %}
             </tbody>
           </table>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if is_admin %}
+      <div class="card">
+        <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+          Access
+          <button type="button" class="btn btn-sm btn-outline-primary edit-btn" id="model-access-edit-btn"
+                  aria-label="Edit access for {{ config.model_name }}" aria-haspopup="dialog">
+            <i class="bi bi-pencil" aria-hidden="true"></i>
+          </button>
+        </div>
+        <div class="card-body">
+          <p class="mb-1 small text-muted">Owner</p>
+          <p class="mb-2" id="model-access-owner">
+            {%- if config.owner -%}
+              {{ config.owner.name }} <span class="text-muted small">({{ config.owner.email }})</span>
+            {%- else -%}
+              Everyone (public)
+            {%- endif -%}
+          </p>
+          <p class="mb-1 small text-muted">Granted groups</p>
+          <p class="mb-0" id="model-access-groups">
+            {%- if granted_group_names -%}
+              {%- for name in granted_group_names %}<span class="badge text-bg-secondary me-1">{{ name }}</span>{% endfor -%}
+            {%- elif config.owner -%}
+              <span class="text-muted">None</span>
+            {%- else -%}
+              <span class="text-muted">Not applicable — public model</span>
+            {%- endif -%}
+          </p>
         </div>
       </div>
       {% endif %}
@@ -211,13 +258,137 @@
     </div>{# end sidebar #}
   </div>{# end row #}
 </ilw-content>
-{% if access_status == 'needs_ack' and not consent %}{% include '_graylist_modal.html' %}{% endif %}
+{% if access_status == 'needs_ack' and not consented %}{% include '_ack_modal.html' %}{% endif %}
+
+{% if is_admin %}
+<!-- Edit Access Modal (opened from the Access card's pencil button) -->
+<div class="modal fade" id="editAccessModal" tabindex="-1" aria-labelledby="editAccessModalLabel">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="editAccessModalLabel">Edit Access</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close Edit Access dialog"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-3">A model without an owner is available to everyone. An owned model is available only to its owner and to members of the granted groups.</p>
+        <div class="mb-3">
+          <label class="form-label" for="access-owner-input">Owner (name or email)</label>
+          <div class="d-flex gap-2">
+            <div class="position-relative flex-grow-1">
+              <input type="text" id="access-owner-input" class="form-control" placeholder="Type to search…"
+                     role="combobox" aria-autocomplete="list" aria-expanded="false"
+                     aria-controls="access-owner-list" autocomplete="off">
+              <ul id="access-owner-list" role="listbox" aria-label="Matching users" class="dropdown-menu w-100 mb-0 p-0"></ul>
+            </div>
+            <button type="button" class="btn btn-outline-secondary" id="access-owner-clear-btn">Make public</button>
+          </div>
+          <div class="form-text">Clear the owner to make the model available to everyone.</div>
+        </div>
+        <fieldset class="mb-3">
+          <legend class="form-label fs-6">Granted groups</legend>
+          <div id="access-groups-list" class="border rounded p-2" style="max-height: 200px; overflow: auto;"></div>
+          <div class="form-text">Only applies when the model has an owner.</div>
+        </fieldset>
+        <div id="access-edit-error" class="text-danger small" role="alert" aria-live="assertive" hidden></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="access-save-btn">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
-<script src="{{ url_for('static', filename='js/graylist-consent.js') }}"></script>
+<script src="{{ url_for('static', filename='js/ack-consent.js') }}"></script>
+{% if is_admin %}
+<script src="{{ url_for('static', filename='js/user-search.js') }}"></script>
+<script>
+(function () {
+  const ACCESS_URL = {{ url_for('admin.model_access_api_get', mid=config.id) | tojson }};
+  const editBtn = document.getElementById('model-access-edit-btn');
+  const modalEl = document.getElementById('editAccessModal');
+  const ownerInput = document.getElementById('access-owner-input');
+  const groupsList = document.getElementById('access-groups-list');
+  const errorEl = document.getElementById('access-edit-error');
+  const modal = new bootstrap.Modal(modalEl);
+  const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+  initUserSearch({
+    inputId: 'access-owner-input',
+    listId: 'access-owner-list',
+    searchUrl: {{ url_for('admin.users_search_api') | tojson }} + '?q=',
+    onChoose: () => syncGroupsEnabled(),
+  });
+  ownerInput.addEventListener('input', syncGroupsEnabled);
+  document.getElementById('access-owner-clear-btn').addEventListener('click', () => {
+    ownerInput.value = '';
+    syncGroupsEnabled();
+    ownerInput.focus();
+  });
+
+  function syncGroupsEnabled() {
+    const hasOwner = ownerInput.value.trim() !== '';
+    groupsList.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.disabled = !hasOwner; });
+  }
+
+  function renderGroups(groups, grantedIds) {
+    if (!groups.length) {
+      groupsList.innerHTML = '<span class="text-muted small">No groups exist yet.</span>';
+      return;
+    }
+    groupsList.innerHTML = groups.map(g => `
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="access-group-${g.id}" value="${g.id}"
+               ${grantedIds.includes(g.id) ? 'checked' : ''}>
+        <label class="form-check-label" for="access-group-${g.id}">${esc(g.name)}${g.active ? '' : ' <span class="text-muted small">(inactive — members get no access)</span>'}</label>
+      </div>`).join('');
+    syncGroupsEnabled();
+  }
+
+  editBtn.addEventListener('click', async () => {
+    errorEl.hidden = true;
+    try {
+      const r = await fetch(ACCESS_URL);
+      if (!r.ok) throw new Error('load failed');
+      const data = await r.json();
+      ownerInput.value = data.owner ? data.owner.email : '';
+      renderGroups(data.groups, data.granted_group_ids);
+      modal.show();
+      setTimeout(() => ownerInput.focus(), 200);
+    } catch (_) {
+      errorEl.textContent = 'Could not load access settings.';
+      errorEl.hidden = false;
+      modal.show();
+    }
+  });
+
+  modalEl.addEventListener('hidden.bs.modal', () => editBtn.focus());
+
+  document.getElementById('access-save-btn').addEventListener('click', async () => {
+    errorEl.hidden = true;
+    const groupIds = [...groupsList.querySelectorAll('input[type="checkbox"]:checked')].map(cb => parseInt(cb.value, 10));
+    const resp = await fetch(ACCESS_URL, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+      body: JSON.stringify({ owner_email: ownerInput.value.trim(), group_ids: groupIds }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      errorEl.textContent = data.error || 'Save failed.';
+      errorEl.hidden = false;
+      return;
+    }
+    modal.hide();
+    location.reload();
+  });
+})();
+</script>
+{% endif %}
 <script>
 (function () {
   {% if effective_notice %}
@@ -253,10 +424,10 @@
   {% endif %}
 })();
 
-{% if access_status == 'needs_ack' and not consent %}
-const openGraylistModal = initGraylistConsent(() => location.reload());
-document.getElementById('graylist-open-btn').addEventListener('click', () => {
-  openGraylistModal({{ config.model_name | tojson }}, {{ effective_notice | tojson if effective_notice else 'null' }});
+{% if access_status == 'needs_ack' and not consented %}
+const openAckModal = initAckConsent(() => location.reload());
+document.getElementById('ack-open-btn').addEventListener('click', () => {
+  openAckModal({{ config.model_name | tojson }}, {{ effective_notice | tojson if effective_notice else 'null' }}, {{ early_access_notice | tojson if early_access_notice else 'null' }});
 });
 {% endif %}
 </script>

@@ -34,7 +34,16 @@ function initUserSearch(opts) {
       try { const r = await fetch(opts.searchUrl + encodeURIComponent(q)); if (r.ok) show((await r.json()).users); } catch (_) {}
     }, 250);
   });
-  input.addEventListener('blur', () => setTimeout(hide, 150));
+  // Don't hide when focus is moving INTO the list (ArrowDown): hiding sets
+  // display:none on the focused <li>, killing keyboard selection entirely.
+  input.addEventListener('blur', e => {
+    if (e.relatedTarget && list.contains(e.relatedTarget)) return;
+    setTimeout(hide, 150);
+  });
+  list.addEventListener('focusout', e => {
+    if (e.relatedTarget && (list.contains(e.relatedTarget) || e.relatedTarget === input)) return;
+    setTimeout(hide, 150);
+  });
   input.addEventListener('keydown', e => {
     const first = list.querySelector('li');
     if (e.key === 'ArrowDown' && first) { e.preventDefault(); first.focus(); }

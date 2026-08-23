@@ -22,6 +22,7 @@ dependencies = [
     "flask-wtf>=1.2",
     "bleach>=6.0",
     "psutil>=7",
+    "cryptography>=42",
 ]
 
 [project.scripts]
@@ -38,6 +39,8 @@ dev = [
     "pytest-timeout>=2.4",
     "beautifulsoup4>=4.12",
     "playwright>=1.59.0",
+    "ruff>=0.14",
+    "yamllint>=1.35",
 ]
 
 [tool.pytest.ini_options]
@@ -51,6 +54,40 @@ timeout = 300
 markers = [
     "postgres: needs a real PostgreSQL + TimescaleDB (set LUMEN_TEST_POSTGRES_URL; skipped otherwise)",
 ]
+
+[tool.ruff]
+target-version = "py311"
+# Alembic revisions are generated from a template that imports sa/op whether or
+# not the revision uses them, and they are never edited after review.
+extend-exclude = ["migrations/versions"]
+# Only used by `ruff format`; E501 is deliberately not enforced (see below).
+line-length = 160
+
+[tool.ruff.lint]
+# Ruff's recommended default (pycodestyle errors + pyflakes) plus import sorting
+# and pycodestyle warnings. Deliberately NOT enabled:
+#   E501  - the codebase uses long single-line column definitions with comments.
+#   DTZ   - it demands timezone-aware datetimes; Lumen stores naive UTC on purpose
+#           (see CLAUDE.md) and gets "now" from lumen.timeutils.utcnow().
+#   UP017 - would rewrite timezone.utc to datetime.UTC, same naive-UTC concern.
+select = ["E4", "E7", "E9", "F", "I", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+# SQLAlchemy relationships use string forward references, e.g. Mapped["Entity"],
+# which the registry resolves at runtime; ruff sees an undefined name.
+"lumen/models/*.py" = ["F821"]
+# The app factory imports blueprints and services inside create_app on purpose,
+# to break import cycles (see CLAUDE.md).
+"lumen/__init__.py" = ["E402"]
+# load_dotenv() must run before `from lumen import create_app`, which reads the
+# environment while building the app config.
+"asgi.py" = ["E402"]
+# The load-test harness keeps timing/token locals around for ad-hoc debugging
+# even when the current scenario does not report them.
+"loadtesting/*.py" = ["F841"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["lumen"]
 
 [tool.uv]
 package = true

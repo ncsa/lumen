@@ -136,20 +136,19 @@ def test_valid_key_lists_accessible_model(
     assert test_model["model_name"] in ids
 
 
-def test_valid_key_filters_blocked_model(
+def test_valid_key_filters_owned_model(
     app, client, test_user, test_model, test_model_endpoint, api_key,
 ):
     token, _ = api_key
     with app.app_context():
         _grant_unlimited_pool(app, test_user["id"])
         from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"],
-            model_config_id=test_model["id"],
-            access_type="blocked",
-        ))
+        from lumen.models.entity import Entity
+        from tests.conftest import set_model_owner
+        owner = Entity(entity_type="user", email="owner@example.com", name="Owner", active=True)
+        db.session.add(owner)
         db.session.commit()
+        set_model_owner(test_model["id"], owner.id)
 
     resp = client.get(
         "/v1/models",
@@ -160,19 +159,18 @@ def test_valid_key_filters_blocked_model(
     assert test_model["model_name"] not in ids
 
 
-def test_get_model_blocked_returns_404(
+def test_get_model_owned_returns_404(
     app, client, test_user, test_model, api_key,
 ):
     token, _ = api_key
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"],
-            model_config_id=test_model["id"],
-            access_type="blocked",
-        ))
+        from lumen.models.entity import Entity
+        from tests.conftest import set_model_owner
+        owner = Entity(entity_type="user", email="owner@example.com", name="Owner", active=True)
+        db.session.add(owner)
         db.session.commit()
+        set_model_owner(test_model["id"], owner.id)
 
     resp = client.get(
         f"/v1/models/{test_model['model_name']}",
@@ -326,13 +324,12 @@ def test_chat_completions_no_access_403(
     token, _ = api_key
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"],
-            model_config_id=test_model["id"],
-            access_type="blocked",
-        ))
+        from lumen.models.entity import Entity
+        from tests.conftest import set_model_owner
+        owner = Entity(entity_type="user", email="owner@example.com", name="Owner", active=True)
+        db.session.add(owner)
         db.session.commit()
+        set_model_owner(test_model["id"], owner.id)
 
     resp = client.post(
         "/v1/chat/completions",
@@ -343,21 +340,15 @@ def test_chat_completions_no_access_403(
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_chat_completions_graylist_no_consent_403(
+def test_chat_completions_ack_no_consent_403(
     app, client, test_user, test_model, api_key,
 ):
     token, _ = api_key
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
         from lumen.models.model_config import ModelConfig
         _grant_unlimited_pool(app, test_user["id"])
         db.session.get(ModelConfig, test_model["id"]).needs_ack = True
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"],
-            model_config_id=test_model["id"],
-            access_type="allowed",
-        ))
         db.session.commit()
 
     resp = client.post(
@@ -369,25 +360,19 @@ def test_chat_completions_graylist_no_consent_403(
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_chat_completions_graylist_with_consent_passes_access(
+def test_chat_completions_ack_with_consent_passes_access(
     app, client, test_user, test_model, api_key,
 ):
-    """Graylist + consent clears the access gate (fails later at endpoint, not at 403)."""
+    """needs_ack + consent clears the access gate (fails later at endpoint, not at 403)."""
     token, _ = api_key
     with app.app_context():
         from datetime import datetime, timezone
 
         from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
         from lumen.models.entity_model_consent import EntityModelConsent
         from lumen.models.model_config import ModelConfig
         _grant_unlimited_pool(app, test_user["id"])
         db.session.get(ModelConfig, test_model["id"]).needs_ack = True
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"],
-            model_config_id=test_model["id"],
-            access_type="allowed",
-        ))
         db.session.add(EntityModelConsent(
             entity_id=test_user["id"],
             model_config_id=test_model["id"],
@@ -404,21 +389,22 @@ def test_chat_completions_graylist_with_consent_passes_access(
     assert resp.status_code != HTTPStatus.FORBIDDEN
 
 
-def test_chat_completions_whitelist_passes_access(
+def test_chat_completions_group_grant_passes_access(
     app, client, test_user, test_model, api_key,
 ):
-    """Whitelist clears the access gate (fails later at endpoint, not at 403)."""
+    """A group grant on an owned model clears the access gate (fails later at endpoint, not at 403)."""
     token, _ = api_key
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
+        from lumen.models.entity import Entity
+        from tests.conftest import grant_model_to_group, make_group_with_member, set_model_owner
         _grant_unlimited_pool(app, test_user["id"])
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"],
-            model_config_id=test_model["id"],
-            access_type="allowed",
-        ))
+        owner = Entity(entity_type="user", email="owner@example.com", name="Owner", active=True)
+        db.session.add(owner)
         db.session.commit()
+        set_model_owner(test_model["id"], owner.id)
+        group_id = make_group_with_member(test_user["id"])
+        grant_model_to_group(test_model["id"], group_id)
 
     resp = client.post(
         "/v1/chat/completions",
@@ -442,7 +428,7 @@ def test_chat_completions_missing_messages_400(client, api_key):
 
 
 # ---------------------------------------------------------------------------
-# api.consent flag — consent: false exempts API from graylist gate
+# api.consent flag — consent: false exempts API from the ack gate
 # ---------------------------------------------------------------------------
 
 def _set_api_consent(app, value: bool):
@@ -452,24 +438,18 @@ def _set_api_consent(app, value: bool):
     app.config["API_REQUIRE_MODEL_CONSENT"] = value
 
 
-def test_consent_false_graylist_chat_completions_passes_access(
+def test_consent_false_ack_chat_completions_passes_access(
     app, client, test_user, test_model, api_key,
 ):
-    """api.consent=false: graylist model clears the access gate (fails later at endpoint, not at 403)."""
+    """api.consent=false: needs_ack model clears the access gate (fails later at endpoint, not at 403)."""
     token, _ = api_key
     _set_api_consent(app, False)
     try:
         with app.app_context():
             from lumen.extensions import db
-            from lumen.models.entity_model_access import EntityModelAccess
             from lumen.models.model_config import ModelConfig
             _grant_unlimited_pool(app, test_user["id"])
             db.session.get(ModelConfig, test_model["id"]).needs_ack = True
-            db.session.add(EntityModelAccess(
-                entity_id=test_user["id"],
-                model_config_id=test_model["id"],
-                access_type="allowed",
-            ))
             db.session.commit()
 
         resp = client.post(
@@ -483,24 +463,18 @@ def test_consent_false_graylist_chat_completions_passes_access(
         _set_api_consent(app, True)
 
 
-def test_consent_false_graylist_list_models_includes_model(
+def test_consent_false_ack_list_models_includes_model(
     app, client, test_user, test_model, test_model_endpoint, api_key,
 ):
-    """api.consent=false: graylist model without consent appears in /v1/models."""
+    """api.consent=false: needs_ack model without consent appears in /v1/models."""
     token, _ = api_key
     _set_api_consent(app, False)
     try:
         with app.app_context():
             from lumen.extensions import db
-            from lumen.models.entity_model_access import EntityModelAccess
             from lumen.models.model_config import ModelConfig
             _grant_unlimited_pool(app, test_user["id"])
             db.session.get(ModelConfig, test_model["id"]).needs_ack = True
-            db.session.add(EntityModelAccess(
-                entity_id=test_user["id"],
-                model_config_id=test_model["id"],
-                access_type="allowed",
-            ))
             db.session.commit()
 
         resp = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"})
@@ -511,24 +485,18 @@ def test_consent_false_graylist_list_models_includes_model(
         _set_api_consent(app, True)
 
 
-def test_consent_false_graylist_get_model_returns_model(
+def test_consent_false_ack_get_model_returns_model(
     app, client, test_user, test_model, test_model_endpoint, api_key,
 ):
-    """api.consent=false: GET /v1/models/<id> returns graylist model without consent."""
+    """api.consent=false: GET /v1/models/<id> returns needs_ack model without consent."""
     token, _ = api_key
     _set_api_consent(app, False)
     try:
         with app.app_context():
             from lumen.extensions import db
-            from lumen.models.entity_model_access import EntityModelAccess
             from lumen.models.model_config import ModelConfig
             _grant_unlimited_pool(app, test_user["id"])
             db.session.get(ModelConfig, test_model["id"]).needs_ack = True
-            db.session.add(EntityModelAccess(
-                entity_id=test_user["id"],
-                model_config_id=test_model["id"],
-                access_type="allowed",
-            ))
             db.session.commit()
 
         resp = client.get(
@@ -541,23 +509,17 @@ def test_consent_false_graylist_get_model_returns_model(
         _set_api_consent(app, True)
 
 
-def test_consent_true_graylist_chat_completions_403(
+def test_consent_true_ack_chat_completions_403(
     app, client, test_user, test_model, api_key,
 ):
-    """api.consent=true (explicit): graylist model without consent still returns 403."""
+    """api.consent=true (explicit): needs_ack model without consent still returns 403."""
     token, _ = api_key
     _set_api_consent(app, True)
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
         from lumen.models.model_config import ModelConfig
         _grant_unlimited_pool(app, test_user["id"])
         db.session.get(ModelConfig, test_model["id"]).needs_ack = True
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"],
-            model_config_id=test_model["id"],
-            access_type="allowed",
-        ))
         db.session.commit()
 
     resp = client.post(
@@ -569,23 +531,22 @@ def test_consent_true_graylist_chat_completions_403(
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_consent_false_blacklist_still_blocked(
+def test_consent_false_owned_model_still_blocked(
     app, client, test_user, test_model, api_key,
 ):
-    """api.consent=false never bypasses a hard blacklist block."""
+    """api.consent=false never bypasses an ownership block."""
     token, _ = api_key
     _set_api_consent(app, False)
     try:
         with app.app_context():
-            from lumen.extensions import db
-            from lumen.models.entity_model_access import EntityModelAccess
             _grant_unlimited_pool(app, test_user["id"])
-            db.session.add(EntityModelAccess(
-                entity_id=test_user["id"],
-                model_config_id=test_model["id"],
-                access_type="blocked",
-            ))
+            from lumen.extensions import db
+            from lumen.models.entity import Entity
+            from tests.conftest import set_model_owner
+            owner = Entity(entity_type="user", email="owner@example.com", name="Owner", active=True)
+            db.session.add(owner)
             db.session.commit()
+            set_model_owner(test_model["id"], owner.id)
 
         resp = client.post(
             "/v1/chat/completions",
@@ -652,14 +613,7 @@ def test_chat_completions_upstream_4xx_passes_through(
     from lumen.blueprints.api import routes
     token, _ = api_key
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
         _grant_unlimited_pool(app, test_user["id"])
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"], model_config_id=test_model["id"],
-            access_type="allowed",
-        ))
-        db.session.commit()
 
     exc = _make_openai_error(openai.BadRequestError, 400, body)
 
@@ -695,14 +649,7 @@ def test_chat_completions_upstream_5xx_is_generic_500(
     from lumen.blueprints.api import routes
     token, _ = api_key
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
         _grant_unlimited_pool(app, test_user["id"])
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"], model_config_id=test_model["id"],
-            access_type="allowed",
-        ))
-        db.session.commit()
 
     exc = _make_openai_error(
         openai.InternalServerError, 500, {"message": "backend exploded"})
@@ -737,14 +684,7 @@ def test_chat_completions_streaming_error_emits_done(
     from lumen.blueprints.api import routes
     token, _ = api_key
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
         _grant_unlimited_pool(app, test_user["id"])
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"], model_config_id=test_model["id"],
-            access_type="allowed",
-        ))
-        db.session.commit()
 
     class _Chunk:
         usage = None
@@ -786,14 +726,7 @@ def test_chat_completions_streaming_records_duration(
     from lumen.blueprints.api import routes
     token, _ = api_key
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
         _grant_unlimited_pool(app, test_user["id"])
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"], model_config_id=test_model["id"],
-            access_type="allowed",
-        ))
-        db.session.commit()
 
     class _Usage:
         prompt_tokens = 5
@@ -847,14 +780,7 @@ def test_chat_completions_streaming_records_duration(
 def _allow_model(app, test_user, test_model):
     """Grant the test user unlimited access to the test model."""
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_model_access import EntityModelAccess
         _grant_unlimited_pool(app, test_user["id"])
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"], model_config_id=test_model["id"],
-            access_type="allowed",
-        ))
-        db.session.commit()
 
 
 class _UsageChunk:
@@ -1109,7 +1035,6 @@ def test_streaming_disconnect_bills_estimated_usage(
     from lumen.models.api_key import APIKey
     from lumen.models.entity_balance import EntityBalance
     from lumen.models.entity_limit import EntityLimit
-    from lumen.models.entity_model_access import EntityModelAccess
     from lumen.models.request_log import RequestLog
 
     token, key_id = api_key
@@ -1118,9 +1043,6 @@ def test_streaming_disconnect_bills_estimated_usage(
             entity_id=test_user["id"], max_coins=10, refresh_coins=0, starting_coins=10,
         ))
         db.session.add(EntityBalance(entity_id=test_user["id"], coins_left=10))
-        db.session.add(EntityModelAccess(
-            entity_id=test_user["id"], model_config_id=test_model["id"], access_type="allowed",
-        ))
         db.session.commit()
 
     disconnected = threading.Event()
@@ -1611,3 +1533,44 @@ def test_aborted_stream_records_disconnect_outcome(
     assert _QUEUE_WAIT <= log.queue_wait < _MAX_PLAUSIBLE_SPAN
     assert 0 <= log.preflight < _MAX_PLAUSIBLE_SPAN
     assert 0 < log.ttft < _MAX_PLAUSIBLE_SPAN
+
+
+# ---------------------------------------------------------------------------
+# end_date — expired models are hidden and rejected on the API
+# ---------------------------------------------------------------------------
+
+def _expire_model(app, model_id):
+    from datetime import timedelta
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        from lumen.timeutils import utcnow
+        db.session.get(ModelConfig, model_id).end_date = utcnow() - timedelta(days=1)
+        db.session.commit()
+
+
+def test_expired_model_absent_from_list(
+    app, client, test_user, test_model, test_model_endpoint, api_key,
+):
+    token, _ = api_key
+    with app.app_context():
+        _grant_unlimited_pool(app, test_user["id"])
+    _expire_model(app, test_model["id"])
+    resp = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == HTTPStatus.OK
+    ids = [m["id"] for m in resp.get_json()["data"]]
+    assert test_model["model_name"] not in ids
+
+
+def test_expired_model_get_404(
+    app, client, test_user, test_model, test_model_endpoint, api_key,
+):
+    token, _ = api_key
+    with app.app_context():
+        _grant_unlimited_pool(app, test_user["id"])
+    _expire_model(app, test_model["id"])
+    resp = client.get(
+        f"/v1/models/{test_model['model_name']}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == HTTPStatus.NOT_FOUND

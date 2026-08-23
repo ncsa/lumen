@@ -478,3 +478,9 @@ ilw-content .btn-primary:active {
 /* ── Graylist consent popover ────────────────────────────────── */
 .popover-warning { border-color: var(--bs-warning) !important; }
 .popover-warning .popover-header { background-color: var(--bs-warning-bg-subtle); border-bottom-color: var(--bs-warning); }
+
+/* ── Bordered tables in scroll wrappers ──────────────────────── */
+/* A table-bordered table's collapsed outer border makes it ~1px taller than
+   its .table-responsive container, which clips the bottom border line and
+   shows a stray vertical scrollbar; give the wrapper that pixel back. */
+.table-responsive { padding-bottom: 1px; }

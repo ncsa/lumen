@@ -21,7 +21,7 @@ from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.services.live_state import get_live_state
-from lumen.services.llm import bulk_model_access_info, check_coin_budget, coin_retry_after, get_pool_limit, send_message_stream
+from lumen.services.llm import bulk_model_access_info, check_coin_budget, coin_retry_after, get_pool_limit, model_notices, send_message_stream
 from lumen.services.wsgi_disconnect import client_disconnect_event
 from lumen.timeutils import utcnow
 
@@ -107,13 +107,12 @@ def chat_page():
     model_ids = [m.id for m in all_models]
     # Bulk-resolve access and consents to avoid N+1 per-model DB queries
     access_statuses, consent_map = bulk_model_access_info(entity_id, model_ids)
-    default_ack = current_app.config.get("MODEL_DEFAULTS", {}).get("ack_message")
     # Pool limit is entity-level; fetch once rather than once per model via get_effective_limit
     pool = get_pool_limit(entity_id)
 
-    # Include models that are accessible (not blocked) and have healthy endpoints.
-    # Models that require acknowledgement without consent are shown with a warning so the
-    # user can navigate to the model detail page to acknowledge them.
+    # Include models that are accessible, funded, and have healthy endpoints.
+    # Models that require acknowledgement remain visible only when the entity
+    # has a coin pool and can use them after acknowledging.
     available_models = []
     for m in all_models:
         if healthy_counts.get(m.id, 0) == 0:
@@ -121,12 +120,13 @@ def chat_page():
         status = access_statuses.get(m.id, "allowed")
         if status == "blocked":
             continue
-        if pool is None and status != "needs_ack":
+        if pool is None:
             continue
         consented = (m.id in consent_map) if status == "needs_ack" else True
         consent_at = consent_map.get(m.id) if status == "needs_ack" else None
-        notice = (m.ack_message or default_ack) if status == "needs_ack" else None
-        available_models.append({"model": m, "status": status, "consented": consented, "consent_at": consent_at, "notice": notice})
+        notice, early_notice = model_notices(m) if status == "needs_ack" else (None, None)
+        available_models.append({"model": m, "status": status, "consented": consented, "consent_at": consent_at,
+                                 "notice": notice, "early_notice": early_notice})
 
     store_conversations = db.session.execute(
         select(Entity.store_conversations).where(Entity.id == entity_id)
