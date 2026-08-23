@@ -80,8 +80,8 @@ Edit `config.yaml` with at minimum:
 version: 3
 
 app:
-  secret_key: "any-random-string"
-  encryption_key: "another-random-string"
+  secret_key: "replace-with-a-random-value-at-least-32-characters"
+  encryption_key: "use-a-different-random-value-at-least-32-characters"
   database:
     url: sqlite:///lumen_dev.db
   debug: true
@@ -227,8 +227,8 @@ The config file must declare `version: 3` at the top level — the app refuses t
 app:
   name: Lumen
   tagline: Illuminating AI access
-  secret_key: change-me-to-something-random   # any long random string; used for session cookies
-  encryption_key: change-me-to-something-different  # separate secret used to hash user API keys
+  secret_key: replace-with-a-random-value-at-least-32-characters  # session signing; `openssl rand -hex 32`
+  encryption_key: use-a-different-random-value-at-least-32-characters  # API-key hashing and credential encryption
   database:
     url: sqlite:///lumen.db                   # or a postgres:// URL
   debug: false
@@ -455,4 +455,3 @@ api:
     token: "a-long-random-string"   # optional; Bearer token auth for /metrics
     multiproc_dir: "/tmp/prom"      # required for multi-worker aggregation (mount as shared volume)
 ```
-

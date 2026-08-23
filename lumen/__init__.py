@@ -51,6 +51,8 @@ logger = logging.getLogger(__name__)
 #: Set once a process has reported serving a request without the ASGI bridge.
 _warned_no_bridge = False
 
+_MIN_SECRET_LENGTH = 32
+
 _NO_BRIDGE_MESSAGE = (
     "Request served without the ASGI bridge: no 'lumen.t0_monotonic' mark in the WSGI "
     "environ, so request_logs.queue_wait, preflight, started_at and send_blocked will "
@@ -279,13 +281,21 @@ def create_app():
     # Override Flask config from yaml app/oauth2 sections
     app_cfg = yaml_data.get("app", {})
     secret_key = os.environ.get("LUMEN_SECRET_KEY") or app_cfg.get("secret_key", "")
-    if not secret_key:
-        app.logger.error("app.secret_key is not set in config.yaml (or LUMEN_SECRET_KEY env var). App cannot start.")
+    if not isinstance(secret_key, str) or len(secret_key) < _MIN_SECRET_LENGTH:
+        app.logger.error(
+            "app.secret_key (or LUMEN_SECRET_KEY) must be a random string of at least "
+            "%d characters. App cannot start.",
+            _MIN_SECRET_LENGTH,
+        )
         sys.exit(1)
     app.config["SECRET_KEY"] = secret_key
     encryption_key = os.environ.get("LUMEN_ENCRYPTION_KEY") or app_cfg.get("encryption_key", "")
-    if not encryption_key:
-        app.logger.error("app.encryption_key is not set in config.yaml (or LUMEN_ENCRYPTION_KEY env var). App cannot start.")
+    if not isinstance(encryption_key, str) or len(encryption_key) < _MIN_SECRET_LENGTH:
+        app.logger.error(
+            "app.encryption_key (or LUMEN_ENCRYPTION_KEY) must be a random string of at least "
+            "%d characters. App cannot start.",
+            _MIN_SECRET_LENGTH,
+        )
         sys.exit(1)
     app.config["ENCRYPTION_KEY"] = encryption_key
     db_cfg = app_cfg.get("database", {})

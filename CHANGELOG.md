@@ -16,6 +16,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Security
 
+- Startup and Helm reject session-signing and encryption keys shorter than 32 characters. (PR #41)
 - Upstream endpoint API keys are encrypted at rest with `app.encryption_key`. (PR #41)
 - Model endpoint probes reject unsafe or internal targets, redirects, and DNS rebinding. (PR #41)
 - Request bodies are capped before oversized uploads are buffered. (PR #41)

@@ -6,8 +6,9 @@
 # fetches the real README from huggingface.co via each model's `url`.
 #
 # Secrets are NOT stored here. Provide them at capture time via environment:
-#   LUMEN_SECRET_KEY, LUMEN_ENCRYPTION_KEY (any non-empty dev value), and
-#   DATABASE_URL (a PostgreSQL/TimescaleDB URL — usage charts need Postgres).
+#   LUMEN_SECRET_KEY, LUMEN_ENCRYPTION_KEY (random values of at least 32
+#   characters), and DATABASE_URL (a PostgreSQL/TimescaleDB URL — usage charts
+#   need Postgres).
 version: 3
 
 app:

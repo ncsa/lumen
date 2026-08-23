@@ -414,6 +414,62 @@ def test_create_app_refuses_non_numeric_config_version(tmp_path, monkeypatch, ca
     assert "config.yaml must declare 'version: 3'" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("weak_key", ["secret_key", "encryption_key"])
+def test_create_app_refuses_short_security_keys(tmp_path, monkeypatch, caplog, weak_key):
+    """Session signing and credential encryption require 32-character keys."""
+    import yaml as _yaml
+
+    app_config = {
+        "secret_key": "s" * 32,
+        "encryption_key": "e" * 32,
+        "database": {"url": "sqlite:///:memory:"},
+    }
+    app_config[weak_key] = "x" * 31
+    cfg = tmp_path / "short-key.yaml"
+    cfg.write_text(_yaml.dump({
+        "version": 3,
+        "app": app_config,
+        "models": [{"model_name": "test-model"}],
+    }))
+    import config as config_module
+
+    monkeypatch.setattr(config_module.Config, "CONFIG_YAML", str(cfg))
+    monkeypatch.delenv("LUMEN_SECRET_KEY", raising=False)
+    monkeypatch.delenv("LUMEN_ENCRYPTION_KEY", raising=False)
+    from lumen import create_app
+
+    with pytest.raises(SystemExit):
+        create_app()
+    assert weak_key in caplog.text
+    assert "at least 32 characters" in caplog.text
+
+
+def test_create_app_refuses_short_environment_key(tmp_path, monkeypatch, caplog):
+    """A weak environment override cannot bypass startup validation."""
+    import yaml as _yaml
+
+    cfg = tmp_path / "strong-keys.yaml"
+    cfg.write_text(_yaml.dump({
+        "version": 3,
+        "app": {
+            "secret_key": "s" * 32,
+            "encryption_key": "e" * 32,
+            "database": {"url": "sqlite:///:memory:"},
+        },
+        "models": [{"model_name": "test-model"}],
+    }))
+    import config as config_module
+
+    monkeypatch.setattr(config_module.Config, "CONFIG_YAML", str(cfg))
+    monkeypatch.setenv("LUMEN_ENCRYPTION_KEY", "short")
+    from lumen import create_app
+
+    with pytest.raises(SystemExit):
+        create_app()
+    assert "LUMEN_ENCRYPTION_KEY" in caplog.text
+    assert "at least 32 characters" in caplog.text
+
+
 def test_unknown_app_key_warns(app, caplog, restore_config):
     """A key renamed by a schema change must not fail silently.
 

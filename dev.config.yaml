@@ -12,8 +12,8 @@ version: 3
 app:
   name: Lumen (dev)
   debug: true
-  secret_key: dev-secret-not-for-production
-  encryption_key: dev-encryption-not-for-production
+  secret_key: dev-secret-key-not-for-production-0001
+  encryption_key: dev-encryption-key-not-for-production-0001
   database:
     url: sqlite:///lumen_dev.db
   logs:

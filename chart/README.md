@@ -25,8 +25,8 @@ helm install lumen chart/ \
 
 | Parameter | Description |
 |-----------|-------------|
-| `config.secretKey` | Flask session signing key (random 32-byte hex). Use `existingSecret` instead for production. |
-| `config.encryptionKey` | API key hashing secret (different from secretKey). |
+| `config.secretKey` | Flask session signing key (random string of at least 32 characters; `openssl rand -hex 32` is recommended). Use `existingSecret` instead for production. |
+| `config.encryptionKey` | API-key hashing and credential-encryption secret (a different random string of at least 32 characters). |
 | `oauth2.clientId` | OIDC client ID |
 | `oauth2.clientSecret` | OIDC client secret |
 
@@ -41,8 +41,8 @@ metadata:
   name: lumen-credentials
 type: Opaque
 stringData:
-  secret-key: "..."
-  encryption-key: "..."
+  secret-key: "<random value of at least 32 characters>"
+  encryption-key: "<different random value of at least 32 characters>"
   oauth2-client-id: "..."
   oauth2-client-secret: "..."
   database-url: "postgresql://user:pass@host:5432/lumen"  # optional

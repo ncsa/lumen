@@ -51,8 +51,14 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "secretKey": { "type": "string" },
-        "encryptionKey": { "type": "string" },
+        "secretKey": {
+          "type": "string",
+          "anyOf": [{ "const": "" }, { "minLength": 32 }]
+        },
+        "encryptionKey": {
+          "type": "string",
+          "anyOf": [{ "const": "" }, { "minLength": 32 }]
+        },
         "debug": { "type": "boolean" },
         "diagnostics": { "type": "boolean" },
         "configEditor": { "type": "boolean" },

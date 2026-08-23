@@ -242,10 +242,10 @@ All of the following environment variables take precedence over the correspondin
 | `OAUTH2_REDIRECT_URI` | `oauth2.redirect_uri` |
 | `OAUTH2_SCOPES` | `oauth2.scopes` |
 
-`app.secret_key` and `app.encryption_key` must be set either in `config.yaml` or via their environment variables — the app will not start without them.
+`app.secret_key` and `app.encryption_key` must each be a random string of at least 32 characters, set either in `config.yaml` or via their environment variables. Generate separate values (for example, with `openssl rand -hex 32`); the app will not start with missing or shorter keys.
 
 ## Security Notes
 
-- **`app.secret_key`** is used for Flask session signing. If leaked, an attacker can forge user sessions. In production, set it to a long random value and inject it via `LUMEN_SECRET_KEY`.
-- **`app.encryption_key`** is used to hash API keys stored in the database. Rotating this value invalidates **all** existing user API keys because the hashes can no longer be verified. Use `LUMEN_ENCRYPTION_KEY` to inject it at deploy time without writing it into the config file.
+- **`app.secret_key`** is used for Flask session signing. If leaked, an attacker can forge user sessions. In production, inject a randomly generated value of at least 32 characters via `LUMEN_SECRET_KEY`.
+- **`app.encryption_key`** is used to hash API keys and encrypt upstream endpoint credentials stored in the database. Rotating this value invalidates **all** existing user API keys and makes existing encrypted credentials unreadable. Inject a separate randomly generated value of at least 32 characters via `LUMEN_ENCRYPTION_KEY`.
 - Never commit `config.yaml` with real secrets to a shared repository. Use `config.yaml.example` as a template and keep your live config file in a private location or inject secrets via environment variables.

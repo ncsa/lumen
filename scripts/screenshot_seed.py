@@ -10,7 +10,8 @@ the SAME CONFIG_YAML and DATABASE_URL as the app you capture from:
 
     DATABASE_URL=postgresql://user:pass@host:5432/lumen_shots \\
     CONFIG_YAML=./scripts/screenshot.config.yaml \\
-    LUMEN_SECRET_KEY=dev LUMEN_ENCRYPTION_KEY=dev \\
+    LUMEN_SECRET_KEY=dev-secret-key-for-screenshots-0001 \\
+    LUMEN_ENCRYPTION_KEY=dev-encryption-key-for-screenshots-0001 \\
     uv run python scripts/screenshot_seed.py
 
 This script contains no secrets: DB credentials come from DATABASE_URL and app

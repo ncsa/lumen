@@ -65,9 +65,9 @@ serviceAccount:
 ## Application config ----------------------------------------------------------------
 
 config:
-  # -- Flask session signing key. REQUIRED unless existingSecret is set.
+  # -- Flask session signing key, a random string of at least 32 characters. REQUIRED unless existingSecret is set.
   secretKey: ""
-  # -- API key hashing secret. REQUIRED unless existingSecret is set.
+  # -- API-key hashing and credential-encryption secret, a different random string of at least 32 characters. REQUIRED unless existingSecret is set.
   encryptionKey: ""
   # -- Enable Flask debug mode (never true in production)
   debug: false
