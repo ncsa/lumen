@@ -42,7 +42,7 @@ All notable changes to Lumen will be documented in this file.
 ### Fixed
 
 - Config validation rejects unknown future schema versions. (PR #41)
-- Model endpoint probes reject carrier-grade NAT, including IPv4-mapped IPv6, and unspecified IP addresses. (PR #41)
+- Model endpoint probes reject carrier-grade NAT, including IPv4-mapped IPv6, and unspecified IP addresses. (PR #53)
 - New model grants cannot target inactive groups. (PR #41)
 - Project creation rejects duplicate project names. (PR #41)
 - Model consent checks fail closed for deleted models and avoid duplicate lookups. (PR #41)
