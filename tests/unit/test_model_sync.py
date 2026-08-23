@@ -435,7 +435,8 @@ def test_normalize_knowledge_drops_long_garbage():
 
 
 def test_validate_url_rejects_cgnat_and_unspecified_ips():
-    for url in ("http://100.64.0.1/v1", "http://0.0.0.0/v1", "http://[::]/v1"):
+    for url in ("http://100.64.0.1/v1", "http://[::ffff:100.64.0.1]/v1",
+                "http://0.0.0.0/v1", "http://[::]/v1"):
         try:
             model_sync._validate_endpoint_url(url)
         except ValueError as exc:

@@ -105,8 +105,10 @@ def _validate_endpoint_url(url: str) -> str:
         raise ValueError(f"Blocked: hostname '{parsed.hostname}' does not resolve")
     for _, _, _, _, sockaddr in infos:
         ip = ipaddress.ip_address(sockaddr[0])
-        if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast
-                or ip.is_reserved or ip.is_unspecified or ip in _CGNAT_NETWORK):
+        policy_ip = getattr(ip, "ipv4_mapped", None) or ip
+        if (policy_ip.is_private or policy_ip.is_loopback or policy_ip.is_link_local
+                or policy_ip.is_multicast or policy_ip.is_reserved or policy_ip.is_unspecified
+                or policy_ip in _CGNAT_NETWORK):
             raise ValueError(f"Blocked: hostname resolves to private/reserved IP {ip}")
     return infos[0][4][0]
 
