@@ -55,15 +55,16 @@ models:
   - url: http://localhost:9999/v1
     api_key: dummy
     model: dummy
-
-# Also wired to the echo backend so it works in chat; requires acknowledgement.
 - name: vision-beta
   description: Demo model that requires acknowledgement before use.
   needs_ack: true
   input_cost_per_million: 0.1
   output_cost_per_million: 0.2
-  input_modalities: [text, image]
-  output_modalities: [text]
+  input_modalities:
+  - text
+  - image
+  output_modalities:
+  - text
   endpoints:
   - url: http://localhost:9999/v1
     api_key: dummy
@@ -88,8 +89,6 @@ models:
   - url: http://localhost:9999/v1
     api_key: dummy
     model: dummy
-
-# A handful of extra (offline) models so the editor's search box has something to find.
 - name: model-a
   input_cost_per_million: 0.1
   output_cost_per_million: 0.2

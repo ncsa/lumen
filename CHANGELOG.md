@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+**Breaking configuration change:** Lumen 2.0 requires config version 3. The `groups`, `users`, and `clients`/`projects` sections are no longer managed in `config.yaml`; their records, memberships, limits, and access settings are now database-backed and managed through the Lumen UI. Migrate existing configuration before upgrading.
+
 ### Added
 
 - Users can create and manage groups, members, and model grants through the new Groups pages; admins manage group coin policies. (PR #41)
@@ -38,6 +40,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Fixed
 
+- Illinois-theme tables use consistent light-gray borders. (PR #41)
 - Blocked, disabled, and expired models no longer expose metadata through detail, profile, or project pages. (PR #41)
 - Bare model end dates keep models available through the named UTC date. (PR #41)
 - Admin user and project tables show unlimited pools inherited from groups or global defaults. (PR #41)
