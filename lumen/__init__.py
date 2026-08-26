@@ -152,9 +152,19 @@ def create_app():
     with open(config_yaml_path) as f:
         yaml_data = yaml.safe_load(f)
 
-    from lumen.services.config_watcher import CONFIG_VERSION_ERROR, config_version_ok
+    from lumen.services.config_watcher import (
+        CONFIG_VERSION_ERROR,
+        config_version_ok,
+        removed_config_key_errors,
+    )
     if not config_version_ok(yaml_data or {}):
         print(f"ERROR: {CONFIG_VERSION_ERROR} App cannot start.", file=sys.stderr)
+        sys.exit(1)
+    if removed_keys := removed_config_key_errors(yaml_data):
+        print(
+            "ERROR: Invalid config.yaml: " + "; ".join(removed_keys) + ". App cannot start.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # A model is active unless explicitly disabled (or the legacy active: false).

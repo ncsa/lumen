@@ -2,9 +2,13 @@
 
 All notable changes to Lumen will be documented in this file.
 
-## [Unreleased]
+## [2.0.0] - 2026-08-25
 
-**Breaking configuration change:** Lumen 2.0 requires config version 3. The `groups`, `users`, and `clients`/`projects` sections are no longer managed in `config.yaml`; their records, memberships, limits, and access settings are now database-backed and managed through the Lumen UI. Migrate existing configuration before upgrading.
+**Breaking configuration change:** Lumen 2.0 requires config version 3. The `groups`, `users`, and `clients`/`projects` sections are no longer managed in `config.yaml`; their records, memberships, limits, and access settings are now database-backed and managed through the Lumen UI. Before upgrading, save the existing `groups.*.rules` values and remove the legacy configuration sections so version 3 passes startup validation. After starting 2.0, log in with an account listed under `admins`, recreate and enable each group's auto-join rules from its Rules tab, and verify them before allowing regular users to sign in.
+
+**Helm upgrade warning:** A rolling Helm upgrade from 1.26 is not supported because the 2.0 database migrations are incompatible with running 1.26 pods. Stop the existing deployment before upgrading the chart.
+
+**Database backup warning:** Back up the database before upgrading to 2.0, regardless of deployment method. Do not rely on a database downgrade for rollback: it cannot reconstruct removed group and access data and will result in data loss; restore the pre-upgrade database backup instead.
 
 ### Added
 

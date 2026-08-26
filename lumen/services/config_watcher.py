@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 # model_access keys), and OAuth auto-assignment rules are database rows managed
 # on each group's Rules tab (no group_rules: section).
 REQUIRED_CONFIG_VERSION = 3
+REMOVED_TOP_LEVEL_KEYS = frozenset({"clients", "group_rules", "groups", "projects", "users"})
+REMOVED_MODEL_POLICY_KEYS = frozenset({"access", "blacklist", "graylist", "model_access", "whitelist"})
 CONFIG_VERSION_ERROR = (
     "config.yaml must declare 'version: 3'. Lumen 2.0 removed the users:, projects:, "
     "clients:, and groups: sections (groups and memberships are managed in the "
@@ -38,6 +40,35 @@ def config_version_ok(yaml_data: dict) -> bool:
     return isinstance(version, int) and not isinstance(version, bool) and version == REQUIRED_CONFIG_VERSION
 
 
+def removed_config_key_errors(data: dict) -> list[str]:
+    """Return version-2 policy keys that version 3 must never ignore."""
+    if not isinstance(data, dict):
+        return []
+
+    errors = [
+        f"removed key '{key}:' must be migrated to the database before upgrading"
+        for key in sorted(REMOVED_TOP_LEVEL_KEYS.intersection(data))
+    ]
+
+    defaults = data.get("defaults")
+    if isinstance(defaults, dict):
+        model_defaults = defaults.get("models")
+        if isinstance(model_defaults, dict):
+            for key in sorted(REMOVED_MODEL_POLICY_KEYS.intersection(model_defaults)):
+                errors.append(f"removed key 'defaults.models.{key}' must be migrated before upgrading")
+
+    models = data.get("models")
+    if isinstance(models, list):
+        for i, model in enumerate(models):
+            if not isinstance(model, dict):
+                continue
+            label = model.get("name") or f"models[{i}]"
+            for key in sorted(REMOVED_MODEL_POLICY_KEYS.intersection(model)):
+                errors.append(f"removed key '{label}.{key}' must be migrated before upgrading")
+
+    return errors
+
+
 def validate_config_structure(data) -> list:
     """Structural check on a config about to be written to disk.
 
@@ -51,6 +82,7 @@ def validate_config_structure(data) -> list:
     errors = []
     if not config_version_ok(data):
         errors.append("version: 3 is required")
+    errors.extend(removed_config_key_errors(data))
     models = data.get("models") or []
     if not isinstance(models, list):
         return errors + ["models: must be a list"]
@@ -499,8 +531,12 @@ def _watcher(app, config_path):
             with open(config_path) as f:
                 new_data = yaml.safe_load(f)
 
+            config_errors = []
             if not config_version_ok(new_data or {}):
-                logger.error("config_watcher: reload skipped — %s", CONFIG_VERSION_ERROR)
+                config_errors.append(CONFIG_VERSION_ERROR)
+            config_errors.extend(removed_config_key_errors(new_data or {}))
+            if config_errors:
+                logger.error("config_watcher: reload skipped — %s", "; ".join(config_errors))
                 continue
 
             with app.app_context():

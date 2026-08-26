@@ -153,8 +153,14 @@ def test_watcher_reloads_config_on_mtime_change(app, tmp_path, restore_config):
         assert app.config.get("APP_NAME") == "Reloaded"
 
 
-def test_watcher_skips_reload_of_old_config_version(app, tmp_path, restore_config, caplog):
-    """A reload with version < 3 is skipped with an error; the running config is untouched."""
+@pytest.mark.parametrize(("bad_data", "expected_error"), [
+    ({"version": 2, "app": {"name": "OldVersion"}}, "version: 3"),
+    ({"version": 3, "groups": {}, "app": {"name": "RemovedPolicy"}}, "groups:"),
+])
+def test_watcher_skips_invalid_config(
+    app, tmp_path, restore_config, caplog, bad_data, expected_error,
+):
+    """An incompatible reload is skipped and leaves the running config untouched."""
     from unittest.mock import patch
 
     import yaml
@@ -162,7 +168,7 @@ def test_watcher_skips_reload_of_old_config_version(app, tmp_path, restore_confi
     from lumen.services.config_watcher import _watcher
 
     config_file = tmp_path / "config.yaml"
-    config_file.write_text(yaml.dump({"version": 2, "app": {"name": "OldVersion"}}))
+    config_file.write_text(yaml.dump(bad_data))
     with app.app_context():
         app.config["APP_NAME"] = "Original"
 
@@ -196,7 +202,7 @@ def test_watcher_skips_reload_of_old_config_version(app, tmp_path, restore_confi
 
     with app.app_context():
         assert app.config.get("APP_NAME") == "Original"
-    assert any("version: 3" in r.getMessage() for r in caplog.records)
+    assert any(expected_error in r.getMessage() for r in caplog.records)
 
 
 def test_watcher_skips_when_mtime_unchanged(app, tmp_path, restore_config):
@@ -412,6 +418,32 @@ def test_create_app_refuses_non_numeric_config_version(tmp_path, monkeypatch, ca
     with pytest.raises(SystemExit):
         create_app()
     assert "config.yaml must declare 'version: 3'" in capsys.readouterr().err
+
+
+def test_create_app_refuses_removed_config_keys(tmp_path, monkeypatch, capsys):
+    """Version 3 cannot boot while version-2 database policy remains in YAML."""
+    import yaml as _yaml
+
+    cfg = tmp_path / "removed-keys.yaml"
+    cfg.write_text(_yaml.dump({
+        "version": 3,
+        "groups": {"staff": {"rules": [{"field": "affiliation", "contains": "staff"}]}},
+        "models": [{
+            "name": "m",
+            "input_cost_per_million": 0,
+            "output_cost_per_million": 0,
+        }],
+    }))
+    import config as config_module
+
+    monkeypatch.setattr(config_module.Config, "CONFIG_YAML", str(cfg))
+    from lumen import create_app
+
+    with pytest.raises(SystemExit):
+        create_app()
+    error = capsys.readouterr().err
+    assert "removed key 'groups:'" in error
+    assert "App cannot start" in error
 
 
 @pytest.mark.parametrize("weak_key", ["secret_key", "encryption_key"])
@@ -767,6 +799,29 @@ def test_validate_config_accepts_model_without_endpoints():
     cfg = _valid_config()
     del cfg["models"][0]["endpoints"]
     assert validate_config_structure(cfg) == []
+
+
+@pytest.mark.parametrize("key", ["clients", "group_rules", "groups", "projects", "users"])
+def test_validate_config_rejects_removed_top_level_keys(key):
+    from lumen.services.config_watcher import validate_config_structure
+    cfg = _valid_config()
+    cfg[key] = {}
+    assert any(f"'{key}:'" in error for error in validate_config_structure(cfg))
+
+
+@pytest.mark.parametrize("key", ["access", "blacklist", "graylist", "model_access", "whitelist"])
+def test_validate_config_rejects_removed_model_policy_keys(key):
+    from lumen.services.config_watcher import validate_config_structure
+    cfg = _valid_config()
+    cfg["models"][0][key] = "allowed"
+    assert any(f"m.{key}" in error for error in validate_config_structure(cfg))
+
+
+def test_validate_config_rejects_removed_default_model_access():
+    from lumen.services.config_watcher import validate_config_structure
+    cfg = _valid_config()
+    cfg["defaults"] = {"models": {"access": "allowed"}}
+    assert any("defaults.models.access" in error for error in validate_config_structure(cfg))
 
 
 def test_validate_config_rejects_missing_version():
