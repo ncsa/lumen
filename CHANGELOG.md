@@ -6,6 +6,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Changed
 
+- New chat sessions show a dismissible notice that the built-in chat is for quick interactions only, linking to the connect page for a full-featured client. (#15)
 - `GET /v1/models` and `GET /v1/models/{id}` no longer count against the per-key API rate limit.
 - Config editor no longer downgrades the saved config to `version: 2`; it preserves the loaded version so version 3 configs stay bootable.
 

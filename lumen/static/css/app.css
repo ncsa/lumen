@@ -152,6 +152,27 @@
     margin: 0.4rem 0;
 }
 
+/* ── Quick-chat notice ──────────────────────────────────────── */
+.quick-chat-notice {
+    display: flex;
+    flex-direction: column;
+    max-width: 34rem;
+    margin: 1rem auto;
+    padding: 0.9rem 1rem;
+    border: 1px solid #dee2e6;
+    border-left: 3px solid #13294b;
+    border-radius: 6px;
+    background: #fff;
+    color: #495057;
+    font-size: 0.92rem;
+}
+.quick-chat-notice p {
+    margin-bottom: 0.35rem;
+}
+.quick-chat-notice .btn-close {
+    align-self: flex-end;
+}
+
 /* ── Message metadata & info icon ────────────────────────────── */
 .msg-meta {
     font-size: 0.82rem;
