@@ -99,6 +99,7 @@
   }
 
   function showQuickChatNotice() {
+    if (quickChatNoticeDismissed()) return;
     const container = document.getElementById("chat-messages");
     if (container.querySelector("#quick-chat-notice")) return;
     const notice = document.createElement("div");
@@ -140,7 +141,7 @@
   }
 
   function initQuickChatNotice() {
-    if (!quickChatNoticeDismissed()) showQuickChatNotice();
+    showQuickChatNotice();
   }
 
   // ── Chat layout height ───────────────────────────────────────

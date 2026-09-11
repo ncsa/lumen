@@ -35,3 +35,15 @@ def test_notice_dismissal_stored_in_localstorage():
 
 def test_notice_links_to_connect_page():
     assert "url_for('connect.index')" in _script()
+
+
+def test_show_notice_guards_on_dismissal():
+    # Every path that shows the notice (initial load, "+ New", delete) goes
+    # through showQuickChatNotice(), so the dismissal check must live inside
+    # it — not just in initQuickChatNotice() — or dismissing the notice would
+    # not stick when starting a new conversation.
+    script = _script()
+    show_start = script.index("function showQuickChatNotice()")
+    show_end = script.index("function hideQuickChatNotice()")
+    show_body = script[show_start:show_end]
+    assert "quickChatNoticeDismissed()" in show_body
