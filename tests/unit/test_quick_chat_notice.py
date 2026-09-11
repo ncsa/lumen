@@ -5,6 +5,7 @@ chat.html, carries role="note" / aria-label for accessibility, links to the
 connect page, and its dismissal is remembered in localStorage so it does not
 reappear on every visit.
 """
+import re
 from pathlib import Path
 
 LUMEN_DIR = Path(__file__).resolve().parents[2] / "lumen"
@@ -16,25 +17,31 @@ def _script():
 
 
 def test_notice_rendered_with_note_role():
-    assert _script().count('notice.setAttribute("role", "note")') == 1
+    assert re.search(r'notice\.setAttribute\(\s*["\']role["\']\s*,\s*["\']note["\']\s*\)', _script())
 
 
 def test_notice_has_accessibility_label():
-    assert 'aria-label", "This chat is for quick interactions only"' in _script()
+    assert re.search(
+        r'notice\.setAttribute\(\s*["\']aria-label["\']\s*,\s*["\']This chat is for quick interactions only["\']\s*\)',
+        _script(),
+    )
 
 
 def test_notice_dismiss_button_is_labelled():
-    assert 'aria-label", "Dismiss notice"' in _script()
+    assert re.search(
+        r'dismiss\.setAttribute\(\s*["\']aria-label["\']\s*,\s*["\']Dismiss notice["\']\s*\)',
+        _script(),
+    )
 
 
 def test_notice_dismissal_stored_in_localstorage():
-    assert 'const NOTICE_STORAGE_KEY = "lumen_quick_chat_notice_dismissed"' in _script()
-    assert 'localStorage.setItem(NOTICE_STORAGE_KEY, "1"' in _script()
-    assert 'localStorage.getItem(NOTICE_STORAGE_KEY) === "1"' in _script()
+    assert re.search(r'NOTICE_STORAGE_KEY\s*=\s*["\']lumen_quick_chat_notice_dismissed["\']', _script())
+    assert re.search(r'localStorage\.setItem\(\s*NOTICE_STORAGE_KEY\s*,\s*["\']1["\']', _script())
+    assert re.search(r'localStorage\.getItem\(\s*NOTICE_STORAGE_KEY\s*\)\s*===\s*["\']1["\']', _script())
 
 
 def test_notice_links_to_connect_page():
-    assert "url_for('connect.index')" in _script()
+    assert re.search(r"url_for\(['\"]connect\.index['\"]\)", _script())
 
 
 def test_show_notice_guards_on_dismissal():
@@ -47,3 +54,12 @@ def test_show_notice_guards_on_dismissal():
     show_end = script.index("function hideQuickChatNotice()")
     show_body = script[show_start:show_end]
     assert "quickChatNoticeDismissed()" in show_body
+
+
+def test_dismiss_moves_focus_to_chat_input():
+    # After dismissal, focus must not fall to <body>; send it to the input.
+    script = _script()
+    dismiss_start = script.index("dismiss.addEventListener")
+    dismiss_end = script.index("notice.appendChild(dismiss)")
+    dismiss_body = script[dismiss_start:dismiss_end]
+    assert re.search(r'getElementById\(\s*["\']chat-input["\']\s*\)\.focus\(\)', dismiss_body)

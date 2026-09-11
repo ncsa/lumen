@@ -129,6 +129,7 @@
     dismiss.addEventListener("click", () => {
       localStorage.setItem(NOTICE_STORAGE_KEY, "1");
       notice.remove();
+      document.getElementById("chat-input").focus();
     });
     notice.appendChild(dismiss);
 
