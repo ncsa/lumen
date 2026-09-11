@@ -292,7 +292,6 @@ def api_key_required(f):
 
 @api_bp.route("/models", methods=["GET"])
 @api_key_required
-@limiter.limit(_api_limit, key_func=_api_key_id)
 def list_models():
     configs = db.session.execute(select(ModelConfig).where(ModelConfig.active)).scalars().all()
     eps_by_model: dict = {}
@@ -325,7 +324,6 @@ def list_models():
 
 @api_bp.route("/models/<model_id>", methods=["GET"])
 @api_key_required
-@limiter.limit(_api_limit, key_func=_api_key_id)
 def get_model(model_id):
     config = db.session.execute(select(ModelConfig).where(ModelConfig.model_name == model_id, ModelConfig.active)).scalar_one_or_none()
     if not config:

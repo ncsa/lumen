@@ -280,7 +280,7 @@ If you send too many requests too quickly, the API returns:
 HTTP 429 Too Many Requests
 ```
 
-Wait a moment and retry. The Usage page shows your recent request volume so you can gauge how close you are to the limit.
+Wait a moment and retry. The Usage page shows your recent request volume so you can gauge how close you are to the limit. Listing models (`GET /v1/models` and `GET /v1/models/{id}`) does not count against the limit, so a client that lists models before every completion is not penalised for it.
 
 A `429` is also returned when your coin budget is exhausted, which needs the opposite
 reaction — retrying shortly will not help until the budget refills. The two are told

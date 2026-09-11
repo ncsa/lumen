@@ -169,7 +169,7 @@ async function loadConfig() {
     const resp = await fetch('{{ url_for("admin.config_api_get") }}');
     if (!resp.ok) throw new Error(resp.statusText);
     const data = await resp.json();
-    normalizeLegacyConfig(data);   // migrate v1 forms so the editor (and save) use v2
+    normalizeLegacyConfig(data);   // migrate v1 forms so the editor (and save) use the current version
     state.data = data;
     state.original = clone(data);
     buildNav();
@@ -221,7 +221,9 @@ function findRestartChanges(oldData, newData) {
 }
 
 function orderedData() {
-  const ordered = { version: 2 };
+  const next = {};
+  if ('version' in state.data) next.version = state.data.version;
+  const ordered = next;
   for (const s of SECTIONS) { if (s.id in state.data) ordered[s.id] = state.data[s.id]; }
   // Preserve any top-level keys not owned by a section.
   for (const k of Object.keys(state.data)) { if (!(k in ordered)) ordered[k] = state.data[k]; }

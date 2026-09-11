@@ -1574,3 +1574,13 @@ def test_expired_model_get_404(
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+def test_list_models_is_not_rate_limited(app, client, test_user, test_model, api_key, fresh_rate_limit):
+    """/v1/models is a read-only lookup that clients call before every
+    completion; it must not consume the per-key completion budget."""
+    token, _ = api_key
+    headers = {"Authorization": f"Bearer {token}"}
+    for _ in range(40):
+        assert client.get("/v1/models", headers=headers).status_code == HTTPStatus.OK
+        assert client.get(f"/v1/models/{test_model['model_name']}", headers=headers).status_code != HTTPStatus.TOO_MANY_REQUESTS

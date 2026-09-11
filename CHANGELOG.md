@@ -2,6 +2,13 @@
 
 All notable changes to Lumen will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- `GET /v1/models` and `GET /v1/models/{id}` no longer count against the per-key API rate limit.
+- Config editor no longer downgrades the saved config to `version: 2`; it preserves the loaded version so version 3 configs stay bootable.
+
 ## [2.0.0] - 2026-08-25
 
 **Breaking configuration change:** Lumen 2.0 requires config version 3. The `groups`, `users`, and `clients`/`projects` sections are no longer managed in `config.yaml`; their records, memberships, limits, and access settings are now database-backed and managed through the Lumen UI. Before upgrading, save the existing `groups.*.rules` values and remove the legacy configuration sections so version 3 passes startup validation. After starting 2.0, log in with an account listed under `admins`, recreate and enable each group's auto-join rules from its Rules tab, and verify them before allowing regular users to sign in.

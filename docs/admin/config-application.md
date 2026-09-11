@@ -160,7 +160,7 @@ chat:
 
 ## rate_limiting
 
-Controls how many API requests each user can make:
+Controls how many API requests each user can make (the read-only `/v1/models` lookups are exempt):
 
 ```yaml
 rate_limiting:

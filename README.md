@@ -351,7 +351,7 @@ chat:
 
 ### Rate limiting
 
-All endpoints are rate-limited per authenticated user (API key ID for `/v1/*` routes, session user ID for `/chat/*` routes). The limit is a single string in flask-limiter notation (`N per second/minute/hour`):
+All endpoints are rate-limited per authenticated user (API key ID for `/v1/*` routes, session user ID for `/chat/*` routes), except the read-only `GET /v1/models` and `GET /v1/models/{id}` lookups, which are not counted. The limit is a single string in flask-limiter notation (`N per second/minute/hour`):
 
 ```yaml
 rate_limiting:
