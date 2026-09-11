@@ -88,6 +88,61 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
 <script>
 (function () {
+  const CONNECT_URL = "{{ url_for('connect.index') }}";
+  const NOTICE_STORAGE_KEY = "lumen_quick_chat_notice_dismissed";
+
+  // ── Quick-chat notice ────────────────────────────────────────
+  // Shown only while the chat is empty (a brand-new session). It is replaced
+  // by the conversation the moment a chat starts or a saved one is opened.
+  function quickChatNoticeDismissed() {
+    return localStorage.getItem(NOTICE_STORAGE_KEY) === "1";
+  }
+
+  function showQuickChatNotice() {
+    const container = document.getElementById("chat-messages");
+    if (container.querySelector("#quick-chat-notice")) return;
+    const notice = document.createElement("div");
+    notice.id = "quick-chat-notice";
+    notice.className = "quick-chat-notice";
+    notice.setAttribute("role", "note");
+    notice.setAttribute("aria-label", "This chat is for quick interactions only");
+
+    const p = document.createElement("p");
+    p.textContent = "This chat is intended for quick interactions, not as a full-featured chat client.";
+    notice.appendChild(p);
+
+    const p2 = document.createElement("p");
+    p2.className = "mb-0";
+    p2.appendChild(document.createTextNode("For advanced features, "));
+    const link = document.createElement("a");
+    link.href = CONNECT_URL;
+    link.textContent = "connect a dedicated client to the API";
+    p2.appendChild(link);
+    p2.appendChild(document.createTextNode("."));
+    notice.appendChild(p2);
+
+    const dismiss = document.createElement("button");
+    dismiss.type = "button";
+    dismiss.className = "btn-close btn-close-sm mt-1";
+    dismiss.setAttribute("aria-label", "Dismiss notice");
+    dismiss.addEventListener("click", () => {
+      localStorage.setItem(NOTICE_STORAGE_KEY, "1");
+      notice.remove();
+    });
+    notice.appendChild(dismiss);
+
+    container.appendChild(notice);
+  }
+
+  function hideQuickChatNotice() {
+    const notice = document.getElementById("quick-chat-notice");
+    if (notice) notice.remove();
+  }
+
+  function initQuickChatNotice() {
+    if (!quickChatNoticeDismissed()) showQuickChatNotice();
+  }
+
   // ── Chat layout height ───────────────────────────────────────
   const el = document.querySelector('.chat-page-layout');
   if (el) {
@@ -251,11 +306,13 @@
     chatHistory = [];
     document.getElementById("chat-messages").innerHTML = "";
     document.querySelectorAll(".conv-item").forEach(el => el.classList.remove("active"));
+    showQuickChatNotice();
   });
 
 
   // ── Load conversations on page load ─────────────────────────────
   loadConversations();
+  initQuickChatNotice();
 
   let _lastConvId = null;
 
@@ -375,6 +432,7 @@
         activeConversationId = null;
         chatHistory = [];
         document.getElementById("chat-messages").innerHTML = "";
+        showQuickChatNotice();
       }
       loadConversations();
       document.getElementById("new-chat-btn").focus();
@@ -693,6 +751,7 @@
     document.getElementById("file-input").value = "";
 
     input.value = "";
+    hideQuickChatNotice();
     chatHistory.push({ role: "user", content });
     appendBubble("user", content, null, null, true, attachedForDisplay);
     addTypingIndicator();
