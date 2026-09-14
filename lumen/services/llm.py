@@ -948,7 +948,7 @@ def _send_message_stream(app, messages, model, entity_id, source, effective, dis
     with app.app_context():
         if model_config_id is not None:
             config = db.session.get(ModelConfig, model_config_id)
-            if config is None:
+            if config is None or not config.active:
                 raise ValueError(f"Unknown or inactive model: {model}")
         else:
             config = resolve_model_config(model)

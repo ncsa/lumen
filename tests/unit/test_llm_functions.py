@@ -522,6 +522,82 @@ def test_stream_uses_authorized_canonical_model_after_alias_retarget(app):
         assert created.call_args.kwargs["model"] == "auth-remote"
 
 
+def test_stream_rejects_pinned_model_disabled_after_preflight(app):
+    """A canonical model pinned at preflight that is disabled before the
+    generator runs must be rejected, never sent to upstream.
+
+    The view resolves and authorizes the canonical id once, then threads it
+    into send_message_stream as ``model_config_id``. If the row is disabled or
+    expired after preflight, the generator must refuse to select an endpoint
+    rather than send the request to the model's (still healthy) backend.
+    """
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        from lumen.services.llm import send_message_stream
+
+        pinned = ModelConfig(
+            model_name="pinned-model",
+            input_cost_per_million=1.0, output_cost_per_million=2.0,
+        )
+        db.session.add(pinned)
+        db.session.commit()
+        pinned_id = pinned.id
+
+        # Model becomes hard-disabled after the preflight access check.
+        db.session.get(ModelConfig, pinned_id).disabled = True
+        db.session.commit()
+
+        reached_endpoint = False
+
+        def _assert_not_reached(model_config_id):
+            nonlocal reached_endpoint
+            reached_endpoint = True
+            raise AssertionError("request reached endpoint selection for a disabled model")
+
+        from unittest.mock import patch
+        with patch("lumen.services.llm.get_next_endpoint", _assert_not_reached):
+            with pytest.raises(ValueError, match="Unknown or inactive model"):
+                list(send_message_stream([], "pinned-model", model_config_id=pinned_id))
+        assert reached_endpoint is False
+
+
+def test_stream_rejects_pinned_model_past_end_date_after_preflight(app):
+    """A canonical model whose end date passes after preflight is rejected."""
+    from datetime import timedelta
+
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        from lumen.services.llm import send_message_stream
+        from lumen.timeutils import utcnow
+
+        pinned = ModelConfig(
+            model_name="pinned-expiring-model",
+            input_cost_per_million=1.0, output_cost_per_million=2.0,
+        )
+        db.session.add(pinned)
+        db.session.commit()
+        pinned_id = pinned.id
+
+        # The model's end date passes after the preflight access check.
+        db.session.get(ModelConfig, pinned_id).end_date = utcnow() - timedelta(days=1)
+        db.session.commit()
+
+        from unittest.mock import patch
+        reached_endpoint = False
+
+        def _assert_not_reached(model_config_id):
+            nonlocal reached_endpoint
+            reached_endpoint = True
+            raise AssertionError("request reached endpoint selection for an expired model")
+
+        with patch("lumen.services.llm.get_next_endpoint", _assert_not_reached):
+            with pytest.raises(ValueError, match="Unknown or inactive model"):
+                list(send_message_stream([], "pinned-expiring-model", model_config_id=pinned_id))
+        assert reached_endpoint is False
+
+
 def test_stream_yields_content_chunks(app, test_model_endpoint):
     model_name = "test-model"
     chunks = [
