@@ -3,7 +3,7 @@ import re
 from http import HTTPStatus
 from pathlib import Path
 
-from flask import Blueprint, abort, render_template, send_from_directory
+from flask import Blueprint, abort, has_request_context, render_template, request, send_from_directory
 
 help_bp = Blueprint("help_bp", __name__, url_prefix="/help")
 
@@ -48,6 +48,21 @@ _SLUG_MAP, _FILE_SLUG_MAP = _build_maps()
 
 _LINK_RE = re.compile(r'(!?)\[([^\]]*)\]\((?!https?://|/)([^)]+)\)')
 _IMG_DIR = DOCS_DIR / "img"
+
+#: Placeholder host used in the docs' examples; replaced with this instance's
+#: real URL when the page is served through the application.
+_PLACEHOLDER_HOST = "https://lumen.example.com"
+
+
+def _substitute_actual_host(content):
+    """Replace the docs' example host with this instance's own host when serving.
+
+    Outside a request (e.g. the raw docs on GitHub or in tests) the content is
+    returned unchanged.
+    """
+    if not has_request_context():
+        return content
+    return content.replace(_PLACEHOLDER_HOST, request.host_url.rstrip("/"))
 
 
 def _slug_url(slug):
@@ -104,6 +119,7 @@ def index_page():
     if path is None:
         abort(HTTPStatus.NOT_FOUND)
     title, content = _read_markdown(path)
+    content = _substitute_actual_host(content)
     return render_template("help.html", title=title, page_content=content,
                            sections=DOC_NAV, current_slug="")
 
@@ -114,5 +130,6 @@ def page(slug):
     if path is None:
         abort(HTTPStatus.NOT_FOUND)
     title, content = _read_markdown(path)
+    content = _substitute_actual_host(content)
     return render_template("help.html", title=title, page_content=content,
                            sections=DOC_NAV, current_slug=slug)

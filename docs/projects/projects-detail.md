@@ -76,7 +76,7 @@ from openai import OpenAI
 
 project = OpenAI(
     api_key="sk_project_key_here",
-    base_url="https://your-lumen-instance/v1"
+    base_url="https://lumen.example.com/v1"
 )
 
 response = project.chat.completions.create(

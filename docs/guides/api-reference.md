@@ -6,7 +6,7 @@ Lumen exposes an **OpenAI-compatible REST API** at `/v1/`. Any tool or library t
 
 ## Base URL and Authentication
 
-Replace `https://your-lumen-instance` with your institution's Lumen URL. All requests require an `Authorization` header:
+Replace `https://lumen.example.com` with your institution's Lumen URL. All requests require an `Authorization` header:
 
 ```
 Authorization: Bearer sk_your_api_key_here
@@ -30,7 +30,7 @@ See [Profile → API Keys](../guides/profile.md#api-keys) to create a key.
 ## List Models
 
 ```bash
-curl https://your-lumen-instance/v1/models \
+curl https://lumen.example.com/v1/models \
   -H "Authorization: Bearer sk_your_api_key_here"
 ```
 
@@ -43,7 +43,7 @@ Returns a list of model IDs you can use in chat completion requests.
 ### Basic request (curl)
 
 ```bash
-curl https://your-lumen-instance/v1/chat/completions \
+curl https://lumen.example.com/v1/chat/completions \
   -H "Authorization: Bearer sk_your_api_key_here" \
   -H "Content-Type: application/json" \
   -d '{
@@ -63,7 +63,7 @@ from openai import OpenAI
 
 client = OpenAI(
     api_key="sk_your_api_key_here",
-    base_url="https://your-lumen-instance/v1"
+    base_url="https://lumen.example.com/v1"
 )
 
 response = client.chat.completions.create(
@@ -83,7 +83,7 @@ from openai import OpenAI
 
 client = OpenAI(
     api_key="sk_your_api_key_here",
-    base_url="https://your-lumen-instance/v1"
+    base_url="https://lumen.example.com/v1"
 )
 
 history = []
@@ -109,7 +109,7 @@ from openai import OpenAI
 
 client = OpenAI(
     api_key="sk_your_api_key_here",
-    base_url="https://your-lumen-instance/v1"
+    base_url="https://lumen.example.com/v1"
 )
 
 with client.chat.completions.stream(
@@ -143,7 +143,7 @@ import OpenAI from "openai";
 
 const client = new OpenAI({
   apiKey: "sk_your_api_key_here",
-  baseURL: "https://your-lumen-instance/v1",
+  baseURL: "https://lumen.example.com/v1",
 });
 
 const response = await client.chat.completions.create({
@@ -163,7 +163,7 @@ import OpenAI from "openai";
 
 const client = new OpenAI({
   apiKey: "sk_your_api_key_here",
-  baseURL: "https://your-lumen-instance/v1",
+  baseURL: "https://lumen.example.com/v1",
 });
 
 const stream = await client.chat.completions.stream({
@@ -188,7 +188,7 @@ client = OpenAI(api_key="sk-...")
 # After (Lumen)
 client = OpenAI(
     api_key="sk_your_lumen_key",
-    base_url="https://your-lumen-instance/v1"
+    base_url="https://lumen.example.com/v1"
 )
 ```
 
@@ -212,7 +212,7 @@ Lumen proxies OpenAI-compatible **speech-to-text** endpoints for backends that s
 ### curl
 
 ```bash
-curl https://your-lumen-instance/v1/audio/transcriptions \
+curl https://lumen.example.com/v1/audio/transcriptions \
   -H "Authorization: Bearer sk_your_api_key_here" \
   -F file=@speech.flac \
   -F model=qwen3-asr \
@@ -224,7 +224,7 @@ curl https://your-lumen-instance/v1/audio/transcriptions \
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="https://your-lumen-instance/v1", api_key="sk_your_api_key_here")
+client = OpenAI(base_url="https://lumen.example.com/v1", api_key="sk_your_api_key_here")
 
 with open("speech.flac", "rb") as f:
     result = client.audio.transcriptions.create(model="qwen3-asr", file=f)
@@ -246,7 +246,7 @@ Speech-to-text models are billed **per hour of audio**. Lumen reads the upstream
 Many desktop and web chat applications support custom OpenAI-compatible endpoints. Look for a setting labelled **API Base URL**, **Custom endpoint**, or **OpenAI-compatible server** and enter:
 
 ```
-https://your-lumen-instance/v1
+https://lumen.example.com/v1
 ```
 
 Then paste your `sk_...` key as the API key. Common tools that support this pattern include Jan, Open WebUI, Msty, and most AI IDE extensions.

@@ -18,6 +18,15 @@ def test_help_valid_slug(client):
     assert resp.status_code == HTTPStatus.OK
 
 
+def test_help_served_docs_replace_example_host(client):
+    """Served help pages substitute the user-facing host for lumen.example.com."""
+    resp = client.get("/help/api")
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.data.decode()
+    assert "https://lumen.example.com" not in body
+    assert "http://localhost/v1" in body
+
+
 def test_help_connect_has_desktop_clients_anchor(client):
     """The Connect guide renders the "Desktop chat clients" heading with the
     fragment id the chat notice links to (chat.html #desktop-chat-clients)."""
@@ -106,3 +115,35 @@ def test_rewrite_md_links_unknown_image(tmp_path):
     content = "![alt](../somewhere/image.png)"
     result = _rewrite_md_links(content, fake_file)
     assert result == content
+
+
+def test_substitute_actual_host_during_request(app):
+    """The example host is replaced with the app's own host while serving."""
+    from lumen.blueprints.help.routes import _substitute_actual_host
+
+    with app.test_request_context():
+        from flask import request
+
+        result = _substitute_actual_host("curl https://lumen.example.com/v1/models")
+        assert "https://lumen.example.com" not in result
+        assert result == f"curl {request.host_url.rstrip('/')}/v1/models"
+
+
+def test_docs_use_consistent_example_host():
+    """Every docs page uses https://lumen.example.com, never a variant host."""
+    from lumen.blueprints.help.routes import DOCS_DIR, _nav_entries
+
+    offenders = []
+    for _, section, filename in _nav_entries():
+        if not filename:
+            continue
+        path = DOCS_DIR / section / filename
+        if not path.is_file():
+            path = DOCS_DIR / filename
+        text = path.read_text(encoding="utf-8")
+        if "your-lumen-instance" in text:
+            offenders.append(str(path))
+        for line in text.splitlines():
+            if "lumen.example.com" in line and "https://lumen.example.com" not in line:
+                offenders.append(f"{path}: {line}")
+    assert not offenders, f"inconsistent example host references:\n{chr(10).join(offenders)}"
