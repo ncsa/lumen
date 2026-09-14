@@ -18,6 +18,14 @@ def test_help_valid_slug(client):
     assert resp.status_code == HTTPStatus.OK
 
 
+def test_help_connect_has_desktop_clients_anchor(client):
+    """The Connect guide renders the "Desktop chat clients" heading with the
+    fragment id the chat notice links to (chat.html #desktop-chat-clients)."""
+    resp = client.get("/help/connect")
+    assert resp.status_code == HTTPStatus.OK
+    assert b'id="desktop-chat-clients"' in resp.data
+
+
 def test_help_unknown_slug_returns_404(client):
     resp = client.get("/help/does-not-exist-ever")
     assert resp.status_code == HTTPStatus.NOT_FOUND

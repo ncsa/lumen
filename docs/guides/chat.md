@@ -4,7 +4,7 @@ The **Chat** page (`/chat`) is the main interface for interacting with AI models
 
 ![Chat page](../img/chat.png)
 
-When you start a new conversation, a notice explains that the built-in chat is intended for quick, lightweight interactions rather than a full-featured chat client, and links to the [Connect](connect.md) page for using a dedicated client with the API. The notice disappears once you send a message.
+When you start a new conversation, a notice explains that the built-in chat is intended for quick, lightweight interactions rather than a full-featured chat client, and links to the [Desktop chat clients](connect.md#desktop-chat-clients) section of the Connect guide for using a dedicated client with the API. The notice disappears once you send a message.
 
 ## Page Layout
 

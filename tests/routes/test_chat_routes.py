@@ -509,6 +509,14 @@ def test_chat_page_shows_needs_ack_model_with_coin_pool(
     assert test_model["model_name"].encode() in resp.data
 
 
+def test_chat_notice_links_to_desktop_clients_header(auth_client):
+    """The quick-chat notice links to the "Desktop chat clients" section of the
+    Connect guide (/help/connect#desktop-chat-clients), not the connect page."""
+    resp = auth_client.get("/chat")
+    assert resp.status_code == HTTPStatus.OK
+    assert b"/help/connect#desktop-chat-clients" in resp.data
+
+
 def test_chat_stream_disconnect_is_not_reported_as_empty_response(
     app, auth_client, test_user, test_model, monkeypatch,
 ):

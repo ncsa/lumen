@@ -2,9 +2,9 @@
 
 The notice is injected into the empty chat session via the inline script in
 chat.html, carries role="note" / aria-label for accessibility, and links to the
-connect page. It has no close button: it simply disappears once the first chat
-message is sent (hideQuickChatNotice()), so there is nothing to remember in
-localStorage.
+"Desktop chat clients" header of the Connect guide. It has no close button: it
+simply disappears once the first chat message is sent
+(hideQuickChatNotice()), so there is nothing to remember in localStorage.
 """
 
 import re
@@ -59,7 +59,11 @@ def test_notice_disappears_on_first_message():
     assert "hideQuickChatNotice()" in send_body
 
 
-def test_notice_links_to_connect_page():
-    # The "connect a dedicated client" link is wired to the connect page.
+def test_notice_links_to_desktop_clients_guide_header():
+    # The "connect a dedicated client" link points at the "Desktop chat
+    # clients" header of the Connect guide rather than the connect page.
     assert "link.href = CONNECT_URL" in _notice_build()
-    assert re.search(r"url_for\(['\"]connect\.index['\"]\)", _script())
+    assert re.search(
+        r"""url_for\(['"]help_bp\.page['"]\s*,\s*slug\s*=\s*['"]connect['"]\)\s*\}\}#desktop-chat-clients""",
+        _script(),
+    )
