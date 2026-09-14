@@ -29,6 +29,7 @@ The owner and admins also get **Deactivate** / **Activate** here, and an **Edit*
 The **Members** tab lists every user and project in the group, with the date each member joined (a dash for memberships older than this feature). The table is sortable by name, email, type, or join date, and paginated — use the Display selector and the search box for large groups.
 
 - The owner carries an **Owner** badge.
+- For **administrators**, each user member's name links to that user's profile page (admin mode), where their usage, model access, and limits can be viewed.
 - In an **auto-join group**, membership is entirely rule-driven: there is no owner, and nobody — not even an administrator — adds or removes members by hand. Change the rules instead; the change takes effect at each member's next sign-in.
 
 ### Adding a Member

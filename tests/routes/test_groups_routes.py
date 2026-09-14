@@ -506,6 +506,31 @@ def test_members_data_lists_owner_flag(auth_client, owned_group, test_user):
     assert rows[0]["type"] == "user"
 
 
+def test_members_data_user_profile_url_for_admin(admin_client, owned_group, test_user):
+    """Admins get a profile_url on each user member so their names link to the
+    user's profile page."""
+    rows = admin_client.get(f"/groups/{owned_group}/members/data").get_json()["members"]
+    assert rows[0]["id"] == test_user["id"]
+    assert rows[0]["profile_url"] == f"/admin/users/{test_user['id']}/profile"
+
+
+def test_members_data_profile_url_hidden_from_member(auth_client, owned_group, test_user, test_project):
+    """Project members and user names are not linked to profiles for anyone but
+    admins (the profile route is admin-only)."""
+    auth_client.post(f"/groups/{owned_group}/members", json={"entity_id": test_project["id"]})
+    rows = auth_client.get(f"/groups/{owned_group}/members/data").get_json()["members"]
+    assert {m["type"] for m in rows} == {"project", "user"}
+    assert all(m["profile_url"] is None for m in rows)
+
+
+def test_members_data_project_member_has_no_profile_url(admin_client, owned_group, test_project):
+    """A project member (not a user) never gets a profile link, even for admins."""
+    admin_client.post(f"/groups/{owned_group}/members", json={"entity_id": test_project["id"]})
+    rows = admin_client.get(f"/groups/{owned_group}/members/data").get_json()["members"]
+    proj = next(m for m in rows if m["type"] == "project")
+    assert proj["profile_url"] is None
+
+
 def test_members_data_forbidden_for_non_member(auth_client, app):
     gid = _make_group(app, name="closed")
     assert auth_client.get(f"/groups/{gid}/members/data").status_code == HTTPStatus.FORBIDDEN

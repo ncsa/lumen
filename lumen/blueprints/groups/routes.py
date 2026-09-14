@@ -677,6 +677,14 @@ def members_data(gid):
     total = db.session.scalar(count_stmt)
     rows = db.session.execute(stmt.offset((page - 1) * per_page).limit(per_page)).all()
 
+    # Only an admin may view another user's profile page (the route is
+    # admin-only), and only users have profiles — projects link to their own
+    # detail page. So user names are linked to profiles for admins only.
+    admin = is_admin(entity)
+
+    def member_url(e: Entity) -> str | None:
+        return url_for("admin.user_profile", eid=e.id) if (admin and e.entity_type == "user") else None
+
     return jsonify({
         "members": [
             {
@@ -688,6 +696,7 @@ def members_data(gid):
                 "is_owner": m.is_owner,
                 "config_managed": m.config_managed,
                 "joined": m.joined_at.strftime("%Y-%m-%dT%H:%M:%SZ") if m.joined_at else None,
+                "profile_url": member_url(e),
             }
             for m, e in rows
         ],

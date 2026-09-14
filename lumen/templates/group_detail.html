@@ -549,6 +549,10 @@ document.querySelectorAll('#group-tabs [data-bs-toggle="tab"]').forEach(btn => {
 
         tbody.innerHTML = data.members.map(m => {
           const nameEsc = escHtml(m.name);
+          // Admins see user names linked to the user's profile page.
+          const nameCell = m.profile_url
+            ? `<a href="${escHtml(m.profile_url)}">${nameEsc}</a>`
+            : nameEsc;
           const ownerBadge = m.is_owner ? ' <span class="badge bg-primary ms-1">Owner</span>' : '';
           let actions = '';
           if (MEMBER_ACTIONS) {
@@ -564,7 +568,7 @@ document.querySelectorAll('#group-tabs [data-bs-toggle="tab"]').forEach(btn => {
             ? new Date(m.joined).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
             : '—';
           return `<tr>
-            <td>${nameEsc}${ownerBadge}</td>
+            <td>${nameCell}${ownerBadge}</td>
             <td>${m.email ? escHtml(m.email) : '—'}</td>
             <td><span class="badge bg-secondary">${escHtml(m.type)}</span></td>
             <td>${joined}</td>
