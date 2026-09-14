@@ -84,3 +84,12 @@ open_weights_models.csv
 reload.sh
 strix.sh
 strix_runs/
+
+# ignore todos
+todo-looper.sh
+/todo-looper/
+todo.md
+
+# monitoring
+monitor/
+monitoring/
