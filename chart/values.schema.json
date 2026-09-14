@@ -391,7 +391,8 @@
               "knowledgeCutoff": { "type": "string" },
               "supportsReasoning": { "type": "boolean" },
               "inputModalities": { "type": "array", "items": { "type": "string" } },
-              "outputModalities": { "type": "array", "items": { "type": "string" } }
+              "outputModalities": { "type": "array", "items": { "type": "string" } },
+              "aliases": { "type": "array", "items": { "type": "string" } }
             }
           }
         },

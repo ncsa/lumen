@@ -16,15 +16,19 @@ from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_group_access import ModelGroupAccess
 from lumen.models.request_log import RequestLog
 from lumen.services.llm import _consent_satisfied, bulk_model_access_info, get_model_access_status, model_notices
+from lumen.services.model_resolver import resolve_model_config
 
 models_page_bp = Blueprint("models_page", __name__)
 
 
 def _visible_model_or_404(model_name):
-    """Return an active model visible to the current entity, or hide its existence."""
-    config = db.first_or_404(
-        select(ModelConfig).where(ModelConfig.model_name == model_name, ModelConfig.active)
-    )
+    """Return an active model visible to the current entity, or hide its existence.
+
+    ``model_name`` may be the canonical name or one of its aliases; an alias
+    resolves to the canonical model so an old /models/<alias> deep link still
+    shows the (renamed/upgraded) model it points at.
+    """
+    config = resolve_model_config(model_name) or abort(HTTPStatus.NOT_FOUND)
     access_status = get_model_access_status(session["entity_id"], config.id)
     if access_status == "blocked":
         abort(HTTPStatus.NOT_FOUND)
@@ -107,6 +111,7 @@ def detail(model_name):
     return render_template(
         "model_detail.html",
         config=config,
+        aliases=sorted(a.alias for a in config.aliases),
         endpoints=endpoints,
         healthy_count=healthy_count,
         status=status,

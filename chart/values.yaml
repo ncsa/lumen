@@ -361,6 +361,7 @@ models: []
 #     supportsReasoning: true
 #     inputModalities: ["text", "image", "video"]
 #     outputModalities: ["text"]
+#     aliases: ["glm-5.2"]        # optional; old IDs that resolve to this model
 #     knowledgeCutoff: "2025-01"
 #
 # Example — external model (replicas=0):

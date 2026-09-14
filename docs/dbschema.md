@@ -70,6 +70,13 @@ erDiagram
         datetime created_at
     }
 
+    model_aliases {
+        int id PK
+        string alias
+        int model_config_id FK
+        datetime created_at
+    }
+
     entity_limits {
         int id PK
         int entity_id FK
@@ -231,6 +238,7 @@ erDiagram
     groups ||--o{ model_group_access : "granted"
 
     model_configs ||--o{ model_endpoints : "served by"
+    model_configs ||--o{ model_aliases : "versioned as"
     model_configs ||--o{ entity_model_consents : "consented via"
     model_configs ||--o{ model_group_access : "granted to"
     model_configs ||--o{ model_stats : "accumulates"
@@ -247,6 +255,7 @@ erDiagram
 - [api\_keys](#api_keys)
 - [model\_configs](#model_configs)
 - [model\_endpoints](#model_endpoints)
+- [model\_aliases](#model_aliases)
 - [entity\_limits](#entity_limits)
 - [entity\_balances](#entity_balances)
 - [entity\_model\_consents](#entity_model_consents)
@@ -359,6 +368,21 @@ Backend endpoint(s) for a model. A single `model_config` can fan out to multiple
 | `healthy` | Boolean | NO | Last known health status; updated by the health-check background task |
 | `last_checked_at` | DateTime | YES | UTC timestamp of the most recent health check; null if never checked |
 | `created_at` | DateTime | NO | UTC timestamp when the endpoint was added |
+
+---
+
+## model_aliases
+
+Backward-compatible alias names that resolve to a canonical [model\_configs](#model_configs) row. A client that requests an alias (e.g. `glm-5.2`) is routed to the canonical model it points at (e.g. `glm-5.3-flash`), so removed or renamed model IDs keep working after an upgrade. Aliases do not grant access or copy consent; the canonical model supplies all policy and capability information, so usage is recorded under the canonical `model_config_id` and history is preserved. See [Model aliases](admin/config-models.md#aliases).
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `id` | Integer | NO | Primary key |
+| `alias` | String(128) | NO | Name clients may request. Unique, and never equal to any canonical `model_configs.model_name`. |
+| `model_config_id` | Integer (FK → model_configs) | NO | The canonical model this alias resolves to. Cascades on delete. |
+| `created_at` | DateTime | NO | UTC timestamp when the alias was created |
+
+**Constraints:** `UNIQUE(alias)`; index `ix_model_aliases_model_config_id` on `model_config_id`
 
 ---
 
@@ -750,6 +774,7 @@ groups ──< group_members >── entities ──< api_keys
 model_configs ──< model_endpoints├──< model_stats
      │                           ├──< conversations ──< messages
      ├──> entities (owner_entity_id, SET NULL)
+     ├──< model_aliases
      ├──< model_group_access     └──< request_logs
      └──< model_stats / request_logs
 ```

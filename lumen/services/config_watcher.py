@@ -7,7 +7,7 @@ import bleach
 import yaml
 from markupsafe import Markup
 
-from lumen.commands import sync_models_from_yaml
+from lumen.commands import model_alias_config_errors, sync_models_from_yaml
 
 _ANNOUNCEMENT_ALLOWED_TAGS = {"a", "b", "br", "em", "i", "li", "ol", "p", "strong", "ul"}
 _ANNOUNCEMENT_ALLOWED_ATTRS = {"a": ["href", "title", "target"]}
@@ -112,6 +112,8 @@ def validate_config_structure(data) -> list:
                 errors.append(f"{label}: endpoints[{j}] missing required key 'url'")
             if "api_key" not in ep:
                 errors.append(f"{label}: endpoints[{j}] missing required key 'api_key'")
+    # Alias validation lives in lumen.commands and is shared with the CLI sync.
+    errors.extend(model_alias_config_errors(models))
     return errors
 
 # Shown when an early-access model is acknowledged; overridable via defaults.models.early_access_message.

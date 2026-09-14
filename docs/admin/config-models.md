@@ -68,6 +68,36 @@ Setting `disabled: true` blocks the model for everyone — it disappears from th
 
 Acknowledgement is a property of the model, not of any group or scope. Set `needs_ack: true` on the model and every user who has access to the model must acknowledge it once before using it.
 
+## Aliases
+
+`aliases` lets a model be reached under one or more extra names, so a renamed or upgraded model (e.g. `glm-5.2` → `glm-5.3-flash`) keeps working for clients that still request the old ID.
+
+```yaml
+- name: glm-5.3-flash
+  aliases:           # optional list of extra requestable names
+    - glm
+    - glm-5.2
+  input_cost_per_million: 1.233658
+  output_cost_per_million: 3.973593
+  endpoints:
+    - url: https://glm-cardassia.ncsa.cloud/v1
+      api_key: sk-your-key
+```
+
+| Field | Description |
+|-------|-------------|
+| `aliases` | Optional list of non-empty names that resolve to this model. Each alias points to exactly one canonical model — no alias chains or automatic version selection. |
+
+How aliases behave:
+
+- **They are just names.** Requests for an alias are served by the canonical model the alias points at. The canonical model supplies all policy (ownership, need-to-ack, early-access), pricing, capabilities, health, and accounted usage — aliases never grant access or copy consent from another model.
+- **History is preserved.** Usage is recorded under the canonical model, and retired database rows whose names become aliases are kept *disabled* so old conversations and history still point somewhere usable; the alias resolves to its new target, never the retired row.
+- **Discovery.**
+  - `GET /v1/models` lists each permitted canonical model **and** each of its aliases, so clients that validate their configured model ID against discovery keep working.
+  - `GET /v1/models/<alias>` returns the target's metadata under the requested alias ID.
+  - `GET /v1/models/<requested>` responds with the **requested** name in the `model` field (whether canonical or an alias); the backend is always called with the canonical name (or the endpoint's `model` override), never the alias.
+- **Validation.** Alias names are exact and case-sensitive, capped at 128 characters. The config is rejected if an alias is empty, duplicates another alias, equals its own model's name, or collides with *any* canonical model name. An invalid reload is skipped, leaving the last valid routing intact.
+
 ## Pricing
 
 Fields shown to users on the Models page:

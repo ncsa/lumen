@@ -2,6 +2,7 @@
 from http import HTTPStatus
 
 import pytest
+import yaml
 from sqlalchemy import select
 
 
@@ -706,5 +707,39 @@ models:
         resp = admin_client.post("/admin/api/config", json=masked)
         assert resp.status_code == HTTPStatus.BAD_REQUEST
         assert "********" not in cfg.read_text()
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
+def test_config_post_round_trips_model_aliases(app, admin_client, tmp_path):
+    """A config-editor save preserves a model's ``aliases`` (the editor sends the
+    model object it collected, which now carries aliases through intact)."""
+    config = """\
+version: 3
+app:
+  name: Lumen
+  secret_key: real-secret
+models:
+  - name: glm-5.3-flash
+    input_cost_per_million: 1
+    output_cost_per_million: 1
+    aliases:
+      - glm-5.2
+    endpoints:
+      - url: https://api.example.com/v1
+        api_key: sk-real
+"""
+    original, cfg = _use_config(app, tmp_path, config)
+    try:
+        data = admin_client.get("/admin/api/config").get_json()
+        assert data["models"][0]["aliases"] == ["glm-5.2"]
+        # An admin editing (say) the price and saving must not strip aliases.
+        data["models"][0]["input_cost_per_million"] = 2
+        resp = admin_client.post("/admin/api/config", json=data)
+        assert resp.status_code == HTTPStatus.OK
+        saved = yaml.safe_load(cfg.read_text())
+        model = saved["models"][0]
+        assert model["aliases"] == ["glm-5.2"]
+        assert model["input_cost_per_million"] == 2
     finally:
         app.config["CONFIG_YAML"] = original

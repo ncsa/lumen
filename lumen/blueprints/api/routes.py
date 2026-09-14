@@ -38,6 +38,7 @@ from lumen.services.llm import (
     update_stats,
     upstream_call_bounds,
 )
+from lumen.services.model_resolver import resolve_model_config
 from lumen.services.wsgi_disconnect import client_disconnect_event
 from lumen.timeutils import utcnow
 
@@ -301,16 +302,15 @@ def list_models():
         eps_by_model.setdefault(ep.model_config_id, []).append(ep)
     rates = _get_request_rates()
     if g.monitor:
-        data = [_model_dict(c, rates, eps_by_model.get(c.id, [])) for c in configs]
+        permitted = configs
     else:
         entity_id = g.entity.id
         model_ids = [c.id for c in configs]
         access_statuses, consent_map = bulk_model_access_info(entity_id, model_ids)
         pool = get_pool_limit(entity_id)
         consent_required = current_app.config.get("API_REQUIRE_MODEL_CONSENT", True)
-        data = [
-            _model_dict(c, rates, eps_by_model.get(c.id, []))
-            for c in configs
+        permitted = [
+            c for c in configs
             if pool is not None
             and access_statuses.get(c.id, "allowed") != "blocked"
             and (
@@ -319,13 +319,24 @@ def list_models():
                 or c.id in consent_map
             )
         ]
+    data = []
+    for c in permitted:
+        entry = _model_dict(c, rates, eps_by_model.get(c.id, []))
+        data.append(entry)
+        # Expose each alias as a discoverable ID so clients that validate their
+        # configured model against discovery keep working. Aliases inherit the
+        # canonical model's visibility and consent, never adding their own grants.
+        for alias in sorted(a.alias for a in c.aliases):
+            alias_entry = dict(entry)
+            alias_entry["id"] = alias
+            data.append(alias_entry)
     return jsonify({"object": "list", "data": data})
 
 
 @api_bp.route("/models/<model_id>", methods=["GET"])
 @api_key_required
 def get_model(model_id):
-    config = db.session.execute(select(ModelConfig).where(ModelConfig.model_name == model_id, ModelConfig.active)).scalar_one_or_none()
+    config = resolve_model_config(model_id)
     if not config:
         return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
     if not g.monitor:
@@ -336,7 +347,11 @@ def get_model(model_id):
         select(ModelEndpoint).where(ModelEndpoint.model_config_id == config.id)
     ).scalars().all()
     rates = _get_request_rates()
-    return jsonify(_model_dict(config, rates, list(eps)))
+    d = _model_dict(config, rates, list(eps))
+    # Requested via an alias? Return metadata under the requested ID so clients
+    # that validate their configured model against discovery keep working.
+    d["id"] = model_id
+    return jsonify(d)
 
 
 def _preflight(model_name: str):
@@ -346,7 +361,7 @@ def _preflight(model_name: str):
     ``effective`` is the resolved coin pool limit, threaded to subtract_coins so the
     billing path does not re-resolve model access and the pool limit.
     """
-    model_config = db.session.execute(select(ModelConfig).where(ModelConfig.model_name == model_name, ModelConfig.active)).scalar_one_or_none()
+    model_config = resolve_model_config(model_name)
     if not model_config:
         return None, None, None, _err(f"Model '{model_name}' not found", status=HTTPStatus.NOT_FOUND)
     consent_required = current_app.config.get("API_REQUIRE_MODEL_CONSENT", True)
@@ -388,7 +403,9 @@ def _complete_and_bill(model_name: str, messages: list, **kwargs):
 
     entity_id = g.entity.id
     ak_id = g.api_key.id
-    remote_model = endpoint.model_name or model_name
+    # Forward the endpoint's override name, else the CANONICAL model name — never
+    # the alias a client may have requested.
+    remote_model = endpoint.model_name or model_config.model_name
     ep_api_key   = endpoint.api_key
     ep_url       = endpoint.url
     ep_id        = endpoint.id
@@ -406,7 +423,7 @@ def _complete_and_bill(model_name: str, messages: list, **kwargs):
     # finishes when this function returns — hence the finally around all of
     # it, billing included, and not around the upstream call alone.
     live_state = get_live_state()
-    ticket = live_state.admit(model_name, entity_id)
+    ticket = live_state.admit(model_config.model_name, entity_id)
 
     try:
         try:
@@ -441,6 +458,8 @@ def _complete_and_bill(model_name: str, messages: list, **kwargs):
                      ttft=duration, ttft_visible=duration, outcome="ok")
         _record_api_key_usage(ak_id, usage_prompt, usage_completion, cost)
         db.session.commit()
+        # Report the requested name (which may be an alias), not the backend's.
+        response.model = model_name
         return response, None
     finally:
         live_state.release(ticket)
@@ -481,7 +500,8 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
     # Extract all scalars from ORM objects before releasing the DB connection.
     # The streaming LLM call can take minutes — holding a pool connection for that
     # entire duration exhausts the pool under load.
-    remote_model = endpoint.model_name or model_name
+    # Capitalize on the canonical model name for the backend call (never the alias).
+    remote_model = endpoint.model_name or model_config.model_name
     ep_api_key   = endpoint.api_key
     ep_url       = endpoint.url
     ep_id        = endpoint.id
@@ -512,7 +532,7 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
     # generator. The backend is resolved here too — picking one reads config,
     # which the context-free generator cannot do.
     live_state = get_live_state()
-    ticket = live_state.admit(model_name, entity_id)
+    ticket = live_state.admit(model_config.model_name, entity_id)
 
     def generate():
         billed = False
@@ -589,6 +609,8 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                         content_deltas += 1
                         if t_first_visible is None:
                             t_first_visible = _time.monotonic() - t0
+                    # Report the requested name (which may be an alias), not the backend's.
+                    chunk.model = model_name
                     yield f"data: {json.dumps(chunk.model_dump())}\n\n"
                 if not aborted:
                     duration = _time.monotonic() - t0
@@ -718,7 +740,8 @@ def _do_audio(kind: str):
     entity_id = g.entity.id
     ak_id = g.api_key.id
 
-    remote_model     = endpoint.model_name or model_name
+    # Forward the endpoint's override name, else the CANONICAL model name.
+    remote_model     = endpoint.model_name or model_config.model_name
     ep_api_key       = endpoint.api_key
     ep_url           = endpoint.url
     ep_id            = endpoint.id
@@ -734,7 +757,7 @@ def _do_audio(kind: str):
     # _preflight owns every rejection. Not a generator either, so the finally
     # runs when the request itself finishes.
     live_state = get_live_state()
-    ticket = live_state.admit(model_name, entity_id)
+    ticket = live_state.admit(model_config.model_name, entity_id)
 
     try:
         try:

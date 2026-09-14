@@ -6,10 +6,12 @@ All notable changes to Lumen will be documented in this file.
 
 ### Added
 
+- Model aliases: a model may declare `aliases:` in `config.yaml` so removed/renamed model IDs keep working and resolve to the canonical model, preserving usage history and exposing the aliases in discovery. (#19)
 - Publish the help documentation to GitHub Pages with MkDocs (`mkdocs.yml` + a `Docs` workflow that runs `mkdocs gh-deploy --force --strict`), so the docs/ folder is built and served at https://ncsa.github.io/lumen/.
 
 ### Changed
 
+- Model alias declarations (`aliases:`) are preserved when editing a model through the admin config editor instead of being silently stripped on save. (#19)
 - Document how to add Lumen as an OpenAI-compatible provider to desktop chat clients (e.g. ChatWise) in the Connect guide.
 - MkDocs renders the `mermaid` diagrams in the Architecture and Database Schema pages as interactive diagrams instead of highlighted code blocks.
 - Fix the Architecture page's table-of-contents anchor links so they match MkDocs's generated heading IDs, and configure `validation.links.anchors: warn` so broken anchors fail the `--strict` docs build instead of passing as informational messages.

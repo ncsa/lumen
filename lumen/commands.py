@@ -14,6 +14,7 @@ from flask.cli import with_appcontext
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import DBAPIError
 
+from lumen.models.model_alias import ModelAlias
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 
@@ -223,8 +224,92 @@ def _deactivate_removed_models(yaml_model_names):
     db.session.expire_all()
 
 
+# Maximum length of an alias/ID (must match the model_aliases.alias column).
+_ALIAS_MAX_LEN = 128
+
+
+def model_alias_config_errors(models) -> list[str]:
+    """Validate the ``aliases`` of every model definition.
+
+    Names are exact and case-sensitive. Returns human-readable error strings
+    (empty when valid). The canonical names are collected from the whole list
+    first so an alias can never collide with a model name that appears later.
+
+    Shared by the startup watcher, the CLI sync, and the admin config editor so
+    an invalid alias configuration is rejected everywhere before any writes.
+    """
+    errors: list[str] = []
+    canonical_names = {
+        m.get("name") for m in models
+        if isinstance(m, dict) and isinstance(m.get("name"), str) and m.get("name")
+    }
+    seen_aliases: set[str] = set()
+    for i, model in enumerate(models):
+        if not isinstance(model, dict):
+            continue
+        name = model.get("name")
+        label = name if isinstance(name, str) and name else f"models[{i}]"
+        aliases = model.get("aliases")
+        if aliases is None:
+            continue
+        if not isinstance(aliases, list):
+            errors.append(f"{label}: 'aliases' must be a list")
+            continue
+        for j, alias in enumerate(aliases):
+            if not isinstance(alias, str) or not alias.strip():
+                errors.append(f"{label}: aliases[{j}] must be a non-empty string")
+                continue
+            if len(alias) > _ALIAS_MAX_LEN:
+                errors.append(f"{label}: alias '{alias}' exceeds {_ALIAS_MAX_LEN} characters")
+                continue
+            if alias == name:
+                errors.append(f"{label}: alias '{alias}' cannot equal the model's own name")
+                continue
+            if alias in canonical_names:
+                errors.append(f"{label}: alias '{alias}' collides with model name '{alias}'")
+                continue
+            if alias in seen_aliases:
+                errors.append(f"{label}: duplicate alias '{alias}'")
+            seen_aliases.add(alias)
+    return errors
+
+
+def validate_model_aliases(data):
+    """Raise ``ValueError`` when the config's model aliases are invalid.
+
+    Central validation for the CLI sync and the config watcher, both of which
+    call :func:`sync_models_from_yaml` and must reject a bad config before any
+    writes. See :func:`model_alias_config_errors`.
+    """
+    models = data.get("models", []) if isinstance(data, dict) else []
+    errors = model_alias_config_errors(models)
+    if errors:
+        raise ValueError("; ".join(errors))
+
+
+def _reconcile_aliases(config, model_def):
+    """Upsert the model_aliases rows for ``config`` from ``model_def['aliases']``.
+
+    Removes aliases no longer declared, adds newly declared ones, and retargets
+    an alias that moved from another model (the alias is unique, so a move must
+    update the existing row rather than insert a duplicate).
+    """
+    desired = set(model_def.get("aliases", []) or [])
+    existing = {a.alias: a for a in config.aliases}
+    for alias in list(existing):
+        if alias not in desired:
+            db.session.delete(existing[alias])
+    for alias in desired:
+        row = db.session.execute(select(ModelAlias).filter_by(alias=alias)).scalar_one_or_none()
+        if row is None:
+            db.session.add(ModelAlias(alias=alias, model_config_id=config.id))
+        elif row.model_config_id != config.id:
+            row.model_config_id = config.id
+
+
 def sync_models_from_yaml(yaml_data):
     """Upsert ModelConfig and ModelEndpoint rows from yaml_data. Must run inside an app context."""
+    validate_model_aliases(yaml_data)
     for model_def in yaml_data.get("models", []):
         config = db.session.execute(select(ModelConfig).filter_by(model_name=model_def["name"])).scalar_one_or_none()
         if not config:
@@ -233,6 +318,7 @@ def sync_models_from_yaml(yaml_data):
         _apply_model_fields(config, model_def)
         db.session.flush()  # ensure config.id exists before reconciling endpoints
         _reconcile_endpoints(config, model_def)
+        _reconcile_aliases(config, model_def)
 
     _deactivate_removed_models({m["name"] for m in yaml_data.get("models", [])})
     db.session.commit()

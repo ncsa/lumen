@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from lumen.timeutils import utcnow
 
 from ..extensions import db
+from .model_alias import ModelAlias
 
 
 class ModelConfig(db.Model):
@@ -63,6 +64,7 @@ class ModelConfig(db.Model):
 
     endpoints: Mapped[list["ModelEndpoint"]] = relationship(backref="model_config", lazy="select", cascade="all, delete-orphan", passive_deletes=True)
     stats: Mapped[list["ModelStat"]] = relationship(backref="model_config", lazy="select", passive_deletes=True)
+    aliases: Mapped[list["ModelAlias"]] = relationship(backref="model_config", lazy="select", cascade="all, delete-orphan", passive_deletes=True)
     owner: Mapped[Optional["Entity"]] = relationship(foreign_keys=[owner_entity_id])
     group_grants: Mapped[list["ModelGroupAccess"]] = relationship(backref="model_config", lazy="select", cascade="all, delete-orphan", passive_deletes=True)
 

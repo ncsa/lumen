@@ -22,6 +22,7 @@ from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.services.live_state import get_live_state
 from lumen.services.llm import bulk_model_access_info, check_coin_budget, coin_retry_after, get_pool_limit, model_notices, send_message_stream
+from lumen.services.model_resolver import resolve_model_config
 from lumen.services.wsgi_disconnect import client_disconnect_event
 from lumen.timeutils import utcnow
 
@@ -211,7 +212,7 @@ def chat_stream():
 
     entity_id = session["entity_id"]
 
-    model_config = db.session.execute(select(ModelConfig).where(ModelConfig.model_name == model, ModelConfig.active)).scalar_one_or_none()
+    model_config = resolve_model_config(model)
     if not model_config:
         return jsonify({"error": f"Unknown model: {model}"}), HTTPStatus.BAD_REQUEST
 
@@ -266,7 +267,7 @@ def chat_stream():
     # reaches the generator. The backend is resolved here too — picking one
     # reads config, which the context-free generator cannot do.
     live_state = get_live_state()
-    ticket = live_state.admit(model, entity_id)
+    ticket = live_state.admit(model_config.model_name, entity_id)
 
     def generate():
         try:

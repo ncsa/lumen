@@ -655,7 +655,9 @@ function collectCurrentModel() {
   const idx = state.selectedModelIdx;
   if (!state.data.models || !$('mdl-name')) return;
   if (idx >= state.data.models.length) return;
-  const m = {};
+  // Seed from the existing model so keys the form doesn't edit (e.g. `aliases`) are
+  // preserved instead of being silently stripped on save.
+  const m = Object.assign({}, state.data.models[idx]);
   m.name                   = val('mdl-name')     || undefined;
   m.needs_ack              = boolVal('mdl-needsack') || undefined;
   m.early_access           = boolVal('mdl-earlyaccess') || undefined;

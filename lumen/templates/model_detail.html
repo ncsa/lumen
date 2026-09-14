@@ -23,6 +23,13 @@
         {% endif %}
       </h1>
 
+      {% if aliases %}
+      <p class="text-muted mb-2">
+        Also known as:
+        {% for alias in aliases %}<span class="badge rounded-pill border border-1 text-secondary fs-6 me-1">{{ alias }}</span>{% endfor %}
+      </p>
+      {% endif %}
+
       {% if config.description %}
       <p>{{ config.description }}</p>
       {% endif %}

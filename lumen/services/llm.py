@@ -31,6 +31,7 @@ from lumen.models.model_stat import ModelStat
 from lumen.models.request_log import RequestLog
 from lumen.services.cost import calculate_cost
 from lumen.services.crypto import cache_salt_for_entity
+from lumen.services.model_resolver import resolve_model_config
 from lumen.services.wsgi_disconnect import (
     SEND_BLOCKED_ENVIRON_KEY,
     STARTED_AT_ENVIRON_KEY,
@@ -938,7 +939,7 @@ def send_message_stream(
 
 def _send_message_stream(app, messages, model, entity_id, source, effective, disconnected, timing):
     with app.app_context():
-        config = db.session.execute(select(ModelConfig).where(ModelConfig.model_name == model, ModelConfig.active)).scalar_one_or_none()
+        config = resolve_model_config(model)
         if config is None:
             raise ValueError(f"Unknown or inactive model: {model}")
 
@@ -950,7 +951,9 @@ def _send_message_stream(app, messages, model, entity_id, source, effective, dis
         # Extract all scalars from ORM objects before the context exits. The
         # streaming LLM call can take minutes; the context teardown releases the
         # session (and its pool connection) before the first token is awaited.
-        remote_model = endpoint.model_name or model
+        # Forward the endpoint's override name, else the CANONICAL model name —
+        # never an alias a client may have requested.
+        remote_model = endpoint.model_name or config.model_name
         ep_api_key   = endpoint.api_key
         ep_url       = endpoint.url
         ep_id        = endpoint.id

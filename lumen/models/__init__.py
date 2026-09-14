@@ -11,6 +11,7 @@ from .group_limit import GroupLimit
 from .group_member import GroupMember
 from .group_rule import GroupRule
 from .message import Message
+from .model_alias import ModelAlias
 from .model_config import ModelConfig
 from .model_endpoint import ModelEndpoint
 from .model_group_access import ModelGroupAccess
@@ -27,6 +28,7 @@ __all__ = [
     "EntityBalance",
     "EntityModelConsent",
     "EntityStat",
+    "ModelAlias",
     "ModelStat",
     "Conversation",
     "Message",
