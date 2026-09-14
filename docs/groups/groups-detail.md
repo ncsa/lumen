@@ -47,7 +47,7 @@ Click **Change Owner** (next to **+ Add Member**), search for the new owner by n
 
 ## Models
 
-The **Models** tab lists the models this group grants access to, with each model's owner.
+The **Models** tab lists the models this group grants access to, with each model's owner. When the group has no granted models, the tab is hidden for regular members altogether rather than shown empty. The owner and administrators always see the tab (even when nothing is granted yet) so they can grant the group's first model.
 
 ### Adding a Model
 

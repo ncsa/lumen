@@ -236,16 +236,69 @@ def test_detail_404_unknown(admin_client):
     assert admin_client.get("/groups/99999").status_code == HTTPStatus.NOT_FOUND
 
 
-def test_detail_add_model_disabled_without_owned_models(auth_client, owned_group):
+def test_detail_add_model_disabled_without_owned_models(auth_client, app, owned_group, test_model, test_user):
+    """With a granted model (tab visible) but none of the owner's own models
+    left to grant, the Add Model button is disabled."""
+    with app.app_context():
+        set_model_owner(test_model["id"], test_user["id"])
+    auth_client.post(f"/groups/{owned_group}/models", json={"model_config_id": test_model["id"]})
     resp = auth_client.get(f"/groups/{owned_group}")
     assert b"you have no models of your own left to grant" in resp.data.lower()
 
 
 def test_detail_add_model_enabled_with_owned_model(auth_client, app, owned_group, test_model, test_user):
+    # A granted model keeps the Models tab visible; a second owned model that
+    # is not yet granted keeps the Add Model button enabled.
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        set_model_owner(test_model["id"], test_user["id"])
+        addable = ModelConfig(
+            model_name="addable-model",
+            input_cost_per_million=1.0,
+            output_cost_per_million=2.0,
+            owner_entity_id=test_user["id"],
+        )
+        db.session.add(addable)
+        db.session.commit()
+    auth_client.post(f"/groups/{owned_group}/models", json={"model_config_id": test_model["id"]})
+    resp = auth_client.get(f"/groups/{owned_group}")
+    assert b'id="add-model-open-btn"' in resp.data
+
+
+def test_detail_models_tab_hidden_without_granted_models(auth_client, member_group):
+    """For a regular member (not the owner) of a group with no models granted,
+    the Models tab is not shown."""
+    resp = auth_client.get(f"/groups/{member_group}")
+    assert resp.status_code == HTTPStatus.OK
+    assert b'id="tab-models"' not in resp.data
+    assert b'id="pane-models"' not in resp.data
+    # The Members tab on a member-visible group is still present.
+    assert b'id="tab-members"' in resp.data
+
+
+def test_detail_models_tab_shown_with_granted_models(auth_client, app, owned_group, test_model, test_user):
+    """Granting a model makes the Models tab appear."""
+    with app.app_context():
+        set_model_owner(test_model["id"], test_user["id"])
+    auth_client.post(f"/groups/{owned_group}/models", json={"model_config_id": test_model["id"]})
+    resp = auth_client.get(f"/groups/{owned_group}")
+    assert resp.status_code == HTTPStatus.OK
+    assert b'id="tab-models"' in resp.data
+    assert b'id="pane-models"' in resp.data
+
+
+def test_detail_models_tab_shown_to_owner_without_granted_models(auth_client, app, owned_group, test_model, test_user):
+    """An owner of a group with no models granted still sees the Models tab so
+    they can grant the group's first model."""
     with app.app_context():
         set_model_owner(test_model["id"], test_user["id"])
     resp = auth_client.get(f"/groups/{owned_group}")
+    assert resp.status_code == HTTPStatus.OK
+    assert b'id="tab-models"' in resp.data
+    assert b'id="pane-models"' in resp.data
     assert b'id="add-model-open-btn"' in resp.data
+    assert b'id="addModelModal"' in resp.data
 
 
 def test_detail_auto_join_group_read_only_for_member(auth_client, config_group):
@@ -861,9 +914,9 @@ def test_ownerless_group_detail_hides_members_tab(auth_client, ownerless_group):
     resp = auth_client.get(f"/groups/{ownerless_group}")
     assert resp.status_code == HTTPStatus.OK
     assert b'id="tab-members"' not in resp.data
-    assert b"has no owner" in resp.data
-    # The models tab is still there — it tells the member what access they get.
-    assert b'id="tab-models"' in resp.data
+    # No granted models means the Models tab (and its ownerless note) is hidden too.
+    assert b'id="tab-models"' not in resp.data
+    assert b"has no owner" not in resp.data
 
 
 def test_ownerless_group_detail_shows_members_tab_to_admin(admin_client, ownerless_group):

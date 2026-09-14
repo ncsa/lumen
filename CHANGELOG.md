@@ -6,6 +6,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Changed
 
+- Group detail pages hide the Models tab from regular members when the group has no granted models; owners and admins still see it so they can grant the first one.
 - New chat sessions show a dismissible notice that the built-in chat is for quick interactions only, linking to the connect page for a full-featured client. (#15)
 - `GET /v1/models` and `GET /v1/models/{id}` no longer count against the per-key API rate limit.
 - Config editor no longer downgrades the saved config to `version: 2`; it preserves the loaded version so version 3 configs stay bootable.
