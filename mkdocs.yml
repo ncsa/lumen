@@ -1,0 +1,61 @@
+site_name: Lumen
+site_url: https://ncsa.github.io/lumen/
+site_description: AI model gateway for research institutions
+repo_url: https://github.com/ncsa/lumen
+edit_uri: edit/main/docs/
+docs_dir: docs
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Dark mode
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Light mode
+
+markdown_extensions:
+  - tables
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.highlight
+
+nav:
+  - Home: index.md
+  - Introduction: introduction.md
+  - Guides:
+      - Chat: guides/chat.md
+      - Profile & API Keys: guides/profile.md
+      - Connect Your Tools: guides/connect.md
+      - Usage: guides/usage.md
+      - API Reference: guides/api-reference.md
+  - Models:
+      - Model Dashboard: models/models.md
+      - Model Detail: models/model-detail.md
+  - Projects:
+      - Projects Overview: projects/projects.md
+      - Project Management: projects/projects-detail.md
+  - Groups:
+      - Groups Overview: groups/groups.md
+      - Group Management: groups/groups-detail.md
+  - Admin Guide:
+      - Configuration Overview: admin/config.md
+      - Application Settings: admin/config-application.md
+      - Users & Access Control: admin/config-users.md
+      - Configuring Projects: admin/config-projects.md
+      - Configuring Models: admin/config-models.md
+  - Developer Reference:
+      - Architecture: architecture.md
+      - Database Schema: dbschema.md

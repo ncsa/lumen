@@ -32,6 +32,9 @@ lumen.yaml
 .coverage
 htmlcov/
 
+# MkDocs build output
+site/
+
 # Database
 *.db
 *.sqlite

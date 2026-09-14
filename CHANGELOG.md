@@ -4,6 +4,10 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Publish the help documentation to GitHub Pages with MkDocs (`mkdocs.yml` + a `Docs` workflow that runs `mkdocs gh-deploy --force --strict`), so the docs/ folder is built and served at https://ncsa.github.io/lumen/.
+
 ### Changed
 
 - Document how to add Lumen as an OpenAI-compatible provider to desktop chat clients (e.g. ChatWise) in the Connect guide.
