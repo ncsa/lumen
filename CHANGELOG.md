@@ -12,6 +12,7 @@ All notable changes to Lumen will be documented in this file.
 
 - Document how to add Lumen as an OpenAI-compatible provider to desktop chat clients (e.g. ChatWise) in the Connect guide.
 - MkDocs renders the `mermaid` diagrams in the Architecture and Database Schema pages as interactive diagrams instead of highlighted code blocks.
+- Fix the Architecture page's table-of-contents anchor links so they match MkDocs's generated heading IDs, and configure `validation.links.anchors: warn` so broken anchors fail the `--strict` docs build instead of passing as informational messages.
 - Group detail pages hide the Models tab from regular members when the group has no granted models; owners and admins still see it so they can grant the first one.
 - In a group's Members list, administrators see user names linked to that user's profile page.
 - New chat sessions show a notice that the built-in chat is for quick interactions only, linking to the connect page for a full-featured client; it has no close button and disappears once the first chat is sent. (#15)

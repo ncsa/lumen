@@ -69,6 +69,49 @@ def test_mkdocs_build_strict(tmp_path):
     _build_site(tmp_path)
 
 
+def test_mkdocs_missing_anchors_fail_strict(tmp_path):
+    """Missing heading anchors are upgraded to warnings so `--strict` fails.
+
+    MkDocs only emits INFO for undefinable anchor links by default, so a broken
+    `[text](#bad-anchor)` link silently passes `mkdocs build --strict`. The
+    `validation.links.anchors: warn` setting in mkdocs.yml escalates those to
+    WARNING, which strict mode turns into a build failure.
+    """
+    config = _load_mkdocs_config()
+    assert config["validation"]["links"]["anchors"] == "warn", (
+        "validation.links.anchors must be 'warn' so broken anchor links fail strict builds"
+    )
+
+
+def test_mkdocs_internal_anchors_resolve(tmp_path):
+    """Every same-page `#anchor` link in the markdown resolves to a real heading.
+
+    MkDocs derives heading IDs (lowercase, `&` and punctuation stripped, spaces
+    collapsed to single hyphens), so hand-written TOC links can drift from the
+    generated IDs and silently render as dead links. Build the site once and
+    check each link against the IDs actually emitted for its page.
+    """
+    import re
+
+    config = _load_mkdocs_config()
+    docs_dir = REPO_ROOT / config["docs_dir"]
+    site_dir = _build_site(tmp_path)
+
+    for src in sorted(docs_dir.rglob("*.md")):
+        text = src.read_text(encoding="utf-8")
+        links = re.findall(r"\[[^\]]*\]\(#([^()\s]+)\)", text)
+        if not links:
+            continue
+
+        rel = src.relative_to(docs_dir)
+        html = site_dir / rel.with_suffix("") / "index.html"
+        assert html.is_file(), f"no built page for {rel}"
+        ids = set(re.findall(r'id="([^"]+)"', html.read_text(encoding="utf-8")))
+
+        for anchor in links:
+            assert anchor in ids, f"{rel}: link '#{anchor}' has no matching heading id"
+
+
 def test_mkdocs_mermaid_diagrams_render(tmp_path):
     """Mermaid blocks are emitted as `.mermaid` elements, not code fences.
 

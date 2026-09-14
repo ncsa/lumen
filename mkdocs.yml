@@ -36,6 +36,10 @@ markdown_extensions:
           format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.highlight
 
+validation:
+  links:
+    anchors: warn
+
 nav:
   - Home: index.md
   - Introduction: introduction.md
