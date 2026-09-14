@@ -89,17 +89,12 @@
 <script>
 (function () {
   const CONNECT_URL = "{{ url_for('connect.index') }}";
-  const NOTICE_STORAGE_KEY = "lumen_quick_chat_notice_dismissed";
 
   // ── Quick-chat notice ────────────────────────────────────────
   // Shown only while the chat is empty (a brand-new session). It is replaced
-  // by the conversation the moment a chat starts or a saved one is opened.
-  function quickChatNoticeDismissed() {
-    return localStorage.getItem(NOTICE_STORAGE_KEY) === "1";
-  }
-
+  // by the conversation the moment a chat starts or a saved one is opened, so
+  // it has no close button.
   function showQuickChatNotice() {
-    if (quickChatNoticeDismissed()) return;
     const container = document.getElementById("chat-messages");
     if (container.querySelector("#quick-chat-notice")) return;
     const notice = document.createElement("div");
@@ -121,17 +116,6 @@
     p2.appendChild(link);
     p2.appendChild(document.createTextNode("."));
     notice.appendChild(p2);
-
-    const dismiss = document.createElement("button");
-    dismiss.type = "button";
-    dismiss.className = "btn-close btn-close-sm mt-1";
-    dismiss.setAttribute("aria-label", "Dismiss notice");
-    dismiss.addEventListener("click", () => {
-      localStorage.setItem(NOTICE_STORAGE_KEY, "1");
-      notice.remove();
-      document.getElementById("chat-input").focus();
-    });
-    notice.appendChild(dismiss);
 
     container.appendChild(notice);
   }

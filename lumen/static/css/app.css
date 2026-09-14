@@ -169,9 +169,6 @@
 .quick-chat-notice p {
     margin-bottom: 0.35rem;
 }
-.quick-chat-notice .btn-close {
-    align-self: flex-end;
-}
 
 /* ── Message metadata & info icon ────────────────────────────── */
 .msg-meta {

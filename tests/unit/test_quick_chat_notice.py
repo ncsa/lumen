@@ -1,10 +1,12 @@
-"""The chat page shows a dismissible notice that the built-in chat is for quick chats only.
+"""The chat page shows a notice that the built-in chat is for quick chats only.
 
 The notice is injected into the empty chat session via the inline script in
-chat.html, carries role="note" / aria-label for accessibility, links to the
-connect page, and its dismissal is remembered in localStorage so it does not
-reappear on every visit.
+chat.html, carries role="note" / aria-label for accessibility, and links to the
+connect page. It has no close button: it simply disappears once the first chat
+message is sent (hideQuickChatNotice()), so there is nothing to remember in
+localStorage.
 """
+
 import re
 from pathlib import Path
 
@@ -16,50 +18,48 @@ def _script():
     return CHAT_TEMPLATE.read_text()
 
 
+def _notice_build():
+    # The body of showQuickChatNotice(), which renders the notice.
+    script = _script()
+    start = script.index("function showQuickChatNotice()")
+    end = script.index("function hideQuickChatNotice()")
+    return script[start:end]
+
+
 def test_notice_rendered_with_note_role():
-    assert re.search(r'notice\.setAttribute\(\s*["\']role["\']\s*,\s*["\']note["\']\s*\)', _script())
+    assert re.search(r'notice\.setAttribute\(\s*["\']role["\']\s*,\s*["\']note["\']\s*\)', _notice_build())
 
 
 def test_notice_has_accessibility_label():
     assert re.search(
         r'notice\.setAttribute\(\s*["\']aria-label["\']\s*,\s*["\']This chat is for quick interactions only["\']\s*\)',
-        _script(),
+        _notice_build(),
     )
 
 
-def test_notice_dismiss_button_is_labelled():
-    assert re.search(
-        r'dismiss\.setAttribute\(\s*["\']aria-label["\']\s*,\s*["\']Dismiss notice["\']\s*\)',
-        _script(),
-    )
+def test_notice_has_no_close_button():
+    # The notice disappears on its own once the first chat is sent, so it must
+    # not render a close/dismiss button.
+    build = _notice_build()
+    assert "btn-close" not in build
+    assert "Dismiss notice" not in build
+    assert "localStorage" not in build
 
 
-def test_notice_dismissal_stored_in_localstorage():
-    assert re.search(r'NOTICE_STORAGE_KEY\s*=\s*["\']lumen_quick_chat_notice_dismissed["\']', _script())
-    assert re.search(r'localStorage\.setItem\(\s*NOTICE_STORAGE_KEY\s*,\s*["\']1["\']', _script())
-    assert re.search(r'localStorage\.getItem\(\s*NOTICE_STORAGE_KEY\s*\)\s*===\s*["\']1["\']', _script())
+def test_notice_disappears_on_first_message():
+    # hideQuickChatNotice() removes #quick-chat-notice from the DOM and must be
+    # invoked on the send path, so the notice clears the moment the first chat
+    # starts.
+    assert "function hideQuickChatNotice()" in _script()
+
+    script = _script()
+    send_start = script.index('input.value = "";')
+    send_end = script.index("chatHistory.push", send_start)
+    send_body = script[send_start:send_end]
+    assert "hideQuickChatNotice()" in send_body
 
 
 def test_notice_links_to_connect_page():
+    # The "connect a dedicated client" link is wired to the connect page.
+    assert "link.href = CONNECT_URL" in _notice_build()
     assert re.search(r"url_for\(['\"]connect\.index['\"]\)", _script())
-
-
-def test_show_notice_guards_on_dismissal():
-    # Every path that shows the notice (initial load, "+ New", delete) goes
-    # through showQuickChatNotice(), so the dismissal check must live inside
-    # it — not just in initQuickChatNotice() — or dismissing the notice would
-    # not stick when starting a new conversation.
-    script = _script()
-    show_start = script.index("function showQuickChatNotice()")
-    show_end = script.index("function hideQuickChatNotice()")
-    show_body = script[show_start:show_end]
-    assert "quickChatNoticeDismissed()" in show_body
-
-
-def test_dismiss_moves_focus_to_chat_input():
-    # After dismissal, focus must not fall to <body>; send it to the input.
-    script = _script()
-    dismiss_start = script.index("dismiss.addEventListener")
-    dismiss_end = script.index("notice.appendChild(dismiss)")
-    dismiss_body = script[dismiss_start:dismiss_end]
-    assert re.search(r'getElementById\(\s*["\']chat-input["\']\s*\)\.focus\(\)', dismiss_body)
