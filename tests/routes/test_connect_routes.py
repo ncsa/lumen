@@ -20,6 +20,16 @@ def test_connect_logged_out_is_generic(client):
     assert b"MODEL" in resp.data
 
 
+def test_connect_where_to_put_this_file_above_config(client):
+    """The "Where to put this file" note precedes the generated OpenCode config."""
+    resp = client.get("/connect")
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.data.decode()
+    put_idx = body.index("Where to put this file:")
+    examples_idx = body.index('id="examples-opencode"')
+    assert put_idx < examples_idx
+
+
 def test_connect_lists_accessible_model(auth_client, test_model):
     resp = auth_client.get("/connect")
     assert resp.status_code == HTTPStatus.OK

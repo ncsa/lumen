@@ -77,6 +77,18 @@ The steps below walk through a concrete example using [ChatWise](https://chatwis
 
 Each model entry includes `limit` (the context window and max output, in tokens) and `cost` (USD per million input/output tokens), so OpenCode can size the context and track spending. The **Download config.json** button fills these in from the model's configured limits and pricing.
 
+To have OpenCode only use Lumen's models — and ignore every other installed provider — add an `enabled_providers` array at the top level of your config:
+
+```json
+{
+  "enabled_providers": [
+    "lumen"
+  ]
+}
+```
+
+OpenCode will then list only Lumen's models when you select a model.
+
 ## curl
 
 Replace `MODEL` with a model id from the [Model Dashboard](/models).

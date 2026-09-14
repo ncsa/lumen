@@ -35,6 +35,15 @@ def test_help_connect_has_desktop_clients_anchor(client):
     assert b'id="desktop-chat-clients"' in resp.data
 
 
+def test_help_connect_opencode_explains_enabled_providers(client):
+    """The Connect guide's OpenCode section shows how to restrict to Lumen models."""
+    resp = client.get("/help/connect")
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.data.decode()
+    assert 'enabled_providers' in body
+    assert '"lumen"' in body
+
+
 def test_help_unknown_slug_returns_404(client):
     resp = client.get("/help/does-not-exist-ever")
     assert resp.status_code == HTTPStatus.NOT_FOUND

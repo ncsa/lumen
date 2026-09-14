@@ -14,6 +14,7 @@ All notable changes to Lumen will be documented in this file.
 - `GET /v1/models` and `GET /v1/models/{id}` no longer count against the per-key API rate limit.
 - Config editor no longer downgrades the saved config to `version: 2`; it preserves the loaded version so version 3 configs stay bootable.
 - Help docs consistently use `https://lumen.example.com` as the example host, and replace it with your instance's real URL when rendered through the app.
+- Connect guide documents `enabled_providers: ["lumen"]` so OpenCode shows only Lumen models; the Connect page moves the "Where to put this file" note above the generated OpenCode config.
 
 ## [2.0.0] - 2026-08-25
 
