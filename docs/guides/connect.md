@@ -19,6 +19,31 @@ setx LUMEN_API_KEY "sk_…"        # Windows (applies to new terminals)
 
 The base URL is your Lumen host with `/v1` appended, for example `https://lumen.example.com/v1`.
 
+## Desktop chat clients
+
+Beyond command-line and coding tools, most **graphical chat clients** that talk to OpenAI can be pointed at Lumen with the same two pieces of information: the **base URL** (`https://lumen.example.com/v1`) and your **API key**. This keeps your chats on your own computer — Lumen is designed not to store or leak your chats and their responses, so your conversation content is not retained. Only usage metadata (request counts, tokens, and cost) is recorded and shown on your [Usage page](/usage); see [Profile](./profile.md) for details on what Lumen retains.
+
+When you configure a new provider in such a client, look for the "OpenAI compatible" (or "OpenAI") option and fill in:
+
+| Field | Value |
+|-------|-------|
+| **API Base URL** | `https://lumen.example.com/v1` |
+| **API Key** | The token from your [Profile](/profile) page |
+| **Model** | Choose a model id from the [Model Dashboard](/models) (most clients offer a "Fetch models" button instead) |
+
+The steps below walk through a concrete example using [ChatWise](https://chatwise.app/), but the same settings apply to any OpenAI-compatible desktop client (LM Studio, Msty, Jan, etc.).
+
+1. **Install the client** and launch it.
+2. Go to **Settings → Providers** and click the **+** (add provider) button, choosing **OpenAI Compatible**.
+3. Fill in the fields:
+   - **Provider Name** — anything you like, e.g. `Lumen`.
+   - **API Base URL** — `https://lumen.example.com/v1`.
+   - **API Key** — paste your [API key](/profile). If the field name is `Api Key`/`Secret Key`, that is the same thing.
+4. Click **Fetch Models** (sometimes *List Models* or *Test Connection*). The client will pull the list of models Lumen hosts; pick one from the [Model Dashboard](/models).
+5. Back in the client's main window, select a Lumen model and start chatting.
+
+> **Model acknowledgement:** Some models ask you to accept their license once before first use. On the [Profile page](/profile), the **Models** tab lists models whose access badge reads **Needs consent** — click it to acknowledge, then the model works from any client. See [Model Access](./profile.md) for the full list of badges.
+
 ## OpenCode
 
 [OpenCode](https://opencode.ai) reads the key from `{env:LUMEN_API_KEY}`. Use the **Download config.json** button on the [Connect page](/connect) to get a file pre-filled with every model you can access, then save it as:

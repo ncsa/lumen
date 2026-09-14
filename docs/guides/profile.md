@@ -121,7 +121,7 @@ The **Models** tab lists models available to you, including models that still ne
 
 | Badge | Meaning |
 |-------|---------|
-| **Need Consent** (warning) | Model requires a one-time acknowledgment — click to enable it |
+| **Needs consent** (warning) | Model requires a one-time acknowledgment — click to enable it |
 | **Consented** (green) | You have acknowledged this model and can use it |
 | **Allowed** (green) | Model is fully available to you |
 

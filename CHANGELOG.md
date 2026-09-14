@@ -6,6 +6,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Changed
 
+- Document how to add Lumen as an OpenAI-compatible provider to desktop chat clients (e.g. ChatWise) in the Connect guide.
 - Group detail pages hide the Models tab from regular members when the group has no granted models; owners and admins still see it so they can grant the first one.
 - In a group's Members list, administrators see user names linked to that user's profile page.
 - New chat sessions show a dismissible notice that the built-in chat is for quick interactions only, linking to the connect page for a full-featured client. (#15)
