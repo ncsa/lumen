@@ -11,6 +11,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Changed
 
+- The admin config editor no longer re-disables a model that was disabled via the legacy `active: false` key: clearing the Disabled checkbox now strips the stale `active` flag on save so config sync re-enables the model. (#19)
 - Model alias declarations (`aliases:`) are preserved when editing a model through the admin config editor instead of being silently stripped on save. (#19)
 - Document how to add Lumen as an OpenAI-compatible provider to desktop chat clients (e.g. ChatWise) in the Connect guide.
 - MkDocs renders the `mermaid` diagrams in the Architecture and Database Schema pages as interactive diagrams instead of highlighted code blocks.

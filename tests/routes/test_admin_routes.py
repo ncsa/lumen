@@ -743,3 +743,65 @@ models:
         assert model["input_cost_per_million"] == 2
     finally:
         app.config["CONFIG_YAML"] = original
+
+
+def test_config_post_re_enables_legacy_disabled_model(app, admin_client, tmp_path):
+    """Clearing the editor's Disabled checkbox re-enables a model that was disabled
+    via the legacy ``active: false`` key.
+
+    The editor ``collectCurrentModel`` copies the on-disk model (which still carries
+    ``active: false``) into the save payload. Clear Disabled -> ``disabled`` is
+    ``undefined`` and omitted on serialization, so without stripping the stale
+    ``active`` field the next config sync would fall back to ``active: false`` and
+    keep the model disabled. The payload after collection must carry neither ``active``
+    nor ``disabled``, and the sync must turn the model on again while preserving aliases.
+    """
+    config = """\
+version: 3
+app:
+  name: Lumen
+  secret_key: real-secret
+models:
+  - name: glm-5.3-flash
+    input_cost_per_million: 1
+    output_cost_per_million: 1
+    active: false
+    aliases:
+      - glm-5.2
+    endpoints:
+      - url: https://api.example.com/v1
+        api_key: sk-real
+"""
+    original, cfg = _use_config(app, tmp_path, config)
+    try:
+        # The config editor loads the on-disk model, which still has `active: false`.
+        data = admin_client.get("/admin/api/config").get_json()
+        model = data["models"][0]
+        assert model["active"] is False
+        # The operator clears the Disabled checkbox and saves. collectCurrentModel
+        # seeds from the existing model then (after the fix) strips the legacy
+        # `active` field, setting `disabled` to undefined (omitted on serialization).
+        model.pop("active", None)
+        model.pop("disabled", None)
+        model["input_cost_per_million"] = 2
+        resp = admin_client.post("/admin/api/config", json=data)
+        assert resp.status_code == HTTPStatus.OK
+        saved = yaml.safe_load(cfg.read_text())
+        saved_model = saved["models"][0]
+        assert "active" not in saved_model
+        assert "disabled" not in saved_model
+        assert saved_model["aliases"] == ["glm-5.2"]
+
+        # Config sync must re-enable the model, not treat it as disabled via the
+        # legacy `active: false` bridging, and must preserve the aliases.
+        with app.app_context():
+            from lumen.commands import sync_models_from_yaml
+            from lumen.extensions import db
+            from lumen.models.model_config import ModelConfig
+            sync_models_from_yaml(saved)
+            mc = db.session.execute(
+                select(ModelConfig).where(ModelConfig.model_name == "glm-5.3-flash")
+            ).scalar_one()
+            assert mc.disabled is False
+    finally:
+        app.config["CONFIG_YAML"] = original

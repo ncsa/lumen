@@ -658,6 +658,11 @@ function collectCurrentModel() {
   // Seed from the existing model so keys the form doesn't edit (e.g. `aliases`) are
   // preserved instead of being silently stripped on save.
   const m = Object.assign({}, state.data.models[idx]);
+  // Drop the legacy `active` boolean: the form edits `disabled`, and a stale
+  // `active: false` copied from the on-disk model would otherwise survive the
+  // save and re-disable the model on the next config sync even after the
+  // operator clears the Disabled checkbox (serialization omits `disabled: undefined`).
+  delete m.active;
   m.name                   = val('mdl-name')     || undefined;
   m.needs_ack              = boolVal('mdl-needsack') || undefined;
   m.early_access           = boolVal('mdl-earlyaccess') || undefined;
