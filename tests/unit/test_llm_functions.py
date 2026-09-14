@@ -467,6 +467,61 @@ def test_stream_no_endpoint_raises(app, test_model):
             list(send_message_stream([], test_model["model_name"]))
 
 
+def test_stream_uses_authorized_canonical_model_after_alias_retarget(app):
+    """A stream authorized against a canonical model must not be re-routed when
+    the alias is retargeted (config reload) after the view's access check.
+
+    The view resolves the alias once, checks access, then threads the authorized
+    canonical ``model_config_id`` into the stream. The generator must load that
+    canonical config rather than re-resolving the alias, so a reload that points
+    the alias at a private model cannot route or bill the request against it.
+    """
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_alias import ModelAlias
+        from lumen.models.model_config import ModelConfig
+        from lumen.models.model_endpoint import ModelEndpoint
+        from lumen.services.llm import send_message_stream
+        from lumen.services.model_resolver import resolve_model_config
+
+        authorized = ModelConfig(
+            model_name="authorized-model",
+            input_cost_per_million=1.0, output_cost_per_million=2.0,
+        )
+        private = ModelConfig(
+            model_name="private-model",
+            input_cost_per_million=1.0, output_cost_per_million=2.0,
+        )
+        db.session.add_all([authorized, private])
+        db.session.flush()
+        db.session.add(ModelAlias(alias="public-alias", model_config_id=authorized.id))
+        db.session.add(ModelEndpoint(model_config_id=authorized.id, url="http://auth/v1",
+                                     api_key="k", model_name="auth-remote", healthy=True))
+        db.session.add(ModelEndpoint(model_config_id=private.id, url="http://private/v1",
+                                     api_key="k", model_name="private-remote", healthy=True))
+        db.session.commit()
+        db.session.refresh(authorized)
+        db.session.refresh(private)
+
+        # Preflight: resolve the alias to the authorized canonical model.
+        preflight = resolve_model_config("public-alias")
+        assert preflight is not None and preflight.id == authorized.id
+
+        # Config reload retargets the alias onto a private (unauthorized) model.
+        alias_row = db.session.execute(
+            select(ModelAlias).filter_by(alias="public-alias")
+        ).scalar_one()
+        alias_row.model_config_id = private.id
+        db.session.commit()
+
+        chunks = [_Chunk(content="hi"), _Chunk(usage=_Usage(prompt_tokens=3, completion_tokens=1))]
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks)) as mock_cls:
+            _drain(send_message_stream([], "public-alias", model_config_id=authorized.id))
+
+        created = mock_cls.return_value.chat.completions.create
+        assert created.call_args.kwargs["model"] == "auth-remote"
+
+
 def test_stream_yields_content_chunks(app, test_model_endpoint):
     model_name = "test-model"
     chunks = [

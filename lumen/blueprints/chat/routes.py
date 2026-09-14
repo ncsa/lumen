@@ -259,7 +259,7 @@ def chat_stream():
     # push short-lived app contexts around the DB work — never across a yield.
     app = current_app._get_current_object()
     disconnected = client_disconnect_event()
-    llm_stream = send_message_stream(messages, model, entity_id=entity_id, source="chat", effective=effective)
+    llm_stream = send_message_stream(messages, model, entity_id=entity_id, source="chat", effective=effective, model_config_id=model_config.id)
     # Admitted last, once every rejection above has passed: a refused request
     # must never appear in flight. The ticket rides in the closure like the
     # disconnect Event, and generate()'s finally releases it. Nothing between

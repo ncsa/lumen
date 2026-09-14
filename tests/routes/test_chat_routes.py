@@ -196,7 +196,7 @@ def test_chat_stream_holds_no_connection_at_yields(app, auth_client, test_user, 
         from lumen.extensions import db
         pool = db.engine.pool
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
         # The real send_message_stream runs context-free between yields; its
         # DB phases each push their own short-lived app context.
         yield "Hello", None, None
@@ -248,7 +248,7 @@ def test_chat_stream_error_path_holds_no_connection(app, auth_client, test_user,
         from lumen.extensions import db
         pool = db.engine.pool
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
         yield "Hello", None, None
         # Missing "reply" key → KeyError inside the billing block, after the
         # conversation SELECT/flush has checked out a connection.
@@ -292,7 +292,7 @@ def test_chat_stream_skips_persistence_when_storing_disabled(app, auth_client, t
         db.session.get(Entity, test_user["id"]).store_conversations = False
         db.session.commit()
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
         yield "Hello", None, None
         yield None, None, {
             "reply": "Hello",
@@ -331,7 +331,7 @@ def test_chat_stream_skips_persistence_when_storing_disabled(app, auth_client, t
         assert db.session.scalar(select(func.count(Message.id))) == 0
 
 
-def _fake_stream(messages, model, entity_id=None, source="chat", effective=None):
+def _fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
     yield "Hello", None, None
     yield None, None, {
         "reply": "Hello",
@@ -534,7 +534,7 @@ def test_chat_stream_disconnect_is_not_reported_as_empty_response(
     with app.app_context():
         _grant_unlimited_pool(app, test_user["id"])
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
         yield "Hello", None, None
         disconnected.set()  # client vanishes mid-stream
         yield " world", None, None
@@ -909,7 +909,7 @@ def test_chat_stream_admits_once_and_releases_once(
         _grant_unlimited_pool(app, test_user["id"])
     state = _recording_live_state(monkeypatch, chat_routes)
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
         yield "Hello", None, None
         yield None, None, dict(_FINAL_RESULT)
 
@@ -941,7 +941,7 @@ def test_chat_stream_releases_when_the_generator_raises(
         _grant_unlimited_pool(app, test_user["id"])
     state = _recording_live_state(monkeypatch, chat_routes)
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
         yield "Hello", None, None
         yield None, None, {"model": "test-model"}  # no "reply" → KeyError
 
@@ -965,7 +965,7 @@ def test_chat_stream_releases_when_upstream_fails(
         _grant_unlimited_pool(app, test_user["id"])
     state = _recording_live_state(monkeypatch, chat_routes)
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
         raise RuntimeError("upstream is down")
         yield  # pragma: no cover - makes this a generator function
 
@@ -991,7 +991,7 @@ def test_chat_stream_releases_on_client_disconnect(
     state = _recording_live_state(monkeypatch, chat_routes)
     disconnected = threading.Event()
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
         yield "Hello", None, None
         disconnected.set()
         yield " world", None, None
@@ -1016,7 +1016,7 @@ def test_chat_stream_releases_when_the_body_is_abandoned(
         _grant_unlimited_pool(app, test_user["id"])
     state = _recording_live_state(monkeypatch, chat_routes)
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
         yield "Hello", None, None
         yield " world", None, None
         yield None, None, dict(_FINAL_RESULT)
@@ -1080,7 +1080,7 @@ def test_releasing_a_finished_stream_twice_leaves_the_count_intact(
     state = _recording_live_state(monkeypatch, chat_routes)
     bystander = state.admit(test_model["model_name"], 4242)
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
         yield "Hello", None, None
         yield None, None, dict(_FINAL_RESULT)
 

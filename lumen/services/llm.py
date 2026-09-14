@@ -910,11 +910,18 @@ def send_message_stream(
     entity_id: int = None,
     source: str = "chat",
     effective=_UNSET,
+    model_config_id: int = None,
 ):
     """Stream messages to LLM. Yields (chunk_text, None) for each token, then (None, result_dict).
 
     ``effective`` is the coin pool limit already resolved during preflight; it is
     threaded to subtract_coins to avoid re-resolving it after the stream completes.
+
+    ``model_config_id`` carries the authorized canonical model already resolved
+    during preflight. When set, it is used to load the config instead of
+    re-resolving ``model``, so a config reload that retargets an alias after the
+    view's access check can never route or bill this request against a different
+    (possibly private) model. ``model`` is still used for display/error strings.
 
     Must be *called* inside an application context (view code); the returned
     generator runs without one. Each DB phase pushes its own short-lived app
@@ -934,14 +941,19 @@ def send_message_stream(
     # Same reason as the disconnect Event: the arrival marks live in the WSGI
     # environ and only the view can reach them.
     timing = capture_request_timing()
-    return _send_message_stream(app, messages, model, entity_id, source, effective, disconnected, timing)
+    return _send_message_stream(app, messages, model, entity_id, source, effective, disconnected, timing, model_config_id)
 
 
-def _send_message_stream(app, messages, model, entity_id, source, effective, disconnected, timing):
+def _send_message_stream(app, messages, model, entity_id, source, effective, disconnected, timing, model_config_id):
     with app.app_context():
-        config = resolve_model_config(model)
-        if config is None:
-            raise ValueError(f"Unknown or inactive model: {model}")
+        if model_config_id is not None:
+            config = db.session.get(ModelConfig, model_config_id)
+            if config is None:
+                raise ValueError(f"Unknown or inactive model: {model}")
+        else:
+            config = resolve_model_config(model)
+            if config is None:
+                raise ValueError(f"Unknown or inactive model: {model}")
 
         endpoint = get_next_endpoint(config.id)
         if endpoint is None:

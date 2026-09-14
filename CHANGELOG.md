@@ -24,6 +24,7 @@ All notable changes to Lumen will be documented in this file.
 - Help docs consistently use `https://lumen.example.com` as the example host, and replace it with your instance's real URL when rendered through the app.
 - Connect guide documents `enabled_providers: ["lumen"]` so OpenCode shows only Lumen models; the Connect page moves the "Where to put this file" note above the generated OpenCode config.
 - Connect guide links to application screens (profile, models, usage, connect) via the substitutable `https://lumen.example.com` host instead of bare `/profile`, `/models`, `/usage`, `/connect` paths, so the published guide on GitHub Pages no longer resolves them to `ncsa.github.io`.
+- Chat requests keep the authorized canonical model when streaming: the model id resolved at access-check time is threaded into the stream instead of re-resolving the alias, so a config reload that retargets the alias mid-request cannot route or bill against a private model.
 
 ## [2.0.0] - 2026-08-25
 
