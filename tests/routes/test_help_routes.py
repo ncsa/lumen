@@ -35,6 +35,36 @@ def test_help_connect_has_desktop_clients_anchor(client):
     assert b'id="desktop-chat-clients"' in resp.data
 
 
+def test_help_connect_no_broken_absolute_app_links():
+    """Application-screen links use the substitutable lumen.example.com host, not
+    bare /profile, /models, /usage, or /connect absolute paths.
+
+    On the GitHub Pages static site, a bare /profile would resolve to
+    https://ncsa.github.io/profile (broken); linking to lumen.example.com keeps
+    the link substitutable so both the static site and in-app help stay correct.
+    """
+    from lumen.blueprints.help.routes import DOCS_DIR
+
+    path = DOCS_DIR / "guides" / "connect.md"
+    text = path.read_text(encoding="utf-8")
+    for href in ("/profile", "/models", "/usage", "/connect"):
+        assert f"]({href})" not in text, f"connect.md still links to {href}"
+        assert f"](https://lumen.example.com{href})" in text, (
+            f"connect.md missing substitutable link to {href}")
+
+
+def test_help_connect_substitutes_host_for_app_links(client):
+    """In-app help rewrites the lumen.example.com app-screen links to this instance."""
+    resp = client.get("/help/connect")
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.data.decode()
+    assert "https://lumen.example.com" not in body
+    assert "http://localhost/profile" in body
+    assert "http://localhost/models" in body
+    assert "http://localhost/usage" in body
+    assert "http://localhost/connect" in body
+
+
 def test_help_connect_opencode_explains_enabled_providers(client):
     """The Connect guide's OpenCode section shows how to restrict to Lumen models."""
     resp = client.get("/help/connect")

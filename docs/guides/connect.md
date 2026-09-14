@@ -2,11 +2,11 @@
 
 Lumen exposes an **OpenAI-compatible API**, so most tools that speak to OpenAI can talk to Lumen by changing two things: the **base URL** and the **API key**.
 
-> **Tip:** The [Connect page](/connect) generates these snippets for you — including a ready-to-download OpenCode config listing every model your account can use, and curl/Python examples for a specific model. Log in first so it can fill in your models.
+> **Tip:** The [Connect page](https://lumen.example.com/connect) generates these snippets for you — including a ready-to-download OpenCode config listing every model your account can use, and curl/Python examples for a specific model. Log in first so it can fill in your models.
 
 ## 1. Create an API key
 
-Create a key on your [Profile](/profile) page. Copy it when it is shown — it is only displayed once.
+Create a key on your [Profile](https://lumen.example.com/profile) page. Copy it when it is shown — it is only displayed once.
 
 ## 2. Set the `LUMEN_API_KEY` environment variable
 
@@ -21,15 +21,15 @@ The base URL is your Lumen host with `/v1` appended, for example `https://lumen.
 
 ## Desktop chat clients
 
-Beyond command-line and coding tools, most **graphical chat clients** that talk to OpenAI can be pointed at Lumen with the same two pieces of information: the **base URL** (`https://lumen.example.com/v1`) and your **API key**. This keeps your chats on your own computer — Lumen is designed not to store or leak your chats and their responses, so your conversation content is not retained. Only usage metadata (request counts, tokens, and cost) is recorded and shown on your [Usage page](/usage); see [Profile](./profile.md) for details on what Lumen retains.
+Beyond command-line and coding tools, most **graphical chat clients** that talk to OpenAI can be pointed at Lumen with the same two pieces of information: the **base URL** (`https://lumen.example.com/v1`) and your **API key**. This keeps your chats on your own computer — Lumen is designed not to store or leak your chats and their responses, so your conversation content is not retained. Only usage metadata (request counts, tokens, and cost) is recorded and shown on your [Usage page](https://lumen.example.com/usage); see [Profile](./profile.md) for details on what Lumen retains.
 
 When you configure a new provider in such a client, look for the "OpenAI compatible" (or "OpenAI") option and fill in:
 
 | Field | Value |
 |-------|-------|
 | **API Base URL** | `https://lumen.example.com/v1` |
-| **API Key** | The token from your [Profile](/profile) page |
-| **Model** | Choose a model id from the [Model Dashboard](/models) (most clients offer a "Fetch models" button instead) |
+| **API Key** | The token from your [Profile](https://lumen.example.com/profile) page |
+| **Model** | Choose a model id from the [Model Dashboard](https://lumen.example.com/models) (most clients offer a "Fetch models" button instead) |
 
 The steps below walk through a concrete example using [ChatWise](https://chatwise.app/), but the same settings apply to any OpenAI-compatible desktop client (LM Studio, Msty, Jan, etc.).
 
@@ -38,15 +38,15 @@ The steps below walk through a concrete example using [ChatWise](https://chatwis
 3. Fill in the fields:
    - **Provider Name** — anything you like, e.g. `Lumen`.
    - **API Base URL** — `https://lumen.example.com/v1`.
-   - **API Key** — paste your [API key](/profile). If the field name is `Api Key`/`Secret Key`, that is the same thing.
-4. Click **Fetch Models** (sometimes *List Models* or *Test Connection*). The client will pull the list of models Lumen hosts; pick one from the [Model Dashboard](/models).
+   - **API Key** — paste your [API key](https://lumen.example.com/profile). If the field name is `Api Key`/`Secret Key`, that is the same thing.
+4. Click **Fetch Models** (sometimes *List Models* or *Test Connection*). The client will pull the list of models Lumen hosts; pick one from the [Model Dashboard](https://lumen.example.com/models).
 5. Back in the client's main window, select a Lumen model and start chatting.
 
-> **Model acknowledgement:** Some models ask you to accept their license once before first use. On the [Profile page](/profile), the **Models** tab lists models whose access badge reads **Needs consent** — click it to acknowledge, then the model works from any client. See [Model Access](./profile.md) for the full list of badges.
+> **Model acknowledgement:** Some models ask you to accept their license once before first use. On the [Profile page](https://lumen.example.com/profile), the **Models** tab lists models whose access badge reads **Needs consent** — click it to acknowledge, then the model works from any client. See [Model Access](./profile.md) for the full list of badges.
 
 ## OpenCode
 
-[OpenCode](https://opencode.ai) reads the key from `{env:LUMEN_API_KEY}`. Use the **Download config.json** button on the [Connect page](/connect) to get a file pre-filled with every model you can access, then save it as:
+[OpenCode](https://opencode.ai) reads the key from `{env:LUMEN_API_KEY}`. Use the **Download config.json** button on the [Connect page](https://lumen.example.com/connect) to get a file pre-filled with every model you can access, then save it as:
 
 - **macOS / Linux:** `~/.config/opencode/opencode.json`
 - **Windows:** `%USERPROFILE%\.config\opencode\opencode.json`
@@ -91,7 +91,7 @@ OpenCode will then list only Lumen's models when you select a model.
 
 ## curl
 
-Replace `MODEL` with a model id from the [Model Dashboard](/models).
+Replace `MODEL` with a model id from the [Model Dashboard](https://lumen.example.com/models).
 
 ```
 curl https://lumen.example.com/v1/chat/completions \
@@ -184,4 +184,4 @@ curl https://lumen.example.com/v1/audio/transcriptions \
   -F model=MODEL
 ```
 
-Select a specific image- or audio-capable model on the [Connect page](/connect) to see tailored examples.
+Select a specific image- or audio-capable model on the [Connect page](https://lumen.example.com/connect) to see tailored examples.
