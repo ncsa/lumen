@@ -5,9 +5,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 def _load_mkdocs_config():
-    import yaml
+    import io
 
-    return yaml.safe_load((REPO_ROOT / "mkdocs.yml").read_text(encoding="utf-8"))
+    from mkdocs.utils import yaml as mkdocs_yaml
+
+    return mkdocs_yaml.yaml_load(io.StringIO((REPO_ROOT / "mkdocs.yml").read_text(encoding="utf-8")))
 
 
 def _nav_files():
@@ -37,24 +39,47 @@ def test_mkdocs_nav_entries_point_to_existing_docs():
         assert (docs_dir / filename).is_file(), f"nav entry missing file: {filename}"
 
 
+def _build_site(tmp_path):
+    """Build the docs site and return its root dir."""
+    from click.testing import CliRunner
+    from mkdocs.__main__ import build_command
+
+    runner = CliRunner()
+    site_dir = tmp_path / "site"
+    result = runner.invoke(
+        build_command,
+        [
+            "--strict",
+            "--site-dir",
+            str(site_dir),
+            "--config-file",
+            str(REPO_ROOT / "mkdocs.yml"),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    return site_dir
+
+
 def test_mkdocs_build_strict(tmp_path):
     """`mkdocs build --strict` completes with no warnings-as-errors.
 
     This is the same build the GitHub Pages workflow runs (gh-deploy --strict),
     so it catches broken relative links and missing nav files.
     """
-    from click.testing import CliRunner
-    from mkdocs.__main__ import build_command
+    _build_site(tmp_path)
 
-    runner = CliRunner()
-    result = runner.invoke(
-        build_command,
-        [
-            "--strict",
-            "--site-dir",
-            str(tmp_path / "site"),
-            "--config-file",
-            str(REPO_ROOT / "mkdocs.yml"),
-        ],
-    )
-    assert result.exit_code == 0, result.output
+
+def test_mkdocs_mermaid_diagrams_render(tmp_path):
+    """Mermaid blocks are emitted as `.mermaid` elements, not code fences.
+
+    mkdocs.yml must register a `mermaid` custom SuperFences block; otherwise
+    the `` ```mermaid `` fences in architecture.md/dbschema.md render as
+    ordinary highlighted code blocks and the published pages show source
+    instead of diagrams.
+    """
+    site_dir = _build_site(tmp_path)
+
+    for page in ("architecture", "dbschema"):
+        html = (site_dir / page / "index.html").read_text(encoding="utf-8")
+        assert 'class="mermaid"' in html, f"{page}: expected a .mermaid element"
+        assert 'language-mermaid' not in html, f"{page}: mermaid rendered as a code fence"
