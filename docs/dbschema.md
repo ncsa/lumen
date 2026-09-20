@@ -612,7 +612,7 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 | `time` | DateTime (with timezone) | NO | UTC timestamp of the request; TimescaleDB partition key. Indexed but non-unique. |
 | `entity_id` | Integer (FK → entities) | YES | The entity that made the request; set to NULL if the entity is later deleted |
 | `model_config_id` | Integer (FK → model_configs) | YES | The model used; set to NULL if the model is later deleted |
-| `model_endpoint_id` | Integer (FK → model_endpoints) | YES | The specific backend endpoint that served the request; set to NULL if the endpoint is later deleted |
+| `model_endpoint_id` | Integer (FK → model_endpoints) | YES | The specific backend endpoint that served the request. Endpoints are retired (marked inactive), never deleted, so the reference stays resolvable; only a direct SQL deletion nulls it |
 | `source` | String(8) | NO | Origin of the request: `'chat'` or `'api'` |
 | `input_tokens` | Integer | NO | Input token count for this request |
 | `output_tokens` | Integer | NO | Output token count for this request |
@@ -629,7 +629,7 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 | `outcome` | String(16) | YES | How the request ended: `'ok'` or `'disconnect'` |
 
 **Notes:**
-- Foreign keys use `SET NULL` on delete (not cascade) to preserve historical log data when entities, models, or endpoints are removed.
+- Foreign keys use `SET NULL` on delete (not cascade) to preserve historical log data when entities or models are removed. Endpoints are not removed at all: the config sync retires them by clearing `model_endpoints.active`, so `model_endpoint_id` keeps pointing at the endpoint that served each request, and the `SET NULL` action on that column only fires if a row is deleted directly in SQL.
 - `time` is indexed but not unique; concurrent workers may insert rows with the same timestamp without collision.
 - **Timing columns measure the user's wait, which `duration` does not.** `duration` starts *after* preflight (model lookup, access checks, coin budget, endpoint selection, pool checkout) and ends before the billing commit, while `time` is stamped *after* that commit. So neither can be walked backwards to the moment the request arrived. Together the new columns partition the request: `started_at` + `queue_wait` + `preflight` + `ttft_visible` is when the user first sees anything.
 - **`started_at` is stored, not derived.** The obvious reconstruction, `time − duration − queue_wait`, silently assumes preflight and the billing commit take zero time. Both grow under load, so the error is largest during exactly the burst the column exists to explain.

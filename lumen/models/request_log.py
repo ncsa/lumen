@@ -16,7 +16,13 @@ class RequestLog(db.Model):
     policies. On SQLite it behaves as a plain table.
 
     FK columns use SET NULL on delete to preserve historical records when
-    entities, models, or endpoints are removed.
+    entities or models are removed. Endpoints are not removed: the config
+    sync retires them by clearing model_endpoints.active, so
+    model_endpoint_id keeps referencing the endpoint that served each
+    request (SET NULL remains as a safety net for direct SQL deletions).
+    Updating this column would force TimescaleDB to decompress compressed
+    chunks — bounded by a tuple limit and liable to abort a large sync —
+    which is exactly what retirement avoids.
     """
 
     __tablename__ = "request_logs"
@@ -53,11 +59,13 @@ class RequestLog(db.Model):
         db.ForeignKey("model_configs.id", ondelete="SET NULL"),
         comment="Model used; SET NULL on delete to preserve historical data",
     )
-    # SET NULL on delete so historical data is preserved after endpoint removal
+    # SET NULL on delete only as a safety net for direct SQL deletions; the
+    # sync retires endpoints (model_endpoints.active = false) instead of
+    # deleting them, precisely so this column is never rewritten
     model_endpoint_id: Mapped[Optional[int]] = mapped_column(
         db.Integer,
         db.ForeignKey("model_endpoints.id", ondelete="SET NULL"),
-        comment="Backend endpoint that served the request; SET NULL on delete to preserve historical data",
+        comment="Backend endpoint that served the request; endpoints are retired (deactivated), never deleted, so this reference is stable",
     )
     # 'chat' (web UI) or 'api' (API key)
     source: Mapped[str] = mapped_column(db.String(8), comment="Origin of the request: chat (web UI) or api (API key)")
