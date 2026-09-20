@@ -8,13 +8,11 @@ All notable changes to Lumen will be documented in this file.
 
 - Model aliases: a model may declare `aliases:` in `config.yaml` so removed/renamed model IDs keep working, survive config-editor saves, and resolve in chat to the still-enabled canonical model. (#19)
 - Admins can add, change, and remove a model's aliases in the config editor's model form.
-- Publish the help documentation to GitHub Pages with MkDocs (`mkdocs.yml` + a `Docs` workflow that runs `mkdocs gh-deploy --force --strict`), so the docs/ folder is built and served at https://ncsa.github.io/lumen/.
+- Publish the help documentation to GitHub Pages with MkDocs (`mkdocs.yml` + a `Docs` workflow that runs `mkdocs gh-deploy --force --strict`), so the docs/ folder is built and served at https://ncsa.github.io/lumen/ with interactive Mermaid diagrams, table-of-contents anchors matching the generated heading IDs, and application links using the substitutable instance host.
 
 ### Changed
 
 - Document how to add Lumen as an OpenAI-compatible provider to desktop chat clients (e.g. ChatWise) in the Connect guide.
-- MkDocs renders the `mermaid` diagrams in the Architecture and Database Schema pages as interactive diagrams instead of highlighted code blocks.
-- Fix the Architecture page's table-of-contents anchor links so they match MkDocs's generated heading IDs, and configure `validation.links.anchors: warn` so broken anchors fail the `--strict` docs build instead of passing as informational messages.
 - Group detail pages hide the Models tab from regular members when the group has no granted models; owners and admins still see it so they can grant the first one.
 - In a group's Members list, administrators see user names linked to that user's profile page.
 - New chat sessions show a notice that the built-in chat is for quick interactions only, linking to the connect page for a full-featured client; it has no close button and disappears once the first chat is sent. (#15)
@@ -23,7 +21,6 @@ All notable changes to Lumen will be documented in this file.
 - Config editor no longer downgrades the saved config to `version: 2`; it preserves the loaded version so version 3 configs stay bootable.
 - Help docs consistently use `https://lumen.example.com` as the example host, and replace it with your instance's real URL when rendered through the app.
 - Connect guide documents `enabled_providers: ["lumen"]` so OpenCode shows only Lumen models; the Connect page moves the "Where to put this file" note above the generated OpenCode config.
-- Connect guide links to application screens (profile, models, usage, connect) via the substitutable `https://lumen.example.com` host instead of bare `/profile`, `/models`, `/usage`, `/connect` paths, so the published guide on GitHub Pages no longer resolves them to `ncsa.github.io`.
 - Endpoints removed from `config.yaml` (or whose model is deactivated) are now retired (marked inactive) instead of deleted, so historical request logs keep referencing the endpoint that served them; inactive endpoints no longer appear in discovery, routing, or health checks, and re-adding the URL reactivates the same row after a fresh health probe.
 
 ### Fixed
