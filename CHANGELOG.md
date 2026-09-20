@@ -15,8 +15,7 @@ All notable changes to Lumen will be documented in this file.
 - Document how to add Lumen as an OpenAI-compatible provider to desktop chat clients (e.g. ChatWise) in the Connect guide.
 - Group detail pages hide the Models tab from regular members when the group has no granted models; owners and admins still see it so they can grant the first one.
 - In a group's Members list, administrators see user names linked to that user's profile page.
-- New chat sessions show a notice that the built-in chat is for quick interactions only, linking to the connect page for a full-featured client; it has no close button and disappears once the first chat is sent. (#15)
-- The quick-chat notice in the chat window now links directly to the "Desktop chat clients" section of the Connect guide.
+- New chat sessions show a quick-interaction notice linking to the "Desktop chat clients" section of the Connect guide; it disappears once the first chat is sent. (#63)
 - `GET /v1/models` and `GET /v1/models/{id}` no longer count against the per-key API rate limit.
 - Config editor no longer downgrades the saved config to `version: 2`; it preserves the loaded version so version 3 configs stay bootable.
 - Help docs consistently use `https://lumen.example.com` as the example host, and replace it with your instance's real URL when rendered through the app.
