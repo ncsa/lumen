@@ -11,6 +11,7 @@ from flask import Flask, current_app, g, jsonify, render_template, request, sess
 from jinja2 import BaseLoader, ChoiceLoader, TemplateNotFound
 from markupsafe import Markup
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 
@@ -131,6 +132,19 @@ def _loaded_by_non_serving_cli():
     if ctx is None:
         return False
     return ctx.info_name != "run"
+
+
+def _startup_db_hint(e: Exception) -> str:
+    """Diagnostics for a failed startup database task, matched to the error.
+
+    A missing table or column means the schema is behind the code, and running
+    ``flask db upgrade`` is the fix. Any other failure — a constraint violation
+    from bad config data, for example — is misdiagnosed by that advice, so the
+    exception itself is the whole hint.
+    """
+    if isinstance(e, (OperationalError, ProgrammingError)):
+        return f"{e} (run 'flask db upgrade' first if the database schema is older than the code)"
+    return str(e)
 
 
 def create_app():
@@ -657,13 +671,18 @@ def create_app():
               "and recreate any rules you still want in the UI.",
               file=sys.stderr)
     from lumen.commands import sync_models_from_yaml
+    from lumen.extensions import db
 
     non_serving_cli = _loaded_by_non_serving_cli()
     with app.app_context():
         try:
             sync_models_from_yaml(yaml_data)
         except Exception as e:
-            print(f"WARNING: Could not sync models from yaml (run 'flask db upgrade' first): {e}",
+            # A failed flush leaves the session in pending-rollback state; roll
+            # it back so the metrics priming below gets a usable session instead
+            # of dying with PendingRollbackError and masking this error.
+            db.session.rollback()
+            print(f"WARNING: Could not sync models from yaml: {_startup_db_hint(e)}",
                   file=sys.stderr)
         if not non_serving_cli:
             try:
@@ -673,7 +692,7 @@ def create_app():
                 from lumen.services.metrics_snapshot import refresh_snapshot
                 refresh_snapshot()
             except Exception as e:
-                print(f"WARNING: Could not prime the metrics snapshot (run 'flask db upgrade' first): {e}",
+                print(f"WARNING: Could not prime the metrics snapshot: {_startup_db_hint(e)}",
                       file=sys.stderr)
 
     # Start background threads once per serving process.
