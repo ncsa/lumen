@@ -300,7 +300,7 @@ All three workers are daemon threads started inside `create_app`. A `SERVER_IS_M
 |---|---|---|---|
 | Health checker | `services/health.py` | 60 s | Polls each `ModelEndpoint` via OpenAI `models.list()`; sets `healthy` flag |
 | Token refiller | `services/token_refill.py` | 60 s poll, hourly effective | Increments `EntityBalance` by `refresh_coins`, capped at `max_coins` |
-| Config watcher | `services/config_watcher.py` | 5 s | Hot-reloads models from `config.yaml` (skips files whose version is not exactly 3 with a logged error); warns on restart-required changes |
+| Config watcher | `services/config_watcher.py` | 5 s | Hot-reloads models from `config.yaml` (skips files whose version is not exactly 3 with a logged error; retries a failed model sync on later polls and keeps the previous config until it applies); warns on restart-required changes |
 
 ---
 

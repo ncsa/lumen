@@ -518,7 +518,13 @@ def _check_restart_required(old_data, new_data):
 
 
 def _watcher(app, config_path):
+    # A reload only completes once the model sync commits: the validated file is
+    # held in pending_data and retried on every poll — no further file edit
+    # required — while the previous config stays fully active in memory and in
+    # the database. "config.yaml reloaded" is logged only after a successful
+    # sync, so a failed sync is never mistaken for an applied one.
     last_mtime = None
+    pending_data = None
     while True:
         time.sleep(5)
         try:
@@ -526,32 +532,37 @@ def _watcher(app, config_path):
             if last_mtime is None:
                 last_mtime = mtime
                 continue
-            if mtime == last_mtime:
+            if mtime != last_mtime:
+                last_mtime = mtime
+
+                with open(config_path) as f:
+                    new_data = yaml.safe_load(f)
+
+                config_errors = []
+                if not config_version_ok(new_data or {}):
+                    config_errors.append(CONFIG_VERSION_ERROR)
+                config_errors.extend(removed_config_key_errors(new_data or {}))
+                if config_errors:
+                    logger.error("config_watcher: reload skipped — %s", "; ".join(config_errors))
+                    continue
+
+                _check_restart_required(app.config.get("YAML_DATA", {}), new_data)
+                pending_data = new_data
+            if pending_data is None:
                 continue
-            last_mtime = mtime
-
-            with open(config_path) as f:
-                new_data = yaml.safe_load(f)
-
-            config_errors = []
-            if not config_version_ok(new_data or {}):
-                config_errors.append(CONFIG_VERSION_ERROR)
-            config_errors.extend(removed_config_key_errors(new_data or {}))
-            if config_errors:
-                logger.error("config_watcher: reload skipped — %s", "; ".join(config_errors))
+            try:
+                with app.app_context():
+                    sync_models_from_yaml(pending_data)
+                    app.config["YAML_DATA"] = pending_data
+                    apply_hot_config(app, pending_data)
+                    _apply_theme(app, pending_data)
+            except Exception as e:
+                logger.warning(
+                    "config_watcher: sync_models_from_yaml failed — config reload pending, "
+                    "keeping the previous config and retrying: %s", e,
+                )
                 continue
-
-            with app.app_context():
-                old_data = app.config.get("YAML_DATA", {})
-                _check_restart_required(old_data, new_data)
-                app.config["YAML_DATA"] = new_data
-                apply_hot_config(app, new_data)
-                _apply_theme(app, new_data)
-                try:
-                    sync_models_from_yaml(new_data)
-                except Exception as e:
-                    logger.warning("config_watcher: sync_models_from_yaml failed: %s", e)
-
+            pending_data = None
             app.logger.info("config.yaml reloaded")
         except Exception:
             logger.exception("config_watcher error")

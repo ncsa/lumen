@@ -71,6 +71,19 @@ def clean_db(app):
 
 
 @pytest.fixture
+def restore_config(app):
+    """Snapshot app.config and restore it afterward.
+
+    apply_hot_config mutates the shared session-scoped app.config; restoring
+    prevents leakage into later tests (e.g. CONFIG_EDITOR / DEV_USER).
+    """
+    saved = dict(app.config)
+    yield
+    app.config.clear()
+    app.config.update(saved)
+
+
+@pytest.fixture
 def client(app):
     return app.test_client()
 

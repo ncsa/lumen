@@ -4,19 +4,6 @@ import logging
 import pytest
 
 
-@pytest.fixture
-def restore_config(app):
-    """Snapshot app.config and restore it afterward.
-
-    apply_hot_config mutates the shared session-scoped app.config; restoring
-    prevents leakage into later tests (e.g. CONFIG_EDITOR / DEV_USER).
-    """
-    saved = dict(app.config)
-    yield
-    app.config.clear()
-    app.config.update(saved)
-
-
 def _check(old, new, caplog):
     from lumen.services.config_watcher import _check_restart_required
     with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):

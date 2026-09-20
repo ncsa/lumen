@@ -1,11 +1,13 @@
 """Retirement keeps endpoint history while removing the endpoint from live use."""
 
+import logging
 import re
 from datetime import timezone
 from http import HTTPStatus
 from unittest.mock import patch
 
 import pytest
+import yaml
 from sqlalchemy import select, text
 
 from lumen.blueprints.profile.routes import _fetch_model_context
@@ -119,3 +121,106 @@ def test_retired_endpoint_is_excluded_from_live_consumers(app, admin_client, adm
     with app.app_context(), patch("lumen.services.health._probe_endpoint", return_value=True) as probe:
         assert check_all_endpoints() == 1
         assert probe.call_args.args[0] == a
+
+
+def test_watcher_retries_failed_removal_sync_until_it_converges(
+    app, admin_client, tmp_path, restore_config, caplog,
+):
+    """A transient sync failure while removing an endpoint is retried on later
+    watcher polls without another file edit: nothing is applied and no success
+    is logged until the sync commits, then the database rows, page counts,
+    probes, and routing converge to the accepted config."""
+    from lumen.services.config_watcher import _watcher
+
+    a, b = "https://active.example/v1", "https://removed.example/v1"
+
+    def watcher_config(*urls):
+        # Keep the admins list so the admin-only per-endpoint rows render on
+        # the detail page after the reload replaces YAML_DATA.
+        return {"version": 3, "admins": ["admin@example.com"], **_config(*urls)}
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.dump(watcher_config(a, b)))
+
+    sync_calls = []
+    state_at_failure = {}
+
+    def flaky_sync(data):
+        reloaded_logged = sum(1 for r in caplog.records if r.getMessage() == "config.yaml reloaded")
+        sync_calls.append({
+            "endpoints": [ep["url"] for ep in data["models"][0]["endpoints"]],
+            "reloaded_logged": reloaded_logged,
+        })
+        if len(sync_calls) == 2:
+            # The removal reload: fail once, transiently, and prove nothing has
+            # been applied — the removed endpoint is still live and the running
+            # config still lists both URLs.
+            removed = db.session.scalars(select(ModelEndpoint).filter_by(url=b)).all()
+            state_at_failure["removed_still_active"] = [ep.active for ep in removed] == [True]
+            state_at_failure["yaml_endpoints"] = [
+                ep["url"] for ep in app.config["YAML_DATA"]["models"][0]["endpoints"]
+            ]
+            raise RuntimeError("simulated transient sync failure")
+        return sync_models_from_yaml(data)
+
+    sleep_count = 0
+
+    def fake_sleep(n):
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count == 3:
+            # The endpoint is removed from the file after the initial reload;
+            # no further edit follows, so the retry must fire on its own.
+            config_file.write_text(yaml.dump(watcher_config(a)))
+        if sleep_count >= 5:
+            raise SystemExit("stop")
+
+    mtime_values = [1.0, 2.0, 3.0]
+    mtime_idx = 0
+
+    def fake_getmtime(path):
+        nonlocal mtime_idx
+        v = mtime_values[mtime_idx] if mtime_idx < len(mtime_values) else mtime_values[-1]
+        mtime_idx += 1
+        return v
+
+    with caplog.at_level(logging.INFO), \
+         patch("lumen.services.config_watcher.sync_models_from_yaml", side_effect=flaky_sync), \
+         patch("lumen.services.config_watcher.time.sleep", side_effect=fake_sleep), \
+         patch("lumen.services.config_watcher.os.path.getmtime", side_effect=fake_getmtime):
+        try:
+            _watcher(app, str(config_file))
+        except SystemExit:
+            pass
+
+    # One sync attempt per poll until success: initial load, the failed removal,
+    # then the retry driven by the unchanged file — and nothing further.
+    assert [c["endpoints"] for c in sync_calls] == [[a, b], [a], [a]]
+    # The failed attempt applied nothing (the previous config stayed active and
+    # the removed endpoint stayed live) and logged no success of its own.
+    assert state_at_failure == {"removed_still_active": True, "yaml_endpoints": [a, b]}
+    assert sync_calls[1]["reloaded_logged"] == sync_calls[2]["reloaded_logged"] == 1
+    messages = [r.getMessage() for r in caplog.records]
+    assert sum(1 for m in messages if m == "config.yaml reloaded") == 2
+    assert any("sync_models_from_yaml failed" in m and "pending" in m for m in messages)
+
+    # The health pass probes only the surviving endpoint; it then routes.
+    with app.app_context(), patch("lumen.services.health._probe_endpoint", return_value=True) as probe:
+        assert check_all_endpoints() == 1
+        assert probe.call_args.args[0] == a
+
+    with app.app_context():
+        rows = db.session.scalars(select(ModelEndpoint).order_by(ModelEndpoint.id)).all()
+        assert [(ep.url, ep.active, ep.healthy) for ep in rows] == [(a, True, True), (b, False, False)]
+        model_id = db.session.scalar(select(ModelConfig.id).filter_by(model_name="retirement-model"))
+    for _ in range(4):
+        assert get_next_endpoint(model_id).url == a
+
+    detail = admin_client.get("/models/retirement-model")
+    assert detail.status_code == HTTPStatus.OK
+    assert a.encode() in detail.data
+    assert b.encode() not in detail.data
+    assert b"1/1 healthy" in detail.data
+    listing = admin_client.get("/models")
+    assert re.search(r">\s*1\s*</span>\s*/\s*1\b", listing.data.decode())
+    assert [ep["url"] for ep in app.config["YAML_DATA"]["models"][0]["endpoints"]] == [a]

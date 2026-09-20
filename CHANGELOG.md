@@ -30,6 +30,10 @@ All notable changes to Lumen will be documented in this file.
 - Chat no longer sends a request to a model that is disabled or past its end date between access check and streaming: the pinned canonical model is re-checked for activity before an endpoint is selected.
 - Endpoints removed from `config.yaml` (or whose model is deactivated) are now retired (marked inactive) instead of deleted, so historical request logs keep referencing the endpoint that served them; inactive endpoints no longer appear in discovery, routing, or health checks, and re-adding the URL reactivates the same row after a fresh health probe.
 
+### Fixed
+
+- A config reload whose model sync fails is retried automatically instead of being logged as reloaded.
+
 ## [2.0.0] - 2026-08-25
 
 **Breaking configuration change:** Lumen 2.0 requires config version 3. The `groups`, `users`, and `clients`/`projects` sections are no longer managed in `config.yaml`; their records, memberships, limits, and access settings are now database-backed and managed through the Lumen UI. Before upgrading, save the existing `groups.*.rules` values and remove the legacy configuration sections so version 3 passes startup validation. After starting 2.0, log in with an account listed under `admins`, recreate and enable each group's auto-join rules from its Rules tab, and verify them before allowing regular users to sign in.
