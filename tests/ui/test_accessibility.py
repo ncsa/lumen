@@ -153,6 +153,14 @@ def test_admin_users_page(admin_client):
     _run_all_checks(resp.data, "/admin/users")
 
 
+def test_admin_config_page_accessibility(admin_client):
+    # The config editor's forms are client-side rendered; this checks the
+    # server-rendered shell (nav, banners, dialogs) of the page.
+    resp = admin_client.get("/admin/config")
+    assert resp.status_code == HTTPStatus.OK
+    _run_all_checks(resp.data, "/admin/config")
+
+
 def test_admin_user_profile_page_accessibility(admin_client, test_user):
     url = f"/admin/users/{test_user['id']}/profile"
     resp = admin_client.get(url)

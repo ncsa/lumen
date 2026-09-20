@@ -805,3 +805,181 @@ models:
             assert mc.disabled is False
     finally:
         app.config["CONFIG_YAML"] = original
+
+
+def test_config_post_edits_model_aliases(app, admin_client, tmp_path):
+    """The editor's Aliases field adds, changes, and removes aliases on save.
+
+    Collecting the form always writes the collected alias list: keeping a name,
+    dropping another, and typing a new one lands in config.yaml as-is, and
+    clearing the field removes the ``aliases`` key entirely.
+    """
+    config = """\
+version: 3
+app:
+  name: Lumen
+  secret_key: real-secret
+models:
+  - name: glm-5.3-flash
+    input_cost_per_million: 1
+    output_cost_per_million: 1
+    aliases:
+      - glm-5.2
+      - old-name
+    endpoints:
+      - url: https://api.example.com/v1
+        api_key: sk-real
+"""
+    original, cfg = _use_config(app, tmp_path, config)
+    try:
+        data = admin_client.get("/admin/api/config").get_json()
+        # Keep glm-5.2, drop old-name, add new-name — the comma-separated field
+        # is collected into the saved alias list.
+        data["models"][0]["aliases"] = ["glm-5.2", "new-name"]
+        resp = admin_client.post("/admin/api/config", json=data)
+        assert resp.status_code == HTTPStatus.OK
+        model = yaml.safe_load(cfg.read_text())["models"][0]
+        assert model["aliases"] == ["glm-5.2", "new-name"]
+        assert "old-name" not in cfg.read_text()
+
+        # Clearing the field removes every alias: collectCurrentModel sets the
+        # key to undefined and JSON.stringify omits it, so the save payload
+        # carries no aliases key at all.
+        del data["models"][0]["aliases"]
+        resp = admin_client.post("/admin/api/config", json=data)
+        assert resp.status_code == HTTPStatus.OK
+        model = yaml.safe_load(cfg.read_text())["models"][0]
+        assert "aliases" not in model
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
+def test_config_alias_edits_persist_through_config_reload(app, admin_client, tmp_path):
+    """Alias edits saved through the editor live in config.yaml, so a config
+    reload (the watcher's sync) applies them instead of reverting them."""
+    config = """\
+version: 3
+app:
+  name: Lumen
+  secret_key: real-secret
+models:
+  - name: glm-5.3-flash
+    input_cost_per_million: 1
+    output_cost_per_million: 1
+    aliases:
+      - glm-5.2
+      - old-name
+    endpoints:
+      - url: https://api.example.com/v1
+        api_key: sk-real
+"""
+    original, cfg = _use_config(app, tmp_path, config)
+    try:
+        # Baseline: the running config is synced into the database (startup).
+        with app.app_context():
+            from lumen.commands import sync_models_from_yaml
+            sync_models_from_yaml(yaml.safe_load(cfg.read_text()))
+
+        # The admin edits the alias set in the editor and saves.
+        data = admin_client.get("/admin/api/config").get_json()
+        data["models"][0]["aliases"] = ["glm-5.2", "new-name"]
+        assert admin_client.post("/admin/api/config", json=data).status_code == HTTPStatus.OK
+
+        # The watcher picks up the file change and re-syncs from disk: the edit
+        # must survive the reload, not be reconciled back to the old set.
+        with app.app_context():
+            from lumen.commands import sync_models_from_yaml
+            from lumen.extensions import db
+            from lumen.models.model_alias import ModelAlias
+            from lumen.models.model_config import ModelConfig
+            sync_models_from_yaml(yaml.safe_load(cfg.read_text()))
+            mc = db.session.execute(
+                select(ModelConfig).where(ModelConfig.model_name == "glm-5.3-flash")
+            ).scalar_one()
+            aliases = db.session.execute(
+                select(ModelAlias.alias).where(ModelAlias.model_config_id == mc.id)
+            ).scalars().all()
+            assert sorted(aliases) == ["glm-5.2", "new-name"]
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
+def test_config_post_rejects_invalid_alias_edit(app, admin_client, tmp_path):
+    """An invalid alias set is rejected by the shared alias validation before
+    anything is written; the on-disk config keeps its valid aliases."""
+    config = """\
+version: 3
+app:
+  name: Lumen
+  secret_key: real-secret
+models:
+  - name: glm-5.3-flash
+    input_cost_per_million: 1
+    output_cost_per_million: 1
+    aliases:
+      - glm-5.2
+    endpoints:
+      - url: https://api.example.com/v1
+        api_key: sk-real
+  - name: glm
+    input_cost_per_million: 1
+    output_cost_per_million: 1
+    endpoints:
+      - url: https://api.example.com/v1
+        api_key: sk-real
+"""
+    original, cfg = _use_config(app, tmp_path, config)
+    try:
+        data = admin_client.get("/admin/api/config").get_json()
+        # An alias may not collide with any canonical model name (here: model 2).
+        data["models"][0]["aliases"] = ["glm"]
+        resp = admin_client.post("/admin/api/config", json=data)
+        assert resp.status_code == HTTPStatus.BAD_REQUEST
+        assert "collides with model name 'glm'" in resp.get_json()["error"]
+
+        # Nor may it duplicate another alias.
+        data["models"][0]["aliases"] = ["dup", "dup"]
+        resp = admin_client.post("/admin/api/config", json=data)
+        assert resp.status_code == HTTPStatus.BAD_REQUEST
+        assert "duplicate alias 'dup'" in resp.get_json()["error"]
+
+        # Both saves were rejected: the disk still holds the original aliases.
+        assert yaml.safe_load(cfg.read_text())["models"][0]["aliases"] == ["glm-5.2"]
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
+def test_config_alias_edit_requires_admin(app, auth_client, tmp_path):
+    """A non-admin cannot change aliases through the config editor API."""
+    config = """\
+version: 3
+app:
+  name: Lumen
+  secret_key: real-secret
+models:
+  - name: glm-5.3-flash
+    input_cost_per_million: 1
+    output_cost_per_million: 1
+    aliases:
+      - glm-5.2
+    endpoints:
+      - url: https://api.example.com/v1
+        api_key: sk-real
+"""
+    original, cfg = _use_config(app, tmp_path, config)
+    try:
+        resp = auth_client.post("/admin/api/config", json={
+            "version": 3,
+            "models": [{
+                "name": "glm-5.3-flash",
+                "input_cost_per_million": 1,
+                "output_cost_per_million": 1,
+                "aliases": ["hijacked"],
+                "endpoints": [{"url": "https://api.example.com/v1", "api_key": "sk-real"}],
+            }],
+        })
+        assert resp.status_code == HTTPStatus.FORBIDDEN
+        # The file is untouched — the alias set was never modified.
+        assert yaml.safe_load(cfg.read_text())["models"][0]["aliases"] == ["glm-5.2"]
+    finally:
+        app.config["CONFIG_YAML"] = original

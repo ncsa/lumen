@@ -580,6 +580,7 @@ function renderModelForm(m, idx) {
   return `
     ${card('Identity', `
       ${field('mdl-name','Name',ti('mdl-name',m.name),'internal identifier')}
+      ${field('mdl-aliases','Aliases',ti('mdl-aliases',Array.isArray(m.aliases) ? m.aliases.join(', ') : (m.aliases || '')),'comma-separated alternative names clients may request')}
       ${field('mdl-desc',  'Description',      ti('mdl-desc',   m.description))}
       ${field('mdl-url',   'Documentation URL', ti('mdl-url',    m.url))}
       ${field('mdl-notice','Admin Notice',      ti('mdl-notice', m.notice),'shown in UI for this model')}
@@ -655,8 +656,8 @@ function collectCurrentModel() {
   const idx = state.selectedModelIdx;
   if (!state.data.models || !$('mdl-name')) return;
   if (idx >= state.data.models.length) return;
-  // Seed from the existing model so keys the form doesn't edit (e.g. `aliases`) are
-  // preserved instead of being silently stripped on save.
+  // Seed from the existing model so keys the form doesn't edit are preserved
+  // instead of being silently stripped on save.
   const m = Object.assign({}, state.data.models[idx]);
   // Drop the legacy `active` boolean: the form edits `disabled`, and a stale
   // `active: false` copied from the on-disk model would otherwise survive the
@@ -664,6 +665,8 @@ function collectCurrentModel() {
   // operator clears the Disabled checkbox (serialization omits `disabled: undefined`).
   delete m.active;
   m.name                   = val('mdl-name')     || undefined;
+  const aliases            = arrFromCommas('mdl-aliases');
+  m.aliases                = aliases.length ? aliases : undefined;
   m.needs_ack              = boolVal('mdl-needsack') || undefined;
   m.early_access           = boolVal('mdl-earlyaccess') || undefined;
   m.disabled               = boolVal('mdl-disabled') || undefined;

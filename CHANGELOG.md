@@ -7,6 +7,7 @@ All notable changes to Lumen will be documented in this file.
 ### Added
 
 - Model aliases: a model may declare `aliases:` in `config.yaml` so removed/renamed model IDs keep working and resolve to the canonical model, preserving usage history and exposing the aliases in discovery. (#19)
+- Admins can add, change, and remove a model's aliases in the config editor's model form.
 - Publish the help documentation to GitHub Pages with MkDocs (`mkdocs.yml` + a `Docs` workflow that runs `mkdocs gh-deploy --force --strict`), so the docs/ folder is built and served at https://ncsa.github.io/lumen/.
 
 ### Changed

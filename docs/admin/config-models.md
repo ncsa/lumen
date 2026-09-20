@@ -70,7 +70,7 @@ Acknowledgement is a property of the model, not of any group or scope. Set `need
 
 ## Aliases
 
-`aliases` lets a model be reached under one or more extra names, so a renamed or upgraded model (e.g. `glm-5.2` → `glm-5.3-flash`) keeps working for clients that still request the old ID.
+`aliases` lets a model be reached under one or more extra names, so a renamed or upgraded model (e.g. `glm-5.2` → `glm-5.3-flash`) keeps working for clients that still request the old ID. Administrators can manage the list in the config editor's model form via the comma-separated **Aliases** field; the saved config keeps working across reloads because the edits live in `config.yaml` like every other model field.
 
 ```yaml
 - name: glm-5.3-flash
@@ -96,7 +96,7 @@ How aliases behave:
   - `GET /v1/models` lists each permitted canonical model **and** each of its aliases, so clients that validate their configured model ID against discovery keep working.
   - `GET /v1/models/<alias>` returns the target's metadata under the requested alias ID.
   - `GET /v1/models/<requested>` responds with the **requested** name in the `model` field (whether canonical or an alias); the backend is always called with the canonical name (or the endpoint's `model` override), never the alias.
-- **Validation.** Alias names are exact and case-sensitive, capped at 128 characters. The config is rejected if an alias is empty, duplicates another alias, equals its own model's name, or collides with *any* canonical model name. An invalid reload is skipped, leaving the last valid routing intact.
+- **Validation.** Alias names are exact and case-sensitive, capped at 128 characters. The config is rejected if an alias is empty, duplicates another alias, equals its own model's name, or collides with *any* canonical model name — in the config editor, a save that would produce an invalid set is rejected before anything is written. An invalid reload is skipped, leaving the last valid routing intact.
 
 ## Pricing
 
