@@ -44,7 +44,7 @@ def index():
     configs = [c for c in all_configs if access_statuses.get(c.id, "allowed") != "blocked"]
     model_ids = [c.id for c in configs]
     endpoints_map: dict[int, list] = {}
-    for ep in db.session.execute(select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(model_ids))).scalars().all():
+    for ep in db.session.execute(select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(model_ids), ModelEndpoint.active.is_(True))).scalars().all():
         endpoints_map.setdefault(ep.model_config_id, []).append(ep)
     return render_template("models.html", configs=configs, endpoints_map=endpoints_map)
 
@@ -53,7 +53,7 @@ def index():
 @login_required
 def detail(model_name):
     config, access_status = _visible_model_or_404(model_name)
-    endpoints = list(config.endpoints)
+    endpoints = [ep for ep in config.endpoints if ep.active]
 
     healthy_count = sum(1 for e in endpoints if e.healthy)
     if not endpoints or healthy_count == 0:

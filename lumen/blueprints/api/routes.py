@@ -297,7 +297,7 @@ def list_models():
     configs = db.session.execute(select(ModelConfig).where(ModelConfig.active)).scalars().all()
     eps_by_model: dict = {}
     for ep in db.session.execute(
-        select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_([c.id for c in configs]))
+        select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_([c.id for c in configs]), ModelEndpoint.active.is_(True))
     ).scalars().all():
         eps_by_model.setdefault(ep.model_config_id, []).append(ep)
     rates = _get_request_rates()
@@ -344,7 +344,7 @@ def get_model(model_id):
         if get_effective_limit(g.entity.id, config.id, require_consent=consent_required) is None:
             return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
     eps = db.session.execute(
-        select(ModelEndpoint).where(ModelEndpoint.model_config_id == config.id)
+        select(ModelEndpoint).where(ModelEndpoint.model_config_id == config.id, ModelEndpoint.active.is_(True))
     ).scalars().all()
     rates = _get_request_rates()
     d = _model_dict(config, rates, list(eps))

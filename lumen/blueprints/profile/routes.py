@@ -69,7 +69,7 @@ def _fetch_model_context(eid: int):
     eps_by_model: dict = {}
     if model_ids:
         for ep in db.session.execute(
-            select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(model_ids))
+            select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(model_ids), ModelEndpoint.active.is_(True))
         ).scalars().all():
             eps_by_model.setdefault(ep.model_config_id, []).append(ep)
     return all_models, eps_by_model, access_statuses, consent_map

@@ -65,6 +65,7 @@ erDiagram
         string url
         string api_key
         string model_name
+        bool active
         bool healthy
         datetime last_checked_at
         datetime created_at
@@ -365,6 +366,7 @@ Backend endpoint(s) for a model. A single `model_config` can fan out to multiple
 | `url` | String(256) | NO | Base URL of the backend (e.g., `https://api.openai.com/v1`) |
 | `api_key` | Text | NO | Credential used when forwarding requests to this endpoint. Encrypted at rest with the app encryption key (`enc:`-prefixed Fernet ciphertext); the ORM decrypts transparently. |
 | `model_name` | String(128) | YES | Override model name sent to this endpoint. When set, Lumen substitutes this value for `model_config.model_name` in upstream requests, enabling one Lumen model to map to differently-named backend models. |
+| `active` | Boolean | NO | Whether the endpoint is configured for live use. Removing an endpoint from `config.yaml` (or deactivating its model) marks the row inactive instead of deleting it, so historical request logs keep referencing the endpoint that served them. Inactive endpoints are excluded from discovery, request routing, and health checks; re-adding the URL reactivates the row and requires a fresh health probe. |
 | `healthy` | Boolean | NO | Last known health status; updated by the health-check background task |
 | `last_checked_at` | DateTime | YES | UTC timestamp of the most recent health check; null if never checked |
 | `created_at` | DateTime | NO | UTC timestamp when the endpoint was added |

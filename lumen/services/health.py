@@ -186,6 +186,7 @@ def check_all_endpoints(heartbeat=_no_heartbeat) -> int:
     rows = db.session.execute(
         select(ModelEndpoint, ModelConfig.model_name.label("config_model_name"))
         .join(ModelConfig, ModelEndpoint.model_config_id == ModelConfig.id)
+        .where(ModelEndpoint.active.is_(True))
     ).all()
     # Capture every scalar needed for probing/logging before releasing the read
     # transaction. Each probe is a network call (up to 5s + retries per endpoint),

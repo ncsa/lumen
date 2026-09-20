@@ -11,7 +11,7 @@ import click
 import yaml
 from flask import current_app
 from flask.cli import with_appcontext
-from sqlalchemy import delete, select, text, update
+from sqlalchemy import select, text, update
 from sqlalchemy.exc import DBAPIError
 
 from lumen.models.model_alias import ModelAlias
@@ -185,27 +185,35 @@ def _apply_model_access(config, model_def):
 
 
 def _reconcile_endpoints(config, model_def):
-    yaml_urls = {ep_def["url"] for ep_def in model_def.get("endpoints", [])}
-    # Build dict once to avoid O(n²) iteration over the endpoints collection
-    existing_by_url = {ep.url: ep for ep in config.endpoints}
-
-    for ep in list(existing_by_url.values()):
-        if ep.url not in yaml_urls:
-            db.session.delete(ep)
+    # Keep every row, including duplicate URLs. Prefer a currently active row
+    # before reusing a retired one, preserving IDs and historical references.
+    existing_by_url = {}
+    for ep in sorted(config.endpoints, key=lambda ep: (not ep.active, ep.id)):
+        existing_by_url.setdefault(ep.url, []).append(ep)
 
     for ep_def in model_def.get("endpoints", []):
-        if ep_def["url"] not in existing_by_url:
+        candidates = existing_by_url.get(ep_def["url"], [])
+        if not candidates:
             db.session.add(ModelEndpoint(
                 model_config_id=config.id,
                 url=ep_def["url"],
                 api_key=ep_def["api_key"],
                 model_name=ep_def.get("model") or None,
+                active=True,
                 healthy=False,
             ))
         else:
-            existing_ep = existing_by_url[ep_def["url"]]
+            existing_ep = candidates.pop(0)
+            if not existing_ep.active:
+                existing_ep.healthy = False  # require a fresh probe on reactivation
+            existing_ep.active = True
             existing_ep.api_key = ep_def["api_key"]
             existing_ep.model_name = ep_def.get("model") or None
+
+    for remaining in existing_by_url.values():
+        for ep in remaining:
+            ep.active = False
+            ep.healthy = False  # retired rows are never probed again; drop stale health
 
 
 def _deactivate_removed_models(yaml_model_names):
@@ -216,7 +224,7 @@ def _deactivate_removed_models(yaml_model_names):
     if not deactivated_ids:
         return
     db.session.execute(
-        delete(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(deactivated_ids))
+        update(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(deactivated_ids)).values(active=False, healthy=False)
     )
     db.session.execute(
         update(ModelConfig).where(ModelConfig.id.in_(deactivated_ids)).values(disabled=True)

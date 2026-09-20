@@ -100,7 +100,7 @@ def chat_page():
     healthy_counts = dict(
         db.session.execute(
             select(ModelEndpoint.model_config_id, func.count())
-            .where(ModelEndpoint.healthy == True)  # noqa: E712
+            .where(ModelEndpoint.active.is_(True), ModelEndpoint.healthy.is_(True))
             .group_by(ModelEndpoint.model_config_id)
         ).all()
     )

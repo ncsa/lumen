@@ -158,6 +158,7 @@ def refresh_snapshot() -> MetricsSnapshot:
         for model_name, url, healthy in db.session.execute(
             select(ModelConfig.model_name, ModelEndpoint.url, ModelEndpoint.healthy)
             .join(ModelConfig, ModelEndpoint.model_config_id == ModelConfig.id)
+            .where(ModelEndpoint.active.is_(True))
         ).all()
     )
 

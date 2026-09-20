@@ -282,7 +282,7 @@ def get_model_status(mc) -> str:
     """Return 'ok', 'degraded', 'down', or 'disabled' for a ModelConfig."""
     if not mc.active:
         return "disabled"
-    endpoints = list(mc.endpoints)
+    endpoints = [ep for ep in mc.endpoints if ep.active]
     if not endpoints:
         return "down"
     healthy = sum(1 for e in endpoints if e.healthy)
@@ -299,7 +299,7 @@ _rr_lock = threading.Lock()
 def get_next_endpoint(model_config_id: int):
     """Return the next healthy endpoint for a model using round-robin, or None."""
     endpoints = db.session.execute(
-        select(ModelEndpoint).filter_by(model_config_id=model_config_id, healthy=True).order_by(ModelEndpoint.id)
+        select(ModelEndpoint).filter_by(model_config_id=model_config_id, active=True, healthy=True).order_by(ModelEndpoint.id)
     ).scalars().all()
     if not endpoints:
         return None

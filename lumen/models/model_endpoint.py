@@ -33,6 +33,8 @@ class ModelEndpoint(db.Model):
     # When set, this name is sent to the endpoint instead of model_config.model_name,
     # allowing one Lumen model to fan out to endpoints that use different identifiers.
     model_name: Mapped[Optional[str]] = mapped_column(db.String(128), comment="Override model name sent upstream; null means use model_config.model_name")
+    active: Mapped[bool] = mapped_column(db.Boolean, default=True, server_default=db.true(), nullable=False,
+                                       comment="Whether the endpoint is configured for live use; inactive rows preserve request history")
     # Updated by the health-check background task
     healthy: Mapped[bool] = mapped_column(db.Boolean, default=False, comment="Last known health status, updated by the health-check background task")
     # Null if the endpoint has never been health-checked

@@ -27,6 +27,7 @@ All notable changes to Lumen will be documented in this file.
 - Connect guide links to application screens (profile, models, usage, connect) via the substitutable `https://lumen.example.com` host instead of bare `/profile`, `/models`, `/usage`, `/connect` paths, so the published guide on GitHub Pages no longer resolves them to `ncsa.github.io`.
 - Chat requests keep the authorized canonical model when streaming: the model id resolved at access-check time is threaded into the stream instead of re-resolving the alias, so a config reload that retargets the alias mid-request cannot route or bill against a private model.
 - Chat no longer sends a request to a model that is disabled or past its end date between access check and streaming: the pinned canonical model is re-checked for activity before an endpoint is selected.
+- Endpoints removed from `config.yaml` (or whose model is deactivated) are now retired (marked inactive) instead of deleted, so historical request logs keep referencing the endpoint that served them; inactive endpoints no longer appear in discovery, routing, or health checks, and re-adding the URL reactivates the same row after a fresh health probe.
 
 ## [2.0.0] - 2026-08-25
 
