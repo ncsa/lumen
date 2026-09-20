@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 """Seed a Lumen database with a week of realistic usage plus a curated chat
 conversation, so the help-doc screenshots (scripts/screenshots.py) show
-populated charts, tables, and a genuine conversation instead of empty pages or
-the echo backend mirroring the prompt.
+populated charts and tables and the chat sidebar has history to show.
 
 Usage charts only render on PostgreSQL/TimescaleDB (the /api/usage/* endpoints
 short-circuit to empty on SQLite), so run this against a Postgres instance. Use
@@ -186,7 +185,8 @@ def main():
             key.cost, key.last_used_at = r[3], r[4]
         db.session.commit()
 
-        # Curated conversation so chat.png shows a real exchange, not echo output.
+        # Curated conversation so the chat screenshot's sidebar shows history
+        # (the chat area itself captures the empty new-chat notice state).
         chat_model = os.environ.get("MODEL") or models[0].model_name
         if not db.session.execute(
             select(Conversation).filter_by(entity_id=user.id)

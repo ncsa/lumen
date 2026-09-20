@@ -46,15 +46,16 @@ defaults:
     refresh: 0.1
     starting: 50
 
-# Groups and coin pools live in the database; rules only drive OAuth auto-assignment.
-group_rules:
-  staff:
-  - field: affiliation
-    contains: staff@example.edu
+# Groups, memberships, coin pools, and auto-join rules all live in the database.
 
 models:
 - name: qwen2.5-7b-instruct
   description: Qwen2.5 7B instruction-tuned — general-purpose chat.
+  # Aliases so the model-detail screenshot shows the "Also known as" badges
+  # (docs/models/model-detail.md).
+  aliases:
+  - qwen2.5-7b
+  - Qwen2.5-7B-Instruct
   url: https://huggingface.co/Qwen/Qwen2.5-7B-Instruct
   input_cost_per_million: 0.15
   output_cost_per_million: 0.6
@@ -73,6 +74,8 @@ models:
     model: dummy
 - name: mistral-7b-instruct
   description: Mistral 7B Instruct v0.3.
+  aliases:
+  - mistral-7b
   url: https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3
   input_cost_per_million: 0.2
   output_cost_per_million: 0.6

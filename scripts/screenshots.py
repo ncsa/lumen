@@ -2,8 +2,9 @@
 """Regenerate the help-doc screenshots in docs/img/ from a running dev instance.
 
 Captures Chat, Models, Usage, Projects, Project detail, Profile, and Model detail with the
-footer and skip-to-content link cropped out. The model-detail shot is taken as a
-non-admin user so admin-only endpoint URLs are not exposed.
+footer and skip-to-content link cropped out. The chat shot is the empty new-chat state so
+the quick-interaction notice shows; the model-detail shot is taken as a non-admin user so
+admin-only endpoint URLs are not exposed.
 
 Prerequisites (see scripts/README.md):
   - `uv run dummy` (echo backend) running, or real model backends reachable
@@ -19,7 +20,6 @@ Env vars: BASE_URL (default http://localhost:5001), OUTPUT_DIR (default docs/img
 MODEL (default: first active model), CHROME_PATH (fallback browser executable).
 """
 import os
-import time
 
 from playwright.sync_api import sync_playwright
 from sqlalchemy import select
@@ -142,38 +142,13 @@ def main():
         page = actx.new_page()
         page.goto(BASE + "/devlogin", wait_until="networkidle")
 
+        # Capture the empty new-chat state so the shot shows the
+        # quick-interaction notice (it disappears once a conversation is opened
+        # or the first message is sent). Seeded conversations still appear in
+        # the sidebar.
         page.goto(BASE + "/chat", wait_until="networkidle")
+        page.wait_for_selector("#quick-chat-notice")
         page.wait_for_timeout(800)  # let the conversation sidebar load
-        # Prefer opening a pre-seeded conversation so the shot shows a realistic
-        # exchange. Fall back to sending live messages (works against a real
-        # backend; the dev echo backend just mirrors the prompt).
-        conv = page.query_selector(".conv-item")
-        if conv:
-            conv.click()
-            page.wait_for_timeout(1500)  # let messages + MathJax render
-            # The picker isn't auto-synced to a conversation's model; select it so
-            # the header matches the messages in the shot.
-            if model:
-                try:
-                    page.select_option("#model-picker", value=model)
-                except Exception:
-                    pass
-        else:
-            if model:
-                try:
-                    page.select_option("#model-picker", label=model)
-                except Exception:
-                    pass
-            for msg in ["What is the capital of Illinois?",
-                        "In two sentences, what is an AI gateway?"]:
-                page.fill("#chat-input", msg)
-                page.click("#send-btn")
-                try:
-                    page.wait_for_function(
-                        "!document.getElementById('send-btn').disabled", timeout=60000)
-                except Exception:
-                    pass
-                time.sleep(1.5)
         hide_chrome(page)
         page.screenshot(path=f"{OUT}/chat.png")
         print("chat.png")
