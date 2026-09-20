@@ -85,6 +85,51 @@ def test_duplicate_url_removal_and_reactivation_preserve_rows(app):
         assert all(ep.active for ep in rows)
 
 
+def test_duplicate_url_reduction_retires_every_stale_row(app, admin_client):
+    """Removing a URL (or shrinking its duplicate count) must retire every row
+    that no longer has a configured slot: a health pass with successful probes
+    leaves no healthy stale row behind, so page counts, probing, and routing
+    all converge to the configured endpoints even though the removed backend
+    itself is still running."""
+    a, b = "https://a.example/v1", "https://b.example/v1"
+    with app.app_context():
+        sync_models_from_yaml(_config(a, b, b))
+        model_id = db.session.scalar(select(ModelConfig.id).filter_by(model_name="retirement-model"))
+        with patch("lumen.services.health._probe_endpoint", return_value=True):
+            assert check_all_endpoints() == 3
+
+        # Shrink the duplicate count 2 → 1: exactly one healthy B survives.
+        sync_models_from_yaml(_config(a, b))
+        rows = db.session.scalars(select(ModelEndpoint).order_by(ModelEndpoint.id)).all()
+        assert [(ep.url, ep.active, ep.healthy) for ep in rows] == [
+            (a, True, True), (b, True, True), (b, False, False),
+        ]
+        assert {get_next_endpoint(model_id).url for _ in range(4)} == {a, b}
+
+        # Remove B entirely: both duplicate rows retire and stay retired.
+        sync_models_from_yaml(_config(a))
+        rows = db.session.scalars(select(ModelEndpoint).order_by(ModelEndpoint.id)).all()
+        assert [(ep.url, ep.active, ep.healthy) for ep in rows] == [
+            (a, True, True), (b, False, False), (b, False, False),
+        ]
+        with patch("lumen.services.health._probe_endpoint", return_value=True) as probe:
+            assert check_all_endpoints() == 1
+            assert [c.args[0] for c in probe.call_args_list] == [a]
+        rows = db.session.scalars(select(ModelEndpoint).order_by(ModelEndpoint.id)).all()
+        assert [(ep.url, ep.active, ep.healthy) for ep in rows] == [
+            (a, True, True), (b, False, False), (b, False, False),
+        ]
+        assert {get_next_endpoint(model_id).url for _ in range(4)} == {a}
+
+    detail = admin_client.get("/models/retirement-model")
+    assert detail.status_code == HTTPStatus.OK
+    assert a.encode() in detail.data
+    assert b.encode() not in detail.data
+    assert b"1/1 healthy" in detail.data
+    listing = admin_client.get("/models")
+    assert re.search(r">\s*1\s*</span>\s*/\s*1\b", listing.data.decode())
+
+
 @pytest.mark.parametrize("active_healthy", [False, True])
 def test_retired_endpoint_is_excluded_from_live_consumers(app, admin_client, admin_user, active_healthy):
     a, b = "https://active.example/v1", "https://retired.example/v1"
