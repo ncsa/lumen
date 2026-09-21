@@ -2,6 +2,12 @@
 
 All notable changes to Lumen will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- A config replacement that fails to load discards the pending reload from the previous file, keeping the running config active.
+
 ## [2.1.0] - 2026-09-20
 
 ### Added

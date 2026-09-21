@@ -962,6 +962,86 @@ def test_watcher_retry_schedule_spacing(app, tmp_path, restore_config):
     assert attempt_polls == [2, 3, 5, 9, 17]
 
 
+@pytest.mark.parametrize("bad_kind", ["malformed_yaml", "version_2", "read_failure"])
+def test_watcher_rejected_replacement_drops_pending_candidate(
+    app, tmp_path, restore_config, caplog, bad_kind,
+):
+    """A file revision that fails to read, parse, or validate discards the pending
+    candidate from the previous revision: a sync left in backoff for the old file
+    is never applied once that file is no longer on disk, and a later corrected
+    replacement is picked up normally."""
+    import builtins
+    from unittest.mock import patch
+
+    import yaml
+
+    from lumen.services.config_watcher import _watcher
+
+    bad_replacement = {
+        "malformed_yaml": "version: 3\napp: [unclosed\n",
+        "version_2": yaml.dump({"version": 2, "app": {"name": "C"}}),
+        "read_failure": None,
+    }[bad_kind]
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.dump({"version": 3, "app": {"name": "B"}}))
+    with app.app_context():
+        app.config["APP_NAME"] = "Original"
+
+    sleep_count = 0
+
+    def fake_sleep(n):
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count > 10:
+            raise SystemExit("stop")
+
+    def fake_getmtime(path):
+        # Poll 3 replaces the still-pending config with the rejected file;
+        # poll 8 replaces it with a corrected one.
+        if sleep_count == 3 and bad_replacement is not None:
+            config_file.write_text(bad_replacement)
+        elif sleep_count == 8:
+            config_file.write_text(yaml.dump({"version": 3, "app": {"name": "D"}}))
+        if sleep_count < 2:
+            return 1.0
+        if sleep_count < 3:
+            return 2.0
+        if sleep_count < 8:
+            return 3.0
+        return 4.0
+
+    real_open = builtins.open
+
+    def fake_open(file, *args, **kwargs):
+        if bad_kind == "read_failure" and sleep_count == 3 and str(file) == str(config_file):
+            raise OSError("disk error")
+        return real_open(file, *args, **kwargs)
+
+    sync_calls = []
+
+    def flaky_sync(data):
+        sync_calls.append(data["app"]["name"])
+        if data["app"]["name"] == "B":
+            raise RuntimeError("db down")
+
+    with caplog.at_level(logging.INFO), \
+         patch("lumen.services.config_watcher.sync_models_from_yaml", side_effect=flaky_sync), \
+         patch("lumen.services.config_watcher.time.sleep", side_effect=fake_sleep), \
+         patch("lumen.services.config_watcher.os.path.getmtime", side_effect=fake_getmtime), \
+         patch("builtins.open", side_effect=fake_open):
+        try:
+            _watcher(app, str(config_file))
+        except SystemExit:
+            pass
+
+    assert sync_calls == ["B", "D"]
+    assert sum(1 for r in caplog.records if r.getMessage() == "config.yaml reloaded") == 1
+    with app.app_context():
+        assert app.config.get("APP_NAME") == "D"
+        assert app.config["YAML_DATA"]["app"]["name"] == "D"
+
+
 def test_watcher_does_not_resync_after_in_memory_apply_failure(app, tmp_path, restore_config, caplog):
     """When the model sync commits but applying in-memory settings raises, the
     database already matches the file: log the failure once and stop — the file

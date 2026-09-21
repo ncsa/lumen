@@ -529,7 +529,10 @@ def _watcher(app, config_path):
     # held in pending_data and retried with backoff — no further file edit
     # required — while the previous config stays fully active in memory and in
     # the database. "config.yaml reloaded" is logged only after a successful
-    # sync, so a failed sync is never mistaken for an applied one.
+    # sync, so a failed sync is never mistaken for an applied one. A newer file
+    # revision supersedes any pending candidate from an older one: the candidate
+    # is dropped before the new file is read, so a replacement that fails to
+    # load can never resurrect it once it is no longer on disk.
     last_mtime = None
     pending_data = None
     retry_wait = 0          # polls between attempts; 0 until the first failure
@@ -543,6 +546,12 @@ def _watcher(app, config_path):
                 continue
             if mtime != last_mtime:
                 last_mtime = mtime
+                # This revision replaces whatever was queued from the previous
+                # one — drop the candidate and its backoff before the file is
+                # even opened, so a read/parse/validation failure here leaves
+                # only the running config instead of resurrecting the old file.
+                pending_data = None
+                retry_wait = polls_until_retry = 0  # a new file is attempted right away
 
                 with open(config_path) as f:
                     new_data = yaml.safe_load(f)
@@ -557,7 +566,6 @@ def _watcher(app, config_path):
 
                 _check_restart_required(app.config.get("YAML_DATA", {}), new_data)
                 pending_data = new_data
-                retry_wait = polls_until_retry = 0  # a new file is attempted right away
             if pending_data is None:
                 continue
             if polls_until_retry > 0:
