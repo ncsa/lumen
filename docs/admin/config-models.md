@@ -70,7 +70,7 @@ Acknowledgement is a property of the model, not of any group or scope. Set `need
 
 ## Aliases
 
-`aliases` lets a model be reached under one or more extra names, so a renamed or upgraded model (e.g. `glm-5.2` → `glm-5.3-flash`) keeps working for clients that still request the old ID. Administrators can manage the list in the config editor's model form via the comma-separated **Aliases** field; the saved config keeps working across reloads because the edits live in `config.yaml` like every other model field.
+`aliases` lets a model be reached under one or more extra names, so a renamed or upgraded model (e.g. `glm-5.2` → `glm-5.3-flash`) keeps working for clients that still request the old ID. Administrators can also manage the list in the config editor's model form via the comma-separated **Aliases** field; edits are saved to `config.yaml`, so they survive reloads.
 
 ```yaml
 - name: glm-5.3-flash

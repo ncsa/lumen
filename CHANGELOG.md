@@ -25,7 +25,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Fixed
 
-- A config reload whose model sync fails is retried automatically instead of being logged as reloaded.
+- A config reload whose model sync fails is retried automatically with backoff (5 s doubling to 5 min, one warning) instead of being logged as reloaded; a failure applying in-memory settings after the sync commits is logged once and not re-synced.
 - Startup recovers from a failed config sync instead of following it with a misleading metrics-priming warning.
 
 ## [2.0.0] - 2026-08-25

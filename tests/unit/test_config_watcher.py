@@ -852,3 +852,139 @@ def test_validate_config_rejects_endpoint_without_url_or_key():
 def test_validate_config_rejects_non_mapping():
     from lumen.services.config_watcher import validate_config_structure
     assert validate_config_structure(["not", "a", "dict"]) == ["config must be a YAML mapping"]
+
+
+def _run_watcher(app, config_file, polls, sync, apply_hot_config=None, mtime_change_at=2):
+    """Drive ``_watcher`` for ``polls`` iterations with a faked clock. The file's
+    mtime changes once, on poll ``mtime_change_at``; ``sync`` replaces
+    ``sync_models_from_yaml`` and ``apply_hot_config`` (optional) the in-memory
+    application step."""
+    from unittest.mock import patch
+
+    from lumen.services.config_watcher import _watcher
+
+    sleep_count = 0
+
+    def fake_sleep(n):
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count > polls:
+            raise SystemExit("stop")
+
+    def fake_getmtime(path):
+        return 2.0 if sleep_count >= mtime_change_at else 1.0
+
+    patches = [
+        patch("lumen.services.config_watcher.sync_models_from_yaml", side_effect=sync),
+        patch("lumen.services.config_watcher.time.sleep", side_effect=fake_sleep),
+        patch("lumen.services.config_watcher.os.path.getmtime", side_effect=fake_getmtime),
+    ]
+    if apply_hot_config is not None:
+        patches.append(patch("lumen.services.config_watcher.apply_hot_config", side_effect=apply_hot_config))
+    for p in patches:
+        p.start()
+    try:
+        _watcher(app, str(config_file))
+    except SystemExit:
+        pass
+    finally:
+        for p in patches:
+            p.stop()
+
+
+def test_watcher_backs_off_repeated_sync_failures_and_warns_once(app, tmp_path, restore_config, caplog):
+    """A sync that keeps failing is retried after 1, 2, 4, ... polls — not on every
+    poll — and only the first failure is a warning; the repeats are debug-level.
+    Once the sync succeeds the pending file is applied and logged as reloaded."""
+    import yaml
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.dump({"version": 3, "app": {"name": "Backoff"}}))
+
+    attempts = []
+
+    def flaky_sync(data):
+        attempts.append(len(caplog.records))
+        if len(attempts) <= 4:
+            raise RuntimeError("db down")
+
+    # Polls: 1 = initial mtime, 2 = change → attempt 1 fails, 3 = attempt 2 (after 1 poll),
+    # 5 = attempt 3 (after 2 polls), 9 = attempt 4 (after 4 polls), 17 = attempt 5 succeeds.
+    # app.logger ("lumen") is pinned to INFO, so the watcher's child logger needs
+    # its own DEBUG level for the repeat-failure records to be captured.
+    with caplog.at_level(logging.DEBUG), \
+         caplog.at_level(logging.DEBUG, logger="lumen.services.config_watcher"):
+        _run_watcher(app, config_file, polls=20, sync=flaky_sync)
+
+    assert len(attempts) == 5
+    watcher_records = [r for r in caplog.records if r.name == "lumen.services.config_watcher"]
+    failures = [r for r in watcher_records if "sync_models_from_yaml failed" in r.getMessage()]
+    assert [r.levelno for r in failures] == [logging.WARNING, logging.DEBUG, logging.DEBUG, logging.DEBUG]
+    assert [m.split("retrying in ")[1].split(" s")[0] for m in (r.getMessage() for r in failures)] == ["5", "10", "20", "40"]
+    assert any("succeeded after retry" in r.getMessage() for r in watcher_records)
+    assert sum(1 for r in caplog.records if r.getMessage() == "config.yaml reloaded") == 1
+    with app.app_context():
+        assert app.config.get("APP_NAME") == "Backoff"
+
+
+def test_watcher_retry_schedule_spacing(app, tmp_path, restore_config):
+    """The attempts land on the polls the backoff schedule predicts."""
+    import yaml
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.dump({"version": 3, "app": {"name": "Spacing"}}))
+
+    from unittest.mock import patch
+
+    from lumen.services.config_watcher import _watcher
+
+    sleep_count = 0
+    attempt_polls = []
+
+    def fake_sleep(n):
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count > 17:
+            raise SystemExit("stop")
+
+    def always_fail(data):
+        attempt_polls.append(sleep_count)
+        raise RuntimeError("db down")
+
+    with patch("lumen.services.config_watcher.sync_models_from_yaml", side_effect=always_fail), \
+         patch("lumen.services.config_watcher.time.sleep", side_effect=fake_sleep), \
+         patch("lumen.services.config_watcher.os.path.getmtime", side_effect=lambda p: 2.0 if sleep_count >= 2 else 1.0):
+        try:
+            _watcher(app, str(config_file))
+        except SystemExit:
+            pass
+
+    assert attempt_polls == [2, 3, 5, 9, 17]
+
+
+def test_watcher_does_not_resync_after_in_memory_apply_failure(app, tmp_path, restore_config, caplog):
+    """When the model sync commits but applying in-memory settings raises, the
+    database already matches the file: log the failure once and stop — the file
+    is not re-synced on later polls and is not reported as reloaded."""
+    import yaml
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.dump({"version": 3, "app": {"name": "ApplyFails"}}))
+
+    sync_calls = []
+
+    def ok_sync(data):
+        sync_calls.append(data["app"]["name"])
+
+    def broken_apply(app_, data):
+        raise RuntimeError("bad in-memory setting")
+
+    with caplog.at_level(logging.INFO):
+        _run_watcher(app, config_file, polls=8, sync=ok_sync, apply_hot_config=broken_apply)
+
+    assert sync_calls == ["ApplyFails"]
+    messages = [r.getMessage() for r in caplog.records]
+    assert sum(1 for m in messages if "applying in-memory settings failed" in m) == 1
+    assert "config.yaml reloaded" not in messages
+    with app.app_context():
+        assert app.config["YAML_DATA"]["app"]["name"] == "ApplyFails"

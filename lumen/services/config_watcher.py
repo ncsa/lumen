@@ -517,16 +517,25 @@ def _check_restart_required(old_data, new_data):
             )
 
 
+# A failed model sync is retried after 1 poll, then 2, 4, ... polls, capped here
+# (5 minutes at the 5 s poll interval) so a long database outage does not hammer
+# the database or fill the log every five seconds.
+_POLL_INTERVAL = 5
+_MAX_RETRY_POLLS = 60
+
+
 def _watcher(app, config_path):
     # A reload only completes once the model sync commits: the validated file is
-    # held in pending_data and retried on every poll — no further file edit
+    # held in pending_data and retried with backoff — no further file edit
     # required — while the previous config stays fully active in memory and in
     # the database. "config.yaml reloaded" is logged only after a successful
     # sync, so a failed sync is never mistaken for an applied one.
     last_mtime = None
     pending_data = None
+    retry_wait = 0          # polls between attempts; 0 until the first failure
+    polls_until_retry = 0
     while True:
-        time.sleep(5)
+        time.sleep(_POLL_INTERVAL)
         try:
             mtime = os.path.getmtime(config_path)
             if last_mtime is None:
@@ -548,21 +557,45 @@ def _watcher(app, config_path):
 
                 _check_restart_required(app.config.get("YAML_DATA", {}), new_data)
                 pending_data = new_data
+                retry_wait = polls_until_retry = 0  # a new file is attempted right away
             if pending_data is None:
+                continue
+            if polls_until_retry > 0:
+                polls_until_retry -= 1
                 continue
             try:
                 with app.app_context():
                     sync_models_from_yaml(pending_data)
-                    app.config["YAML_DATA"] = pending_data
-                    apply_hot_config(app, pending_data)
-                    _apply_theme(app, pending_data)
             except Exception as e:
-                logger.warning(
+                first_failure = retry_wait == 0
+                retry_wait = 1 if first_failure else min(retry_wait * 2, _MAX_RETRY_POLLS)
+                polls_until_retry = retry_wait - 1  # the next poll counts as one
+                # Warn once; the repeats during an outage are debug-level noise.
+                log = logger.warning if first_failure else logger.debug
+                log(
                     "config_watcher: sync_models_from_yaml failed — config reload pending, "
-                    "keeping the previous config and retrying: %s", e,
+                    "keeping the previous config and retrying in %d s: %s",
+                    retry_wait * _POLL_INTERVAL, e,
                 )
                 continue
-            pending_data = None
+            if retry_wait:
+                logger.info("config_watcher: model sync succeeded after retry")
+            retry_wait = 0
+            data, pending_data = pending_data, None
+            # The database already matches the file; a failure here is an
+            # in-memory application error that a retry would only repeat, so it
+            # is logged once and the file is not re-synced.
+            try:
+                with app.app_context():
+                    app.config["YAML_DATA"] = data
+                    apply_hot_config(app, data)
+                    _apply_theme(app, data)
+            except Exception:
+                logger.exception(
+                    "config_watcher: models synced to the database but applying in-memory "
+                    "settings failed; fix the config or restart to apply them"
+                )
+                continue
             app.logger.info("config.yaml reloaded")
         except Exception:
             logger.exception("config_watcher error")

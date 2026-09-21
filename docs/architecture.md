@@ -269,7 +269,8 @@ ModelConfig ──< RequestLog (SET NULL on delete)
 
 ### Notable schema decisions
 
-- **`RequestLog` FKs use `SET NULL` on delete** — preserves historical data when entities, models, or endpoints are removed. All other FKs cascade.
+- **`RequestLog` FKs use `SET NULL` on delete** — preserves historical data when entities or models are removed. All other FKs cascade.
+- **Endpoints are retired, not deleted** — removing an endpoint from `config.yaml` (or its model) clears `model_endpoints.active`; the row stays so `request_logs.model_endpoint_id` keeps pointing at the endpoint that served each request, and inactive rows are excluded from discovery, routing, and health checks. Re-adding the URL reactivates the same row after a fresh probe.
 - **Coin values use `Numeric(12,6)`** — avoids floating-point precision errors for financial accumulation.
 - **`entity_stats` uses `entity_id` as PK (no surrogate key)** — there is exactly one row per entity; the FK doubles as the PK, which also prevents accidental duplicates.
 - **`model_endpoints.model_name` overrides the logical name** — allows one Lumen model to map to differently-named upstream models across endpoints.
@@ -298,9 +299,9 @@ All three workers are daemon threads started inside `create_app`. A `SERVER_IS_M
 
 | Worker | File | Interval | Role |
 |---|---|---|---|
-| Health checker | `services/health.py` | 60 s | Polls each `ModelEndpoint` via OpenAI `models.list()`; sets `healthy` flag |
+| Health checker | `services/health.py` | 60 s | Polls each active `ModelEndpoint` via OpenAI `models.list()`; sets `healthy` flag (retired endpoints are skipped) |
 | Token refiller | `services/token_refill.py` | 60 s poll, hourly effective | Increments `EntityBalance` by `refresh_coins`, capped at `max_coins` |
-| Config watcher | `services/config_watcher.py` | 5 s | Hot-reloads models from `config.yaml` (skips files whose version is not exactly 3 with a logged error; retries a failed model sync on later polls and keeps the previous config until it applies); warns on restart-required changes |
+| Config watcher | `services/config_watcher.py` | 5 s | Hot-reloads models from `config.yaml` (skips files whose version is not exactly 3 with a logged error; retries a failed model sync with backoff — 5 s, 10 s, 20 s, … up to 5 min — and keeps the previous config until it applies); warns on restart-required changes |
 
 ---
 
@@ -408,7 +409,7 @@ Protected by an optional Bearer token. Aggregates across workers via `prometheus
 
 ### Request Logging
 
-Every proxied request is written to `request_logs` (TimescaleDB hypertable partitioned by `time`). Foreign keys use `SET NULL ON DELETE` to preserve historical data after users, models, or endpoints are removed.
+Every proxied request is written to `request_logs` (TimescaleDB hypertable partitioned by `time`). Foreign keys use `SET NULL ON DELETE` to preserve historical data after users or models are removed; endpoints are never deleted (they are retired by clearing `model_endpoints.active`), so `model_endpoint_id` stays resolvable.
 
 ### Analytics Dashboard (`/usage`)
 

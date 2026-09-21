@@ -113,7 +113,9 @@ Some settings are read only at startup and cannot be hot-reloaded. Lumen logs a 
 
 ## How It Works
 
-On startup, Lumen validates `config.yaml` and loads it into memory. While running, a background thread checks the file's modification time every 5 seconds. When a change is detected, it re-parses the YAML, applies the differences, and logs `config.yaml reloaded`. The reload is applied — and logged — only after the model sync to the database commits: if that sync fails (for example during a database outage), the previous configuration stays active, the failure is logged as a pending reload, and the sync is retried on later checks without requiring another edit to the file. If a restart-required setting changed, it also emits a warning.
+On startup, Lumen validates `config.yaml` and loads it into memory. While running, a background thread checks the file's modification time every 5 seconds. When a change is detected, it re-parses the YAML, syncs the models to the database, applies the in-memory differences, and logs `config.yaml reloaded`. If a restart-required setting changed, it also emits a warning.
+
+The reload is applied — and logged — only after the model sync to the database commits. If that sync fails (for example during a database outage), the previous configuration stays active, the failure is logged once as a pending reload, and the sync is retried with increasing delays (5 s, 10 s, 20 s, … up to 5 minutes) without requiring another edit to the file. Saving the file again resets the delay and retries immediately. If the sync succeeds but an in-memory setting cannot be applied, that is logged as an error and not retried: fix the setting or restart.
 
 The `init-db` command syncs model config changes to the database without waiting for the watcher or restarting. It does not update in-memory settings like `APP_NAME` or `CHAT_CONVERSATION_REMOVE_MODE` — those only update when the watcher picks up the change or the app restarts.
 
