@@ -1,0 +1,3712 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="AI model gateway for research institutions">
+      
+      
+      
+        <link rel="canonical" href="https://ncsa.github.io/lumen/dbschema/">
+      
+      
+        <link rel="prev" href="../architecture/">
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Database Schema - Lumen</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#database-schema" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Lumen" class="md-header__button md-logo" aria-label="Lumen" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Lumen
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Database Schema
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ncsa/lumen" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Lumen" class="md-nav__button md-logo" aria-label="Lumen" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Lumen
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ncsa/lumen" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/chat/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chat
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/profile/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Profile & API Keys
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/connect/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect Your Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../models/models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Dashboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../models/model-detail/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Detail
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Projects
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Projects
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../projects/projects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Projects Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../projects/projects-detail/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Groups
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Groups
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../groups/groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Groups Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../groups/groups-detail/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Admin Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Admin Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admin/config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admin/config-application/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Application Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admin/config-users/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Users & Access Control
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admin/config-projects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuring Projects
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admin/config-models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuring Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database Schema
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database Schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#uml-entity-relationship-diagram" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UML Entity-Relationship Diagram
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#entities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        entities
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api_keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        api_keys
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model_configs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        model_configs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model_endpoints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        model_endpoints
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model_aliases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        model_aliases
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#entity_limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        entity_limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#entity_balances" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        entity_balances
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#entity_model_consents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        entity_model_consents
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        groups
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#group_members" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        group_members
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#group_rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        group_rules
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#group_limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        group_limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model_group_access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        model_group_access
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#entity_managers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        entity_managers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model_stats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        model_stats
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#entity_stats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        entity_stats
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conversations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        conversations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#messages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        messages
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#request_logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        request_logs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#continuous-aggregates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Continuous aggregates
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Continuous aggregates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#request_counts_hourly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        request_counts_hourly
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#request_counts_hourly_by_entity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        request_counts_hourly_by_entity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#request_metrics_1m" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        request_metrics_1m
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#request_logs-storage-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        request_logs storage lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#entity-relationship-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entity Relationship Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#access-control-evaluation-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Access Control Evaluation Order
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#coin-budget-resolution-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coin Budget Resolution Order
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#uml-entity-relationship-diagram" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UML Entity-Relationship Diagram
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#entities" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        entities
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api_keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        api_keys
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model_configs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        model_configs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model_endpoints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        model_endpoints
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model_aliases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        model_aliases
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#entity_limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        entity_limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#entity_balances" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        entity_balances
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#entity_model_consents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        entity_model_consents
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        groups
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#group_members" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        group_members
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#group_rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        group_rules
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#group_limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        group_limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model_group_access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        model_group_access
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#entity_managers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        entity_managers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model_stats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        model_stats
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#entity_stats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        entity_stats
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#conversations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        conversations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#messages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        messages
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#request_logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        request_logs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#continuous-aggregates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Continuous aggregates
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Continuous aggregates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#request_counts_hourly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        request_counts_hourly
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#request_counts_hourly_by_entity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        request_counts_hourly_by_entity
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#request_metrics_1m" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        request_metrics_1m
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#request_logs-storage-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        request_logs storage lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#entity-relationship-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entity Relationship Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#access-control-evaluation-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Access Control Evaluation Order
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#coin-budget-resolution-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coin Budget Resolution Order
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/ncsa/lumen/edit/main/docs/dbschema.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="database-schema">Database Schema<a class="headerlink" href="#database-schema" title="Permanent link">&para;</a></h1>
+<p>All timestamps are stored as UTC without timezone info. Coin values use <code>Numeric(12, 6)</code> precision.</p>
+<h2 id="uml-entity-relationship-diagram">UML Entity-Relationship Diagram<a class="headerlink" href="#uml-entity-relationship-diagram" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>erDiagram
+    entities {
+        int id PK
+        string entity_type
+        string email
+        string name
+        string initials
+        string gravatar_hash
+        bool active
+        bool store_conversations
+        datetime created_at
+    }
+
+    api_keys {
+        int id PK
+        int entity_id FK
+        string name
+        string key_hash
+        string key_hint
+        bool active
+        int requests
+        bigint input_tokens
+        bigint output_tokens
+        bigint audio_seconds
+        numeric cost
+        datetime last_used_at
+        datetime created_at
+    }
+
+    model_configs {
+        int id PK
+        string model_name
+        numeric input_cost_per_million
+        numeric output_cost_per_million
+        numeric audio_cost_per_hour
+        int owner_entity_id FK
+        bool needs_ack
+        text ack_message
+        bool early_access
+        datetime end_date
+        bool disabled
+        text description
+        string url
+        int context_window
+        int max_output_tokens
+        bool supports_function_calling
+        bool supports_reasoning
+        json input_modalities
+        json output_modalities
+        string knowledge_cutoff
+        text notice
+        datetime created_at
+    }
+
+    model_endpoints {
+        int id PK
+        int model_config_id FK
+        string url
+        string api_key
+        string model_name
+        bool active
+        bool healthy
+        datetime last_checked_at
+        datetime created_at
+    }
+
+    model_aliases {
+        int id PK
+        string alias
+        int model_config_id FK
+        datetime created_at
+    }
+
+    entity_limits {
+        int id PK
+        int entity_id FK
+        numeric max_coins
+        numeric refresh_coins
+        numeric starting_coins
+        bool config_managed
+    }
+
+    entity_balances {
+        int id PK
+        int entity_id FK
+        numeric coins_left
+        datetime last_refill_at
+    }
+
+    entity_model_consents {
+        int id PK
+        int entity_id FK
+        int model_config_id FK
+        datetime consented_at
+        datetime early_access_at
+    }
+
+    groups {
+        int id PK
+        string name
+        text description
+        bool active
+        bool auto_join
+        datetime created_at
+    }
+
+    group_members {
+        int id PK
+        int group_id FK
+        int entity_id FK
+        bool config_managed
+        bool is_owner
+        datetime joined_at
+    }
+
+    group_rules {
+        int id PK
+        int group_id FK
+        string field
+        string match
+        string value
+    }
+
+    group_limits {
+        int id PK
+        int group_id FK
+        numeric max_coins
+        numeric refresh_coins
+        numeric starting_coins
+    }
+
+    model_group_access {
+        int id PK
+        int model_config_id FK
+        int group_id FK
+        datetime created_at
+    }
+
+    entity_managers {
+        int id PK
+        int user_entity_id FK
+        int project_entity_id FK
+        boolean is_owner
+    }
+
+    model_stats {
+        int id PK
+        int entity_id FK
+        int model_config_id FK
+        string source
+        int requests
+        bigint input_tokens
+        bigint output_tokens
+        bigint audio_seconds
+        numeric cost
+        datetime last_used_at
+    }
+
+    entity_stats {
+        int entity_id PK
+        int requests
+        bigint input_tokens
+        bigint output_tokens
+        bigint audio_seconds
+        numeric cost
+        int conversations
+        datetime last_used_at
+    }
+
+    conversations {
+        int id PK
+        int entity_id FK
+        string title
+        string model
+        datetime created_at
+        datetime updated_at
+    }
+
+    messages {
+        int id PK
+        int conversation_id FK
+        string role
+        text content
+        datetime created_at
+        int input_tokens
+        int output_tokens
+        float time_to_first_token
+        float duration
+        float output_speed
+        text thinking
+        int thinking_tokens
+    }
+
+    request_logs {
+        bigint id PK
+        datetime time
+        int entity_id FK
+        int model_config_id FK
+        int model_endpoint_id FK
+        string source
+        int input_tokens
+        int output_tokens
+        int audio_seconds
+        numeric cost
+        float duration
+        bool aborted
+        datetime started_at
+        float queue_wait
+        float preflight
+        float ttft
+        float ttft_visible
+        float send_blocked
+        string outcome
+    }
+
+    entities ||--o{ api_keys : "owns"
+    entities ||--o| entity_limits : "has"
+    entities ||--o| entity_balances : "has"
+    entities ||--o{ model_configs : "owns"
+    entities ||--o{ entity_model_consents : "consents"
+    entities ||--o{ model_stats : "accumulates"
+    entities ||--o| entity_stats : "totals"
+    entities ||--o{ conversations : "owns"
+    entities ||--o{ group_members : "belongs to"
+    entities ||--o{ request_logs : "logs"
+    entities ||--o{ entity_managers : "manages (user)"
+    entities ||--o{ entity_managers : "managed by (project)"
+
+    groups ||--o{ group_members : "contains"
+    groups ||--o{ group_rules : "auto-join rules"
+    groups ||--o| group_limits : "has"
+    groups ||--o{ model_group_access : "granted"
+
+    model_configs ||--o{ model_endpoints : "served by"
+    model_configs ||--o{ model_aliases : "versioned as"
+    model_configs ||--o{ entity_model_consents : "consented via"
+    model_configs ||--o{ model_group_access : "granted to"
+    model_configs ||--o{ model_stats : "accumulates"
+    model_configs ||--o{ request_logs : "logs"
+
+    model_endpoints ||--o{ request_logs : "logs"
+
+    conversations ||--o{ messages : "contains"</code></pre>
+<h2 id="tables">Tables<a class="headerlink" href="#tables" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="#entities">entities</a></li>
+<li><a href="#api_keys">api_keys</a></li>
+<li><a href="#model_configs">model_configs</a></li>
+<li><a href="#model_endpoints">model_endpoints</a></li>
+<li><a href="#model_aliases">model_aliases</a></li>
+<li><a href="#entity_limits">entity_limits</a></li>
+<li><a href="#entity_balances">entity_balances</a></li>
+<li><a href="#entity_model_consents">entity_model_consents</a></li>
+<li><a href="#groups">groups</a></li>
+<li><a href="#group_members">group_members</a></li>
+<li><a href="#group_rules">group_rules</a></li>
+<li><a href="#group_limits">group_limits</a></li>
+<li><a href="#model_group_access">model_group_access</a></li>
+<li><a href="#entity_managers">entity_managers</a></li>
+<li><a href="#model_stats">model_stats</a></li>
+<li><a href="#entity_stats">entity_stats</a></li>
+<li><a href="#conversations">conversations</a></li>
+<li><a href="#messages">messages</a></li>
+<li><a href="#request_logs">request_logs</a></li>
+<li><a href="#request_counts_hourly_by_entity">request_counts_hourly_by_entity</a> <em>(continuous aggregate)</em></li>
+<li><a href="#request_metrics_1m">request_metrics_1m</a> <em>(continuous aggregate)</em></li>
+</ul>
+<hr />
+<h2 id="entities">entities<a class="headerlink" href="#entities" title="Permanent link">&para;</a></h2>
+<p>Unified table for both human users (authenticated via OAuth) and programmatic projects (authenticated via API keys). The <code>entity_type</code> column distinguishes them.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>entity_type</code></td>
+<td>String(8)</td>
+<td>NO</td>
+<td><code>'user'</code> for human users, <code>'project'</code> for API projects</td>
+</tr>
+<tr>
+<td><code>email</code></td>
+<td>String(256)</td>
+<td>YES</td>
+<td>Email address; populated for users, null for projects. Unique across users.</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td>String(256)</td>
+<td>NO</td>
+<td>Display name</td>
+</tr>
+<tr>
+<td><code>initials</code></td>
+<td>String(4)</td>
+<td>NO</td>
+<td>Short initials used in UI avatars</td>
+</tr>
+<tr>
+<td><code>gravatar_hash</code></td>
+<td>String(64)</td>
+<td>YES</td>
+<td>MD5 hash of the user's email for Gravatar lookups; users only</td>
+</tr>
+<tr>
+<td><code>active</code></td>
+<td>Boolean</td>
+<td>NO</td>
+<td>Whether the entity can make requests. Inactive entities are blocked.</td>
+</tr>
+<tr>
+<td><code>store_conversations</code></td>
+<td>Boolean</td>
+<td>NO</td>
+<td>Whether webchat conversations are persisted for this user. Default <code>true</code>.</td>
+</tr>
+<tr>
+<td><code>created_at</code></td>
+<td>DateTime</td>
+<td>NO</td>
+<td>UTC timestamp when the entity was created</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Notes:</strong>
+- All foreign keys that reference <code>entities.id</code> cascade on delete, except <code>model_configs.owner_entity_id</code> and the <code>request_logs</code> FKs, which use <code>SET NULL</code>.
+- Acknowledgement (<code>needs_ack</code>) is a property of the model, not of the entity.</p>
+<hr />
+<h2 id="api_keys">api_keys<a class="headerlink" href="#api_keys" title="Permanent link">&para;</a></h2>
+<p>API keys that entities (users or projects) use to authenticate against the proxy API. Keys are stored only as a bcrypt hash; the plaintext is shown once at creation.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>entity_id</code></td>
+<td>Integer (FK → entities)</td>
+<td>NO</td>
+<td>The entity that owns this key. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td>String(128)</td>
+<td>NO</td>
+<td>Human-readable label for the key (e.g., "Production bot")</td>
+</tr>
+<tr>
+<td><code>key_hash</code></td>
+<td>String(64)</td>
+<td>NO</td>
+<td>SHA-256 hash of the raw key. Unique.</td>
+</tr>
+<tr>
+<td><code>key_hint</code></td>
+<td>String(32)</td>
+<td>YES</td>
+<td>Last few characters of the raw key shown in the UI for identification</td>
+</tr>
+<tr>
+<td><code>active</code></td>
+<td>Boolean</td>
+<td>NO</td>
+<td>Whether the key is currently usable</td>
+</tr>
+<tr>
+<td><code>requests</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Cumulative request count made with this key</td>
+</tr>
+<tr>
+<td><code>input_tokens</code></td>
+<td>BigInteger</td>
+<td>NO</td>
+<td>Cumulative input tokens consumed via this key</td>
+</tr>
+<tr>
+<td><code>output_tokens</code></td>
+<td>BigInteger</td>
+<td>NO</td>
+<td>Cumulative output tokens produced via this key</td>
+</tr>
+<tr>
+<td><code>audio_seconds</code></td>
+<td>BigInteger</td>
+<td>NO</td>
+<td>Cumulative seconds of audio transcribed/translated via this key</td>
+</tr>
+<tr>
+<td><code>cost</code></td>
+<td>Numeric(12,6)</td>
+<td>NO</td>
+<td>Cumulative cost in USD charged through this key</td>
+</tr>
+<tr>
+<td><code>last_used_at</code></td>
+<td>DateTime</td>
+<td>YES</td>
+<td>UTC timestamp of the most recent request; null if never used</td>
+</tr>
+<tr>
+<td><code>created_at</code></td>
+<td>DateTime</td>
+<td>NO</td>
+<td>UTC timestamp when the key was created</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="model_configs">model_configs<a class="headerlink" href="#model_configs" title="Permanent link">&para;</a></h2>
+<p>Configuration and metadata for each AI model that Lumen can proxy. One row per logical model name (e.g., <code>gpt-4o</code>). Actual backend connectivity is in <code>model_endpoints</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>model_name</code></td>
+<td>String(128)</td>
+<td>NO</td>
+<td>Canonical model identifier sent to clients (e.g., <code>gpt-4o</code>). Unique.</td>
+</tr>
+<tr>
+<td><code>input_cost_per_million</code></td>
+<td>Numeric(12,6)</td>
+<td>NO</td>
+<td>USD cost per one million input tokens</td>
+</tr>
+<tr>
+<td><code>output_cost_per_million</code></td>
+<td>Numeric(12,6)</td>
+<td>NO</td>
+<td>USD cost per one million output tokens</td>
+</tr>
+<tr>
+<td><code>audio_cost_per_hour</code></td>
+<td>Numeric(12,6)</td>
+<td>YES</td>
+<td>USD cost per hour of audio; only set for speech-to-text (ASR) models</td>
+</tr>
+<tr>
+<td><code>owner_entity_id</code></td>
+<td>Integer (FK → entities)</td>
+<td>YES</td>
+<td>Owning user entity; NULL = available to everyone. When set, only the owner and members of granted groups may use the model. <code>SET NULL</code> on delete — deleting the owner makes the model public again.</td>
+</tr>
+<tr>
+<td><code>needs_ack</code></td>
+<td>Boolean</td>
+<td>NO</td>
+<td>Requires user acknowledgement before use; a sticky model-level property that no scope can add or remove. Default <code>false</code>.</td>
+</tr>
+<tr>
+<td><code>ack_message</code></td>
+<td>Text</td>
+<td>YES</td>
+<td>Per-model acknowledgement message; overrides the global <code>defaults.models.ack_message</code>.</td>
+</tr>
+<tr>
+<td><code>early_access</code></td>
+<td>Boolean</td>
+<td>NO</td>
+<td>Early-access model: users must acknowledge it may change or be removed before use. A sticky model-level property like <code>needs_ack</code>. Default <code>false</code>.</td>
+</tr>
+<tr>
+<td><code>end_date</code></td>
+<td>DateTime</td>
+<td>YES</td>
+<td>Naive-UTC datetime after which the model is hidden everywhere and rejected (exclusive comparison). NULL = no end date.</td>
+</tr>
+<tr>
+<td><code>disabled</code></td>
+<td>Boolean</td>
+<td>NO</td>
+<td>Hard off: the model is hidden everywhere and not overridable by any scope. Default <code>false</code>.</td>
+</tr>
+<tr>
+<td><code>description</code></td>
+<td>Text</td>
+<td>YES</td>
+<td>Human-readable description shown in the UI</td>
+</tr>
+<tr>
+<td><code>url</code></td>
+<td>String(512)</td>
+<td>YES</td>
+<td>Link to the model's documentation or provider page</td>
+</tr>
+<tr>
+<td><code>supports_function_calling</code></td>
+<td>Boolean</td>
+<td>YES</td>
+<td>Whether the model supports tool/function-calling</td>
+</tr>
+<tr>
+<td><code>input_modalities</code></td>
+<td>JSON</td>
+<td>YES</td>
+<td>List of supported input types, e.g., <code>["text", "image"]</code></td>
+</tr>
+<tr>
+<td><code>output_modalities</code></td>
+<td>JSON</td>
+<td>YES</td>
+<td>List of supported output types, e.g., <code>["text"]</code></td>
+</tr>
+<tr>
+<td><code>context_window</code></td>
+<td>Integer</td>
+<td>YES</td>
+<td>Total context window in tokens (input + output)</td>
+</tr>
+<tr>
+<td><code>max_output_tokens</code></td>
+<td>Integer</td>
+<td>YES</td>
+<td>Maximum tokens the model can generate in a single response</td>
+</tr>
+<tr>
+<td><code>supports_reasoning</code></td>
+<td>Boolean</td>
+<td>YES</td>
+<td>Whether the model exposes chain-of-thought / reasoning tokens</td>
+</tr>
+<tr>
+<td><code>knowledge_cutoff</code></td>
+<td>String(7)</td>
+<td>YES</td>
+<td>Training data cutoff in <code>YYYY-MM</code> format</td>
+</tr>
+<tr>
+<td><code>notice</code></td>
+<td>Text</td>
+<td>YES</td>
+<td>Optional admin notice displayed to users on the model detail page</td>
+</tr>
+<tr>
+<td><code>created_at</code></td>
+<td>DateTime</td>
+<td>NO</td>
+<td>UTC timestamp when the model was registered</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Notes:</strong>
+- <code>active</code> is a derived, read-only property (<code>active = not disabled and (end_date is null or end_date &gt; now)</code>), not a stored column. It replaces the old <code>active</code> column.
+- <code>owner_entity_id</code> and the <code>model_group_access</code> grants are DB-managed (edited via the model detail page), never synced from <code>config.yaml</code>.</p>
+<hr />
+<h2 id="model_endpoints">model_endpoints<a class="headerlink" href="#model_endpoints" title="Permanent link">&para;</a></h2>
+<p>Backend endpoint(s) for a model. A single <code>model_config</code> can fan out to multiple endpoints for load distribution or failover. Lumen routes requests to healthy endpoints.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>model_config_id</code></td>
+<td>Integer (FK → model_configs)</td>
+<td>NO</td>
+<td>The model this endpoint serves. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>url</code></td>
+<td>String(256)</td>
+<td>NO</td>
+<td>Base URL of the backend (e.g., <code>https://api.openai.com/v1</code>)</td>
+</tr>
+<tr>
+<td><code>api_key</code></td>
+<td>Text</td>
+<td>NO</td>
+<td>Credential used when forwarding requests to this endpoint. Encrypted at rest with the app encryption key (<code>enc:</code>-prefixed Fernet ciphertext); the ORM decrypts transparently.</td>
+</tr>
+<tr>
+<td><code>model_name</code></td>
+<td>String(128)</td>
+<td>YES</td>
+<td>Override model name sent to this endpoint. When set, Lumen substitutes this value for <code>model_config.model_name</code> in upstream requests, enabling one Lumen model to map to differently-named backend models.</td>
+</tr>
+<tr>
+<td><code>active</code></td>
+<td>Boolean</td>
+<td>NO</td>
+<td>Whether the endpoint is configured for live use. Removing an endpoint from <code>config.yaml</code> (or deactivating its model) marks the row inactive instead of deleting it, so historical request logs keep referencing the endpoint that served them. Inactive endpoints are excluded from discovery, request routing, and health checks; re-adding the URL reactivates the row and requires a fresh health probe.</td>
+</tr>
+<tr>
+<td><code>healthy</code></td>
+<td>Boolean</td>
+<td>NO</td>
+<td>Last known health status; updated by the health-check background task</td>
+</tr>
+<tr>
+<td><code>last_checked_at</code></td>
+<td>DateTime</td>
+<td>YES</td>
+<td>UTC timestamp of the most recent health check; null if never checked</td>
+</tr>
+<tr>
+<td><code>created_at</code></td>
+<td>DateTime</td>
+<td>NO</td>
+<td>UTC timestamp when the endpoint was added</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="model_aliases">model_aliases<a class="headerlink" href="#model_aliases" title="Permanent link">&para;</a></h2>
+<p>Backward-compatible alias names that resolve to a canonical <a href="#model_configs">model_configs</a> row. A client that requests an alias (e.g. <code>glm-5.2</code>) is routed to the canonical model it points at (e.g. <code>glm-5.3-flash</code>), so removed or renamed model IDs keep working after an upgrade. Aliases do not grant access or copy consent; the canonical model supplies all policy and capability information, so usage is recorded under the canonical <code>model_config_id</code> and history is preserved. See <a href="../admin/config-models/#aliases">Model aliases</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>alias</code></td>
+<td>String(128)</td>
+<td>NO</td>
+<td>Name clients may request. Unique, and never equal to any canonical <code>model_configs.model_name</code>.</td>
+</tr>
+<tr>
+<td><code>model_config_id</code></td>
+<td>Integer (FK → model_configs)</td>
+<td>NO</td>
+<td>The canonical model this alias resolves to. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>created_at</code></td>
+<td>DateTime</td>
+<td>NO</td>
+<td>UTC timestamp when the alias was created</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Constraints:</strong> <code>UNIQUE(alias)</code>; index <code>ix_model_aliases_model_config_id</code> on <code>model_config_id</code></p>
+<hr />
+<h2 id="entity_limits">entity_limits<a class="headerlink" href="#entity_limits" title="Permanent link">&para;</a></h2>
+<p>Budget configuration for a single entity. Each entity has at most one limit row. Coin semantics: <code>-2</code> = unlimited, <code>0</code> = blocked, positive value = coin budget.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>entity_id</code></td>
+<td>Integer (FK → entities)</td>
+<td>NO</td>
+<td>The entity this limit applies to. Unique; one row per entity. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>max_coins</code></td>
+<td>Numeric(12,6)</td>
+<td>NO</td>
+<td>Maximum coins the entity may hold at any time. <code>-2</code> = unlimited, <code>0</code> = blocked.</td>
+</tr>
+<tr>
+<td><code>refresh_coins</code></td>
+<td>Numeric(12,6)</td>
+<td>NO</td>
+<td>Coins added at each periodic refill cycle</td>
+</tr>
+<tr>
+<td><code>starting_coins</code></td>
+<td>Numeric(12,6)</td>
+<td>NO</td>
+<td>Coins granted when the entity is first created or reset</td>
+</tr>
+<tr>
+<td><code>config_managed</code></td>
+<td>Boolean</td>
+<td>NO</td>
+<td>Historical: <code>true</code> on rows created by the old <code>config.yaml</code> limit sync. Rows edited through the project/profile Edit dialogs are set to <code>false</code>.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="entity_balances">entity_balances<a class="headerlink" href="#entity_balances" title="Permanent link">&para;</a></h2>
+<p>Current coin balance for each entity. Updated on every request and on each refill cycle.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>entity_id</code></td>
+<td>Integer (FK → entities)</td>
+<td>NO</td>
+<td>The entity this balance belongs to. Unique; one row per entity. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>coins_left</code></td>
+<td>Numeric(12,6)</td>
+<td>NO</td>
+<td>Current spendable coin balance</td>
+</tr>
+<tr>
+<td><code>last_refill_at</code></td>
+<td>DateTime</td>
+<td>NO</td>
+<td>UTC timestamp of the most recent coin refill</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="entity_model_consents">entity_model_consents<a class="headerlink" href="#entity_model_consents" title="Permanent link">&para;</a></h2>
+<p>Records that an entity has acknowledged a model's requirements. A model can carry two acknowledgement requirements — <code>needs_ack</code> (tracked in <code>consented_at</code>) and <code>early_access</code> (tracked in <code>early_access_at</code>). A requirement is satisfied when its timestamp is set; if a model gains a requirement after the entity consented, the new requirement's timestamp is NULL and the entity is prompted to acknowledge again (a single combined dialog covers all outstanding requirements).</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>entity_id</code></td>
+<td>Integer (FK → entities)</td>
+<td>NO</td>
+<td>The consenting entity. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>model_config_id</code></td>
+<td>Integer (FK → model_configs)</td>
+<td>NO</td>
+<td>The model for which consent was given. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>consented_at</code></td>
+<td>DateTime</td>
+<td>YES</td>
+<td>UTC timestamp when the entity acknowledged the model notice (<code>needs_ack</code>); NULL if never required</td>
+</tr>
+<tr>
+<td><code>early_access_at</code></td>
+<td>DateTime</td>
+<td>YES</td>
+<td>UTC timestamp when the entity acknowledged the early-access warning; NULL if never required</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Constraints:</strong> <code>UNIQUE(entity_id, model_config_id)</code></p>
+<hr />
+<h2 id="groups">groups<a class="headerlink" href="#groups" title="Permanent link">&para;</a></h2>
+<p>Named collections of entities used for bulk policy assignment. Groups are managed entirely in the database via the Groups pages; a group with <code>auto_join</code> assigns membership at OAuth login to users matching all of its <a href="#group_rules">group_rules</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td>String(128)</td>
+<td>NO</td>
+<td>Unique group identifier (e.g., <code>faculty</code>, <code>students</code>)</td>
+</tr>
+<tr>
+<td><code>description</code></td>
+<td>Text</td>
+<td>YES</td>
+<td>Optional human-readable description shown in the admin UI</td>
+</tr>
+<tr>
+<td><code>active</code></td>
+<td>Boolean</td>
+<td>NO</td>
+<td>Whether the group is currently in effect</td>
+</tr>
+<tr>
+<td><code>auto_join</code></td>
+<td>Boolean</td>
+<td>NO</td>
+<td>When <code>true</code>, users matching all of the group's rules are added as members at OAuth login</td>
+</tr>
+<tr>
+<td><code>created_at</code></td>
+<td>DateTime</td>
+<td>NO</td>
+<td>UTC timestamp when the group was created</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="group_members">group_members<a class="headerlink" href="#group_members" title="Permanent link">&para;</a></h2>
+<p>Association table linking entities to groups. An entity may belong to multiple groups.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>group_id</code></td>
+<td>Integer (FK → groups)</td>
+<td>NO</td>
+<td>The group. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>entity_id</code></td>
+<td>Integer (FK → entities)</td>
+<td>NO</td>
+<td>The entity that belongs to the group. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>config_managed</code></td>
+<td>Boolean</td>
+<td>NO</td>
+<td>When <code>true</code>, assigned automatically at login by the group's auto-join rules; reconciled (added/removed) at each login. Manual memberships are <code>false</code>.</td>
+</tr>
+<tr>
+<td><code>is_owner</code></td>
+<td>Boolean</td>
+<td>NO</td>
+<td>True for the group owner; at most one owner per group (enforced by app logic). The owner may add/remove members, transfer ownership, grant models they own, and deactivate the group.</td>
+</tr>
+<tr>
+<td><code>joined_at</code></td>
+<td>DateTime</td>
+<td>YES</td>
+<td>UTC timestamp when the membership was created; <code>NULL</code> for memberships that predate the column (join time unknown)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Constraints:</strong> <code>UNIQUE(group_id, entity_id)</code></p>
+<hr />
+<h2 id="group_rules">group_rules<a class="headerlink" href="#group_rules" title="Permanent link">&para;</a></h2>
+<p>Auto-join conditions per group, edited on the group detail page (admin-only Rules tab). A user matching <strong>all</strong> of a group's rules is added as a member at OAuth login; a group with <code>auto_join</code> but no rules matches nobody (fails closed).</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>group_id</code></td>
+<td>Integer (FK → groups)</td>
+<td>NO</td>
+<td>The group this rule belongs to. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>field</code></td>
+<td>String(128)</td>
+<td>NO</td>
+<td>Userinfo claim to inspect (e.g. <code>affiliation</code>, <code>idp</code>)</td>
+</tr>
+<tr>
+<td><code>match</code></td>
+<td>String(8)</td>
+<td>NO</td>
+<td><code>contains</code> for substring match, <code>equals</code> for exact match</td>
+</tr>
+<tr>
+<td><code>value</code></td>
+<td>String(256)</td>
+<td>NO</td>
+<td>Value the claim is compared against</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Constraints:</strong> index on <code>group_id</code></p>
+<hr />
+<h2 id="group_limits">group_limits<a class="headerlink" href="#group_limits" title="Permanent link">&para;</a></h2>
+<p>Coin budget configuration for a group. Works identically to <code>entity_limits</code> but applies to all members of the group unless overridden at the entity level.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>group_id</code></td>
+<td>Integer (FK → groups)</td>
+<td>NO</td>
+<td>The group this limit applies to. Unique; one row per group. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>max_coins</code></td>
+<td>Numeric(12,6)</td>
+<td>NO</td>
+<td>Maximum coins the group may hold at any time. <code>-2</code> = unlimited, <code>0</code> = blocked.</td>
+</tr>
+<tr>
+<td><code>refresh_coins</code></td>
+<td>Numeric(12,6)</td>
+<td>NO</td>
+<td>Coins added at each periodic refill cycle</td>
+</tr>
+<tr>
+<td><code>starting_coins</code></td>
+<td>Numeric(12,6)</td>
+<td>NO</td>
+<td>Coins granted when the group is first created or reset</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="model_group_access">model_group_access<a class="headerlink" href="#model_group_access" title="Permanent link">&para;</a></h2>
+<p>Group grants for owned models; a row gives all group members access to the model. Only meaningful for models with an <code>owner_entity_id</code> set — a model with no owner is available to everyone and needs no grants. Grants are edited by admins on the model detail page; deleting a granted group removes the grant.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>model_config_id</code></td>
+<td>Integer (FK → model_configs)</td>
+<td>NO</td>
+<td>The owned model being granted. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>group_id</code></td>
+<td>Integer (FK → groups)</td>
+<td>NO</td>
+<td>The group whose members receive access. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>created_at</code></td>
+<td>DateTime</td>
+<td>NO</td>
+<td>UTC timestamp when the grant was created</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Constraints:</strong> <code>UNIQUE(model_config_id, group_id)</code> (<code>uq_mga_model_group</code>); index <code>ix_model_group_access_group_id</code> on <code>group_id</code></p>
+<hr />
+<h2 id="entity_managers">entity_managers<a class="headerlink" href="#entity_managers" title="Permanent link">&para;</a></h2>
+<p>Maps users to the project entities they are permitted to manage. A manager can view and administer a project's API keys and usage. The <code>is_owner</code> flag designates the project owner — a manager who can additionally add/remove managers, transfer ownership, and activate/deactivate the project. At most one owner per project (enforced by app logic).</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>user_entity_id</code></td>
+<td>Integer (FK → entities)</td>
+<td>NO</td>
+<td>The user (must be <code>entity_type = 'user'</code>) who has management rights. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>project_entity_id</code></td>
+<td>Integer (FK → entities)</td>
+<td>NO</td>
+<td>The project entity being managed. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>is_owner</code></td>
+<td>Boolean</td>
+<td>NO</td>
+<td>True for the project owner; at most one owner per project (enforced by app logic). Default <code>false</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Constraints:</strong> <code>UNIQUE(user_entity_id, project_entity_id)</code></p>
+<hr />
+<h2 id="model_stats">model_stats<a class="headerlink" href="#model_stats" title="Permanent link">&para;</a></h2>
+<p>Running aggregated usage counters per entity per model per source. Updated after every proxied request. Used for the usage dashboard.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>entity_id</code></td>
+<td>Integer (FK → entities)</td>
+<td>NO</td>
+<td>The entity that made the requests. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>model_config_id</code></td>
+<td>Integer (FK → model_configs)</td>
+<td>NO</td>
+<td>The model used. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>source</code></td>
+<td>String(8)</td>
+<td>NO</td>
+<td>Origin of the request: <code>'chat'</code> (web UI) or <code>'api'</code> (API key)</td>
+</tr>
+<tr>
+<td><code>requests</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Total number of requests</td>
+</tr>
+<tr>
+<td><code>input_tokens</code></td>
+<td>BigInteger</td>
+<td>NO</td>
+<td>Total input tokens consumed</td>
+</tr>
+<tr>
+<td><code>output_tokens</code></td>
+<td>BigInteger</td>
+<td>NO</td>
+<td>Total output tokens produced</td>
+</tr>
+<tr>
+<td><code>audio_seconds</code></td>
+<td>BigInteger</td>
+<td>NO</td>
+<td>Total seconds of audio transcribed/translated</td>
+</tr>
+<tr>
+<td><code>cost</code></td>
+<td>Numeric(12,6)</td>
+<td>NO</td>
+<td>Total cost in USD</td>
+</tr>
+<tr>
+<td><code>last_used_at</code></td>
+<td>DateTime</td>
+<td>NO</td>
+<td>UTC timestamp of the most recent request counted in this row</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Constraints:</strong> <code>UNIQUE(entity_id, model_config_id, source)</code></p>
+<hr />
+<h2 id="entity_stats">entity_stats<a class="headerlink" href="#entity_stats" title="Permanent link">&para;</a></h2>
+<p>Pre-aggregated usage totals per entity across all models and sources. One row per entity, maintained atomically alongside <code>model_stats</code> on every proxied request. Enables O(1) per-entity lookups in the admin users table and projects listing without scanning <code>model_stats</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>entity_id</code></td>
+<td>Integer (PK, FK → entities)</td>
+<td>NO</td>
+<td>The entity these counters belong to. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>requests</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Total request count across all models and sources</td>
+</tr>
+<tr>
+<td><code>input_tokens</code></td>
+<td>BigInteger</td>
+<td>NO</td>
+<td>Total input tokens consumed across all models and sources</td>
+</tr>
+<tr>
+<td><code>output_tokens</code></td>
+<td>BigInteger</td>
+<td>NO</td>
+<td>Total output tokens produced across all models and sources</td>
+</tr>
+<tr>
+<td><code>audio_seconds</code></td>
+<td>BigInteger</td>
+<td>NO</td>
+<td>Total seconds of audio transcribed/translated across all models and sources</td>
+</tr>
+<tr>
+<td><code>cost</code></td>
+<td>Numeric(12,6)</td>
+<td>NO</td>
+<td>Total cost in USD across all models and sources</td>
+</tr>
+<tr>
+<td><code>conversations</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Total webchat conversations started. Retained even when conversations are deleted or storage is disabled.</td>
+</tr>
+<tr>
+<td><code>last_used_at</code></td>
+<td>DateTime</td>
+<td>YES</td>
+<td>UTC timestamp of the most recent request by this entity; null if never used</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Notes:</strong>
+- Populated on migration by a <code>GROUP BY</code> backfill from <code>model_stats</code>.
+- Always current — no refresh lag. Unlike <code>request_counts_hourly</code>, this is written synchronously with every request.</p>
+<hr />
+<h2 id="conversations">conversations<a class="headerlink" href="#conversations" title="Permanent link">&para;</a></h2>
+<p>Chat sessions created through the Lumen web UI. Each conversation belongs to a single entity and holds an ordered list of messages. Deleting a conversation permanently removes it and all its messages.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>entity_id</code></td>
+<td>Integer (FK → entities)</td>
+<td>NO</td>
+<td>The entity (user) who owns the conversation. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>title</code></td>
+<td>String(40)</td>
+<td>NO</td>
+<td>Short auto-generated or user-edited title</td>
+</tr>
+<tr>
+<td><code>model</code></td>
+<td>String(128)</td>
+<td>NO</td>
+<td>Model name used in this conversation (snapshot at creation time)</td>
+</tr>
+<tr>
+<td><code>created_at</code></td>
+<td>DateTime</td>
+<td>NO</td>
+<td>UTC timestamp when the conversation was created</td>
+</tr>
+<tr>
+<td><code>updated_at</code></td>
+<td>DateTime</td>
+<td>NO</td>
+<td>UTC timestamp of the most recent message or edit</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="messages">messages<a class="headerlink" href="#messages" title="Permanent link">&para;</a></h2>
+<p>Individual turns within a conversation. Both user and assistant messages are stored here.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Primary key</td>
+</tr>
+<tr>
+<td><code>conversation_id</code></td>
+<td>Integer (FK → conversations)</td>
+<td>NO</td>
+<td>The conversation this message belongs to. Cascades on delete.</td>
+</tr>
+<tr>
+<td><code>role</code></td>
+<td>String(16)</td>
+<td>NO</td>
+<td>Speaker role: <code>'user'</code>, <code>'assistant'</code>, or <code>'system'</code></td>
+</tr>
+<tr>
+<td><code>content</code></td>
+<td>Text</td>
+<td>NO</td>
+<td>Full message text</td>
+</tr>
+<tr>
+<td><code>created_at</code></td>
+<td>DateTime</td>
+<td>NO</td>
+<td>UTC timestamp when the message was created</td>
+</tr>
+<tr>
+<td><code>input_tokens</code></td>
+<td>Integer</td>
+<td>YES</td>
+<td>Input tokens reported by the model; assistant messages only</td>
+</tr>
+<tr>
+<td><code>output_tokens</code></td>
+<td>Integer</td>
+<td>YES</td>
+<td>Output tokens reported by the model; assistant messages only</td>
+</tr>
+<tr>
+<td><code>time_to_first_token</code></td>
+<td>Float</td>
+<td>YES</td>
+<td>Seconds from request send to first token received; assistant messages only</td>
+</tr>
+<tr>
+<td><code>duration</code></td>
+<td>Float</td>
+<td>YES</td>
+<td>Total response time in seconds; assistant messages only</td>
+</tr>
+<tr>
+<td><code>output_speed</code></td>
+<td>Float</td>
+<td>YES</td>
+<td>Output tokens per second; assistant messages only</td>
+</tr>
+<tr>
+<td><code>thinking</code></td>
+<td>Text</td>
+<td>YES</td>
+<td>Reasoning/thinking content from the model; assistant messages only</td>
+</tr>
+<tr>
+<td><code>thinking_tokens</code></td>
+<td>Integer</td>
+<td>YES</td>
+<td>Thinking/reasoning token count reported by the model; assistant messages only</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="request_logs">request_logs<a class="headerlink" href="#request_logs" title="Permanent link">&para;</a></h2>
+<p>Append-only log of every proxied request. On PostgreSQL this table is converted to a TimescaleDB hypertable partitioned by <code>time</code>, enabling efficient time-range queries and retention policies. On SQLite it behaves as a plain table.</p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>BigInteger</td>
+<td>NO</td>
+<td>Surrogate primary key (Integer on SQLite); avoids timestamp collision under concurrent load</td>
+</tr>
+<tr>
+<td><code>time</code></td>
+<td>DateTime (with timezone)</td>
+<td>NO</td>
+<td>UTC timestamp of the request; TimescaleDB partition key. Indexed but non-unique.</td>
+</tr>
+<tr>
+<td><code>entity_id</code></td>
+<td>Integer (FK → entities)</td>
+<td>YES</td>
+<td>The entity that made the request; set to NULL if the entity is later deleted</td>
+</tr>
+<tr>
+<td><code>model_config_id</code></td>
+<td>Integer (FK → model_configs)</td>
+<td>YES</td>
+<td>The model used; set to NULL if the model is later deleted</td>
+</tr>
+<tr>
+<td><code>model_endpoint_id</code></td>
+<td>Integer (FK → model_endpoints)</td>
+<td>YES</td>
+<td>The specific backend endpoint that served the request. Endpoints are retired (marked inactive), never deleted, so the reference stays resolvable; only a direct SQL deletion nulls it</td>
+</tr>
+<tr>
+<td><code>source</code></td>
+<td>String(8)</td>
+<td>NO</td>
+<td>Origin of the request: <code>'chat'</code> or <code>'api'</code></td>
+</tr>
+<tr>
+<td><code>input_tokens</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Input token count for this request</td>
+</tr>
+<tr>
+<td><code>output_tokens</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Output token count for this request</td>
+</tr>
+<tr>
+<td><code>audio_seconds</code></td>
+<td>Integer</td>
+<td>NO</td>
+<td>Seconds of audio transcribed/translated; 0 for text requests</td>
+</tr>
+<tr>
+<td><code>cost</code></td>
+<td>Numeric(12,6)</td>
+<td>NO</td>
+<td>Cost in USD for this request</td>
+</tr>
+<tr>
+<td><code>duration</code></td>
+<td>Float</td>
+<td>NO</td>
+<td>Total proxy response time in seconds</td>
+</tr>
+<tr>
+<td><code>aborted</code></td>
+<td>Boolean</td>
+<td>NO</td>
+<td>True if the client disconnected before the stream completed; token counts may be estimated</td>
+</tr>
+<tr>
+<td><code>started_at</code></td>
+<td>DateTime (with timezone)</td>
+<td>YES</td>
+<td>UTC instant the request arrived at the ASGI bridge (T0)</td>
+</tr>
+<tr>
+<td><code>queue_wait</code></td>
+<td>Float</td>
+<td>YES</td>
+<td>Seconds spent waiting for a WSGI worker thread (T1−T0)</td>
+</tr>
+<tr>
+<td><code>preflight</code></td>
+<td>Float</td>
+<td>YES</td>
+<td>Seconds from worker pickup to the upstream call (T2−T1)</td>
+</tr>
+<tr>
+<td><code>ttft</code></td>
+<td>Float</td>
+<td>YES</td>
+<td>Seconds to the first upstream chunk of any kind, including reasoning deltas</td>
+</tr>
+<tr>
+<td><code>ttft_visible</code></td>
+<td>Float</td>
+<td>YES</td>
+<td>Seconds to the first visible content delta</td>
+</tr>
+<tr>
+<td><code>send_blocked</code></td>
+<td>Float</td>
+<td>YES</td>
+<td>Seconds blocked handing response chunks to the server</td>
+</tr>
+<tr>
+<td><code>outcome</code></td>
+<td>String(16)</td>
+<td>YES</td>
+<td>How the request ended: <code>'ok'</code> or <code>'disconnect'</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Notes:</strong>
+- Foreign keys use <code>SET NULL</code> on delete (not cascade) to preserve historical log data when entities or models are removed. Endpoints are not removed at all: the config sync retires them by clearing <code>model_endpoints.active</code>, so <code>model_endpoint_id</code> keeps pointing at the endpoint that served each request, and the <code>SET NULL</code> action on that column only fires if a row is deleted directly in SQL.
+- <code>time</code> is indexed but not unique; concurrent workers may insert rows with the same timestamp without collision.
+- <strong>Timing columns measure the user's wait, which <code>duration</code> does not.</strong> <code>duration</code> starts <em>after</em> preflight (model lookup, access checks, coin budget, endpoint selection, pool checkout) and ends before the billing commit, while <code>time</code> is stamped <em>after</em> that commit. So neither can be walked backwards to the moment the request arrived. Together the new columns partition the request: <code>started_at</code> + <code>queue_wait</code> + <code>preflight</code> + <code>ttft_visible</code> is when the user first sees anything.
+- <strong><code>started_at</code> is stored, not derived.</strong> The obvious reconstruction, <code>time − duration − queue_wait</code>, silently assumes preflight and the billing commit take zero time. Both grow under load, so the error is largest during exactly the burst the column exists to explain.
+- <strong><code>started_at</code> is the second <code>TIMESTAMPTZ</code> in the schema</strong> (with <code>time</code>), deliberately unlike the naive-UTC convention everywhere else. It exists to be subtracted from <code>time</code> on the same row, and mixing naive with aware in that arithmetic misbehaves on PostgreSQL. Write it with <code>datetime.now(timezone.utc)</code>, never <code>timeutils.utcnow()</code>.
+- <strong>NULL means "not measured", not "zero".</strong> Rows written before this migration, and requests that never passed through the ASGI bridge (dev server, Flask test client), have NULL timing. They were not backfilled: nothing recorded an arrival time for them, and inventing one would produce a column that looks authoritative and is wrong for every historical row.
+- <strong><code>outcome</code> carries only values the code can actually write.</strong> There is deliberately no <code>billing_error</code> or <code>upstream_error</code>: the row is created inside <code>update_stats</code>, which only flushes, so a failing commit rolls back the very row that would have recorded the failure. Enum values are added together with the code that writes them.
+- <code>ttft</code> and <code>ttft_visible</code> are both stored because on a reasoning model they differ by the whole thinking phase — which is what separates "the model was queued" from "the model was thinking".
+- <code>aborted</code> replaces the earlier "<code>cost</code> = 0 identifies an abandoned stream" convention: aborted streams are now billed for what they consumed, so their cost is usually non-zero. Rows written before the column was added are all <code>false</code> and were not backfilled — a completed request can also cost 0 (zero-priced model, audio model with no <code>audio_cost_per_hour</code>, missing upstream usage, or a cost that rounds to 0 at <code>Numeric(12,6)</code>), so the old convention could not be applied retroactively without false positives.</p>
+<hr />
+<h2 id="continuous-aggregates">Continuous aggregates<a class="headerlink" href="#continuous-aggregates" title="Permanent link">&para;</a></h2>
+<p>PostgreSQL only. TimescaleDB continuous aggregates over <code>request_logs</code>, refreshed by
+background policies. They are what makes the usage charts survive a retention policy
+dropping raw chunks — anything not carried here is unrecoverable once the raw rows are gone.</p>
+<p>All three views below are <strong>real-time</strong>: they set <code>timescaledb.materialized_only = false</code>, so
+a query unions the materialised rows with a live scan of the raw rows newer than the
+materialisation watermark. Without that — and <code>true</code> is the default on TimescaleDB 2.13+ — the
+current bucket is missing, and a user who ran forty requests this hour sees zero.</p>
+<p><strong>They are views, not tables.</strong> Despite the <code>CREATE MATERIALIZED VIEW</code> spelling, a continuous
+aggregate is a plain view (<code>pg_class.relkind = 'v'</code>) over a hidden materialisation hypertable,
+so its comment is set with <code>COMMENT ON VIEW</code>.</p>
+<p><strong>Rows older than a policy's <code>start_offset</code> are invisible until backfilled.</strong> Once the scheduled
+policy runs, the watermark advances past them, and real-time aggregation only scans raw rows
+<em>above</em> the watermark — so history that was never materialised silently disappears from queries.
+That is why the full-history backfill is a deliberate operator command, and why refreshing a
+window whose raw chunks have already been dropped is destructive: it recomputes the window as
+empty and deletes the materialised rows, without erroring.</p>
+<h3 id="request_counts_hourly">request_counts_hourly<a class="headerlink" href="#request_counts_hourly" title="Permanent link">&para;</a></h3>
+<p><code>time_bucket('1 hour', time)</code> grouped by <code>bucket, model_config_id, source</code>, carrying <code>requests</code>,
+<code>input_tokens</code>, <code>output_tokens</code>, <code>cost</code>. Org-wide only — it has no <code>entity_id</code>, which is why the
+per-entity charts needed the aggregate below. <code>materialized_only = false</code>, <code>start_offset</code> 3 hours,
+<code>end_offset</code> 1 hour, refreshed hourly.</p>
+<p>It was created before TimescaleDB 2.13 flipped the <code>materialized_only</code> default to <code>true</code>, and was
+left unset — so from that version on it silently became materialised-only and the org-wide <code>/usage</code>
+charts, which read this view and have no raw-<code>request_logs</code> fallback, lost the last one to two hours
+of every day. Migration <code>j4k5l6m7n8o9</code> sets it explicitly. <code>end_offset</code> stays at one bucket width:
+real-time aggregation already covers everything past the watermark, and an <code>end_offset</code> shorter than
+the bucket would materialise a partial open bucket and hide the rest of that hour until the next
+scheduled run.</p>
+<h3 id="request_counts_hourly_by_entity">request_counts_hourly_by_entity<a class="headerlink" href="#request_counts_hourly_by_entity" title="Permanent link">&para;</a></h3>
+<p>Answers <em>"what did this user do, and how did it feel?"</em> — the per-entity <code>/usage</code> charts read it
+instead of raw <code>request_logs</code>, so an individual's "All Time" history is not truncated when
+retention drops raw chunks.</p>
+<p><strong>Grouped by:</strong> <code>bucket</code> (<code>time_bucket('1 hour', time)</code>), <code>entity_id</code>, <code>model_config_id</code>, <code>source</code></p>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Expression</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>bucket</code></td>
+<td><code>time_bucket('1 hour', time)</code></td>
+<td>Start of the hour, TIMESTAMPTZ. One hour, not one day: the heatmap does <code>EXTRACT(HOUR FROM bucket)</code> and a daily bucket would collapse the 7×24 grid to a single column</td>
+</tr>
+<tr>
+<td><code>entity_id</code></td>
+<td><code>entity_id</code></td>
+<td>The entity that made the requests; NULL once the entity is deleted</td>
+</tr>
+<tr>
+<td><code>model_config_id</code></td>
+<td><code>model_config_id</code></td>
+<td>The model used; NULL once the model is deleted</td>
+</tr>
+<tr>
+<td><code>source</code></td>
+<td><code>source</code></td>
+<td><code>'chat'</code> or <code>'api'</code></td>
+</tr>
+<tr>
+<td><code>requests</code></td>
+<td><code>COUNT(*)</code></td>
+<td>Requests in the bucket</td>
+</tr>
+<tr>
+<td><code>input_tokens</code></td>
+<td><code>SUM(input_tokens)</code></td>
+<td>Input tokens</td>
+</tr>
+<tr>
+<td><code>output_tokens</code></td>
+<td><code>SUM(output_tokens)</code></td>
+<td>Output tokens</td>
+</tr>
+<tr>
+<td><code>cost</code></td>
+<td><code>SUM(cost)</code></td>
+<td>Cost in USD</td>
+</tr>
+<tr>
+<td><code>duration_sum</code></td>
+<td><code>SUM(duration)</code></td>
+<td>Total proxy response seconds; divide by <code>requests</code> for the mean</td>
+</tr>
+<tr>
+<td><code>duration_max</code></td>
+<td><code>MAX(duration)</code></td>
+<td>Worst response time in the bucket</td>
+</tr>
+<tr>
+<td><code>aborts</code></td>
+<td><code>COUNT(*) FILTER (WHERE outcome = 'disconnect')</code></td>
+<td>Client disconnects. Follows <code>outcome</code>, not the older <code>aborted</code> boolean</td>
+</tr>
+<tr>
+<td><code>ttft_count</code></td>
+<td><code>COUNT(ttft_visible)</code></td>
+<td>Non-null denominator for the TTFT measures</td>
+</tr>
+<tr>
+<td><code>ttft_sum</code></td>
+<td><code>SUM(ttft_visible)</code></td>
+<td>Total seconds to first visible content</td>
+</tr>
+<tr>
+<td><code>ttft_max</code></td>
+<td><code>MAX(ttft_visible)</code></td>
+<td>Worst time to first visible content</td>
+</tr>
+<tr>
+<td><code>ttft_le_0_5</code> … <code>ttft_le_30</code></td>
+<td><code>COUNT(*) FILTER (WHERE ttft_visible &lt;= edge)</code></td>
+<td>Cumulative histogram at 0.5, 1, 2, 5, 10 and 30 seconds</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Refresh policy:</strong> <code>start_offset</code> 30 days, <code>end_offset</code> 1 hour, <code>schedule_interval</code> 1 hour.
+Created <code>WITH NO DATA</code>; full history is materialised by the operator backfill command.</p>
+<p><strong>Notes:</strong>
+- <strong>The <code>ttft_le_*</code> columns are cumulative</strong>, in the Prometheus-histogram sense: each counts
+  everything at or below its edge, so <code>ttft_le_0_5 &lt;= ttft_le_1 &lt;= … &lt;= ttft_le_30 &lt;= ttft_count</code>.
+  p95 is found by walking the edges and interpolating. They exist because <code>timescaledb_toolkit</code>
+  is not installed on the deployed image, so <code>percentile_agg</code> is unavailable.
+- <strong>A NULL <code>ttft_visible</code> counts in none of the buckets and not in <code>ttft_count</code>.</strong> Rows predating
+  the timing columns have NULL there; counting them would make every historical bucket read as
+  uniformly fast.
+- <strong><code>start_offset</code> (30 days) must stay comfortably inside the retention window (13 months).</strong>
+  If they cross, the scheduled refresh reaches into dropped chunks and erases materialised history.
+- Cardinality is bounded by <em>active</em> user-hours: a student uses one or two models in an hour, so a
+  300-student class produces a few hundred rows per hour, not users × models × hours.</p>
+<h3 id="request_metrics_1m">request_metrics_1m<a class="headerlink" href="#request_metrics_1m" title="Permanent link">&para;</a></h3>
+<p>Answers <em>"what is happening right now, per model?"</em> — a ten-minute burst is over before an hourly
+bucket closes, so the hourly views cannot resolve a class-start incident at all.</p>
+<p><strong>Grouped by:</strong> <code>bucket</code> (<code>time_bucket('1 minute', time)</code>), <code>model_config_id</code>, <code>source</code></p>
+<p>Same measures as <code>request_counts_hourly_by_entity</code> (<code>requests</code>, <code>input_tokens</code>, <code>output_tokens</code>,
+<code>cost</code>, <code>duration_sum</code>, <code>duration_max</code>, <code>aborts</code>, <code>ttft_count</code>, <code>ttft_sum</code>, <code>ttft_max</code>,
+<code>ttft_le_0_5</code> … <code>ttft_le_30</code>), with the same cumulative-histogram and NULL semantics.</p>
+<p><strong>Refresh policy:</strong> <code>start_offset</code> 3 hours, <code>end_offset</code> 1 minute, <code>schedule_interval</code> 1 minute.
+Created <code>WITH NO DATA</code>; it needs no historical backfill.</p>
+<p><strong>Notes:</strong>
+- <strong>Deliberately no <code>entity_id</code>.</strong> This view describes the shape of the load, not who caused it —
+  <code>request_counts_hourly_by_entity</code> answers the per-user question. Adding <code>entity_id</code> here would
+  multiply the row count by the size of the class in every minute, for no stated requirement.
+- <code>materialized_only = false</code> matters more here than anywhere: with a one-minute <code>end_offset</code>, a
+  materialised-only view is by construction always at least a minute stale, which is most of the
+  resolution the view exists to provide.</p>
+<hr />
+<h2 id="request_logs-storage-lifecycle">request_logs storage lifecycle<a class="headerlink" href="#request_logs-storage-lifecycle" title="Permanent link">&para;</a></h2>
+<p><strong>Compression.</strong> <code>request_logs</code> has columnstore compression enabled with
+<code>compress_segmentby = 'model_config_id, source'</code> and <code>compress_orderby = 'time DESC'</code>, and a
+policy compresses chunks older than <strong>7 days</strong> — the same interval the chunks use, so only closed
+chunks are ever compressed. The segment-by columns are exactly what the analytics queries filter
+on, so compressed chunks can be pruned without being decompressed.</p>
+<p>Nullable <code>ADD COLUMN</code>, <code>ADD COLUMN … DEFAULT</code> and <code>ADD COLUMN … NOT NULL DEFAULT</code> all work against
+compressed chunks on TimescaleDB 2.27; only <code>NOT NULL</code> <em>without</em> a default is refused, and loudly.
+The residual cost of compression is I/O — servicing an <code>ADD COLUMN</code> rewrites compressed chunks
+across the whole window.</p>
+<p><strong>Retention is not enabled by any migration, deliberately.</strong> <code>entrypoint.sh</code> runs
+<code>flask db upgrade</code> at container start, so a migration adding a retention policy would begin
+deleting production data automatically on the next deploy. Retention is an explicit operator
+command with a dry run as its default.</p>
+<hr />
+<h2 id="entity-relationship-overview">Entity Relationship Overview<a class="headerlink" href="#entity-relationship-overview" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>groups ──&lt; group_members &gt;── entities ──&lt; api_keys
+  │                              │
+  ├──&lt; group_limits              ├──&lt; entity_limits
+  │                              ├──&lt; entity_balances
+  └──&lt; model_group_access        ├──&lt; entity_model_consents
+                                 ├──&lt; entity_managers (user→project)
+model_configs ──&lt; model_endpoints├──&lt; model_stats
+     │                           ├──&lt; conversations ──&lt; messages
+     ├──&gt; entities (owner_entity_id, SET NULL)
+     ├──&lt; model_aliases
+     ├──&lt; model_group_access     └──&lt; request_logs
+     └──&lt; model_stats / request_logs
+</code></pre></div>
+<h2 id="access-control-evaluation-order">Access Control Evaluation Order<a class="headerlink" href="#access-control-evaluation-order" title="Permanent link">&para;</a></h2>
+<p>When determining whether an entity (user or project) may use a model, Lumen evaluates in this order:</p>
+<ol>
+<li><strong>Disabled or expired</strong> — <code>model_configs.disabled = true</code> or <code>end_date</code> in the past → blocked, not overridable.</li>
+<li><strong>No owner</strong> — <code>model_configs.owner_entity_id</code> is NULL → allowed (the model is available to everyone).</li>
+<li><strong>Entity is the owner</strong> — the entity is <code>owner_entity_id</code> → allowed.</li>
+<li><strong>Granted group</strong> — the entity is a member of an <strong>active</strong> group that has a <code>model_group_access</code> row for the model → allowed.</li>
+<li><strong>Otherwise</strong> → blocked.</li>
+</ol>
+<p>Independently, if the model has <code>needs_ack = true</code> or <code>early_access = true</code>, an allowed entity must still record acknowledgement in <code>entity_model_consents</code> before using the model ("needs_ack" until consent).</p>
+<h2 id="coin-budget-resolution-order">Coin Budget Resolution Order<a class="headerlink" href="#coin-budget-resolution-order" title="Permanent link">&para;</a></h2>
+<p>When determining an entity's coin pool, Lumen evaluates in this priority order:</p>
+<ol>
+<li><strong>Entity-level</strong> <code>entity_limits</code> row → if present, use it (wins over all group limits). Set via <code>users:</code> in <code>config.yaml</code>. <code>max_coins = 0</code> blocks the entity; <code>max_coins = -2</code> grants unlimited access.</li>
+<li><strong>Group-level</strong> <code>group_limits</code> rows → if no entity limit exists, the most generous group limit is used. <code>-2</code> (unlimited) beats any positive value; among positive values, the highest <code>max_coins</code> wins.</li>
+<li><strong>No limit</strong> → access is denied (entity cannot use any model).</li>
+</ol>
+<p>This mirrors the model access priority: entity-level configuration always overrides group defaults.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

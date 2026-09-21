@@ -1,0 +1,3394 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="AI model gateway for research institutions">
+      
+      
+      
+        <link rel="canonical" href="https://ncsa.github.io/lumen/architecture/">
+      
+      
+        <link rel="prev" href="../admin/config-models/">
+      
+      
+        <link rel="next" href="../dbschema/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Architecture - Lumen</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#lumen-architecture" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Lumen" class="md-header__button md-logo" aria-label="Lumen" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Lumen
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Architecture
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ncsa/lumen" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Lumen" class="md-nav__button md-logo" aria-label="Lumen" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Lumen
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ncsa/lumen" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../introduction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/chat/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Chat
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/profile/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Profile & API Keys
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/connect/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect Your Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../models/models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Dashboard
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../models/model-detail/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Detail
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Projects
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Projects
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../projects/projects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Projects Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../projects/projects-detail/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Project Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Groups
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Groups
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../groups/groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Groups Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../groups/groups-detail/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Group Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Admin Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Admin Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admin/config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admin/config-application/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Application Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admin/config-users/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Users & Access Control
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admin/config-projects/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuring Projects
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admin/config-models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuring Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#table-of-contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Table of Contents
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#system-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        System Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#technology-stack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Technology Stack
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#project-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Project Layout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#application-layers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Application Layers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#blueprints-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Blueprints &amp; Routes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Blueprints &amp; Routes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#openai-compatible-api-v1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenAI-compatible API (/v1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Model
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Data Model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#identity-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Identity &amp; Access
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#token-economy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Token Economy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#model-access-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model Access Control
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#llm-catalogue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LLM Catalogue
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#chat-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chat &amp; Audit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#entity-relationship-simplified" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entity Relationship (simplified)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#notable-schema-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notable schema decisions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#services-background-workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Services &amp; Background Workers
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Services &amp; Background Workers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#servicesllmpy-520-lines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        services/llm.py (~520 lines)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#background-workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Background Workers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authentication-access-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authentication &amp; Access Control
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Authentication &amp; Access Control">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#oauth2-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OAuth2 Flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#group-auto-assignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Group Auto-Assignment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#model-access-resolution-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model Access Resolution (ownership)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api-key-auth-programmatic-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API Key Auth (programmatic access)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tokencoin-economy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Token/Coin Economy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration Management
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#observability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observability
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Observability">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prometheus-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prometheus (/metrics)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#request-logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request Logging
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#analytics-dashboard-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Analytics Dashboard (/usage)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deployment
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deployment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#docker-compose-development-single-node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Docker Compose (development / single-node)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#production-scaling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Production Scaling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-time-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build-time Metadata
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#theme-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Theme System
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#security-assessment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security Assessment
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Security Assessment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#strengths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Strengths
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#risks-gaps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risks &amp; Gaps
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scalability-assessment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scalability Assessment
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Scalability Assessment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#current-bottlenecks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Bottlenecks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-scales-well" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Scales Well
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#technical-debt-known-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Technical Debt &amp; Known Issues
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recommendations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommendations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Recommendations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#high-priority" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        High Priority
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#medium-priority" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Medium Priority
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#low-priority" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Low Priority
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-design-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key Design Decisions
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dbschema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database Schema
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#table-of-contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Table of Contents
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#system-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        System Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#technology-stack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Technology Stack
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#project-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Project Layout
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#application-layers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Application Layers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#blueprints-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Blueprints &amp; Routes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Blueprints &amp; Routes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#openai-compatible-api-v1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenAI-compatible API (/v1)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#data-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Model
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Data Model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#identity-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Identity &amp; Access
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#token-economy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Token Economy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#model-access-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model Access Control
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#llm-catalogue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        LLM Catalogue
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#chat-audit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chat &amp; Audit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#entity-relationship-simplified" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entity Relationship (simplified)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#notable-schema-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notable schema decisions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#services-background-workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Services &amp; Background Workers
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Services &amp; Background Workers">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#servicesllmpy-520-lines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        services/llm.py (~520 lines)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#background-workers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Background Workers
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#authentication-access-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authentication &amp; Access Control
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Authentication &amp; Access Control">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#oauth2-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OAuth2 Flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#group-auto-assignment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Group Auto-Assignment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#model-access-resolution-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model Access Resolution (ownership)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api-key-auth-programmatic-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API Key Auth (programmatic access)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tokencoin-economy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Token/Coin Economy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration Management
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#observability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observability
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Observability">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#prometheus-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prometheus (/metrics)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#request-logging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request Logging
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#analytics-dashboard-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Analytics Dashboard (/usage)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deployment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deployment
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deployment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#docker-compose-development-single-node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Docker Compose (development / single-node)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#production-scaling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Production Scaling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-time-metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build-time Metadata
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#theme-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Theme System
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#security-assessment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security Assessment
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Security Assessment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#strengths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Strengths
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#risks-gaps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Risks &amp; Gaps
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scalability-assessment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Scalability Assessment
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Scalability Assessment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#current-bottlenecks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current Bottlenecks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-scales-well" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What Scales Well
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#technical-debt-known-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Technical Debt &amp; Known Issues
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recommendations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recommendations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Recommendations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#high-priority" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        High Priority
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#medium-priority" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Medium Priority
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#low-priority" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Low Priority
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-design-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Key Design Decisions
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/ncsa/lumen/edit/main/docs/architecture.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="lumen-architecture">Lumen Architecture<a class="headerlink" href="#lumen-architecture" title="Permanent link">&para;</a></h1>
+<p>Lumen is a multi-tenant AI model proxy and management platform. It fronts one or more OpenAI-compatible LLM backends with authentication (CILogon/OAuth2), token-budget enforcement, analytics, and a web chat UI. It is built on Flask 3.x, PostgreSQL 17 + TimescaleDB, and deployed via Docker/uvicorn.</p>
+<blockquote>
+<p><strong>Review date:</strong> 2026-05-17 — Senior architect review covering system design, data model, security, scalability, and recommendations.</p>
+</blockquote>
+<hr />
+<h2 id="table-of-contents">Table of Contents<a class="headerlink" href="#table-of-contents" title="Permanent link">&para;</a></h2>
+<ol>
+<li><a href="#system-overview">System Overview</a></li>
+<li><a href="#technology-stack">Technology Stack</a></li>
+<li><a href="#project-layout">Project Layout</a></li>
+<li><a href="#application-layers">Application Layers</a></li>
+<li><a href="#blueprints-routes">Blueprints &amp; Routes</a></li>
+<li><a href="#data-model">Data Model</a></li>
+<li><a href="#services-background-workers">Services &amp; Background Workers</a></li>
+<li><a href="#authentication-access-control">Authentication &amp; Access Control</a></li>
+<li><a href="#tokencoin-economy">Token/Coin Economy</a></li>
+<li><a href="#configuration-management">Configuration Management</a></li>
+<li><a href="#observability">Observability</a></li>
+<li><a href="#deployment">Deployment</a></li>
+<li><a href="#theme-system">Theme System</a></li>
+<li><a href="#security-assessment">Security Assessment</a></li>
+<li><a href="#scalability-assessment">Scalability Assessment</a></li>
+<li><a href="#technical-debt-known-issues">Technical Debt &amp; Known Issues</a></li>
+<li><a href="#recommendations">Recommendations</a></li>
+<li><a href="#key-design-decisions">Key Design Decisions</a></li>
+</ol>
+<hr />
+<h2 id="system-overview">System Overview<a class="headerlink" href="#system-overview" title="Permanent link">&para;</a></h2>
+<pre class="mermaid"><code>graph TD
+    Browser["Browser / API Client"]
+    subgraph Lumen ["Lumen (Flask + uvicorn)"]
+        Auth["auth blueprint\n(CILogon OAuth2)"]
+        Chat["chat blueprint\n(Web UI)"]
+        API["api blueprint\n(OpenAI-compat /v1)"]
+        Admin["admin blueprint"]
+        Projects["projects / profile blueprints"]
+        Models["models_page blueprint"]
+        Metrics["metrics blueprint\n(Prometheus)"]
+        Help["help blueprint\n(Markdown docs)"]
+        BG["Background Workers\nhealth · refill · config-watcher"]
+        DB["PostgreSQL 17 + TimescaleDB"]
+        Cfg["config.yaml"]
+        Redis["Redis (optional)\nrate-limit state"]
+    end
+    LLM["LLM Backends\n(OpenAI-compatible)"]
+    CILogon["CILogon IdP\n(OAuth2 / OIDC)"]
+    Prometheus["Prometheus Scraper"]
+
+    Browser --&gt; Auth
+    Browser --&gt; Chat
+    Browser --&gt; API
+    Browser --&gt; Admin
+    Browser --&gt; Projects
+    Browser --&gt; Models
+    Auth --&gt; CILogon
+    Chat --&gt; API
+    API --&gt; LLM
+    API --&gt; DB
+    API --&gt; Redis
+    Auth --&gt; DB
+    Admin --&gt; DB
+    Metrics --&gt; DB
+    Prometheus --&gt; Metrics
+    BG --&gt; LLM
+    BG --&gt; DB
+    BG --&gt; Cfg</code></pre>
+<p>Lumen sits between clients (browser users and API consumers) and one or more private or third-party LLM backends. It enforces authentication, coin budgets, model access rules, and records every request for audit and analytics. The chat web UI is layered on top of the same <code>/v1</code> API that external clients use.</p>
+<hr />
+<h2 id="technology-stack">Technology Stack<a class="headerlink" href="#technology-stack" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Technology</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Web framework</td>
+<td>Flask 3.0+</td>
+<td>Synchronous WSGI; wrapped in ASGI via a2wsgi</td>
+</tr>
+<tr>
+<td>ASGI server</td>
+<td>Uvicorn 0.30+</td>
+<td>Multi-worker capable; <code>--workers N</code> for scale</td>
+</tr>
+<tr>
+<td>ORM</td>
+<td>SQLAlchemy 2.0+ / Flask-SQLAlchemy 3.1+</td>
+<td>2.x select()-style API throughout</td>
+</tr>
+<tr>
+<td>Migrations</td>
+<td>Alembic via Flask-Migrate 4.0+</td>
+<td>30+ migrations versioned in <code>migrations/versions/</code></td>
+</tr>
+<tr>
+<td>Database</td>
+<td>PostgreSQL 17 + TimescaleDB 2.26</td>
+<td>TimescaleDB used for <code>request_logs</code> hypertable</td>
+</tr>
+<tr>
+<td>Auth</td>
+<td>Authlib 1.3+ · CILogon OAuth2/OIDC</td>
+<td>Institutional IdP federation via CILogon</td>
+</tr>
+<tr>
+<td>LLM client</td>
+<td>OpenAI SDK 1.0+</td>
+<td>Used both for proxying and health checks</td>
+</tr>
+<tr>
+<td>Rate limiting</td>
+<td>Flask-Limiter 3.5+</td>
+<td>In-memory (single worker) or Redis (multi-worker)</td>
+</tr>
+<tr>
+<td>CSRF</td>
+<td>Flask-WTF</td>
+<td>Exempted on <code>/v1/*</code> routes (API clients)</td>
+</tr>
+<tr>
+<td>Metrics</td>
+<td>prometheus-client 0.20+</td>
+<td>Multiprocess mode supported</td>
+</tr>
+<tr>
+<td>PDF handling</td>
+<td>pypdf 4.0+</td>
+<td>File upload support in chat</td>
+</tr>
+<tr>
+<td>Templating</td>
+<td>Jinja2 with custom <code>_ThemeLoader</code></td>
+<td>Theme overlays without forking templates</td>
+</tr>
+<tr>
+<td>Packaging / runtime</td>
+<td>uv / pyproject.toml</td>
+<td>Python ≥ 3.11 required</td>
+</tr>
+<tr>
+<td>Testing</td>
+<td>pytest · pytest-flask · Playwright · Locust</td>
+<td>Unit, integration, E2E, and load tests</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="project-layout">Project Layout<a class="headerlink" href="#project-layout" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>lumen/                   # Main Python package
+├── __init__.py          # App factory: create_app()
+├── extensions.py        # Flask extension singletons (db, migrate, oauth, limiter, csrf)
+├── decorators.py        # @login_required, @api_key_required, @admin_required
+├── commands.py          # Flask CLI commands (init_db, reassign_model, sync_*)
+├── blueprints/          # One subdirectory per blueprint
+│   ├── auth/
+│   ├── chat/
+│   ├── api/             # OpenAI-compatible /v1 routes
+│   ├── admin/
+│   ├── projects/
+│   ├── profile/
+│   ├── models_page/
+│   ├── metrics/
+│   └── help/
+├── models/              # SQLAlchemy ORM (18 models, one file per entity)
+├── services/            # Business logic &amp; background workers
+│   ├── llm.py           # Proxy logic, access resolution, coin deduction (~520 lines)
+│   ├── health.py        # Model endpoint health checker
+│   ├── token_refill.py  # Hourly coin replenishment
+│   ├── config_watcher.py# Hot-reload watcher (5 s poll)
+│   ├── cost.py          # Cost calculation utility
+│   └── crypto.py        # HMAC-SHA256 API key hashing
+├── templates/           # Jinja2 HTML (base.html + per-blueprint)
+└── static/              # CSS, JS, images, vendor (SkipTo.js)
+
+themes/                  # Branding overrides (default, illinois, uic, uis)
+migrations/              # Alembic migration scripts (30+)
+tests/                   # pytest suite (routes, services, models, accessibility)
+loadtesting/             # Locust scripts + dummy backend (port 9999)
+docs/                    # Architecture, DB schema, help pages
+chart/                   # Kubernetes / Helm chart
+asgi.py                  # ASGI entry point (uvicorn target)
+run.py                   # Dev server entry point
+config.yaml              # Primary runtime configuration
+docker-compose.yaml
+Dockerfile
+</code></pre></div>
+<hr />
+<h2 id="application-layers">Application Layers<a class="headerlink" href="#application-layers" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>┌──────────────────────────────────────────────────────────┐
+│  Presentation   │  blueprints/, templates/, static/      │
+├──────────────────────────────────────────────────────────┤
+│  Application    │  decorators.py, commands.py            │
+│                 │  create_app() wiring in __init__.py    │
+├──────────────────────────────────────────────────────────┤
+│  Domain/Service │  services/ (llm, health, token_refill, │
+│                 │  config_watcher, cost, crypto)          │
+├──────────────────────────────────────────────────────────┤
+│  Data Access    │  models/ (SQLAlchemy 2.x ORM, 18 models)│
+├──────────────────────────────────────────────────────────┤
+│  Infrastructure │  PostgreSQL 17 + TimescaleDB, Redis,   │
+│                 │  CILogon IdP, LLM backends             │
+└──────────────────────────────────────────────────────────┘
+</code></pre></div>
+<p>The app factory (<code>create_app</code>) wires all layers together: it initialises extensions, registers blueprints, starts background workers (only in the main worker process to avoid duplicate threads under multi-process uvicorn), and syncs <code>config.yaml</code> state into the database on every startup.</p>
+<hr />
+<h2 id="blueprints-routes">Blueprints &amp; Routes<a class="headerlink" href="#blueprints-routes" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Blueprint</th>
+<th>Mount</th>
+<th>Responsibility</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>auth</code></td>
+<td><code>/</code></td>
+<td>Landing page, OAuth2 login/callback/logout, group auto-assignment</td>
+</tr>
+<tr>
+<td><code>chat</code></td>
+<td><code>/chat</code></td>
+<td>Web chat UI (SSE streaming) + conversation management</td>
+</tr>
+<tr>
+<td><code>api</code></td>
+<td><code>/v1</code></td>
+<td>OpenAI-compatible completions, models, and embeddings endpoints</td>
+</tr>
+<tr>
+<td><code>admin</code></td>
+<td><code>/admin</code></td>
+<td>User/project management, analytics dashboard</td>
+</tr>
+<tr>
+<td><code>projects</code></td>
+<td><code>/projects</code></td>
+<td>Service account &amp; API key management</td>
+</tr>
+<tr>
+<td><code>profile</code></td>
+<td><code>/profile</code></td>
+<td>Personal API keys, usage stats</td>
+</tr>
+<tr>
+<td><code>models_page</code></td>
+<td><code>/models</code></td>
+<td>Model catalog and detail pages with HuggingFace READMEs</td>
+</tr>
+<tr>
+<td><code>metrics</code></td>
+<td><code>/metrics</code></td>
+<td>Prometheus scrape endpoint (optional Bearer auth)</td>
+</tr>
+<tr>
+<td><code>help</code></td>
+<td><code>/help</code></td>
+<td>Markdown documentation system with embedded screenshots</td>
+</tr>
+</tbody>
+</table>
+<h3 id="openai-compatible-api-v1">OpenAI-compatible API (<code>/v1</code>)<a class="headerlink" href="#openai-compatible-api-v1" title="Permanent link">&para;</a></h3>
+<p>The <code>api</code> blueprint is the core proxy surface:</p>
+<div class="highlight"><pre><span></span><code>GET  /v1/models                → list active models with health info
+GET  /v1/models/&lt;id&gt;           → model detail JSON
+POST /v1/chat/completions      → stream/non-stream chat (proxied to backend)
+POST /v1/audio/transcriptions  → speech-to-text (billed per hour of audio)
+POST /v1/audio/translations    → speech-to-text translated to English
+POST /v1/embeddings            → embeddings passthrough
+</code></pre></div>
+<p>Every request through <code>@api_key_required</code>:
+1. Validates the Bearer token against HMAC-SHA256 hashed API keys in the DB
+2. Checks coin budget (<code>services/llm.py::check_coin_budget</code>)
+3. Enforces rate limits (Flask-Limiter, per authenticated entity)
+4. After response: logs to <code>RequestLog</code>, deducts coins, updates <code>ModelStat</code> and <code>EntityStat</code></p>
+<p>The chat blueprint's <code>/chat/&lt;id&gt;/message</code> SSE endpoint is functionally a web-UI wrapper around the same proxy logic; it reuses access control and coin deduction from <code>services/llm.py</code>.</p>
+<hr />
+<h2 id="data-model">Data Model<a class="headerlink" href="#data-model" title="Permanent link">&para;</a></h2>
+<p>18 SQLAlchemy models organised into five functional areas. See <code>docs/dbschema.md</code> for full column-level detail and the ERD.</p>
+<h3 id="identity-access">Identity &amp; Access<a class="headerlink" href="#identity-access" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Entity</code></td>
+<td>Unified table for human users (OAuth) and service projects; <code>entity_type ∈ {user, project}</code></td>
+</tr>
+<tr>
+<td><code>APIKey</code></td>
+<td>HMAC-SHA256 hashed API keys; tracks per-key request counts, tokens, cost, <code>last_used_at</code></td>
+</tr>
+<tr>
+<td><code>Group</code></td>
+<td>Named groups; auto-join rules live in the <code>group_rules</code> table, edited on the group detail page</td>
+</tr>
+<tr>
+<td><code>GroupMember</code></td>
+<td>Entity ↔ Group many-to-many; supports <code>config_managed</code> flag</td>
+</tr>
+<tr>
+<td><code>EntityManager</code></td>
+<td>User → Project delegation (a user can manage a project's keys)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="token-economy">Token Economy<a class="headerlink" href="#token-economy" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>EntityBalance</code></td>
+<td>Current coin balance per entity; written on every request</td>
+</tr>
+<tr>
+<td><code>EntityLimit</code></td>
+<td>Per-entity ceiling, refresh rate, starting balance; entity limit overrides group</td>
+</tr>
+<tr>
+<td><code>GroupLimit</code></td>
+<td>Coin budget inherited by group members; most generous group limit wins</td>
+</tr>
+</tbody>
+</table>
+<h3 id="model-access-control">Model Access Control<a class="headerlink" href="#model-access-control" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ModelGroupAccess</code></td>
+<td>Group grant for an owned model; a row gives all group members access</td>
+</tr>
+<tr>
+<td><code>EntityModelConsent</code></td>
+<td>Records user acknowledgment of models with <code>needs_ack</code> set</td>
+</tr>
+</tbody>
+</table>
+<h3 id="llm-catalogue">LLM Catalogue<a class="headerlink" href="#llm-catalogue" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ModelConfig</code></td>
+<td>Logical model (name, cost/token, capabilities, <code>owner_entity_id</code>, <code>needs_ack</code>/<code>disabled</code> flags)</td>
+</tr>
+<tr>
+<td><code>ModelEndpoint</code></td>
+<td>Physical backend URL + API key; <code>healthy</code> flag set by health checker every 60 s</td>
+</tr>
+<tr>
+<td><code>ModelStat</code></td>
+<td>Per-(entity, model, source) aggregated usage counters; <code>UNIQUE(entity_id, model_config_id, source)</code></td>
+</tr>
+<tr>
+<td><code>EntityStat</code></td>
+<td>Per-entity aggregated totals across all models; enables O(1) admin list queries</td>
+</tr>
+</tbody>
+</table>
+<h3 id="chat-audit">Chat &amp; Audit<a class="headerlink" href="#chat-audit" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Conversation</code></td>
+<td>Chat sessions owned by an entity; soft-deleted via <code>hidden</code> flag</td>
+</tr>
+<tr>
+<td><code>Message</code></td>
+<td>Individual turns with full performance metadata (TTFT, speed, thinking tokens)</td>
+</tr>
+<tr>
+<td><code>RequestLog</code></td>
+<td>Append-only log of every proxied request; TimescaleDB hypertable partitioned by <code>time</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="entity-relationship-simplified">Entity Relationship (simplified)<a class="headerlink" href="#entity-relationship-simplified" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>Entity ──&lt; APIKey
+Entity ──&lt; EntityBalance
+Entity ──&lt; EntityLimit
+Entity ──&lt; EntityModelConsent
+Entity ──&lt; EntityStat
+Entity ──&lt; GroupMember &gt;── Group ──&lt; GroupLimit
+                                   ──&lt; ModelGroupAccess
+Entity ──&lt; Conversation ──&lt; Message
+Entity ──&lt; EntityManager (user → project)
+Entity ──&lt; RequestLog (SET NULL on delete)
+Entity ──&lt; ModelConfig (owner_entity_id, SET NULL on delete)
+ModelConfig ──&lt; ModelGroupAccess
+ModelConfig ──&lt; ModelEndpoint
+ModelConfig ──&lt; ModelStat
+ModelConfig ──&lt; RequestLog (SET NULL on delete)
+</code></pre></div>
+<h3 id="notable-schema-decisions">Notable schema decisions<a class="headerlink" href="#notable-schema-decisions" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>RequestLog</code> FKs use <code>SET NULL</code> on delete</strong> — preserves historical data when entities or models are removed. All other FKs cascade.</li>
+<li><strong>Endpoints are retired, not deleted</strong> — removing an endpoint from <code>config.yaml</code> (or its model) clears <code>model_endpoints.active</code>; the row stays so <code>request_logs.model_endpoint_id</code> keeps pointing at the endpoint that served each request, and inactive rows are excluded from discovery, routing, and health checks. Re-adding the URL reactivates the same row after a fresh probe.</li>
+<li><strong>Coin values use <code>Numeric(12,6)</code></strong> — avoids floating-point precision errors for financial accumulation.</li>
+<li><strong><code>entity_stats</code> uses <code>entity_id</code> as PK (no surrogate key)</strong> — there is exactly one row per entity; the FK doubles as the PK, which also prevents accidental duplicates.</li>
+<li><strong><code>model_endpoints.model_name</code> overrides the logical name</strong> — allows one Lumen model to map to differently-named upstream models across endpoints.</li>
+</ul>
+<hr />
+<h2 id="services-background-workers">Services &amp; Background Workers<a class="headerlink" href="#services-background-workers" title="Permanent link">&para;</a></h2>
+<h3 id="servicesllmpy-520-lines"><code>services/llm.py</code> (~520 lines)<a class="headerlink" href="#servicesllmpy-520-lines" title="Permanent link">&para;</a></h3>
+<p>Core proxy logic. Key functions:</p>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>get_next_endpoint(model)</code></td>
+<td>Round-robin load balancing across healthy endpoints only</td>
+</tr>
+<tr>
+<td><code>bulk_model_access_info(entity, models)</code></td>
+<td>Batch-resolve access + consent for many models in O(n) DB queries</td>
+</tr>
+<tr>
+<td><code>get_model_access_status(entity, model)</code></td>
+<td>Access resolution: disabled/expired → no owner (public) → entity is owner → granted group</td>
+</tr>
+<tr>
+<td><code>check_coin_budget(entity)</code></td>
+<td>Validate balance &gt; 0 before forwarding; respects unlimited (-2) and blocked (0) sentinels</td>
+</tr>
+<tr>
+<td><code>subtract_coins(entity, cost)</code></td>
+<td>Decrement <code>EntityBalance.coins_left</code>; uses <code>SELECT ... FOR UPDATE</code></td>
+</tr>
+<tr>
+<td><code>send_message_stream()</code></td>
+<td>Wraps OpenAI SDK streaming as SSE; accumulates token counts for post-request accounting</td>
+</tr>
+<tr>
+<td><code>update_stats()</code></td>
+<td>Increment <code>ModelStat</code>, <code>EntityStat</code>, <code>APIKey</code> counters; insert <code>RequestLog</code> row</td>
+</tr>
+</tbody>
+</table>
+<h3 id="background-workers">Background Workers<a class="headerlink" href="#background-workers" title="Permanent link">&para;</a></h3>
+<p>All three workers are daemon threads started inside <code>create_app</code>. A <code>SERVER_IS_MAIN_WORKER</code> flag prevents duplicate threads when uvicorn runs multiple worker processes.</p>
+<table>
+<thead>
+<tr>
+<th>Worker</th>
+<th>File</th>
+<th>Interval</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Health checker</td>
+<td><code>services/health.py</code></td>
+<td>60 s</td>
+<td>Polls each active <code>ModelEndpoint</code> via OpenAI <code>models.list()</code>; sets <code>healthy</code> flag (retired endpoints are skipped)</td>
+</tr>
+<tr>
+<td>Token refiller</td>
+<td><code>services/token_refill.py</code></td>
+<td>60 s poll, hourly effective</td>
+<td>Increments <code>EntityBalance</code> by <code>refresh_coins</code>, capped at <code>max_coins</code></td>
+</tr>
+<tr>
+<td>Config watcher</td>
+<td><code>services/config_watcher.py</code></td>
+<td>5 s</td>
+<td>Hot-reloads models from <code>config.yaml</code> (skips files whose version is not exactly 3 with a logged error; retries a failed model sync with backoff — 5 s, 10 s, 20 s, … up to 5 min — and keeps the previous config until it applies); warns on restart-required changes</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="authentication-access-control">Authentication &amp; Access Control<a class="headerlink" href="#authentication-access-control" title="Permanent link">&para;</a></h2>
+<h3 id="oauth2-flow">OAuth2 Flow<a class="headerlink" href="#oauth2-flow" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>User → /login → CILogon OIDC → /callback → group auto-assignment → session cookie
+</code></pre></div>
+<p>Session stores: <code>entity_id</code>, <code>entity_type</code>, <code>userinfo</code> (OAuth claims).</p>
+<p>For local development, set <code>app.dev_user.email</code> in <code>config.yaml</code> to bypass OAuth entirely.</p>
+<h3 id="group-auto-assignment">Group Auto-Assignment<a class="headerlink" href="#group-auto-assignment" title="Permanent link">&para;</a></h3>
+<p>Auto-join rules live in the database (<code>group_rules</code> table, edited on each group's Rules tab) and are evaluated against OAuth claims at every login (matching lives in <code>lumen/blueprints/auth/routes.py</code>). There is no <code>group_rules:</code> config section — a leftover one from an older config is ignored with a startup warning.</p>
+<p>A user is added to a group if the group is active, has auto-join enabled, and <strong>all</strong> of its rules match; the assignment runs on every login, so rule-based memberships stay in sync with IdP claims (and are removed when they stop matching). Groups themselves (pools, memberships, model grants, rules) are entirely DB-managed.</p>
+<h3 id="model-access-resolution-ownership">Model Access Resolution (ownership)<a class="headerlink" href="#model-access-resolution-ownership" title="Permanent link">&para;</a></h3>
+<p>A model may have an owner (a user). Ownership and group grants live in the DB and
+are edited by admins on the model detail page; config sync never touches them.</p>
+<div class="highlight"><pre><span></span><code>1. Disabled / expired  (model_configs.disabled or past end_date → blocked)
+        ↓ otherwise
+2. No owner            (owner_entity_id IS NULL → allowed for everyone)
+        ↓ otherwise
+3. Entity is owner     (entity == owner_entity_id → allowed)
+        ↓ otherwise
+4. Granted group       (entity in an active group with a ModelGroupAccess row → allowed)
+        ↓ otherwise
+5. Blocked
+</code></pre></div>
+<p><code>needs_ack</code> / <code>early_access</code> add a one-time acknowledgement gate (<code>EntityModelConsent</code>) on top of an allowed result without changing the access decision. Deleting the owner user makes the model public again (FK <code>SET NULL</code>); deleting a granted group removes the grant (cascade).</p>
+<h3 id="api-key-auth-programmatic-access">API Key Auth (programmatic access)<a class="headerlink" href="#api-key-auth-programmatic-access" title="Permanent link">&para;</a></h3>
+<p>Keys are HMAC-SHA256 hashed (using <code>LUMEN_ENCRYPTION_KEY</code>) before storage. The <code>@api_key_required</code> decorator recomputes the hash of the presented Bearer token and compares against <code>api_keys.key_hash</code>. Human users create keys at <code>/profile</code>; service projects create keys at <code>/projects/&lt;id&gt;/keys</code>. Only the key hint (last few characters) is stored in plaintext for UI identification.</p>
+<hr />
+<h2 id="tokencoin-economy">Token/Coin Economy<a class="headerlink" href="#tokencoin-economy" title="Permanent link">&para;</a></h2>
+<p>Coins are a virtual currency unit (not 1:1 with tokens or dollars). Cost is computed as:</p>
+<div class="highlight"><pre><span></span><code>cost_usd = (input_tokens / 1_000_000 × input_cost_per_million)
+         + (output_tokens / 1_000_000 × output_cost_per_million)
+</code></pre></div>
+<p>Coin values use sentinel semantics: <code>-2</code> = unlimited, <code>0</code> = blocked, positive = budget ceiling.</p>
+<p><strong>Lifecycle:</strong></p>
+<ol>
+<li>Entity created or group sync → <code>EntityBalance.coins_left</code> initialised to <code>starting_coins</code></li>
+<li>Each request → <code>check_coin_budget</code> → forward → <code>subtract_coins</code> (atomic via SELECT FOR UPDATE)</li>
+<li>Periodic (every ~60 s, effective hourly) → <code>token_refill</code> thread adds <code>refresh_coins</code>, capped at <code>max_coins</code></li>
+<li>Admin can manually reset or adjust balances via admin UI</li>
+</ol>
+<p><strong>Resolution priority:</strong></p>
+<ul>
+<li>Entity-level <code>EntityLimit</code> overrides all group limits</li>
+<li>If no entity limit: the most generous <code>GroupLimit</code> among the entity's groups applies</li>
+<li>If neither exists: the entity is blocked (no budget = no access)</li>
+</ul>
+<hr />
+<h2 id="configuration-management">Configuration Management<a class="headerlink" href="#configuration-management" title="Permanent link">&para;</a></h2>
+<p><code>config.yaml</code> is the single source of truth for runtime configuration (integer version 3 is required; every other value is rejected at startup). On each <code>create_app</code> call, models are synced to the database. Groups — memberships, coin pools, model grants, and auto-join rules — are DB-managed and never touched by config sync (a leftover <code>group_rules:</code> section only triggers a startup warning).</p>
+<table>
+<thead>
+<tr>
+<th>Section</th>
+<th>Controls</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>app.*</code></td>
+<td>Name, secret_key, encryption_key, database_url, theme, db pool tuning</td>
+</tr>
+<tr>
+<td><code>oauth2.*</code></td>
+<td>CILogon client credentials, scopes, redirect URI, IdP hint</td>
+</tr>
+<tr>
+<td><code>models[]</code></td>
+<td>Model definitions: endpoints, costs, capabilities, notices, modalities</td>
+</tr>
+<tr>
+<td><code>chat.*</code></td>
+<td>Upload settings (allowed extensions, max size), soft/hard delete mode</td>
+</tr>
+<tr>
+<td><code>rate_limiting.*</code></td>
+<td>Per-user rate limit rules, optional Redis storage URI</td>
+</tr>
+<tr>
+<td><code>prometheus.*</code></td>
+<td>Metrics collection settings, optional scrape Bearer token</td>
+</tr>
+<tr>
+<td><code>admins[]</code></td>
+<td>Admin email list (checked at request time, not cached)</td>
+</tr>
+<tr>
+<td><code>logs.*</code></td>
+<td>Access log toggle, model health log toggle, log level</td>
+</tr>
+<tr>
+<td><code>monitoring.*</code></td>
+<td>Internal monitoring token</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Hot-reload (5 s):</strong> The config watcher syncs models to the DB without a restart. Changes to <code>oauth2</code>, <code>database_url</code>, <code>debug</code>, or <code>prometheus</code> emit a restart-required warning to logs.</p>
+<p>Environment variables (<code>DATABASE_URL</code>, <code>LUMEN_SECRET_KEY</code>, <code>LUMEN_ENCRYPTION_KEY</code>, <code>OAUTH2_*</code>) override config.yaml values and take precedence at startup.</p>
+<hr />
+<h2 id="observability">Observability<a class="headerlink" href="#observability" title="Permanent link">&para;</a></h2>
+<h3 id="prometheus-metrics">Prometheus (<code>/metrics</code>)<a class="headerlink" href="#prometheus-metrics" title="Permanent link">&para;</a></h3>
+<p>Protected by an optional Bearer token. Aggregates across workers via <code>prometheus_multiproc_dir</code>. Metrics include:</p>
+<ul>
+<li>HTTP request count, duration, status code (per route)</li>
+<li>Active entity counts, group membership counts (<code>LumenDBCollector</code>)</li>
+<li>Per-model health status (ok / degraded / down / disabled)</li>
+<li>Token pool utilisation per entity group</li>
+</ul>
+<h3 id="request-logging">Request Logging<a class="headerlink" href="#request-logging" title="Permanent link">&para;</a></h3>
+<p>Every proxied request is written to <code>request_logs</code> (TimescaleDB hypertable partitioned by <code>time</code>). Foreign keys use <code>SET NULL ON DELETE</code> to preserve historical data after users or models are removed; endpoints are never deleted (they are retired by clearing <code>model_endpoints.active</code>), so <code>model_endpoint_id</code> stays resolvable.</p>
+<h3 id="analytics-dashboard-usage">Analytics Dashboard (<code>/usage</code>)<a class="headerlink" href="#analytics-dashboard-usage" title="Permanent link">&para;</a></h3>
+<p>The <code>/admin/analytics</code> route redirects to the Usage page (<code>/usage</code>); admins see org-wide
+data there while regular users are scoped to their own. Built on <code>request_logs</code> aggregations:</p>
+<ul>
+<li>New users / cumulative users over time</li>
+<li>Requests and cost by model</li>
+<li>Endpoint health summary</li>
+<li>Token usage trends</li>
+</ul>
+<hr />
+<h2 id="deployment">Deployment<a class="headerlink" href="#deployment" title="Permanent link">&para;</a></h2>
+<h3 id="docker-compose-development-single-node">Docker Compose (development / single-node)<a class="headerlink" href="#docker-compose-development-single-node" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>postgres  timescale/timescaledb:2.26.4-pg17   port 5678
+lumen     uvicorn asgi:app --reload            port 5001
+</code></pre></div>
+<p>The lumen container runs <code>entrypoint.sh</code>:
+1. Source <code>.env</code>
+2. <code>flask db upgrade</code> (Alembic migrations — safe to run on every start)
+3. <code>uvicorn asgi:app --host 0.0.0.0 --port 5001</code></p>
+<h3 id="production-scaling">Production Scaling<a class="headerlink" href="#production-scaling" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Uvicorn workers:</strong> <code>--workers N</code> for multi-process throughput; <code>SERVER_IS_MAIN_WORKER</code> ensures background threads run only once</li>
+<li><strong>Rate limiting:</strong> Switch <code>rate_limiting.storage_url</code> to a Redis URI for distributed per-user state across workers</li>
+<li><strong>Database:</strong> Configure <code>app.db_pool</code> (pool_size, max_overflow, pool_timeout, pool_recycle, pool_pre_ping) for connection-pool tuning; TimescaleDB compression + data retention policies on <code>request_logs</code></li>
+<li><strong>Kubernetes:</strong> PostgreSQL StatefulSet, Lumen Deployment with <code>config.yaml</code> ConfigMap, optional Redis Deployment; Helm chart in <code>chart/</code></li>
+</ul>
+<h3 id="build-time-metadata">Build-time Metadata<a class="headerlink" href="#build-time-metadata" title="Permanent link">&para;</a></h3>
+<p><code>APP_VERSION</code> and <code>GIT_COMMIT</code> are injected as Docker build args and surfaced on the <code>/help</code> page sidebar.</p>
+<hr />
+<h2 id="theme-system">Theme System<a class="headerlink" href="#theme-system" title="Permanent link">&para;</a></h2>
+<p>Each theme lives under <code>themes/&lt;name&gt;/</code>:</p>
+<ul>
+<li><code>theme.yaml</code> — colours, logo, fonts</li>
+<li><code>templates/</code> — Jinja2 overrides (resolved before core templates)</li>
+<li><code>static/</code> — CSS, JS, images</li>
+</ul>
+<p>A custom <code>_ThemeLoader</code> (Jinja2 <code>BaseLoader</code>) checks the active theme directory first, then falls back to <code>lumen/templates/</code>. The config watcher hot-reloads the active theme when <code>app.theme</code> changes in <code>config.yaml</code>.</p>
+<blockquote>
+<p><strong>Accessibility note:</strong> Do not use <code>#e84a27</code> (UIUC orange) as a background with white text — contrast ratio is only 3.0:1 (WCAG minimum is 4.5:1). Use <code>#b5300c</code> or darker.</p>
+</blockquote>
+<hr />
+<h2 id="security-assessment">Security Assessment<a class="headerlink" href="#security-assessment" title="Permanent link">&para;</a></h2>
+<h3 id="strengths">Strengths<a class="headerlink" href="#strengths" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Observation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>API key storage</td>
+<td>HMAC-SHA256 with a server-side secret; keys never stored in plaintext; only a hint is retained for UI identification</td>
+</tr>
+<tr>
+<td>CSRF protection</td>
+<td>Flask-WTF applied globally; exempted only on <code>/v1/*</code> (correct — OpenAI-compatible clients don't send CSRF tokens)</td>
+</tr>
+<tr>
+<td>Security headers</td>
+<td><code>X-Frame-Options</code>, <code>X-Content-Type-Options</code>, HSTS set by app factory on every response</td>
+</tr>
+<tr>
+<td>Session handling</td>
+<td>Server-side Flask sessions with a strong <code>SECRET_KEY</code>; no sensitive data in client-side cookies</td>
+</tr>
+<tr>
+<td>OAuth2 / OIDC</td>
+<td>Authlib handles PKCE and state validation; CILogon provides institutional IdP federation</td>
+</tr>
+<tr>
+<td>Coin budget pre-check</td>
+<td>Budget is validated <strong>before</strong> the upstream request, not after — prevents free-riding on failed checks</td>
+</tr>
+<tr>
+<td>SQL injection</td>
+<td>SQLAlchemy ORM with parameterised queries throughout; no raw SQL string construction observed</td>
+</tr>
+<tr>
+<td>Admin gating</td>
+<td>Admin status checked from <code>config.yaml</code> at request time (not cached in session); avoids stale privilege escalation</td>
+</tr>
+</tbody>
+</table>
+<h3 id="risks-gaps">Risks &amp; Gaps<a class="headerlink" href="#risks-gaps" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Risk</th>
+<th>Severity</th>
+<th>Detail</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Race condition on coin deduction</td>
+<td>Medium</td>
+<td><code>subtract_coins</code> uses <code>SELECT ... FOR UPDATE</code> at the row level, which is correct. However, the window between <code>check_coin_budget</code> and <code>subtract_coins</code> (which spans the entire LLM call duration) could theoretically be exploited by concurrent requests to over-spend before deduction. Consider pre-deducting an estimated amount and reconciling after.</td>
+</tr>
+<tr>
+<td>Background worker single-process assumption</td>
+<td>Medium</td>
+<td><code>SERVER_IS_MAIN_WORKER</code> relies on uvicorn's environment; if deployed behind gunicorn or another process manager that doesn't set this flag, all workers will start duplicate threads (multiplied health checks, refills). Validate the detection mechanism against the target process manager.</td>
+</tr>
+<tr>
+<td><code>dev_user</code> in production config</td>
+<td>High</td>
+<td>If <code>app.dev_user</code> is set in a production <code>config.yaml</code>, anyone can log in as that user without OAuth. There is no env-specific guard; operators must manually ensure this is absent in production. Consider asserting <code>dev_user</code> is absent when <code>FLASK_ENV=production</code> or equivalent.</td>
+</tr>
+<tr>
+<td>API key in <code>model_endpoints</code></td>
+<td>Medium</td>
+<td>Backend API keys are stored in plaintext in <code>model_endpoints.api_key</code>. A DB read access (e.g., via SQL injection elsewhere, or a compromised read replica) exposes all upstream credentials. Consider encrypting with <code>LUMEN_ENCRYPTION_KEY</code> at rest.</td>
+</tr>
+<tr>
+<td>No request body size limit for <code>/v1</code></td>
+<td>Low</td>
+<td>Large prompt injection payloads could exhaust memory or hit backend limits. Flask's <code>MAX_CONTENT_LENGTH</code> should be set explicitly (it is set for file uploads but may not cover raw API body).</td>
+</tr>
+<tr>
+<td>Gravatar hash via MD5</td>
+<td>Informational</td>
+<td><code>gravatar_hash</code> is computed as MD5(email). MD5 is cryptographically broken but Gravatar still uses it; this poses no practical risk here since the hash is used only for avatar lookup, not authentication.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="scalability-assessment">Scalability Assessment<a class="headerlink" href="#scalability-assessment" title="Permanent link">&para;</a></h2>
+<h3 id="current-bottlenecks">Current Bottlenecks<a class="headerlink" href="#current-bottlenecks" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Concern</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Synchronous Flask workers</td>
+<td>Each LLM streaming response holds a worker thread for the full duration (seconds to minutes). Under sustained concurrent load, thread exhaustion is the primary scaling limit. <code>--workers N</code> + <code>--threads M</code> helps but does not eliminate this. Consider migrating the streaming path to an async framework (Quart, FastAPI) for the <code>/v1</code> routes.</td>
+</tr>
+<tr>
+<td>Background workers per process</td>
+<td>With N uvicorn workers only one runs background threads; if that process dies, health checks and coin refills pause until the process restarts. There is no leader-election or external scheduler.</td>
+</tr>
+<tr>
+<td><code>EntityBalance</code> write contention</td>
+<td>Every request writes to <code>entity_balances</code> for the coin deduction. Under high concurrency from a single entity, this row becomes a hot spot. <code>SELECT ... FOR UPDATE</code> serialises these writes; a high-QPS client will queue behind itself.</td>
+</tr>
+<tr>
+<td><code>model_stats</code> upsert</td>
+<td>After every request, <code>model_stats</code> is upserted for (entity, model, source). Under concurrent requests this becomes a serialised bottleneck per entity/model pair. Batching or an async write queue would help at scale.</td>
+</tr>
+<tr>
+<td>In-memory rate limiter</td>
+<td>The default in-memory rate limit state is per-process and not shared across uvicorn workers. Without Redis, the effective limit is <code>N × configured_limit</code>. Operators should always configure <code>rate_limiting.storage_url</code> in production.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="what-scales-well">What Scales Well<a class="headerlink" href="#what-scales-well" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>request_logs</code> as a TimescaleDB hypertable handles high insert volume and efficient time-range analytics without schema changes</li>
+<li>Round-robin over <code>ModelEndpoint</code> rows provides backend load distribution and automatic failover via the <code>healthy</code> flag</li>
+<li><code>entity_stats</code> pre-aggregation avoids expensive <code>GROUP BY</code> scans on admin listing pages</li>
+<li>YAML-driven config with hot-reload allows model and group changes without rolling restarts</li>
+</ul>
+<hr />
+<h2 id="technical-debt-known-issues">Technical Debt &amp; Known Issues<a class="headerlink" href="#technical-debt-known-issues" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Location</th>
+<th>Impact</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>services/llm.py</code> is 520 lines</td>
+<td><code>services/llm.py</code></td>
+<td>Single file handles access resolution, coin accounting, endpoint selection, streaming, and stats — multiple concerns. Hard to unit-test individual pieces. Split into <code>access.py</code>, <code>budget.py</code>, <code>proxy.py</code>.</td>
+</tr>
+<tr>
+<td>No retry / backoff on upstream failure</td>
+<td><code>services/llm.py::send_message_stream</code></td>
+<td>If an upstream endpoint fails mid-stream, the error is propagated directly to the client with no retry to a healthy endpoint. The health checker will eventually mark the endpoint unhealthy, but the current request fails unrecoverably.</td>
+</tr>
+<tr>
+<td>Background worker death is silent</td>
+<td>All three workers</td>
+<td>Exceptions are caught and logged but the thread continues sleeping. A crash loop (repeated exceptions) produces log noise but no alert. Add a dead-thread watchdog or liveness signal.</td>
+</tr>
+<tr>
+<td><code>config_watcher</code> polls every 5 s but reapplies full sync</td>
+<td><code>config_watcher.py</code></td>
+<td>On every tick, the watcher compares and syncs models/groups/projects to the DB regardless of whether <code>config.yaml</code> has changed (no mtime/hash check). At scale with many models and groups, this adds unnecessary DB load.</td>
+</tr>
+<tr>
+<td>Conversations store model name as a snapshot string</td>
+<td><code>conversations.model</code></td>
+<td>If a model is renamed or removed, the conversation still shows the old name. There is no FK to <code>model_configs</code>, so model detail links from conversation history will break.</td>
+</tr>
+<tr>
+<td><code>message.content</code> is plain text</td>
+<td><code>messages.content</code></td>
+<td>Multi-modal messages (images, files) are not stored; uploaded file content is embedded as text in the content field. File metadata is not preserved, making conversation replay or re-analysis impossible.</td>
+</tr>
+<tr>
+<td>Gravatar email hash leaks email existence</td>
+<td><code>entities.gravatar_hash</code></td>
+<td>The MD5 hash of an email can be used to confirm whether a specific email address has logged in, by recomputing the hash externally. Low risk in an institutional context but worth noting.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="recommendations">Recommendations<a class="headerlink" href="#recommendations" title="Permanent link">&para;</a></h2>
+<h3 id="high-priority">High Priority<a class="headerlink" href="#high-priority" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>Encrypt <code>model_endpoints.api_key</code> at rest.</strong> Use the existing <code>LUMEN_ENCRYPTION_KEY</code> (same mechanism as API key hashing) to encrypt backend credentials. This prevents exposure if the database is accessed directly. A migration can encrypt existing values.</p>
+</li>
+<li>
+<p><strong>Add a guard against <code>dev_user</code> in production.</strong> In <code>create_app</code>, assert that <code>app.dev_user</code> is absent when an environment variable like <code>FLASK_ENV=production</code> or <code>LUMEN_PRODUCTION=1</code> is set. A misconfigured production deployment is a complete authentication bypass.</p>
+</li>
+<li>
+<p><strong>Switch to Redis-backed rate limiting in all multi-worker deployments.</strong> Document this as a production requirement in <code>README.md</code> and the Helm chart values. The current default (in-memory) is only correct for single-worker development.</p>
+</li>
+<li>
+<p><strong>Split <code>services/llm.py</code> into focused modules.</strong> Proposed breakdown:</p>
+</li>
+<li><code>services/access.py</code> — access and consent resolution</li>
+<li><code>services/budget.py</code> — coin checks, deduction, refill logic</li>
+<li><code>services/proxy.py</code> — endpoint selection, upstream forwarding, streaming</li>
+<li><code>services/stats.py</code> — request log and stat updates
+   This makes each concern independently testable and reduces merge conflicts.</li>
+</ol>
+<h3 id="medium-priority">Medium Priority<a class="headerlink" href="#medium-priority" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>Add mtime/hash check to <code>config_watcher</code>.</strong> Only run the full DB sync when <code>config.yaml</code> has actually changed. This reduces unnecessary DB load under steady-state operation.</p>
+</li>
+<li>
+<p><strong>Implement upstream retry with endpoint failover.</strong> When <code>send_message_stream</code> catches a network error, retry on the next healthy endpoint (up to once) before returning an error to the client. This improves resilience during rolling backend restarts.</p>
+</li>
+<li>
+<p><strong>Add a dead-thread watchdog for background workers.</strong> Track the last successful run time for each worker and expose it via <code>/metrics</code> or a <code>/health</code> endpoint. Alert when a worker has not run for &gt; 2× its interval.</p>
+</li>
+<li>
+<p><strong>Pre-deduct estimated coins and reconcile post-request.</strong> The current window between <code>check_coin_budget</code> and <code>subtract_coins</code> allows concurrent requests to transiently over-spend (especially for long streaming responses). Pre-deduct an estimated amount (e.g., based on <code>max_output_tokens</code>) and reconcile the actual cost after the response completes.</p>
+</li>
+</ol>
+<h3 id="low-priority">Low Priority<a class="headerlink" href="#low-priority" title="Permanent link">&para;</a></h3>
+<ol>
+<li>
+<p><strong>Add <code>config.yaml</code> schema validation on startup.</strong> Use <code>pydantic</code> or <code>cerberus</code> to validate the YAML structure and emit clear error messages (with field names) rather than runtime <code>KeyError</code> or <code>AttributeError</code> when the config is malformed.</p>
+</li>
+<li>
+<p><strong>Store conversation model as a FK, not a string snapshot.</strong> Change <code>conversations.model</code> to <code>model_config_id</code> (nullable FK with <code>SET NULL ON DELETE</code>) so model detail links remain valid and renames propagate automatically.</p>
+</li>
+<li>
+<p><strong>Batch <code>model_stats</code> and <code>entity_stats</code> writes.</strong> Accumulate stat increments in-memory per worker and flush to the DB every N seconds (e.g., 10 s) to reduce write contention under high QPS. Accept a small window of potential loss (acceptable for analytics) in exchange for throughput.</p>
+</li>
+</ol>
+<hr />
+<h2 id="key-design-decisions">Key Design Decisions<a class="headerlink" href="#key-design-decisions" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Decision</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Flask + SQLAlchemy 2.x (synchronous)</td>
+<td>Simplicity; most latency is in LLM I/O (seconds), not request setup (ms). Synchronous code is easier to reason about for correctness. The tradeoff is thread-per-connection worker exhaustion at high concurrency.</td>
+</tr>
+<tr>
+<td>TimescaleDB hypertable for <code>request_logs</code></td>
+<td>Time-series partitioning enables fast time-range analytics and retention policies without schema changes. Falls back to a plain PostgreSQL table on SQLite.</td>
+</tr>
+<tr>
+<td>Coin economy abstraction</td>
+<td>Decouples billing model from raw token counts; allows group-level budgets and refresh rates without exposing per-user pricing details to end users.</td>
+</tr>
+<tr>
+<td>Ownership-based model access (no owner = public; owned = owner + granted groups)</td>
+<td>One simple, DB-managed rule replaces the old six-tier allow/block precedence chain. Public models need zero configuration; restricting a model is a single owner assignment plus group grants, edited on the model detail page rather than in <code>config.yaml</code>.</td>
+</tr>
+<tr>
+<td><code>config.yaml</code> as single source of truth with hot-reload</td>
+<td>Operators can add/update models and groups without restarting the service; GitOps-friendly (config in a repo, applied automatically).</td>
+</tr>
+<tr>
+<td>Themes as Jinja2 loader overlays</td>
+<td>Universities can fully brand the UI without forking application code or maintaining a separate deployment.</td>
+</tr>
+<tr>
+<td>HMAC-SHA256 API key hashing with <code>encryption_key</code></td>
+<td>Keys are never stored in plaintext; compromise of the DB alone does not expose usable keys. HMAC over plain SHA-256 binds the hash to the server secret.</td>
+</tr>
+<tr>
+<td>CSRF exemption for <code>/v1/*</code></td>
+<td>OpenAI-compatible API clients do not send CSRF tokens and authenticate via Bearer tokens instead. Session auth is never used on these routes.</td>
+</tr>
+<tr>
+<td>Unified <code>Entity</code> table for users and projects</td>
+<td>Simplifies the data model — coin budgets, model access rules, stats, and API keys are the same schema for both entity types. The <code>entity_type</code> discriminator keeps queries straightforward.</td>
+</tr>
+<tr>
+<td>Background workers as daemon threads (not external jobs)</td>
+<td>Zero operational overhead for simple deployments. The tradeoff is that workers are not independently scalable or observable. For large deployments, extract into Celery or APScheduler tasks.</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.expand", "navigation.top", "search.suggest", "content.code.copy", "content.action.edit"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
