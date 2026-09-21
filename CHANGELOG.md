@@ -4,36 +4,31 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
-### Fixed
-
-- A config replacement that fails to load discards the pending reload from the previous file, keeping the running config active.
-- Large model catalogs no longer slow down model discovery.
-
 ## [2.1.0] - 2026-09-20
 
 ### Added
 
-- Model aliases: a model may declare `aliases:` in `config.yaml` so removed/renamed model IDs keep working, survive config-editor saves, and resolve in chat to the still-enabled canonical model. (#19)
-- Admins can add, change, and remove a model's aliases in the config editor's model form.
-- Publish the help documentation to GitHub Pages with MkDocs (`mkdocs.yml` + a `Docs` workflow that runs `mkdocs gh-deploy --force --strict`), so the docs/ folder is built and served at https://ncsa.github.io/lumen/ with interactive Mermaid diagrams, table-of-contents anchors matching the generated heading IDs, and application links using the substitutable instance host.
+- Model aliases preserve compatibility with renamed model IDs in API requests and chat, inherit the target model's access controls, and are managed through `config.yaml` or the admin config editor. ([#19](https://github.com/ncsa/lumen/issues/19))
+- Publish [help documentation](https://ncsa.github.io/lumen/) on GitHub Pages with rendered architecture and database diagrams.
+- Add desktop chat client setup instructions, including ChatWise, to the Connect guide.
+- New chats show a notice linking to desktop chat client setup; the notice disappears after the first message. ([#63](https://github.com/ncsa/lumen/pull/63))
 
 ### Changed
 
-- Document how to add Lumen as an OpenAI-compatible provider to desktop chat clients (e.g. ChatWise) in the Connect guide.
-- Group detail pages hide the Models tab from regular members when the group has no granted models; owners and admins still see it so they can grant the first one.
-- In a group's Members list, administrators see user names linked to that user's profile page.
-- New chat sessions show a quick-interaction notice linking to the "Desktop chat clients" section of the Connect guide; it disappears once the first chat is sent. (#63)
-- Chat and model-detail help screenshots now show the quick-interaction notice and model alias badges.
+- Retire removed model endpoints while preserving their request history; retired endpoints are excluded from discovery, routing, and health checks, and require a fresh health probe when reactivated.
 - `GET /v1/models` and `GET /v1/models/{id}` no longer count against the per-key API rate limit.
-- Config editor no longer downgrades the saved config to `version: 2`; it preserves the loaded version so version 3 configs stay bootable.
-- Help docs consistently use `https://lumen.example.com` as the example host, and replace it with your instance's real URL when rendered through the app.
-- Connect guide documents `enabled_providers: ["lumen"]` so OpenCode shows only Lumen models; the Connect page moves the "Where to put this file" note above the generated OpenCode config.
-- Endpoints removed from `config.yaml` (or whose model is deactivated) are now retired (marked inactive) instead of deleted, so historical request logs keep referencing the endpoint that served them; inactive endpoints no longer appear in discovery, routing, or health checks, and re-adding the URL reactivates the same row after a fresh health probe.
+- Hide a group's Models tab from regular members when no models are granted; owners and admins retain access.
+- Link user names in group member lists to their profiles for administrators.
+- Help examples use a consistent placeholder host and substitute your instance's URL when viewed in the app.
+- Clarify where to save OpenCode configuration and how to show only Lumen models with `enabled_providers`.
+- Refresh help screenshots for chat and model details.
+- Update application dependencies.
 
 ### Fixed
 
-- A config reload whose model sync fails is retried automatically with backoff (5 s doubling to 5 min, one warning) instead of being logged as reloaded; a failure applying in-memory settings after the sync commits is logged once and not re-synced.
-- Startup recovers from a failed config sync instead of following it with a misleading metrics-priming warning.
+- Config-editor saves preserve the configuration version instead of downgrading version 3 files to version 2.
+- Config reloads retry failed model syncs with bounded backoff and report success only after the new configuration is applied.
+- A failed startup model sync no longer prevents metrics initialization or produces misleading database migration advice.
 
 ## [2.0.0] - 2026-08-25
 
