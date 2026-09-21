@@ -12,6 +12,7 @@ import openai
 from flask import Blueprint, Response, current_app, g, jsonify, request
 from sqlalchemy import case, func, select
 from sqlalchemy import update as sa_update
+from sqlalchemy.orm import selectinload
 
 from lumen.blueprints.metrics.middleware import observe_stream_abort
 from lumen.extensions import db, limiter
@@ -294,7 +295,9 @@ def api_key_required(f):
 @api_bp.route("/models", methods=["GET"])
 @api_key_required
 def list_models():
-    configs = db.session.execute(select(ModelConfig).where(ModelConfig.active)).scalars().all()
+    configs = db.session.execute(
+        select(ModelConfig).where(ModelConfig.active).options(selectinload(ModelConfig.aliases))
+    ).scalars().all()
     eps_by_model: dict = {}
     for ep in db.session.execute(
         select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_([c.id for c in configs]), ModelEndpoint.active.is_(True))

@@ -72,6 +72,63 @@ def test_list_models_includes_aliases(
     assert "alias-two" in ids
 
 
+def test_list_models_alias_loading_does_not_scale_with_catalog(
+    app, client, test_user, test_model, test_model_endpoint, api_key,
+):
+    """Regression: discovery must not run one alias query per visible model.
+
+    A 20-model catalog used to emit 20 separate ``SELECT ... FROM model_aliases``
+    statements on every /v1/models request; alias loading must stay batched
+    regardless of catalog size.
+    """
+    from sqlalchemy import event
+
+    from lumen.extensions import db
+
+    token, _ = api_key
+    with app.app_context():
+        _grant_unlimited_pool(app, test_user["id"])
+        engine = db.engine
+
+    def _create_models(n):
+        with app.app_context():
+            from lumen.models.model_config import ModelConfig
+            for i in range(n):
+                db.session.add(ModelConfig(
+                    model_name=f"bulk-model-{i}",
+                    input_cost_per_million=1.0,
+                    output_cost_per_million=2.0,
+                ))
+            db.session.commit()
+
+    def _statements_during_request():
+        statements = []
+
+        def _count(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+
+        event.listen(engine, "before_cursor_execute", _count)
+        try:
+            resp = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"})
+            assert resp.status_code == HTTPStatus.OK
+        finally:
+            event.remove(engine, "before_cursor_execute", _count)
+        return statements
+
+    # Warm-up: absorbs one-off first-request work (rate cache population) so the
+    # two counted requests below differ only in catalog size.
+    client.get("/v1/models", headers={"Authorization": f"Bearer {token}"})
+
+    small = _statements_during_request()
+    _create_models(20)
+    large = _statements_during_request()
+
+    assert len(large) == len(small)
+    assert sum("model_aliases" in s for s in large) <= 1
+    ids = {m["id"] for m in client.get("/v1/models", headers={"Authorization": f"Bearer {token}"}).get_json()["data"]}
+    assert {f"bulk-model-{i}" for i in range(20)} <= ids
+
+
 def test_get_model_by_alias_returns_metadata_under_alias(
     app, client, test_user, test_model, test_model_endpoint, api_key,
 ):
