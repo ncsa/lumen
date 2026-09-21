@@ -2,7 +2,7 @@
 
 All notable changes to Lumen will be documented in this file.
 
-## [Unreleased]
+## [2.1.0] - 2026-09-20
 
 ### Added
 
