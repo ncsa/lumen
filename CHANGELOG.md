@@ -10,6 +10,7 @@ All notable changes to Lumen will be documented in this file.
 - `lumen.sh` logs in through the device flow, stores keys per server in `~/.config/lumen/keys.json` plus a managed shell rc block (`LUMEN_API_KEY` + `LUMEN_BASE_URL`), and syncs Lumen models into the opencode config by default (`--no-opencode`, `--relogin`). ([#67](https://github.com/ncsa/lumen/issues/67))
 - Alias entries in `/v1/models` set `parent` to the canonical model ID.
 - API keys record OAuth provenance (`client_id`, `requested_by`), shown in the profile key list tooltip.
+- Add an Anthropic Messages subset and token estimates for the Python SDK and configured Claude Code, sharing Lumen access controls and billing. ([#61](https://github.com/ncsa/lumen/issues/61))
 
 ### Changed
 
