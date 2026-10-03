@@ -290,6 +290,7 @@ def create_key():
 
     api_key = APIKey(
         entity_id=entity_id,
+        created_by_entity_id=entity_id,
         name=name or "Unnamed Key",
         key_hash=key_hash,
         key_hint=f"{key[:7]}...{key[-4:]}",

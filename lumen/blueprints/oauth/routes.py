@@ -510,6 +510,7 @@ def _mint(req: AuthRequest):
     key = "sk_" + secrets.token_urlsafe(32)
     api_key = APIKey(
         entity_id=req.entity_id,
+        created_by_entity_id=req.entity_id,
         name=req.requested_name,
         key_hash=hash_api_key(key),
         key_hint=f"{key[:7]}...{key[-4:]}",

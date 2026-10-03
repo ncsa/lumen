@@ -33,7 +33,8 @@ class Entity(db.Model):
     store_conversations: Mapped[bool] = mapped_column(db.Boolean, default=True, comment="Whether webchat conversations are persisted for this user")
     created_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, default=utcnow, comment="UTC creation timestamp")
 
-    api_keys: Mapped[list["APIKey"]] = relationship(backref="entity", lazy="select", cascade="all, delete-orphan", passive_deletes=True)
+    # foreign_keys pinned to entity_id: the table also has created_by_entity_id
+    api_keys: Mapped[list["APIKey"]] = relationship(backref="entity", lazy="select", cascade="all, delete-orphan", passive_deletes=True, foreign_keys="APIKey.entity_id")
     entity_limit: Mapped[Optional["EntityLimit"]] = relationship(backref="entity", uselist=False, cascade="all, delete-orphan", passive_deletes=True)
     entity_balance: Mapped[Optional["EntityBalance"]] = relationship(backref="entity", uselist=False, cascade="all, delete-orphan", passive_deletes=True)
     model_stats: Mapped[list["ModelStat"]] = relationship(backref="entity", lazy="select", passive_deletes=True)

@@ -885,6 +885,64 @@ def test_create_key_admin_succeeds(app, admin_client, service_project):
     assert resp.status_code == HTTPStatus.CREATED
 
 
+def test_create_key_records_manager_as_creator(app, managed_auth_client, managed_project, test_user):
+    resp = managed_auth_client.post(
+        f"/projects/{managed_project['id']}/keys",
+        json={"name": "prod", "key": "sk_mgrcreator12345"},
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        key = db.session.execute(select(APIKey).filter_by(entity_id=managed_project["id"], name="prod")).scalar_one()
+        assert key.created_by_entity_id == test_user["id"]
+
+
+def test_create_key_records_non_manager_admin(app, admin_client, service_project, admin_user):
+    """A global admin who is not a manager of the project is still the creator."""
+    resp = admin_client.post(
+        f"/projects/{service_project['id']}/keys",
+        json={"name": "ops", "key": "sk_admincreator123"},
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        key = db.session.execute(select(APIKey).filter_by(entity_id=service_project["id"], name="ops")).scalar_one()
+        assert key.created_by_entity_id == admin_user["id"]
+
+
+def test_created_by_null_for_keys_made_without_a_creator(app, service_project, make_api_key):
+    """Keys seeded directly (standing in for legacy rows) keep a NULL creator."""
+    make_api_key(service_project["id"], raw_key="sk_legacykey123456", name="legacy")
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        key = db.session.execute(select(APIKey).filter_by(entity_id=service_project["id"], name="legacy")).scalar_one()
+        assert key.created_by_entity_id is None
+
+
+def test_deleting_creator_keeps_key_with_null_creator(app, managed_auth_client, managed_project, test_user):
+    resp = managed_auth_client.post(
+        f"/projects/{managed_project['id']}/keys",
+        json={"name": "orphan", "key": "sk_orphcreator123"},
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    with app.app_context():
+        from sqlalchemy import delete, text
+
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        from lumen.models.entity import Entity
+        # SQLite only enforces FKs per connection; enable it to exercise the
+        # ON DELETE SET NULL clause the schema actually carries.
+        db.session.execute(text("PRAGMA foreign_keys=ON"))
+        db.session.execute(delete(Entity).where(Entity.id == test_user["id"]))
+        db.session.commit()
+        key = db.session.execute(select(APIKey).filter_by(entity_id=managed_project["id"], name="orphan")).scalar_one()
+        assert key.created_by_entity_id is None
+
+
 def test_delete_key_forbidden_for_non_manager(auth_client, service_project, make_api_key):
     key_id, _ = make_api_key(service_project["id"], raw_key="sk_delkey1234567890", name="k")
     resp = auth_client.delete(f"/projects/{service_project['id']}/keys/{key_id}")

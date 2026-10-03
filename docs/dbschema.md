@@ -34,6 +34,7 @@ erDiagram
         datetime created_at
         string client_id
         string requested_by
+        int created_by_entity_id FK
     }
 
     auth_requests {
@@ -245,6 +246,7 @@ erDiagram
     }
 
     entities ||--o{ api_keys : "owns"
+    entities |o--o{ api_keys : "created"
     entities |o--o{ auth_requests : "approves"
     api_keys |o--o{ auth_requests : "minted at claim"
     entities ||--o| entity_limits : "has"
@@ -320,7 +322,7 @@ Unified table for both human users (authenticated via OAuth) and programmatic pr
 | `created_at` | DateTime | NO | UTC timestamp when the entity was created |
 
 **Notes:**
-- All foreign keys that reference `entities.id` cascade on delete, except `model_configs.owner_entity_id` and the `request_logs` FKs, which use `SET NULL`.
+- All foreign keys that reference `entities.id` cascade on delete, except `model_configs.owner_entity_id`, `api_keys.created_by_entity_id`, and the `request_logs` FKs, which use `SET NULL`.
 - Acknowledgement (`needs_ack`) is a property of the model, not of the entity.
 
 ---
@@ -346,6 +348,7 @@ API keys that entities (users or projects) use to authenticate against the proxy
 | `created_at` | DateTime | NO | UTC timestamp when the key was created |
 | `client_id` | String(128) | YES | Application label the key was requested through via the OAuth flows; null for keys created on the profile page |
 | `requested_by` | String(128) | YES | Requester-supplied author label from the OAuth request (unverified) |
+| `created_by_entity_id` | Integer (FK → entities) | YES | The user who created this key (the approving user for OAuth claims). Null for legacy keys; SET NULL on creator deletion. |
 
 ---
 

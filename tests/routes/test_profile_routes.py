@@ -128,6 +128,24 @@ def test_create_key_default_name(auth_client):
     assert resp.get_json()["name"] == "Unnamed Key"
 
 
+def test_create_key_records_creator(app, auth_client, test_user):
+    key = "sk_" + "c" * 32
+    resp = auth_client.post(
+        "/profile/keys",
+        data=json.dumps({"key": key}),
+        content_type="application/json",
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    with app.app_context():
+        from sqlalchemy import select
+
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        from lumen.services.crypto import hash_api_key
+        api_key = db.session.execute(select(APIKey).filter_by(key_hash=hash_api_key(key))).scalar_one()
+        assert api_key.created_by_entity_id == test_user["id"]
+
+
 def test_create_key_invalid_key(auth_client):
     resp = auth_client.post(
         "/profile/keys",

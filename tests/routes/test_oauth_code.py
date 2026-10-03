@@ -144,7 +144,7 @@ def test_authorize_requires_login_stashes_query(client):
         assert sess["oauth_return_to"].startswith("/oauth/authorize?")
 
 
-def test_code_full_round_trip(client, auth_client, app):
+def test_code_full_round_trip(client, auth_client, app, test_user):
     code, verifier = _approve_code_flow(app, auth_client)
     resp = _redeem(client, code, verifier)
     assert resp.status_code == HTTPStatus.OK
@@ -154,6 +154,7 @@ def test_code_full_round_trip(client, auth_client, app):
         api_key = db.session.execute(select(APIKey)).scalars().one()
         assert api_key.client_id == "web-portal"
         assert api_key.requested_by == "alice"
+        assert api_key.created_by_entity_id == test_user["id"]
 
 
 def test_redeem_wrong_verifier(client, auth_client, app):
