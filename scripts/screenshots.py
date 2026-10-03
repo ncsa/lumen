@@ -70,6 +70,7 @@ def ensure_demo_data(app):
             db.session.flush()
             key = "sk_example_0123456789abcdef"
             db.session.add(APIKey(entity_id=project.id, name="example-key",
+                                  created_by_entity_id=user.id,
                                   key_hash=hash_api_key(key),
                                   key_hint=f"{key[:7]}...{key[-4:]}", active=True))
 

@@ -211,7 +211,7 @@
   <div class="d-flex align-items-center gap-2">
     <label for="key-search" class="text-muted small mb-0">Search:</label>
     <input id="key-search" type="search" class="form-control form-control-sm" style="width:200px"
-           placeholder="Filter by name…" aria-label="Filter API keys by name">
+           placeholder="Filter by name or creator…" aria-label="Filter API keys by name or creator">
   </div>
 </div>
 <div class="table-responsive">
@@ -220,6 +220,7 @@
     <thead class="table-light">
       <tr>
         <th scope="col" class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="created_by">Created By <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th scope="col" class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th scope="col" class="sort-header text-end" data-col="tokens">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th scope="col" class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
@@ -444,6 +445,7 @@ const KEY_ROWS = [
   {
     id: {{ key.id }},
     name: {{ (key.name or "(unnamed)") | tojson }},
+    created_by: {{ (key_creators.get(key.id) or 'Unknown') | tojson }},
     hint: {{ key.key_hint | tojson }},
     requests: {{ key.requests or 0 }},
     tokens: {{ (key.input_tokens or 0) + (key.output_tokens or 0) }},
@@ -461,10 +463,10 @@ const keyEmpty = document.getElementById('key-empty');
 
 function renderKeys() {
   const f = keyFilter.toLowerCase();
-  let rows = KEY_ROWS.filter(k => (showDeleted || k.active) && (!f || k.name.toLowerCase().includes(f)));
+  let rows = KEY_ROWS.filter(k => (showDeleted || k.active) && (!f || k.name.toLowerCase().includes(f) || k.created_by.toLowerCase().includes(f)));
   rows.sort((a, b) => {
     let av, bv;
-    if (keyState.col === 'name') { av = a.name.toLowerCase(); bv = b.name.toLowerCase(); }
+    if (keyState.col === 'name' || keyState.col === 'created_by') { av = a[keyState.col].toLowerCase(); bv = b[keyState.col].toLowerCase(); }
     else if (keyState.col === 'last_used') { av = a.last_used || ''; bv = b.last_used || ''; }
     else { av = a[keyState.col]; bv = b[keyState.col]; }
     const cmp = av < bv ? -1 : av > bv ? 1 : 0;
@@ -484,6 +486,7 @@ function renderKeys() {
         : `<span class="badge bg-secondary">deleted</span>`;
       return `<tr${deletedClass}>
         <td><span data-bs-toggle="tooltip" data-bs-title="${escHtml(k.hint)}">${escHtml(k.name)}</span></td>
+        <td>${escHtml(k.created_by)}</td>
         <td class="text-end">${k.requests.toLocaleString()}</td>
         <td class="text-end">${k.tokens.toLocaleString()}</td>
         <td class="text-end">${parseFloat(k.cost).toFixed(2)}</td>

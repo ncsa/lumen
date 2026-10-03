@@ -90,12 +90,13 @@ response = project.chat.completions.create(
 | Column | Description |
 |--------|-------------|
 | **Name** | Label you chose |
+| **Created By** | User who created the key (email if no display name); **Unknown** for keys created before this was tracked, or whose creator was deleted |
 | **Hint** | First 4 + last 4 characters for identification |
 | **Requests / Tokens / Coins** | Usage tracked on this key |
 | **Last Used** | Timestamp of the last API call |
 | **Actions** | Revoke button for active keys |
 
-Use **Show deleted keys** to view previously revoked keys. Use the search box to filter.
+Use **Show deleted keys** to view previously revoked keys. Use the search box to filter by key name or creator.
 
 ## Model Access
 

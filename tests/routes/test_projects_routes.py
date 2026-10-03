@@ -950,6 +950,51 @@ def test_deleting_creator_keeps_key_with_null_creator(app, managed_auth_client, 
             db.session.commit()
 
 
+def test_detail_shows_key_creator_and_unknown_for_legacy(managed_auth_client, managed_project, make_api_key):
+    """The detail page embeds the creator's display name per key, Unknown for NULL."""
+    resp = managed_auth_client.post(
+        f"/projects/{managed_project['id']}/keys",
+        json={"name": "prod", "key": "sk_detailcreator12"},
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    make_api_key(managed_project["id"], raw_key="sk_detaillegacy123", name="legacy")
+    page = managed_auth_client.get(f"/projects/{managed_project['id']}")
+    assert page.status_code == HTTPStatus.OK
+    html = page.get_data(as_text=True)
+    assert 'created_by: "Test User"' in html
+    assert 'created_by: "Unknown"' in html
+
+
+def test_detail_key_creator_falls_back_to_email(app, managed_auth_client, managed_project):
+    """A creator with no display name is shown by email."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        from lumen.models.entity import Entity
+        from lumen.services.crypto import hash_api_key
+        silent = Entity(entity_type="user", email="silent@example.com", name="", active=True)
+        db.session.add(silent)
+        db.session.flush()
+        db.session.add(APIKey(
+            entity_id=managed_project["id"], name="silent-key",
+            created_by_entity_id=silent.id, key_hash=hash_api_key("sk_emailfallback1"),
+            key_hint="sk_emai...1234", active=True,
+        ))
+        db.session.commit()
+    page = managed_auth_client.get(f"/projects/{managed_project['id']}")
+    assert page.status_code == HTTPStatus.OK
+    assert 'created_by: "silent@example.com"' in page.get_data(as_text=True)
+
+
+def test_detail_key_table_has_sortable_created_by_column(managed_auth_client, managed_project):
+    """The Created By column exists and is a sortable text column."""
+    page = managed_auth_client.get(f"/projects/{managed_project['id']}")
+    assert page.status_code == HTTPStatus.OK
+    html = page.get_data(as_text=True)
+    assert '<th scope="col" class="sort-header" data-col="created_by">Created By' in html
+    assert "'requests','tokens','cost','last_used'" in html  # created_by not numeric → asc first click
+
+
 def test_delete_key_forbidden_for_non_manager(auth_client, service_project, make_api_key):
     key_id, _ = make_api_key(service_project["id"], raw_key="sk_delkey1234567890", name="k")
     resp = auth_client.delete(f"/projects/{service_project['id']}/keys/{key_id}")

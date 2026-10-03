@@ -6,6 +6,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Added
 
+- Show which user created each project API key.
 - API keys can retrieve their cumulative usage through `GET /v1/usage`, including the account's remaining coins.
 - Lumen is now licensed under the Apache License 2.0.
 - OAuth key-request flows: device flow for CLIs and authorization-code + PKCE for web apps mint scoped API keys after a consent page with model acknowledgements and overwrite control. ([#67](https://github.com/ncsa/lumen/issues/67))
