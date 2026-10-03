@@ -935,12 +935,19 @@ def test_deleting_creator_keeps_key_with_null_creator(app, managed_auth_client, 
         from lumen.models.api_key import APIKey
         from lumen.models.entity import Entity
         # SQLite only enforces FKs per connection; enable it to exercise the
-        # ON DELETE SET NULL clause the schema actually carries.
-        db.session.execute(text("PRAGMA foreign_keys=ON"))
-        db.session.execute(delete(Entity).where(Entity.id == test_user["id"]))
-        db.session.commit()
-        key = db.session.execute(select(APIKey).filter_by(entity_id=managed_project["id"], name="orphan")).scalar_one()
-        assert key.created_by_entity_id is None
+        # ON DELETE SET NULL clause the schema actually carries. The session
+        # fixture keeps this connection pooled for later tests, so the finally
+        # must hand it back with enforcement off, as it was found.
+        try:
+            db.session.execute(text("PRAGMA foreign_keys=ON"))
+            db.session.execute(delete(Entity).where(Entity.id == test_user["id"]))
+            db.session.commit()
+            key = db.session.execute(select(APIKey).filter_by(entity_id=managed_project["id"], name="orphan")).scalar_one()
+            assert key.created_by_entity_id is None
+        finally:
+            db.session.rollback()
+            db.session.execute(text("PRAGMA foreign_keys=OFF"))
+            db.session.commit()
 
 
 def test_delete_key_forbidden_for_non_manager(auth_client, service_project, make_api_key):
