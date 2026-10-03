@@ -87,7 +87,9 @@ The steps below walk through a concrete example using [ChatWise](https://chatwis
         "MODEL": {
           "name": "MODEL via Lumen",
           "limit": { "context": 131072, "output": 32768 },
-          "cost": { "input": 5.0, "output": 15.0 }
+          "cost": { "input": 5.0, "output": 15.0 },
+          "modalities": { "input": ["text", "image"], "output": ["text"] },
+          "attachment": true
         }
       }
     }
@@ -95,7 +97,7 @@ The steps below walk through a concrete example using [ChatWise](https://chatwis
 }
 ```
 
-Each model entry includes `limit` (the context window and max output, in tokens) and `cost` (USD per million input/output tokens), so OpenCode can size the context and track spending. The **Download config.json** button fills these in from the model's configured limits and pricing.
+Each model entry includes `limit` (the context window and max output, in tokens) and `cost` (USD per million input/output tokens), so OpenCode can size the context and track spending. Capability fields describe what the model accepts: `modalities` mirrors the model's input/output types, `attachment` marks models that accept images, and `tool_call`/`reasoning` appear for models with function calling or reasoning — models that can attach files and images fail with "this model does not support image input" otherwise. Fields the instance doesn't publish are omitted. The **Download config.json** button fills these in from the model's configured limits and pricing.
 
 To have OpenCode only use Lumen's models — and ignore every other installed provider — add an `enabled_providers` array at the top level of your config:
 

@@ -13,6 +13,7 @@
   <thead class="table-light">
     <tr>
       <th>Model</th>
+      <th>Input</th>
       <th class="text-end">Coins / 1M tokens (input)</th>
       <th class="text-end">Coins / 1M tokens (output)</th>
       <th class="text-center">Healthy</th>
@@ -30,6 +31,13 @@
         <a href="{{ url_for('models_page.detail', model_name=config.model_name) }}"
            class="fw-bold text-decoration-none"
            {% if config.description %}title="{{ config.description }}" data-bs-toggle="tooltip" data-bs-placement="right"{% endif %}>{{ config.model_name }}</a>
+      </td>
+      <td>
+        {% if config.input_modalities %}
+          {% for modality in config.input_modalities %}<span class="badge rounded-pill bg-secondary">{{ modality }}</span> {% endfor %}
+        {% else %}
+          <span class="text-muted">&mdash;</span>
+        {% endif %}
       </td>
       <td class="text-end">{{ "%.2f"|format(config.input_cost_per_million | float) }}</td>
       <td class="text-end">{{ "%.2f"|format(config.output_cost_per_million | float) }}</td>
@@ -70,7 +78,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="7" class="text-center text-muted">No models configured.</td></tr>
+    <tr><td colspan="8" class="text-center text-muted">No models configured.</td></tr>
     {% endfor %}
   </tbody>
 </table>

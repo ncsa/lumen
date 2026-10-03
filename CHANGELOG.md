@@ -15,6 +15,8 @@ All notable changes to Lumen will be documented in this file.
 
 ### Changed
 
+- Generated opencode configs (`lumen.sh` sync and the Connect page) advertise each model's `modalities`, `attachment`, `tool_call`, and `reasoning` flags, so OpenCode accepts image uploads for vision models instead of rejecting them client-side. ([#79](https://github.com/ncsa/lumen/issues/79))
+- The model dashboard lists each model's accepted inputs (text/image/audio) as pills next to its name. ([#79](https://github.com/ncsa/lumen/issues/79))
 - Require an owner when creating a project, with a user search in the owner field.
 - **Breaking (Helm chart):** the chart no longer deploys vLLM/SGLang model servers; `models` is copied verbatim into `config.yaml` and uses the config format (snake_case keys, `endpoints` list).
 

@@ -28,6 +28,11 @@ def _accessible_models(entity_id):
             "name": c.model_name,
             "input_modalities": c.input_modalities or [],
             "output_modalities": c.output_modalities or [],
+            # Capability booleans so the generated OpenCode config can advertise
+            # what each model can do (issue #79). None stays None — "unknown"
+            # must stay distinguishable from false on the client.
+            "supports_function_calling": c.supports_function_calling,
+            "supports_reasoning": c.supports_reasoning,
             # Surfaced so the generated OpenCode config can set each model's
             # token limits and pricing (issue #9421). Costs are USD per million
             # tokens, matching OpenCode's models.dev cost units 1:1.

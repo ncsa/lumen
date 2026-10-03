@@ -273,6 +273,18 @@ sync_models() {
          {name: (.id + " via Lumen" + (if .parent then " (alias of " + .parent + ")" else "" end))}
          + {limit: (({context: .max_model_len} + (if .max_output_tokens then {output: .max_output_tokens} else {} end)))}
          + {cost: {input: .input_cost_per_million, output: .output_cost_per_million}}
+         # Capability flags (issue #79): OpenCode derives image support from
+         # modalities.input, not from attachment, and spells the function-call
+         # flag tool_call. Omit anything the server does not know.
+         + (if ((.input_modalities // []) | length) > 0 or ((.output_modalities // []) | length) > 0
+            then {modalities: (
+              (if ((.input_modalities // []) | length) > 0 then {input: .input_modalities} else {} end)
+              + (if ((.output_modalities // []) | length) > 0 then {output: .output_modalities} else {} end)
+            )}
+            else {} end)
+         + (if ((.input_modalities // []) | index("image")) != null then {attachment: true} else {} end)
+         + (if .supports_function_calling == true then {tool_call: true} else {} end)
+         + (if .supports_reasoning == true then {reasoning: true} else {} end)
        )
      }] | from_entries')
 

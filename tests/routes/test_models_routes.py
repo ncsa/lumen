@@ -1,6 +1,16 @@
 from datetime import timedelta
 from http import HTTPStatus
 
+from bs4 import BeautifulSoup
+
+
+def _row_for(html_bytes, model_name):
+    soup = BeautifulSoup(html_bytes, "html.parser")
+    for row in soup.find_all("tr"):
+        if row.find("a", string=model_name):
+            return row
+    return None
+
 
 def test_models_requires_login(client):
     resp = client.get("/models", follow_redirects=False)
@@ -12,6 +22,38 @@ def test_models_lists_active_model(app, auth_client, test_model):
     resp = auth_client.get("/models")
     assert resp.status_code == HTTPStatus.OK
     assert test_model["model_name"].encode() in resp.data
+
+
+def test_models_header_and_input_modality_pills(app, auth_client):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        db.session.add(ModelConfig(
+            model_name="pill-model",
+            input_cost_per_million=1.0,
+            output_cost_per_million=1.0,
+            input_modalities=["text", "image"],
+        ))
+        db.session.commit()
+
+    resp = auth_client.get("/models")
+    assert resp.status_code == HTTPStatus.OK
+    soup = BeautifulSoup(resp.data, "html.parser")
+    assert soup.find("th", string="Input") is not None
+    row = _row_for(resp.data, "pill-model")
+    assert row is not None
+    pills = [s.get_text(strip=True) for s in row.find_all(
+        "span", class_=lambda c: c and "badge" in c and "rounded-pill" in c and "bg-secondary" in c)]
+    assert pills == ["text", "image"]
+
+
+def test_models_row_unknown_modalities_shows_dash(app, auth_client, test_model):
+    resp = auth_client.get("/models")
+    row = _row_for(resp.data, test_model["model_name"])
+    assert row is not None
+    cells = row.find_all("td")
+    assert cells[1].get_text(strip=True) == "\u2014"  # em dash
+    assert not cells[1].find_all("span", class_="badge")
 
 
 def _make_other_owner(app):

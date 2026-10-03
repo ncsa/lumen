@@ -77,6 +77,19 @@
         }
         // Costs are USD per million tokens — OpenCode's models.dev cost unit.
         entry.cost = { input: m.input_cost_per_million, output: m.output_cost_per_million };
+        // Capability fields (issue #79). OpenCode derives image support from
+        // modalities.input — attachment alone does not gate image requests —
+        // and reads tool_call (underscored) for function calling. Omit
+        // anything unknown rather than guessing a default.
+        if ((m.input_modalities && m.input_modalities.length) ||
+            (m.output_modalities && m.output_modalities.length)) {
+          entry.modalities = {};
+          if (m.input_modalities && m.input_modalities.length) entry.modalities.input = m.input_modalities;
+          if (m.output_modalities && m.output_modalities.length) entry.modalities.output = m.output_modalities;
+        }
+        if (m.input_modalities && m.input_modalities.includes("image")) entry.attachment = true;
+        if (m.supports_function_calling === true) entry.tool_call = true;
+        if (m.supports_reasoning === true) entry.reasoning = true;
         models[m.id] = entry;
       });
     } else {

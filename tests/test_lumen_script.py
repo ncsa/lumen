@@ -16,11 +16,16 @@ MODELS = {
         {
             "id": "gpt-demo", "max_model_len": 4000, "max_output_tokens": 500,
             "input_cost_per_million": 1.0, "output_cost_per_million": 2.0,
+            "input_modalities": ["text", "image"],
+            "output_modalities": ["text"],
+            "supports_function_calling": True,
+            "supports_reasoning": True,
         },
         {
             "id": "gpt-alias", "max_model_len": 4000,
             "input_cost_per_million": 1.0, "output_cost_per_million": 2.0,
             "parent": "gpt-demo",
+            "output_modalities": ["text"],
         },
     ],
 }
@@ -280,6 +285,31 @@ def test_sync_no_aliases_flag(home, lumen_server):
     assert r.returncode == 0, r.stderr
     cfg = json.loads((home / ".config" / "opencode" / "opencode.json").read_text())
     assert set(cfg["provider"]["lumen"]["models"]) == {"gpt-demo"}
+
+
+def test_sync_writes_capability_flags(home, lumen_server):
+    """Capability fields from /v1/models land in the config as OpenCode's
+    modalities/attachment/tool_call/reasoning flags; models without the data
+    get no capability keys at all (issue #79)."""
+    port = lumen_server.server_address[1]
+    keys = home / ".config" / "lumen" / "keys.json"
+    keys.parent.mkdir(parents=True)
+    keys.write_text(json.dumps({host_key(port): "sk_stored_key_000"}))
+    r = run_script(home, port)
+    assert r.returncode == 0, r.stderr
+    models = json.loads(
+        (home / ".config" / "opencode" / "opencode.json").read_text()
+    )["provider"]["lumen"]["models"]
+    demo = models["gpt-demo"]
+    assert demo["modalities"] == {"input": ["text", "image"], "output": ["text"]}
+    assert demo["attachment"] is True
+    assert demo["tool_call"] is True
+    assert demo["reasoning"] is True
+    alias = models["gpt-alias"]
+    assert alias["modalities"] == {"output": ["text"]}
+    assert "attachment" not in alias
+    assert "tool_call" not in alias
+    assert "reasoning" not in alias
 
 
 def test_sync_reports_added_and_removed(home, lumen_server):
