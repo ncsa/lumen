@@ -25,6 +25,8 @@ See [Profile → API Keys](../guides/profile.md#api-keys) to create a key.
 | `POST` | `/v1/completions` | Legacy text-completion endpoint (prefer `/v1/chat/completions`) |
 | `POST` | `/v1/audio/transcriptions` | Transcribe audio to text (speech-to-text) |
 | `POST` | `/v1/audio/translations` | Translate audio into English text |
+| `POST` | `/v1/messages` | Anthropic Messages API, see [Anthropic API](anthropic.md) |
+| `POST` | `/v1/messages/count_tokens` | Estimate the prompt tokens of a Messages request |
 
 ---
 
