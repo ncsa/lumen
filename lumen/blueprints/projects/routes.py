@@ -6,7 +6,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 
 from lumen.blueprints.admin.routes import apply_coin_pool_edit
-from lumen.blueprints.profile.routes import _get_profile_data
+from lumen.blueprints.profile.routes import _get_profile_data, _new_key_fields, rotate_key_secret
 from lumen.decorators import admin_required, is_admin, login_required
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
@@ -22,7 +22,6 @@ from lumen.models.entity_manager import (
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.entity_stat import EntityStat
 from lumen.models.model_config import ModelConfig
-from lumen.services.crypto import hash_api_key
 from lumen.services.llm import entity_has_unlimited_pool, get_model_access_status
 from lumen.timeutils import utcnow
 
@@ -556,20 +555,16 @@ def create_project_key(sid):
     name = (data.get("name") or "").strip()
     key = (data.get("key") or "").strip()
 
-    if not key or not key.startswith("sk_"):
-        return jsonify({"error": "Invalid key"}), HTTPStatus.BAD_REQUEST
-
-    key_hash = hash_api_key(key)
-    if db.session.execute(select(APIKey).filter_by(key_hash=key_hash)).scalar_one_or_none():
-        return jsonify({"error": "Key already exists"}), HTTPStatus.CONFLICT
+    fields, error = _new_key_fields(key)
+    if error:
+        return error
 
     api_key = APIKey(
         entity_id=sid,
         created_by_entity_id=entity_id,
         name=name or "Unnamed Key",
-        key_hash=key_hash,
-        key_hint=f"{key[:7]}...{key[-4:]}",
         active=True,
+        **fields,
     )
     db.session.add(api_key)
     db.session.commit()
@@ -590,6 +585,22 @@ def delete_project_key(sid, kid):
     db.session.delete(api_key)
     db.session.commit()
     return "", HTTPStatus.NO_CONTENT
+
+
+@projects_bp.route("/projects/<int:sid>/keys/<int:kid>/rotate", methods=["POST"])
+@login_required
+def rotate_project_key(sid, kid):
+    entity_id = session["entity_id"]
+    _require_project_access(entity_id, sid)
+
+    api_key = db.get_or_404(APIKey, kid)
+    if api_key.entity_id != sid:
+        return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
+    # Only the key's creator may rotate it; legacy keys with no creator cannot be rotated.
+    if api_key.created_by_entity_id != entity_id:
+        return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
+
+    return rotate_key_secret(api_key)
 
 
 @projects_bp.route("/projects/<int:sid>/consent/<path:model_name>", methods=["POST"])
