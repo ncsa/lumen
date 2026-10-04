@@ -272,9 +272,11 @@ def test_rotate_key_swaps_secret_and_keeps_stats(app, client, auth_client, test_
     assert resp.get_json() == {"id": kid, "name": "rotating", "key": new}
 
     after = _key_snapshot(app, kid)
-    assert after.pop("key_hash") != before.pop("key_hash")
-    assert after.pop("key_hint") == f"{new[:7]}...{new[-4:]}"
+    old_hash, new_hash = before.pop("key_hash"), after.pop("key_hash")
+    new_hint = after.pop("key_hint")
     before.pop("key_hint")
+    assert new_hash != old_hash
+    assert new_hint == f"{new[:7]}...{new[-4:]}"
     assert after == before
 
     assert client.get("/v1/usage", headers={"Authorization": f"Bearer {old}"}).status_code == HTTPStatus.UNAUTHORIZED
