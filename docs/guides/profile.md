@@ -98,7 +98,17 @@ Keys requested through a CLI or web app via [OAuth](./oauth-clients.md) show tha
 | **Tokens** | Total input + output tokens |
 | **Coins** | Total coins spent |
 | **Last Used** | Timestamp of the last API call |
-| **Actions** | Revoke button for active keys |
+| **Actions** | Rotate and Delete buttons for active keys |
+
+### Rotating a Key
+
+Click **Rotate** on any active key to replace its secret while keeping the key's name and usage stats.
+
+1. Confirm the dialog. The current key stops working immediately.
+2. A dialog shows the new key **once**. Copy it, then click **Done**.
+3. The table now shows the new hint, and the requests, tokens and coins counters are unchanged.
+
+Update any code that used the old key with the new one.
 
 ### Revoking a Key
 

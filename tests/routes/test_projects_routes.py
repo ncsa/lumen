@@ -1,4 +1,5 @@
 """Tests for the projects blueprint (/projects/*)."""
+import re
 from datetime import datetime
 from decimal import Decimal
 from http import HTTPStatus
@@ -1161,6 +1162,37 @@ def test_rotate_project_key_concurrent_duplicate_returns_409(managed_auth_client
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/rotate",
                                     json={"key": "sk_racetaken123456"})
     assert resp.status_code == HTTPStatus.CONFLICT
+
+
+def _key_rows_can_rotate(html):
+    """Map key id -> can_rotate from the KEY_ROWS literal the project page renders."""
+    return {int(kid): flag == "true"
+            for kid, flag in re.findall(r"id: (\d+),.*?can_rotate: (true|false),", html, re.S)}
+
+
+def test_detail_rotate_only_on_own_active_keys(app, managed_auth_client, managed_project, test_user, second_user,
+                                               make_created_key):
+    _add_manager(app, managed_project["id"], second_user["id"])
+    sid = managed_project["id"]
+    own = make_created_key(sid, test_user["id"], "sk_ownrotui1234567")
+    own_inactive = make_created_key(sid, test_user["id"], "sk_owninactui12345", active=False)
+    other = make_created_key(sid, second_user["id"], "sk_otherrotui12345")
+    legacy = make_created_key(sid, None, "sk_legacyrotui1234")
+
+    html = managed_auth_client.get(f"/projects/{sid}").get_data(as_text=True)
+    assert _key_rows_can_rotate(html) == {own: True, own_inactive: True, other: False, legacy: False}
+    # The JS only renders Rotate for active rows with can_rotate.
+    assert "${rotate}<button" in html and "k.can_rotate" in html
+    assert 'id="rotatedKeyModal"' in html
+    assert "js/key-rotate.js" in html
+    # Creator ids are not exposed to the page.
+    assert "created_by_entity_id" not in html
+
+
+def test_detail_admin_cannot_rotate_others_keys(admin_client, service_project, test_user, make_created_key):
+    kid = make_created_key(service_project["id"], test_user["id"], "sk_adminrotui12345")
+    html = admin_client.get(f"/projects/{service_project['id']}").get_data(as_text=True)
+    assert _key_rows_can_rotate(html) == {kid: False}
 
 
 def test_rotate_project_key_requires_login(client, service_project):

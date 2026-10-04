@@ -343,6 +343,8 @@
   </div>
 </div>
 
+{% include '_rotated_key_modal.html' %}
+
 <!-- Delete Conversations confirmation modal -->
 <div class="modal fade" id="purgeConversationsModal" tabindex="-1" aria-labelledby="purgeConversationsModal-title" aria-modal="true" role="dialog">
   <div class="modal-dialog">
@@ -425,6 +427,7 @@
 <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
 <script src="{{ url_for('static', filename='js/ack-consent.js') }}"></script>
 {% if is_admin and profile_entity %}<script src="{{ url_for('static', filename='js/group-pills.js') }}"></script>{% endif %}
+{% if not viewing_user %}<script src="{{ url_for('static', filename='js/key-rotate.js') }}"></script>{% endif %}
 <script>
 const IS_ADMIN_VIEW = {{ (viewing_user is defined and viewing_user is not none) | tojson }};
 
@@ -614,7 +617,8 @@ function renderKeys() {
       const action = IS_ADMIN_VIEW
         ? (k.active ? '' : `<span class="badge bg-secondary">deleted</span>`)
         : (k.active
-          ? `<button class="btn btn-sm btn-outline-danger delete-key-btn" data-id="${k.id}" aria-label="Delete key ${escHtml(k.name)}">Delete</button>`
+          ? `<button class="btn btn-sm btn-outline-secondary rotate-key-btn" data-id="${k.id}" data-name="${escHtml(k.name)}" aria-label="Rotate key ${escHtml(k.name)}">Rotate</button>
+             <button class="btn btn-sm btn-outline-danger delete-key-btn" data-id="${k.id}" aria-label="Delete key ${escHtml(k.name)}">Delete</button>`
           : `<span class="badge bg-secondary">deleted</span>`);
       return `<tr${deletedClass}>
         <td><span data-bs-toggle="tooltip" data-bs-title="${escHtml(k.hint)}${k.source ? '&#10;' + escHtml(k.source) : ''}">${escHtml(k.name)}</span></td>
@@ -633,6 +637,9 @@ function renderKeys() {
         if (resp.ok) location.reload();
         else appAlert("Failed to delete key.");
       });
+    });
+    keyTbody.querySelectorAll('.rotate-key-btn').forEach(btn => {
+      btn.addEventListener('click', () => rotateApiKey("/profile/keys/" + btn.dataset.id + "/rotate", btn.dataset.name));
     });
   }
 }

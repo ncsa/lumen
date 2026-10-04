@@ -107,6 +107,23 @@ def _assert_heading_hierarchy(soup, url):
 
 
 
+def _assert_rotated_key_modal_accessible(html_bytes, url):
+    """The show-once rotated-key modal is labelled, and its key field and copy button have names."""
+    soup = _soup(html_bytes)
+    modal = soup.find("div", id="rotatedKeyModal")
+    assert modal, f"{url}: rotated-key modal missing"
+    title_id = modal.get("aria-labelledby")
+    assert title_id and modal.find(id=title_id) and modal.find(id=title_id).get_text(strip=True), (
+        f"{url}: rotated-key modal title missing"
+    )
+    assert modal.find("label", attrs={"for": "rotated-key-display"}), f"{url}: rotated key field has no label"
+    assert modal.find("button", class_="btn-close").get("aria-label"), f"{url}: close button has no aria-label"
+    assert modal.find("button", id="rotated-key-copy-btn").get("aria-label"), f"{url}: copy button has no aria-label"
+    # The rotate confirm uses the shared app dialog; it must be labelled too.
+    dialog = soup.find("div", id="app-dialog")
+    assert dialog and dialog.get("aria-labelledby") == "app-dialog-title", f"{url}: confirm dialog not labelled"
+
+
 def _run_all_checks(html_bytes, url):
     soup = _soup(html_bytes)
     _assert_lang(soup, url)
@@ -173,6 +190,7 @@ def test_own_profile_page_as_admin_accessibility(admin_client):
     resp = admin_client.get("/profile")
     assert resp.status_code == HTTPStatus.OK
     _run_all_checks(resp.data, "/profile")
+    _assert_rotated_key_modal_accessible(resp.data, "/profile")
 
 
 def test_project_detail_page_accessibility(app, admin_client):
@@ -187,6 +205,7 @@ def test_project_detail_page_accessibility(app, admin_client):
     resp = admin_client.get(url)
     assert resp.status_code == HTTPStatus.OK
     _run_all_checks(resp.data, url)
+    _assert_rotated_key_modal_accessible(resp.data, url)
 
 
 def test_groups_page_accessibility(auth_client):

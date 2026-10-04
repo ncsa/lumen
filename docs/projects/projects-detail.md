@@ -50,6 +50,7 @@ Click **Change Owner** (next to **+ Add Manager**), search for the new owner by 
 |--------|---------|-------|-------|
 | Create API keys for this project | ✓ | ✓ | ✓ |
 | Revoke API keys for this project | ✓ | ✓ | ✓ |
+| Rotate API keys: creator only | ✓ | ✓ | ✓ |
 | Grant model consent for this project | ✓ | ✓ | ✓ |
 | View usage on this page | ✓ | ✓ | ✓ |
 | Add / remove managers | — | ✓ | ✓ |
@@ -94,9 +95,13 @@ response = project.chat.completions.create(
 | **Hint** | First 4 + last 4 characters for identification |
 | **Requests / Tokens / Coins** | Usage tracked on this key |
 | **Last Used** | Timestamp of the last API call |
-| **Actions** | Revoke button for active keys |
+| **Actions** | Rotate (keys you created) and Delete buttons for active keys |
 
 Use **Show deleted keys** to view previously revoked keys. Use the search box to filter by key name or creator.
+
+### Rotating a Key
+
+Click **Rotate** to replace a key's secret while keeping its name and usage stats. The button only appears on keys you created; other managers, the owner and admins cannot rotate your keys. The flow is the same as [on the Profile page](../guides/profile.md#rotating-a-key): the current key stops working immediately and the new key is shown once.
 
 ## Model Access
 

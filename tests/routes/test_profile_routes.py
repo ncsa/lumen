@@ -594,6 +594,23 @@ def test_profile_projects_section_includes_inactive(app, auth_client, test_user)
     assert "inactive-client" in body
 
 
+def test_profile_key_table_has_rotate_button(auth_client):
+    html = auth_client.get("/profile").get_data(as_text=True)
+    assert 'class="btn btn-sm btn-outline-secondary rotate-key-btn"' in html
+    assert 'aria-label="Rotate key ${escHtml(k.name)}"' in html
+    assert 'id="rotatedKeyModal"' in html
+    assert "js/key-rotate.js" in html
+
+
+def test_admin_user_profile_has_no_rotate(admin_client, test_user):
+    """The admin view of another user's profile stays read-only: no rotate flow is loaded."""
+    resp = admin_client.get(f"/admin/users/{test_user['id']}/profile")
+    assert resp.status_code == HTTPStatus.OK
+    html = resp.get_data(as_text=True)
+    assert 'id="rotatedKeyModal"' not in html
+    assert "js/key-rotate.js" not in html
+
+
 def test_admin_user_profile_shows_projects_section(app, admin_client, test_user):
     """Admin viewing another user's profile also sees that user's Projects section."""
     _make_managed_project(app, test_user["id"], name="user-client")

@@ -1,0 +1,27 @@
+<!-- Rotated API Key Modal (shared; shows the new secret once, see static/js/key-rotate.js) -->
+<div class="modal fade" id="rotatedKeyModal" tabindex="-1" aria-labelledby="rotatedKeyModalLabel">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="rotatedKeyModalLabel">Rotated API Key</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close Rotated API Key dialog"></button>
+      </div>
+      <div class="modal-body">
+        <p>New secret for <strong id="rotated-key-name"></strong>. The old key no longer works.</p>
+        <div class="mb-3">
+          <label class="form-label" for="rotated-key-display">
+            New Key
+            <small class="text-danger fw-semibold">— copy now, it won't be shown again</small>
+          </label>
+          <div class="input-group">
+            <input type="text" id="rotated-key-display" class="form-control font-monospace" readonly>
+            <button class="btn btn-outline-secondary" id="rotated-key-copy-btn" aria-label="Copy new key to clipboard">Copy</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" data-bs-dismiss="modal">Done</button>
+      </div>
+    </div>
+  </div>
+</div>

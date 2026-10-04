@@ -256,6 +256,9 @@ def detail(sid):
         select(EntityLimit).filter_by(entity_id=sid)
     ).scalar_one_or_none()
 
+    # Only a key's creator may rotate it; pass ids, not creator ids, to the page.
+    rotatable_key_ids = {k.id for k in data["api_keys"] if k.created_by_entity_id == entity_id}
+
     return render_template(
         "project_detail.html",
         project=project,
@@ -264,6 +267,7 @@ def detail(sid):
         can_manage=can_manage,
         gravatar_url=gravatar_url,
         project_limit=project_limit,
+        rotatable_key_ids=rotatable_key_ids,
         **data,
     )
 

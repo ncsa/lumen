@@ -307,6 +307,8 @@
   </div>
 </div>
 
+{% include '_rotated_key_modal.html' %}
+
 {% if can_manage %}
 <!-- Edit Project Modal -->
 <div class="modal fade" id="editProjectModal" tabindex="-1" aria-labelledby="editProjectModalLabel">
@@ -384,6 +386,7 @@
 <script src="{{ url_for('static', filename='js/user-search.js') }}"></script>
 <script src="{{ url_for('static', filename='js/entity-search.js') }}"></script>
 <script src="{{ url_for('static', filename='js/ack-consent.js') }}"></script>
+<script src="{{ url_for('static', filename='js/key-rotate.js') }}"></script>
 <script>
 const PROJECT_ID = {{ project.id }};
 
@@ -452,6 +455,7 @@ const KEY_ROWS = [
     cost: {{ "%.6f"|format(key.cost|float) }},
     last_used: {{ key.last_used_at.strftime('%Y-%m-%dT%H:%M:%SZ') | tojson if key.last_used_at else 'null' }},
     active: {{ key.active | tojson }},
+    can_rotate: {{ (key.id in rotatable_key_ids) | tojson }},
   },
   {% endfor %}
 ];
@@ -481,8 +485,11 @@ function renderKeys() {
     keyTbody.innerHTML = rows.map(k => {
       const dt = fmtDate(k.last_used);
       const deletedClass = k.active ? '' : ' class="table-secondary text-decoration-line-through text-muted"';
+      const rotate = k.can_rotate
+        ? `<button class="btn btn-sm btn-outline-secondary rotate-key-btn" data-id="${k.id}" data-name="${escHtml(k.name)}" aria-label="Rotate key ${escHtml(k.name)}">Rotate</button> `
+        : '';
       const action = k.active
-        ? `<button class="btn btn-sm btn-outline-danger delete-key-btn" data-id="${k.id}" aria-label="Delete key ${escHtml(k.name)}">Delete</button>`
+        ? `${rotate}<button class="btn btn-sm btn-outline-danger delete-key-btn" data-id="${k.id}" aria-label="Delete key ${escHtml(k.name)}">Delete</button>`
         : `<span class="badge bg-secondary">deleted</span>`;
       return `<tr${deletedClass}>
         <td><span data-bs-toggle="tooltip" data-bs-title="${escHtml(k.hint)}">${escHtml(k.name)}</span></td>
@@ -502,6 +509,9 @@ function renderKeys() {
         if (resp.ok) location.reload();
         else appAlert("Failed to delete key.");
       });
+    });
+    keyTbody.querySelectorAll('.rotate-key-btn').forEach(btn => {
+      btn.addEventListener('click', () => rotateApiKey("/projects/" + PROJECT_ID + "/keys/" + btn.dataset.id + "/rotate", btn.dataset.name));
     });
   }
 }
