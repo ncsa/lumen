@@ -116,6 +116,7 @@ def data():
             EntityManager.project_entity_id.label("project_id"),
             func.count(EntityManager.id).label("mgr_count"),
         )
+        .where(EntityManager.role == "manager")
         .group_by(EntityManager.project_entity_id)
         .subquery()
     )

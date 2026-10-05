@@ -173,6 +173,7 @@ erDiagram
         int id PK
         int user_entity_id FK
         int project_entity_id FK
+        string role
     }
 
     model_stats {
@@ -582,15 +583,16 @@ Group grants for owned models; a row gives all group members access to the model
 
 ## entity_managers
 
-Maps users to the project entities they are permitted to manage. A manager can view and administer a project's API keys and usage. The project owner is the manager that `entities.owner_entity_id` points at — a manager who can additionally add/remove managers, transfer ownership, and activate/deactivate the project.
+Maps users to the project entities they are members of. `role` is `'manager'` or `'user'`. A manager can view and administer a project's API keys and usage. The project owner is the member that `entities.owner_entity_id` points at — a manager who can additionally add/remove managers, transfer ownership, and activate/deactivate the project. `get_project_role()` in `lumen/models/entity_manager.py` returns `'owner'`, `'manager'`, `'user'`, or `None` for a non-member.
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `id` | Integer | NO | Primary key |
 | `user_entity_id` | Integer (FK → entities) | NO | The user (must be `entity_type = 'user'`) who has management rights. Cascades on delete. |
 | `project_entity_id` | Integer (FK → entities) | NO | The project entity being managed. Cascades on delete. |
+| `role` | String(16) | NO | Project role: `'manager'` or `'user'`. Defaults to `'manager'`; rows that existed before the column was added are managers. The owner keeps their own row (normally `'manager'`) — ownership is the `entities.owner_entity_id` pointer, not a role value. |
 
-**Constraints:** `UNIQUE(user_entity_id, project_entity_id)`, also the target of `entities.fk_entities_owner_membership`
+**Constraints:** `UNIQUE(user_entity_id, project_entity_id)`, also the target of `entities.fk_entities_owner_membership`; `ck_entity_managers_role` — `CHECK (role IN ('manager', 'user'))`
 
 ---
 
