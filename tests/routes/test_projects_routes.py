@@ -1908,7 +1908,9 @@ def test_members_tab_owner_sees_all_actions(client, mixed_members):
         "Demote Second User to user", "Remove Second User",
         "Promote Third User to manager", "Remove Third User",
     }
-    assert soup.find("button", attrs={"aria-label": "Cannot remove owner Owner of test-svc"}).has_attr("disabled")
+    owner_remove = soup.find("button", attrs={"aria-label": "Cannot remove owner Owner of test-svc"})
+    assert owner_remove.has_attr("disabled")
+    assert soup.find(id=owner_remove["aria-describedby"]).get_text(strip=True) == "Transfer ownership first"
 
 
 def test_members_tab_admin_sees_owner_actions(admin_client, mixed_members):

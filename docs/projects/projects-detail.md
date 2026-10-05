@@ -41,7 +41,7 @@ Everyone who can open the project is a member, and every member has one role. Th
 
 ### Removing a Member
 
-Click **Remove** next to the member. Managers can remove users; only the owner or an admin can remove managers. The owner's **Remove** button is always disabled: transfer ownership first.
+Click **Remove** next to the member. Managers can remove users; only the owner or an admin can remove managers. The owner's **Remove** button is always disabled, with a note to transfer ownership first.
 
 ### Promoting and Demoting (owner or admin)
 
