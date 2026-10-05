@@ -15,6 +15,7 @@ All notable changes to Lumen will be documented in this file.
 - API keys record OAuth provenance (`client_id`, `requested_by`), shown in the profile key list tooltip.
 - Admins can add and remove a user's groups from the Edit User dialog.
 - Admins can reset a user's coins from the Coins Available card on their profile.
+- Log a warning with email, affiliation and IdP when a login matches no auto-join group.
 
 ### Changed
 

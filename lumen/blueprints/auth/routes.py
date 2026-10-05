@@ -1,4 +1,5 @@
 import hashlib
+import logging
 from http import HTTPStatus
 
 from flask import Blueprint, abort, current_app, jsonify, redirect, render_template, session, url_for
@@ -15,6 +16,7 @@ from lumen.services.llm import get_pool_limit
 from lumen.timeutils import utcnow
 
 auth_bp = Blueprint("auth", __name__)
+logger = logging.getLogger(__name__)
 
 
 def gravatar_md5(email: str) -> str:
@@ -104,7 +106,13 @@ def sync_auto_memberships(entity: Entity, userinfo=None, extra_groups=None):
         if group:
             desired_ids.add(group.id)
     if userinfo:
-        desired_ids |= _group_ids_from_rules(userinfo)
+        rule_ids = _group_ids_from_rules(userinfo)
+        if not rule_ids:
+            logger.warning(
+                "No auto-join group matched login: email=%r affiliation=%r idp=%r",
+                userinfo.get("email"), userinfo.get("affiliation"), userinfo.get("idp"),
+            )
+        desired_ids |= rule_ids
 
     _reconcile_group_memberships(entity, desired_ids)
 

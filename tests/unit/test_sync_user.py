@@ -1,4 +1,6 @@
 """Tests for sync_auto_memberships (login group reconciliation) in auth routes."""
+import logging
+
 import pytest
 from sqlalchemy import select
 
@@ -186,3 +188,69 @@ def test_sync_rule_matches_list_claims(app, user):
         g = _make_group("aifarms", auto_join=True, rules=[("is_member_of", "contains", "grp-aifarms")])
         assert g.id in _sync(app, user, userinfo={"is_member_of": ["icc-grp-aifarms", "other"]})
         assert g.id not in _sync(app, user, userinfo={"is_member_of": ["unrelated"]})
+
+
+LOGGER = "lumen.blueprints.auth.routes"
+
+
+def _no_match_warnings(caplog):
+    return [r for r in caplog.records
+            if r.name == LOGGER and r.levelno == logging.WARNING
+            and r.getMessage().startswith("No auto-join group matched login")]
+
+
+def test_sync_warns_when_no_rule_group_matches(app, user, caplog):
+    with app.app_context():
+        _make_group("uiuc", auto_join=True, rules=[("eppn", "contains", "@illinois.edu")])
+        caplog.set_level(logging.WARNING, logger=LOGGER)
+        _sync(app, user, userinfo={"email": "a@x.edu", "affiliation": "student", "idp": "https://idp.x.edu"})
+        records = _no_match_warnings(caplog)
+        assert len(records) == 1
+        msg = records[0].getMessage()
+        assert "email='a@x.edu'" in msg
+        assert "affiliation='student'" in msg
+        assert "idp='https://idp.x.edu'" in msg
+
+
+def test_sync_no_warning_when_rule_group_matches(app, user, caplog):
+    with app.app_context():
+        _make_group("uiuc", auto_join=True, rules=[("eppn", "contains", "@illinois.edu")])
+        caplog.set_level(logging.WARNING, logger=LOGGER)
+        _sync(app, user, userinfo={"email": "a@illinois.edu", "eppn": "a@illinois.edu"})
+        assert _no_match_warnings(caplog) == []
+
+
+def test_sync_no_warning_for_dev_login(app, user, caplog):
+    """Dev login passes extra_groups only, never userinfo: nothing to warn about."""
+    with app.app_context():
+        _make_group("staff")
+        caplog.set_level(logging.WARNING, logger=LOGGER)
+        _sync(app, user, extra_groups=["staff"])
+        _sync(app, user)
+        assert _no_match_warnings(caplog) == []
+
+
+def test_sync_warning_escapes_newlines_and_shows_missing_claims(app, user, caplog):
+    with app.app_context():
+        caplog.set_level(logging.WARNING, logger=LOGGER)
+        _sync(app, user, userinfo={"email": "a@x.edu\nFAKE log line"})
+        records = _no_match_warnings(caplog)
+        assert len(records) == 1
+        msg = records[0].getMessage()
+        assert "\n" not in msg
+        assert "email='a@x.edu\\nFAKE log line'" in msg
+        assert "affiliation=None" in msg
+        assert "idp=None" in msg
+
+
+def test_sync_warns_even_with_manual_membership(app, user, caplog):
+    """The trigger is "no rule matched", not "user has no groups"."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.group_member import GroupMember
+        manual = _make_group("hand-picked")
+        db.session.add(GroupMember(group_id=manual.id, entity_id=user, config_managed=False))
+        db.session.commit()
+        caplog.set_level(logging.WARNING, logger=LOGGER)
+        assert manual.id in _sync(app, user, userinfo={"email": "a@x.edu"})
+        assert len(_no_match_warnings(caplog)) == 1
