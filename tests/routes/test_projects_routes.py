@@ -1128,7 +1128,9 @@ def test_rotate_project_key_inactive_returns_409(managed_auth_client, managed_pr
     assert resp.status_code == HTTPStatus.CONFLICT
 
 
-@pytest.mark.parametrize("payload", [{}, {"key": "bad-key-no-prefix"}])
+@pytest.mark.parametrize("payload", [
+    {}, {"key": "bad-key-no-prefix"}, {"key": 123}, {"key": ["sk_invalidrotnew12"]}, ["sk_invalidrotnew12"],
+])
 def test_rotate_project_key_invalid_key_returns_400(managed_auth_client, managed_project, test_user,
                                                     make_created_key, payload):
     kid = make_created_key(managed_project["id"], test_user["id"], "sk_invalidrot12345")
@@ -1142,6 +1144,22 @@ def test_rotate_project_key_duplicate_returns_409(managed_auth_client, managed_p
     make_created_key(managed_project["id"], test_user["id"], "sk_dupetaken123456")
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/rotate",
                                     json={"key": "sk_dupetaken123456"})
+    assert resp.status_code == HTTPStatus.CONFLICT
+
+
+def test_rotate_project_key_concurrent_duplicate_returns_409(managed_auth_client, managed_project, test_user,
+                                                             make_created_key, monkeypatch):
+    """A secret committed by another request after the duplicate check yields 409, not 500."""
+    from lumen.blueprints.profile import routes as profile_routes
+    from lumen.services.crypto import hash_api_key
+    kid = make_created_key(managed_project["id"], test_user["id"], "sk_raceoriginal123")
+    make_created_key(managed_project["id"], test_user["id"], "sk_racetaken123456")
+    # Skip the pre-check so the unique constraint on key_hash is what catches the duplicate.
+    monkeypatch.setattr(profile_routes, "_new_key_fields",
+                        lambda key: ({"key_hash": hash_api_key(key), "key_hint": "sk_race...3456"}, None))
+
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/rotate",
+                                    json={"key": "sk_racetaken123456"})
     assert resp.status_code == HTTPStatus.CONFLICT
 
 

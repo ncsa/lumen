@@ -297,7 +297,9 @@ def test_rotate_key_inactive_returns_409(app, auth_client, test_user):
     assert resp.status_code == HTTPStatus.CONFLICT
 
 
-@pytest.mark.parametrize("payload", [{}, {"key": ""}, {"key": "badkey"}])
+@pytest.mark.parametrize("payload", [
+    {}, {"key": ""}, {"key": "badkey"}, {"key": 123}, {"key": ["sk_" + "v" * 32]}, ["sk_" + "v" * 32],
+])
 def test_rotate_key_invalid_key_returns_400(app, auth_client, test_user, payload):
     kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "v" * 32)
     resp = auth_client.post(f"/profile/keys/{kid}/rotate", json=payload)
@@ -312,6 +314,22 @@ def test_rotate_key_duplicate_returns_409(app, auth_client, test_user):
     assert resp.status_code == HTTPStatus.CONFLICT
     resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": "sk_" + "w" * 32})
     assert resp.status_code == HTTPStatus.CONFLICT
+
+
+def test_rotate_key_concurrent_duplicate_returns_409(app, auth_client, test_user, monkeypatch):
+    """A secret committed by another request after the duplicate check yields 409, not 500."""
+    from lumen.blueprints.profile import routes as profile_routes
+    from lumen.services.crypto import hash_api_key
+    old, raced = "sk_" + "q" * 32, "sk_" + "k" * 32
+    kid = _seed_key_with_usage(app, test_user["id"], old)
+    auth_client.post("/profile/keys", json={"key": raced})
+    # Skip the pre-check so the unique constraint on key_hash is what catches the duplicate.
+    monkeypatch.setattr(profile_routes, "_new_key_fields",
+                        lambda key: ({"key_hash": hash_api_key(key), "key_hint": "sk_kkkk...kkkk"}, None))
+
+    resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": raced})
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert _key_snapshot(app, kid)["key_hint"] == f"{old[:7]}...{old[-4:]}"
 
 
 def test_rotate_key_not_found(auth_client):

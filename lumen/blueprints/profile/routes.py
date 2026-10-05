@@ -5,6 +5,7 @@ from http import HTTPStatus
 
 from flask import Blueprint, abort, g, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy import delete, func, select, text
+from sqlalchemy.exc import IntegrityError
 
 from lumen.decorators import is_admin as _is_admin
 from lumen.decorators import is_admin_eligible, login_required
@@ -336,14 +337,24 @@ def rotate_key_secret(api_key: APIKey):
     if not api_key.active:
         return jsonify({"error": "Key is inactive"}), HTTPStatus.CONFLICT
 
-    key = ((request.get_json() or {}).get("key") or "").strip()
+    data = request.get_json()
+    key = data.get("key") if isinstance(data, dict) else None
+    if not isinstance(key, str):
+        return jsonify({"error": "Invalid key"}), HTTPStatus.BAD_REQUEST
+
+    key = key.strip()
     fields, error = _new_key_fields(key)
     if error:
         return error
 
     api_key.key_hash = fields["key_hash"]
     api_key.key_hint = fields["key_hint"]
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # A concurrent create/rotate committed the same secret after the duplicate check.
+        db.session.rollback()
+        return jsonify({"error": "Key already exists"}), HTTPStatus.CONFLICT
     return jsonify({"id": api_key.id, "name": api_key.name, "key": key}), HTTPStatus.OK
 
 
