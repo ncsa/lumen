@@ -119,6 +119,10 @@ def _assert_rotated_key_modal_accessible(html_bytes, url):
     assert modal.find("label", attrs={"for": "rotated-key-display"}), f"{url}: rotated key field has no label"
     assert modal.find("button", class_="btn-close").get("aria-label"), f"{url}: close button has no aria-label"
     assert modal.find("button", id="rotated-key-copy-btn").get("aria-label"), f"{url}: copy button has no aria-label"
+    status = modal.find(id="rotated-key-copy-status")
+    assert status and status.get("role") == "status" and status.get("aria-live") == "polite", (
+        f"{url}: copy result is not announced"
+    )
     # The rotate confirm uses the shared app dialog; it must be labelled too.
     dialog = soup.find("div", id="app-dialog")
     assert dialog and dialog.get("aria-labelledby") == "app-dialog-title", f"{url}: confirm dialog not labelled"
