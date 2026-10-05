@@ -23,7 +23,7 @@ Think of a project as a shared identity for automated tools: it has a name (e.g.
 |------|-----------|
 | **Admin** | All projects in the system |
 | **Manager** | Projects they manage |
-| **User** | Projects they are a member of (view usage and model access, grant model consent, create one API key) |
+| **User** | Projects they are a member of (view usage and model access, grant model consent, create one active API key at a time) |
 
 See [What Each Role Can Do](projects-detail.md#what-each-role-can-do) for the full list of what each project role allows.
 
