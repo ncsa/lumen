@@ -1581,8 +1581,10 @@ def test_user_cannot_promote_self(app, user_auth_client, user_project, test_user
 
 def test_update_member_invalid_role_and_unknown_member(owner_auth_client, owned_project, second_user):
     url = f"/projects/{owned_project['id']}/users/{second_user['id']}"
-    assert owner_auth_client.patch(url, json={"role": "admin"}).status_code == HTTPStatus.BAD_REQUEST
-    assert owner_auth_client.patch(url, json={"role": "user"}).status_code == HTTPStatus.NOT_FOUND
+    resp = owner_auth_client.patch(url, json={"role": "admin"})
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    resp = owner_auth_client.patch(url, json={"role": "user"})
+    assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 def test_demoting_owner_returns_409(app, admin_client, owned_project, test_user):
@@ -1595,11 +1597,13 @@ def test_demoting_owner_returns_409(app, admin_client, owned_project, test_user)
 
 def test_removing_owner_returns_409_for_admin_and_manager(app, admin_client, managed_project, second_user):
     owner_url = f"/projects/{managed_project['id']}/users/{managed_project['owner_id']}"
-    assert admin_client.delete(owner_url).status_code == HTTPStatus.CONFLICT
+    resp = admin_client.delete(owner_url)
+    assert resp.status_code == HTTPStatus.CONFLICT
 
     _add_member(app, managed_project["id"], second_user["id"], "manager")
     _login_as(admin_client, second_user["id"])
-    assert admin_client.delete(owner_url).status_code == HTTPStatus.CONFLICT
+    resp = admin_client.delete(owner_url)
+    assert resp.status_code == HTTPStatus.CONFLICT
 
 
 def test_transfer_ownership_to_user_rejected(app, owner_auth_client, owned_project, test_user, second_user):
@@ -1656,8 +1660,10 @@ def test_user_key_limit_ignores_inactive_and_other_members_keys(app, user_auth_c
 
 def test_manager_can_create_many_keys(managed_auth_client, managed_project):
     url = f"/projects/{managed_project['id']}/keys"
-    assert managed_auth_client.post(url, json={"key": "sk_mgrkey_one_1234"}).status_code == HTTPStatus.CREATED
-    assert managed_auth_client.post(url, json={"key": "sk_mgrkey_two_1234"}).status_code == HTTPStatus.CREATED
+    resp = managed_auth_client.post(url, json={"key": "sk_mgrkey_one_1234"})
+    assert resp.status_code == HTTPStatus.CREATED
+    resp = managed_auth_client.post(url, json={"key": "sk_mgrkey_two_1234"})
+    assert resp.status_code == HTTPStatus.CREATED
 
 
 def test_user_deleting_another_members_key_returns_404(app, user_auth_client, user_project, make_api_key):
@@ -1705,14 +1711,16 @@ def test_manager_and_owner_detail_show_all_keys(app, client, user_project, test_
 
 
 def test_user_can_view_project_and_consent(app, user_auth_client, user_project, test_model, make_ack_access):
-    assert user_auth_client.get(f"/projects/{user_project['id']}").status_code == HTTPStatus.OK
+    resp = user_auth_client.get(f"/projects/{user_project['id']}")
+    assert resp.status_code == HTTPStatus.OK
     make_ack_access(user_project["id"], test_model["id"])
     resp = user_auth_client.post(f"/projects/{user_project['id']}/consent/{test_model['model_name']}")
     assert resp.status_code == HTTPStatus.OK
 
 
 def test_user_cannot_edit_or_toggle_project(user_auth_client, user_project):
-    assert user_auth_client.post(f"/projects/{user_project['id']}/toggle").status_code == HTTPStatus.FORBIDDEN
+    resp = user_auth_client.post(f"/projects/{user_project['id']}/toggle")
+    assert resp.status_code == HTTPStatus.FORBIDDEN
     resp = user_auth_client.patch(f"/projects/{user_project['id']}", json={"name": "renamed"})
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
