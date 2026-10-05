@@ -2,7 +2,7 @@
 
 This page is for people managing Lumen-based services and tools. For details on what a project is, start with the [Projects overview](./projects.md).
 
-The project detail page (`/projects/<id>`) is where you manage a specific project: view usage, assign managers, create API keys, and check model access. It is laid out like the [Profile page](../guides/profile.md): a header card at the top, followed by **Managers**, **API Keys**, and **Models** tabs.
+The project detail page (`/projects/<id>`) is where you manage a specific project: view usage, add members, create API keys, and check model access. It is laid out like the [Profile page](../guides/profile.md): a header card at the top, followed by **Members**, **API Keys**, and **Models** tabs.
 
 ![Project detail page](../img/project-detail.png)
 
@@ -12,7 +12,7 @@ The left side of the card shows the project's auto-generated avatar, its name, t
 
 | Card | Description |
 |------|-------------|
-| **Managers** | Number of users managing this project |
+| **Members** | Number of users in this project (owner, managers and users) |
 | **Coins Used** | Total coins spent by this project |
 | **Tokens Used** | All input + output tokens this project has consumed |
 | **Favorite Model** | The model this project has sent the most requests to |
@@ -23,41 +23,48 @@ The left side of the card shows the project's auto-generated avatar, its name, t
 
 The owner and admins see an **Edit** button above the stat cards. It opens a dialog where the owner or an admin can change the project's **name** and **Active** flag. Admins additionally see the project's coin pool: **Max Coins** (`-2` = unlimited, `0` = blocked) and **Refill Rate** (coins added per hour). Clearing Max Coins removes the project's own pool so it falls back to its groups or the global defaults; lowering Max Coins clamps the current balance to the new cap.
 
-## Managers
+## Members
 
-Managers are the users responsible for a project. They can create and revoke API keys, grant model consent, and view usage — but they cannot manage other managers or deactivate the project.
+Everyone who can open the project is a member, and every member has one role. The **Role** column shows it as a text badge:
 
-One manager can be designated as the **owner**. The owner has all manager powers plus the ability to add/remove managers, transfer ownership, and activate/deactivate the project. Each project has at most one owner. The owner is marked with an **Owner** badge in the managers table.
+- **Owner**: the one manager the project belongs to. Every project always has exactly one owner.
+- **Manager**: can create and delete any of the project's API keys, and add or remove users.
+- **User**: can create one API key at a time and sees only the keys they created.
 
-### Adding a Manager (admin or owner)
+### Adding a Member (manager, owner or admin)
 
-1. Click **+ Add Manager**.
+1. Click **+ Add User**.
 2. A search dialog opens. Start typing a user's name or email.
 3. Select the user from the dropdown.
-4. Click **Add Manager**.
+4. Pick a **Role**. Managers can only add users; the **Manager** option appears only for the owner and admins.
+5. Click **Add User**.
 
-### Removing a Manager (admin or owner)
+### Removing a Member
 
-Click **Remove** next to any manager in the table. The owner cannot be removed directly — you must transfer ownership to another manager first.
+Click **Remove** next to the member. Managers can remove users; only the owner or an admin can remove managers. The owner's **Remove** button is always disabled: transfer ownership first.
 
-### Transferring Ownership (admin or owner)
+### Promoting and Demoting (owner or admin)
 
-Click **Change Owner** (next to **+ Add Manager**), search for the new owner by name or email, pick them from the list, and confirm. Only existing **managers** of the project are offered — add the person as a manager first if needed. The previous owner becomes a regular manager; their **Remove** button is disabled until ownership has moved. If you are the current owner, transferring ownership means you will no longer be able to manage managers or toggle the project.
+Click **Promote** next to a user to make them a manager, or **Demote** next to a manager to make them a user. The owner cannot be demoted.
 
-### What Managers Can Do
+### Transferring Ownership (owner or admin)
 
-| Action | Manager | Owner | Admin |
-|--------|---------|-------|-------|
-| Create API keys for this project | ✓ | ✓ | ✓ |
-| Revoke API keys for this project | ✓ | ✓ | ✓ |
-| Rotate API keys: creator only | ✓ | ✓ | ✓ |
-| Grant model consent for this project | ✓ | ✓ | ✓ |
-| View usage on this page | ✓ | ✓ | ✓ |
-| Add / remove managers | — | ✓ | ✓ |
-| Transfer ownership | — | ✓ | ✓ |
-| Activate / deactivate the project | — | ✓ | ✓ |
-| Rename the project | — | ✓ | ✓ |
-| Change the coin pool (Max Coins / Refill Rate) | — | — | ✓ |
+Click **Change Owner** (next to **+ Add User**), search for the new owner by name or email, pick them from the list, and confirm. Only existing **managers** of the project are offered, so promote the person first if needed. The previous owner becomes a regular manager. If you are the current owner, transferring ownership means you will no longer be able to add or remove managers or toggle the project.
+
+### What Each Role Can Do
+
+| Action | User | Manager | Owner | Admin |
+|--------|------|---------|-------|-------|
+| View the project, its usage and model access | ✓ | ✓ | ✓ | ✓ |
+| Grant model consent for this project | ✓ | ✓ | ✓ | ✓ |
+| Create API keys | One at a time | ✓ | ✓ | ✓ |
+| See and delete API keys | Own keys only | All | All | All |
+| Rotate API keys: creator only | ✓ | ✓ | ✓ | ✓ |
+| Add / remove users | — | ✓ | ✓ | ✓ |
+| Add / remove managers, promote / demote | — | — | ✓ | ✓ |
+| Transfer ownership | — | — | ✓ | ✓ |
+| Activate / deactivate or rename the project | — | — | ✓ | ✓ |
+| Change the coin pool (Max Coins / Refill Rate) | — | — | — | ✓ |
 
 ## API Keys
 
@@ -69,6 +76,8 @@ This section works exactly like the API Keys section on the [Profile page](../gu
 2. The key is generated and shown **once** in a dialog — copy it immediately.
 3. Give the key a descriptive name (e.g., `production`, `staging`, `ci-runner`).
 4. Click **Save Key**.
+
+If you are a **user** and already have an active key, **+ New API Key** is disabled and the page explains why. Delete your key to create a new one.
 
 Keys follow the same `sk_...` format as personal API keys. Use them exactly the same way in code:
 

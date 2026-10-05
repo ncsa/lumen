@@ -50,11 +50,11 @@
       <!-- Col 2: all info cards in a 2-column grid -->
       <div class="col-12 col-md-9 profile-col-meta">
         <div class="row g-2">
-          <!-- Row 1: Managers | Coins Used | Tokens Used -->
+          <!-- Row 1: Members | Coins Used | Tokens Used -->
           <div class="col-6 col-sm-4">
             <div class="profile-stat-card p-3 rounded border h-100">
-              <div class="text-muted small mb-1">Managers</div>
-              <div class="fw-bold fs-5">{{ managers | length }}</div>
+              <div class="text-muted small mb-1">Members</div>
+              <div class="fw-bold fs-5">{{ members | length }}</div>
             </div>
           </div>
           <div class="col-6 col-sm-4">
@@ -121,8 +121,8 @@
 <!-- Tabs -->
 <ul class="nav nav-tabs mt-4" id="project-tabs" role="tablist">
   <li class="nav-item" role="presentation">
-    <button class="nav-link active" id="tab-managers" data-bs-toggle="tab" data-bs-target="#pane-managers"
-            type="button" role="tab" aria-controls="pane-managers" aria-selected="true">Managers</button>
+    <button class="nav-link active" id="tab-members" data-bs-toggle="tab" data-bs-target="#pane-members"
+            type="button" role="tab" aria-controls="pane-members" aria-selected="true">Members</button>
   </li>
   <li class="nav-item" role="presentation">
     <button class="nav-link" id="tab-keys" data-bs-toggle="tab" data-bs-target="#pane-keys"
@@ -135,58 +135,77 @@
 </ul>
 <div class="tab-content border border-top-0 rounded-bottom p-3 mb-4">
 
-<div class="tab-pane fade show active" id="pane-managers" role="tabpanel" aria-labelledby="tab-managers">
+<div class="tab-pane fade show active" id="pane-members" role="tabpanel" aria-labelledby="tab-members">
 
-<!-- Managers -->
+<!-- Members -->
 <div class="d-flex justify-content-between align-items-center mt-0 mb-0 flex-wrap gap-2">
-  <h2 class="mb-0">Managers</h2>
-  {% if can_manage %}
+  <h2 class="mb-0">Members</h2>
+  {% if can_add_members %}
   <div class="d-flex gap-2">
+    {% if can_manage %}
     <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#changeOwnerModal"
             aria-haspopup="dialog">Change Owner</button>
-    <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addManagerModal"
-            aria-haspopup="dialog">+ Add Manager</button>
+    {% endif %}
+    <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addMemberModal"
+            aria-haspopup="dialog">+ Add User</button>
   </div>
   {% endif %}
 </div>
 <div class="table-responsive mt-2">
   <table class="table table-bordered table-striped table-hover align-middle mb-0">
-    <caption class="visually-hidden">Users who manage this project</caption>
+    <caption class="visually-hidden">Members of this project and their roles</caption>
     <thead class="table-light">
       <tr>
         <th>Name</th>
         <th>Email</th>
-        {% if can_manage %}<th><span class="visually-hidden">Actions</span></th>{% endif %}
+        <th>Role</th>
+        {% if can_add_members %}<th><span class="visually-hidden">Actions</span></th>{% endif %}
       </tr>
     </thead>
     <tbody>
-      {% for mgr in managers %}
+      {% for member, role in members %}
       <tr>
         <td>
-          {% if is_admin %}<a href="{{ url_for('admin.user_profile', eid=mgr.id) }}">{{ mgr.name }}</a>{% else %}{{ mgr.name }}{% endif %}
-          {% if mgr.id == owner_id %}<span class="badge bg-primary ms-1">Owner</span>{% endif %}
+          {% if is_admin %}<a href="{{ url_for('admin.user_profile', eid=member.id) }}">{{ member.name }}</a>{% else %}{{ member.name }}{% endif %}
         </td>
-        <td>{{ mgr.email or "—" }}</td>
-        {% if can_manage %}
+        <td>{{ member.email or "—" }}</td>
+        <td>
+          {% if role == "owner" %}<span class="badge bg-primary">Owner</span>
+          {% elif role == "manager" %}<span class="badge bg-secondary">Manager</span>
+          {% else %}<span class="badge bg-light text-dark border">User</span>{% endif %}
+        </td>
+        {% if can_add_members %}
         <td>
           <div class="d-flex gap-1 align-items-center">
-            {% if mgr.id == owner_id %}
+            {% if role == "owner" %}
             <span class="d-inline-block" tabindex="0" data-bs-toggle="tooltip" data-bs-placement="top"
                   title="Transfer ownership before removing">
               <button class="btn btn-sm btn-outline-danger" disabled
-                      aria-label="Cannot remove owner {{ mgr.name }}">Remove</button>
+                      aria-label="Cannot remove owner {{ member.name }}">Remove</button>
             </span>
-            {% else %}
+            {% elif role == "manager" and can_manage %}
+            <button class="btn btn-sm btn-outline-secondary"
+                    onclick='setMemberRole({{ member.id }}, {{ member.name | tojson }}, "user")'
+                    aria-label="Demote {{ member.name }} to user">Demote</button>
             <button class="btn btn-sm btn-outline-danger"
-                    onclick='removeManager({{ project.id }}, {{ mgr.id }}, {{ mgr.name | tojson }})'
-                    aria-label="Remove {{ mgr.name }}">Remove</button>
+                    onclick='removeMember({{ member.id }}, {{ member.name | tojson }})'
+                    aria-label="Remove {{ member.name }}">Remove</button>
+            {% elif role == "user" %}
+            {% if can_manage %}
+            <button class="btn btn-sm btn-outline-secondary"
+                    onclick='setMemberRole({{ member.id }}, {{ member.name | tojson }}, "manager")'
+                    aria-label="Promote {{ member.name }} to manager">Promote</button>
+            {% endif %}
+            <button class="btn btn-sm btn-outline-danger"
+                    onclick='removeMember({{ member.id }}, {{ member.name | tojson }})'
+                    aria-label="Remove {{ member.name }}">Remove</button>
             {% endif %}
           </div>
         </td>
         {% endif %}
       </tr>
       {% else %}
-      <tr><td colspan="{{ 3 if can_manage else 2 }}" class="text-muted text-center">No managers assigned.</td></tr>
+      <tr><td colspan="{{ 4 if can_add_members else 3 }}" class="text-muted text-center">No members.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -199,10 +218,19 @@
   <h2 class="mb-0">API Keys</h2>
   <div class="d-flex gap-2">
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('connect.index') }}">Usage examples</a>
+    {% if key_limit_reached %}
+    <button class="btn btn-sm btn-primary" disabled aria-describedby="key-limit-note">+ New API Key</button>
+    {% else %}
     <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#apiKeyModal"
             aria-haspopup="dialog">+ New API Key</button>
+    {% endif %}
   </div>
 </div>
+{% if key_limit_reached %}
+<p id="key-limit-note" class="text-muted small mt-2 mb-0">
+  You already have an API key for this project. Users can have only one active key; delete it to create a new one.
+</p>
+{% endif %}
 <div class="d-flex justify-content-between align-items-center mt-2 mb-1 flex-wrap gap-2">
   <div class="d-flex align-items-center gap-1">
     <input type="checkbox" id="show-deleted-cb" class="form-check-input mt-0" aria-label="Show deleted keys">
@@ -309,6 +337,20 @@
 
 {% include '_rotated_key_modal.html' %}
 
+{% if can_add_members %}
+<!-- Add Member Modal -->
+{% call user_search_modal('addMemberModal', 'Add User', 'add-member-email', 'member-suggestions', 'add-member-btn', 'Add User',
+   'Search for a user by name or email address.') %}
+<div class="mt-3">
+  <label for="add-member-role" class="form-label">Role</label>
+  <select id="add-member-role" class="form-select">
+    <option value="user" selected>User — can create one API key</option>
+    {% if can_manage %}<option value="manager">Manager — can create keys and add or remove users</option>{% endif %}
+  </select>
+</div>
+{% endcall %}
+{% endif %}
+
 {% if can_manage %}
 <!-- Edit Project Modal -->
 <div class="modal fade" id="editProjectModal" tabindex="-1" aria-labelledby="editProjectModalLabel">
@@ -350,10 +392,6 @@
     </div>
   </div>
 </div>
-
-<!-- Add Manager Modal -->
-{{ user_search_modal('addManagerModal', 'Add Manager', 'add-manager-email', 'manager-suggestions', 'add-manager-btn', 'Add Manager',
-   'Search for a user by name or email address.') }}
 
 <!-- Change Owner Modal -->
 {{ entity_search_modal('changeOwnerModal', 'Change Owner', 'change-owner-name', 'owner-suggestions', 'change-owner-id',
@@ -401,7 +439,7 @@ document.querySelectorAll(".local-time[data-utc]").forEach(el => {
   el.textContent = (mins <= 1 ? "in seconds" : `in ${mins} minutes`) + ` (${at})`;
 });
 
-// ── Tab ↔ URL hash sync (#managers / #keys / #models) ────────────────────
+// ── Tab ↔ URL hash sync (#members / #keys / #models) ────────────────────
 const hashTabBtn = location.hash && document.getElementById('tab-' + location.hash.slice(1));
 if (hashTabBtn && hashTabBtn.closest('#project-tabs')) bootstrap.Tab.getOrCreateInstance(hashTabBtn).show();
 document.querySelectorAll('#project-tabs [data-bs-toggle="tab"]').forEach(btn => {
@@ -666,47 +704,69 @@ document.getElementById("save-key-btn").addEventListener("click", async function
 });
 
 
-{% if can_manage %}
-// Add manager — shared user-search typeahead (see static/js/user-search.js).
-const managerInput = document.getElementById("add-manager-email");
-const managerSearch = initUserSearch({
-  inputId: "add-manager-email",
-  listId: "manager-suggestions",
+{% if can_add_members %}
+// Add member — shared user-search typeahead (see static/js/user-search.js).
+const memberInput = document.getElementById("add-member-email");
+const memberSearch = initUserSearch({
+  inputId: "add-member-email",
+  listId: "member-suggestions",
   searchUrl: `/projects/${PROJECT_ID}/users/search?q=`,
-  onEnter: () => addManager(),
+  onEnter: () => addMember(),
 });
 
-document.getElementById("addManagerModal").addEventListener("hidden.bs.modal", () => {
-  managerSearch && managerSearch.clear();
-  document.getElementById("add-manager-email-result").innerHTML = "";
+document.getElementById("addMemberModal").addEventListener("hidden.bs.modal", () => {
+  memberSearch && memberSearch.clear();
+  document.getElementById("add-member-role").value = "user";
+  document.getElementById("add-member-email-result").innerHTML = "";
 });
-document.getElementById("addManagerModal").addEventListener("shown.bs.modal", () => managerSearch && managerSearch.focus());
+document.getElementById("addMemberModal").addEventListener("shown.bs.modal", () => memberSearch && memberSearch.focus());
 
-async function addManager() {
-  const email = managerInput.value.trim();
+async function addMember() {
+  const email = memberInput.value.trim();
   if (!email) return;
+  const role = document.getElementById("add-member-role").value;
   const resp = await fetch("/projects/" + PROJECT_ID + "/users", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, role }),
   });
   const data = await resp.json();
-  const el = document.getElementById("add-manager-email-result");
+  const el = document.getElementById("add-member-email-result");
   if (resp.ok) {
     el.innerHTML = `<div class="alert alert-success py-1">Added ${escHtml(data.name)}</div>`;
-    managerSearch && managerSearch.clear();
+    memberSearch && memberSearch.clear();
     setTimeout(() => location.reload(), 800);
   } else {
     el.innerHTML = `<div class="alert alert-danger py-1">${data.error ? escHtml(data.error) : "Error"}</div>`;
   }
 }
-document.getElementById("add-manager-btn").addEventListener("click", addManager);
+document.getElementById("add-member-btn").addEventListener("click", addMember);
 
-// Remove manager
-async function removeManager(sid, uid, name) {
-  if (!await appConfirm(`Remove ${name} as manager?`, { title: "Remove Manager", okLabel: "Remove", okClass: "btn-danger" })) return;
-  fetch("/projects/" + sid + "/users/" + uid, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } })
-    .then(r => { if (r.ok) location.reload(); else appAlert("Failed to remove manager."); });
+// Remove member
+async function removeMember(uid, name) {
+  if (!await appConfirm(`Remove ${name} from this project?`, { title: "Remove Member", okLabel: "Remove", okClass: "btn-danger" })) return;
+  const resp = await fetch("/projects/" + PROJECT_ID + "/users/" + uid, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } });
+  if (resp.ok) { location.reload(); return; }
+  const d = await resp.json().catch(() => ({}));
+  appAlert(d.error || "Failed to remove member.");
+}
+{% endif %}
+
+{% if can_manage %}
+// Promote a user to manager or demote a manager to user
+async function setMemberRole(uid, name, role) {
+  const msg = role === "manager"
+    ? `Make ${name} a manager? Managers can create keys and add or remove users.`
+    : `Make ${name} a user? Users can create only one API key.`;
+  if (!await appConfirm(msg, { title: role === "manager" ? "Promote to Manager" : "Demote to User", okLabel: role === "manager" ? "Promote" : "Demote" })) return;
+  const resp = await fetch("/projects/" + PROJECT_ID + "/users/" + uid, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+    body: JSON.stringify({ role }),
+  });
+  if (resp.ok) { location.reload(); return; }
+  const d = await resp.json().catch(() => ({}));
+  appAlert(d.error || "Failed to change role.");
 }
 
 // ── Change owner (searches existing managers only) ────────────────────────
@@ -735,7 +795,7 @@ async function changeOwner() {
   }
   const name = document.getElementById("change-owner-name").value;
   const consequence = CALLER_IS_OWNER
-    ? "You will no longer be able to manage managers for this project."
+    ? "You will no longer be able to add or remove managers for this project."
     : "The current owner will become a regular manager.";
   if (!await appConfirm(`Transfer ownership to ${name}? ${consequence}`, { title: "Change Owner", okLabel: "Transfer" })) return;
   const resp = await fetch("/projects/" + PROJECT_ID + "/owner", {

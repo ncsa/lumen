@@ -266,8 +266,11 @@ def detail(sid):
         data["api_keys"] = [k for k in data["api_keys"] if k.created_by_entity_id == entity_id]
         data["key_creators"] = {k.id: data["key_creators"][k.id] for k in data["api_keys"]}
 
+    owner = get_project_owner(sid)
+    owner_id = owner.id if owner else None
+    # (member, role) pairs; the owner's stored role is 'manager', shown as 'owner'.
     members_stmt = (
-        select(Entity)
+        select(Entity, EntityManager.role)
         .join(EntityManager, EntityManager.user_entity_id == Entity.id)
         .where(EntityManager.project_entity_id == sid)
         .order_by(Entity.name)
@@ -280,12 +283,17 @@ def detail(sid):
             Entity.id == project.owner_entity_id,
             Entity.id == entity_id,
         ))
-    managers = db.session.execute(members_stmt).scalars().all()
+    members = [
+        (member, "owner" if member.id == owner_id else role)
+        for member, role in db.session.execute(members_stmt).all()
+    ]
 
-    owner = get_project_owner(sid)
-    owner_id = owner.id if owner else None
+    # Flags for the template only; the routes below enforce the same rules.
     entity = db.session.get(Entity, entity_id)
-    can_manage = is_admin(entity) or (owner_id == entity_id)
+    caller_role = get_project_role(entity_id, sid)
+    can_manage = is_admin(entity) or caller_role == "owner"
+    can_add_members = can_manage or caller_role == "manager"
+    key_limit_reached = _is_plain_user(entity_id, sid) and any(k.active for k in data["api_keys"])
 
     h = hashlib.md5(project.name.strip().lower().encode(), usedforsecurity=False).hexdigest()
     gravatar_url = f"https://www.gravatar.com/avatar/{h}?s=230&d=identicon&f=y"
@@ -302,9 +310,12 @@ def detail(sid):
     return render_template(
         "project_detail.html",
         project=project,
-        managers=managers,
+        members=members,
         owner_id=owner_id,
+        caller_role=caller_role,
         can_manage=can_manage,
+        can_add_members=can_add_members,
+        key_limit_reached=key_limit_reached,
         gravatar_url=gravatar_url,
         project_limit=project_limit,
         rotatable_key_ids=rotatable_key_ids,

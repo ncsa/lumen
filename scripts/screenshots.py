@@ -35,6 +35,7 @@ from lumen.services.crypto import hash_api_key
 BASE = os.environ.get("BASE_URL", "http://localhost:5001").rstrip("/")
 OUT = os.environ.get("OUTPUT_DIR", "docs/img")
 DEMO_USER = "screenshot-demo@example.com"
+DEMO_MANAGER = "screenshot-manager@example.com"
 
 HIDE_CSS = """
 ilw-footer, footer, [slot='footer'] { display:none !important; }
@@ -95,6 +96,22 @@ def ensure_demo_data(app):
             select(EntityManager).filter_by(user_entity_id=dev.id, project_entity_id=project.id)
         ).scalar_one_or_none():
             db.session.add(EntityManager(user_entity_id=dev.id, project_entity_id=project.id))
+
+        # A manager and a plain user, so the Members tab shows every role and its actions.
+        manager = db.session.execute(
+            select(Entity).filter_by(email=DEMO_MANAGER, entity_type="user")
+        ).scalar_one_or_none()
+        if not manager:
+            manager = Entity(entity_type="user", email=DEMO_MANAGER, name="Demo Manager",
+                             initials="DM", active=True)
+            db.session.add(manager)
+            db.session.flush()
+        for member, role in ((manager, "manager"), (user, "user")):
+            if member.id != project.owner_entity_id and not db.session.execute(
+                select(EntityManager).filter_by(user_entity_id=member.id, project_entity_id=project.id)
+            ).scalar_one_or_none():
+                db.session.add(EntityManager(user_entity_id=member.id, project_entity_id=project.id,
+                                             role=role))
 
         # Give one model an owner and a group grant so the admin Access card
         # (model-access.png) shows a populated example instead of "Everyone".

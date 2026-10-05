@@ -1867,3 +1867,99 @@ def test_user_sees_only_managers_owner_and_self(app, client, user_project, test_
         page = client.get(url).get_data(as_text=True)
         assert "Hidden Member U2" in page
         assert "hidden-u2@example.com" in page
+
+
+# ---------------------------------------------------------------------------
+# Members tab: each role sees only the actions it may take
+# ---------------------------------------------------------------------------
+
+def _members_page(client, project_id):
+    from bs4 import BeautifulSoup
+    return BeautifulSoup(client.get(f"/projects/{project_id}").data, "html.parser")
+
+
+def _action_labels(soup):
+    return {b.get("aria-label") for b in soup.select("#pane-members tbody button") if not b.has_attr("disabled")}
+
+
+@pytest.fixture
+def mixed_members(app, service_project, second_user):
+    """service_project with second_user as manager and a third user as plain user."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        third = Entity(entity_type="user", email="third@example.com", name="Third User",
+                       initials="TU", active=True)
+        db.session.add(third)
+        db.session.commit()
+        third_id = third.id
+    _add_member(app, service_project["id"], second_user["id"], "manager")
+    _add_member(app, service_project["id"], third_id, "user")
+    return service_project
+
+
+def test_members_tab_owner_sees_all_actions(client, mixed_members):
+    soup = _members_page(_login_as(client, mixed_members["owner_id"]), mixed_members["id"])
+    assert soup.find(id="tab-members").get_text(strip=True) == "Members"
+    assert soup.find("button", attrs={"data-bs-target": "#addMemberModal"}).get_text(strip=True) == "+ Add User"
+    assert soup.find("button", attrs={"data-bs-target": "#changeOwnerModal"})
+    assert [o["value"] for o in soup.select("#add-member-role option")] == ["user", "manager"]
+    assert _action_labels(soup) == {
+        "Demote Second User to user", "Remove Second User",
+        "Promote Third User to manager", "Remove Third User",
+    }
+    assert soup.find("button", attrs={"aria-label": "Cannot remove owner Owner of test-svc"}).has_attr("disabled")
+
+
+def test_members_tab_admin_sees_owner_actions(admin_client, mixed_members):
+    soup = _members_page(admin_client, mixed_members["id"])
+    assert [o["value"] for o in soup.select("#add-member-role option")] == ["user", "manager"]
+    assert "Demote Second User to user" in _action_labels(soup)
+
+
+def test_members_tab_manager_can_only_add_and_remove_users(client, mixed_members, second_user):
+    soup = _members_page(_login_as(client, second_user["id"]), mixed_members["id"])
+    assert soup.find("button", attrs={"data-bs-target": "#addMemberModal"})
+    assert soup.find("button", attrs={"data-bs-target": "#changeOwnerModal"}) is None
+    assert soup.find(id="editProjectModal") is None
+    assert [o["value"] for o in soup.select("#add-member-role option")] == ["user"]
+    assert _action_labels(soup) == {"Remove Third User"}
+
+
+def test_members_tab_user_sees_no_member_actions(app, client, mixed_members):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        third_id = db.session.scalar(select(Entity.id).filter_by(email="third@example.com"))
+    soup = _members_page(_login_as(client, third_id), mixed_members["id"])
+    assert soup.find("button", attrs={"data-bs-target": "#addMemberModal"}) is None
+    assert soup.find(id="addMemberModal") is None
+    assert soup.find(id="add-member-role") is None
+    assert soup.select("#pane-members tbody button") == []
+    roles = [td.get_text(strip=True) for td in soup.select("#pane-members tbody tr td:nth-of-type(3)")]
+    assert sorted(roles) == ["Manager", "Owner", "User"]
+
+
+def test_new_key_button_disabled_once_user_has_a_key(user_auth_client, user_project):
+    def new_key_button():
+        soup = _members_page(user_auth_client, user_project["id"])
+        return soup, soup.find("button", string=lambda t: t and "New API Key" in t)
+
+    soup, btn = new_key_button()
+    assert not btn.has_attr("disabled")
+    assert soup.find(id="key-limit-note") is None
+
+    resp = user_auth_client.post(f"/projects/{user_project['id']}/keys", json={"name": "k", "key": "sk_onlykey_0001"})
+    soup, btn = new_key_button()
+    assert btn.has_attr("disabled")
+    assert "only one active key" in soup.find(id=btn["aria-describedby"]).get_text()
+
+    user_auth_client.delete(f"/projects/{user_project['id']}/keys/{resp.get_json()['id']}")
+    _, btn = new_key_button()
+    assert not btn.has_attr("disabled")
+
+
+def test_new_key_button_stays_enabled_for_managers(app, managed_auth_client, managed_project):
+    managed_auth_client.post(f"/projects/{managed_project['id']}/keys", json={"name": "k", "key": "sk_mgrkey_0001"})
+    soup = _members_page(managed_auth_client, managed_project["id"])
+    assert not soup.find("button", string=lambda t: t and "New API Key" in t).has_attr("disabled")
