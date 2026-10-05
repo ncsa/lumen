@@ -41,6 +41,8 @@ Rules match against fields in the user's OAuth identity-provider profile:
 | `member_of` | Group membership reported by the identity provider | `icc-grp-aifarms` |
 | `ou` | Organizational unit | `research@university.edu` |
 
+A login that matches no auto-join group is logged at WARNING level with the user's email, affiliation and IdP; find these with `grep "No auto-join group matched"` in the application logs.
+
 Rules can use two matcher types:
 
 | Matcher | Behavior | Example |
