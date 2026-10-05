@@ -1388,3 +1388,32 @@ def test_project_transfer_to_manager_with_lower_row_id(app, owner_auth_client, o
     # second_user's row id is higher here; also cover the reverse by transferring twice
     r1 = owner_auth_client.post(f"/projects/{owned_project['id']}/owner", json={"user_id": second_user["id"]})
     assert r1.status_code == HTTPStatus.OK
+
+
+def test_transfer_by_stale_owner_conflicts(app, owner_auth_client, owned_project, test_user, second_user):
+    """Authorized as owner, but ownership moved before the update: the
+    caller's request must not hand on the new owner's project."""
+    from unittest.mock import patch
+
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.entity_manager import EntityManager
+        db.session.add(EntityManager(user_entity_id=second_user["id"], project_entity_id=owned_project["id"]))
+        third = Entity(entity_type="user", email="third@example.com", name="Third", initials="TH", active=True)
+        db.session.add(third)
+        db.session.flush()
+        db.session.add(EntityManager(user_entity_id=third.id, project_entity_id=owned_project["id"]))
+        # A concurrent transfer already made second_user the owner.
+        db.session.get(Entity, owned_project["id"]).owner_entity_id = second_user["id"]
+        db.session.commit()
+        third_id = third.id
+
+    # The authorization check ran before that transfer committed.
+    with patch("lumen.blueprints.projects.routes.is_project_owner", return_value=True):
+        resp = owner_auth_client.post(f"/projects/{owned_project['id']}/owner", json={"user_id": third_id})
+    assert resp.status_code == HTTPStatus.CONFLICT
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        assert db.session.get(Entity, owned_project["id"]).owner_entity_id == second_user["id"]

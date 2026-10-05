@@ -186,9 +186,6 @@ def data():
 
     # Per-row data for the inline edit dialog: whether the caller owns the
     # project, and the project's own coin limit (None = inherited pool).
-    owner_ids = set(db.session.execute(
-        select(Entity.id).where(Entity.owner_entity_id == entity_id)
-    ).scalars().all())
     page_ids = [c.id for c, *_ in rows]
     limits = {
         lim.entity_id: lim
@@ -211,7 +208,7 @@ def data():
                 "cost": float(cost),
                 "created": c.created_at.strftime("%Y-%m-%dT%H:%M:%SZ") if c.created_at else None,
                 "detail_url": url_for("projects.detail", sid=c.id),
-                "is_owner": c.id in owner_ids,
+                "is_owner": c.owner_entity_id == entity_id,
                 "max_coins": float(limits[c.id].max_coins) if c.id in limits else None,
                 "refresh_coins": float(limits[c.id].refresh_coins) if c.id in limits else None,
             }
@@ -528,7 +525,11 @@ def transfer_ownership(sid):
         return jsonify(
             {"error": "The new owner must already be a manager of this project"}
         ), HTTPStatus.BAD_REQUEST
-    old_owner_id = project.owner_entity_id
+    # A non-admin was authorized as the owner, so only their ownership may be
+    # handed on: re-reading the pointer here could pick up an owner that a
+    # concurrent transfer installed after the authorization check.
+    entity = db.session.get(Entity, entity_id)
+    old_owner_id = project.owner_entity_id if is_admin(entity) else entity_id
     if old_owner_id == new_owner.id:
         return jsonify({"error": "User is already the owner"}), HTTPStatus.CONFLICT
 
