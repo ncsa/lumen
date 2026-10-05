@@ -106,10 +106,16 @@ def ensure_demo_data(app):
                              initials="DM", active=True)
             db.session.add(manager)
             db.session.flush()
+        # Existing rows are reset to the seed role so re-runs stay reproducible.
         for member, role in ((manager, "manager"), (user, "user")):
-            if member.id != project.owner_entity_id and not db.session.execute(
+            if member.id == project.owner_entity_id:
+                continue
+            row = db.session.execute(
                 select(EntityManager).filter_by(user_entity_id=member.id, project_entity_id=project.id)
-            ).scalar_one_or_none():
+            ).scalar_one_or_none()
+            if row:
+                row.role = role
+            else:
                 db.session.add(EntityManager(user_entity_id=member.id, project_entity_id=project.id,
                                              role=role))
 
