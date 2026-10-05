@@ -258,7 +258,12 @@ def detail(sid):
     project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
     _require_project_access(entity_id, sid)
 
-    plain_user = _is_plain_user(entity_id, sid)
+    entity = db.session.get(Entity, entity_id)
+    admin = is_admin(entity)
+    caller_role = get_project_role(entity_id, sid)
+    # Same rule as _is_plain_user, without re-querying the role.
+    plain_user = not admin and caller_role == "user"
+
     data = _get_profile_data(sid)
     # Users see only the keys they created. The key rows are embedded in the
     # page, so the filter has to happen here, not in the template.
@@ -289,11 +294,9 @@ def detail(sid):
     ]
 
     # Flags for the template only; the routes below enforce the same rules.
-    entity = db.session.get(Entity, entity_id)
-    caller_role = get_project_role(entity_id, sid)
-    can_manage = is_admin(entity) or caller_role == "owner"
+    can_manage = admin or caller_role == "owner"
     can_add_members = can_manage or caller_role == "manager"
-    key_limit_reached = _is_plain_user(entity_id, sid) and any(k.active for k in data["api_keys"])
+    key_limit_reached = plain_user and any(k.active for k in data["api_keys"])
 
     h = hashlib.md5(project.name.strip().lower().encode(), usedforsecurity=False).hexdigest()
     gravatar_url = f"https://www.gravatar.com/avatar/{h}?s=230&d=identicon&f=y"

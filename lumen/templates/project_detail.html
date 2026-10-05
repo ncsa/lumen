@@ -769,7 +769,7 @@ async function setMemberRole(uid, name, role) {
 }
 
 // ── Change owner (searches existing managers only) ────────────────────────
-const CALLER_IS_OWNER = {{ (owner_id == session['entity_id']) | tojson }};
+const CALLER_IS_OWNER = {{ (caller_role == 'owner') | tojson }};
 const ownerSearch = initEntitySearch({
   inputId: "change-owner-name",
   listId: "owner-suggestions",
