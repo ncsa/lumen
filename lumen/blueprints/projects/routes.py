@@ -451,7 +451,8 @@ def add_project_member(sid):
     email = (data.get("email") or "").strip()
     if not email:
         return jsonify({"error": "Email required"}), HTTPStatus.BAD_REQUEST
-    role = data.get("role") or "user"
+    # Only an omitted role defaults to user; "", null and other values are rejected.
+    role = data.get("role", "user")
     if role not in _MEMBER_ROLES:
         return jsonify({"error": "Role must be 'user' or 'manager'"}), HTTPStatus.BAD_REQUEST
     if role == "manager" and not _can_administer(entity_id, sid):
@@ -486,16 +487,24 @@ def remove_project_member(sid, uid):
 
     project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
 
+    # Lock the target's membership row so the role checked below cannot change
+    # under a concurrent promotion (no-op on SQLite).
     target_assoc = db.session.execute(
-        select(EntityManager).filter_by(user_entity_id=uid, project_entity_id=sid)
+        select(EntityManager)
+        .filter_by(user_entity_id=uid, project_entity_id=sid)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     ).scalar_one_or_none()
     if not target_assoc:
         return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
 
+    db.session.refresh(project)
     if project.owner_entity_id == uid:
+        db.session.rollback()
         return jsonify({"error": "Transfer ownership before removing the owner"}), HTTPStatus.CONFLICT
 
     if target_assoc.role == "manager" and not _can_administer(entity_id, sid):
+        db.session.rollback()
         return jsonify({"error": "Only the owner can remove managers"}), HTTPStatus.FORBIDDEN
 
     db.session.delete(target_assoc)
@@ -522,12 +531,13 @@ def update_project_member(sid, uid):
     if role not in _MEMBER_ROLES:
         return jsonify({"error": "Role must be 'user' or 'manager'"}), HTTPStatus.BAD_REQUEST
 
-    # Lock the membership row so a concurrent transfer to this member cannot
-    # interleave with a demotion (no-op on SQLite).
+    # Lock the membership row so a concurrent transfer to this member, or a key
+    # they are creating, cannot interleave with a demotion (no-op on SQLite).
     target_assoc = db.session.execute(
         select(EntityManager)
         .filter_by(user_entity_id=uid, project_entity_id=sid)
         .with_for_update()
+        .execution_options(populate_existing=True)
     ).scalar_one_or_none()
     if not target_assoc:
         return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
@@ -536,6 +546,22 @@ def update_project_member(sid, uid):
     if project.owner_entity_id == uid and role != "manager":
         db.session.rollback()
         return jsonify({"error": "The owner cannot be demoted; transfer ownership first"}), HTTPStatus.CONFLICT
+
+    if role == "user":
+        # A user may hold one active key; refuse rather than revoke the extras.
+        active_keys = db.session.scalar(
+            select(func.count(APIKey.id)).where(
+                APIKey.entity_id == sid,
+                APIKey.created_by_entity_id == uid,
+                APIKey.active.is_(True),
+            )
+        )
+        if active_keys > 1:
+            db.session.rollback()
+            return jsonify({
+                "error": f"This manager has {active_keys} active API keys and users can have only one; "
+                         "delete the extra keys first",
+            }), HTTPStatus.CONFLICT
 
     target_assoc.role = role
     db.session.commit()
@@ -644,14 +670,15 @@ def create_project_key(sid):
     db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
     _require_project_access(entity_id, sid)
 
+    # Lock the caller's membership row before reading their role, so two
+    # concurrent creates cannot both pass the one-key check and a demotion
+    # cannot interleave with a manager's create (no-op on SQLite).
+    db.session.execute(
+        select(EntityManager.id)
+        .filter_by(user_entity_id=entity_id, project_entity_id=sid)
+        .with_for_update()
+    )
     if _is_plain_user(entity_id, sid):
-        # Lock the caller's membership row so two concurrent requests cannot
-        # both pass the one-key check (no-op on SQLite).
-        db.session.execute(
-            select(EntityManager.id)
-            .filter_by(user_entity_id=entity_id, project_entity_id=sid)
-            .with_for_update()
-        )
         has_key = db.session.scalar(
             select(APIKey.id).where(
                 APIKey.entity_id == sid,

@@ -1715,3 +1715,49 @@ def test_user_cannot_edit_or_toggle_project(user_auth_client, user_project):
     assert user_auth_client.post(f"/projects/{user_project['id']}/toggle").status_code == HTTPStatus.FORBIDDEN
     resp = user_auth_client.patch(f"/projects/{user_project['id']}", json={"name": "renamed"})
     assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+@pytest.mark.parametrize("role", ["", None, 0, "owner"])
+def test_add_member_explicit_invalid_role_returns_400(app, admin_client, service_project, second_user, role):
+    resp = admin_client.post(
+        f"/projects/{service_project['id']}/users", json={"email": second_user["email"], "role": role},
+    )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert _member_role(app, service_project["id"], second_user["id"]) is None
+
+
+def test_demoting_manager_with_several_active_keys_returns_409(app, owner_auth_client, owned_project, second_user):
+    _add_member(app, owned_project["id"], second_user["id"], "manager")
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        db.session.add_all([
+            APIKey(entity_id=owned_project["id"], created_by_entity_id=second_user["id"],
+                   name=f"k{i}", key_hash=str(i) * 64, active=True)
+            for i in (1, 2)
+        ])
+        db.session.commit()
+    url = f"/projects/{owned_project['id']}/users/{second_user['id']}"
+    resp = owner_auth_client.patch(url, json={"role": "user"})
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert "2 active API keys" in resp.get_json()["error"]
+    assert _member_role(app, owned_project["id"], second_user["id"]) == "manager"
+
+
+def test_demoting_manager_with_one_active_key_succeeds(app, owner_auth_client, owned_project, second_user):
+    _add_member(app, owned_project["id"], second_user["id"], "manager")
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        db.session.add_all([
+            APIKey(entity_id=owned_project["id"], created_by_entity_id=second_user["id"],
+                   name="live", key_hash="1" * 64, active=True),
+            APIKey(entity_id=owned_project["id"], created_by_entity_id=second_user["id"],
+                   name="old", key_hash="2" * 64, active=False),
+        ])
+        db.session.commit()
+    resp = owner_auth_client.patch(
+        f"/projects/{owned_project['id']}/users/{second_user['id']}", json={"role": "user"},
+    )
+    assert resp.status_code == HTTPStatus.OK
+    assert _member_role(app, owned_project["id"], second_user["id"]) == "user"
