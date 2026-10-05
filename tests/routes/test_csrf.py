@@ -114,17 +114,8 @@ def test_set_admin_mode_rejected_without_csrf_token(csrf_client):
 
 def test_update_project_rejected_without_csrf_token(app, csrf_client, test_user):
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity import Entity
-        from lumen.models.entity_manager import EntityManager
-        project = Entity(entity_type="project", name="csrf-svc", initials="CS", active=True)
-        db.session.add(project)
-        db.session.flush()
-        db.session.add(EntityManager(
-            user_entity_id=test_user["id"], project_entity_id=project.id, is_owner=True,
-        ))
-        db.session.commit()
-        sid = project.id
+        from tests.conftest import make_project
+        sid = make_project("csrf-svc", owner_id=test_user["id"], initials="CS").id
 
     resp = csrf_client.patch(f"/projects/{sid}", json={"name": "x"})
     assert resp.status_code == HTTPStatus.BAD_REQUEST

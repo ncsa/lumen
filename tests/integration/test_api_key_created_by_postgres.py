@@ -49,6 +49,7 @@ def test_migrated_creator_fk_is_set_null_and_commented(pg_app):
     from lumen.extensions import db
     from lumen.models.api_key import APIKey
     from lumen.models.entity import Entity
+    from lumen.models.entity_manager import EntityManager
     from lumen.services.crypto import hash_api_key
 
     with pg_app.app_context():
@@ -69,9 +70,17 @@ def test_migrated_creator_fk_is_set_null_and_commented(pg_app):
 
         creator = Entity(entity_type="user", email="creator@example.invalid",
                          name="Key Creator", initials="KC", active=True)
-        project = Entity(entity_type="project", name="set-null-proj", initials="SN", active=True)
-        db.session.add_all([creator, project])
+        # Owned by someone other than the creator, so deleting the creator
+        # does not trip fk_entities_owner_membership.
+        owner = Entity(entity_type="user", email="owner@example.invalid",
+                       name="Project Owner", initials="PO", active=True)
+        db.session.add_all([creator, owner])
         db.session.flush()
+        project = Entity(entity_type="project", name="set-null-proj", initials="SN", active=True,
+                         owner_entity_id=owner.id)
+        db.session.add(project)
+        db.session.flush()
+        db.session.add(EntityManager(user_entity_id=owner.id, project_entity_id=project.id))
         key = APIKey(entity_id=project.id, created_by_entity_id=creator.id,
                      name="k", key_hash=hash_api_key("sk_pgsetnull12345678"), active=True)
         db.session.add(key)

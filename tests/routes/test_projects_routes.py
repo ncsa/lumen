@@ -7,21 +7,18 @@ from http import HTTPStatus
 import pytest
 from sqlalchemy import func, select
 
+from tests.conftest import make_project
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
 def service_project(app):
-    """An active service (project) entity."""
+    """An active service (project) entity, owned by a dedicated owner user."""
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity import Entity
-        c = Entity(entity_type="project", name="test-svc", initials="TS", active=True)
-        db.session.add(c)
-        db.session.commit()
-        db.session.refresh(c)
-        return {"id": c.id, "name": c.name}
+        c = make_project("test-svc", initials="TS")
+        return {"id": c.id, "name": c.name, "owner_id": c.owner_entity_id}
 
 
 @pytest.fixture
@@ -40,17 +37,24 @@ def managed_project(app, service_project, test_user):
 
 @pytest.fixture
 def owned_project(app, service_project, test_user):
-    """service_project with test_user as owner (is_owner=True)."""
+    """service_project with test_user as its owner and only manager."""
     with app.app_context():
         from lumen.extensions import db
+        from lumen.models.entity import Entity
         from lumen.models.entity_manager import EntityManager
         db.session.add(EntityManager(
             user_entity_id=test_user["id"],
             project_entity_id=service_project["id"],
-            is_owner=True,
         ))
+        db.session.get(Entity, service_project["id"]).owner_entity_id = test_user["id"]
+        db.session.flush()
+        db.session.delete(db.session.execute(
+            select(EntityManager).filter_by(
+                user_entity_id=service_project["owner_id"], project_entity_id=service_project["id"],
+            )
+        ).scalar_one())
         db.session.commit()
-    return service_project
+    return {**service_project, "owner_id": test_user["id"]}
 
 
 @pytest.fixture
@@ -435,10 +439,7 @@ def test_update_project_invalid_values_return_400(admin_client, service_project)
 
 def test_update_project_duplicate_name_returns_409(app, admin_client, service_project):
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity import Entity
-        db.session.add(Entity(entity_type="project", name="other-svc", initials="OS", active=True))
-        db.session.commit()
+        make_project("other-svc", initials="OS")
     resp = admin_client.patch(f"/projects/{service_project['id']}", json={"name": "other-svc"})
     assert resp.status_code == HTTPStatus.CONFLICT
 
@@ -652,10 +653,10 @@ def test_create_project_with_owner(app, admin_client, test_user):
         from lumen.models.entity import Entity
         from lumen.models.entity_manager import EntityManager
         project = db.session.execute(select(Entity).filter_by(name="owned-svc", entity_type="project")).scalar_one()
-        assoc = db.session.execute(
+        assert project.owner_entity_id == test_user["id"]
+        assert db.session.execute(
             select(EntityManager).filter_by(user_entity_id=test_user["id"], project_entity_id=project.id)
-        ).scalar_one()
-        assert assoc.is_owner is True
+        ).scalar_one_or_none() is not None
 
 
 def test_create_project_owner_not_found_returns_404(admin_client):
@@ -724,7 +725,6 @@ def test_transfer_ownership(app, owner_auth_client, owned_project, test_user, se
         db.session.add(EntityManager(
             user_entity_id=second_user["id"],
             project_entity_id=owned_project["id"],
-            is_owner=False,
         ))
         db.session.commit()
     resp = owner_auth_client.post(
@@ -734,15 +734,13 @@ def test_transfer_ownership(app, owner_auth_client, owned_project, test_user, se
     assert resp.status_code == HTTPStatus.OK
     with app.app_context():
         from lumen.extensions import db
+        from lumen.models.entity import Entity
         from lumen.models.entity_manager import EntityManager
-        old = db.session.execute(
+        assert db.session.get(Entity, owned_project["id"]).owner_entity_id == second_user["id"]
+        # The previous owner stays on as a manager.
+        assert db.session.execute(
             select(EntityManager).filter_by(user_entity_id=test_user["id"], project_entity_id=owned_project["id"])
-        ).scalar_one()
-        new = db.session.execute(
-            select(EntityManager).filter_by(user_entity_id=second_user["id"], project_entity_id=owned_project["id"])
-        ).scalar_one()
-        assert old.is_owner is False
-        assert new.is_owner is True
+        ).scalar_one_or_none() is not None
 
 
 def test_transfer_to_non_manager_rejected(app, owner_auth_client, owned_project, test_user, second_user):
@@ -755,11 +753,9 @@ def test_transfer_to_non_manager_rejected(app, owner_auth_client, owned_project,
     assert "must already be a manager" in resp.get_json()["error"]
     with app.app_context():
         from lumen.extensions import db
+        from lumen.models.entity import Entity
         from lumen.models.entity_manager import EntityManager
-        old = db.session.execute(
-            select(EntityManager).filter_by(user_entity_id=test_user["id"], project_entity_id=owned_project["id"])
-        ).scalar_one()
-        assert old.is_owner is True
+        assert db.session.get(Entity, owned_project["id"]).owner_entity_id == test_user["id"]
         assert db.session.execute(
             select(EntityManager).filter_by(user_entity_id=second_user["id"], project_entity_id=owned_project["id"])
         ).scalar_one_or_none() is None
@@ -797,9 +793,9 @@ def test_transfer_to_current_owner_returns_409(owner_auth_client, owned_project,
     assert resp.status_code == HTTPStatus.CONFLICT
 
 
-def test_admin_assigns_owner_to_ownerless_project(app, admin_client, service_project, second_user):
-    """An ownerless project gains an owner in two steps: add the user as a
-    manager, then promote them (also covers the no-previous-owner path)."""
+def test_admin_transfers_ownership_to_new_manager(app, admin_client, service_project, second_user):
+    """An admin hands a project to someone new in two steps: add the user as a
+    manager, then make them the owner."""
     resp = admin_client.post(
         f"/projects/{service_project['id']}/owner",
         json={"user_id": second_user["id"]},
@@ -814,13 +810,8 @@ def test_admin_assigns_owner_to_ownerless_project(app, admin_client, service_pro
     assert resp.status_code == HTTPStatus.OK
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_manager import EntityManager
-        assoc = db.session.execute(
-            select(EntityManager).filter_by(
-                user_entity_id=second_user["id"], project_entity_id=service_project["id"]
-            )
-        ).scalar_one()
-        assert assoc.is_owner is True
+        from lumen.models.entity import Entity
+        assert db.session.get(Entity, service_project["id"]).owner_entity_id == second_user["id"]
 
 
 def test_plain_non_manager_forbidden_on_owner_routes(auth_client, service_project, second_user):
@@ -1378,18 +1369,15 @@ def test_owner_search_requires_project_admin(managed_auth_client, managed_projec
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_two_project_owner_rows_rejected_by_db(app, owned_project, second_user):
-    """uq_entity_managers_owner makes the concurrent double-transfer impossible
-    to commit — without it, get_project_owner() raises for everyone afterwards."""
+def test_project_without_owner_rejected_by_db(app, owned_project):
+    """ck_entities_project_owner: a project can never lose its owner."""
     import pytest as _pytest
     from sqlalchemy.exc import IntegrityError
 
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_manager import EntityManager
-        db.session.add(EntityManager(
-            user_entity_id=second_user["id"], project_entity_id=owned_project["id"], is_owner=True,
-        ))
+        from lumen.models.entity import Entity
+        db.session.get(Entity, owned_project["id"]).owner_entity_id = None
         with _pytest.raises(IntegrityError):
             db.session.commit()
         db.session.rollback()

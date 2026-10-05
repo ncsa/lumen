@@ -69,11 +69,8 @@ def second_user(app):
 @pytest.fixture
 def test_project(app):
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity import Entity
-        e = Entity(entity_type="project", name="Research Bot", initials="RB", active=True)
-        db.session.add(e)
-        db.session.commit()
+        from tests.conftest import make_project
+        e = make_project("Research Bot", initials="RB")
         return {"id": e.id, "name": e.name}
 
 

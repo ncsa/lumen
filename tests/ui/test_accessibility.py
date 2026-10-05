@@ -225,12 +225,8 @@ def test_own_profile_page_as_admin_accessibility(admin_client):
 
 def test_project_detail_page_accessibility(app, admin_client):
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity import Entity
-        project = Entity(entity_type="project", name="a11y-svc", initials="AS", active=True)
-        db.session.add(project)
-        db.session.commit()
-        sid = project.id
+        from tests.conftest import make_project
+        sid = make_project("a11y-svc", initials="AS").id
     url = f"/projects/{sid}"
     resp = admin_client.get(url)
     assert resp.status_code == HTTPStatus.OK

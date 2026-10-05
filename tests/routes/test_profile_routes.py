@@ -73,13 +73,8 @@ def test_profile_page_with_no_endpoints(app, auth_client, test_model):
 
 def test_project_profile_page_redirects(app, auth_client):
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity import Entity
-        svc = Entity(entity_type="project", name="svc", initials="SV", active=True)
-        db.session.add(svc)
-        db.session.commit()
-        db.session.refresh(svc)
-        sid = svc.id
+        from tests.conftest import make_project
+        sid = make_project("svc", initials="SV").id
 
     resp = auth_client.get(f"/profile/project/{sid}", follow_redirects=False)
     assert resp.status_code == HTTPStatus.MOVED_PERMANENTLY
@@ -539,18 +534,10 @@ def test_profile_page_shows_needs_ack_model(app, auth_client, test_user):
 # ---------------------------------------------------------------------------
 
 def _make_managed_project(app, user_id, name="managed-svc"):
-    """Create an active project entity managed by user_id; return its id."""
+    """Create an active project entity owned (and so managed) by user_id; return its id."""
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity import Entity
-        from lumen.models.entity_manager import EntityManager
-        proj = Entity(entity_type="project", name=name, initials="MS", active=True)
-        db.session.add(proj)
-        db.session.flush()
-        db.session.add(EntityManager(user_entity_id=user_id, project_entity_id=proj.id))
-        db.session.commit()
-        db.session.refresh(proj)
-        return proj.id
+        from tests.conftest import make_project
+        return make_project(name, owner_id=user_id, initials="MS").id
 
 
 def test_profile_projects_section_hidden_when_none(auth_client):
@@ -578,14 +565,8 @@ def test_profile_projects_section_shows_managed_project(app, auth_client, test_u
 def test_profile_projects_section_includes_inactive(app, auth_client, test_user):
     """An inactive managed project is still shown so the manager can reach and re-enable it."""
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity import Entity
-        from lumen.models.entity_manager import EntityManager
-        proj = Entity(entity_type="project", name="inactive-client", initials="IC", active=False)
-        db.session.add(proj)
-        db.session.flush()
-        db.session.add(EntityManager(user_entity_id=test_user["id"], project_entity_id=proj.id))
-        db.session.commit()
+        from tests.conftest import make_project
+        make_project("inactive-client", owner_id=test_user["id"], initials="IC", active=False)
 
     resp = auth_client.get("/profile")
     assert resp.status_code == HTTPStatus.OK

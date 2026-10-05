@@ -15,6 +15,7 @@ erDiagram
         string gravatar_hash
         bool active
         bool store_conversations
+        int owner_entity_id FK
         datetime created_at
     }
 
@@ -172,7 +173,6 @@ erDiagram
         int id PK
         int user_entity_id FK
         int project_entity_id FK
-        boolean is_owner
     }
 
     model_stats {
@@ -260,6 +260,7 @@ erDiagram
     entities ||--o{ request_logs : "logs"
     entities ||--o{ entity_managers : "manages (user)"
     entities ||--o{ entity_managers : "managed by (project)"
+    entity_managers |o--o| entities : "owns (project owner)"
 
     groups ||--o{ group_members : "contains"
     groups ||--o{ group_rules : "auto-join rules"
@@ -319,11 +320,17 @@ Unified table for both human users (authenticated via OAuth) and programmatic pr
 | `gravatar_hash` | String(64) | YES | MD5 hash of the user's email for Gravatar lookups; users only |
 | `active` | Boolean | NO | Whether the entity can make requests. Inactive entities are blocked. |
 | `store_conversations` | Boolean | NO | Whether webchat conversations are persisted for this user. Default `true`. |
+| `owner_entity_id` | Integer (FK → entity_managers) | YES | Owning user of a project; required for projects, null for users. Together with `id` it references the owner's `entity_managers` row, so the owner is always one of the project's managers. |
 | `created_at` | DateTime | NO | UTC timestamp when the entity was created |
+
+**Constraints:**
+- `ck_entities_project_owner` — `CHECK ((entity_type = 'project' AND owner_entity_id IS NOT NULL) OR (entity_type <> 'project' AND owner_entity_id IS NULL))`: every project has exactly one owner and users have none.
+- `fk_entities_owner_membership` — `FOREIGN KEY (owner_entity_id, id) REFERENCES entity_managers (user_entity_id, project_entity_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED`. The owner's manager row cannot be deleted while they own the project (transfer ownership first). Deferred so a project and its owner's manager row can be inserted in the same transaction. Not enforced on SQLite, which runs without foreign keys.
 
 **Notes:**
 - All foreign keys that reference `entities.id` cascade on delete, except `model_configs.owner_entity_id`, `api_keys.created_by_entity_id`, and the `request_logs` FKs, which use `SET NULL`.
 - Acknowledgement (`needs_ack`) is a property of the model, not of the entity.
+- Deleting a user who owns a project fails on `fk_entities_owner_membership`; transfer ownership first.
 
 ---
 
@@ -575,16 +582,15 @@ Group grants for owned models; a row gives all group members access to the model
 
 ## entity_managers
 
-Maps users to the project entities they are permitted to manage. A manager can view and administer a project's API keys and usage. The `is_owner` flag designates the project owner — a manager who can additionally add/remove managers, transfer ownership, and activate/deactivate the project. At most one owner per project (enforced by app logic).
+Maps users to the project entities they are permitted to manage. A manager can view and administer a project's API keys and usage. The project owner is the manager that `entities.owner_entity_id` points at — a manager who can additionally add/remove managers, transfer ownership, and activate/deactivate the project.
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `id` | Integer | NO | Primary key |
 | `user_entity_id` | Integer (FK → entities) | NO | The user (must be `entity_type = 'user'`) who has management rights. Cascades on delete. |
 | `project_entity_id` | Integer (FK → entities) | NO | The project entity being managed. Cascades on delete. |
-| `is_owner` | Boolean | NO | True for the project owner; at most one owner per project (enforced by app logic). Default `false`. |
 
-**Constraints:** `UNIQUE(user_entity_id, project_entity_id)`
+**Constraints:** `UNIQUE(user_entity_id, project_entity_id)`, also the target of `entities.fk_entities_owner_membership`
 
 ---
 
