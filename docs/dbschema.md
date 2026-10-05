@@ -588,8 +588,8 @@ Maps users to the project entities they are members of. `role` is `'manager'` or
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `id` | Integer | NO | Primary key |
-| `user_entity_id` | Integer (FK → entities) | NO | The user (must be `entity_type = 'user'`) who has management rights. Cascades on delete. |
-| `project_entity_id` | Integer (FK → entities) | NO | The project entity being managed. Cascades on delete. |
+| `user_entity_id` | Integer (FK → entities) | NO | The member user (must be `entity_type = 'user'`); their rights depend on `role`. Cascades on delete. |
+| `project_entity_id` | Integer (FK → entities) | NO | The project the user is a member of. Cascades on delete. |
 | `role` | String(16) | NO | Project role: `'manager'` or `'user'`. Defaults to `'manager'`; rows that existed before the column was added are managers. The owner keeps their own row (normally `'manager'`) — ownership is the `entities.owner_entity_id` pointer, not a role value. |
 
 **Constraints:** `UNIQUE(user_entity_id, project_entity_id)`, also the target of `entities.fk_entities_owner_membership`; `ck_entity_managers_role` — `CHECK (role IN ('manager', 'user'))`

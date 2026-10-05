@@ -20,8 +20,8 @@ class EntityManager(db.Model):
     __tablename__ = "entity_managers"
 
     id: Mapped[int] = mapped_column(db.Integer, primary_key=True, comment="Primary key")
-    user_entity_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), comment="The user who has management rights over the project")
-    project_entity_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), comment="The project entity being managed")
+    user_entity_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), comment="The member user; their rights depend on role")
+    project_entity_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), comment="The project the user is a member of")
     role: Mapped[str] = mapped_column(db.String(16), nullable=False, default="manager", server_default="manager", comment="Project role: 'manager' or 'user'; the owner is the member entities.owner_entity_id points at")
 
     user: Mapped["Entity"] = relationship(foreign_keys=[user_entity_id], backref="managed_projects_assoc")
@@ -31,7 +31,7 @@ class EntityManager(db.Model):
         db.UniqueConstraint("user_entity_id", "project_entity_id"),
         db.Index("ix_entity_managers_project_entity_id", "project_entity_id"),
         db.CheckConstraint("role IN ('manager', 'user')", name="ck_entity_managers_role"),
-        {"comment": "Maps users to project entities they are permitted to manage"},
+        {"comment": "Maps users to the project entities they are members of"},
     )
 
 
