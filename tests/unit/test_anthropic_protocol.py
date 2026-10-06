@@ -145,6 +145,64 @@ def test_multi_turn_roles_are_preserved():
     assert [m["role"] for m in messages] == ["user", "assistant", "user"]
 
 
+def test_consecutive_user_turns_are_combined():
+    """Anthropic combines them; templates that require alternating roles reject
+    two user messages in a row."""
+    _, messages, _, _, _ = translate_request(_req(messages=[
+        {"role": "user", "content": "one"},
+        {"role": "user", "content": [{"type": "text", "text": "two"},
+                                     {"type": "image", "source": {"type": "url", "url": "https://x/i.png"}}]},
+    ]))
+    assert messages == [{"role": "user", "content": [
+        {"type": "text", "text": "one"},
+        {"type": "text", "text": "two"},
+        {"type": "image_url", "image_url": {"url": "https://x/i.png"}},
+    ]}]
+
+
+def test_consecutive_assistant_turns_are_combined_keeping_tool_calls():
+    _, messages, _, _, _ = translate_request(_req(messages=[
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": [
+            {"type": "text", "text": "first"},
+            {"type": "tool_use", "id": "t1", "name": "a", "input": {}}]},
+        {"role": "assistant", "content": [
+            {"type": "text", "text": "second"},
+            {"type": "tool_use", "id": "t2", "name": "b", "input": {}}]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "r1"},
+            {"type": "tool_result", "tool_use_id": "t2", "content": "r2"}]},
+    ]))
+    assert [m["role"] for m in messages] == ["user", "assistant", "tool", "tool"]
+    assert messages[1]["content"] == "first\n\nsecond"
+    assert [c["id"] for c in messages[1]["tool_calls"]] == ["t1", "t2"]
+    assert [m["tool_call_id"] for m in messages[2:]] == ["t1", "t2"]
+
+
+def test_user_text_after_tool_results_follows_them():
+    _, messages, _, _, _ = translate_request(_req(messages=[
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "a", "input": {}}]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "r1"},
+            {"type": "text", "text": "and"}]},
+        {"role": "user", "content": "more"},
+    ]))
+    assert [m["role"] for m in messages] == ["user", "assistant", "tool", "user"]
+    assert messages[3]["content"] == "and\n\nmore"
+
+
+def test_a_dropped_thinking_turn_leaves_alternating_roles():
+    """A reasoning-only max_tokens reply comes back as history with nothing left
+    once thinking is dropped."""
+    _, messages, _, _, _ = translate_request(_req(messages=[
+        {"role": "user", "content": "one"},
+        {"role": "assistant", "content": [{"type": "thinking", "thinking": "hmm", "signature": ""}]},
+        {"role": "user", "content": "two"},
+    ]))
+    assert messages == [{"role": "user", "content": "one\n\ntwo"}]
+
+
 def test_unknown_role_is_refused():
     with pytest.raises(AnthropicError):
         translate_request(_req(messages=[{"role": "tool", "content": "x"}]))

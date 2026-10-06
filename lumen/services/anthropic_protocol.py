@@ -312,20 +312,37 @@ def _translate_tool_choice(choice):
     raise AnthropicError(f"Unsupported tool_choice type: {kind!r}")
 
 
-def _append_user_text(messages, text):
-    """Add text as user content without creating two user messages in a row.
+def _as_parts(content):
+    return [{"type": "text", "text": content}] if isinstance(content, str) else content
+
+
+def _join_turns(messages):
+    """Merge consecutive user or assistant messages into one, as Anthropic does.
 
     Some chat templates (Gemma's, older Mistral's) require strictly alternating
-    roles. Appending to a trailing user message only changes the end of the
-    conversation, so each request still extends the previous one.
+    roles. Runs arise from consecutive same-role turns in the request, from
+    mid-conversation system turns sent as user text, and from assistant turns
+    dropped for holding only thinking. Tool messages are never merged, so tool
+    calls and their results keep their order. Merging only joins messages that
+    were already adjacent, so each request still extends the previous one.
     """
-    last = messages[-1] if messages else None
-    if last is None or last["role"] != "user":
-        messages.append({"role": "user", "content": text})
-    elif isinstance(last["content"], str):
-        last["content"] = f"{last['content']}\n\n{text}"
-    else:
-        last["content"] = [*last["content"], {"type": "text", "text": text}]
+    out = []
+    for message in messages:
+        last = out[-1] if out else None
+        if last is None or last["role"] != message["role"] or message["role"] not in ("user", "assistant"):
+            out.append(message)
+        elif message["role"] == "user":
+            if isinstance(last["content"], str) and isinstance(message["content"], str):
+                last["content"] = f"{last['content']}\n\n{message['content']}"
+            else:
+                last["content"] = _as_parts(last["content"]) + _as_parts(message["content"])
+        else:
+            texts = [text for text in (last["content"], message["content"]) if text]
+            last["content"] = "\n\n".join(texts) if texts else None
+            tool_calls = last.get("tool_calls", []) + message.get("tool_calls", [])
+            if tool_calls:
+                last["tool_calls"] = tool_calls
+    return out
 
 
 def translate_request(data: dict, require_max_tokens: bool = True):
@@ -401,9 +418,12 @@ def translate_request(data: dict, require_max_tokens: bool = True):
             # backend re-read the whole conversation each time.
             text = _system_text(content)
             if text:
-                _append_user_text(messages, f"<system-reminder>\n{text}\n</system-reminder>")
+                messages.append({"role": "user",
+                                 "content": f"<system-reminder>\n{text}\n</system-reminder>"})
         else:
             raise AnthropicError(f"Unsupported message role: {role!r}")
+
+    messages = _join_turns(messages)
 
     system = _system_text(data.get("system"))
     if system:
