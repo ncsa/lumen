@@ -1101,12 +1101,7 @@ def test_rotate_project_key_forbidden_for_non_manager(app, auth_client, service_
 def test_rotate_project_key_from_other_project_returns_404(app, managed_auth_client, managed_project, test_user,
                                                            make_created_key):
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity import Entity
-        other = Entity(entity_type="project", name="other-svc", initials="OS", active=True)
-        db.session.add(other)
-        db.session.commit()
-        other_id = other.id
+        other_id = make_project("other-svc", initials="OS").id
     kid = make_created_key(other_id, test_user["id"], "sk_otherproj123456")
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/rotate",
                                     json={"key": "sk_otherprojnew123"})
