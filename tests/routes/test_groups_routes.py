@@ -349,9 +349,10 @@ def test_create_by_non_admin_forbidden(auth_client, app):
     resp = auth_client.post("/groups", json={"name": "my-lab"}, headers={"Accept": "application/json"})
     assert resp.status_code == HTTPStatus.FORBIDDEN
     with app.app_context():
+        from sqlalchemy import select
+
         from lumen.extensions import db
         from lumen.models.group import Group
-        from sqlalchemy import select
         assert db.session.execute(select(Group).filter_by(name="my-lab")).scalar_one_or_none() is None
 
 

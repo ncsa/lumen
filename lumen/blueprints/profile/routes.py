@@ -56,14 +56,14 @@ def _memberships_by_entity(entity_ids: list[int]) -> dict[int, list[dict]]:
     result: dict[int, list[dict]] = {}
     if not entity_ids:
         return result
-    for eid, g, is_owner in db.session.execute(
+    for eid, group, is_owner in db.session.execute(
         select(GroupMember.entity_id, Group, GroupMember.is_owner)
         .join(Group, Group.id == GroupMember.group_id)
         .where(GroupMember.entity_id.in_(entity_ids))
         .order_by(Group.name)
     ).all():
         result.setdefault(eid, []).append(
-            {"id": g.id, "name": g.name, "auto_join": g.auto_join, "is_owner": is_owner}
+            {"id": group.id, "name": group.name, "auto_join": group.auto_join, "is_owner": is_owner}
         )
     return result
 
