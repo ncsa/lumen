@@ -438,6 +438,24 @@ def test_malformed_tool_arguments_do_not_crash():
     assert out["content"][0]["input"] == {"__raw_arguments": "{oops"}
 
 
+@pytest.mark.parametrize("arguments", ["[]", "null", "42", '"text"'])
+def test_non_object_tool_arguments_are_wrapped(arguments):
+    """Valid JSON that is not an object fails the SDKs' ToolUseBlock validation
+    and is refused when the client replays the turn."""
+    out = translate_response(_completion(
+        message={"role": "assistant", "content": None, "tool_calls": [
+            {"id": "c", "type": "function", "function": {"name": "b", "arguments": arguments}},
+        ]},
+        finish_reason="tool_calls",
+    ), "m")
+    assert out["content"][0]["input"] == {"__raw_arguments": arguments}
+    # The returned turn can be sent back as history.
+    translate_request(_req(messages=[
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": out["content"]},
+    ]))
+
+
 def test_response_reasoning_becomes_a_thinking_block():
     out = translate_response(_completion(
         message={"role": "assistant", "content": "answer", "reasoning_content": "thought"}), "m")

@@ -513,6 +513,10 @@ def _tool_use_block(call):
         # Anthropic's `input` is an object, so the raw text is preserved under a
         # key rather than dropped.
         parsed = {"__raw_arguments": arguments}
+    if not isinstance(parsed, dict):
+        # Valid JSON that is not an object ([], null, 42) is still not a valid
+        # `input`; same fallback as _tool_input_json on the streaming path.
+        parsed = {"__raw_arguments": arguments}
     return {
         "type": "tool_use",
         "id": call.get("id") or "toolu_unknown",
