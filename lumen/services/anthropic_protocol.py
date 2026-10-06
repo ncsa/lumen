@@ -276,6 +276,14 @@ def _translate_tools(tools):
             raise AnthropicError("each tool requires a name")
         if not isinstance(tool.get("input_schema"), dict):
             raise AnthropicError("tool input_schema must be an object")
+        # `strict` asks for arguments guaranteed to match the schema. Backends
+        # differ on whether they enforce OpenAI's `strict`, and dropping it would
+        # let unconstrained arguments through, so it is refused.
+        strict = tool.get("strict", False)
+        if not isinstance(strict, bool):
+            raise AnthropicError("tool strict must be a boolean")
+        if strict:
+            raise AnthropicError("strict tool validation is unsupported")
         function = {"name": name, "parameters": tool["input_schema"]}
         if tool.get("description"):
             function["description"] = tool["description"]

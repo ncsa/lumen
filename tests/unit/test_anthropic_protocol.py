@@ -271,6 +271,18 @@ def test_tools_translate_to_openai_functions():
     }]
 
 
+def test_strict_tools_are_refused():
+    """Forwarding without `strict` would let the model return arguments that do
+    not match the schema the client asked to be enforced."""
+    tool = {"name": "bash", "input_schema": {"type": "object"}}
+    with pytest.raises(AnthropicError, match="strict"):
+        translate_request(_req(tools=[{**tool, "strict": True}]))
+    with pytest.raises(AnthropicError, match="strict"):
+        translate_request(_req(tools=[{**tool, "strict": "yes"}]))
+    _, _, _, kwargs, _ = translate_request(_req(tools=[{**tool, "strict": False}]))
+    assert "strict" not in kwargs["tools"][0]["function"]
+
+
 def test_a_commonly_refused_beta_explains_what_happens_next():
     """The bare name leaves an operator guessing whether the client recovered."""
     from lumen.services.anthropic_protocol import check_headers
