@@ -1,5 +1,8 @@
 from bs4 import BeautifulSoup
 
+from lumen.extensions import db
+from lumen.models.model_config import ModelConfig
+
 
 def _soup(auth_client):
     return BeautifulSoup(auth_client.get("/models").data, "html.parser")
@@ -42,8 +45,6 @@ def test_model_name_does_not_wrap(auth_client, test_model):
 
 def test_needs_ack_row_has_lock_icon_and_hidden_text(app, auth_client, test_model):
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.model_config import ModelConfig
         db.session.get(ModelConfig, test_model["id"]).needs_ack = True
         db.session.commit()
 
