@@ -12,9 +12,8 @@ The **Models** page (`/models`) shows every AI model available to you in your Lu
 | **Input** | What the model accepts, one pill per modality (text, image, audio) — a dash means the instance hasn't published modality info |
 | **Coins / 1M tokens — In** | Cost per million input tokens |
 | **Coins / 1M tokens — Out** | Cost per million output tokens |
-| **Healthy** | How many of the model's backend servers are currently reachable, out of the total configured (e.g. `3 / 4`) |
 | **Last Checked** | When the most recent health check ran |
-| **Status** | Current availability (see below) |
+| **Status** | Current availability (see below), followed by how many of the model's backend servers are currently reachable out of the total configured (e.g. **ok** `4/4`, **degraded** `2/4`) |
 | **Ack** | Whether you must acknowledge the model's terms before use (see below) |
 
 ## Status Badges
@@ -26,6 +25,8 @@ The **Models** page (`/models`) shows every AI model available to you in your Lu
 | **down** (red) | No backends are reachable — model is temporarily unavailable |
 | **disabled** (gray) | Model has been turned off |
 | **no endpoints** (gray) | No backends have been set up for this model |
+
+The healthy count is shown only for enabled models that have at least one backend; **disabled** and **no endpoints** show the badge alone.
 
 In the **Ack** column, models that require a one-time acknowledgment show a lock icon, and early-access models show an **early access** badge — these models may change or be removed at any time, and you must acknowledge that before using them. A model with an end date disappears from this page once the date passes.
 

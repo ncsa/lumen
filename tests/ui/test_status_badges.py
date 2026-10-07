@@ -1,15 +1,28 @@
 from bs4 import BeautifulSoup
 
 
-def _get_badge(html_bytes, model_name):
+def _get_status_cell(html_bytes, model_name):
     soup = BeautifulSoup(html_bytes, "html.parser")
-    # Find the row containing the model name link, then find its badge
+    # Column index of Status, expanding the grouped "Coins / 1M tokens" header
+    status_idx = 0
+    for th in soup.find("thead").find("tr").find_all("th"):
+        if th.get_text(strip=True) == "Status":
+            break
+        status_idx += int(th.get("colspan", 1))
+    # Find the row containing the model name link, then its Status cell
     for row in soup.find_all("tr"):
-        link = row.find("a", string=model_name)
-        if link:
-            badge = row.find("span", class_="badge")
-            return badge
+        if row.find("a", string=model_name):
+            return row.find_all("td")[status_idx]
     return None
+
+
+def _get_badge(html_bytes, model_name):
+    cell = _get_status_cell(html_bytes, model_name)
+    return cell.find("span", class_="badge") if cell else None
+
+
+def _status_text(html_bytes, model_name):
+    return " ".join(_get_status_cell(html_bytes, model_name).get_text().split())
 
 
 def test_ok_badge_uses_bg_success(app, auth_client, test_model):
@@ -29,6 +42,7 @@ def test_ok_badge_uses_bg_success(app, auth_client, test_model):
     assert badge is not None
     assert "bg-success" in badge["class"]
     assert badge.get_text(strip=True) == "ok"
+    assert _status_text(resp.data, test_model["model_name"]) == "ok 1/1"
 
 
 def test_down_badge_uses_bg_danger(app, auth_client, test_model):
@@ -48,6 +62,7 @@ def test_down_badge_uses_bg_danger(app, auth_client, test_model):
     assert badge is not None
     assert "bg-danger" in badge["class"]
     assert badge.get_text(strip=True) == "down"
+    assert _status_text(resp.data, test_model["model_name"]) == "down 0/1"
 
 
 def test_degraded_badge_uses_bg_warning(app, auth_client, test_model):
@@ -74,6 +89,7 @@ def test_degraded_badge_uses_bg_warning(app, auth_client, test_model):
     assert "bg-warning" in badge["class"]
     assert "text-dark" in badge["class"]
     assert badge.get_text(strip=True) == "degraded"
+    assert _status_text(resp.data, test_model["model_name"]) == "degraded 1/2"
 
 
 def test_no_endpoints_badge_uses_bg_secondary(app, auth_client, test_model):
@@ -83,3 +99,24 @@ def test_no_endpoints_badge_uses_bg_secondary(app, auth_client, test_model):
     assert badge is not None
     assert "bg-secondary" in badge["class"]
     assert badge.get_text(strip=True) == "no endpoints"
+    assert _status_text(resp.data, test_model["model_name"]) == "no endpoints"
+
+
+def test_status_badge_skips_modality_pills(app, auth_client, test_model):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        db.session.get(ModelConfig, test_model["id"]).input_modalities = ["text", "image"]
+        db.session.commit()
+
+    resp = auth_client.get("/models")
+    badge = _get_badge(resp.data, test_model["model_name"])
+    assert "rounded-pill" not in badge["class"]
+    assert badge.get_text(strip=True) == "no endpoints"
+
+
+def test_no_healthy_column(auth_client, test_model):
+    soup = BeautifulSoup(auth_client.get("/models").data, "html.parser")
+    headers = [th.get_text(strip=True) for th in soup.find("thead").find_all("th")]
+    assert "Healthy" not in headers
+    assert "Status" in headers
