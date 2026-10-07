@@ -172,6 +172,7 @@ async function loadConfig() {
     normalizeLegacyConfig(data);   // migrate v1 forms so the editor (and save) use the current version
     state.data = data;
     state.original = clone(data);
+    state.selectedModelIdx = firstModelIdx();
     buildNav();
     navigateTo('app');
   } catch (e) {
@@ -265,7 +266,7 @@ async function doSave() {
 function resetConfig() {
   if (!state.original) return;
   state.data = clone(state.original);
-  state.selectedModelIdx = 0;
+  state.selectedModelIdx = firstModelIdx();
   renderSection(state.currentSection);
 }
 
@@ -532,19 +533,29 @@ function collectAdmins() {
 }
 
 // ── Models ─────────────────────────────────────────────────────────────────
-function renderModels() {
-  const models = state.data.models || [];
-  if (state.selectedModelIdx >= models.length) state.selectedModelIdx = 0;
-  const label = i => String(models[i].name || `Model ${i}`);
-  const sortedIdxs = models.map((_, i) => i).sort((a, b) => {
+function modelLabel(models, i) {
+  return String(models[i].name || `Model ${i}`);
+}
+// Display order: enabled models A–Z, then disabled models A–Z. Returns indexes
+// into `models`; the underlying array (and saved config.yaml) keeps its order.
+function sortedModelIdxs(models) {
+  return models.map((_, i) => i).sort((a, b) => {
     const aOn = !models[a].disabled;
     const bOn = !models[b].disabled;
     if (aOn !== bOn) return aOn ? -1 : 1;
-    return label(a).localeCompare(label(b), undefined, { sensitivity: 'base', numeric: true });
+    return modelLabel(models, a).localeCompare(modelLabel(models, b), undefined, { sensitivity: 'base', numeric: true });
   });
+}
+function firstModelIdx() {
+  return sortedModelIdxs(state.data.models || [])[0] ?? 0;
+}
+function renderModels() {
+  const models = state.data.models || [];
+  const sortedIdxs = sortedModelIdxs(models);
+  if (state.selectedModelIdx >= models.length) state.selectedModelIdx = sortedIdxs[0] ?? 0;
   const opts = sortedIdxs.map(i => {
     const m = models[i];
-    return `<option value="${i}"${i === state.selectedModelIdx ? ' selected' : ''}>${esc(label(i))}${m.disabled ? ' (disabled)' : ''}</option>`;
+    return `<option value="${i}"${i === state.selectedModelIdx ? ' selected' : ''}>${esc(modelLabel(models, i))}${m.disabled ? ' (disabled)' : ''}</option>`;
   }).join('');
   $('cfg-body').innerHTML = `
     <div class="entity-bar">
@@ -651,7 +662,7 @@ async function deleteModel() {
   if (!state.data.models?.[idx]) return;
   if (!await appConfirm(`Delete model "${state.data.models[idx].name || `Model ${idx}`}"?`, { title: 'Delete Model', okLabel: 'Delete', okClass: 'btn-danger' })) return;
   state.data.models.splice(idx, 1);
-  state.selectedModelIdx = Math.max(0, idx - 1);
+  state.selectedModelIdx = firstModelIdx();
   renderModels();
 }
 function collectCurrentModel() {
