@@ -13,7 +13,9 @@ def _get_status_cell(html_bytes, model_name):
     # Find the row containing the model name link, then its Status cell
     for row in soup.find_all("tr"):
         if row.find("a", string=model_name):
-            return row.find_all("td")[status_idx]
+            cells = row.find_all("td")
+            assert len(cells) > status_idx, f"row for {model_name} has no Status cell"
+            return cells[status_idx]
     return None
 
 
@@ -23,7 +25,14 @@ def _get_badge(html_bytes, model_name):
 
 
 def _status_text(html_bytes, model_name):
-    return " ".join(_get_status_cell(html_bytes, model_name).get_text().split())
+    cell = _get_status_cell(html_bytes, model_name)
+    assert cell is not None, f"model row for {model_name} not found"
+    return " ".join(cell.get_text().split())
+
+
+def _count_span(html_bytes, model_name):
+    cell = _get_status_cell(html_bytes, model_name)
+    return cell.find("span", class_="fw-bold") if cell else None
 
 
 def test_ok_badge_uses_bg_success(app, auth_client, test_model):
@@ -44,6 +53,7 @@ def test_ok_badge_uses_bg_success(app, auth_client, test_model):
     assert "bg-success" in badge["class"]
     assert badge.get_text(strip=True) == "ok"
     assert _status_text(resp.data, test_model["model_name"]) == "ok 1/1"
+    assert "text-success" in _count_span(resp.data, test_model["model_name"])["class"]
 
 
 def test_down_badge_uses_bg_danger(app, auth_client, test_model):
@@ -64,6 +74,7 @@ def test_down_badge_uses_bg_danger(app, auth_client, test_model):
     assert "bg-danger" in badge["class"]
     assert badge.get_text(strip=True) == "down"
     assert _status_text(resp.data, test_model["model_name"]) == "down 0/1"
+    assert "text-danger" in _count_span(resp.data, test_model["model_name"])["class"]
 
 
 def test_degraded_badge_uses_bg_warning(app, auth_client, test_model):
@@ -91,6 +102,7 @@ def test_degraded_badge_uses_bg_warning(app, auth_client, test_model):
     assert "text-dark" in badge["class"]
     assert badge.get_text(strip=True) == "degraded"
     assert _status_text(resp.data, test_model["model_name"]) == "degraded 1/2"
+    assert "text-success" in _count_span(resp.data, test_model["model_name"])["class"]
 
 
 def test_no_endpoints_badge_uses_bg_secondary(app, auth_client, test_model):
@@ -101,6 +113,7 @@ def test_no_endpoints_badge_uses_bg_secondary(app, auth_client, test_model):
     assert "bg-secondary" in badge["class"]
     assert badge.get_text(strip=True) == "no endpoints"
     assert _status_text(resp.data, test_model["model_name"]) == "no endpoints"
+    assert _count_span(resp.data, test_model["model_name"]) is None
 
 
 def test_status_badge_skips_modality_pills(app, auth_client, test_model):
