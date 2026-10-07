@@ -92,7 +92,7 @@ window.renderLocalDatetimes = function (root) {
 };
 
 function relativeTime(d) {
-  const minutes = Math.floor((Date.now() - d) / 60000);
+  const minutes = Math.max(0, Math.floor((Date.now() - d) / 60000));
   if (minutes < 1) return "just now";
   const rtf = new Intl.RelativeTimeFormat([], { style: "short" });
   if (minutes < 60) return rtf.format(-minutes, "minute");
