@@ -535,7 +535,7 @@ function collectAdmins() {
 function renderModels() {
   const models = state.data.models || [];
   if (state.selectedModelIdx >= models.length) state.selectedModelIdx = 0;
-  const label = i => models[i].name || `Model ${i}`;
+  const label = i => String(models[i].name || `Model ${i}`);
   const sortedIdxs = models.map((_, i) => i).sort((a, b) => {
     const aOn = !models[a].disabled;
     const bOn = !models[b].disabled;
