@@ -3,7 +3,8 @@ from bs4 import BeautifulSoup
 
 def _get_status_cell(html_bytes, model_name):
     soup = BeautifulSoup(html_bytes, "html.parser")
-    # Column index of Status, expanding the grouped "Coins / 1M tokens" header
+    # Column index of Status, expanding the grouped "Coins / 1M tokens" header.
+    # Assumes Status is a rowspan header in the first <thead> row.
     status_idx = 0
     for th in soup.find("thead").find("tr").find_all("th"):
         if th.get_text(strip=True) == "Status":
@@ -110,6 +111,9 @@ def test_status_badge_skips_modality_pills(app, auth_client, test_model):
         db.session.commit()
 
     resp = auth_client.get("/models")
+    soup = BeautifulSoup(resp.data, "html.parser")
+    row = soup.find("a", string=test_model["model_name"]).find_parent("tr")
+    assert len(row.find_all("span", class_="rounded-pill")) == 2
     badge = _get_badge(resp.data, test_model["model_name"])
     assert "rounded-pill" not in badge["class"]
     assert badge.get_text(strip=True) == "no endpoints"
