@@ -535,14 +535,16 @@ function collectAdmins() {
 function renderModels() {
   const models = state.data.models || [];
   if (state.selectedModelIdx >= models.length) state.selectedModelIdx = 0;
+  const label = i => models[i].name || `Model ${i}`;
   const sortedIdxs = models.map((_, i) => i).sort((a, b) => {
     const aOn = !models[a].disabled;
     const bOn = !models[b].disabled;
-    return aOn === bOn ? 0 : aOn ? -1 : 1;
+    if (aOn !== bOn) return aOn ? -1 : 1;
+    return label(a).localeCompare(label(b), undefined, { sensitivity: 'base', numeric: true });
   });
   const opts = sortedIdxs.map(i => {
     const m = models[i];
-    return `<option value="${i}"${i === state.selectedModelIdx ? ' selected' : ''}>${esc(m.name || `Model ${i}`)}${m.disabled ? ' (disabled)' : ''}</option>`;
+    return `<option value="${i}"${i === state.selectedModelIdx ? ' selected' : ''}>${esc(label(i))}${m.disabled ? ' (disabled)' : ''}</option>`;
   }).join('');
   $('cfg-body').innerHTML = `
     <div class="entity-bar">
