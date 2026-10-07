@@ -66,13 +66,19 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   window.renderLocalDatetimes();
+  setInterval(function () {
+    document.querySelectorAll(".local-datetime[data-utc][data-relative]").forEach(function (el) {
+      const d = new Date(el.dataset.utc);
+      if (!isNaN(d)) el.textContent = relativeTime(d);
+    });
+  }, 60000);
 });
 
 // Convert UTC ISO timestamps to local time for display. Exposed so pages
 // that insert timestamps after load (e.g. the OAuth consent page flipping a
 // model row to "acknowledged") render them identically to the server pass.
-// Elements with data-relative show "5 min. ago" and keep the full local
-// datetime in their title.
+// Elements with data-relative show "5 min. ago", refresh every minute, and
+// expose the full local datetime in a tooltip shown on hover and focus.
 window.renderLocalDatetimes = function (root) {
   (root || document).querySelectorAll(".local-datetime[data-utc]").forEach(function (el) {
     const d = new Date(el.dataset.utc);
@@ -84,6 +90,8 @@ window.renderLocalDatetimes = function (root) {
       if (el.hasAttribute("data-relative")) {
         el.textContent = relativeTime(d);
         el.title = local;
+        el.tabIndex = 0;
+        bootstrap.Tooltip.getOrCreateInstance(el);
       } else {
         el.textContent = local;
       }
