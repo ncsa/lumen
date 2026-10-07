@@ -68,7 +68,11 @@ document.addEventListener("DOMContentLoaded", function () {
   window.renderLocalDatetimes();
   const relativeEls = document.querySelectorAll(".local-datetime[data-utc][data-relative]");
   if (relativeEls.length) {
-    setInterval(function () {
+    const timer = setInterval(function () {
+      if (!Array.from(relativeEls).some(function (el) { return el.isConnected; })) {
+        clearInterval(timer);
+        return;
+      }
       relativeEls.forEach(function (el) {
         const d = new Date(el.dataset.utc);
         if (!isNaN(d)) el.textContent = relativeTime(d);
