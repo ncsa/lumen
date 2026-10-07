@@ -48,15 +48,18 @@ def test_needs_ack_row_has_lock_icon_and_hidden_text(app, auth_client, test_mode
         db.session.commit()
 
     row = _row(_soup(auth_client), test_model["model_name"])
+    assert row is not None
     icon = row.find("i", class_="bi-lock-fill")
     assert icon is not None
     assert icon["aria-hidden"] == "true"
     hidden = row.find("span", class_="visually-hidden")
+    assert hidden is not None
     assert hidden.get_text(strip=True) == "Acknowledgment required"
-    assert "required" not in [b.get_text(strip=True) for b in row.find_all("span", class_="badge")]
+    assert not any("required" in b.get_text(strip=True) for b in row.find_all("span", class_="badge"))
 
 
 def test_model_without_ack_has_no_lock(auth_client, test_model):
     row = _row(_soup(auth_client), test_model["model_name"])
+    assert row is not None
     assert row.find("i", class_="bi-lock-fill") is None
     assert "Acknowledgment required" not in row.get_text()
