@@ -66,12 +66,15 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   window.renderLocalDatetimes();
-  setInterval(function () {
-    document.querySelectorAll(".local-datetime[data-utc][data-relative]").forEach(function (el) {
-      const d = new Date(el.dataset.utc);
-      if (!isNaN(d)) el.textContent = relativeTime(d);
-    });
-  }, 60000);
+  const relativeEls = document.querySelectorAll(".local-datetime[data-utc][data-relative]");
+  if (relativeEls.length) {
+    setInterval(function () {
+      relativeEls.forEach(function (el) {
+        const d = new Date(el.dataset.utc);
+        if (!isNaN(d)) el.textContent = relativeTime(d);
+      });
+    }, 60000);
+  }
 });
 
 // Convert UTC ISO timestamps to local time for display. Exposed so pages
@@ -89,7 +92,7 @@ window.renderLocalDatetimes = function (root) {
       });
       if (el.hasAttribute("data-relative")) {
         el.textContent = relativeTime(d);
-        el.title = local;
+        el.title = local;  // becomes the Bootstrap tooltip's content
         el.tabIndex = 0;
         bootstrap.Tooltip.getOrCreateInstance(el);
       } else {
