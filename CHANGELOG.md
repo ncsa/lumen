@@ -28,6 +28,10 @@ All notable changes to Lumen will be documented in this file.
 - **Breaking (Helm chart):** the chart no longer deploys vLLM/SGLang model servers; `models` is copied verbatim into `config.yaml` and uses the config format (snake_case keys, `endpoints` list).
 - Config editor model list is sorted A–Z, with disabled models listed after enabled ones; the first model in that order is selected by default.
 
+### Fixed
+
+- Fix model Update resetting input modalities to text-only on SGLang endpoints.
+
 ## [2.1.0] - 2026-09-20
 
 ### Added

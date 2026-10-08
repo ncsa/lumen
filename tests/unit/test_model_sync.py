@@ -373,10 +373,53 @@ def test_server_embedding_sets_text_in_empty_out(monkeypatch):
     assert result["updates"]["output_modalities"] == []
 
 
-def test_server_multimodal_disabled_strips_image(monkeypatch):
-    """enable_multimodal=null on the server vetoes models.dev's image claim."""
+def test_server_multimodal_null_keeps_dev_image(monkeypatch):
+    """enable_multimodal=null (SGLang auto-detect) keeps models.dev's image claim."""
     _patch_ep(monkeypatch,
               ep_model={"id": "m", "max_model_len": 32768, "backend": "sglang", "is_embedding": False, "enable_multimodal": None},
+              dev_match={"modalities": {"input": ["text", "image"], "output": ["text"]}})
+    result = model_sync.sync_model({"name": "m", "input_modalities": ["text"],
+                                    "endpoints": [{"url": "http://x"}]})
+    assert result["updates"]["input_modalities"] == ["text", "image"]
+
+
+def test_server_multimodal_null_keeps_operator_image(monkeypatch):
+    """enable_multimodal=null + operator already has image → no change proposed."""
+    _patch_ep(monkeypatch,
+              ep_model={"id": "m", "max_model_len": 32768, "backend": "sglang", "is_embedding": False, "enable_multimodal": None},
+              dev_match={"modalities": {"input": ["text", "image"], "output": ["text"]}})
+    result = model_sync.sync_model({"name": "m", "input_modalities": ["text", "image"],
+                                    "output_modalities": ["text"],
+                                    "endpoints": [{"url": "http://x"}]})
+    assert "input_modalities" not in result["updates"]
+    assert "output_modalities" not in result["updates"]
+
+
+def test_server_multimodal_null_no_dev_match_keeps_operator(monkeypatch):
+    """enable_multimodal=null + no models.dev match → operator modalities untouched."""
+    _patch_ep(monkeypatch,
+              ep_model={"id": "m", "max_model_len": 32768, "backend": "sglang", "is_embedding": False, "enable_multimodal": None},
+              dev_match=None)
+    result = model_sync.sync_model({"name": "m", "input_modalities": ["text", "audio"],
+                                    "endpoints": [{"url": "http://x"}]})
+    assert "input_modalities" not in result["updates"]
+    assert "output_modalities" not in result["updates"]
+
+
+def test_server_multimodal_missing_keeps_operator(monkeypatch):
+    """enable_multimodal absent from /get_server_info behaves like null."""
+    _patch_ep(monkeypatch,
+              ep_model={"id": "m", "max_model_len": 32768, "backend": "sglang", "is_embedding": False},
+              dev_match=None)
+    result = model_sync.sync_model({"name": "m", "input_modalities": ["text", "image"],
+                                    "endpoints": [{"url": "http://x"}]})
+    assert "input_modalities" not in result["updates"]
+
+
+def test_server_multimodal_false_strips_image(monkeypatch):
+    """enable_multimodal=False on the server vetoes models.dev's image claim."""
+    _patch_ep(monkeypatch,
+              ep_model={"id": "m", "max_model_len": 32768, "backend": "sglang", "is_embedding": False, "enable_multimodal": False},
               dev_match={"modalities": {"input": ["text", "image"], "output": ["text"]}})
     result = model_sync.sync_model({"name": "m", "input_modalities": ["text", "image"],
                                     "endpoints": [{"url": "http://x"}]})
