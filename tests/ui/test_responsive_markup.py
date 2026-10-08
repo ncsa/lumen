@@ -141,10 +141,15 @@ def test_other_pages_keep_normal_flow(auth_client):
     assert "fill-viewport" not in soup.body.get("class", [])
 
 
-def test_banner_moves_to_header_slot_only_on_fill_viewport_pages(app, auth_client, monkeypatch):
+@pytest.mark.parametrize("client_name, url, slot", [
+    ("auth_client", "/chat", "header"),
+    ("auth_client", "/help/", "header"),
+    ("admin_client", "/admin/config", "header"),
+    ("auth_client", "/profile", None),
+])
+def test_banner_moves_to_header_slot_only_on_fill_viewport_pages(request, app, monkeypatch, client_name, url, slot):
     """ilw-page needs the banner in its header slot only where <main> must fill
     the rest of the screen; other pages keep it in the main area."""
     monkeypatch.setitem(app.config, "APP_ANNOUNCEMENT", "Maintenance tonight")
-    for url, slot in (("/chat", "header"), ("/profile", None)):
-        soup = BeautifulSoup(auth_client.get(url).data, "html.parser")
-        assert soup.select_one(".announcement-banner").get("slot") == slot, url
+    soup = BeautifulSoup(request.getfixturevalue(client_name).get(url).data, "html.parser")
+    assert soup.select_one(".announcement-banner").get("slot") == slot
