@@ -44,3 +44,32 @@ def test_cli_embedding_sets_text_in_empty_out():
     changes = _changes({}, {**_SGLANG, "is_embedding": True, "enable_multimodal": None}, None)
     assert changes["input_modalities"] == (None, ["text"])
     assert changes["output_modalities"] == (None, [])
+
+
+def test_cli_multimodal_false_keeps_audio():
+    """enable_multimodal=False strips image/video but keeps audio."""
+    dev = {"modalities": {"input": ["text", "image", "audio", "video"], "output": ["text"]}}
+    changes = _changes({"input_modalities": ["text"]},
+                       {**_SGLANG, "enable_multimodal": False}, dev)
+    assert changes["input_modalities"] == (["text"], ["text", "audio"])
+
+
+def test_cli_multimodal_false_keeps_operator_audio():
+    """enable_multimodal=False + no models.dev match → operator's audio kept, no change."""
+    changes = _changes({"input_modalities": ["text", "audio"]},
+                       {**_SGLANG, "enable_multimodal": False}, None)
+    assert "input_modalities" not in changes
+
+
+def test_cli_multimodal_enabled_operator_audio_only_unchanged():
+    """enable_multimodal=True + no models.dev match + operator ['text','audio'] → no image added."""
+    changes = _changes({"input_modalities": ["text", "audio"]},
+                       {**_SGLANG, "enable_multimodal": True}, None)
+    assert "input_modalities" not in changes
+
+
+def test_cli_multimodal_enabled_adds_image():
+    """enable_multimodal=True + text-only base → image added."""
+    changes = _changes({"input_modalities": ["text"]},
+                       {**_SGLANG, "enable_multimodal": True}, None)
+    assert changes["input_modalities"] == (["text"], ["text", "image"])

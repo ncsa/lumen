@@ -427,6 +427,46 @@ def test_server_multimodal_false_strips_image(monkeypatch):
     assert result["updates"]["input_modalities"] == ["text"]
 
 
+def test_server_multimodal_false_keeps_audio(monkeypatch):
+    """enable_multimodal=False strips image/video but keeps audio."""
+    _patch_ep(monkeypatch,
+              ep_model={"id": "m", "max_model_len": 32768, "backend": "sglang", "is_embedding": False, "enable_multimodal": False},
+              dev_match={"modalities": {"input": ["text", "image", "audio", "video"], "output": ["text"]}})
+    result = model_sync.sync_model({"name": "m", "input_modalities": ["text"],
+                                    "endpoints": [{"url": "http://x"}]})
+    assert result["updates"]["input_modalities"] == ["text", "audio"]
+
+
+def test_server_multimodal_false_keeps_operator_audio(monkeypatch):
+    """enable_multimodal=False + no models.dev match → operator's audio kept, no change."""
+    _patch_ep(monkeypatch,
+              ep_model={"id": "m", "max_model_len": 32768, "backend": "sglang", "is_embedding": False, "enable_multimodal": False},
+              dev_match=None)
+    result = model_sync.sync_model({"name": "m", "input_modalities": ["text", "audio"],
+                                    "endpoints": [{"url": "http://x"}]})
+    assert "input_modalities" not in result["updates"]
+
+
+def test_server_multimodal_enabled_audio_only_unchanged(monkeypatch):
+    """enable_multimodal=True + audio-only model → image is not added."""
+    _patch_ep(monkeypatch,
+              ep_model={"id": "m", "max_model_len": 32768, "backend": "sglang", "is_embedding": False, "enable_multimodal": True},
+              dev_match={"modalities": {"input": ["text", "audio"], "output": ["text"]}})
+    result = model_sync.sync_model({"name": "m", "input_modalities": ["text", "audio"],
+                                    "endpoints": [{"url": "http://x"}]})
+    assert "input_modalities" not in result["updates"]
+
+
+def test_server_multimodal_enabled_operator_audio_only_unchanged(monkeypatch):
+    """enable_multimodal=True + no models.dev match + operator ['text','audio'] → no image added."""
+    _patch_ep(monkeypatch,
+              ep_model={"id": "m", "max_model_len": 32768, "backend": "sglang", "is_embedding": False, "enable_multimodal": True},
+              dev_match=None)
+    result = model_sync.sync_model({"name": "m", "input_modalities": ["text", "audio"],
+                                    "endpoints": [{"url": "http://x"}]})
+    assert "input_modalities" not in result["updates"]
+
+
 def test_server_multimodal_enabled_adds_image(monkeypatch):
     """enable_multimodal=True + models.dev says text only → ensure image present."""
     _patch_ep(monkeypatch,
