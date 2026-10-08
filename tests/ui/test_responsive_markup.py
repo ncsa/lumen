@@ -4,6 +4,8 @@ on a server-rendered page must sit inside a ``.table-responsive`` wrapper, so a
 wide table scrolls inside its own box instead of pushing the whole page sideways
 on a phone. Tables built in JS (e.g. the config editor's endpoints table) are
 not in the server HTML and are covered by ``scripts/responsive_check.py`` instead.
+
+It also pins the chat page to the ``fill-viewport`` layout (see app.css).
 """
 from http import HTTPStatus
 
@@ -85,3 +87,18 @@ def test_data_tables_are_responsive(request, app, admin_user, test_model, client
         if not table.find_parent(class_="table-responsive")
     ]
     assert not bare, f"{url}: tables not wrapped in .table-responsive: {bare}"
+
+
+def test_chat_fills_viewport(auth_client):
+    """Chat takes the screen with the fill-viewport flex layout, not a height
+    measured in JS; the viewport shrinks with the on-screen keyboard."""
+    soup = BeautifulSoup(auth_client.get("/chat").data, "html.parser")
+    assert "fill-viewport" in soup.body.get("class", [])
+    viewport = soup.find("meta", attrs={"name": "viewport"})["content"]
+    assert "interactive-widget=resizes-content" in viewport
+    assert "--chat-top" not in str(soup)
+
+
+def test_other_pages_keep_normal_flow(auth_client):
+    soup = BeautifulSoup(auth_client.get("/profile").data, "html.parser")
+    assert "fill-viewport" not in soup.body.get("class", [])

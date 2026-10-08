@@ -17,4 +17,34 @@
   /* ilw-page sizes its grid column to the content's min-content width, so a wide
      table would stretch the page past the viewport; ignore main's intrinsic width. */
   #main-content { contain: inline-size; }
+
+  /* Full-height pages (body.fill-viewport, see app.css): ilw-page's shadow grid
+     has no height of its own; as the one cell of a grid it stretches to the
+     wrapper's height, so its 1fr main row holds what the header leaves. (A row
+     flex box would also stretch it, but before ilw-page upgrades ilw-header would
+     measure itself as a narrow flex item and stay in compact mode.) The
+     toolkit's overflow-y:hidden would clip the footer below the fold. */
+  body.fill-viewport > ilw-page {
+    display: grid !important;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+    overflow: visible;
+  }
+  body.fill-viewport #main-content { height: 100%; }
+  body.fill-viewport ilw-spacer { display: none; }
+  body.fill-viewport ilw-footer {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+  }
+  @media (max-width: 767.98px) {
+    body.fill-viewport ilw-footer { display: none; }
+  }
+
+  /* The announcement banner sits in ilw-page's header slot (see base.html), so
+     give it the side margins the main area has. */
+  ilw-page > .announcement-banner {
+    margin-left: var(--ilw-page--margin, 0);
+    margin-right: var(--ilw-page--margin, 0);
+  }
 </style>

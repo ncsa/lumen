@@ -1,7 +1,45 @@
+/* ── Full-height pages (body.fill-viewport) ──────────────────── */
+/* The theme wrapper is exactly one screen tall and the page content takes what
+   the header and banner leave, so the page scrolls inside itself instead of
+   measuring offsets in JS. On screens too short for the content's own minimum
+   (landscape phones) the content spills and the page scrolls. The footer sits
+   just below the fold from md up and is hidden on phones; Help and Log Out
+   stay reachable from the header nav. */
+body.fill-viewport > :has(> #main-content) {
+    position: relative;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0 !important; /* themes set min-height:100vh inline */
+}
+body.fill-viewport #main-content,
+body.fill-viewport #main-content > .container-fluid {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow: visible !important;
+}
+/* Size the content from the space it is given, never from what it holds. */
+body.fill-viewport #main-content {
+    contain: size;
+}
+body.fill-viewport > :has(> #main-content) > footer {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+}
+@media (max-width: 767.98px) {
+    body.fill-viewport > :has(> #main-content) > footer {
+        display: none;
+    }
+}
+
 /* ── Chat page layout ────────────────────────────────────────── */
 .chat-page-layout {
     display: flex;
-    height: calc(100vh - var(--chat-top, 200px) - 100px);
+    flex: 1;
+    min-height: 320px;
     overflow: auto;
     margin: 0 -1.5rem;
 }
@@ -56,6 +94,13 @@
     opacity: 1;
 }
 
+/* Touch screens have no hover to reveal it. */
+@media (hover: none) {
+    .conv-remove-btn {
+        opacity: 1;
+    }
+}
+
 /* ── Desktop: offcanvas becomes static sidebar ───────────────── */
 @media (min-width: 768px) {
     .chat-sidebar.offcanvas {
@@ -73,6 +118,24 @@
     .chat-sidebar.offcanvas-start {
         top: auto;
         left: auto;
+    }
+}
+
+/* Model picker: on phones it takes the rest of its row and the ack warning
+   wraps onto its own line below it. */
+#model-picker {
+    flex: 1 1 0;
+    min-width: 0;
+}
+.chat-header .ack-warning {
+    flex-basis: 100%;
+}
+@media (min-width: 576px) {
+    #model-picker {
+        flex: 0 1 280px;
+    }
+    .chat-header .ack-warning {
+        flex-basis: auto;
     }
 }
 
@@ -407,7 +470,7 @@ ilw-content .btn-primary:active {
     border-radius: 999px;
     padding: 0.2rem 0.6rem;
     font-size: 0.8rem;
-    max-width: 280px;
+    max-width: min(280px, 100%);
 }
 .attach-chip .chip-name {
     overflow: hidden;
@@ -442,7 +505,7 @@ ilw-content .btn-primary:active {
 
 /* Inline image in user bubble */
 .bubble-img {
-    max-width: 220px;
+    max-width: min(220px, 100%);
     max-height: 160px;
     border-radius: 6px;
     display: block;
