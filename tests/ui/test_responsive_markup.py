@@ -154,3 +154,19 @@ def test_banner_moves_to_header_slot_only_on_fill_viewport_pages(request, app, m
     monkeypatch.setitem(app.config, "APP_ANNOUNCEMENT", "Maintenance tonight")
     soup = BeautifulSoup(request.getfixturevalue(client_name).get(url).data, "html.parser")
     assert soup.select_one(".announcement-banner").get("slot") == slot
+
+
+@pytest.mark.parametrize("client_name", ["auth_client", "admin_client"])
+def test_usage_charts_and_filters_fit_small_screens(request, client_name):
+    """Charts size to a CSS box instead of a canvas height; the heatmap scrolls
+    in its own box; the period/user filter rows wrap."""
+    soup = BeautifulSoup(request.getfixturevalue(client_name).get("/usage").data, "html.parser")
+    canvases = soup.select("canvas")
+    assert canvases
+    for canvas in canvases:
+        assert "chart-box" in canvas.parent.get("class", []), canvas["id"]
+        assert not canvas.has_attr("height"), canvas["id"]
+    assert "table-responsive" in soup.select_one("#heatmap-container")["class"]
+    for row in (soup.select_one("#period-select").find_parent(class_="justify-content-between"),
+                soup.select_one("#user-filter-banner")):
+        assert "flex-wrap" in row["class"]
