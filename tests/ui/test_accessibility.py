@@ -156,6 +156,20 @@ def test_models_page(auth_client):
     _run_all_checks(resp.data, "/models")
 
 
+def test_models_page_with_access_pills(app, auth_client, test_model):
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+
+    with app.app_context():
+        model = db.session.get(ModelConfig, test_model["id"])
+        model.needs_ack = True
+        model.early_access = True
+        db.session.commit()
+    resp = auth_client.get("/models")
+    assert resp.status_code == HTTPStatus.OK
+    _run_all_checks(resp.data, "/models")
+
+
 def test_connect_page_logged_out(client):
     resp = client.get("/connect")
     assert resp.status_code == HTTPStatus.OK

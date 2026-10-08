@@ -3,6 +3,7 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 
 from lumen.extensions import db
+from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 
@@ -58,37 +59,97 @@ def test_model_name_does_not_wrap(auth_client, test_model):
     assert "text-nowrap" in row.find("a")["class"]
 
 
-def test_needs_ack_row_has_acknowledge_pill(app, auth_client, test_model):
-    _set_model(app, test_model["id"], needs_ack=True)
+def _access_cell(row):
+    return row.find_all("td")[-1]
+
+
+def _access_buttons(row):
+    return {b.find(string=True, recursive=False).strip(): b for b in _access_cell(row).find_all("button")}
+
+
+def _consent(app, entity_id, model_id, **timestamps):
+    with app.app_context():
+        db.session.add(EntityModelConsent(entity_id=entity_id, model_config_id=model_id, **timestamps))
+        db.session.commit()
+
+
+def test_needs_ack_row_has_acknowledge_button(app, auth_client, test_model):
+    _set_model(app, test_model["id"], needs_ack=True, ack_message="Read **this**.")
 
     row = _row(_soup(auth_client), test_model["model_name"])
     assert row is not None
-    pill = row.find("span", class_="badge", string="acknowledge")
-    assert pill is not None
-    assert "bg-warning" in pill["class"]
-    assert "text-dark" in pill["class"]
+    buttons = _access_buttons(row)
+    assert list(buttons) == ["acknowledge"]
+    btn = buttons["acknowledge"]
+    assert btn["type"] == "button"
+    assert {"badge", "rounded-pill", "bg-warning", "text-dark", "ack-btn"} <= set(btn["class"])
+    assert btn["data-name"] == test_model["model_name"]
+    assert btn["data-notice"] == "Read **this**."
+    assert btn["data-early-notice"] == ""
+    assert btn.find("span", class_="visually-hidden").get_text() == f" for {test_model['model_name']}"
     assert row.find("i", class_="bi-lock-fill") is None
     assert "Acknowledgment required" not in row.get_text()
 
 
-def test_early_access_row_has_early_access_pill(app, auth_client, test_model):
+def test_early_access_row_has_early_access_button(app, auth_client, test_model):
     _set_model(app, test_model["id"], early_access=True)
 
     row = _row(_soup(auth_client), test_model["model_name"])
     assert row is not None
-    pill = row.find("span", class_="badge", string="early access")
-    assert pill is not None
-    assert "bg-info" in pill["class"]
-    assert "acknowledge" not in _pills(row)
+    buttons = _access_buttons(row)
+    assert list(buttons) == ["early access"]
+    btn = buttons["early access"]
+    assert "bg-info" in btn["class"]
+    assert btn["data-name"] == test_model["model_name"]
+    assert btn["data-notice"] == ""
 
 
-def test_plain_model_has_no_access_pills(auth_client, test_model):
+def test_both_requirements_render_both_buttons(app, auth_client, test_model):
+    _set_model(app, test_model["id"], needs_ack=True, early_access=True)
+
+    row = _row(_soup(auth_client), test_model["model_name"])
+    buttons = _access_buttons(row)
+    assert list(buttons) == ["acknowledge", "early access"]
+    # Either pill opens the same dialog with both notices.
+    assert buttons["acknowledge"]["data-early-notice"] == buttons["early access"]["data-early-notice"]
+    assert buttons["acknowledge"]["data-notice"] == buttons["early access"]["data-notice"]
+
+
+def test_consented_model_shows_single_granted_pill(app, auth_client, test_user, test_model):
+    _set_model(app, test_model["id"], needs_ack=True, early_access=True)
+    _consent(app, test_user["id"], test_model["id"], consented_at=datetime(2026, 1, 1), early_access_at=datetime(2026, 1, 1))
+
+    cell = _access_cell(_row(_soup(auth_client), test_model["model_name"]))
+    assert cell.find_all("button") == []
+    pills = cell.find_all("span", class_="badge")
+    assert len(pills) == 1
+    assert pills[0].get_text(strip=True) == "granted"
+    assert "bg-success" in pills[0]["class"]
+
+
+def test_requirement_added_after_consent_shows_pills_again(app, auth_client, test_user, test_model):
+    _set_model(app, test_model["id"], needs_ack=True)
+    _consent(app, test_user["id"], test_model["id"], consented_at=datetime(2026, 1, 1))
+    _set_model(app, test_model["id"], early_access=True)
+
+    row = _row(_soup(auth_client), test_model["model_name"])
+    assert list(_access_buttons(row)) == ["acknowledge", "early access"]
+    assert "granted" not in _pills(row)
+
+
+def test_plain_model_has_empty_access_cell(auth_client, test_model):
     row = _row(_soup(auth_client), test_model["model_name"])
     assert row is not None
-    pills = _pills(row)
-    assert "acknowledge" not in pills
-    assert "early access" not in pills
+    cell = _access_cell(row)
+    assert cell.get_text(strip=True) == ""
+    assert cell.find("button") is None
     assert row.find("i", class_="bi-lock-fill") is None
+
+
+def test_page_includes_ack_dialog(auth_client, test_model):
+    soup = _soup(auth_client)
+    assert soup.find(id="ackModal") is not None
+    assert any("ack-consent.js" in (s.get("src") or "") for s in soup.find_all("script"))
 
 
 def test_checked_header_renamed(auth_client, test_model):
