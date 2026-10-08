@@ -1,8 +1,16 @@
 {% extends "base.html" %}
 {% block title %}Help — {{ app_name }}{% endblock %}
+{% block body_class %}fill-viewport{% endblock %}
 
 {% block head %}
 <style>
+/* The page fills the screen (fill-viewport); sidebar and content scroll on their own. */
+.help-page { display:flex; flex:1; min-height:0; }
+.help-sidebar { width:260px; flex-shrink:0; border-right:1px solid var(--bs-border-color); padding:16px 0; overflow-y:auto; }
+.help-content { flex:1; padding:16px; overflow-y:auto; overflow-x:hidden; min-width:0; }
+@media (min-width: 768px) {
+  .help-content { padding:24px 32px; }
+}
 .help-sidebar .nav-link.active {
   color: var(--bs-link-color) !important;
   background: rgba(0,0,0,0.05) !important;
@@ -34,12 +42,13 @@
 {% endblock %}
 
 {% block content %}
-<div class="help-page" style="display:flex;gap:0;flex:1">
+<div class="help-page">
 
-  <!-- Sidebar -->
-  <aside class="help-sidebar" aria-label="Help navigation" style="width:260px;flex-shrink:0;border-right:1px solid var(--bs-border-color);padding:16px 0;overflow-y:auto;position:sticky">
-    <div class="px-3 py-2 border-bottom">
+  <!-- Sidebar: offcanvas below md, static from md up -->
+  <aside class="help-sidebar offcanvas-md offcanvas-start" id="helpSidebar" tabindex="-1" aria-label="Help navigation">
+    <div class="d-flex align-items-center px-3 py-2 border-bottom">
       <h2 class="h6 mb-0 fw-bold" id="help-nav-heading">Help</h2>
+      <button type="button" class="btn-close ms-auto d-md-none" data-bs-dismiss="offcanvas" data-bs-target="#helpSidebar" aria-label="Close help topics"></button>
     </div>
     <nav aria-labelledby="help-nav-heading" style="padding:8px 0">
       {% for section in sections %}
@@ -82,7 +91,12 @@
   </aside>
 
   <!-- Content -->
-  <section class="help-content" aria-label="Help content" style="flex:1;padding:24px 32px;overflow-y:auto;overflow-x:hidden;min-width:0">
+  <section class="help-content" aria-label="Help content">
+    <button type="button" class="btn btn-sm btn-outline-secondary d-md-none mb-3"
+            data-bs-toggle="offcanvas" data-bs-target="#helpSidebar"
+            aria-controls="helpSidebar" aria-label="Help topics">
+      <span aria-hidden="true">☰</span> Help topics
+    </button>
     <h1 class="mb-3">{{ title }}</h1>
     <div class="help-markdown" aria-live="polite">{{ page_content | markdown }}</div>
   </section>

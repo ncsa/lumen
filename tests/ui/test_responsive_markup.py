@@ -2,11 +2,14 @@
 Static responsive-markup guard: every Bootstrap data table (``<table class="table">``)
 on a server-rendered page must sit inside a ``.table-responsive`` wrapper, so a
 wide table scrolls inside its own box instead of pushing the whole page sideways
-on a phone. Tables built in JS (e.g. the config editor's endpoints table) are
-not in the server HTML and are covered by ``scripts/responsive_check.py`` instead.
+on a phone. Tables built in JS are not in the server HTML and are covered by
+``scripts/responsive_check.py`` instead; the config editor's endpoints table is
+checked here in its inline-script template.
 
-It also pins the chat page to the ``fill-viewport`` layout (see app.css).
+It also pins chat, help and the config editor to the ``fill-viewport`` layout
+(see app.css).
 """
+import re
 from http import HTTPStatus
 
 import pytest
@@ -97,6 +100,40 @@ def test_chat_fills_viewport(auth_client):
     viewport = soup.find("meta", attrs={"name": "viewport"})["content"]
     assert "interactive-widget=resizes-content" in viewport
     assert "--chat-top" not in str(soup)
+
+
+@pytest.mark.parametrize("client_name, url", [
+    ("auth_client", "/help/"),
+    ("admin_client", "/admin/config"),
+])
+def test_help_and_config_fill_viewport(request, client_name, url):
+    html = request.getfixturevalue(client_name).get(url).data.decode()
+    soup = BeautifulSoup(html, "html.parser")
+    assert "fill-viewport" in soup.body.get("class", [])
+    assert "--chat-top" not in html
+    assert "--cfg-top" not in html
+
+
+def test_help_sidebar_is_offcanvas_on_phones(auth_client):
+    """Below md the help topics sit in an offcanvas opened by a labelled button."""
+    soup = BeautifulSoup(auth_client.get("/help/").data, "html.parser")
+    sidebar = soup.select_one("aside.help-sidebar")
+    assert "offcanvas-md" in sidebar["class"]
+    button = soup.select_one('[data-bs-toggle="offcanvas"][data-bs-target="#helpSidebar"]')
+    assert button["aria-controls"] == sidebar["id"] == "helpSidebar"
+    assert button["aria-label"] == "Help topics"
+    assert "d-md-none" in button["class"]
+
+
+def test_config_endpoints_table_is_responsive(admin_client):
+    """The endpoints table is rendered from a JS template: it must sit in
+    .table-responsive and keep its fixed column widths out of inline styles."""
+    html = admin_client.get("/admin/config").data.decode()
+    template = re.search(r"card\('Endpoints', `(.*?)`\)", html, re.S).group(1)
+    soup = BeautifulSoup(template, "html.parser")
+    table = soup.select_one("table.table")
+    assert table.find_parent(class_="table-responsive")
+    assert not [th for th in table.select("th") if "width" in th.get("style", "")]
 
 
 def test_other_pages_keep_normal_flow(auth_client):
