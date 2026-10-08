@@ -41,9 +41,9 @@
     body.fill-viewport ilw-footer { display: none; }
   }
 
-  /* The announcement banner sits in ilw-page's header slot (see base.html), so
-     give it the side margins the main area has. */
-  ilw-page > .announcement-banner {
+  /* On full-height pages the announcement banner sits in ilw-page's header slot
+     (see base.html), so give it the side margins the main area has. */
+  ilw-page > .announcement-banner[slot="header"] {
     margin-left: var(--ilw-page--margin, 0);
     margin-right: var(--ilw-page--margin, 0);
   }

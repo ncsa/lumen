@@ -134,13 +134,15 @@
   // ── Input placeholder ────────────────────────────────────────
   // The keyboard hint does not fit on phones (and they have no Shift+Enter).
   const chatInput = document.getElementById("chat-input");
-  const longPlaceholder = chatInput.placeholder;
-  const phoneQuery = window.matchMedia("(max-width: 575.98px)");
-  function updatePlaceholder() {
-    chatInput.placeholder = phoneQuery.matches ? chatInput.dataset.shortPlaceholder : longPlaceholder;
+  if (chatInput) {
+    const longPlaceholder = chatInput.placeholder;
+    const phoneQuery = window.matchMedia("(max-width: 575.98px)");
+    const updatePlaceholder = () => {
+      chatInput.placeholder = phoneQuery.matches ? chatInput.dataset.shortPlaceholder : longPlaceholder;
+    };
+    phoneQuery.addEventListener("change", updatePlaceholder);
+    updatePlaceholder();
   }
-  phoneQuery.addEventListener("change", updatePlaceholder);
-  updatePlaceholder();
 
   // ── Math + Markdown rendering ───────────────────────────────
   function renderMarkdownWithMath(text) {

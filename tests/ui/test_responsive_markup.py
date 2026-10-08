@@ -102,3 +102,12 @@ def test_chat_fills_viewport(auth_client):
 def test_other_pages_keep_normal_flow(auth_client):
     soup = BeautifulSoup(auth_client.get("/profile").data, "html.parser")
     assert "fill-viewport" not in soup.body.get("class", [])
+
+
+def test_banner_moves_to_header_slot_only_on_fill_viewport_pages(app, auth_client, monkeypatch):
+    """ilw-page needs the banner in its header slot only where <main> must fill
+    the rest of the screen; other pages keep it in the main area."""
+    monkeypatch.setitem(app.config, "APP_ANNOUNCEMENT", "Maintenance tonight")
+    for url, slot in (("/chat", "header"), ("/profile", None)):
+        soup = BeautifulSoup(auth_client.get(url).data, "html.parser")
+        assert soup.select_one(".announcement-banner").get("slot") == slot, url

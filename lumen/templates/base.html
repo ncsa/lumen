@@ -22,9 +22,10 @@
   {% include 'theme/header.html' %}
 
   {% if app_announcement %}
-  {# slot="header": ilw-page (illinois theme) stacks it with the header, so its
-     main area is left entirely to <main>; other themes ignore the attribute. #}
-  <div class="announcement-banner" slot="header"
+  {# Full-height pages: slot="header" makes ilw-page (illinois theme) stack it with
+     the header, so its main area is left entirely to <main>; other themes ignore
+     the attribute. #}
+  <div class="announcement-banner"{% if 'fill-viewport' in self.body_class() %} slot="header"{% endif %}
        style="background-color:{{ theme.banner_bg_color }};color:{{ theme.banner_text_color }};border-color:{{ theme.banner_border_color }}"
        role="region" aria-label="Site announcement"
        data-announcement-key="{{ app_announcement_key }}">
