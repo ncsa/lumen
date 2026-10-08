@@ -34,6 +34,25 @@ crash page. Use it after UI or routing changes.
 BASE_URL=http://localhost:5001 uv run python scripts/smoke_test.py
 ```
 
+## responsive_check.py
+
+Audits every page at phone and tablet sizes (375×667, 768×1024, 1024×768) and at
+1280×800, signed in as the dev admin (admin mode on) and as the non-admin demo
+user (the landing page signed out). For each page and size it reports horizontal
+overflow and names the elements causing it; on chat it also checks that the input
+bar is fully visible without scrolling. It writes `report.md` (a pass/fail table)
+and full-page screenshots to `responsive-audit/` (git-ignored) and exits 1 if
+anything fails. It seeds the same demo data as `screenshots.py`, plus a demo group,
+so run it with the **same** `CONFIG_YAML` as the running app.
+
+```bash
+CONFIG_YAML=./dev.config.yaml uv run python scripts/responsive_check.py
+ONLY=chat,models CONFIG_YAML=./dev.config.yaml uv run python scripts/responsive_check.py
+```
+
+Override defaults with `BASE_URL`, `OUTPUT_DIR`, `MODEL`, `CHROME_PATH`, and `ONLY`
+(comma-separated page names from the report).
+
 ## screenshots.py
 
 Regenerates the screenshots in `docs/img/` (chat, models, usage, projects,
