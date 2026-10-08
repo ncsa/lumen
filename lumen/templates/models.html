@@ -18,11 +18,11 @@
       <th scope="col" rowspan="2" class="text-center">Healthy</th>
       <th scope="col" rowspan="2">Last Checked</th>
       <th scope="col" rowspan="2">Status</th>
-      <th scope="col" rowspan="2" class="text-center"><abbr title="Acknowledgment required before use">Ack</abbr></th>
+      <th scope="col" rowspan="2" class="text-center">Access</th>
     </tr>
     <tr>
-      <th scope="col" class="text-end">In</th>
-      <th scope="col" class="text-end">Out</th>
+      <th scope="col" class="text-end">Input</th>
+      <th scope="col" class="text-end">Output</th>
     </tr>
   </thead>
   <tbody>
@@ -73,7 +73,7 @@
       </td>
       <td class="text-center">
         {% if config.needs_ack %}
-          <i class="bi bi-lock-fill" aria-hidden="true"></i><span class="visually-hidden">Acknowledgment required</span>
+          <span class="badge rounded-pill bg-warning text-dark">acknowledge</span>
         {% endif %}
         {% if config.early_access %}
           <span class="badge rounded-pill bg-info text-dark">early access</span>
