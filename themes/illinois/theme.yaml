@@ -10,9 +10,24 @@ js:
   - type: module
     src: https://cdn.toolkit.illinois.edu/3/toolkit.js
 skipto_color_theme: illinois
-footer_links:
-  - label: Illinois Computes
-    url: https://computes.illinois.edu
+footer_actions:
+  - label: Illinois Chat
+    url: https://chat.illinois.edu
+  - label: Lumen
+    url: https://lumen.computes.illinois.edu
+  - label: LLMHub
+    url: https://llmhub.computes.illinois.edu
+  - label: Which LLM should I use?
+    url: https://llm.computes.illinois.edu/
+footer_menus:
+  - title: Illinois Computes
+    links:
+      - label: Illinois Computes
+        url: https://computes.illinois.edu
+      - label: LLM guide
+        url: https://llm.computes.illinois.edu/
+  - title: Lumen
+    github_links: true
 banner_bg_color: "#fff9c4"
 banner_text_color: "#000000"
 banner_border_color: "#000000"

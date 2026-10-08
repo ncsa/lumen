@@ -3,10 +3,26 @@
   {% if theme.institution %}<p slot="primary-unit"><a href="{{ theme.institution_url }}">{{ theme.institution }}</a></p>{% endif %}
   <p slot="site-name"><a href="{% if is_logged_in %}{{ url_for('chat.chat_page') }}{% else %}/{% endif %}">{{ app_name }}</a></p>
   <div slot="actions">
-    {% for link in theme.footer_links %}
+    {% for link in theme.footer_actions %}
     <a href="{{ link.url }}" target="_blank" rel="noopener noreferrer">{{ link.label }}</a>
     {% endfor %}
-    <a href="{{ github_url }}" target="_blank" rel="noopener noreferrer">GitHub Repository</a>
-    <a href="{{ github_url }}/issues" target="_blank" rel="noopener noreferrer">Request Feature</a>
   </div>
+  {% if theme.footer_menus %}
+  <ilw-grid gap="30px" padding="0" style="--ilw-color--background: transparent">
+    {% for menu in theme.footer_menus %}
+    <nav class="ilw-footer-menu" aria-labelledby="footer-menu-{{ loop.index }}">
+      <h2 id="footer-menu-{{ loop.index }}">{{ menu.title }}</h2>
+      <ul>
+        {% for link in menu.links or [] %}
+        <li><a href="{{ link.url }}" target="_blank" rel="noopener noreferrer">{{ link.label }}</a></li>
+        {% endfor %}
+        {% if menu.github_links %}
+        <li><a href="{{ github_url }}" target="_blank" rel="noopener noreferrer">GitHub Repository</a></li>
+        <li><a href="{{ github_url }}/issues" target="_blank" rel="noopener noreferrer">Request Feature</a></li>
+        {% endif %}
+      </ul>
+    </nav>
+    {% endfor %}
+  </ilw-grid>
+  {% endif %}
 </ilw-footer>
