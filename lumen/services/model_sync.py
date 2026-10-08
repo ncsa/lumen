@@ -327,20 +327,25 @@ def _server_modalities(ep_model: dict, pending_in, current_in) -> tuple:
     Each component is the authoritative modality list, or None to mean
     "don't touch this field". pending_in is the input_modalities already
     proposed by models.dev (if any); current_in is the operator's current
-    value — used as the base to which image is added when multimodal is on.
+    value. The base is pending_in, else current_in, else ["text"].
 
     enable_multimodal null/missing is SGLang's auto-detect default and says
     nothing about the model's modalities, so it leaves both fields untouched.
+    False strips image/video from the base but keeps text and audio. True adds
+    image only when the base has no non-text input modality, so an audio-only
+    model is left as is.
     """
     if ep_model.get("is_embedding"):
         return ["text"], []
     multimodal = ep_model.get("enable_multimodal")
     if multimodal is None:
         return None, None
+    base = pending_in or current_in or ["text"]
     if multimodal is True:
-        base = pending_in or current_in or ["text"]
-        return (base if "image" in base else [*base, "image"]), None
-    return ["text"], None
+        if any(m != "text" for m in base):
+            return base, None
+        return [*base, "image"], None
+    return [m for m in base if m not in ("image", "video")] or ["text"], None
 
 
 # ---------------------------------------------------------------------------
