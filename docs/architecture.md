@@ -460,6 +460,12 @@ Each theme lives under `themes/<name>/`:
 
 A custom `_ThemeLoader` (Jinja2 `BaseLoader`) checks the active theme directory first, then falls back to `lumen/templates/`. The config watcher hot-reloads the active theme when `app.theme` changes in `config.yaml`.
 
+Footer content is driven by optional `theme.yaml` keys that each theme's `templates/theme/footer.html` reads:
+
+- `footer_links` — list of `{label, url}` rendered next to the GitHub links (default theme only; the UIC and UIS footer templates hard-code their links and ignore this key).
+- `footer_actions` — list of `{label, url}` rendered as the action buttons in the `ilw-footer` `actions` slot (Illinois theme).
+- `footer_menus` — list of `{title, links: [{label, url}], github_links}` rendered as `nav.ilw-footer-menu` columns inside an `ilw-grid`, each labelled by its `h2`; `github_links: true` appends GitHub Repository and Request Feature links built from `github_url` (Illinois theme).
+
 > **Accessibility note:** Do not use `#e84a27` (UIUC orange) as a background with white text — contrast ratio is only 3.0:1 (WCAG minimum is 4.5:1). Use `#b5300c` or darker.
 
 ---
