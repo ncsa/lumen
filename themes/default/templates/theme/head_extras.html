@@ -16,4 +16,19 @@
     padding-left: 1.5rem !important;
     padding-right: 1.5rem !important;
   }
+  /* Phones: narrower shell padding (matches px-2 in base.html); the banner keeps
+     a small side gap and room for its dismiss button. */
+  @media (max-width: 767.98px) {
+    main > .container-fluid {
+      padding-left: 0.5rem !important;
+      padding-right: 0.5rem !important;
+    }
+    .announcement-banner {
+      width: auto;
+      margin-left: 0.5rem !important;
+      margin-right: 0.5rem !important;
+      padding-left: 2.5rem !important;
+      padding-right: 2.5rem !important;
+    }
+  }
 </style>
