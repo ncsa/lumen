@@ -14,7 +14,7 @@ from http import HTTPStatus
 import pytest
 from bs4 import BeautifulSoup
 
-from lumen.extensions import db
+from lumen.extensions import db, limiter
 from lumen.models.entity import Entity
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
@@ -41,8 +41,6 @@ def _group_url(app, admin_user, test_model):
 
 
 def _consent_url(app, admin_user, test_model):
-    from lumen.extensions import limiter
-
     limiter.reset()
     body = app.test_client().post("/oauth/device_authorization", data={
         "client_id": "lumen-cli", "name": "opencode", "author": "alice",

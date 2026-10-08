@@ -144,14 +144,18 @@ def ensure_audit_data(app):
 
 def enable_admin_mode(page):
     page.goto(BASE + "/profile", wait_until="networkidle")
-    page.evaluate("""async () => {
+    result = page.evaluate("""async () => {
         const token = document.querySelector('meta[name="csrf-token"]').content;
-        await fetch('/profile/settings/admin-mode', {
+        const resp = await fetch('/profile/settings/admin-mode', {
             method: 'POST',
             headers: {'Content-Type': 'application/json', 'X-CSRFToken': token},
             body: JSON.stringify({enabled: true}),
         });
+        const body = await resp.json().catch(() => null);
+        return {status: resp.status, body: body};
     }""")
+    if result["status"] != 200 or not (result["body"] or {}).get("admin_mode"):
+        raise RuntimeError(f"could not enable admin mode: HTTP {result['status']} {result['body']}")
 
 
 def first_link(page, path, selector):
