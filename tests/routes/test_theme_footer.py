@@ -9,7 +9,7 @@ ILLINOIS_ACTION_URLS = [
     "https://chat.illinois.edu",
     "https://lumen.computes.illinois.edu",
     "https://llmhub.computes.illinois.edu",
-    "https://llm.computes.illinois.edu/",
+    "https://llmflux.ncsa.ai/",
 ]
 
 

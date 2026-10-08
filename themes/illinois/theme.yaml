@@ -17,8 +17,8 @@ footer_actions:
     url: https://lumen.computes.illinois.edu
   - label: LLMHub
     url: https://llmhub.computes.illinois.edu
-  - label: Which LLM should I use?
-    url: https://llm.computes.illinois.edu/
+  - label: LLMflux
+    url: https://llmflux.ncsa.ai/
 footer_menus:
   - title: Illinois Computes
     links:
