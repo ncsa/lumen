@@ -10,7 +10,10 @@ page/size it reports:
   - on chat, whether the input bar is fully visible without scrolling the page.
 
 Writes report.md (pass/fail table plus details) and full-page screenshots to
-OUTPUT_DIR (default responsive-audit/, git-ignored). Exits 1 if anything fails.
+OUTPUT_DIR (default responsive-audit/, git-ignored). Exits 1 if anything fails,
+including a page that cannot be measured: an unexpected HTTP status or redirect
+(e.g. bounced to login), a detail page with no link to follow, or a chat page
+without its input bar.
 
 Prerequisites are the same as scripts/screenshots.py (see scripts/README.md):
 a running dummy backend and app with a dev config that sets `app.dev_user`, and
@@ -23,6 +26,8 @@ browser executable), ONLY (comma-separated route names to limit the run).
 """
 import os
 import sys
+from http import HTTPStatus
+from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
 from sqlalchemy import select
@@ -61,6 +66,9 @@ ROUTES = [
     ("oauth-consent", None, BOTH),
     ("404", "/responsive-check-missing", BOTH),
 ]
+# Routes that intentionally answer with something other than 200 at the same path.
+EXPECTED_STATUS = {"404": HTTPStatus.NOT_FOUND}
+EXPECTED_REDIRECTS = {"/admin/analytics": "/usage"}
 
 # Returns {overflow, offenders[], chatInput} for the current page at scroll 0.
 PROBE_JS = """() => {
@@ -183,6 +191,26 @@ def resolve_paths(page, model):
     }
 
 
+def problems(name, path, r):
+    """Why a measured row fails: layout problems, or a measurement of the wrong page."""
+    if not path:
+        return ["no URL to visit (missing demo data?)"]
+    bad = []
+    expected = EXPECTED_STATUS.get(name, HTTPStatus.OK)
+    if r["status"] != expected:
+        bad.append(f"HTTP {r['status']}, expected {expected.value}")
+    landed = urlparse(r["url"]).path
+    if landed != EXPECTED_REDIRECTS.get(urlparse(path).path, urlparse(path).path):
+        bad.append(f"redirected to {landed}")
+    if r["overflow"] > 0:
+        bad.append(f"overflow {r['overflow']}px")
+    if name == "chat" and r["chatInput"] is None:
+        bad.append("input missing")
+    elif r["chatInput"] is False:
+        bad.append("input hidden")
+    return bad
+
+
 def audit(page, user, results):
     dynamic = resolve_paths(page, results["model"]) if user != "anon" else {}
     for name, path, users in ROUTES:
@@ -192,30 +220,25 @@ def audit(page, user, results):
         for w, h in SIZES:
             key = (name, user, w, h)
             if not path:
-                results["rows"][key] = {"skip": "no data to link to"}
+                results["rows"][key] = {"problems": problems(name, path, None),
+                                        "status": None, "shot": "no screenshot", "offenders": []}
                 continue
             page.set_viewport_size({"width": w, "height": h})
             resp = page.goto(BASE + path, wait_until="networkidle")
             page.wait_for_timeout(600)  # JS-rendered tables and charts
             probe = page.evaluate(PROBE_JS)
             probe["status"] = resp.status if resp else None
+            probe["url"] = page.url
+            probe["problems"] = problems(name, path, probe)
             shot = f"{name}-{user}-{w}x{h}.png"
             page.screenshot(path=os.path.join(OUT, shot), full_page=True)
             probe["shot"] = shot
             results["rows"][key] = probe
-            print(f"{name:16} {user:5} {w}x{h}  overflow={probe['overflow']}px"
-                  + (f" chat-input-visible={probe['chatInput']}" if probe["chatInput"] is not None else ""))
+            print(f"{name:16} {user:5} {w}x{h}  {cell(probe)}")
 
 
 def cell(r):
-    if "skip" in r:
-        return "n/a"
-    bad = []
-    if r["overflow"] > 0:
-        bad.append(f"overflow {r['overflow']}px")
-    if r["chatInput"] is False:
-        bad.append("input hidden")
-    return "FAIL: " + ", ".join(bad) if bad else "pass"
+    return "FAIL: " + ", ".join(r["problems"]) if r["problems"] else "pass"
 
 
 def write_report(results):
@@ -231,7 +254,7 @@ def write_report(results):
             lines.append(f"| {name} | {user} | " + " | ".join(cells) + " |")
     lines += ["", "## Details", ""]
     for (name, user, w, h), r in rows.items():
-        if cell(r) in ("pass", "n/a"):
+        if not r["problems"]:
             continue
         lines.append(f"- **{name}** ({user}, {w}×{h}, HTTP {r['status']}): {cell(r)} — `{r['shot']}`")
         for o in r["offenders"][:8]:
@@ -240,7 +263,7 @@ def write_report(results):
     with open(path, "w") as f:
         f.write("\n".join(lines) + "\n")
     print(f"\nWrote {path}")
-    return any(cell(r).startswith("FAIL") for r in rows.values())
+    return any(r["problems"] for r in rows.values())
 
 
 def main():

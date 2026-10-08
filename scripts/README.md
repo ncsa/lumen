@@ -42,7 +42,9 @@ user (the landing page signed out). For each page and size it reports horizontal
 overflow and names the elements causing it; on chat it also checks that the input
 bar is fully visible without scrolling. It writes `report.md` (a pass/fail table)
 and full-page screenshots to `responsive-audit/` (git-ignored) and exits 1 if
-anything fails. It seeds the same demo data as `screenshots.py`, plus a demo group,
+anything fails, including pages it could not measure properly (an unexpected HTTP
+status or redirect, a detail page with nothing to link to, or a chat page without
+its input bar). It seeds the same demo data as `screenshots.py`, plus a demo group,
 so run it with the **same** `CONFIG_YAML` as the running app.
 
 ```bash
