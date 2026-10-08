@@ -129,8 +129,9 @@ def test_config_endpoints_table_is_responsive(admin_client):
     """The endpoints table is rendered from a JS template: it must sit in
     .table-responsive and keep its fixed column widths out of inline styles."""
     html = admin_client.get("/admin/config").data.decode()
-    template = re.search(r"card\('Endpoints', `(.*?)`\)", html, re.S).group(1)
-    soup = BeautifulSoup(template, "html.parser")
+    match = re.search(r"card\('Endpoints', `(.*?)`\)", html, re.S)
+    assert match, "Endpoints card template not found in the config editor script"
+    soup = BeautifulSoup(match.group(1), "html.parser")
     table = soup.select_one("table.table")
     assert table.find_parent(class_="table-responsive")
     assert not [th for th in table.select("th") if "width" in th.get("style", "")]
