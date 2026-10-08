@@ -245,10 +245,17 @@ def _server_modalities(ep_model: dict, pending_in, current_in) -> tuple:
     "don't touch this field". pending_in is the input_modalities already
     proposed by models.dev (if any); current_in is the operator's current
     value — used as the base to which image is added when multimodal is on.
+
+    enable_multimodal null/missing is SGLang's auto-detect default and says
+    nothing about the model's modalities, so it leaves both fields untouched.
+    Mirrors lumen.services.model_sync._server_modalities.
     """
     if ep_model.get("is_embedding"):
         return ["text"], []
-    if ep_model.get("enable_multimodal") is True:
+    multimodal = ep_model.get("enable_multimodal")
+    if multimodal is None:
+        return None, None
+    if multimodal is True:
         base = pending_in or current_in or ["text"]
         return (base if "image" in base else [*base, "image"]), None
     return ["text"], None
@@ -313,8 +320,9 @@ def compute_changes(
                 changes["output_cost_per_million"] = (model_def.get("output_cost_per_million"), avg_out)
 
     # SGLang /get_server_info capability flags are authoritative over models.dev
-    # — they reflect what the operator actually enabled on the serving backend,
-    # so a disabled modality on the server vetoes a models.dev claim.
+    # when set explicitly — they reflect what the operator configured on the
+    # serving backend. A null enable_multimodal (auto-detect) leaves the
+    # operator's or models.dev's modalities as they are.
     if ep_model and ep_model.get("backend") == "sglang":
         pending = changes.get("input_modalities", (None, None))[1]
         srv_in, srv_out = _server_modalities(
