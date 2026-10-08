@@ -14,7 +14,7 @@ The **Models** page (`/models`) shows every AI model available to you in your Lu
 | **Coins / 1M tokens — Output** | Cost per million output tokens |
 | **Checked** | How long ago the most recent health check ran (e.g. `5 min. ago`); hover over or tab to it for the full date and time. It updates every minute while the page is open. **Never** means no check has run yet |
 | **Status** | Current availability (see below), followed by how many of the model's backend servers are currently reachable out of the total configured (e.g. **ok** `4/4`, **degraded** `2/4`) |
-| **Access** | Whether you must acknowledge the model's terms before use (see below) |
+| **Access** | Whether you must acknowledge the model's terms before use, or **granted** once you have (see below) |
 
 ## Status Badges
 
@@ -28,7 +28,7 @@ The **Models** page (`/models`) shows every AI model available to you in your Lu
 
 Models with **no endpoints** show the badge alone, without a healthy count.
 
-In the **Access** column, models that require a one-time acknowledgment show an **acknowledge** badge, and early-access models show an **early access** badge — these models may change or be removed at any time, and you must acknowledge that before using them. A model with an end date disappears from this page once the date passes.
+In the **Access** column, models that require a one-time acknowledgment show an **acknowledge** pill, and early-access models show an **early access** pill — these models may change or be removed at any time, and you must acknowledge that before using them. Click either pill to open the acknowledgment dialog, which shows every notice that applies to the model; **Accept & Enable** records your acknowledgment and the pills are replaced by a green **granted** pill. **Cancel** leaves the model unchanged. If a model gains a new requirement after you acknowledged it, its pills appear again until you acknowledge the new terms. Models without requirements leave the column empty. A model with an end date disappears from this page once the date passes.
 
 ## Understanding Pricing
 
