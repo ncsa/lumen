@@ -462,7 +462,7 @@ A custom `_ThemeLoader` (Jinja2 `BaseLoader`) checks the active theme directory 
 
 Footer content is driven by optional `theme.yaml` keys that each theme's `templates/theme/footer.html` reads:
 
-- `footer_links` — list of `{label, url}` rendered next to the GitHub links (default, UIC, UIS themes).
+- `footer_links` — list of `{label, url}` rendered next to the GitHub links (default theme only; the UIC and UIS footer templates hard-code their links and ignore this key).
 - `footer_actions` — list of `{label, url}` rendered as the action buttons in the `ilw-footer` `actions` slot (Illinois theme).
 - `footer_menus` — list of `{title, links: [{label, url}], github_links}` rendered as `nav.ilw-footer-menu` columns inside an `ilw-grid`, each labelled by its `h2`; `github_links: true` appends GitHub Repository and Request Feature links built from `github_url` (Illinois theme).
 
