@@ -12,14 +12,17 @@
   <caption class="visually-hidden">Model health and endpoint status</caption>
   <thead class="table-light">
     <tr>
-      <th>Model</th>
-      <th>Input</th>
-      <th class="text-end">Coins / 1M tokens (input)</th>
-      <th class="text-end">Coins / 1M tokens (output)</th>
-      <th class="text-center">Healthy</th>
-      <th>Last Checked</th>
-      <th>Status</th>
-      <th class="text-center">Acknowledgment</th>
+      <th scope="col" rowspan="2">Model</th>
+      <th scope="col" rowspan="2">Input</th>
+      <th scope="colgroup" colspan="2" class="text-center">Coins / 1M tokens</th>
+      <th scope="col" rowspan="2" class="text-center">Healthy</th>
+      <th scope="col" rowspan="2">Last Checked</th>
+      <th scope="col" rowspan="2">Status</th>
+      <th scope="col" rowspan="2" class="text-center">Access</th>
+    </tr>
+    <tr>
+      <th scope="col" class="text-end">Input</th>
+      <th scope="col" class="text-end">Output</th>
     </tr>
   </thead>
   <tbody>
@@ -29,7 +32,7 @@
     <tr>
       <td>
         <a href="{{ url_for('models_page.detail', model_name=config.model_name) }}"
-           class="fw-bold text-decoration-none"
+           class="fw-bold text-decoration-none text-nowrap"
            {% if config.description %}title="{{ config.description }}" data-bs-toggle="tooltip" data-bs-placement="right"{% endif %}>{{ config.model_name }}</a>
       </td>
       <td>
@@ -70,7 +73,7 @@
       </td>
       <td class="text-center">
         {% if config.needs_ack %}
-          <span class="badge rounded-pill bg-warning text-dark">required</span>
+          <span class="badge rounded-pill bg-warning text-dark">acknowledge</span>
         {% endif %}
         {% if config.early_access %}
           <span class="badge rounded-pill bg-info text-dark">early access</span>
