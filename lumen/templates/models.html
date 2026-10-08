@@ -15,7 +15,6 @@
       <th scope="col" rowspan="2">Model</th>
       <th scope="col" rowspan="2">Input</th>
       <th scope="colgroup" colspan="2" class="text-center">Coins / 1M tokens</th>
-      <th scope="col" rowspan="2" class="text-center">Healthy</th>
       <th scope="col" rowspan="2">Last Checked</th>
       <th scope="col" rowspan="2">Status</th>
       <th scope="col" rowspan="2" class="text-center">Access</th>
@@ -44,12 +43,6 @@
       </td>
       <td class="text-end">{{ "%.2f"|format(config.input_cost_per_million | float) }}</td>
       <td class="text-end">{{ "%.2f"|format(config.output_cost_per_million | float) }}</td>
-      <td class="text-center">
-        <span class="fw-bold {% if healthy_eps %}text-success{% else %}text-danger{% endif %}">
-          {{ healthy_eps | length }}
-        </span>
-        / {{ endpoints | length }}
-      </td>
       <td>
         {% set checked_at = endpoints | map(attribute="last_checked_at") | select("ne", None) | list %}
         {% if checked_at %}
@@ -58,7 +51,7 @@
           <span class="text-muted">Never</span>
         {% endif %}
       </td>
-      <td>
+      <td class="text-nowrap">
         {% if not config.active %}
           <span class="badge bg-secondary">disabled</span>
         {% elif endpoints | length == 0 %}
@@ -69,6 +62,9 @@
           <span class="badge bg-warning text-dark">degraded</span>
         {% else %}
           <span class="badge bg-danger">down</span>
+        {% endif %}
+        {% if config.active and endpoints %}
+          <span class="fw-bold {% if healthy_eps %}text-success{% else %}text-danger{% endif %}">{{ healthy_eps | length }}</span>/{{ endpoints | length }}
         {% endif %}
       </td>
       <td class="text-center">
@@ -81,7 +77,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="8" class="text-center text-muted">No models configured.</td></tr>
+    <tr><td colspan="7" class="text-center text-muted">No models configured.</td></tr>
     {% endfor %}
   </tbody>
 </table>
