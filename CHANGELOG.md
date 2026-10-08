@@ -20,7 +20,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Changed
 
-- Compact the Model Dashboard table: grouped coin columns, merged health into status, relative check times.
+- Compact the Model Dashboard table: grouped coin columns, health merged into status, relative check times; acknowledge models from the Access column.
 - Request and token totals of a million or more display compactly (e.g. "5.2 million", "16.1 billion").
 - Generated opencode configs (`lumen.sh` sync and the Connect page) advertise each model's `modalities`, `attachment`, `tool_call`, and `reasoning` flags, so OpenCode accepts image uploads for vision models instead of rejecting them client-side. ([#79](https://github.com/ncsa/lumen/issues/79))
 - The model dashboard lists each model's accepted inputs (text/image/audio) as pills next to its name. ([#79](https://github.com/ncsa/lumen/issues/79))

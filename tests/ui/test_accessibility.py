@@ -12,9 +12,14 @@ Rules enforced (from CLAUDE.md):
 - Data tables (<table> with <thead> and <tbody>) have <caption> or aria-label
 - Heading levels do not skip (h1 → h2 → h3, never h1 → h3)
 """
+from datetime import datetime
 from http import HTTPStatus
 
 from bs4 import BeautifulSoup
+
+from lumen.extensions import db
+from lumen.models.entity_model_consent import EntityModelConsent
+from lumen.models.model_config import ModelConfig
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -151,6 +156,27 @@ def test_landing_page(client):
 
 
 def test_models_page(auth_client):
+    resp = auth_client.get("/models")
+    assert resp.status_code == HTTPStatus.OK
+    _run_all_checks(resp.data, "/models")
+
+
+def test_models_page_with_access_pills(app, auth_client, test_model):
+    with app.app_context():
+        model = db.session.get(ModelConfig, test_model["id"])
+        model.needs_ack = True
+        model.early_access = True
+        db.session.commit()
+    resp = auth_client.get("/models")
+    assert resp.status_code == HTTPStatus.OK
+    _run_all_checks(resp.data, "/models")
+
+
+def test_models_page_with_granted_pill(app, auth_client, test_user, test_model):
+    with app.app_context():
+        db.session.get(ModelConfig, test_model["id"]).needs_ack = True
+        db.session.add(EntityModelConsent(entity_id=test_user["id"], model_config_id=test_model["id"], consented_at=datetime(2026, 1, 1)))
+        db.session.commit()
     resp = auth_client.get("/models")
     assert resp.status_code == HTTPStatus.OK
     _run_all_checks(resp.data, "/models")

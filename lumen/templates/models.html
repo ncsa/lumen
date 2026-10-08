@@ -67,12 +67,21 @@
           <span class="fw-bold {% if healthy_eps %}text-success{% else %}text-danger{% endif %}">{{ healthy_eps | length }}</span>/{{ endpoints | length }}
         {% endif %}
       </td>
-      <td class="text-center">
-        {% if config.needs_ack %}
-          <span class="badge rounded-pill bg-warning text-dark">acknowledge</span>
-        {% endif %}
-        {% if config.early_access %}
-          <span class="badge rounded-pill bg-info text-dark">early access</span>
+      <td class="text-center text-nowrap">
+        {% set ack = ack_map.get(config.id) %}
+        {% if ack and ack.consented %}
+          <button type="button" class="badge rounded-pill bg-success border-0 consent-info-btn"
+                  data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}"
+                  data-consented-at="{{ ack.consent_at.strftime('%Y-%m-%dT%H:%M:%SZ') if ack.consent_at else '' }}">granted<span class="visually-hidden"> for {{ config.model_name }}, show acknowledgment details</span></button>
+        {% elif ack %}
+          {% if config.needs_ack %}
+            <button type="button" class="badge rounded-pill bg-warning text-dark border-0 ack-btn" aria-haspopup="dialog"
+                    data-name="{{ config.model_name }}" data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}">acknowledge<span class="visually-hidden"> for {{ config.model_name }}</span></button>
+          {% endif %}
+          {% if config.early_access %}
+            <button type="button" class="badge rounded-pill bg-info text-dark border-0 ack-btn" aria-haspopup="dialog"
+                    data-name="{{ config.model_name }}" data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}">early access<span class="visually-hidden"> for {{ config.model_name }}</span></button>
+          {% endif %}
         {% endif %}
       </td>
     </tr>
@@ -82,10 +91,21 @@
   </tbody>
 </table>
 </ilw-content>
+{% include '_ack_modal.html' %}
 {% endblock %}
 
 {% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+<script src="{{ url_for('static', filename='js/ack-consent.js') }}"></script>
 <script>
   document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
+  const openAckModal = initAckConsent(() => location.reload());
+  document.querySelectorAll('.ack-btn').forEach(btn => {
+    btn.addEventListener('click', () => openAckModal(btn.dataset.name, btn.dataset.notice || null, btn.dataset.earlyNotice || null));
+  });
+  document.querySelectorAll('.consent-info-btn').forEach(btn => {
+    btn.addEventListener('click', () => toggleConsentPopover(btn, 'left'));
+  });
 </script>
 {% endblock %}

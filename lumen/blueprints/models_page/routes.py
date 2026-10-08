@@ -40,13 +40,26 @@ def _visible_model_or_404(model_name):
 def index():
     entity_id = session.get("entity_id")
     all_configs = db.session.execute(select(ModelConfig).where(ModelConfig.active).order_by(ModelConfig.model_name)).scalars().all()
-    access_statuses, _ = bulk_model_access_info(entity_id, [c.id for c in all_configs])
+    access_statuses, consent_map = bulk_model_access_info(entity_id, [c.id for c in all_configs])
     configs = [c for c in all_configs if access_statuses.get(c.id, "allowed") != "blocked"]
     model_ids = [c.id for c in configs]
+    # Acknowledgement state for the Access column. consent_map only holds models
+    # whose requirements are all satisfied, so a requirement added after consent
+    # re-shows the pills.
+    ack_map = {}
+    for c in configs:
+        if access_statuses.get(c.id) == "needs_ack":
+            notice, early_notice = model_notices(c)
+            ack_map[c.id] = {
+                "consented": c.id in consent_map,
+                "consent_at": consent_map.get(c.id),
+                "notice": notice,
+                "early_notice": early_notice,
+            }
     endpoints_map: dict[int, list] = {}
     for ep in db.session.execute(select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(model_ids), ModelEndpoint.active.is_(True))).scalars().all():
         endpoints_map.setdefault(ep.model_config_id, []).append(ep)
-    return render_template("models.html", configs=configs, endpoints_map=endpoints_map)
+    return render_template("models.html", configs=configs, endpoints_map=endpoints_map, ack_map=ack_map)
 
 
 @models_page_bp.route("/models/<path:model_name>")
