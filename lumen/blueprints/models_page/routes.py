@@ -50,7 +50,12 @@ def index():
     for c in configs:
         if access_statuses.get(c.id) == "needs_ack":
             notice, early_notice = model_notices(c)
-            ack_map[c.id] = {"consented": c.id in consent_map, "notice": notice, "early_notice": early_notice}
+            ack_map[c.id] = {
+                "consented": c.id in consent_map,
+                "consent_at": consent_map.get(c.id),
+                "notice": notice,
+                "early_notice": early_notice,
+            }
     endpoints_map: dict[int, list] = {}
     for ep in db.session.execute(select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(model_ids), ModelEndpoint.active.is_(True))).scalars().all():
         endpoints_map.setdefault(ep.model_config_id, []).append(ep)

@@ -120,11 +120,26 @@ def test_consented_model_shows_single_granted_pill(app, auth_client, test_user, 
     _consent(app, test_user["id"], test_model["id"], consented_at=datetime(2026, 1, 1), early_access_at=datetime(2026, 1, 1))
 
     cell = _access_cell(_row(_soup(auth_client), test_model["model_name"]))
-    assert cell.find_all("button") == []
-    pills = cell.find_all("span", class_="badge")
+    assert cell.find(class_="ack-btn") is None
+    pills = cell.find_all(class_="badge")
     assert len(pills) == 1
-    assert pills[0].get_text(strip=True) == "granted"
-    assert "bg-success" in pills[0]["class"]
+    pill = pills[0]
+    assert pill.name == "button"
+    assert pill["type"] == "button"
+    assert pill.find(string=True, recursive=False).strip() == "granted"
+    assert {"bg-success", "consent-info-btn"} <= set(pill["class"])
+    assert pill["data-consented-at"] == "2026-01-01T00:00:00Z"
+    assert "for test-model" in pill.find("span", class_="visually-hidden").get_text()
+
+
+def test_granted_pill_carries_notices_for_details_popover(app, auth_client, test_user, test_model):
+    _set_model(app, test_model["id"], needs_ack=True, ack_message="Read **this**.")
+    _consent(app, test_user["id"], test_model["id"], consented_at=datetime(2026, 2, 3, 4, 5, 6))
+
+    pill = _access_cell(_row(_soup(auth_client), test_model["model_name"])).find("button", class_="consent-info-btn")
+    assert pill["data-notice"] == "Read **this**."
+    assert pill["data-early-notice"] == ""
+    assert pill["data-consented-at"] == "2026-02-03T04:05:06Z"
 
 
 def test_requirement_added_after_consent_shows_pills_again(app, auth_client, test_user, test_model):

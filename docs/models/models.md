@@ -28,7 +28,7 @@ The **Models** page (`/models`) shows every AI model available to you in your Lu
 
 Models with **no endpoints** show the badge alone, without a healthy count.
 
-In the **Access** column, models that require a one-time acknowledgment show an **acknowledge** pill, and early-access models show an **early access** pill — these models may change or be removed at any time, and you must acknowledge that before using them. Click either pill to open the acknowledgment dialog, which shows every notice that applies to the model; **Accept & Enable** records your acknowledgment and the pills are replaced by a green **granted** pill. **Cancel** leaves the model unchanged. If a model gains a new requirement after you acknowledged it, its pills appear again until you acknowledge the new terms. Models without requirements leave the column empty. A model with an end date disappears from this page once the date passes.
+In the **Access** column, models that require a one-time acknowledgment show an **acknowledge** pill, and early-access models show an **early access** pill — these models may change or be removed at any time, and you must acknowledge that before using them. Click either pill to open the acknowledgment dialog, which shows every notice that applies to the model; **Accept & Enable** records your acknowledgment and the pills are replaced by a green **granted** pill; click **granted** to see the notices you accepted and when you acknowledged them. **Cancel** leaves the model unchanged. If a model gains a new requirement after you acknowledged it, its pills appear again until you acknowledge the new terms. Models without requirements leave the column empty. A model with an end date disappears from this page once the date passes.
 
 ## Understanding Pricing
 

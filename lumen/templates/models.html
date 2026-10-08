@@ -70,7 +70,9 @@
       <td class="text-center text-nowrap">
         {% set ack = ack_map.get(config.id) %}
         {% if ack and ack.consented %}
-          <span class="badge rounded-pill bg-success">granted</span>
+          <button type="button" class="badge rounded-pill bg-success border-0 consent-info-btn"
+                  data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}"
+                  data-consented-at="{{ ack.consent_at.strftime('%Y-%m-%dT%H:%M:%SZ') if ack.consent_at else '' }}">granted<span class="visually-hidden"> for {{ config.model_name }}, show acknowledgment details</span></button>
         {% elif ack %}
           {% if config.needs_ack %}
             <button type="button" class="badge rounded-pill bg-warning text-dark border-0 ack-btn" aria-haspopup="dialog"
@@ -101,6 +103,9 @@
   const openAckModal = initAckConsent(() => location.reload());
   document.querySelectorAll('.ack-btn').forEach(btn => {
     btn.addEventListener('click', () => openAckModal(btn.dataset.name, btn.dataset.notice || null, btn.dataset.earlyNotice || null));
+  });
+  document.querySelectorAll('.consent-info-btn').forEach(btn => {
+    btn.addEventListener('click', () => toggleConsentPopover(btn, 'left'));
   });
 </script>
 {% endblock %}
