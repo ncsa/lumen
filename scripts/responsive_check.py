@@ -109,6 +109,11 @@ PROBE_JS = """() => {
 }"""
 
 
+def unknown_routes(only):
+    """Names in ONLY that match no route, so a typo fails instead of auditing nothing."""
+    return sorted(only - {name for name, _, _ in ROUTES})
+
+
 def ensure_audit_data(app):
     """On top of screenshots.py's demo data, give both users a group to open and
     the demo user the demo project, so every detail page has a link to follow."""
@@ -235,6 +240,10 @@ def write_report(results):
 
 
 def main():
+    unknown = unknown_routes(ONLY)
+    if unknown:
+        sys.exit(f"Unknown ONLY route name(s): {', '.join(unknown)}. "
+                 f"Valid names: {', '.join(name for name, _, _ in ROUTES)}")
     app = create_app()
     model, cookie, _ = ensure_demo_data(app)
     ensure_audit_data(app)
