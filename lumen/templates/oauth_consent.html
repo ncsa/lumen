@@ -73,42 +73,44 @@
 
   <h2 class="h5 mt-4">Models</h2>
   <p>This key can use the following models:</p>
-  <table class="table table-sm align-middle" id="consent-models">
-    <caption class="visually-hidden">Models this key can access, with your acknowledgment status for each.</caption>
-    <thead>
-      <tr>
-        <th scope="col">Model</th>
-        <th scope="col">Acknowledgment</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for m in model_rows %}
-      <tr data-model-name="{{ m.name }}">
-        <td>{{ m.name }}</td>
-        <td class="model-state">
-          {% if m.accepted %}
-          <span class="badge rounded-pill bg-success">acknowledged</span>
-          {% if m.accepted_at %}
-          <span class="local-datetime ms-1" data-utc="{{ m.accepted_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
-          {% endif %}
-          {% endif %}
-          {% if m.requires_action %}
-          <span class="badge rounded-pill bg-warning text-dark">required</span>
-          <button type="button" class="btn btn-sm btn-outline-warning ms-1 ack-btn"
-                  data-name="{{ m.name }}"
-                  data-notice="{{ m.notice or '' }}"
-                  data-early-notice="{{ m.early_notice or '' }}"
-                  aria-label="Acknowledge {{ m.name }}"
-                  aria-haspopup="dialog">Acknowledge</button>
-          {% endif %}
-          {% if m.early_access %}<span class="badge rounded-pill bg-info text-dark">early access</span>{% endif %}
-        </td>
-      </tr>
-      {% else %}
-      <tr><td colspan="2" class="text-muted">No models configured.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="table-responsive mb-3">
+    <table class="table table-sm align-middle mb-0" id="consent-models">
+      <caption class="visually-hidden">Models this key can access, with your acknowledgment status for each.</caption>
+      <thead>
+        <tr>
+          <th scope="col">Model</th>
+          <th scope="col">Acknowledgment</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in model_rows %}
+        <tr data-model-name="{{ m.name }}">
+          <td>{{ m.name }}</td>
+          <td class="model-state">
+            {% if m.accepted %}
+            <span class="badge rounded-pill bg-success">acknowledged</span>
+            {% if m.accepted_at %}
+            <span class="local-datetime ms-1" data-utc="{{ m.accepted_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
+            {% endif %}
+            {% endif %}
+            {% if m.requires_action %}
+            <span class="badge rounded-pill bg-warning text-dark">required</span>
+            <button type="button" class="btn btn-sm btn-outline-warning ms-1 ack-btn"
+                    data-name="{{ m.name }}"
+                    data-notice="{{ m.notice or '' }}"
+                    data-early-notice="{{ m.early_notice or '' }}"
+                    aria-label="Acknowledge {{ m.name }}"
+                    aria-haspopup="dialog">Acknowledge</button>
+            {% endif %}
+            {% if m.early_access %}<span class="badge rounded-pill bg-info text-dark">early access</span>{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="2" class="text-muted">No models configured.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 
   <div id="consent-status" role="status" aria-live="polite" class="mt-3">
     {% if error %}<div class="text-danger fw-semibold">{{ error }}</div>{% endif %}

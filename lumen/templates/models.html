@@ -8,88 +8,90 @@
 </div>
 <ilw-content>
 
-<table class="table table-bordered table-hover align-middle">
-  <caption class="visually-hidden">Model health and endpoint status</caption>
-  <thead class="table-light">
-    <tr>
-      <th scope="col" rowspan="2">Model</th>
-      <th scope="col" rowspan="2">Input</th>
-      <th scope="colgroup" colspan="2" class="text-center">Coins / 1M tokens</th>
-      <th scope="col" rowspan="2">Checked</th>
-      <th scope="col" rowspan="2">Status</th>
-      <th scope="col" rowspan="2" class="text-center">Access</th>
-    </tr>
-    <tr>
-      <th scope="col" class="text-end">Input</th>
-      <th scope="col" class="text-end">Output</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for config in configs %}
-    {% set endpoints = endpoints_map.get(config.id, []) %}
-    {% set healthy_eps = endpoints | selectattr("healthy") | list %}
-    <tr>
-      <td>
-        <a href="{{ url_for('models_page.detail', model_name=config.model_name) }}"
-           class="fw-bold text-decoration-none text-nowrap"
-           {% if config.description %}title="{{ config.description }}" data-bs-toggle="tooltip" data-bs-placement="right"{% endif %}>{{ config.model_name }}</a>
-      </td>
-      <td>
-        {% if config.input_modalities %}
-          {% for modality in config.input_modalities %}<span class="badge rounded-pill bg-secondary">{{ modality }}</span> {% endfor %}
-        {% else %}
-          <span class="text-muted">&mdash;</span>
-        {% endif %}
-      </td>
-      <td class="text-end">{{ "%.2f"|format(config.input_cost_per_million | float) }}</td>
-      <td class="text-end">{{ "%.2f"|format(config.output_cost_per_million | float) }}</td>
-      <td>
-        {% set checked_at = endpoints | map(attribute="last_checked_at") | select("ne", None) | list %}
-        {% if checked_at %}
-          <span class="local-datetime" data-relative data-utc="{{ (checked_at | max).strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
-        {% else %}
-          <span class="text-muted">Never</span>
-        {% endif %}
-      </td>
-      <td class="text-nowrap">
-        {% if not config.active %}
-          <span class="badge bg-secondary">disabled</span>
-        {% elif endpoints | length == 0 %}
-          <span class="badge bg-secondary">no endpoints</span>
-        {% elif healthy_eps | length == endpoints | length %}
-          <span class="badge bg-success">ok</span>
-        {% elif healthy_eps | length > 0 %}
-          <span class="badge bg-warning text-dark">degraded</span>
-        {% else %}
-          <span class="badge bg-danger">down</span>
-        {% endif %}
-        {% if config.active and endpoints %}
-          <span class="fw-bold {% if healthy_eps %}text-success{% else %}text-danger{% endif %}">{{ healthy_eps | length }}</span>/{{ endpoints | length }}
-        {% endif %}
-      </td>
-      <td class="text-center text-nowrap">
-        {% set ack = ack_map.get(config.id) %}
-        {% if ack and ack.consented %}
-          <button type="button" class="badge rounded-pill bg-success border-0 consent-info-btn"
-                  data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}"
-                  data-consented-at="{{ ack.consent_at.strftime('%Y-%m-%dT%H:%M:%SZ') if ack.consent_at else '' }}">granted<span class="visually-hidden"> for {{ config.model_name }}, show acknowledgment details</span></button>
-        {% elif ack %}
-          {% if config.needs_ack %}
-            <button type="button" class="badge rounded-pill bg-warning text-dark border-0 ack-btn" aria-haspopup="dialog"
-                    data-name="{{ config.model_name }}" data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}">acknowledge<span class="visually-hidden"> for {{ config.model_name }}</span></button>
+<div class="table-responsive">
+  <table class="table table-bordered table-hover align-middle">
+    <caption class="visually-hidden">Model health and endpoint status</caption>
+    <thead class="table-light">
+      <tr>
+        <th scope="col" rowspan="2">Model</th>
+        <th scope="col" rowspan="2">Input</th>
+        <th scope="colgroup" colspan="2" class="text-center">Coins / 1M tokens</th>
+        <th scope="col" rowspan="2">Checked</th>
+        <th scope="col" rowspan="2">Status</th>
+        <th scope="col" rowspan="2" class="text-center">Access</th>
+      </tr>
+      <tr>
+        <th scope="col" class="text-end">Input</th>
+        <th scope="col" class="text-end">Output</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for config in configs %}
+      {% set endpoints = endpoints_map.get(config.id, []) %}
+      {% set healthy_eps = endpoints | selectattr("healthy") | list %}
+      <tr>
+        <td>
+          <a href="{{ url_for('models_page.detail', model_name=config.model_name) }}"
+             class="fw-bold text-decoration-none text-nowrap"
+             {% if config.description %}title="{{ config.description }}" data-bs-toggle="tooltip" data-bs-placement="right"{% endif %}>{{ config.model_name }}</a>
+        </td>
+        <td>
+          {% if config.input_modalities %}
+            {% for modality in config.input_modalities %}<span class="badge rounded-pill bg-secondary">{{ modality }}</span> {% endfor %}
+          {% else %}
+            <span class="text-muted">&mdash;</span>
           {% endif %}
-          {% if config.early_access %}
-            <button type="button" class="badge rounded-pill bg-info text-dark border-0 ack-btn" aria-haspopup="dialog"
-                    data-name="{{ config.model_name }}" data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}">early access<span class="visually-hidden"> for {{ config.model_name }}</span></button>
+        </td>
+        <td class="text-end">{{ "%.2f"|format(config.input_cost_per_million | float) }}</td>
+        <td class="text-end">{{ "%.2f"|format(config.output_cost_per_million | float) }}</td>
+        <td>
+          {% set checked_at = endpoints | map(attribute="last_checked_at") | select("ne", None) | list %}
+          {% if checked_at %}
+            <span class="local-datetime" data-relative data-utc="{{ (checked_at | max).strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
+          {% else %}
+            <span class="text-muted">Never</span>
           {% endif %}
-        {% endif %}
-      </td>
-    </tr>
-    {% else %}
-    <tr><td colspan="7" class="text-center text-muted">No models configured.</td></tr>
-    {% endfor %}
-  </tbody>
-</table>
+        </td>
+        <td class="text-nowrap">
+          {% if not config.active %}
+            <span class="badge bg-secondary">disabled</span>
+          {% elif endpoints | length == 0 %}
+            <span class="badge bg-secondary">no endpoints</span>
+          {% elif healthy_eps | length == endpoints | length %}
+            <span class="badge bg-success">ok</span>
+          {% elif healthy_eps | length > 0 %}
+            <span class="badge bg-warning text-dark">degraded</span>
+          {% else %}
+            <span class="badge bg-danger">down</span>
+          {% endif %}
+          {% if config.active and endpoints %}
+            <span class="fw-bold {% if healthy_eps %}text-success{% else %}text-danger{% endif %}">{{ healthy_eps | length }}</span>/{{ endpoints | length }}
+          {% endif %}
+        </td>
+        <td class="text-center text-nowrap">
+          {% set ack = ack_map.get(config.id) %}
+          {% if ack and ack.consented %}
+            <button type="button" class="badge rounded-pill bg-success border-0 consent-info-btn"
+                    data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}"
+                    data-consented-at="{{ ack.consent_at.strftime('%Y-%m-%dT%H:%M:%SZ') if ack.consent_at else '' }}">granted<span class="visually-hidden"> for {{ config.model_name }}, show acknowledgment details</span></button>
+          {% elif ack %}
+            {% if config.needs_ack %}
+              <button type="button" class="badge rounded-pill bg-warning text-dark border-0 ack-btn" aria-haspopup="dialog"
+                      data-name="{{ config.model_name }}" data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}">acknowledge<span class="visually-hidden"> for {{ config.model_name }}</span></button>
+            {% endif %}
+            {% if config.early_access %}
+              <button type="button" class="badge rounded-pill bg-info text-dark border-0 ack-btn" aria-haspopup="dialog"
+                      data-name="{{ config.model_name }}" data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}">early access<span class="visually-hidden"> for {{ config.model_name }}</span></button>
+            {% endif %}
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="text-center text-muted">No models configured.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 </ilw-content>
 {% include '_ack_modal.html' %}
 {% endblock %}

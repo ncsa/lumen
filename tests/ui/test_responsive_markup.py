@@ -2,12 +2,8 @@
 Static responsive-markup guard: every Bootstrap data table (``<table class="table">``)
 on a server-rendered page must sit inside a ``.table-responsive`` wrapper, so a
 wide table scrolls inside its own box instead of pushing the whole page sideways
-on a phone.
-
-Pages that still have bare tables are marked xfail individually (non-strict) until
-the responsive fixes land; drop the mark when a page is fixed. Tables built in JS
-(e.g. the config editor's endpoints table) are not in the server HTML and are
-covered by ``scripts/responsive_check.py`` instead.
+on a phone. Tables built in JS (e.g. the config editor's endpoints table) are
+not in the server HTML and are covered by ``scripts/responsive_check.py`` instead.
 """
 from http import HTTPStatus
 
@@ -18,8 +14,6 @@ from lumen.extensions import db, limiter
 from lumen.models.entity import Entity
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
-
-BARE_TABLES = "bare tables; fixed by the responsive sub-issues of RK-280"
 
 
 def _project_url(app, admin_user, test_model):
@@ -52,18 +46,14 @@ def _model_url(app, admin_user, test_model):
     return f"/models/{test_model['model_name']}"
 
 
-def _xfail(*values, id):
-    return pytest.param(*values, id=id, marks=pytest.mark.xfail(reason=BARE_TABLES, strict=False))
-
-
 # (client fixture, url or url builder, expected status)
 PAGES = [
     pytest.param("client", "/", HTTPStatus.OK, id="landing"),
     pytest.param("auth_client", "/chat", HTTPStatus.OK, id="chat"),
     pytest.param("auth_client", "/profile", HTTPStatus.OK, id="profile"),
-    _xfail("auth_client", "/usage", HTTPStatus.OK, id="usage"),
-    _xfail("auth_client", "/models", HTTPStatus.OK, id="models"),
-    _xfail("auth_client", _model_url, HTTPStatus.OK, id="model-detail"),
+    pytest.param("auth_client", "/usage", HTTPStatus.OK, id="usage"),
+    pytest.param("auth_client", "/models", HTTPStatus.OK, id="models"),
+    pytest.param("auth_client", _model_url, HTTPStatus.OK, id="model-detail"),
     pytest.param("auth_client", "/projects", HTTPStatus.OK, id="projects"),
     pytest.param("admin_client", _project_url, HTTPStatus.OK, id="project-detail"),
     pytest.param("auth_client", "/groups", HTTPStatus.OK, id="groups"),
@@ -73,8 +63,8 @@ PAGES = [
     pytest.param("admin_client", "/admin/users", HTTPStatus.OK, id="admin-users"),
     pytest.param("admin_client", "/admin/config", HTTPStatus.OK, id="admin-config"),
     # /admin/analytics redirects here; admin mode adds the all-users filters.
-    _xfail("admin_client", "/usage", HTTPStatus.OK, id="admin-analytics"),
-    _xfail("auth_client", _consent_url, HTTPStatus.OK, id="oauth-consent"),
+    pytest.param("admin_client", "/usage", HTTPStatus.OK, id="admin-analytics"),
+    pytest.param("auth_client", _consent_url, HTTPStatus.OK, id="oauth-consent"),
     pytest.param("auth_client", "/device", HTTPStatus.OK, id="oauth-device"),
     pytest.param("auth_client", "/responsive-check-missing", HTTPStatus.NOT_FOUND, id="404"),
 ]

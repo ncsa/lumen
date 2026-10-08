@@ -32,7 +32,7 @@
   {% endif %}
 
   <main id="main-content" style="flex:1;overflow:auto;display:flex;flex-direction:column">
-    <div class="container-fluid mt-3 px-4" style="flex:1;overflow:auto">
+    <div class="container-fluid mt-3 px-2 px-md-4" style="flex:1;overflow:auto">
       {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         {% for category, message in messages %}
