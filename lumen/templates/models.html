@@ -15,7 +15,7 @@
       <th scope="col" rowspan="2">Model</th>
       <th scope="col" rowspan="2">Input</th>
       <th scope="colgroup" colspan="2" class="text-center">Coins / 1M tokens</th>
-      <th scope="col" rowspan="2">Last Checked</th>
+      <th scope="col" rowspan="2">Checked</th>
       <th scope="col" rowspan="2">Status</th>
       <th scope="col" rowspan="2" class="text-center">Access</th>
     </tr>
@@ -46,7 +46,7 @@
       <td>
         {% set checked_at = endpoints | map(attribute="last_checked_at") | select("ne", None) | list %}
         {% if checked_at %}
-          <span class="local-datetime" data-utc="{{ (checked_at | max).strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
+          <span class="local-datetime" data-relative data-utc="{{ (checked_at | max).strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
         {% else %}
           <span class="text-muted">Never</span>
         {% endif %}

@@ -12,7 +12,7 @@ The **Models** page (`/models`) shows every AI model available to you in your Lu
 | **Input** | What the model accepts, one pill per modality (text, image, audio) — a dash means the instance hasn't published modality info |
 | **Coins / 1M tokens — Input** | Cost per million input tokens |
 | **Coins / 1M tokens — Output** | Cost per million output tokens |
-| **Last Checked** | When the most recent health check ran |
+| **Checked** | How long ago the most recent health check ran (e.g. `5 min. ago`); hover over or tab to it for the full date and time. It updates every minute while the page is open. **Never** means no check has run yet |
 | **Status** | Current availability (see below), followed by how many of the model's backend servers are currently reachable out of the total configured (e.g. **ok** `4/4`, **degraded** `2/4`) |
 | **Access** | Whether you must acknowledge the model's terms before use (see below) |
 

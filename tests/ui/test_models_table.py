@@ -1,7 +1,10 @@
+from datetime import datetime
+
 from bs4 import BeautifulSoup
 
 from lumen.extensions import db
 from lumen.models.model_config import ModelConfig
+from lumen.models.model_endpoint import ModelEndpoint
 
 
 def _soup(auth_client):
@@ -86,3 +89,26 @@ def test_plain_model_has_no_access_pills(auth_client, test_model):
     assert "acknowledge" not in pills
     assert "early access" not in pills
     assert row.find("i", class_="bi-lock-fill") is None
+
+
+def test_checked_header_renamed(auth_client, test_model):
+    headers = [th.get_text(strip=True) for th in _soup(auth_client).find("thead").find_all("th")]
+    assert "Checked" in headers
+    assert "Last Checked" not in headers
+
+
+def test_checked_time_is_relative(app, auth_client, test_model, test_model_endpoint):
+    with app.app_context():
+        db.session.get(ModelEndpoint, test_model_endpoint["id"]).last_checked_at = datetime(2026, 1, 2, 3, 4, 5)
+        db.session.commit()
+
+    span = _row(_soup(auth_client), test_model["model_name"]).find("span", class_="local-datetime")
+    assert span is not None
+    assert span.has_attr("data-relative")
+    assert span["data-utc"] == "2026-01-02T03:04:05Z"
+
+
+def test_unchecked_model_shows_never(auth_client, test_model, test_model_endpoint):
+    row = _row(_soup(auth_client), test_model["model_name"])
+    assert row.find("span", class_="local-datetime") is None
+    assert "Never" in row.get_text()

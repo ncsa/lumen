@@ -66,22 +66,55 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   window.renderLocalDatetimes();
+  const relativeEls = document.querySelectorAll(".local-datetime[data-utc][data-relative]");
+  if (relativeEls.length) {
+    const timer = setInterval(function () {
+      if (!Array.from(relativeEls).some(function (el) { return el.isConnected; })) {
+        clearInterval(timer);
+        return;
+      }
+      relativeEls.forEach(function (el) {
+        const d = new Date(el.dataset.utc);
+        if (!isNaN(d)) el.textContent = relativeTime(d);
+      });
+    }, 60000);
+  }
 });
 
 // Convert UTC ISO timestamps to local time for display. Exposed so pages
 // that insert timestamps after load (e.g. the OAuth consent page flipping a
 // model row to "acknowledged") render them identically to the server pass.
+// Elements with data-relative show "5 min. ago", refresh every minute, and
+// expose the full local datetime in a tooltip shown on hover and focus.
 window.renderLocalDatetimes = function (root) {
   (root || document).querySelectorAll(".local-datetime[data-utc]").forEach(function (el) {
     const d = new Date(el.dataset.utc);
     if (!isNaN(d) && !el.textContent) {
-      el.textContent = d.toLocaleString([], {
+      const local = d.toLocaleString([], {
         year: "numeric", month: "2-digit", day: "2-digit",
         hour: "2-digit", minute: "2-digit",
       });
+      if (el.hasAttribute("data-relative")) {
+        el.textContent = relativeTime(d);
+        el.title = local;  // becomes the Bootstrap tooltip's content
+        el.tabIndex = 0;
+        bootstrap.Tooltip.getOrCreateInstance(el);
+      } else {
+        el.textContent = local;
+      }
     }
   });
 };
+
+function relativeTime(d) {
+  const minutes = Math.max(0, Math.floor((Date.now() - d) / 60000));
+  if (minutes < 1) return "just now";
+  const rtf = new Intl.RelativeTimeFormat([], { style: "short" });
+  if (minutes < 60) return rtf.format(-minutes, "minute");
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return rtf.format(-hours, "hour");
+  return rtf.format(-Math.floor(hours / 24), "day");
+}
 
 // ── Styled dialogs replacing native alert()/confirm()/prompt() ─────────────
 // Each returns a promise that resolves when the dialog closes:
