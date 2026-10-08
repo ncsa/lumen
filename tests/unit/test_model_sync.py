@@ -414,6 +414,7 @@ def test_server_multimodal_missing_keeps_operator(monkeypatch):
     result = model_sync.sync_model({"name": "m", "input_modalities": ["text", "image"],
                                     "endpoints": [{"url": "http://x"}]})
     assert "input_modalities" not in result["updates"]
+    assert "output_modalities" not in result["updates"]
 
 
 def test_server_multimodal_false_strips_image(monkeypatch):
