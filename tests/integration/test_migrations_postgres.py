@@ -175,7 +175,8 @@ def test_model_group_access_dropped_and_downgrade_recreates_it(pg_migrated_isola
     assert owner_comment.endswith("only the owner may use the model")
     assert groups_comment == "Named collections of entities for coin limit policy assignment"
 
-    flask_db(url, "downgrade", "-1")
+    # An explicit revision: click would parse "-1" as an option.
+    flask_db(url, "downgrade", "d6e7f8a9b0c1")
     table, index, owner_comment, groups_comment = state()
     assert table == "model_group_access"
     assert index == "ix_model_group_access_group_id"
