@@ -1,4 +1,5 @@
 """Admin route tests — focus on user management happy paths."""
+import re
 from http import HTTPStatus
 
 import pytest
@@ -751,7 +752,7 @@ def test_config_page_renders_auto_price_checkbox(admin_client):
     assert "cbi('mdl-autoprice', !!m.auto_price, 'Automatic price (from models.dev)'" in html
     # cbi() pairs every checkbox with a <label for=...>.
     assert '<label class="form-check-label" for="${esc(id)}">' in html
-    assert "m.auto_price             = boolVal('mdl-autoprice') || undefined;" in html
+    assert re.search(r"m\.auto_price\s*=\s*boolVal\('mdl-autoprice'\) \|\| undefined;", html)
     assert "function syncAutoPriceFields()" in html
 
 
