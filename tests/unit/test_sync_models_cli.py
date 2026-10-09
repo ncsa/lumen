@@ -94,7 +94,7 @@ def test_cli_auto_price_updates_price():
     assert changes["output_cost_per_million"] == (2.0, 15.0)
 
 
-@pytest.mark.parametrize("flag", [{}, {"auto_price": False}])
+@pytest.mark.parametrize("flag", [{}, {"auto_price": False}, {"auto_price": "yes"}, {"auto_price": 1}])
 def test_cli_manual_price_untouched(flag):
     """Without auto_price: true, the CLI never proposes a price change."""
     changes = _price_changes({"input_cost_per_million": 1.0,

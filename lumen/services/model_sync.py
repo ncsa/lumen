@@ -414,7 +414,7 @@ def sync_model(model_def: dict) -> dict:
         # Pricing: average across providers offering the same base model on
         # models.dev, excluding $0 listings. Only for models that opt in with
         # auto_price: true — otherwise the operator's hand-set price is kept.
-        if model_def.get("auto_price"):
+        if model_def.get("auto_price") is True:
             avg_in, avg_out = _average_price(dev_match, price_index)
             if avg_in is not None and model_def.get("input_cost_per_million") != avg_in:
                 updates["input_cost_per_million"] = avg_in

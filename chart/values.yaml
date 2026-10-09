@@ -343,7 +343,7 @@ models: []
 # - name: gpt-4o                      # Lumen model ID used in API requests
 #   input_cost_per_million: 2.5       # REQUIRED; coins per 1M input tokens
 #   output_cost_per_million: 10.0     # REQUIRED; coins per 1M output tokens
-#   auto_price: false                 # true: model sync overwrites prices with models.dev averages
+#   auto_price: false                 # true: the model update action sets prices from models.dev
 #   description: "OpenAI GPT-4o"
 #   url: "https://platform.openai.com/docs/models/gpt-4o"
 #   context_window: 128000
