@@ -54,32 +54,6 @@
           </div>
           <div class="col-6 col-sm-4">
             <div class="profile-stat-card p-3 rounded border h-100">
-              <div class="text-muted small mb-1">Models Granted</div>
-              <div class="fw-bold fs-5">{{ granted_models | length }}</div>
-            </div>
-          </div>
-          <div class="col-6 col-sm-4">
-            <div class="profile-stat-card p-3 rounded border h-100">
-              <div class="text-muted small mb-1">Tokens Used</div>
-              {% if show_members %}
-              <div class="fw-bold fs-5">{{ total_tokens|compact_number }}</div>
-              {% else %}
-              <div class="fw-bold fs-5 text-muted">—</div>
-              {% endif %}
-            </div>
-          </div>
-          <div class="col-6 col-sm-4">
-            <div class="profile-stat-card p-3 rounded border h-100">
-              <div class="text-muted small mb-1">Coins Used</div>
-              {% if show_members %}
-              <div class="fw-bold fs-5">{{ "%.2f"|format(total_cost) }}</div>
-              {% else %}
-              <div class="fw-bold fs-5 text-muted">—</div>
-              {% endif %}
-            </div>
-          </div>
-          <div class="col-6 col-sm-4">
-            <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Max Coins</div>
               {% if group_limit is none %}
                 <div class="fw-bold fs-5 text-muted">—</div>
@@ -110,18 +84,12 @@
 
 
 <!-- Tabs -->
-{% if show_members or granted_models or can_manage or is_admin %}
+{% if show_members or can_manage or is_admin %}
 <ul class="nav nav-tabs mt-4" id="group-tabs" role="tablist">
   {% if show_members %}
   <li class="nav-item" role="presentation">
     <button class="nav-link active" id="tab-members" data-bs-toggle="tab" data-bs-target="#pane-members"
             type="button" role="tab" aria-controls="pane-members" aria-selected="true">Members</button>
-  </li>
-  {% endif %}
-  {% if granted_models or can_manage %}
-  <li class="nav-item" role="presentation">
-    <button class="nav-link{% if not show_members %} active{% endif %}" id="tab-models" data-bs-toggle="tab" data-bs-target="#pane-models"
-            type="button" role="tab" aria-controls="pane-models" aria-selected="{{ 'false' if show_members else 'true' }}">Models</button>
   </li>
   {% endif %}
   {% if is_admin %}
@@ -193,64 +161,6 @@
 <div class="d-flex justify-content-between align-items-center mt-2 flex-wrap gap-2">
   <span id="member-range" class="text-muted small"></span>
   <div id="member-pagination" class="d-flex gap-1 flex-wrap"></div>
-</div>
-</div>
-{% endif %}
-
-<!-- Models -->
-{% if granted_models or can_manage %}
-<div class="tab-pane fade{% if not show_members %} show active{% endif %}" id="pane-models" role="tabpanel" aria-labelledby="tab-models">
-{% if not show_members %}
-<p class="text-muted small mb-3" role="note">
-  This group has no owner, so its member list and usage totals are not shown.
-  An administrator can assign an owner to make them visible.
-</p>
-{% endif %}
-<div class="d-flex justify-content-between align-items-center mt-0 mb-0 flex-wrap gap-2">
-  <h2 class="mb-0">Models</h2>
-  {% if can_manage %}
-  {% if addable_model_count %}
-  <button class="btn btn-sm btn-primary" id="add-model-open-btn" data-bs-toggle="modal" data-bs-target="#addModelModal"
-          aria-haspopup="dialog">+ Add Model</button>
-  {% else %}
-  <span class="d-inline-block" tabindex="0" data-bs-toggle="tooltip"
-        data-bs-title="You have no models of your own left to grant to this group">
-    <button class="btn btn-sm btn-primary" disabled
-            aria-label="Add Model (you have no models of your own left to grant)">+ Add Model</button>
-  </span>
-  {% endif %}
-  {% endif %}
-</div>
-<div class="table-responsive mt-2">
-  <table class="table table-bordered table-striped table-hover align-middle mb-0">
-    <caption class="visually-hidden">Models granted to this group</caption>
-    <thead class="table-light">
-      <tr>
-        <th scope="col">Model</th>
-        <th scope="col">Owner</th>
-        {% if can_manage %}<th><span class="visually-hidden">Actions</span></th>{% endif %}
-      </tr>
-    </thead>
-    <tbody>
-      {% for m in granted_models %}
-      <tr>
-        <td><a href="{{ m.url }}">{{ m.model_name }}</a></td>
-        <td>{{ m.owner_name }}</td>
-        {% if can_manage %}
-        <td>
-          <button class="btn btn-sm btn-outline-danger remove-model-btn"
-                  data-id="{{ m.id }}" data-name="{{ m.model_name }}"
-                  aria-label="Remove {{ m.model_name }} from this group">
-            <i class="bi bi-trash" aria-hidden="true"></i>
-          </button>
-        </td>
-        {% endif %}
-      </tr>
-      {% else %}
-      <tr><td colspan="{{ 3 if can_manage else 2 }}" class="text-muted text-center">No models granted to this group.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
 </div>
 </div>
 {% endif %}
@@ -354,30 +264,6 @@
 {{ entity_search_modal('changeOwnerModal', 'Change Owner', 'change-owner-name', 'owner-suggestions', 'change-owner-id',
    'change-owner-btn', 'Change Owner', 'Search for a group member by name or email. The new owner must already be a member of this group; the current owner becomes a regular member.') }}
 {% endif %}
-
-<!-- Add Model Modal -->
-<div class="modal fade" id="addModelModal" tabindex="-1" aria-labelledby="addModelModalLabel">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2 class="modal-title h5" id="addModelModalLabel">Add Model</h2>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close Add Model dialog"></button>
-      </div>
-      <div class="modal-body">
-        <p class="text-muted small">Grant a model you own to every member of this group.</p>
-        <label class="form-label" for="add-model-select">Model</label>
-        <select id="add-model-select" class="form-select">
-          <option value="">Loading…</option>
-        </select>
-        <div id="add-model-error" class="text-danger small mt-2" role="alert" aria-live="assertive" hidden></div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button class="btn btn-primary" id="add-model-btn">Add Model</button>
-      </div>
-    </div>
-  </div>
-</div>
 {% endif %}
 
 <style>
@@ -407,13 +293,11 @@ const MEMBER_ACTIONS = CAN_MANAGE && !{{ group.auto_join | tojson }};
 const OWNER_ID = {{ owner_id | tojson }};
 const CALLER_IS_OWNER = {{ (owner_id == session['entity_id']) | tojson }};
 
-document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
-
 function escHtml(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ── Tab ↔ URL hash sync (#members / #models / #rules) ────────────────────
+// ── Tab ↔ URL hash sync (#members / #rules) ────────────────────
 const hashTabBtn = location.hash && document.getElementById('tab-' + location.hash.slice(1));
 if (hashTabBtn && hashTabBtn.closest('#group-tabs')) bootstrap.Tab.getOrCreateInstance(hashTabBtn).show();
 document.querySelectorAll('#group-tabs [data-bs-toggle="tab"]').forEach(btn => {
@@ -702,48 +586,6 @@ async function changeOwner() {
 }
 document.getElementById("change-owner-btn").addEventListener("click", changeOwner);
 {% endif %}
-
-// ── Add / remove model grants ─────────────────────────────────────────────
-const addModelModalEl = document.getElementById("addModelModal");
-if (addModelModalEl) {
-  addModelModalEl.addEventListener("show.bs.modal", async () => {
-    const sel = document.getElementById("add-model-select");
-    document.getElementById("add-model-error").hidden = true;
-    sel.innerHTML = '<option value="">Loading…</option>';
-    const resp = await fetch(`/groups/${GROUP_ID}/models`);
-    const data = await resp.json().catch(() => ({ models: [] }));
-    sel.innerHTML = data.models.length
-      ? data.models.map(m => `<option value="${m.id}">${escHtml(m.model_name)}</option>`).join('')
-      : '<option value="">No models available</option>';
-  });
-  addModelModalEl.addEventListener("shown.bs.modal", () => document.getElementById("add-model-select").focus());
-
-  document.getElementById("add-model-btn").addEventListener("click", async () => {
-    const errEl = document.getElementById("add-model-error");
-    errEl.hidden = true;
-    const mid = document.getElementById("add-model-select").value;
-    if (!mid) { errEl.textContent = "Pick a model."; errEl.hidden = false; return; }
-    const resp = await fetch(`/groups/${GROUP_ID}/models`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
-      body: JSON.stringify({ model_config_id: parseInt(mid) }),
-    });
-    if (resp.ok) { location.reload(); return; }
-    const d = await resp.json().catch(() => ({}));
-    errEl.textContent = d.error || "Failed to add model.";
-    errEl.hidden = false;
-  });
-}
-
-document.querySelectorAll('.remove-model-btn').forEach(btn => {
-  btn.addEventListener('click', async () => {
-    const name = btn.dataset.name;
-    if (!await appConfirm(`Remove ${name} from this group?`, { title: "Remove Model", okLabel: "Remove", okClass: "btn-danger" })) return;
-    const resp = await fetch(`/groups/${GROUP_ID}/models/${btn.dataset.id}`, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } });
-    if (resp.ok) location.reload();
-    else appAlert("Failed to remove model.");
-  });
-});
 
 // ── Toggle active ─────────────────────────────────────────────────────────
 const toggleBtn = document.getElementById("toggle-group-btn");
