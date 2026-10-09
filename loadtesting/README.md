@@ -69,7 +69,7 @@ uv run python loadtesting/setup_users.py 10 --write-config
 | `--model` | `dummy` | Model name to grant access to |
 | `--coins` | `20` | Coins granted per account |
 | `--prefix` | `loadtest` | Name prefix for created entities (e.g. `loadtest-1`) |
-| `--group` | *(none)* | Add each entity to this group (e.g. `staff`) for model access |
+| `--group` | *(none)* | Add each entity to this group (e.g. `staff`) for its coin policy |
 | `--write-config` | off | Update `loadtesting/config.yaml` with the generated keys |
 
 ### 4. Configure `loadtesting/config.yaml`

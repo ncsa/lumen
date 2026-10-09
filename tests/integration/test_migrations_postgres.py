@@ -150,10 +150,16 @@ def test_migration_is_at_a_single_head(pg_migrated):
     assert len(heads) == 1, f"expected one alembic head, got {heads}"
 
 
-def test_model_group_access_dropped_and_downgrade_recreates_it(pg_url, pg_migrated):
-    """f8a9b0c1d2e3 drops the table; downgrade recreates it empty with its index."""
-    def table_and_index():
-        with pg_migrated.connect() as conn:
+def test_model_group_access_dropped_and_downgrade_recreates_it(pg_migrated_isolated):
+    """f8a9b0c1d2e3 drops the table; downgrade recreates it empty with its index.
+
+    Uses a private database so a failed downgrade/upgrade cannot leave the
+    shared session database off head.
+    """
+    url, engine = pg_migrated_isolated
+
+    def state():
+        with engine.connect() as conn:
             return (
                 conn.execute(text("SELECT to_regclass('public.model_group_access')")).scalar(),
                 conn.execute(text("SELECT to_regclass('public.ix_model_group_access_group_id')")).scalar(),
@@ -161,20 +167,21 @@ def test_model_group_access_dropped_and_downgrade_recreates_it(pg_url, pg_migrat
                     "SELECT col_description('model_configs'::regclass, attnum) FROM pg_attribute "
                     "WHERE attrelid = 'model_configs'::regclass AND attname = 'owner_entity_id'"
                 )).scalar(),
+                conn.execute(text("SELECT obj_description('groups'::regclass, 'pg_class')")).scalar(),
             )
 
-    table, index, comment = table_and_index()
+    table, index, owner_comment, groups_comment = state()
     assert table is None and index is None, "model_group_access survived the upgrade"
-    assert comment.endswith("only the owner may use the model")
+    assert owner_comment.endswith("only the owner may use the model")
+    assert groups_comment == "Named collections of entities for coin limit policy assignment"
 
-    flask_db(pg_url, "downgrade", "-1")
-    try:
-        table, index, comment = table_and_index()
-        assert table == "model_group_access"
-        assert index == "ix_model_group_access_group_id"
-        assert comment.endswith("only the owner and members of granted groups may use the model")
-    finally:
-        flask_db(pg_url, "upgrade")
+    flask_db(url, "downgrade", "-1")
+    table, index, owner_comment, groups_comment = state()
+    assert table == "model_group_access"
+    assert index == "ix_model_group_access_group_id"
+    assert owner_comment.endswith("only the owner and members of granted groups may use the model")
+    assert groups_comment == "Named collections of entities for bulk model access and coin limit policy assignment"
 
-    table, index, _ = table_and_index()
+    flask_db(url, "upgrade")
+    table, index, *_ = state()
     assert table is None and index is None
