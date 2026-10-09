@@ -745,6 +745,52 @@ models:
         app.config["CONFIG_YAML"] = original
 
 
+def test_config_page_renders_auto_price_checkbox(admin_client):
+    """The model form has a labelled Automatic price checkbox wired to the price fields."""
+    html = admin_client.get("/admin/config").get_data(as_text=True)
+    assert "cbi('mdl-autoprice', !!m.auto_price, 'Automatic price (from models.dev)'" in html
+    # cbi() pairs every checkbox with a <label for=...>.
+    assert '<label class="form-check-label" for="${esc(id)}">' in html
+    assert "m.auto_price             = boolVal('mdl-autoprice') || undefined;" in html
+    assert "function syncAutoPriceFields()" in html
+
+
+def test_config_post_round_trips_auto_price(app, admin_client, tmp_path):
+    """Saving writes ``auto_price: true`` for ticked models and omits it for the rest."""
+    config = """\
+version: 3
+app:
+  name: Lumen
+  secret_key: real-secret
+models:
+  - name: auto-model
+    input_cost_per_million: 1
+    output_cost_per_million: 1
+    auto_price: true
+    endpoints:
+      - url: https://api.example.com/v1
+        api_key: sk-real
+  - name: manual-model
+    input_cost_per_million: 3
+    output_cost_per_million: 4
+    endpoints:
+      - url: https://api.example.com/v1
+        api_key: sk-real
+"""
+    original, cfg = _use_config(app, tmp_path, config)
+    try:
+        data = admin_client.get("/admin/api/config").get_json()
+        assert data["models"][0]["auto_price"] is True
+        assert "auto_price" not in data["models"][1]
+        resp = admin_client.post("/admin/api/config", json=data)
+        assert resp.status_code == HTTPStatus.OK
+        saved = yaml.safe_load(cfg.read_text())
+        assert saved["models"][0]["auto_price"] is True
+        assert "auto_price" not in saved["models"][1]
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
 def test_config_post_re_enables_legacy_disabled_model(app, admin_client, tmp_path):
     """Clearing the editor's Disabled checkbox re-enables a model that was disabled
     via the legacy ``active: false`` key.

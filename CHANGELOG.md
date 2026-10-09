@@ -6,6 +6,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Added
 
+- Models can be set to take their price automatically from models.dev; manually set prices are no longer overwritten by Update.
 - API keys can be rotated in place, issuing a new secret while keeping the key's name and usage stats; project keys can only be rotated by the user who created them.
 - Show which user created each project API key.
 - API keys can retrieve their cumulative usage through `GET /v1/usage`, including the account's remaining coins.

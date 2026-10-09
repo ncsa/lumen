@@ -129,8 +129,8 @@ function si(id, v, opts) {
 function tai(id, v, rows = 4) {
   return `<textarea class="form-control form-control-sm" id="${esc(id)}" rows="${rows}">${esc(String(v ?? ''))}</textarea>`;
 }
-function cbi(id, checked, label) {
-  return `<div class="form-check"><input class="form-check-input" type="checkbox" id="${esc(id)}"${checked ? ' checked' : ''}><label class="form-check-label" for="${esc(id)}">${esc(label)}</label></div>`;
+function cbi(id, checked, label, attrs = '') {
+  return `<div class="form-check"><input class="form-check-input" type="checkbox" id="${esc(id)}"${checked ? ' checked' : ''}${attrs}><label class="form-check-label" for="${esc(id)}">${esc(label)}</label></div>`;
 }
 function card(title, body) {
   return `<div class="card mb-3"><div class="card-header py-2 small fw-bold">${esc(title)}</div><div class="card-body">${body}</div></div>`;
@@ -569,6 +569,7 @@ function renderModels() {
     <div id="mdl-form">${models.length ? renderModelForm(models[state.selectedModelIdx], state.selectedModelIdx) : ''}</div>
   `;
   syncAudioCostField();
+  syncAutoPriceFields();
 }
 
 // Audio Cost / minute only applies to speech-to-text models; gate it on the audio input modality.
@@ -578,6 +579,12 @@ function syncAudioCostField() {
   const on = !!(audio && audio.checked);
   cost.disabled = !on;
   if (!on) cost.value = '';
+}
+
+// Automatic price: models.dev sets input/output prices on Update, so lock them (readonly keeps values in collect).
+function syncAutoPriceFields() {
+  const auto = boolVal('mdl-autoprice');
+  for (const id of ['mdl-in-cost', 'mdl-out-cost']) { const el = $(id); if (el) el.readOnly = auto; }
 }
 
 function renderModelForm(m, idx) {
@@ -610,6 +617,7 @@ function renderModelForm(m, idx) {
       ${row3(field('mdl-in-cost', 'Input Cost / 1M tokens ($)',  ni('mdl-in-cost',  m.input_cost_per_million)),
              field('mdl-out-cost','Output Cost / 1M tokens ($)', ni('mdl-out-cost', m.output_cost_per_million)),
              field('mdl-audio-cost','Audio Cost / hour ($)', ni('mdl-audio-cost', m.audio_cost_per_hour), 'speech-to-text only'))}
+      <div class="mb-3 d-flex align-items-baseline gap-2">${cbi('mdl-autoprice', !!m.auto_price, 'Automatic price (from models.dev)', ' onchange="syncAutoPriceFields()"')}<span class="text-muted small fst-italic">set from models.dev on Update</span></div>
       ${row3(field('mdl-ctx',    'Context Window (tokens)', ni('mdl-ctx',    m.context_window,  '1')),
              field('mdl-maxout', 'Max Output Tokens',       ni('mdl-maxout', m.max_output_tokens,'1')),
              field('mdl-cutoff', 'Knowledge Cutoff',        ti('mdl-cutoff', m.knowledge_cutoff, 'YYYY-MM')))}
@@ -649,6 +657,7 @@ function switchModel(idx) {
   state.selectedModelIdx = idx;
   $('mdl-form').innerHTML = renderModelForm(state.data.models?.[idx] || {}, idx);
   syncAudioCostField();
+  syncAutoPriceFields();
 }
 function addModel() {
   collectCurrentModel();
@@ -690,6 +699,7 @@ function collectCurrentModel() {
   m.end_date               = val('mdl-enddate')  || undefined;
   m.input_cost_per_million = numVal('mdl-in-cost');
   m.output_cost_per_million= numVal('mdl-out-cost');
+  m.auto_price             = boolVal('mdl-autoprice') || undefined;
   m.audio_cost_per_hour    = $('mdl-in-audio')?.checked ? numVal('mdl-audio-cost') : undefined;
   m.context_window         = numVal('mdl-ctx');
   m.max_output_tokens      = numVal('mdl-maxout');
@@ -739,6 +749,7 @@ async function syncModel() {
     for (const field of removals) delete m[field];
     $('mdl-form').innerHTML = renderModelForm(m, idx);
     syncAudioCostField();
+    syncAutoPriceFields();
     const FIELD_LABELS = {
       context_window: 'context size',
       max_output_tokens: 'max output',

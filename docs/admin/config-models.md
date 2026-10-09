@@ -106,6 +106,9 @@ Fields shown to users on the Models page:
 |-------|-------------|---------|
 | `input_cost_per_million` | Coins charged per 1M input tokens | 0.0 |
 | `output_cost_per_million` | Coins charged per 1M output tokens | 0.0 |
+| `auto_price` | Take input/output prices from models.dev on Update (admin only, not shown to users) | `false` |
+
+Prices are set by hand unless `auto_price: true` is set; a missing key means manual. Update (in the config editor or `sync_models.py`) only changes the prices of models with `auto_price: true`, and keeps the current price if models.dev has none. In the config editor, tick **Automatic price (from models.dev)** in Pricing & Limits; the input and output price fields are then read-only.
 
 See the [Introduction](../introduction.md#tokens-and-coins) for how coin costs are calculated.
 
