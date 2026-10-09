@@ -173,10 +173,12 @@
         <td>
           <div class="d-flex gap-1 align-items-center">
             {% if role == "owner" %}
+            {% if can_manage %}
             <button class="btn btn-sm btn-outline-danger" disabled
-                    aria-label="Cannot remove owner {{ member.name }}"
+                    aria-label="{{ 'Cannot remove yourself as owner' if caller_role == 'owner' else 'Cannot remove owner ' ~ member.name }}"
                     aria-describedby="owner-remove-reason">Remove</button>
-            <span id="owner-remove-reason" class="text-muted small">Transfer ownership first</span>
+            <span id="owner-remove-reason" class="text-muted small">Make another manager owner first</span>
+            {% endif %}
             {% elif role == "manager" and can_manage %}
             <button class="btn btn-sm btn-outline-primary"
                     onclick='makeOwner({{ member.id }}, {{ member.name | tojson }})'

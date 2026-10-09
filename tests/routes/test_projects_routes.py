@@ -1887,9 +1887,9 @@ def test_members_tab_owner_sees_all_actions(client, mixed_members):
         "Make Second User owner", "Demote Second User to user", "Remove Second User",
         "Promote Third User to manager", "Remove Third User",
     }
-    owner_remove = soup.find("button", attrs={"aria-label": "Cannot remove owner Owner of test-svc"})
+    owner_remove = soup.find("button", attrs={"aria-label": "Cannot remove yourself as owner"})
     assert owner_remove.has_attr("disabled")
-    assert soup.find(id=owner_remove["aria-describedby"]).get_text(strip=True) == "Transfer ownership first"
+    assert soup.find(id=owner_remove["aria-describedby"]).get_text(strip=True) == "Make another manager owner first"
 
 
 def test_members_tab_admin_sees_owner_actions(admin_client, mixed_members):
@@ -2048,3 +2048,31 @@ def test_user_sees_self_owner_and_managers_only(app, client, mixed_members, seco
     soup = _members_page(_login_as(client, second_user["id"]), mixed_members["id"])
     assert _member_names(soup) == ["Owner of test-svc", "Second User", "Other User", "Third User"]
     assert soup.find("div", string="Members").find_next_sibling("div").get_text(strip=True) == "4"
+
+
+def _owner_row(soup):
+    return next(tr for tr in soup.select("#pane-members tbody tr")
+                if tr.select("td")[2].get_text(strip=True) == "Owner")
+
+
+def test_owner_row_remove_cell_per_role(client, admin_client, mixed_members, second_user):
+    sid = mixed_members["id"]
+    # admin_client and client are the same test client, so check the admin view first.
+    for login, label in (
+        (lambda: admin_client, "Cannot remove owner Owner of test-svc"),
+        (lambda: _login_as(client, mixed_members["owner_id"]), "Cannot remove yourself as owner"),
+    ):
+        viewer = login()
+        page = viewer.get(f"/projects/{sid}").get_data(as_text=True)
+        assert "Transfer ownership first" not in page
+        soup = _members_page(viewer, sid)
+        btn = _owner_row(soup).find("button")
+        assert btn.has_attr("disabled") and btn["aria-label"] == label
+        assert soup.find(id=btn["aria-describedby"]).get_text(strip=True) == "Make another manager owner first"
+
+    manager = _login_as(client, second_user["id"])
+    page = manager.get(f"/projects/{sid}").get_data(as_text=True)
+    assert "Transfer ownership first" not in page
+    assert "Make another manager owner first" not in page
+    soup = _members_page(manager, sid)
+    assert _owner_row(soup).find("button") is None

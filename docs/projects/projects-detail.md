@@ -43,7 +43,7 @@ The list shows the owner first, then managers, then users, sorted A–Z by name 
 
 ### Removing a Member
 
-Click **Remove** next to the member. Managers can remove users; only the owner or an admin can remove managers. The owner's **Remove** button is always disabled, with a note to transfer ownership first.
+Click **Remove** next to the member. Managers can remove users; only the owner or an admin can remove managers. The owner can't be removed: the owner and admins see the owner's **Remove** button disabled, with the hint "Make another manager owner first". Managers see no button on the owner's row.
 
 ### Promoting and Demoting (owner or admin)
 
