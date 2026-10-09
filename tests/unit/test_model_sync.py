@@ -245,6 +245,7 @@ def test_price_untouched_without_dev_match(monkeypatch):
 # ── supports_reasoning: models.dev provider consensus ──────────────────────────
 
 def _reasoning_models(*flags):
+    # Distinct provider ids that all normalize to "m", so they share one price-index group.
     return [{"id": f"p{i}/m", "reasoning": f} for i, f in enumerate(flags)]
 
 
