@@ -1710,11 +1710,34 @@ def test_manager_and_owner_detail_show_all_keys(app, client, user_project, test_
         assert "someone-elses-key" in page
 
 
-def test_user_can_view_project_and_consent(app, user_auth_client, user_project, test_model, make_ack_access):
+def test_user_can_view_project_but_not_acknowledge_models(
+    app, user_auth_client, user_project, test_model, make_ack_access,
+):
     resp = user_auth_client.get(f"/projects/{user_project['id']}")
     assert resp.status_code == HTTPStatus.OK
     make_ack_access(user_project["id"], test_model["id"])
     resp = user_auth_client.post(f"/projects/{user_project['id']}/consent/{test_model['model_name']}")
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_model_consent import EntityModelConsent
+        assert db.session.execute(
+            select(EntityModelConsent).filter_by(entity_id=user_project["id"])
+        ).scalar_one_or_none() is None
+
+
+@pytest.mark.parametrize("caller", ["manager", "owner", "admin"])
+def test_manager_owner_and_admin_can_acknowledge_models(
+    app, client, user_project, second_user, admin_user, test_model, make_ack_access, caller,
+):
+    _add_member(app, user_project["id"], second_user["id"], "manager")
+    caller_id = {"manager": second_user["id"], "owner": user_project["owner_id"], "admin": admin_user["id"]}[caller]
+    _login_as(client, caller_id)
+    if caller == "admin":
+        with client.session_transaction() as sess:
+            sess["admin_mode"] = True
+    make_ack_access(user_project["id"], test_model["id"])
+    resp = client.post(f"/projects/{user_project['id']}/consent/{test_model['model_name']}")
     assert resp.status_code == HTTPStatus.OK
 
 
@@ -1810,3 +1833,37 @@ def test_create_key_refused_when_membership_removed_before_lock(app, user_auth_c
         assert db.session.scalar(
             select(func.count(APIKey.id)).where(APIKey.entity_id == user_project["id"])
         ) == 0
+
+
+def test_user_sees_only_managers_owner_and_self(app, client, user_project, test_user, second_user, admin_user):
+    """U1 (test_user) and U2 are users; second_user is a manager. U1 sees the
+    owner, the manager and themselves but never U2; everyone else sees U2."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        hidden = Entity(entity_type="user", email="hidden-u2@example.com", name="Hidden Member U2",
+                        initials="HU", active=True)
+        db.session.add(hidden)
+        db.session.commit()
+        hidden_id = hidden.id
+        owner = db.session.get(Entity, user_project["owner_id"])
+        owner_name, owner_email = owner.name, owner.email
+    _add_member(app, user_project["id"], hidden_id, "user")
+    _add_member(app, user_project["id"], second_user["id"], "manager")
+    url = f"/projects/{user_project['id']}"
+
+    page = _login_as(client, test_user["id"]).get(url).get_data(as_text=True)
+    assert "testuser@example.com" in page
+    assert owner_name in page and owner_email in page
+    assert second_user["name"] in page and second_user["email"] in page
+    assert "Hidden Member U2" not in page
+    assert "hidden-u2@example.com" not in page
+
+    for viewer in (second_user["id"], user_project["owner_id"], admin_user["id"]):
+        _login_as(client, viewer)
+        if viewer == admin_user["id"]:
+            with client.session_transaction() as sess:
+                sess["admin_mode"] = True
+        page = client.get(url).get_data(as_text=True)
+        assert "Hidden Member U2" in page
+        assert "hidden-u2@example.com" in page

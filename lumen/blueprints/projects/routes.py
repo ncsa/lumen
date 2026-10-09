@@ -258,19 +258,29 @@ def detail(sid):
     project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
     _require_project_access(entity_id, sid)
 
+    plain_user = _is_plain_user(entity_id, sid)
     data = _get_profile_data(sid)
     # Users see only the keys they created. The key rows are embedded in the
     # page, so the filter has to happen here, not in the template.
-    if _is_plain_user(entity_id, sid):
+    if plain_user:
         data["api_keys"] = [k for k in data["api_keys"] if k.created_by_entity_id == entity_id]
         data["key_creators"] = {k.id: data["key_creators"][k.id] for k in data["api_keys"]}
 
-    managers = db.session.execute(
+    members_stmt = (
         select(Entity)
         .join(EntityManager, EntityManager.user_entity_id == Entity.id)
         .where(EntityManager.project_entity_id == sid)
         .order_by(Entity.name)
-    ).scalars().all()
+    )
+    # Users see only the managers, the owner and themselves, never the other
+    # users; like the keys, the member rows are embedded in the page.
+    if plain_user:
+        members_stmt = members_stmt.where(db.or_(
+            EntityManager.role == "manager",
+            Entity.id == project.owner_entity_id,
+            Entity.id == entity_id,
+        ))
+    managers = db.session.execute(members_stmt).scalars().all()
 
     owner = get_project_owner(sid)
     owner_id = owner.id if owner else None
@@ -755,7 +765,8 @@ def rotate_project_key(sid, kid):
 def project_consent(sid, model_name):
     entity_id = session["entity_id"]
     db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
-    _require_project_access(entity_id, sid)
+    # Acknowledging a model binds the whole project, so plain users cannot.
+    _require_project_manager(entity_id, sid)
 
     config = db.first_or_404(select(ModelConfig).where(ModelConfig.model_name == model_name, ModelConfig.active))
 
