@@ -227,7 +227,6 @@ The chat blueprint's `/chat/<id>/message` SSE endpoint is functionally a web-UI 
 
 | Model | Purpose |
 |---|---|
-| `ModelGroupAccess` | Group grant for an owned model; a row gives all group members access |
 | `EntityModelConsent` | Records user acknowledgment of models with `needs_ack` set |
 
 ### LLM Catalogue
@@ -256,12 +255,10 @@ Entity ──< EntityLimit
 Entity ──< EntityModelConsent
 Entity ──< EntityStat
 Entity ──< GroupMember >── Group ──< GroupLimit
-                                   ──< ModelGroupAccess
 Entity ──< Conversation ──< Message
 Entity ──< EntityManager (user → project)
 Entity ──< RequestLog (SET NULL on delete)
 Entity ──< ModelConfig (owner_entity_id, SET NULL on delete)
-ModelConfig ──< ModelGroupAccess
 ModelConfig ──< ModelEndpoint
 ModelConfig ──< ModelStat
 ModelConfig ──< RequestLog (SET NULL on delete)

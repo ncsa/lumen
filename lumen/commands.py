@@ -170,7 +170,7 @@ def _apply_model_access(config, model_def):
     """Set config.needs_ack / early_access / disabled from a model definition.
 
     Bridges the legacy `active:` boolean (active: false -> disabled) with a
-    deprecation warning. Never touches owner_entity_id or group grants — model
+    deprecation warning. Never touches owner_entity_id — model
     ownership is DB-managed via the admin UI, not config.yaml.
     """
     config.needs_ack = bool(model_def.get("needs_ack", False))

@@ -2,7 +2,6 @@
 from http import HTTPStatus
 
 import pytest
-from sqlalchemy import select
 
 
 def _owner_id(app, model_id):
@@ -70,12 +69,6 @@ def test_patch_ignores_group_ids(app, admin_client, test_model, test_user, group
         "owner": {"id": test_user["id"], "name": test_user["name"], "email": "testuser@example.com"},
     }
     assert _owner_id(app, test_model["id"]) == test_user["id"]
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.model_group_access import ModelGroupAccess
-        assert db.session.execute(
-            select(ModelGroupAccess).filter_by(model_config_id=test_model["id"])
-        ).first() is None
 
 
 def test_patch_without_owner_email_leaves_owner(app, admin_client, test_model, test_user):

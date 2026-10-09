@@ -10,6 +10,8 @@ test here must fail — otherwise this file is decoration.
 import pytest
 from sqlalchemy import text
 
+from .conftest import flask_db
+
 pytestmark = pytest.mark.postgres
 
 
@@ -146,3 +148,33 @@ def test_migration_is_at_a_single_head(pg_migrated):
     with pg_migrated.connect() as conn:
         heads = conn.execute(text("SELECT version_num FROM alembic_version")).scalars().all()
     assert len(heads) == 1, f"expected one alembic head, got {heads}"
+
+
+def test_model_group_access_dropped_and_downgrade_recreates_it(pg_url, pg_migrated):
+    """f8a9b0c1d2e3 drops the table; downgrade recreates it empty with its index."""
+    def table_and_index():
+        with pg_migrated.connect() as conn:
+            return (
+                conn.execute(text("SELECT to_regclass('public.model_group_access')")).scalar(),
+                conn.execute(text("SELECT to_regclass('public.ix_model_group_access_group_id')")).scalar(),
+                conn.execute(text(
+                    "SELECT col_description('model_configs'::regclass, attnum) FROM pg_attribute "
+                    "WHERE attrelid = 'model_configs'::regclass AND attname = 'owner_entity_id'"
+                )).scalar(),
+            )
+
+    table, index, comment = table_and_index()
+    assert table is None and index is None, "model_group_access survived the upgrade"
+    assert comment.endswith("only the owner may use the model")
+
+    flask_db(pg_url, "downgrade", "-1")
+    try:
+        table, index, comment = table_and_index()
+        assert table == "model_group_access"
+        assert index == "ix_model_group_access_group_id"
+        assert comment.endswith("only the owner and members of granted groups may use the model")
+    finally:
+        flask_db(pg_url, "upgrade")
+
+    table, index, _ = table_and_index()
+    assert table is None and index is None
