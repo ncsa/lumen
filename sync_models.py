@@ -274,8 +274,10 @@ def _consensus_bool(dev_model: dict, price_index: dict[str, list[dict]], key: st
     """Majority vote on a boolean field across every models.dev provider that
     lists the same base model. Providers that don't report a boolean are
     ignored, so a single reporting provider is a unanimous consensus. Votes are
-    counted per listing, not per provider. Returns None on a tie or when no
-    provider reports a value. Mirrors lumen.services.model_sync._consensus_bool.
+    counted per listing, not per provider: a provider listing the same base
+    model twice (e.g. ``m`` and ``m:free``) votes twice. Returns None on a tie
+    or when no provider reports a value.
+    Mirrors lumen.services.model_sync._consensus_bool.
     """
     needle = _normalize_id(dev_model.get("id", ""))
     if not needle:
