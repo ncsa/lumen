@@ -322,7 +322,7 @@ def _patch_probe(monkeypatch, fake_get):
 
 
 def test_sglang_server_info_preferred_over_v1_models(monkeypatch):
-    """/get_server_info is called first; when it 200s, /v1/models is never hit.
+    """The server info is read first; when it 200s, /v1/models is never hit.
     SGLang's max_req_input_len wins over /v1/models' theoretical max_model_len."""
     calls = []
     def fake_get(url, **kw):
