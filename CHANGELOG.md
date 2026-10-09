@@ -17,6 +17,7 @@ All notable changes to Lumen will be documented in this file.
 - Admins can add and remove a user's groups from the Edit User dialog.
 - Admins can reset a user's coins from the Coins Available card on their profile.
 - Log a warning with email, affiliation and IdP when a login matches no auto-join group.
+- `scripts/responsive_check.py` audits pages for horizontal overflow at phone and tablet widths, and a UI test guards that server-rendered data tables sit in a `.table-responsive` wrapper.
 
 ### Changed
 

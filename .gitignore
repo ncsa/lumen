@@ -73,6 +73,9 @@ restore.sh
 /models/
 chart/phoenix.yaml
 
+# Responsive audit output (scripts/responsive_check.py)
+responsive-audit/
+
 # Load-test run data and summaries (local only)
 loadtesting/results/
 
