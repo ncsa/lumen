@@ -10,7 +10,6 @@ from lumen.blueprints.admin.routes import apply_group_coin_pool_edit
 from lumen.decorators import admin_required, is_admin, login_required
 from lumen.extensions import db
 from lumen.models.entity import Entity
-from lumen.models.entity_stat import EntityStat
 from lumen.models.group import Group
 from lumen.models.group_limit import GroupLimit
 from lumen.models.group_member import (
@@ -19,8 +18,6 @@ from lumen.models.group_member import (
     is_group_owner,
 )
 from lumen.models.group_rule import GroupRule
-from lumen.models.model_config import ModelConfig
-from lumen.models.model_group_access import ModelGroupAccess
 
 groups_bp = Blueprint("groups", __name__)
 
@@ -42,8 +39,8 @@ def _require_group_access(entity_id: int, gid: int):
 def _require_group_admin(entity_id: int, gid: int):
     """Abort 403 unless caller is a global admin or the group's owner.
 
-    Owner-level actions: add/remove members, transfer ownership, grant and
-    revoke models, edit the profile, toggle. Regular members are rejected here.
+    Owner-level actions: add/remove members, transfer ownership, edit the
+    profile, toggle. Regular members are rejected here.
     """
     entity = db.session.get(Entity, entity_id)
     if not is_admin(entity) and not is_group_owner(entity_id, gid):
@@ -63,7 +60,7 @@ def _owned_group_ids(group_ids=None):
     """Ids of groups that have an owner.
 
     A group with no owner has nobody accountable for its membership, so its
-    member list and rolled-up usage are withheld from everyone but admins —
+    member list is withheld from everyone but admins —
     otherwise any member of a large ownerless group (e.g. one created by a
     config.yaml group rule) could enumerate the whole directory through it.
     """
@@ -129,42 +126,6 @@ def _member_count_sq(group_ids=None):
     return stmt.group_by(GroupMember.group_id).subquery()
 
 
-def _model_count_sq(group_ids=None):
-    stmt = select(
-        ModelGroupAccess.group_id.label("group_id"),
-        func.count(ModelGroupAccess.id).label("model_count"),
-    )
-    if group_ids is not None:
-        stmt = stmt.where(ModelGroupAccess.group_id.in_(group_ids))
-    return stmt.group_by(ModelGroupAccess.group_id).subquery()
-
-
-def _usage_sq(group_ids=None):
-    """Usage summed over the group's member entities.
-
-    A member in two groups contributes to both totals: these are per-group
-    views of member activity, not a partition of overall traffic.
-
-    group_ids narrows the aggregate to the caller's visible groups. Without it
-    every request would aggregate the whole membership table just to render one
-    page, which is what dominates the query for a user who belongs to a few
-    groups. Admins see everything, so they pass None and no filter is added.
-    """
-    stmt = (
-        select(
-            GroupMember.group_id.label("group_id"),
-            func.coalesce(func.sum(EntityStat.requests), 0).label("requests"),
-            func.coalesce(func.sum(EntityStat.input_tokens + EntityStat.output_tokens), 0).label("tokens"),
-            func.coalesce(func.sum(EntityStat.cost), 0).label("cost"),
-            func.max(EntityStat.last_used_at).label("last_used_at"),
-        )
-        .join(EntityStat, EntityStat.entity_id == GroupMember.entity_id)
-    )
-    if group_ids is not None:
-        stmt = stmt.where(GroupMember.group_id.in_(group_ids))
-    return stmt.group_by(GroupMember.group_id).subquery()
-
-
 @groups_bp.route("/groups", methods=["GET"])
 @login_required
 def index():
@@ -173,33 +134,14 @@ def index():
 
     # Summary cards reflect the full visible set, independent of the paginated table.
     group_ids = _scoped_group_ids(entity_id, entity)
-    # Member counts are not sensitive and cover every visible group; usage is
-    # withheld for ownerless groups (see _owned_group_ids), so those are left
-    # out of the usage totals rather than silently inflating them.
     total_members = db.session.scalar(
         select(func.count()).select_from(GroupMember).where(GroupMember.group_id.in_(group_ids))
     ) if group_ids else 0
-    agg_ids = group_ids if is_admin(entity) else sorted(_owned_group_ids(group_ids))
-    if agg_ids:
-        agg = db.session.execute(
-            select(
-                func.coalesce(func.sum(EntityStat.requests), 0),
-                func.coalesce(func.sum(EntityStat.input_tokens + EntityStat.output_tokens), 0),
-            )
-            .select_from(GroupMember)
-            .join(EntityStat, EntityStat.entity_id == GroupMember.entity_id)
-            .where(GroupMember.group_id.in_(agg_ids))
-        ).one()
-        total_requests, total_tokens = int(agg[0]), int(agg[1])
-    else:
-        total_requests = total_tokens = 0
 
     return render_template(
         "groups.html",
         total_groups=len(group_ids),
         total_members=total_members,
-        total_requests=total_requests,
-        total_tokens=total_tokens,
     )
 
 
@@ -219,41 +161,25 @@ def data():
     order = request.args.get("order", "asc")
     search = (request.args.get("search") or "").strip()
 
-    # Resolve visibility first so the aggregates below only scan the caller's
-    # groups; an unscoped aggregate over every membership dominates the query.
+    # Resolve visibility first so the member count below only scans the
+    # caller's groups; an unscoped aggregate over every membership dominates
+    # the query.
     visible_ids = None
-    # Usage is withheld for ownerless groups unless the caller is an admin
-    # (member counts are not sensitive and always shown). Narrowing the usage
-    # aggregate to agg_ids (rather than blanking the numbers afterwards) means
-    # the hidden values are never computed at all, so they cannot leak through
-    # the sort order either.
-    agg_ids = None
     if not admin:
         visible_ids = _scoped_group_ids(entity_id, entity)
         if not visible_ids:
             return jsonify({"groups": [], "total": 0, "page": page, "per_page": per_page})
-        owned = _owned_group_ids(visible_ids)
-        agg_ids = [gid for gid in visible_ids if gid in owned]
 
     member_sq = _member_count_sq(visible_ids)
-    model_sq = _model_count_sq(visible_ids)
-    usage_sq = _usage_sq(agg_ids)
 
     stmt = (
         select(
             Group,
             member_sq.c.member_count.label("members"),
-            func.coalesce(model_sq.c.model_count, 0).label("models"),
-            usage_sq.c.requests.label("requests"),
-            usage_sq.c.tokens.label("tokens"),
-            usage_sq.c.cost.label("cost"),
-            usage_sq.c.last_used_at.label("last_used_at"),
             GroupLimit.max_coins.label("max_coins"),
             GroupLimit.refresh_coins.label("refresh_coins"),
         )
         .outerjoin(member_sq, Group.id == member_sq.c.group_id)
-        .outerjoin(model_sq, Group.id == model_sq.c.group_id)
-        .outerjoin(usage_sq, Group.id == usage_sq.c.group_id)
         .outerjoin(GroupLimit, Group.id == GroupLimit.group_id)
     )
 
@@ -268,12 +194,7 @@ def data():
     sort_col = {
         "name": Group.name,
         "members": member_sq.c.member_count,
-        "models": func.coalesce(model_sq.c.model_count, 0),
         "active": Group.active,
-        "last_used": usage_sq.c.last_used_at,
-        "requests": usage_sq.c.requests,
-        "tokens": usage_sq.c.tokens,
-        "cost": usage_sq.c.cost,
         "max_coins": GroupLimit.max_coins,
         "refresh_coins": GroupLimit.refresh_coins,
         "created": Group.created_at,
@@ -281,7 +202,7 @@ def data():
     direction = sort_col.desc().nullslast() if order == "desc" else sort_col.asc().nullslast()
     stmt = stmt.order_by(direction)
 
-    # Count from the base Group filters only: the aggregate subqueries are
+    # Count from the base Group filters only: the member count subquery is
     # grouped by group_id, so the outer left joins are at most 1:1 and cannot
     # change the row count — re-running them for the count is pure waste.
     count_stmt = select(func.count()).select_from(Group)
@@ -309,21 +230,16 @@ def data():
                 "name": g.name,
                 "description": g.description,
                 "members": int(members or 0),
-                "models": int(models),
                 "active": g.active,
                 "auto_join": g.auto_join,
                 "has_owner": g.id in has_owner,
-                "last_used": last_used_at.strftime("%Y-%m-%dT%H:%M:%SZ") if last_used_at else None,
-                "requests": int(requests or 0) if (admin or g.id in has_owner) else None,
-                "tokens": int(tokens or 0) if (admin or g.id in has_owner) else None,
-                "cost": float(cost or 0) if (admin or g.id in has_owner) else None,
                 "max_coins": float(max_coins) if max_coins is not None else None,
                 "refresh_coins": float(refresh_coins) if refresh_coins is not None else None,
                 "created": g.created_at.strftime("%Y-%m-%dT%H:%M:%SZ") if g.created_at else None,
                 "detail_url": url_for("groups.detail", gid=g.id),
                 "is_owner": g.id in owner_ids,
             }
-            for g, members, models, requests, tokens, cost, last_used_at, max_coins, refresh_coins in rows
+            for g, members, max_coins, refresh_coins in rows
         ],
         "total": total,
         "page": page,
@@ -849,91 +765,3 @@ def transfer_ownership(gid):
         db.session.rollback()
         return jsonify({"error": "Ownership changed concurrently; reload and try again"}), HTTPStatus.CONFLICT
     return jsonify({"owner_id": new_owner_id}), HTTPStatus.OK
-
-
-# ---------------------------------------------------------------------------
-# Model grants
-# ---------------------------------------------------------------------------
-
-def _addable_models(entity_id, gid):
-    """Models the caller may grant to this group that are not already granted.
-
-    Admins may grant any owned model; everyone else only models they own.
-    Models with no owner are public already, so granting them is meaningless.
-    """
-    entity = db.session.get(Entity, entity_id)
-    granted_ids = db.session.execute(
-        select(ModelGroupAccess.model_config_id).where(ModelGroupAccess.group_id == gid)
-    ).scalars().all()
-
-    stmt = select(ModelConfig).where(ModelConfig.owner_entity_id != None)  # noqa: E711
-    if not is_admin(entity):
-        stmt = stmt.where(ModelConfig.owner_entity_id == entity_id)
-    if granted_ids:
-        stmt = stmt.where(~ModelConfig.id.in_(granted_ids))
-    return db.session.execute(stmt.order_by(ModelConfig.model_name)).scalars().all()
-
-
-@groups_bp.route("/groups/<int:gid>/models")
-@login_required
-def group_models(gid):
-    entity_id = session["entity_id"]
-    db.get_or_404(Group, gid)
-    _require_group_admin(entity_id, gid)
-    return jsonify({
-        "models": [
-            {"id": mc.id, "model_name": mc.model_name}
-            for mc in _addable_models(entity_id, gid)
-        ]
-    })
-
-
-@groups_bp.route("/groups/<int:gid>/models", methods=["POST"])
-@login_required
-def add_group_model(gid):
-    entity_id = session["entity_id"]
-    db.get_or_404(Group, gid)
-    _require_group_admin(entity_id, gid)
-
-    data = request.get_json() or {}
-    mid = data.get("model_config_id")
-    if not mid:
-        return jsonify({"error": "model_config_id required"}), HTTPStatus.BAD_REQUEST
-
-    config = db.session.get(ModelConfig, mid)
-    if not config:
-        return jsonify({"error": "Model not found"}), HTTPStatus.NOT_FOUND
-
-    caller = db.session.get(Entity, entity_id)
-    if not is_admin(caller) and config.owner_entity_id != entity_id:
-        return jsonify({"error": "You can only grant models you own"}), HTTPStatus.FORBIDDEN
-    if config.owner_entity_id is None:
-        return jsonify({"error": "This model has no owner and is already available to everyone"}), HTTPStatus.BAD_REQUEST
-
-    existing = db.session.execute(
-        select(ModelGroupAccess).filter_by(model_config_id=mid, group_id=gid)
-    ).scalar_one_or_none()
-    if existing:
-        return jsonify({"error": "Model already granted to this group"}), HTTPStatus.CONFLICT
-
-    db.session.add(ModelGroupAccess(model_config_id=mid, group_id=gid))
-    db.session.commit()
-    return jsonify({"id": config.id, "model_name": config.model_name}), HTTPStatus.CREATED
-
-
-@groups_bp.route("/groups/<int:gid>/models/<int:mid>", methods=["DELETE"])
-@login_required
-def remove_group_model(gid, mid):
-    entity_id = session["entity_id"]
-    db.get_or_404(Group, gid)
-    _require_group_admin(entity_id, gid)
-
-    grant = db.session.execute(
-        select(ModelGroupAccess).filter_by(model_config_id=mid, group_id=gid)
-    ).scalar_one_or_none()
-    if not grant:
-        return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
-
-    db.session.delete(grant)
-    db.session.commit()
-    return "", HTTPStatus.NO_CONTENT

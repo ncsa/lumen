@@ -33,24 +33,6 @@
       </div>
     </div>
   </div>
-  <div class="col-sm-6 col-lg-3">
-    <div class="card h-100">
-      <div class="card-body">
-        <div class="text-muted small mb-1">Total Requests</div>
-        <div class="fs-4 fw-semibold">{{ total_requests|compact_number }}</div>
-        <div class="text-muted small">by members, all time</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-sm-6 col-lg-3">
-    <div class="card h-100">
-      <div class="card-body">
-        <div class="text-muted small mb-1">Total Tokens Used</div>
-        <div class="fs-4 fw-semibold">{{ total_tokens|compact_number }}</div>
-        <div class="text-muted small">input + output (all time)</div>
-      </div>
-    </div>
-  </div>
 </div>
 <p class="text-muted small text-center mb-3">Totals count each member once per group — a user in two groups is counted twice.</p>
 
@@ -79,20 +61,15 @@
       <tr>
         <th scope="col" class="sort-header" data-col="name">Name <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th scope="col" class="sort-header text-center" data-col="members">Members <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th scope="col" class="sort-header text-center" data-col="models">Models <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th scope="col" class="sort-header" data-col="created">Created <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th scope="col" class="sort-header text-center" data-col="active">Active <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th scope="col" class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th scope="col" class="sort-header text-end" data-col="requests">Requests <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th scope="col" class="sort-header text-end" data-col="tokens">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th scope="col" class="sort-header wrap text-end" data-col="max_coins">Max<br>Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th scope="col" class="sort-header wrap text-end" data-col="refresh_coins">Refill<br>Rate <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
-        <th scope="col" class="sort-header wrap text-end" data-col="cost">Coins<br>Spent <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th><span class="visually-hidden">Actions</span></th>
       </tr>
     </thead>
     <tbody id="group-tbody">
-      <tr><td colspan="12" class="text-center text-muted py-3">Loading…</td></tr>
+      <tr><td colspan="7" class="text-center text-muted py-3">Loading…</td></tr>
     </tbody>
   </table>
 </div>
@@ -126,7 +103,7 @@
                  role="combobox" aria-autocomplete="list" aria-expanded="false"
                  aria-controls="group-owner-suggestions" autocomplete="off">
           <ul id="group-owner-suggestions" role="listbox" aria-label="Matching users" class="dropdown-menu w-100 mb-0 p-0"></ul>
-          <div class="form-text">The owner can add/remove members, transfer ownership, grant models and deactivate this group. Not available for auto-join groups — their membership is rule-driven.</div>
+          <div class="form-text">The owner can add/remove members, transfer ownership and deactivate this group. Not available for auto-join groups — their membership is rule-driven.</div>
         </div>
         <div class="mb-3">
           <label class="form-label" for="group-max-input">Max Coins (optional)</label>
@@ -293,7 +270,7 @@
     const qs = new URLSearchParams({ page, per_page: perPage, sort, order });
     if (search) qs.set('search', search);
 
-    tbody.innerHTML = '<tr><td colspan="12" class="text-center text-muted py-3">Loading…</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">Loading…</td></tr>';
 
     fetch('/groups/data?' + qs.toString())
       .then(r => r.json())
@@ -305,7 +282,7 @@
           : 'No entries found';
 
         if (!data.groups.length) {
-          tbody.innerHTML = '<tr><td colspan="12" class="text-center text-muted py-3">No groups found.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">No groups found.</td></tr>';
           paginationEl.innerHTML = '';
           return;
         }
@@ -328,22 +305,13 @@
             actions += `<span class="d-inline-block" tabindex="0" data-bs-toggle="tooltip" data-bs-title="Only the group owner or an admin can edit this group">` +
               `<button class="btn btn-sm btn-outline-secondary" disabled aria-label="Edit ${nameEsc} (only the group owner or an admin can edit)"><i class="bi bi-pencil" aria-hidden="true"></i></button></span>`;
           }
-          // Members and usage are withheld for a group with no owner (server
-          // sends null); an admin always gets the real numbers.
-          const withheld = '<span class="text-muted" title="This group has no owner">—</span>';
-          const num = v => v === null ? withheld : v.toLocaleString();
           return `<tr id="group-row-${g.id}">
             <td><a href="${escHtml(g.detail_url)}">${nameEsc}</a></td>
-            <td class="text-center">${num(g.members)}</td>
-            <td class="text-center">${g.models}</td>
+            <td class="text-center">${g.members.toLocaleString()}</td>
             <td>${fmtDate(g.created)}</td>
             <td class="text-center">${activeIcon}</td>
-            <td>${g.requests === null ? withheld : fmtDate(g.last_used)}</td>
-            <td class="text-end">${num(g.requests)}</td>
-            <td class="text-end">${num(g.tokens)}</td>
             <td class="text-end">${fmtCoins(g.max_coins)}</td>
             <td class="text-end">${fmtCoins(g.refresh_coins)}</td>
-            <td class="text-end">${g.cost === null ? withheld : parseFloat(g.cost).toFixed(2)}</td>
             <td class="text-nowrap">${actions}</td>
           </tr>`;
         }).join('');
@@ -359,7 +327,7 @@
         renderPagination(data.total, data.page, data.per_page);
       })
       .catch(() => {
-        tbody.innerHTML = '<tr><td colspan="12" class="text-center text-danger py-3">Failed to load groups.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-danger py-3">Failed to load groups.</td></tr>';
       });
   }
 
@@ -377,7 +345,7 @@
       .catch(() => { btn.disabled = false; });
   }
 
-  const DESC_COLS = new Set(['members', 'models', 'requests', 'tokens', 'cost', 'created', 'last_used', 'max_coins', 'refresh_coins']);
+  const DESC_COLS = new Set(['members', 'created', 'max_coins', 'refresh_coins']);
   document.querySelectorAll('#group-table .sort-header').forEach(th => {
     th.setAttribute('tabindex', '0');
     const activate = () => {
