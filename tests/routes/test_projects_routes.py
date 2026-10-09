@@ -1769,3 +1769,44 @@ def test_demoting_manager_with_one_active_key_succeeds(app, owner_auth_client, o
     )
     assert resp.status_code == HTTPStatus.OK
     assert _member_role(app, owned_project["id"], second_user["id"]) == "user"
+
+
+def test_create_key_refused_when_membership_removed_before_lock(app, user_auth_client, user_project, test_user):
+    """A removal that commits before the membership lock is taken must not mint a key.
+
+    The listener deletes the caller's membership row just before the route's
+    locked SELECT on entity_managers runs, as a concurrent removal would.
+    """
+    from sqlalchemy import delete, event
+    from sqlalchemy.orm import Session
+
+    from lumen.models.entity_manager import EntityManager
+
+    removed = []
+
+    def remove_before_lock(state):
+        stmt = state.statement
+        if (not removed and state.is_select and stmt._for_update_arg is not None
+                and EntityManager.__table__ in stmt.get_final_froms()):
+            removed.append(True)
+            state.session.connection().execute(delete(EntityManager.__table__).where(
+                EntityManager.user_entity_id == test_user["id"],
+                EntityManager.project_entity_id == user_project["id"],
+            ))
+
+    event.listen(Session, "do_orm_execute", remove_before_lock)
+    try:
+        resp = user_auth_client.post(
+            f"/projects/{user_project['id']}/keys", json={"name": "late", "key": "sk_removedkey_1234"},
+        )
+    finally:
+        event.remove(Session, "do_orm_execute", remove_before_lock)
+
+    assert removed, "the route never took the membership lock"
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        assert db.session.scalar(
+            select(func.count(APIKey.id)).where(APIKey.entity_id == user_project["id"])
+        ) == 0

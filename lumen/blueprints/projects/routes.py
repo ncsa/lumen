@@ -667,18 +667,23 @@ def transfer_ownership(sid):
 @login_required
 def create_project_key(sid):
     entity_id = session["entity_id"]
-    db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
-    _require_project_access(entity_id, sid)
+    project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
+    admin = is_admin(db.session.get(Entity, entity_id))
 
-    # Lock the caller's membership row before reading their role, so two
-    # concurrent creates cannot both pass the one-key check and a demotion
-    # cannot interleave with a manager's create (no-op on SQLite).
-    db.session.execute(
-        select(EntityManager.id)
+    # Authorize from the caller's locked membership row, not an earlier read:
+    # a removal that commits first leaves no row, so the caller is refused;
+    # concurrent creates cannot both pass the one-key check; and a demotion
+    # cannot interleave with a manager's create (the lock is a no-op on SQLite).
+    role = db.session.scalar(
+        select(EntityManager.role)
         .filter_by(user_entity_id=entity_id, project_entity_id=sid)
         .with_for_update()
     )
-    if _is_plain_user(entity_id, sid):
+    if role is None and not admin:
+        db.session.rollback()
+        abort(HTTPStatus.FORBIDDEN)
+    db.session.refresh(project)
+    if not admin and role == "user" and project.owner_entity_id != entity_id:
         has_key = db.session.scalar(
             select(APIKey.id).where(
                 APIKey.entity_id == sid,

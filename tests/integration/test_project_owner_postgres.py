@@ -12,7 +12,7 @@ import uuid
 from http import HTTPStatus
 
 import pytest
-from sqlalchemy import create_engine, delete, select, text, update
+from sqlalchemy import create_engine, delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 
 from .conftest import TEST_CONFIG
@@ -215,3 +215,56 @@ def test_concurrent_transfers_one_succeeds_one_conflicts(pg_app, pg_migrated_iso
     with pg_app.app_context():
         db.session.expire_all()
         assert db.session.get(Entity, sid).owner_entity_id == first_id
+
+
+def test_member_removed_while_creating_key_gets_403(pg_app, pg_migrated_isolated):
+    """A removal holds the member's row; the key create (the route) blocks on
+    its membership lock, then finds the row gone and answers 403, minting no key."""
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+
+    url, engine = pg_migrated_isolated
+    with pg_app.app_context():
+        owner = _user()
+        member = _user()
+        project = _project(owner, member)
+        sid, member_id = project.id, member.id
+
+    other = create_engine(url)
+    try:
+        with other.connect() as conn:
+            deleted = conn.execute(text(
+                "DELETE FROM entity_managers WHERE user_entity_id = :uid AND project_entity_id = :sid"
+            ), {"uid": member_id, "sid": sid}).rowcount
+            assert deleted == 1
+
+            result = {}
+
+            def create_key():
+                client = _client_as(pg_app, member_id)
+                result["resp"] = client.post(
+                    f"/projects/{sid}/keys", json={"name": "late", "key": f"sk_{uuid.uuid4().hex}"},
+                )
+
+            thread = threading.Thread(target=create_key)
+            thread.start()
+            # Wait until the route's locked SELECT is blocked on the removal's row lock.
+            with engine.connect() as probe:
+                deadline = time.monotonic() + 30
+                while not probe.execute(text(
+                    "SELECT count(*) FROM pg_stat_activity"
+                    " WHERE datname = current_database() AND wait_event_type = 'Lock'"
+                )).scalar():
+                    assert time.monotonic() < deadline, "the key create never blocked"
+                    time.sleep(0.05)
+            conn.commit()
+            thread.join(timeout=30)
+    finally:
+        other.dispose()
+
+    assert result["resp"].status_code == HTTPStatus.FORBIDDEN
+    with pg_app.app_context():
+        db.session.expire_all()
+        assert db.session.scalar(
+            select(func.count(APIKey.id)).where(APIKey.entity_id == sid)
+        ) == 0
