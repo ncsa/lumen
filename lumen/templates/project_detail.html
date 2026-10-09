@@ -394,7 +394,7 @@
 {% endif %}
 
 <!-- Ack Consent Modal (shared) -->
-{% include '_ack_modal.html' %}
+{% if can_acknowledge %}{% include '_ack_modal.html' %}{% endif %}
 
 <style>
 .profile-avatar-img { border: 1px solid rgba(0,0,0,.1); }
@@ -417,7 +417,7 @@
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
 <script src="{{ url_for('static', filename='js/user-search.js') }}"></script>
-<script src="{{ url_for('static', filename='js/ack-consent.js') }}"></script>
+{% if can_acknowledge %}<script src="{{ url_for('static', filename='js/ack-consent.js') }}"></script>{% endif %}
 <script src="{{ url_for('static', filename='js/key-rotate.js') }}"></script>
 <script>
 const PROJECT_ID = {{ project.id }};
@@ -623,7 +623,11 @@ function renderModels() {
       } else if (r.access_status === 'needs_ack' && r.consented) {
         accessCell = `<span class="badge bg-success"><span role="img" aria-label="check">✓</span> Consented</span>`;
       } else {
+        {% if can_acknowledge -%}
         accessCell = `<button class="btn btn-sm btn-warning ack-btn" data-name="${escHtml(r.model_name)}" data-notice="${escHtml(r.notice || '')}" data-early-notice="${escHtml(r.early_notice || '')}" aria-haspopup="dialog"><span role="img" aria-label="warning">⚠</span> Needs consent</button>`;
+        {%- else -%}
+        accessCell = `<span class="badge bg-warning text-dark"><span role="img" aria-label="warning">⚠</span> Needs consent: ask a project manager</span>`;
+        {%- endif %}
       }
       const statusBadge = r.model_status === 'ok'
         ? `<span class="badge bg-success">ok</span>`
@@ -642,9 +646,11 @@ function renderModels() {
         <td>${statusBadge}</td>
       </tr>`;
     }).join('');
+    {% if can_acknowledge -%}
     modelTbody.querySelectorAll('.ack-btn').forEach(btn => {
       btn.addEventListener('click', () => openAckModal(btn.dataset.name, btn.dataset.notice || null, btn.dataset.earlyNotice || null));
     });
+    {%- endif %}
   }
 }
 
@@ -818,10 +824,12 @@ document.getElementById("edit-project-save-btn").addEventListener("click", async
 });
 {% endif %}
 
+{% if can_acknowledge %}
 // Ack consent modal (shared _ack_modal.html + ack-consent.js, posting to the project endpoint)
 const openAckModal = initAckConsent(
   () => location.reload(),
   name => "/projects/" + PROJECT_ID + "/consent/" + encodeURIComponent(name),
 );
+{% endif %}
 </script>
 {% endblock %}

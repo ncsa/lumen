@@ -12,7 +12,7 @@ The left side of the card shows the project's auto-generated avatar, its name, t
 
 | Card | Description |
 |------|-------------|
-| **Members** | Number of users in this project (owner, managers and users) |
+| **Members** | Number of members listed on the Members tab (a user sees a smaller count; see below) |
 | **Coins Used** | Total coins spent by this project |
 | **Tokens Used** | All input + output tokens this project has consumed |
 | **Favorite Model** | The model this project has sent the most requests to |
@@ -31,7 +31,7 @@ Everyone who can open the project is a member, and every member has one role. Th
 - **Manager**: can create and delete any of the project's API keys, and add or remove users.
 - **User**: can create one API key at a time and sees only the keys they created.
 
-The list shows the owner first, then managers, then users, sorted A–Z by name within each group.
+The list shows the owner first, then managers, then users, sorted A–Z by name within each group. A **user** sees only themselves, the owner and the managers, not the other users. Managers, the owner and admins see every member.
 
 ### Adding a Member (manager, owner or admin)
 
@@ -58,7 +58,7 @@ Click **Make Owner** on a manager's row and confirm. The button appears only on 
 | Action | User | Manager | Owner | Admin |
 |--------|------|---------|-------|-------|
 | View the project, its usage and model access | ✓ | ✓ | ✓ | ✓ |
-| Grant model consent for this project | ✓ | ✓ | ✓ | ✓ |
+| Grant model consent for this project | — | ✓ | ✓ | ✓ |
 | Create API keys | One at a time | ✓ | ✓ | ✓ |
 | See and delete API keys | Own keys only | All | All | All |
 | Rotate API keys: creator only | ✓ | ✓ | ✓ | ✓ |
@@ -120,4 +120,4 @@ Click **Rotate** to replace a key's secret while keeping its name and usage stat
 
 This table shows which models this project can use and how much it has consumed on each. Models awaiting acknowledgment remain visible; models blocked for the project and disabled, expired, or deleted models are omitted without exposing their metadata. The columns and access badges are the same as on the [Profile page](../guides/profile.md#model-access).
 
-If a model shows **Needs Consent**, you can click it to grant acknowledgment on behalf of the project, making the model available to all API keys associated with this project.
+If a model shows **Needs consent**, the owner or a manager (or an admin) can click it to grant acknowledgment on behalf of the project, making the model available to all API keys associated with this project. Users see **Needs consent: ask a project manager** instead, and need a manager or the owner to acknowledge the model.

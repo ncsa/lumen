@@ -2013,3 +2013,38 @@ def test_user_key_table_hides_created_by(app, client, user_project, test_user, s
     headers = [th.get_text(" ", strip=True) for th in soup.select("#key-table thead th")]
     assert any(h.startswith("Created By") for h in headers)
     assert "creator" in soup.find(id="key-search")["placeholder"]
+
+
+def test_user_models_tab_has_no_ack_button(client, user_project, test_user, second_user, app):
+    _add_member(app, user_project["id"], second_user["id"], "manager")
+    page = _login_as(client, test_user["id"]).get(f"/projects/{user_project['id']}").get_data(as_text=True)
+    assert "ack-btn" not in page
+    assert "Needs consent: ask a project manager" in page
+    assert 'id="ackModal"' not in page
+
+    page = _login_as(client, second_user["id"]).get(f"/projects/{user_project['id']}").get_data(as_text=True)
+    assert "ack-btn" in page
+    assert 'id="ackModal"' in page
+
+
+def test_user_sees_self_owner_and_managers_only(app, client, mixed_members, second_user):
+    """Plain users do not see the other users; the Members stat matches the rows shown."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        other = Entity(entity_type="user", email="other@example.com", name="Other User",
+                       initials="OU", active=True)
+        db.session.add(other)
+        db.session.commit()
+        other_id = other.id
+        third_id = db.session.scalar(select(Entity.id).filter_by(email="third@example.com"))
+    _add_member(app, mixed_members["id"], other_id, "user")
+
+    soup = _members_page(_login_as(client, third_id), mixed_members["id"])
+    assert _member_names(soup) == ["Owner of test-svc", "Second User", "Third User"]
+    stat = soup.find("div", string="Members").find_next_sibling("div").get_text(strip=True)
+    assert int(stat) == len(_member_names(soup))
+
+    soup = _members_page(_login_as(client, second_user["id"]), mixed_members["id"])
+    assert _member_names(soup) == ["Owner of test-svc", "Second User", "Other User", "Third User"]
+    assert soup.find("div", string="Members").find_next_sibling("div").get_text(strip=True) == "4"

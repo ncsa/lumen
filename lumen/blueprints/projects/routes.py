@@ -325,6 +325,7 @@ def detail(sid):
         can_add_members=can_add_members,
         key_limit_reached=key_limit_reached,
         show_key_creators=not plain_user,
+        can_acknowledge=not plain_user,
         gravatar_url=gravatar_url,
         project_limit=project_limit,
         rotatable_key_ids=rotatable_key_ids,
