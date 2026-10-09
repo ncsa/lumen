@@ -204,9 +204,11 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
                     mrl = info.get("max_req_input_len")
                     if mrl is not None:
                         return {"id": info.get("served_model_name") or "", "max_model_len": mrl, **server_flags}
+                    # Both paths describe the same server, so the alias adds
+                    # nothing; the context length comes from the fallbacks below.
                     break
         except Exception:
-            pass
+            pass  # unreachable, non-JSON or blocked: try the next path
 
     # vLLM (or SGLang without max_req_input_len): /v1/models gives id + max_model_len.
     model_id = None
