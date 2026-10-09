@@ -320,8 +320,10 @@ def _average_price(dev_match: dict, price_index: dict[str, list[dict]]) -> tuple
 def _consensus_bool(dev_match: dict, price_index: dict[str, list[dict]], key: str) -> bool | None:
     """Majority vote on a boolean field across every models.dev provider that
     lists the same base model. Providers that don't report a boolean are
-    ignored, so a single reporting provider is a unanimous consensus. Returns
-    None on a tie or when no provider reports a value.
+    ignored, so a single reporting provider is a unanimous consensus. Votes are
+    counted per listing, not per provider: a provider listing the same base
+    model twice (e.g. ``m`` and ``m:free``) votes twice. Returns None on a tie
+    or when no provider reports a value.
     """
     needle = _normalize_id(dev_match.get("id", ""))
     if not needle:

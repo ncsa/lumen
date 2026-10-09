@@ -291,6 +291,18 @@ def test_reasoning_true_already_matches_consensus(monkeypatch):
     assert "supports_reasoning" not in result["updates"]
 
 
+def test_reasoning_downgraded_when_consensus_false(monkeypatch):
+    dev_models = _reasoning_models(True, False, False)
+    _patch_price(monkeypatch, dev_models, dev_models[0])
+    result = model_sync.sync_model({"name": "m", "supports_reasoning": True, "endpoints": [{"url": "http://x"}]})
+    assert result["updates"]["supports_reasoning"] is False
+
+
+def test_consensus_without_dev_id_is_none():
+    index = model_sync._build_price_index(_reasoning_models(True, True))
+    assert model_sync._consensus_bool({"reasoning": True}, index, "reasoning") is None
+
+
 # ── fetch_endpoint_model: SGLang /get_server_info first ────────────────────────
 
 class _Resp:
