@@ -2,7 +2,7 @@
 
 The model detail page (`/models/<name>`) shows everything you need to know about a specific model before you use it.
 
-The page is available only when the model is public, you own it, or one of your active groups has been granted access. Models awaiting acknowledgment remain visible so you can acknowledge them. Blocked, disabled, expired, deleted, and unknown models return **Not Found** without exposing metadata.
+The page is available only when the model is public or you own it. Models awaiting acknowledgment remain visible so you can acknowledge them. Blocked, disabled, expired, deleted, and unknown models return **Not Found** without exposing metadata.
 
 ![Model detail page](../img/model-detail.png)
 
@@ -35,17 +35,16 @@ accepted that requirement to acknowledge it again.
 
 #### Access (Admin Only)
 
-![Access card showing the model's owner and granted groups](../img/model-access.png)
+![Access card showing the model's owner](../img/model-access.png)
 
-Administrators see an **Access** card showing who may use the model: either **Public** (available to everyone) or the model's **owner** and the groups it has been granted to. A model with no owner is available to all users and projects; an owned model is available only to its owner and to members of the granted groups.
+Administrators see an **Access** card showing who may use the model: either **Public** (available to everyone) or the model's **owner**. A model with no owner is available to all users and projects; an owned model is available only to its owner.
 
 The pencil button opens the **Edit Access** dialog:
 
 - **Owner** — a typeahead field that searches users by name or email; pick a user to make them the owner.
-- **Make public** — clears the owner (and grants become irrelevant), making the model available to everyone.
-- **Groups** — checkboxes selecting which groups are granted access to the owned model.
+- **Make public** — clears the owner, making the model available to everyone.
 
-Ownership and grants are stored in the database and are not part of `config.yaml` — see [Configuring Models](../admin/config-models.md#access-control).
+Ownership is stored in the database and are not part of `config.yaml` — see [Configuring Models](../admin/config-models.md#access-control).
 
 #### Availability
 

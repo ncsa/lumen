@@ -389,32 +389,6 @@ def test_chat_completions_ack_with_consent_passes_access(
     assert resp.status_code != HTTPStatus.FORBIDDEN
 
 
-def test_chat_completions_group_grant_passes_access(
-    app, client, test_user, test_model, api_key,
-):
-    """A group grant on an owned model clears the access gate (fails later at endpoint, not at 403)."""
-    token, _ = api_key
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity import Entity
-        from tests.conftest import grant_model_to_group, make_group_with_member, set_model_owner
-        _grant_unlimited_pool(app, test_user["id"])
-        owner = Entity(entity_type="user", email="owner@example.com", name="Owner", active=True)
-        db.session.add(owner)
-        db.session.commit()
-        set_model_owner(test_model["id"], owner.id)
-        group_id = make_group_with_member(test_user["id"])
-        grant_model_to_group(test_model["id"], group_id)
-
-    resp = client.post(
-        "/v1/chat/completions",
-        headers={"Authorization": f"Bearer {token}"},
-        json={"model": test_model["model_name"],
-              "messages": [{"role": "user", "content": "hi"}]},
-    )
-    assert resp.status_code != HTTPStatus.FORBIDDEN
-
-
 def test_chat_completions_missing_messages_400(client, api_key):
     """model provided but messages omitted → 400."""
     token, _ = api_key

@@ -120,7 +120,7 @@ If you can access any projects, a **Projects** tab lists them with their usage (
 
 ## Model Access
 
-The **Models** tab lists models available to you, including models that still need your acknowledgment. Models owned by someone else without a grant to one of your active groups are blocked and omitted completely. Disabled, expired, and deleted models are also omitted, even when you have historical usage for them.
+The **Models** tab lists models available to you, including models that still need your acknowledgment. Models owned by someone else are blocked and omitted completely. Disabled, expired, and deleted models are also omitted, even when you have historical usage for them.
 
 | Column | Description |
 |--------|------------|

@@ -3,8 +3,6 @@ from http import HTTPStatus
 
 import pytest
 
-from tests.conftest import grant_model_to_group, set_model_owner
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -697,48 +695,21 @@ def test_group_model_endpoints_removed(admin_client, owned_group, test_model):
 
 
 # ---------------------------------------------------------------------------
-# End to end: a group grant really opens access
+# End to end: a group's coin pool reaches its members
 # ---------------------------------------------------------------------------
 
-def test_user_member_gains_access_through_group(auth_client, app, owned_group, test_model,
-                                                test_user, second_user):
-    """A user granted a model via the group can use it; a non-member still cannot."""
-    with app.app_context():
-        set_model_owner(test_model["id"], test_user["id"])
-        grant_model_to_group(test_model["id"], owned_group)
-    auth_client.post(f"/groups/{owned_group}/members", json={"entity_id": second_user["id"]})
-
-    with app.app_context():
-        from lumen.services.llm import get_model_access_status
-        assert get_model_access_status(second_user["id"], test_model["id"]) == "allowed"
-
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity import Entity
-        outsider = Entity(entity_type="user", email="out@example.com", name="Outsider",
-                          initials="OU", active=True)
-        db.session.add(outsider)
-        db.session.commit()
-        from lumen.services.llm import get_model_access_status
-        assert get_model_access_status(outsider.id, test_model["id"]) == "blocked"
-
-
-def test_project_member_gains_access_and_pool_through_group(auth_client, app, owned_group,
-                                                            test_model, test_user, test_project):
+def test_project_member_gets_pool_through_group(auth_client, app, owned_group, test_project):
     """A project is itself the authenticating entity for API traffic, so a project member
-    inherits both the group's model grants and its coin pool."""
+    inherits the group's coin pool."""
     with app.app_context():
-        set_model_owner(test_model["id"], test_user["id"])
         from lumen.extensions import db
         from lumen.models.group_limit import GroupLimit
         db.session.add(GroupLimit(group_id=owned_group, max_coins=30, refresh_coins=3, starting_coins=30))
         db.session.commit()
-        grant_model_to_group(test_model["id"], owned_group)
     auth_client.post(f"/groups/{owned_group}/members", json={"entity_id": test_project["id"]})
 
     with app.app_context():
-        from lumen.services.llm import get_model_access_status, get_pool_limit
-        assert get_model_access_status(test_project["id"], test_model["id"]) == "allowed"
+        from lumen.services.llm import get_pool_limit
         assert float(get_pool_limit(test_project["id"]).max_coins) == 30.0
 
 

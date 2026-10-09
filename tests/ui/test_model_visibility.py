@@ -54,18 +54,13 @@ def test_multiple_models_all_shown(app, auth_client, test_model):
     assert "second-model" in links
 
 
-def test_non_member_blocked_model_absent(app, auth_client, test_model, test_user):
-    """An owned model granted to a group the user is not in stays hidden."""
-    from tests.conftest import grant_model_to_group, set_model_owner
+def test_group_member_blocked_model_absent(app, auth_client, test_model, test_user):
+    """An owned model stays hidden from a non-owner, whatever groups they are in."""
+    from tests.conftest import make_group_with_member, set_model_owner
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.group import Group
         owner_id = _make_owner(app)
         set_model_owner(test_model["id"], owner_id)
-        group = Group(name="other-group")
-        db.session.add(group)
-        db.session.commit()
-        grant_model_to_group(test_model["id"], group.id)
+        make_group_with_member(test_user["id"])
 
     resp = auth_client.get("/models")
     soup = BeautifulSoup(resp.data, "html.parser")
@@ -80,28 +75,6 @@ def test_needs_ack_model_visible_without_consent(app, auth_client, test_model, t
         from lumen.models.model_config import ModelConfig
         db.session.get(ModelConfig, test_model["id"]).needs_ack = True
         db.session.commit()
-
-    resp = auth_client.get("/models")
-    soup = BeautifulSoup(resp.data, "html.parser")
-    links = [a.get_text(strip=True) for a in soup.find_all("a")]
-    assert test_model["model_name"] in links
-
-
-def test_needs_ack_model_not_overridable_by_group(app, auth_client, test_model, test_user):
-    # A group grant on an owned model cannot remove its acknowledgement requirement.
-    from tests.conftest import grant_model_to_group, make_group_with_member, set_model_owner
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.model_config import ModelConfig
-        db.session.get(ModelConfig, test_model["id"]).needs_ack = True
-        db.session.commit()
-        owner_id = _make_owner(app)
-        set_model_owner(test_model["id"], owner_id)
-        group_id = make_group_with_member(test_user["id"])
-        grant_model_to_group(test_model["id"], group_id)
-
-        from lumen.services.llm import get_model_access_status
-        assert get_model_access_status(test_user["id"], test_model["id"]) == "needs_ack"
 
     resp = auth_client.get("/models")
     soup = BeautifulSoup(resp.data, "html.parser")

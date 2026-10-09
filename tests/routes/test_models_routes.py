@@ -79,20 +79,6 @@ def test_models_owned_model_not_listed(app, auth_client, test_model, test_user):
     assert test_model["model_name"].encode() not in resp.data
 
 
-def test_models_inactive_granted_group_not_listed(app, auth_client, test_model, test_user):
-    """A grant through an inactive group does not make an owned model visible."""
-    from tests.conftest import grant_model_to_group, make_group_with_member, set_model_owner
-    with app.app_context():
-        owner_id = _make_other_owner(app)
-        set_model_owner(test_model["id"], owner_id)
-        group_id = make_group_with_member(test_user["id"], active=False)
-        grant_model_to_group(test_model["id"], group_id)
-
-    resp = auth_client.get("/models")
-    assert resp.status_code == HTTPStatus.OK
-    assert test_model["model_name"].encode() not in resp.data
-
-
 def test_models_inactive_model_not_listed(app, auth_client):
     with app.app_context():
         from lumen.extensions import db
