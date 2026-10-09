@@ -242,6 +242,54 @@ def test_price_untouched_without_dev_match(monkeypatch):
     assert "output_cost_per_million" not in result["updates"]
 
 
+# ── supports_reasoning: models.dev provider consensus ──────────────────────────
+
+def _reasoning_models(*flags):
+    return [{"id": f"p{i}/m", "reasoning": f} for i, f in enumerate(flags)]
+
+
+def test_reasoning_majority_wins_over_first_match(monkeypatch):
+    dev_models = _reasoning_models(False, True, True)
+    _patch_price(monkeypatch, dev_models, dev_models[0])
+    result = model_sync.sync_model({"name": "m", "supports_reasoning": False, "endpoints": [{"url": "http://x"}]})
+    assert result["updates"]["supports_reasoning"] is True
+
+
+def test_reasoning_tie_leaves_field_untouched(monkeypatch):
+    dev_models = _reasoning_models(True, False)
+    _patch_price(monkeypatch, dev_models, dev_models[0])
+    result = model_sync.sync_model({"name": "m", "supports_reasoning": False, "endpoints": [{"url": "http://x"}]})
+    assert "supports_reasoning" not in result["updates"]
+
+
+def test_reasoning_ignores_providers_without_boolean(monkeypatch):
+    dev_models = _reasoning_models(None, "yes", True)
+    _patch_price(monkeypatch, dev_models, dev_models[0])
+    result = model_sync.sync_model({"name": "m", "endpoints": [{"url": "http://x"}]})
+    assert result["updates"]["supports_reasoning"] is True
+
+
+def test_reasoning_no_data_leaves_field_untouched(monkeypatch):
+    dev_models = _reasoning_models(None, None)
+    _patch_price(monkeypatch, dev_models, dev_models[0])
+    result = model_sync.sync_model({"name": "m", "supports_reasoning": True, "endpoints": [{"url": "http://x"}]})
+    assert "supports_reasoning" not in result["updates"]
+
+
+def test_reasoning_missing_key_treated_as_false(monkeypatch):
+    dev_models = _reasoning_models(False, False, True)
+    _patch_price(monkeypatch, dev_models, dev_models[0])
+    result = model_sync.sync_model({"name": "m", "endpoints": [{"url": "http://x"}]})
+    assert "supports_reasoning" not in result["updates"]
+
+
+def test_reasoning_true_already_matches_consensus(monkeypatch):
+    dev_models = _reasoning_models(True, True, False)
+    _patch_price(monkeypatch, dev_models, dev_models[2])
+    result = model_sync.sync_model({"name": "m", "supports_reasoning": True, "endpoints": [{"url": "http://x"}]})
+    assert "supports_reasoning" not in result["updates"]
+
+
 # ── fetch_endpoint_model: SGLang /get_server_info first ────────────────────────
 
 class _Resp:

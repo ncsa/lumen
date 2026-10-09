@@ -317,6 +317,23 @@ def _average_price(dev_match: dict, price_index: dict[str, list[dict]]) -> tuple
     return avg_in, avg_out
 
 
+def _consensus_bool(dev_match: dict, price_index: dict[str, list[dict]], key: str) -> bool | None:
+    """Majority vote on a boolean field across every models.dev provider that
+    lists the same base model. Providers that don't report a boolean are
+    ignored. Returns None on a tie or when no provider reports a value, so a
+    single provider's listing can't flip the field back and forth.
+    """
+    needle = _normalize_id(dev_match.get("id", ""))
+    if not needle:
+        return None
+    votes = [m[key] for m in price_index.get(needle, []) if isinstance(m.get(key), bool)]
+    yes = sum(votes)
+    no = len(votes) - yes
+    if yes == no:
+        return None
+    return yes > no
+
+
 # ---------------------------------------------------------------------------
 # Server-authoritative modalities
 # ---------------------------------------------------------------------------
@@ -398,12 +415,19 @@ def sync_model(model_def: dict) -> dict:
     if dev_match:
         for field, new_val in [
             ("knowledge_cutoff",   _normalize_knowledge(dev_match.get("knowledge"))),
-            ("supports_reasoning", dev_match.get("reasoning")),
             ("input_modalities",   (dev_match.get("modalities") or {}).get("input")),
             ("output_modalities",  (dev_match.get("modalities") or {}).get("output")),
         ]:
             if new_val is not None and model_def.get(field) != new_val:
                 updates[field] = new_val
+
+        # Reasoning: models.dev providers disagree on this flag, so take the
+        # majority across providers of the same base model rather than whichever
+        # listing matched first. A missing value counts as false, so an unset
+        # field isn't reported as a change when the consensus is false.
+        reasoning = _consensus_bool(dev_match, price_index, "reasoning")
+        if reasoning is not None and bool(model_def.get("supports_reasoning")) != reasoning:
+            updates["supports_reasoning"] = reasoning
 
         # Description: only fill in when the operator left it blank — never
         # overwrite a hand-written description with the models.dev blurb.
