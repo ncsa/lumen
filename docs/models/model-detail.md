@@ -44,7 +44,7 @@ The pencil button opens the **Edit Access** dialog:
 - **Owner** — a typeahead field that searches users by name or email; pick a user to make them the owner.
 - **Make public** — clears the owner, making the model available to everyone.
 
-Ownership is stored in the database and are not part of `config.yaml` — see [Configuring Models](../admin/config-models.md#access-control).
+Ownership is stored in the database and is not part of `config.yaml` — see [Configuring Models](../admin/config-models.md#access-control).
 
 #### Availability
 
