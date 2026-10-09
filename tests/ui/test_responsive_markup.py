@@ -16,16 +16,15 @@ import pytest
 from bs4 import BeautifulSoup
 
 from lumen.extensions import db, limiter
-from lumen.models.entity import Entity
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
+from tests.conftest import make_project
 
 
 def _project_url(app, admin_user, test_model):
     with app.app_context():
-        project = Entity(entity_type="project", name="resp-svc", initials="RS", active=True)
-        db.session.add(project)
-        db.session.commit()
+        # Every project needs an owner (ck_entities_project_owner); the admin owns it.
+        project = make_project("resp-svc", owner_id=admin_user["id"], initials="RS")
         return f"/projects/{project.id}"
 
 
