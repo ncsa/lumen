@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Chat — {{ app_name }}{% endblock %}
+{% block body_class %}fill-viewport{% endblock %}
 
 {% block content %}
 <div class="chat-page-layout">
@@ -25,7 +26,7 @@
 
   <!-- Chat main -->
   <div class="chat-main d-flex flex-column flex-fill">
-    <div class="chat-header d-flex align-items-center gap-2 px-3 py-2 border-bottom flex-shrink-0">
+    <div class="chat-header d-flex flex-wrap align-items-center gap-2 px-3 py-2 border-bottom flex-shrink-0">
       <!-- Mobile hamburger -->
       <button class="btn btn-sm btn-outline-secondary d-md-none"
               data-bs-toggle="offcanvas" data-bs-target="#chatSidebar"
@@ -35,7 +36,7 @@
               id="sidebar-toggle-btn" aria-label="Toggle sidebar">←</button>
 
       <label for="model-picker" class="form-label mb-0 fw-semibold">Model:</label>
-      <select id="model-picker" class="form-select form-select-sm" style="max-width:280px">
+      <select id="model-picker" class="form-select form-select-sm">
         {% for item in available_models %}
         <option value="{{ item.model.model_name }}"
                 {% if item.status == 'needs_ack' %}{% if not item.consented %}data-ack="true"{% else %}data-consented-ack="true" data-consented-at="{{ item.consent_at.strftime('%Y-%m-%dT%H:%M:%SZ') if item.consent_at else '' }}"{% endif %} data-notice="{{ item.notice or '' }}" data-early-notice="{{ item.early_notice or '' }}"{% endif %}>
@@ -49,7 +50,7 @@
               title="Acknowledged – click for details">
         <i class="bi bi-exclamation-triangle-fill" aria-hidden="true"></i>
       </button>
-      <div id="ack-warning" class="alert alert-warning py-1 px-2 mb-0 small d-none" role="alert" aria-live="polite">
+      <div id="ack-warning" class="ack-warning alert alert-warning py-1 px-2 mb-0 small d-none" role="alert" aria-live="polite">
         <span aria-hidden="true">⚠</span>
         This model requires acknowledgment before use.
         <button id="ack-btn" type="button" class="btn btn-sm btn-warning py-0 px-1 ms-1"
@@ -65,7 +66,8 @@
         <div class="d-flex gap-2">
           <label for="chat-input" class="visually-hidden">Message</label>
           <textarea id="chat-input" class="form-control" rows="2"
-                    placeholder="Type your message… (Enter to send, Shift+Enter for newline)"></textarea>
+                    placeholder="Type your message… (Enter to send, Shift+Enter for newline)"
+                    data-short-placeholder="Type your message…"></textarea>
           <label for="file-input" class="visually-hidden">Attach a file</label>
           <input type="file" id="file-input" class="visually-hidden"
                  accept=".txt,.md,.csv,.json,.py,.js,.ts,.html,.css,.xml,.yaml,.yml,.pdf,.png,.jpg,.jpeg,.gif,.webp">
@@ -129,11 +131,17 @@
     showQuickChatNotice();
   }
 
-  // ── Chat layout height ───────────────────────────────────────
-  const el = document.querySelector('.chat-page-layout');
-  if (el) {
-    const top = el.getBoundingClientRect().top;
-    document.documentElement.style.setProperty('--chat-top', top + 'px');
+  // ── Input placeholder ────────────────────────────────────────
+  // The keyboard hint does not fit on phones (and they have no Shift+Enter).
+  const chatInput = document.getElementById("chat-input");
+  if (chatInput) {
+    const longPlaceholder = chatInput.placeholder;
+    const phoneQuery = window.matchMedia("(max-width: 575.98px)");
+    const updatePlaceholder = () => {
+      chatInput.placeholder = phoneQuery.matches ? chatInput.dataset.shortPlaceholder : longPlaceholder;
+    };
+    phoneQuery.addEventListener("change", updatePlaceholder);
+    updatePlaceholder();
   }
 
   // ── Math + Markdown rendering ───────────────────────────────
