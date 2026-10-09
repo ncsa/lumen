@@ -31,6 +31,8 @@ Everyone who can open the project is a member, and every member has one role. Th
 - **Manager**: can create and delete any of the project's API keys, and add or remove users.
 - **User**: can create one API key at a time and sees only the keys they created.
 
+The list shows the owner first, then managers, then users, sorted A–Z by name within each group.
+
 ### Adding a Member (manager, owner or admin)
 
 1. Click **+ Add User**.
@@ -49,7 +51,7 @@ Click **Promote** next to a user to make them a manager, or **Demote** next to a
 
 ### Transferring Ownership (owner or admin)
 
-Click **Change Owner** (next to **+ Add User**), search for the new owner by name or email, pick them from the list, and confirm. Only existing **managers** of the project are offered, so promote the person first if needed. The previous owner becomes a regular manager. If you are the current owner, transferring ownership means you will no longer be able to add or remove managers or toggle the project.
+Click **Make Owner** on a manager's row and confirm. The button appears only on **manager** rows, so promote a user first if needed. The previous owner becomes a regular manager. If you are the current owner, transferring ownership means you will no longer be able to add or remove managers or toggle the project.
 
 ### What Each Role Can Do
 
@@ -69,6 +71,8 @@ Click **Change Owner** (next to **+ Add User**), search for the new owner by nam
 ## API Keys
 
 This section works exactly like the API Keys section on the [Profile page](../guides/profile.md#api-keys), but keys here belong to the project, not to your personal account.
+
+Managers, the owner and admins see every key in the project. A **user** sees only the keys they created, without the **Created By** column.
 
 ### Creating a Key
 
@@ -100,13 +104,13 @@ response = project.chat.completions.create(
 | Column | Description |
 |--------|-------------|
 | **Name** | Label you chose |
-| **Created By** | User who created the key (email if no display name); **Unknown** for keys created before this was tracked, or whose creator was deleted |
+| **Created By** | User who created the key (email if no display name); **Unknown** for keys created before this was tracked, or whose creator was deleted. Not shown to users. |
 | **Hint** | First 4 + last 4 characters for identification |
 | **Requests / Tokens / Coins** | Usage tracked on this key |
 | **Last Used** | Timestamp of the last API call |
 | **Actions** | Rotate (keys you created) and Delete buttons for active keys |
 
-Use **Show deleted keys** to view previously revoked keys. Use the search box to filter by key name or creator.
+Use **Show deleted keys** to view previously revoked keys. Use the search box to filter by key name or creator (by name only for users).
 
 ### Rotating a Key
 

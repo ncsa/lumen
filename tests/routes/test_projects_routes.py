@@ -1365,25 +1365,10 @@ def test_project_key_no_pool_returns_403(
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_owner_search_returns_only_managers(owner_auth_client, owned_project, second_user):
-    """The Change Owner dialog only offers existing managers, never outsiders."""
-    hits = owner_auth_client.get(f"/projects/{owned_project['id']}/owner/search?q=Second").get_json()["entities"]
-    assert hits == []
-    owner_auth_client.post(
-        f"/projects/{owned_project['id']}/users", json={"email": second_user["email"], "role": "manager"},
-    )
-    hits = owner_auth_client.get(f"/projects/{owned_project['id']}/owner/search?q=Second").get_json()["entities"]
-    assert [e["id"] for e in hits] == [second_user["id"]]
-
-
-def test_owner_search_excludes_current_owner(owner_auth_client, owned_project, test_user):
-    hits = owner_auth_client.get(f"/projects/{owned_project['id']}/owner/search?q=Test").get_json()["entities"]
-    assert all(e["id"] != test_user["id"] for e in hits)
-
-
-def test_owner_search_requires_project_admin(managed_auth_client, managed_project):
-    resp = managed_auth_client.get(f"/projects/{managed_project['id']}/owner/search?q=Te")
-    assert resp.status_code == HTTPStatus.FORBIDDEN
+def test_owner_search_route_removed(owner_auth_client, owned_project):
+    """The Change Owner dialog was replaced by per-row Make Owner buttons."""
+    resp = owner_auth_client.get(f"/projects/{owned_project['id']}/owner/search?q=Te")
+    assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 def test_project_without_owner_rejected_by_db(app, owned_project):
@@ -1617,12 +1602,6 @@ def test_transfer_ownership_to_user_rejected(app, owner_auth_client, owned_proje
         from lumen.extensions import db
         from lumen.models.entity import Entity
         assert db.session.get(Entity, owned_project["id"]).owner_entity_id == test_user["id"]
-
-
-def test_owner_search_excludes_users(app, owner_auth_client, owned_project, second_user):
-    _add_member(app, owned_project["id"], second_user["id"], "user")
-    hits = owner_auth_client.get(f"/projects/{owned_project['id']}/owner/search?q=Second").get_json()["entities"]
-    assert hits == []
 
 
 def test_user_can_have_only_one_active_key(app, user_auth_client, user_project):
@@ -1902,10 +1881,10 @@ def test_members_tab_owner_sees_all_actions(client, mixed_members):
     soup = _members_page(_login_as(client, mixed_members["owner_id"]), mixed_members["id"])
     assert soup.find(id="tab-members").get_text(strip=True) == "Members"
     assert soup.find("button", attrs={"data-bs-target": "#addMemberModal"}).get_text(strip=True) == "+ Add User"
-    assert soup.find("button", attrs={"data-bs-target": "#changeOwnerModal"})
+    assert soup.find(id="changeOwnerModal") is None
     assert [o["value"] for o in soup.select("#add-member-role option")] == ["user", "manager"]
     assert _action_labels(soup) == {
-        "Demote Second User to user", "Remove Second User",
+        "Make Second User owner", "Demote Second User to user", "Remove Second User",
         "Promote Third User to manager", "Remove Third User",
     }
     owner_remove = soup.find("button", attrs={"aria-label": "Cannot remove owner Owner of test-svc"})
@@ -1916,13 +1895,16 @@ def test_members_tab_owner_sees_all_actions(client, mixed_members):
 def test_members_tab_admin_sees_owner_actions(admin_client, mixed_members):
     soup = _members_page(admin_client, mixed_members["id"])
     assert [o["value"] for o in soup.select("#add-member-role option")] == ["user", "manager"]
-    assert "Demote Second User to user" in _action_labels(soup)
+    assert soup.find(id="changeOwnerModal") is None
+    labels = _action_labels(soup)
+    assert "Demote Second User to user" in labels
+    assert {lbl for lbl in labels if lbl.startswith("Make ")} == {"Make Second User owner"}
 
 
 def test_members_tab_manager_can_only_add_and_remove_users(client, mixed_members, second_user):
     soup = _members_page(_login_as(client, second_user["id"]), mixed_members["id"])
     assert soup.find("button", attrs={"data-bs-target": "#addMemberModal"})
-    assert soup.find("button", attrs={"data-bs-target": "#changeOwnerModal"}) is None
+    assert soup.find(id="changeOwnerModal") is None
     assert soup.find(id="editProjectModal") is None
     assert [o["value"] for o in soup.select("#add-member-role option")] == ["user"]
     assert _action_labels(soup) == {"Remove Third User"}
@@ -1938,6 +1920,7 @@ def test_members_tab_user_sees_no_member_actions(app, client, mixed_members):
     assert soup.find(id="addMemberModal") is None
     assert soup.find(id="add-member-role") is None
     assert soup.select("#pane-members tbody button") == []
+    assert soup.find(id="changeOwnerModal") is None
     roles = [td.get_text(strip=True) for td in soup.select("#pane-members tbody tr td:nth-of-type(3)")]
     assert sorted(roles) == ["Manager", "Owner", "User"]
 
@@ -1965,3 +1948,68 @@ def test_new_key_button_stays_enabled_for_managers(app, managed_auth_client, man
     managed_auth_client.post(f"/projects/{managed_project['id']}/keys", json={"name": "k", "key": "sk_mgrkey_0001"})
     soup = _members_page(managed_auth_client, managed_project["id"])
     assert not soup.find("button", string=lambda t: t and "New API Key" in t).has_attr("disabled")
+
+
+def _member_names(soup):
+    return [td.get_text(strip=True) for td in soup.select("#pane-members tbody tr td:nth-of-type(1)")]
+
+
+def test_members_listed_owner_then_managers_then_users(app, client):
+    """Role order wins over name order; names sort A-Z within each role."""
+    from lumen.extensions import db
+    from lumen.models.entity import Entity
+    with app.app_context():
+        ids = {}
+        for name in ("Zed Owner", "Yan Manager", "Bob Manager", "Amy User", "Carl User"):
+            e = Entity(entity_type="user", email=f"{name.split()[0].lower()}@example.com", name=name,
+                       initials="XX", active=True)
+            db.session.add(e)
+            db.session.flush()
+            ids[name] = e.id
+        db.session.commit()
+        sid = make_project("ordered", owner_id=ids["Zed Owner"]).id
+    for name, role in (("Yan Manager", "manager"), ("Bob Manager", "manager"),
+                       ("Carl User", "user"), ("Amy User", "user")):
+        _add_member(app, sid, ids[name], role)
+
+    _login_as(client, ids["Zed Owner"])
+    assert _member_names(_members_page(client, sid)) == [
+        "Zed Owner", "Bob Manager", "Yan Manager", "Amy User", "Carl User",
+    ]
+
+    assert client.post(f"/projects/{sid}/owner", json={"user_id": ids["Yan Manager"]}).status_code == HTTPStatus.OK
+    assert _member_names(_members_page(client, sid)) == [
+        "Yan Manager", "Bob Manager", "Zed Owner", "Amy User", "Carl User",
+    ]
+
+
+def test_make_owner_only_on_manager_rows_for_owner_and_admin(app, client, admin_client, mixed_members, second_user):
+    def make_owner_labels(soup):
+        return {b["aria-label"] for b in soup.select("#pane-members tbody button") if b.get_text(strip=True) == "Make Owner"}
+
+    expected = {"Make Second User owner"}
+    assert make_owner_labels(_members_page(admin_client, mixed_members["id"])) == expected
+    assert make_owner_labels(_members_page(_login_as(client, mixed_members["owner_id"]), mixed_members["id"])) == expected
+    assert make_owner_labels(_members_page(_login_as(client, second_user["id"]), mixed_members["id"])) == set()
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        third_id = db.session.scalar(select(Entity.id).filter_by(email="third@example.com"))
+    assert make_owner_labels(_members_page(_login_as(client, third_id), mixed_members["id"])) == set()
+
+
+def test_user_key_table_hides_created_by(app, client, user_project, test_user, second_user):
+    _login_as(client, test_user["id"])
+    client.post(f"/projects/{user_project['id']}/keys", json={"name": "mine", "key": "sk_minekey_h1d3"})
+    soup = _members_page(client, user_project["id"])
+    headers = [th.get_text(" ", strip=True) for th in soup.select("#key-table thead th")]
+    assert not any(h.startswith("Created By") for h in headers)
+    search = soup.find(id="key-search")
+    assert "creator" not in search["placeholder"] and "creator" not in search["aria-label"]
+    assert "Test User" not in soup.find("script", string=lambda t: t and "KEY_ROWS" in t).string
+
+    _add_member(app, user_project["id"], second_user["id"], "manager")
+    soup = _members_page(_login_as(client, second_user["id"]), user_project["id"])
+    headers = [th.get_text(" ", strip=True) for th in soup.select("#key-table thead th")]
+    assert any(h.startswith("Created By") for h in headers)
+    assert "creator" in soup.find(id="key-search")["placeholder"]
