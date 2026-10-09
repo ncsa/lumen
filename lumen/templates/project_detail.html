@@ -4,7 +4,7 @@
 {% block title %}{{ project.name }} — {{ app_name }}{% endblock %}
 
 {% block content %}
-<div class="mb-4 d-flex justify-content-between align-items-center">
+<div class="mb-4 d-flex justify-content-between align-items-center flex-wrap gap-2">
   <a href="{{ url_for('projects.index') }}" class="btn btn-sm btn-outline-secondary">← Projects</a>
   {% if can_manage %}
   <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editProjectModal">
@@ -138,7 +138,7 @@
 <div class="tab-pane fade show active" id="pane-managers" role="tabpanel" aria-labelledby="tab-managers">
 
 <!-- Managers -->
-<div class="d-flex justify-content-between align-items-center mt-0 mb-0">
+<div class="d-flex justify-content-between align-items-center mt-0 mb-0 flex-wrap gap-2">
   <h2 class="mb-0">Managers</h2>
   {% if can_manage %}
   <div class="d-flex gap-2">
@@ -195,7 +195,7 @@
 
 <!-- API Keys -->
 <div class="tab-pane fade" id="pane-keys" role="tabpanel" aria-labelledby="tab-keys">
-<div class="d-flex justify-content-between align-items-center mt-0 mb-0">
+<div class="d-flex justify-content-between align-items-center mt-0 mb-0 flex-wrap gap-2">
   <h2 class="mb-0">API Keys</h2>
   <div class="d-flex gap-2">
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('connect.index') }}">Usage examples</a>
@@ -203,14 +203,14 @@
             aria-haspopup="dialog">+ New API Key</button>
   </div>
 </div>
-<div class="d-flex justify-content-between align-items-center mt-2 mb-1">
+<div class="d-flex justify-content-between align-items-center mt-2 mb-1 flex-wrap gap-2">
   <div class="d-flex align-items-center gap-1">
     <input type="checkbox" id="show-deleted-cb" class="form-check-input mt-0" aria-label="Show deleted keys">
     <label for="show-deleted-cb" class="form-check-label small">Show deleted keys</label>
   </div>
-  <div class="d-flex align-items-center gap-2">
+  <div class="d-flex align-items-center gap-2 flex-grow-1 flex-sm-grow-0">
     <label for="key-search" class="text-muted small mb-0">Search:</label>
-    <input id="key-search" type="search" class="form-control form-control-sm" style="width:200px"
+    <input id="key-search" type="search" class="form-control form-control-sm search-input search-input-narrow"
            placeholder="Filter by name or creator…" aria-label="Filter API keys by name or creator">
   </div>
 </div>
@@ -238,13 +238,13 @@
 
 <!-- Model Access -->
 <div class="tab-pane fade" id="pane-models" role="tabpanel" aria-labelledby="tab-models">
-<div class="d-flex justify-content-between align-items-center mt-0 mb-0">
+<div class="d-flex justify-content-between align-items-center mt-0 mb-0 flex-wrap gap-2">
   <h2 class="mb-0">Model Access</h2>
 </div>
-<div class="d-flex justify-content-end align-items-center mt-2 mb-1">
-  <div class="d-flex align-items-center gap-2">
+<div class="d-flex justify-content-end align-items-center mt-2 mb-1 flex-wrap gap-2">
+  <div class="d-flex align-items-center gap-2 flex-grow-1 flex-sm-grow-0">
     <label for="model-search" class="text-muted small mb-0">Search:</label>
-    <input id="model-search" type="search" class="form-control form-control-sm" style="width:200px"
+    <input id="model-search" type="search" class="form-control form-control-sm search-input search-input-narrow"
            placeholder="Filter by name…" aria-label="Filter models by name">
   </div>
 </div>

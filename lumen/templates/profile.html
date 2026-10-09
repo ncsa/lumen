@@ -4,7 +4,7 @@
 {% block content %}
 <ilw-content>
 {% if viewing_user or (is_admin and profile_entity) %}
-<div class="mb-4 d-flex justify-content-between align-items-center">
+<div class="mb-4 d-flex justify-content-between align-items-center flex-wrap gap-2">
   {% if viewing_user %}
   <a href="{{ url_for('admin.users') }}" class="btn btn-sm btn-outline-secondary">← Back</a>
   {% else %}<span></span>{% endif %}
@@ -145,7 +145,7 @@
 <!-- Web Chat -->
 <h2 class="mt-0 mb-0">Web Chat</h2>
 {% if not viewing_user %}
-<div class="d-flex justify-content-between align-items-center mt-2 mb-1">
+<div class="d-flex justify-content-between align-items-center mt-2 mb-1 flex-wrap gap-2">
   <div class="form-check mb-0">
     <input class="form-check-input" type="checkbox" id="store-conversations-toggle"
            {% if not profile_entity.store_conversations %}checked{% endif %}>
@@ -192,7 +192,7 @@
 
 
 <!-- API Keys -->
-<div class="d-flex justify-content-between align-items-center mt-4 mb-0">
+<div class="d-flex justify-content-between align-items-center mt-4 mb-0 flex-wrap gap-2">
   <h2 class="mb-0">API Keys</h2>
   {% if not viewing_user %}
   <div class="d-flex gap-2">
@@ -202,14 +202,14 @@
   </div>
   {% endif %}
 </div>
-<div class="d-flex justify-content-between align-items-center mt-2 mb-1">
+<div class="d-flex justify-content-between align-items-center mt-2 mb-1 flex-wrap gap-2">
   <div class="d-flex align-items-center gap-1">
     <input type="checkbox" id="show-deleted-cb" class="form-check-input mt-0" aria-label="Show deleted keys">
     <label for="show-deleted-cb" class="form-check-label small">Show deleted keys</label>
   </div>
-  <div class="d-flex align-items-center gap-2">
+  <div class="d-flex align-items-center gap-2 flex-grow-1 flex-sm-grow-0">
     <label for="key-search" class="text-muted small mb-0">Search:</label>
-    <input id="key-search" type="search" class="form-control form-control-sm" style="width:200px"
+    <input id="key-search" type="search" class="form-control form-control-sm search-input search-input-narrow"
            placeholder="Filter by name…" aria-label="Filter API keys by name">
   </div>
 </div>
@@ -238,14 +238,14 @@
 {% if project_list %}
 <div class="tab-pane fade" id="pane-projects" role="tabpanel" aria-labelledby="tab-projects">
 <!-- Projects (clients this user can access) -->
-<div class="d-flex justify-content-between align-items-center mt-0 mb-0">
+<div class="d-flex justify-content-between align-items-center mt-0 mb-0 flex-wrap gap-2">
   <h2 class="mb-0">Projects</h2>
 </div>
-<div class="d-flex justify-content-between align-items-center mt-2 mb-1">
+<div class="d-flex justify-content-between align-items-center mt-2 mb-1 flex-wrap gap-2">
   <div class="text-muted small">Projects (clients) you can access.</div>
-  <div class="d-flex align-items-center gap-2">
+  <div class="d-flex align-items-center gap-2 flex-grow-1 flex-sm-grow-0">
     <label for="project-search" class="text-muted small mb-0">Search:</label>
-    <input id="project-search" type="search" class="form-control form-control-sm" style="width:200px"
+    <input id="project-search" type="search" class="form-control form-control-sm search-input search-input-narrow"
            placeholder="Filter by name…" aria-label="Filter projects by name">
   </div>
 </div>
@@ -273,13 +273,13 @@
 
 <div class="tab-pane fade" id="pane-models" role="tabpanel" aria-labelledby="tab-models">
 <!-- Model Access -->
-<div class="d-flex justify-content-between align-items-center mt-0 mb-0">
+<div class="d-flex justify-content-between align-items-center mt-0 mb-0 flex-wrap gap-2">
   <h2 class="mb-0">Model Access</h2>
 </div>
-<div class="d-flex justify-content-end align-items-center mt-2 mb-1">
-  <div class="d-flex align-items-center gap-2">
+<div class="d-flex justify-content-end align-items-center mt-2 mb-1 flex-wrap gap-2">
+  <div class="d-flex align-items-center gap-2 flex-grow-1 flex-sm-grow-0">
     <label for="model-search" class="text-muted small mb-0">Search:</label>
-    <input id="model-search" type="search" class="form-control form-control-sm" style="width:200px"
+    <input id="model-search" type="search" class="form-control form-control-sm search-input search-input-narrow"
            placeholder="Filter by name…" aria-label="Filter models by name">
   </div>
 </div>

@@ -5,6 +5,12 @@
     overflow: auto;
     margin: 0 -1.5rem;
 }
+/* Bleed to the edges of the shell container, whose side padding is px-2 below md. */
+@media (max-width: 767.98px) {
+    .chat-page-layout {
+        margin: 0 -0.5rem;
+    }
+}
 
 .chat-main {
     min-width: 0;
@@ -467,6 +473,13 @@ ilw-content .btn-primary:active {
     border: 2px solid;
     border-radius: 0.375rem;
 }
+@media (max-width: 767.98px) {
+    .announcement-banner {
+        padding: 0.5rem 2.5rem;
+        margin: 0.5rem;
+        font-size: 1rem;
+    }
+}
 .announcement-dismiss {
     position: absolute;
     top: 50%;
@@ -486,6 +499,32 @@ ilw-content .btn-primary:active {
     opacity: 1;
     outline: 2px solid currentColor;
     border-radius: 0.25rem;
+}
+
+/* ── Toolbar search inputs ───────────────────────────────────── */
+/* Fill the toolbar row on phones; fixed width from sm up. */
+.search-input {
+    width: 100%;
+}
+@media (min-width: 576px) {
+    .search-input {
+        width: 220px;
+    }
+    .search-input.search-input-narrow {
+        width: 200px;
+    }
+}
+
+/* ── Tables ──────────────────────────────────────────────────── */
+/* Contain absolutely positioned descendants (e.g. .visually-hidden header
+   labels) so they cannot widen the page past the scroll box. */
+.table-responsive {
+    position: relative;
+}
+/* Edge-to-edge tables in cards: the card border closes the table, so the last
+   row's border would draw a second line inside the scroll box. */
+.card-body.p-0 > .table-responsive > .table > :last-child > tr:last-child > * {
+    border-bottom-width: 0;
 }
 
 /* ── Misc ────────────────────────────────────────────────────── */

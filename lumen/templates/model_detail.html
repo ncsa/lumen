@@ -89,49 +89,51 @@
       <div class="card">
         <div class="card-header fw-semibold">Availability</div>
         <div class="card-body p-0">
-          <table class="table table-sm mb-0">
-            <caption class="visually-hidden">Endpoint availability</caption>
-            <tbody>
-              <tr>
-                <th scope="row" class="text-muted fw-normal ps-3">Status</th>
-                <td class="text-end pe-3">
-                  {% if status == "ok" %}
-                    <span class="badge bg-success">ok</span>
-                  {% elif status == "degraded" %}
-                    <span class="badge bg-warning text-dark">degraded</span>
-                  {% else %}
-                    <span class="badge bg-danger">down</span>
-                  {% endif %}
-                </td>
-              </tr>
-              <tr>
-                <th scope="row" class="text-muted fw-normal ps-3">Endpoints</th>
-                <td class="text-end pe-3">{{ healthy_count }}/{{ endpoints | length }} healthy</td>
-              </tr>
-              {% if config.end_date %}
-              <tr>
-                <th scope="row" class="text-muted fw-normal ps-3">Available until</th>
-                <td class="text-end pe-3"><span class="local-datetime" data-utc="{{ config.end_date.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span></td>
-              </tr>
-              {% endif %}
-              {% if is_admin %}
-              {% for ep in endpoints %}
-              <tr>
-                <th scope="row" class="text-muted fw-normal ps-3 small" style="word-break:break-all;">{{ ep.url }}</th>
-                <td class="text-end pe-3"><span class="badge {% if ep.healthy %}bg-success{% else %}bg-danger{% endif %}">{% if ep.healthy %}up{% else %}down{% endif %}</span></td>
-              </tr>
-              {% endfor %}
-              {% endif %}
-              <tr>
-                <th scope="row" class="text-muted fw-normal ps-3">Requests / hr</th>
-                <td class="text-end pe-3">{{ requests_last_hour | int }}</td>
-              </tr>
-              <tr>
-                <th scope="row" class="text-muted fw-normal ps-3">Requests / 24h</th>
-                <td class="text-end pe-3">{{ requests_last_day | int }}</td>
-              </tr>
-            </tbody>
-          </table>
+          <div class="table-responsive">
+            <table class="table table-sm mb-0">
+              <caption class="visually-hidden">Endpoint availability</caption>
+              <tbody>
+                <tr>
+                  <th scope="row" class="text-muted fw-normal ps-3">Status</th>
+                  <td class="text-end pe-3">
+                    {% if status == "ok" %}
+                      <span class="badge bg-success">ok</span>
+                    {% elif status == "degraded" %}
+                      <span class="badge bg-warning text-dark">degraded</span>
+                    {% else %}
+                      <span class="badge bg-danger">down</span>
+                    {% endif %}
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row" class="text-muted fw-normal ps-3">Endpoints</th>
+                  <td class="text-end pe-3">{{ healthy_count }}/{{ endpoints | length }} healthy</td>
+                </tr>
+                {% if config.end_date %}
+                <tr>
+                  <th scope="row" class="text-muted fw-normal ps-3">Available until</th>
+                  <td class="text-end pe-3"><span class="local-datetime" data-utc="{{ config.end_date.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span></td>
+                </tr>
+                {% endif %}
+                {% if is_admin %}
+                {% for ep in endpoints %}
+                <tr>
+                  <th scope="row" class="text-muted fw-normal ps-3 small" style="word-break:break-all;">{{ ep.url }}</th>
+                  <td class="text-end pe-3"><span class="badge {% if ep.healthy %}bg-success{% else %}bg-danger{% endif %}">{% if ep.healthy %}up{% else %}down{% endif %}</span></td>
+                </tr>
+                {% endfor %}
+                {% endif %}
+                <tr>
+                  <th scope="row" class="text-muted fw-normal ps-3">Requests / hr</th>
+                  <td class="text-end pe-3">{{ requests_last_hour | int }}</td>
+                </tr>
+                <tr>
+                  <th scope="row" class="text-muted fw-normal ps-3">Requests / 24h</th>
+                  <td class="text-end pe-3">{{ requests_last_day | int }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -143,77 +145,79 @@
       <div class="card">
         <div class="card-header fw-semibold">Model Details</div>
         <div class="card-body p-0">
-          <table class="table table-sm mb-0">
-            <caption class="visually-hidden">Model technical details</caption>
-            <tbody>
-              {% if config.url %}
-              <tr>
-                <th scope="row" class="text-muted fw-normal ps-3">HuggingFace</th>
-                <td class="text-end pe-3">
-                  <a href="{{ config.url }}" target="_blank" rel="noopener noreferrer"
-                     aria-label="View {{ config.model_name }} on HuggingFace (opens in new tab)">
-                    Model page
-                  </a>
-                </td>
-              </tr>
-              {% endif %}
-              {% if config.context_window %}
-              <tr>
-                <th scope="row" class="text-muted fw-normal ps-3">Context Window</th>
-                <td class="text-end pe-3">{{ "{:,}".format(config.context_window) }}</td>
-              </tr>
-              {% endif %}
-              {% if config.max_output_tokens %}
-              <tr>
-                <th scope="row" class="text-muted fw-normal ps-3">Max Output</th>
-                <td class="text-end pe-3">{{ "{:,}".format(config.max_output_tokens) }}</td>
-              </tr>
-              {% endif %}
-              {% if config.input_modalities %}
-              <tr>
-                <th scope="row" class="text-muted fw-normal ps-3">Input</th>
-                <td class="text-end pe-3">{{ config.input_modalities | join(", ") }}</td>
-              </tr>
-              {% endif %}
-              {% if config.output_modalities %}
-              <tr>
-                <th scope="row" class="text-muted fw-normal ps-3">Output</th>
-                <td class="text-end pe-3">{{ config.output_modalities | join(", ") }}</td>
-              </tr>
-              {% endif %}
-              {% if config.knowledge_cutoff %}
-              <tr>
-                <th scope="row" class="text-muted fw-normal ps-3">Knowledge Cutoff</th>
-                <td class="text-end pe-3">{{ config.knowledge_cutoff }}</td>
-              </tr>
-              {% endif %}
-              {% if config.supports_reasoning is not none %}
-              <tr>
-                <th scope="row" class="text-muted fw-normal ps-3">Reasoning</th>
-                <td class="text-end pe-3">{% if config.supports_reasoning %}<span role="img" aria-label="Supported">✓</span>{% else %}<span aria-label="Not supported">—</span>{% endif %}</td>
-              </tr>
-              {% endif %}
-              {% if config.supports_function_calling is not none %}
-              <tr>
-                <th scope="row" class="text-muted fw-normal ps-3">Function Calling</th>
-                <td class="text-end pe-3">{% if config.supports_function_calling %}<span role="img" aria-label="Supported">✓</span>{% else %}<span aria-label="Not supported">—</span>{% endif %}</td>
-              </tr>
-              {% endif %}
-              {% if config.created_at %}
-              <tr>
-                <th scope="row" class="text-muted fw-normal ps-3">First seen</th>
-                <td class="text-end pe-3"><span class="local-datetime" data-utc="{{ config.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span></td>
-              </tr>
-              {% endif %}
-            </tbody>
-          </table>
+          <div class="table-responsive">
+            <table class="table table-sm mb-0">
+              <caption class="visually-hidden">Model technical details</caption>
+              <tbody>
+                {% if config.url %}
+                <tr>
+                  <th scope="row" class="text-muted fw-normal ps-3">HuggingFace</th>
+                  <td class="text-end pe-3">
+                    <a href="{{ config.url }}" target="_blank" rel="noopener noreferrer"
+                       aria-label="View {{ config.model_name }} on HuggingFace (opens in new tab)">
+                      Model page
+                    </a>
+                  </td>
+                </tr>
+                {% endif %}
+                {% if config.context_window %}
+                <tr>
+                  <th scope="row" class="text-muted fw-normal ps-3">Context Window</th>
+                  <td class="text-end pe-3">{{ "{:,}".format(config.context_window) }}</td>
+                </tr>
+                {% endif %}
+                {% if config.max_output_tokens %}
+                <tr>
+                  <th scope="row" class="text-muted fw-normal ps-3">Max Output</th>
+                  <td class="text-end pe-3">{{ "{:,}".format(config.max_output_tokens) }}</td>
+                </tr>
+                {% endif %}
+                {% if config.input_modalities %}
+                <tr>
+                  <th scope="row" class="text-muted fw-normal ps-3">Input</th>
+                  <td class="text-end pe-3">{{ config.input_modalities | join(", ") }}</td>
+                </tr>
+                {% endif %}
+                {% if config.output_modalities %}
+                <tr>
+                  <th scope="row" class="text-muted fw-normal ps-3">Output</th>
+                  <td class="text-end pe-3">{{ config.output_modalities | join(", ") }}</td>
+                </tr>
+                {% endif %}
+                {% if config.knowledge_cutoff %}
+                <tr>
+                  <th scope="row" class="text-muted fw-normal ps-3">Knowledge Cutoff</th>
+                  <td class="text-end pe-3">{{ config.knowledge_cutoff }}</td>
+                </tr>
+                {% endif %}
+                {% if config.supports_reasoning is not none %}
+                <tr>
+                  <th scope="row" class="text-muted fw-normal ps-3">Reasoning</th>
+                  <td class="text-end pe-3">{% if config.supports_reasoning %}<span role="img" aria-label="Supported">✓</span>{% else %}<span aria-label="Not supported">—</span>{% endif %}</td>
+                </tr>
+                {% endif %}
+                {% if config.supports_function_calling is not none %}
+                <tr>
+                  <th scope="row" class="text-muted fw-normal ps-3">Function Calling</th>
+                  <td class="text-end pe-3">{% if config.supports_function_calling %}<span role="img" aria-label="Supported">✓</span>{% else %}<span aria-label="Not supported">—</span>{% endif %}</td>
+                </tr>
+                {% endif %}
+                {% if config.created_at %}
+                <tr>
+                  <th scope="row" class="text-muted fw-normal ps-3">First seen</th>
+                  <td class="text-end pe-3"><span class="local-datetime" data-utc="{{ config.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span></td>
+                </tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
       {% endif %}
 
       {% if is_admin %}
       <div class="card">
-        <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+        <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
           Access
           <button type="button" class="btn btn-sm btn-outline-primary edit-btn" id="model-access-edit-btn"
                   aria-label="Edit access for {{ config.model_name }}" aria-haspopup="dialog">
@@ -246,19 +250,21 @@
       <div class="card">
         <div class="card-header fw-semibold">Pricing</div>
         <div class="card-body p-0">
-          <table class="table table-sm mb-0">
-            <caption class="visually-hidden">Model pricing per million tokens</caption>
-            <tbody>
-              <tr>
-                <th scope="row" class="text-muted fw-normal ps-3">Input</th>
-                <td class="text-end pe-3">{{ "%.2f"|format(config.input_cost_per_million | float) }} / 1M</td>
-              </tr>
-              <tr>
-                <th scope="row" class="text-muted fw-normal ps-3">Output</th>
-                <td class="text-end pe-3">{{ "%.2f"|format(config.output_cost_per_million | float) }} / 1M</td>
-              </tr>
-            </tbody>
-          </table>
+          <div class="table-responsive">
+            <table class="table table-sm mb-0">
+              <caption class="visually-hidden">Model pricing per million tokens</caption>
+              <tbody>
+                <tr>
+                  <th scope="row" class="text-muted fw-normal ps-3">Input</th>
+                  <td class="text-end pe-3">{{ "%.2f"|format(config.input_cost_per_million | float) }} / 1M</td>
+                </tr>
+                <tr>
+                  <th scope="row" class="text-muted fw-normal ps-3">Output</th>
+                  <td class="text-end pe-3">{{ "%.2f"|format(config.output_cost_per_million | float) }} / 1M</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 

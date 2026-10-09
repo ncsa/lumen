@@ -2,7 +2,7 @@
 {% block title %}Projects — {{ app_name }}{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h1 class="mb-0">Projects</h1>
   {% if is_admin %}
   <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createProjectModal"
@@ -63,9 +63,9 @@
     </select>
     <span class="text-muted small mb-0">results</span>
   </div>
-  <div class="d-flex align-items-center gap-2">
+  <div class="d-flex align-items-center gap-2 flex-grow-1 flex-sm-grow-0">
     <label for="project-search" class="text-muted small mb-0">Search:</label>
-    <input id="project-search" type="search" class="form-control form-control-sm" style="width:220px"
+    <input id="project-search" type="search" class="form-control form-control-sm search-input"
            placeholder="Filter by name…" aria-label="Filter projects by name">
   </div>
 </div>

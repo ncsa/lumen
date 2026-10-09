@@ -13,4 +13,8 @@
   .table-bordered > :not(caption) > * > * {
     border-color: var(--bs-table-border-color) !important;
   }
+
+  /* ilw-page sizes its grid column to the content's min-content width, so a wide
+     table would stretch the page past the viewport; ignore main's intrinsic width. */
+  #main-content { contain: inline-size; }
 </style>

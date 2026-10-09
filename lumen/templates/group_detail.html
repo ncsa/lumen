@@ -3,7 +3,7 @@
 {% block title %}{{ group.name }} — {{ app_name }}{% endblock %}
 
 {% block content %}
-<div class="mb-4 d-flex justify-content-between align-items-center">
+<div class="mb-4 d-flex justify-content-between align-items-center flex-wrap gap-2">
   <a href="{{ url_for('groups.index') }}" class="btn btn-sm btn-outline-secondary">← Groups</a>
   {% if can_manage %}
   <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#editGroupModal">
@@ -139,7 +139,7 @@
 <!-- Members -->
 {% if show_members %}
 <div class="tab-pane fade show active" id="pane-members" role="tabpanel" aria-labelledby="tab-members">
-<div class="d-flex justify-content-between align-items-center mt-0 mb-0">
+<div class="d-flex justify-content-between align-items-center mt-0 mb-0 flex-wrap gap-2">
   <h2 class="mb-0">Members</h2>
   {% if can_manage and not group.auto_join %}
   <div class="d-flex gap-2">
@@ -167,9 +167,9 @@
     </select>
     <span class="text-muted small mb-0">results</span>
   </div>
-  <div class="d-flex align-items-center gap-2">
+  <div class="d-flex align-items-center gap-2 flex-grow-1 flex-sm-grow-0">
     <label for="member-search" class="text-muted small mb-0">Search:</label>
-    <input id="member-search" type="search" class="form-control form-control-sm" style="width:200px"
+    <input id="member-search" type="search" class="form-control form-control-sm search-input search-input-narrow"
            placeholder="Filter by name…" aria-label="Filter members by name or email">
   </div>
 </div>
@@ -206,7 +206,7 @@
   An administrator can assign an owner to make them visible.
 </p>
 {% endif %}
-<div class="d-flex justify-content-between align-items-center mt-0 mb-0">
+<div class="d-flex justify-content-between align-items-center mt-0 mb-0 flex-wrap gap-2">
   <h2 class="mb-0">Models</h2>
   {% if can_manage %}
   {% if addable_model_count %}
@@ -258,7 +258,7 @@
 {% if is_admin %}
 <!-- Auto-join rules (admin only: rules pull members in from login claims) -->
 <div class="tab-pane fade" id="pane-rules" role="tabpanel" aria-labelledby="tab-rules">
-<div class="d-flex justify-content-between align-items-center mt-0 mb-2">
+<div class="d-flex justify-content-between align-items-center mt-0 mb-2 flex-wrap gap-2">
   <h2 class="mb-0">Auto-join Rules</h2>
   <button class="btn btn-sm btn-primary" id="save-rules-btn">Save Rules</button>
 </div>

@@ -1,7 +1,7 @@
 {# Reusable "search a user or project by name" modal (add group member). #}
 {% macro entity_search_modal(modal_id, title, input_id, list_id, hidden_id, confirm_id, confirm_label, help_text) %}
 <div class="modal fade" id="{{ modal_id }}" tabindex="-1" aria-labelledby="{{ modal_id }}-title" aria-modal="true" role="dialog">
-  <div class="modal-dialog">
+  <div class="modal-dialog modal-fullscreen-sm-down">
     <div class="modal-content">
       <div class="modal-header">
         <h2 class="modal-title h5" id="{{ modal_id }}-title">{{ title }}</h2>
