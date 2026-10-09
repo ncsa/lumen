@@ -314,9 +314,9 @@ def compute_changes(
             changes["description"] = (model_def.get("description"), dev_desc)
 
         # Pricing: average across providers offering the same base model on
-        # models.dev, excluding $0 listings. Overwrites a stale/zero operator
-        # value the same way other fields are corrected on a trusted match.
-        if price_index:
+        # models.dev, excluding $0 listings. Only for models that opt in with
+        # auto_price: true — otherwise the operator's hand-set price is kept.
+        if price_index and model_def.get("auto_price") is True:
             avg_in, avg_out = _average_price(dev_model, price_index)
             if avg_in is not None and model_def.get("input_cost_per_million") != avg_in:
                 changes["input_cost_per_million"] = (model_def.get("input_cost_per_million"), avg_in)

@@ -833,6 +833,21 @@ def test_validate_config_rejects_non_numeric_costs():
     assert any("input_cost_per_million" in e for e in errors)
 
 
+@pytest.mark.parametrize("value", [True, False])
+def test_validate_config_accepts_boolean_auto_price(value):
+    from lumen.services.config_watcher import validate_config_structure
+    cfg = _valid_config()
+    cfg["models"][0]["auto_price"] = value
+    assert validate_config_structure(cfg) == []
+
+
+def test_validate_config_rejects_non_boolean_auto_price():
+    from lumen.services.config_watcher import validate_config_structure
+    cfg = _valid_config()
+    cfg["models"][0]["auto_price"] = "yes"
+    assert any("auto_price" in e for e in validate_config_structure(cfg))
+
+
 def test_validate_config_rejects_missing_costs():
     from lumen.services.config_watcher import validate_config_structure
     cfg = _valid_config()
