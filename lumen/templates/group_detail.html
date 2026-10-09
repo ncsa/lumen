@@ -46,19 +46,19 @@
       <!-- Col 2: all info cards in a 2-column grid -->
       <div class="col-12 col-md-9 profile-col-meta">
         <div class="row g-2">
-          <div class="col-4">
+          <div class="col-6 col-sm-4">
             <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Members</div>
               <div class="fw-bold fs-5">{{ "{:,}".format(member_count) }}</div>
             </div>
           </div>
-          <div class="col-4">
+          <div class="col-6 col-sm-4">
             <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Models Granted</div>
               <div class="fw-bold fs-5">{{ granted_models | length }}</div>
             </div>
           </div>
-          <div class="col-4">
+          <div class="col-6 col-sm-4">
             <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Tokens Used</div>
               {% if show_members %}
@@ -68,7 +68,7 @@
               {% endif %}
             </div>
           </div>
-          <div class="col-4">
+          <div class="col-6 col-sm-4">
             <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Coins Used</div>
               {% if show_members %}
@@ -78,7 +78,7 @@
               {% endif %}
             </div>
           </div>
-          <div class="col-4">
+          <div class="col-6 col-sm-4">
             <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Max Coins</div>
               {% if group_limit is none %}
@@ -91,7 +91,7 @@
               <div class="text-muted small">per member</div>
             </div>
           </div>
-          <div class="col-4">
+          <div class="col-6 col-sm-4">
             <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Refill Rate</div>
               {% if group_limit is not none and group_limit.max_coins != -2 and group_limit.refresh_coins > 0 %}

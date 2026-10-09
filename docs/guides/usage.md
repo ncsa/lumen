@@ -36,7 +36,8 @@ that was 7 days ago rather than from this exact minute. Numbers can therefore in
 - **Token Usage Over Time** — input + output tokens across the period.
 - **Model Popularity** — a bar chart ranking the models you've used most.
 - **Usage Heatmap** — requests laid out by hour of day (columns) against day of week (rows), in your
-  local time, so you can see when activity peaks.
+  local time, so you can see when activity peaks. Hover over, tap or focus a cell to see its request
+  count (arrow keys move between cells); on small screens the grid scrolls sideways.
 - **New Users Over Time** and **Total Users (Cumulative)** — user-growth charts that appear **only** in
   the admin all-users view.
 

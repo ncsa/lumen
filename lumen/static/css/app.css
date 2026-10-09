@@ -590,6 +590,41 @@ ilw-content .btn-primary:active {
     border-bottom-width: 0;
 }
 
+/* ── Usage charts and heatmap ────────────────────────────────── */
+/* Chart.js fills this box (maintainAspectRatio: false): a fixed height on
+   phones, Chart.js's default 2:1 shape from md up. */
+.chart-box {
+    position: relative;
+    height: 220px;
+}
+@media (min-width: 768px) {
+    .chart-box {
+        height: auto;
+        aspect-ratio: 2;
+    }
+}
+/* The heatmap scrolls inside its card; the day column stays in view. */
+#heatmap-container {
+    scroll-padding-left: 2.5rem;
+}
+#heatmap-table tr > :first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--bs-body-bg, #fff);
+}
+/* Below lg the heatmap card is narrow: keep cells big enough to tap and
+   scroll the grid instead of squeezing it. */
+@media (max-width: 991.98px) {
+    #heatmap-table td {
+        min-width: 1.5rem;
+    }
+}
+#heatmap-table td:focus-visible {
+    outline: 2px solid #000;
+    outline-offset: -2px;
+}
+
 /* ── Misc ────────────────────────────────────────────────────── */
 .font-monospace {
     font-family: var(--bs-font-monospace);

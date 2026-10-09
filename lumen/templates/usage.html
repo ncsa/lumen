@@ -3,9 +3,9 @@
 {% block content %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 
-<div class="d-flex align-items-center justify-content-between mb-3">
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
   <h1 class="mb-0">Usage</h1>
-  <div class="d-flex align-items-center gap-3">
+  <div class="d-flex flex-wrap align-items-center gap-3">
     {% if is_admin %}
     <div class="form-check mb-0" id="all-users-wrap">
       <input class="form-check-input" type="checkbox" id="all-users-check">
@@ -24,9 +24,9 @@
   </div>
 </div>
 
-<div id="user-filter-banner" class="alert alert-info d-flex align-items-center justify-content-between mb-3 d-none" role="status">
+<div id="user-filter-banner" class="alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3 d-none" role="status">
   <span>Showing usage for: <strong id="user-filter-name"></strong></span>
-  <a href="/usage" class="btn btn-sm btn-outline-secondary ms-3">Clear filter</a>
+  <a href="/usage" class="btn btn-sm btn-outline-secondary">Clear filter</a>
 </div>
 
 <!-- Stat cards -->
@@ -79,7 +79,7 @@
     <div class="card">
       <div class="card-body">
         <h2 class="h6 card-title">New Users Over Time</h2>
-        <canvas id="chart-users-new" aria-label="New users over time chart" role="img">Chart data not available as text.</canvas>
+        <div class="chart-box"><canvas id="chart-users-new" aria-label="New users over time chart" role="img">Chart data not available as text.</canvas></div>
       </div>
     </div>
   </div>
@@ -87,7 +87,7 @@
     <div class="card">
       <div class="card-body">
         <h2 class="h6 card-title">Total Users (Cumulative)</h2>
-        <canvas id="chart-users-cumul" aria-label="Total users cumulative chart" role="img">Chart data not available as text.</canvas>
+        <div class="chart-box"><canvas id="chart-users-cumul" aria-label="Total users cumulative chart" role="img">Chart data not available as text.</canvas></div>
       </div>
     </div>
   </div>
@@ -99,7 +99,7 @@
     <div class="card">
       <div class="card-body">
         <h2 class="h6 card-title">Requests Over Time</h2>
-        <canvas id="chart-requests" aria-label="Requests over time chart" role="img">Chart data not available as text.</canvas>
+        <div class="chart-box"><canvas id="chart-requests" aria-label="Requests over time chart" role="img">Chart data not available as text.</canvas></div>
       </div>
     </div>
   </div>
@@ -107,7 +107,7 @@
     <div class="card">
       <div class="card-body">
         <h2 class="h6 card-title">Token Usage Over Time</h2>
-        <canvas id="chart-tokens" aria-label="Token usage over time chart" role="img">Chart data not available as text.</canvas>
+        <div class="chart-box"><canvas id="chart-tokens" aria-label="Token usage over time chart" role="img">Chart data not available as text.</canvas></div>
       </div>
     </div>
   </div>
@@ -119,7 +119,7 @@
     <div class="card h-100">
       <div class="card-body">
         <h2 class="h6 card-title">Model Popularity</h2>
-        <canvas id="chart-models" aria-label="Model popularity bar chart" role="img">Chart data not available as text.</canvas>
+        <div class="chart-box"><canvas id="chart-models" aria-label="Model popularity bar chart" role="img">Chart data not available as text.</canvas></div>
       </div>
     </div>
   </div>
@@ -128,7 +128,7 @@
       <div class="card-body">
         <h2 class="h6 card-title">Usage Heatmap</h2>
         <p class="text-muted small mb-2">Hour of day (x) × Day of week (y) — local time</p>
-        <div id="heatmap-container" class="table-responsive" role="img" aria-label="Usage heatmap showing requests by day and hour">
+        <div id="heatmap-container" class="table-responsive" role="region" aria-label="Usage heatmap showing requests by day and hour">
           <table id="heatmap-table" class="table table-sm mb-0" style="font-size:0.65rem;border-collapse:collapse">
             <caption class="visually-hidden">Request heatmap: rows are days of the week, columns are hours 0–23</caption>
             <thead>
@@ -177,7 +177,7 @@ function makeLineChart(id, label) {
   return new Chart(ctx, {
     type: 'line',
     data: { labels: [], datasets: [{ label, data: [], borderColor: CHART_COLOR, backgroundColor: CHART_COLOR + '22', fill: true, tension: 0, pointRadius: 3 }] },
-    options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { maxRotation: 45 } }, y: { beginAtZero: true } } }
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { maxRotation: 45 } }, y: { beginAtZero: true } } }
   });
 }
 
@@ -186,7 +186,7 @@ function makeBarChart(id, label, horizontal) {
   return new Chart(ctx, {
     type: 'bar',
     data: { labels: [], datasets: [{ label, data: [], backgroundColor: CHART_COLOR }] },
-    options: { indexAxis: horizontal ? 'y' : 'x', responsive: true, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } }
+    options: { indexAxis: horizontal ? 'y' : 'x', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true } } }
   });
 }
 
@@ -200,6 +200,37 @@ function updateLineChart(chart, rows, valueKey) {
 const _hmTip = document.createElement('div');
 _hmTip.style.cssText = 'position:fixed;background:#333;color:#fff;padding:3px 8px;border-radius:4px;font-size:0.75rem;pointer-events:none;z-index:9999;display:none;white-space:nowrap';
 document.body.appendChild(_hmTip);
+
+function showHeatmapTip(label, x, y) {
+  _hmTip.textContent = label;
+  _hmTip.style.display = 'block';
+  _hmTip.style.left = Math.max(0, Math.min(x, window.innerWidth - _hmTip.offsetWidth - 4)) + 'px';
+  _hmTip.style.top = y + 'px';
+}
+function hideHeatmapTip() { _hmTip.style.display = 'none'; }
+// Tap and keyboard focus show the tip above the cell (below it near the top edge).
+function showHeatmapTipAt(td) {
+  const r = td.getBoundingClientRect();
+  showHeatmapTip(td.dataset.tip, r.left, r.top > 32 ? r.top - 28 : r.bottom + 4);
+}
+// Scrolling moves the tip with a focused cell, or hides a hover/tap tip.
+window.addEventListener('scroll', () => {
+  const td = document.activeElement;
+  if (td && td.dataset.tip) showHeatmapTipAt(td); else hideHeatmapTip();
+}, true);
+
+// One cell is in the tab order; arrow keys move between cells.
+document.getElementById('heatmap-body').addEventListener('keydown', e => {
+  const step = {ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0]}[e.key];
+  const td = e.target;
+  if (!step || td.tagName !== 'TD') return;
+  const next = td.parentElement.parentElement.rows[td.parentElement.sectionRowIndex + step[0]]?.cells[td.cellIndex + step[1]];
+  if (!next || next.tagName !== 'TD') return;
+  e.preventDefault();
+  td.tabIndex = -1;
+  next.tabIndex = 0;
+  next.focus();
+});
 
 function renderHeatmap(rows) {
   const offsetHours = Math.round(new Date().getTimezoneOffset() / 60);
@@ -241,9 +272,13 @@ function renderHeatmap(rows) {
       td.style.cssText = `background:${t === null ? '#e0e0e0' : heatmapColor(t)};width:1.5rem;height:1.5rem;padding:0;cursor:default`;
       td.setAttribute('aria-label', `${DAY_NAMES[dow]} ${h}:00 — ${count} requests`);
       const label = `${DAY_NAMES[dow]} ${h}:00 — ${count.toLocaleString()} request${count !== 1 ? 's' : ''}`;
-      td.addEventListener('mouseover', () => { if (count > 0) { _hmTip.textContent = label; _hmTip.style.display = 'block'; } });
-      td.addEventListener('mousemove', e => { _hmTip.style.left = (e.clientX + 14) + 'px'; _hmTip.style.top = (e.clientY - 10) + 'px'; });
-      td.addEventListener('mouseleave', () => { _hmTip.style.display = 'none'; });
+      td.dataset.tip = label;
+      td.tabIndex = dow === 1 && h === 0 ? 0 : -1;
+      td.addEventListener('mousemove', e => showHeatmapTip(label, e.clientX + 14, e.clientY - 10));
+      td.addEventListener('mouseleave', hideHeatmapTip);
+      td.addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse') showHeatmapTipAt(td); });
+      td.addEventListener('focus', () => showHeatmapTipAt(td));
+      td.addEventListener('blur', hideHeatmapTip);
       tr.appendChild(td);
     }
     tbody.appendChild(tr);

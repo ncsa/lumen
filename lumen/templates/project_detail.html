@@ -51,32 +51,32 @@
       <div class="col-12 col-md-9 profile-col-meta">
         <div class="row g-2">
           <!-- Row 1: Managers | Coins Used | Tokens Used -->
-          <div class="col-4">
+          <div class="col-6 col-sm-4">
             <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Managers</div>
               <div class="fw-bold fs-5">{{ managers | length }}</div>
             </div>
           </div>
-          <div class="col-4">
+          <div class="col-6 col-sm-4">
             <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Coins Used</div>
               <div class="fw-bold fs-5">{{ "%.2f"|format(status.total_cost) }}</div>
             </div>
           </div>
-          <div class="col-4">
+          <div class="col-6 col-sm-4">
             <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Tokens Used</div>
               <div class="fw-bold fs-5">{{ status.total_tokens_used|compact_number }}</div>
             </div>
           </div>
           <!-- Row 2: Favorite Model | Coins Available | Refill Rate -->
-          <div class="col-4">
+          <div class="col-6 col-sm-4">
             <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Favorite Model</div>
               <div class="fw-semibold small">{% if fav_model %}{{ fav_model }}{% else %}<span class="text-muted">—</span>{% endif %}</div>
             </div>
           </div>
-          <div class="col-4">
+          <div class="col-6 col-sm-4">
             <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Coins Available</div>
               {% if coin_pool is none %}
@@ -98,7 +98,7 @@
               {% endif %}
             </div>
           </div>
-          <div class="col-4">
+          <div class="col-6 col-sm-4">
             <div class="profile-stat-card p-3 rounded border h-100">
               <div class="text-muted small mb-1">Refill Rate</div>
               {% if coin_pool is not none and coin_pool.coin_limit != -2 and coin_pool.coins_per_hour > 0 %}

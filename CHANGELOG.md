@@ -30,6 +30,7 @@ All notable changes to Lumen will be documented in this file.
 - Only admins in admin mode can create groups.
 - **Breaking (Helm chart):** the chart no longer deploys vLLM/SGLang model servers; `models` is copied verbatim into `config.yaml` and uses the config format (snake_case keys, `endpoints` list).
 - Config editor model list is sorted A–Z, with disabled models listed after enabled ones; the first model in that order is selected by default.
+- Pages are usable on phones and tablets: tables scroll, toolbars wrap, and chat/help/config fill the screen on any device.
 
 ### Fixed
 

@@ -3,9 +3,9 @@
 {% block content %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 
-<div class="d-flex align-items-center justify-content-between mb-3">
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
   <h1 class="mb-0">Analytics</h1>
-  <div class="d-flex align-items-center gap-3">
+  <div class="d-flex flex-wrap align-items-center gap-3">
     <div class="form-check mb-0" id="mine-check-wrap">
       <input class="form-check-input" type="checkbox" id="mine-check">
       <label class="form-check-label fw-semibold" for="mine-check">My usage only</label>
@@ -22,9 +22,9 @@
   </div>
 </div>
 
-<div id="user-filter-banner" class="alert alert-info d-flex align-items-center justify-content-between mb-3 d-none" role="status">
+<div id="user-filter-banner" class="alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3 d-none" role="status">
   <span>Showing usage for: <strong id="user-filter-name"></strong></span>
-  <a href="/admin/analytics" class="btn btn-sm btn-outline-secondary ms-3">Clear filter</a>
+  <a href="/admin/analytics" class="btn btn-sm btn-outline-secondary">Clear filter</a>
 </div>
 
 <!-- Stat cards -->
@@ -69,7 +69,7 @@
     <div class="card">
       <div class="card-body">
         <h2 class="h6 card-title">New Users Over Time</h2>
-        <canvas id="chart-users-new" aria-label="New users over time chart" role="img">Chart data not available as text.</canvas>
+        <div class="chart-box"><canvas id="chart-users-new" aria-label="New users over time chart" role="img">Chart data not available as text.</canvas></div>
       </div>
     </div>
   </div>
@@ -77,7 +77,7 @@
     <div class="card">
       <div class="card-body">
         <h2 class="h6 card-title">Total Users (Cumulative)</h2>
-        <canvas id="chart-users-cumul" aria-label="Total users cumulative chart" role="img">Chart data not available as text.</canvas>
+        <div class="chart-box"><canvas id="chart-users-cumul" aria-label="Total users cumulative chart" role="img">Chart data not available as text.</canvas></div>
       </div>
     </div>
   </div>
@@ -89,7 +89,7 @@
     <div class="card">
       <div class="card-body">
         <h2 class="h6 card-title">Requests Over Time</h2>
-        <canvas id="chart-requests" aria-label="Requests over time chart" role="img">Chart data not available as text.</canvas>
+        <div class="chart-box"><canvas id="chart-requests" aria-label="Requests over time chart" role="img">Chart data not available as text.</canvas></div>
       </div>
     </div>
   </div>
@@ -97,7 +97,7 @@
     <div class="card">
       <div class="card-body">
         <h2 class="h6 card-title">Token Usage Over Time</h2>
-        <canvas id="chart-tokens" aria-label="Token usage over time chart" role="img">Chart data not available as text.</canvas>
+        <div class="chart-box"><canvas id="chart-tokens" aria-label="Token usage over time chart" role="img">Chart data not available as text.</canvas></div>
       </div>
     </div>
   </div>
@@ -109,7 +109,7 @@
     <div class="card h-100">
       <div class="card-body">
         <h2 class="h6 card-title">Model Popularity</h2>
-        <canvas id="chart-models" aria-label="Model popularity bar chart" role="img">Chart data not available as text.</canvas>
+        <div class="chart-box"><canvas id="chart-models" aria-label="Model popularity bar chart" role="img">Chart data not available as text.</canvas></div>
       </div>
     </div>
   </div>
@@ -170,6 +170,7 @@ function makeLineChart(id, label) {
     },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
       plugins: { legend: { display: false } },
       scales: {
         x: { ticks: { maxRotation: 45 } },
@@ -194,6 +195,7 @@ function makeBarChart(id, label, horizontal) {
     options: {
       indexAxis: horizontal ? 'y' : 'x',
       responsive: true,
+      maintainAspectRatio: false,
       plugins: { legend: { display: false } },
       scales: { x: { beginAtZero: true } }
     }
