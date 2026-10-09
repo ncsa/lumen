@@ -1,4 +1,6 @@
 """Tests for field precedence in lumen/services/model_sync.sync_model."""
+import pytest
+
 from lumen.services import model_sync
 
 
@@ -162,7 +164,7 @@ def test_price_averaged_across_providers(monkeypatch):
         {"id": "github/gpt-4o", "cost": {"input": 0, "output": 12}},  # 0 input excluded
     ]
     _patch_price(monkeypatch, dev_models, dev_models[0])
-    result = model_sync.sync_model({"name": "gpt-4o", "endpoints": [{"url": "http://x"}]})
+    result = model_sync.sync_model({"name": "gpt-4o", "auto_price": True, "endpoints": [{"url": "http://x"}]})
     assert result["updates"]["input_cost_per_million"] == 3.0          # mean(2.5, 3.5)
     assert result["updates"]["output_cost_per_million"] == round(34 / 3, 6)  # mean(10, 12, 12)
 
@@ -174,7 +176,7 @@ def test_price_zero_listing_excluded(monkeypatch):
         {"id": "q/llama-3.3-70b", "cost": {"input": 1.2, "output": 1.8}},
     ]
     _patch_price(monkeypatch, dev_models, dev_models[1])
-    result = model_sync.sync_model({"name": "llama-3.3-70b", "endpoints": [{"url": "http://x"}]})
+    result = model_sync.sync_model({"name": "llama-3.3-70b", "auto_price": True, "endpoints": [{"url": "http://x"}]})
     assert result["updates"]["input_cost_per_million"] == 1.2
     assert result["updates"]["output_cost_per_million"] == 1.8
 
@@ -183,23 +185,48 @@ def test_no_price_update_when_all_zero(monkeypatch):
     """If every provider lists $0, no cost update is proposed (never 0)."""
     dev_models = [{"id": "p/m", "cost": {"input": 0, "output": 0}}]
     _patch_price(monkeypatch, dev_models, dev_models[0])
-    result = model_sync.sync_model({"name": "m", "endpoints": [{"url": "http://x"}]})
+    result = model_sync.sync_model({"name": "m", "auto_price": True, "endpoints": [{"url": "http://x"}]})
     assert "input_cost_per_million" not in result["updates"]
     assert "output_cost_per_million" not in result["updates"]
 
 
 def test_price_overwrites_stale_operator_value(monkeypatch):
-    """A trusted match corrects a stale/zero operator-set price."""
+    """With auto_price, a trusted match corrects a stale/zero operator-set price."""
     dev_models = [{"id": "p/m", "cost": {"input": 5.0, "output": 15.0}}]
     _patch_price(monkeypatch, dev_models, dev_models[0])
     result = model_sync.sync_model({
         "name": "m",
+        "auto_price": True,
         "input_cost_per_million": 0,
         "output_cost_per_million": 0,
         "endpoints": [{"url": "http://x"}],
     })
     assert result["updates"]["input_cost_per_million"] == 5.0
     assert result["updates"]["output_cost_per_million"] == 15.0
+
+
+@pytest.mark.parametrize("flag", [{}, {"auto_price": False}])
+def test_manual_price_kept_but_other_fields_update(monkeypatch, flag):
+    """Without auto_price: true, prices are left alone; other fields still sync."""
+    dev_models = [{
+        "id": "p/m",
+        "cost": {"input": 5.0, "output": 15.0},
+        "limit": {"context": 200000, "output": 64000},
+        "reasoning": True,
+    }]
+    _patch_price(monkeypatch, dev_models, dev_models[0])
+    result = model_sync.sync_model({
+        "name": "m",
+        "input_cost_per_million": 1.0,
+        "output_cost_per_million": 2.0,
+        "endpoints": [{"url": "http://x"}],
+        **flag,
+    })
+    assert "input_cost_per_million" not in result["updates"]
+    assert "output_cost_per_million" not in result["updates"]
+    assert result["updates"]["context_window"] == 200000
+    assert result["updates"]["max_output_tokens"] == 64000
+    assert result["updates"]["supports_reasoning"] is True
 
 
 def test_price_untouched_without_dev_match(monkeypatch):

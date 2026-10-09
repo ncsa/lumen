@@ -1,5 +1,7 @@
 """CLI sync_models.py mirrors the SGLang modality rules of lumen.services.model_sync."""
 
+import pytest
+
 import sync_models
 
 _SGLANG = {"max_model_len": 32768, "backend": "sglang", "is_embedding": False}
@@ -73,3 +75,29 @@ def test_cli_multimodal_enabled_adds_image():
     changes = _changes({"input_modalities": ["text"]},
                        {**_SGLANG, "enable_multimodal": True}, None)
     assert changes["input_modalities"] == (["text"], ["text", "image"])
+
+
+_DEV_PRICED = {"id": "p/m", "cost": {"input": 5.0, "output": 15.0}}
+
+
+def _price_changes(model_def):
+    index = sync_models._build_price_index([_DEV_PRICED])
+    changes, _ = sync_models.compute_changes(model_def, None, _DEV_PRICED, index)
+    return changes
+
+
+def test_cli_auto_price_updates_price():
+    """auto_price: true lets the CLI propose models.dev prices."""
+    changes = _price_changes({"auto_price": True, "input_cost_per_million": 1.0,
+                              "output_cost_per_million": 2.0})
+    assert changes["input_cost_per_million"] == (1.0, 5.0)
+    assert changes["output_cost_per_million"] == (2.0, 15.0)
+
+
+@pytest.mark.parametrize("flag", [{}, {"auto_price": False}])
+def test_cli_manual_price_untouched(flag):
+    """Without auto_price: true, the CLI never proposes a price change."""
+    changes = _price_changes({"input_cost_per_million": 1.0,
+                              "output_cost_per_million": 2.0, **flag})
+    assert "input_cost_per_million" not in changes
+    assert "output_cost_per_million" not in changes

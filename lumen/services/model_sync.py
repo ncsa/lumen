@@ -412,13 +412,14 @@ def sync_model(model_def: dict) -> dict:
             updates["description"] = dev_desc
 
         # Pricing: average across providers offering the same base model on
-        # models.dev, excluding $0 listings. Overwrites a stale/zero operator
-        # value the same way other fields are corrected on a trusted match.
-        avg_in, avg_out = _average_price(dev_match, price_index)
-        if avg_in is not None and model_def.get("input_cost_per_million") != avg_in:
-            updates["input_cost_per_million"] = avg_in
-        if avg_out is not None and model_def.get("output_cost_per_million") != avg_out:
-            updates["output_cost_per_million"] = avg_out
+        # models.dev, excluding $0 listings. Only for models that opt in with
+        # auto_price: true — otherwise the operator's hand-set price is kept.
+        if model_def.get("auto_price"):
+            avg_in, avg_out = _average_price(dev_match, price_index)
+            if avg_in is not None and model_def.get("input_cost_per_million") != avg_in:
+                updates["input_cost_per_million"] = avg_in
+            if avg_out is not None and model_def.get("output_cost_per_million") != avg_out:
+                updates["output_cost_per_million"] = avg_out
 
     # SGLang /get_server_info capability flags are authoritative over models.dev
     # when set explicitly — they reflect what the operator configured on the

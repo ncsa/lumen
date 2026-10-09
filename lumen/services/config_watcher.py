@@ -98,6 +98,8 @@ def validate_config_structure(data) -> list:
             value = model.get(key)
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 errors.append(f"{label}: '{key}' must be a number")
+        if "auto_price" in model and not isinstance(model["auto_price"], bool):
+            errors.append(f"{label}: 'auto_price' must be true or false")
         endpoints = model.get("endpoints")
         if endpoints is None:
             continue
