@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Config Editor{% endblock %}
+{% block body_class %}fill-viewport{% endblock %}
 
 {% block content %}
 <div class="modal fade" id="removed-fields-modal" tabindex="-1" aria-labelledby="removed-fields-title" aria-modal="true" role="dialog">
@@ -22,19 +23,36 @@
 </div>
 
 <style>
-  .cfg-layout { display:flex; height:calc(100vh - var(--cfg-top, 200px)); margin:0 -1.5rem 0; overflow:hidden; }
-  @media (max-width: 767.98px) { .cfg-layout { margin:0 -0.5rem 0; } }
+  .cfg-layout { display:flex; flex:1; min-height:0; margin:0 -1.5rem 0; overflow:auto; }
   .cfg-nav { width:155px; min-width:155px; background:#f8f9fa; border-right:1px solid #dee2e6; display:flex; flex-direction:column; flex-shrink:0; }
   .cfg-nav-items { flex:1; overflow-y:auto; padding:4px 0; }
   .cfg-nav-btn { display:block; width:100%; text-align:left; padding:5px 12px; background:none; border:none; border-left:3px solid transparent; font-size:12px; cursor:pointer; color:#495057; }
   .cfg-nav-btn:hover { background:#e9ecef; }
   .cfg-nav-btn.active { background:#e2e8f3; border-left-color:#13294B; color:#13294B; font-weight:600; }
   .cfg-nav-footer { padding:10px; border-top:1px solid #dee2e6; display:flex; flex-direction:column; gap:6px; }
-  .cfg-main { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; }
+  .cfg-main { flex:1; display:flex; flex-direction:column; overflow:auto; min-width:0; }
   .cfg-header { padding:12px 20px; background:#fff; border-bottom:1px solid #dee2e6; flex-shrink:0; }
   .cfg-body { flex:1; overflow-y:auto; padding:1.25rem 1.5rem; background:#f5f5f5; }
-  .entity-bar { display:flex; align-items:center; gap:8px; padding:10px 14px; background:#fff; border:1px solid #dee2e6; border-radius:6px; margin-bottom:1rem; }
-  .entity-bar select { flex:1; }
+  .entity-bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 14px; background:#fff; border:1px solid #dee2e6; border-radius:6px; margin-bottom:1rem; }
+  .entity-bar select { flex:1 1 12rem; min-width:0; }
+  @media (min-width: 576px) {
+    .ep-model-col { width:190px; }
+    .ep-actions-col { width:44px; }
+  }
+  /* Phones: the section nav is a scrollable strip above the editor, and the
+     endpoint inputs keep a usable width (the table scrolls instead). */
+  @media (max-width: 767.98px) {
+    .cfg-layout { flex-direction:column; margin:0 -0.5rem 0; }
+    .cfg-nav { width:auto; min-width:0; flex-direction:row; border-right:none; border-bottom:1px solid #dee2e6; }
+    .cfg-nav-items { display:flex; flex:1; overflow-x:auto; overflow-y:hidden; padding:0; }
+    .cfg-nav-btn { width:auto; white-space:nowrap; padding:10px 12px; border-left:none; border-bottom:3px solid transparent; }
+    .cfg-nav-btn.active { border-bottom-color:#13294B; }
+    .cfg-nav-footer { flex-direction:row; align-items:center; padding:6px 8px; border-top:none; border-left:1px solid #dee2e6; }
+    .cfg-main { min-height:320px; }
+    .cfg-header { padding:10px 16px; }
+    .cfg-body { padding:1rem; }
+    .ep-table td input { min-width:9rem; }
+  }
 </style>
 
 <div class="cfg-layout">
@@ -47,7 +65,7 @@
   </nav>
 
   <div class="cfg-main">
-    <div class="cfg-header d-flex align-items-baseline gap-3">
+    <div class="cfg-header d-flex flex-wrap align-items-baseline column-gap-3">
       <h5 id="cfg-section-title" class="mb-0">Loading…</h5>
       <span id="cfg-section-desc" class="text-muted small"></span>
     </div>
@@ -623,12 +641,15 @@ function renderModelForm(m, idx) {
     `)}
     ${card('Endpoints', `
       <p class="text-muted small mb-2">Multiple endpoints enable load-balancing and failover</p>
-      <table class="table table-sm table-bordered align-middle mb-2">
-        <thead class="table-light">
-          <tr><th>URL</th><th>API Key</th><th style="width:190px">Model at Endpoint</th><th style="width:44px"></th></tr>
-        </thead>
-        <tbody id="ep-body">${eps.map((ep, i) => endpointRow(ep, i)).join('')}</tbody>
-      </table>
+      <div class="table-responsive">
+        <table class="table table-sm table-bordered align-middle mb-2 ep-table">
+          <caption class="visually-hidden">Endpoints</caption>
+          <thead class="table-light">
+            <tr><th>URL</th><th>API Key</th><th class="ep-model-col">Model at Endpoint</th><th class="ep-actions-col"><span class="visually-hidden">Actions</span></th></tr>
+          </thead>
+          <tbody id="ep-body">${eps.map((ep, i) => endpointRow(ep, i)).join('')}</tbody>
+        </table>
+      </div>
       <button type="button" class="btn btn-outline-secondary btn-sm" onclick="addEndpoint()">+ Add Endpoint</button>
     `)}
   `;
@@ -863,11 +884,6 @@ const RENDERERS = {
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 (function () {
-  const el = document.querySelector('.cfg-layout');
-  if (el) {
-    const top = el.getBoundingClientRect().top;
-    document.documentElement.style.setProperty('--cfg-top', top + 'px');
-  }
   $('btn-confirm-save').addEventListener('click', async () => {
     bootstrap.Modal.getInstance($('removed-fields-modal')).hide();
     await doSave();
