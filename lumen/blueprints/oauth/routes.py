@@ -502,8 +502,9 @@ def _mint(req: AuthRequest):
                              APIKey.revoked_at.is_(None))
     ).scalars().all()
     if req.overwrite:
+        now = utcnow()
         for stale in existing:
-            stale.revoked_at = utcnow()
+            stale.revoked_at = now
     elif existing:
         db.session.rollback()
         return _oauth_error("invalid_grant", "key name now in use, run again")
