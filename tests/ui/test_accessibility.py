@@ -11,11 +11,15 @@ Rules enforced (from CLAUDE.md):
 - Bootstrap modals (.modal[role=dialog] or .modal with tabindex) have aria-labelledby
 - Data tables (<table> with <thead> and <tbody>) have <caption> or aria-label
 - Heading levels do not skip (h1 → h2 → h3, never h1 → h3)
+- Badges carry text, so their meaning is not conveyed by colour alone
+- A disabled button's aria-describedby points at visible text explaining why
 """
 from datetime import datetime
 from http import HTTPStatus
 
+import pytest
 from bs4 import BeautifulSoup
+from sqlalchemy import select
 
 from lumen.extensions import db
 from lumen.models.entity_model_consent import EntityModelConsent
@@ -133,6 +137,24 @@ def _assert_rotated_key_modal_accessible(html_bytes, url):
     assert dialog and dialog.get("aria-labelledby") == "app-dialog-title", f"{url}: confirm dialog not labelled"
 
 
+def _assert_badges_have_text(soup, url):
+    """Badges must say what they mean in text, not just in colour."""
+    for badge in soup.find_all(class_="badge"):
+        assert badge.get_text(strip=True), f"{url}: badge {badge.get('class')} has no text"
+
+
+def _assert_disabled_reasons_visible(soup, url):
+    """A disabled button that describes itself must point at visible text."""
+    for btn in soup.find_all("button", disabled=True):
+        for ref in (btn.get("aria-describedby") or "").split():
+            el = soup.find(id=ref)
+            assert el, f"{url}: aria-describedby='{ref}' points at no element"
+            assert el.get_text(strip=True), f"{url}: #{ref} has no text"
+            assert not el.has_attr("hidden") and "visually-hidden" not in (el.get("class") or []), (
+                f"{url}: #{ref} explains a disabled button but is not visible"
+            )
+
+
 def _run_all_checks(html_bytes, url):
     soup = _soup(html_bytes)
     _assert_lang(soup, url)
@@ -143,6 +165,8 @@ def _run_all_checks(html_bytes, url):
     _assert_modals_labelled(soup, url)
     _assert_tables_have_captions(soup, url)
     _assert_heading_hierarchy(soup, url)
+    _assert_badges_have_text(soup, url)
+    _assert_disabled_reasons_visible(soup, url)
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +256,66 @@ def test_project_detail_page_accessibility(app, admin_client):
     assert resp.status_code == HTTPStatus.OK
     _run_all_checks(resp.data, url)
     _assert_rotated_key_modal_accessible(resp.data, url)
+
+
+def _project_with_members(app, member_id, member_role):
+    """A project whose owner is a dedicated user, plus member_id with member_role
+    and one more member of each role, so every badge and action renders."""
+    from lumen.extensions import db
+    from lumen.models.entity import Entity
+    from lumen.models.entity_manager import EntityManager
+    from tests.conftest import make_project
+    with app.app_context():
+        project = make_project("a11y-members", initials="AM")
+        others = []
+        for role in ("manager", "user"):
+            other = Entity(entity_type="user", email=f"a11y-{role}@example.com",
+                           name=f"A11y {role}", initials="AY", active=True)
+            db.session.add(other)
+            db.session.flush()
+            others.append(EntityManager(user_entity_id=other.id, project_entity_id=project.id, role=role))
+        db.session.add_all(others)
+        if member_role == "owner":
+            db.session.add(EntityManager(user_entity_id=member_id, project_entity_id=project.id))
+            old_owner = project.owner_entity_id
+            project.owner_entity_id = member_id
+            db.session.flush()
+            db.session.delete(db.session.execute(
+                select(EntityManager).filter_by(user_entity_id=old_owner, project_entity_id=project.id)
+            ).scalar_one())
+        else:
+            db.session.add(EntityManager(user_entity_id=member_id, project_entity_id=project.id, role=member_role))
+        db.session.commit()
+        return project.id
+
+
+@pytest.mark.parametrize("role", ["owner", "manager", "user"])
+def test_project_detail_members_tab_accessibility(app, auth_client, test_user, role):
+    sid = _project_with_members(app, test_user["id"], role)
+    url = f"/projects/{sid}"
+    resp = auth_client.get(url)
+    assert resp.status_code == HTTPStatus.OK
+    _run_all_checks(resp.data, url)
+    soup = _soup(resp.data)
+    badges = {b.get_text(strip=True) for b in soup.select("#pane-members .badge")}
+    assert {"Owner", "Manager", "User"} <= badges
+    if role != "user":
+        role_select = soup.find("select", id="add-member-role")
+        assert soup.find("label", attrs={"for": "add-member-role"}).get_text(strip=True) == "Role"
+        assert role_select is not None
+
+
+def test_project_detail_key_limit_reason_is_visible_text(app, auth_client, test_user):
+    sid = _project_with_members(app, test_user["id"], "user")
+    auth_client.post(f"/projects/{sid}/keys", json={"name": "mine", "key": "sk_a11ykey_0001"})
+    url = f"/projects/{sid}"
+    resp = auth_client.get(url)
+    _run_all_checks(resp.data, url)
+    soup = _soup(resp.data)
+    btn = soup.find("button", string=lambda t: t and "New API Key" in t)
+    assert btn.has_attr("disabled")
+    note = soup.find(id=btn["aria-describedby"])
+    assert "only one" in note.get_text()
 
 
 def test_groups_page_accessibility(auth_client):

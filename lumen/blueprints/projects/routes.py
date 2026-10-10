@@ -35,6 +35,8 @@ _VALID_PER_PAGE = {25, 50, 100, 200}
 _BIGINT_MAX = 9223372036854775807
 # Roles a project member can hold; the owner is a manager the project points at.
 _MEMBER_ROLES = ("user", "manager")
+# Members-list order on the project page.
+_ROLE_RANK = {"owner": 0, "manager": 1, "user": 2}
 
 
 def _require_project_access(entity_id: int, sid: int):
@@ -258,7 +260,12 @@ def detail(sid):
     project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
     _require_project_access(entity_id, sid)
 
-    plain_user = _is_plain_user(entity_id, sid)
+    entity = db.session.get(Entity, entity_id)
+    admin = is_admin(entity)
+    caller_role = get_project_role(entity_id, sid)
+    # Same rule as _is_plain_user, without re-querying the role.
+    plain_user = not admin and caller_role == "user"
+
     data = _get_profile_data(sid)
     # Users see only the keys they created. The key rows are embedded in the
     # page, so the filter has to happen here, not in the template.
@@ -266,11 +273,13 @@ def detail(sid):
         data["api_keys"] = [k for k in data["api_keys"] if k.created_by_entity_id == entity_id]
         data["key_creators"] = {k.id: data["key_creators"][k.id] for k in data["api_keys"]}
 
+    owner = get_project_owner(sid)
+    owner_id = owner.id if owner else None
+    # (member, role) pairs; the owner's stored role is 'manager', shown as 'owner'.
     members_stmt = (
-        select(Entity)
+        select(Entity, EntityManager.role)
         .join(EntityManager, EntityManager.user_entity_id == Entity.id)
         .where(EntityManager.project_entity_id == sid)
-        .order_by(Entity.name)
     )
     # Users see only the managers, the owner and themselves, never the other
     # users; like the keys, the member rows are embedded in the page.
@@ -280,12 +289,19 @@ def detail(sid):
             Entity.id == project.owner_entity_id,
             Entity.id == entity_id,
         ))
-    managers = db.session.execute(members_stmt).scalars().all()
+    # Listed owner first, then managers, then users, A-Z within each group.
+    members = sorted(
+        (
+            (member, "owner" if member.id == owner_id else role)
+            for member, role in db.session.execute(members_stmt).all()
+        ),
+        key=lambda m: (_ROLE_RANK[m[1]], (m[0].name or "").lower()),
+    )
 
-    owner = get_project_owner(sid)
-    owner_id = owner.id if owner else None
-    entity = db.session.get(Entity, entity_id)
-    can_manage = is_admin(entity) or (owner_id == entity_id)
+    # Flags for the template only; the routes below enforce the same rules.
+    can_manage = admin or caller_role == "owner"
+    can_add_members = can_manage or caller_role == "manager"
+    key_limit_reached = plain_user and any(k.active for k in data["api_keys"])
 
     h = hashlib.md5(project.name.strip().lower().encode(), usedforsecurity=False).hexdigest()
     gravatar_url = f"https://www.gravatar.com/avatar/{h}?s=230&d=identicon&f=y"
@@ -302,9 +318,14 @@ def detail(sid):
     return render_template(
         "project_detail.html",
         project=project,
-        managers=managers,
+        members=members,
         owner_id=owner_id,
+        caller_role=caller_role,
         can_manage=can_manage,
+        can_add_members=can_add_members,
+        key_limit_reached=key_limit_reached,
+        show_key_creators=not plain_user,
+        can_acknowledge=not plain_user,
         gravatar_url=gravatar_url,
         project_limit=project_limit,
         rotatable_key_ids=rotatable_key_ids,
@@ -576,45 +597,6 @@ def update_project_member(sid, uid):
     target_assoc.role = role
     db.session.commit()
     return jsonify({"user_id": uid, "role": role}), HTTPStatus.OK
-
-
-@projects_bp.route("/projects/<int:sid>/owner/search")
-@login_required
-def search_owner_candidates(sid):
-    """Managers of the project who could become its owner.
-
-    The Change Owner dialog searches here: only existing managers qualify
-    (ownership is a promotion, not an invitation), and the current owner is
-    excluded.
-    """
-    entity_id = session["entity_id"]
-    _require_project_admin(entity_id, sid)
-    project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
-
-    q = (request.args.get("q") or "").strip()
-    if len(q) < 2:
-        return jsonify({"entities": []})
-
-    entities = db.session.execute(
-        select(Entity)
-        .join(EntityManager, EntityManager.user_entity_id == Entity.id)
-        .where(
-            EntityManager.project_entity_id == sid,
-            EntityManager.role == "manager",
-            Entity.id != project.owner_entity_id,
-            Entity.entity_type == "user",
-            Entity.active == True,  # noqa: E712 — SQL comparison, not a truth check
-            db.or_(Entity.email.ilike(f"%{q}%"), Entity.name.ilike(f"%{q}%")),
-        )
-        .order_by(Entity.name)
-        .limit(10)
-    ).scalars().all()
-    return jsonify({
-        "entities": [
-            {"id": e.id, "name": e.name, "email": e.email, "type": e.entity_type}
-            for e in entities
-        ]
-    })
 
 
 @projects_bp.route("/projects/<int:sid>/owner", methods=["POST"])
