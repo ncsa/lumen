@@ -1754,6 +1754,11 @@ def test_old_delete_key_url_returns_405(app, managed_auth_client, managed_projec
     assert _key_state(app, kid)[0] is None
 
 
+def test_old_delete_key_url_requires_login(client):
+    resp = client.delete("/projects/1/keys/1", follow_redirects=False)
+    assert resp.status_code == HTTPStatus.FOUND
+
+
 def _keys_on_page(client, project_id):
     return client.get(f"/projects/{project_id}").get_data(as_text=True)
 

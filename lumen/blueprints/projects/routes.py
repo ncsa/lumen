@@ -708,6 +708,7 @@ def create_project_key(sid):
 
 
 @projects_bp.route("/projects/<int:sid>/keys/<int:kid>", methods=["DELETE"])
+@login_required
 def delete_project_key_removed(sid, kid):
     # Keys are revoked, not deleted; answer the old URL with 405 instead of 404.
     return jsonify({"error": "Use POST /projects/<sid>/keys/<id>/revoke"}), HTTPStatus.METHOD_NOT_ALLOWED

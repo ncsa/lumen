@@ -383,6 +383,7 @@ def create_key():
 
 
 @profile_bp.route("/profile/keys/<int:kid>", methods=["DELETE"])
+@login_required
 def delete_key_removed(kid):
     # Keys are revoked, not deleted; answer the old URL with 405 instead of 404.
     return jsonify({"error": "Use POST /profile/keys/<id>/revoke"}), HTTPStatus.METHOD_NOT_ALLOWED

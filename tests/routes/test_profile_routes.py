@@ -294,6 +294,11 @@ def test_old_delete_key_url_returns_405(app, auth_client, test_user):
     assert _personal_key_state(app, kid)[0] is None
 
 
+def test_old_delete_key_url_requires_login(client):
+    resp = client.delete("/profile/keys/1", follow_redirects=False)
+    assert resp.status_code == HTTPStatus.FOUND
+
+
 # ---------------------------------------------------------------------------
 # rotate_key
 # ---------------------------------------------------------------------------
