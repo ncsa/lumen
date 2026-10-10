@@ -190,6 +190,47 @@ def test_delete_key_success(app, auth_client, test_user):
     assert resp.status_code == HTTPStatus.NO_CONTENT
 
 
+def _make_personal_key(app, entity_id, raw, active=True):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        from lumen.services.crypto import hash_api_key
+        ak = APIKey(
+            entity_id=entity_id, created_by_entity_id=entity_id, name="usage key",
+            key_hash=hash_api_key(raw), key_hint=f"{raw[:8]}...{raw[-4:]}", active=active,
+            requests=9, input_tokens=300, output_tokens=120, audio_seconds=3, cost=Decimal("2.250000"),
+        )
+        db.session.add(ak)
+        db.session.commit()
+        return ak.id
+
+
+def _personal_key_state(app, kid):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        k = db.session.get(APIKey, kid)
+        assert k is not None
+        return k.active, k.requests, k.input_tokens, k.output_tokens, k.audio_seconds, k.cost
+
+
+def test_delete_key_soft_deletes(app, auth_client, test_user):
+    kid = _make_personal_key(app, test_user["id"], "sk_" + "s" * 32)
+    resp = auth_client.delete(f"/profile/keys/{kid}")
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    active, *counters = _personal_key_state(app, kid)
+    assert active is False
+    assert counters == [9, 300, 120, 3, Decimal("2.250000")]
+
+
+def test_delete_inactive_key_is_noop(app, auth_client, test_user):
+    kid = _make_personal_key(app, test_user["id"], "sk_" + "i" * 32, active=False)
+    before = _personal_key_state(app, kid)
+    resp = auth_client.delete(f"/profile/keys/{kid}")
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    assert _personal_key_state(app, kid) == before
+
+
 def test_delete_key_forbidden(app, auth_client, admin_user):
     """Key owned by admin_user cannot be deleted by auth_client (test_user)."""
     with app.app_context():

@@ -1015,15 +1015,40 @@ def test_delete_key_forbidden_for_non_manager(auth_client, service_project, make
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_delete_key_soft_deletes(app, managed_auth_client, managed_project, make_api_key):
-    key_id, _ = make_api_key(managed_project["id"], raw_key="sk_todelete12345678", name="to-delete")
-    resp = managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
-    assert resp.status_code == HTTPStatus.NO_CONTENT
+def _key_state(app, key_id):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.api_key import APIKey
         k = db.session.get(APIKey, key_id)
-        assert k is None
+        assert k is not None
+        return k.active, k.requests, k.input_tokens, k.output_tokens, k.audio_seconds, k.cost
+
+
+def test_delete_key_soft_deletes(app, managed_auth_client, managed_project, test_user, make_created_key):
+    key_id = make_created_key(managed_project["id"], test_user["id"], "sk_todelete12345678")
+    resp = managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    active, *counters = _key_state(app, key_id)
+    assert active is False
+    assert counters == [9, 300, 120, 3, Decimal("2.250000")]
+
+
+def test_delete_inactive_key_is_noop(app, managed_auth_client, managed_project, test_user, make_created_key):
+    key_id = make_created_key(managed_project["id"], test_user["id"], "sk_inactive12345678", active=False)
+    before = _key_state(app, key_id)
+    resp = managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    assert _key_state(app, key_id) == before
+
+
+def test_deleted_key_still_listed_as_inactive(managed_auth_client, managed_project, make_api_key):
+    key_id, _ = make_api_key(managed_project["id"], raw_key="sk_listed12345678", name="gone-key")
+    managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
+    html = managed_auth_client.get(f"/projects/{managed_project['id']}").get_data(as_text=True)
+    row = re.search(r"\{\s*id: " + str(key_id) + r",.*?\}", html, re.S)
+    assert row is not None
+    assert '"gone-key"' in row.group(0)
+    assert "active: false" in row.group(0)
 
 
 @pytest.fixture
@@ -1615,6 +1640,10 @@ def test_user_can_have_only_one_active_key(app, user_auth_client, user_project):
 
     resp = user_auth_client.delete(f"{url}/{first.get_json()['id']}")
     assert resp.status_code == HTTPStatus.NO_CONTENT
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        assert db.session.get(APIKey, first.get_json()["id"]).active is False
 
     third = user_auth_client.post(url, json={"name": "three", "key": "sk_userkey_three_1234"})
     assert third.status_code == HTTPStatus.CREATED

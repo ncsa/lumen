@@ -36,6 +36,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Fixed
 
+- Deleting an API key (project, personal or OAuth-minted) deactivates it instead of removing it, so its usage history is kept.
 - Fix model Update resetting input modalities to text-only on SGLang endpoints.
 
 ## [2.1.0] - 2026-09-20
