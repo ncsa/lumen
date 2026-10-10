@@ -585,12 +585,13 @@ const KEY_ROWS = [
     cost: {{ "%.6f"|format(key.cost|float) }},
     last_used: {{ key.last_used_at.strftime('%Y-%m-%dT%H:%M:%SZ') | tojson if key.last_used_at else 'null' }},
     revoked_at: {{ key.revoked_at.strftime('%Y-%m-%dT%H:%M:%SZ') | tojson if key.revoked_at else 'null' }},
+    revoked_by: {{ key_revokers.get(key.id) | tojson }},
   },
   {% endfor %}
 ];
 
 function revokedBadge(k) {
-  return `<span class="badge bg-secondary" tabindex="0" data-bs-toggle="tooltip" data-bs-title="Revoked ${escHtml(fmtDate(k.revoked_at).text)}">revoked</span>`;
+  return `<span class="badge bg-secondary" tabindex="0" data-bs-toggle="tooltip" data-bs-title="Revoked ${escHtml(fmtDate(k.revoked_at).text)}${k.revoked_by ? ' by ' + escHtml(k.revoked_by) : ''}">revoked</span>`;
 }
 const keyState = { col: 'name', dir: 'asc' };
 let keyFilter = '', showRevoked = false;

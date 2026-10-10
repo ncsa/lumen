@@ -86,7 +86,7 @@ An API key is a secret token in the format `sk_...`. It identifies you to the AP
 
 ### Viewing Your Keys
 
-The API Keys table shows all your active keys and lets you sort by name, requests, tokens, cost, or last used. Enable **Show revoked keys** to see revoked keys (deactivated, usage kept). They are displayed with strikethrough and a **revoked** badge; hover over or focus the badge to see when the key was revoked, in your local time. Times for keys revoked before this was recorded are approximate.
+The API Keys table shows all your active keys and lets you sort by name, requests, tokens, cost, or last used. Enable **Show revoked keys** to see revoked keys (deactivated, usage kept). They are displayed with strikethrough and a **revoked** badge; hover over or focus the badge to see when the key was revoked, in your local time, and who revoked it (e.g. *Revoked 10/10/2026, 2:15 PM by Jane Doe*). The name is left out when no revoker is recorded, such as for keys revoked before this was recorded or revoked automatically by an OAuth code replay. Times for keys revoked before this was recorded are approximate.
 
 Keys requested through a CLI or web app via [OAuth](./oauth-clients.md) show that provenance in the name tooltip (e.g. *Requested via lumen-cli by alice*); keys created with **+ New API Key** have no such note.
 

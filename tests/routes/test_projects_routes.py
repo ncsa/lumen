@@ -1037,7 +1037,7 @@ def test_revoke_key_sets_revoked_at(app, managed_auth_client, managed_project, t
 def test_manager_revoking_member_key_records_revoker(app, managed_auth_client, managed_project, test_user,
                                                      second_user, make_created_key):
     key_id = make_created_key(managed_project["id"], second_user["id"], "sk_memberkey1234567")
-    resp = managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     _, revoked_by, *_ = _key_state(app, key_id)
     assert revoked_by == test_user["id"]
@@ -1046,7 +1046,8 @@ def test_manager_revoking_member_key_records_revoker(app, managed_auth_client, m
 def test_deleting_revoker_keeps_key_with_null_revoker(app, managed_auth_client, managed_project, test_user,
                                                       second_user, make_created_key):
     key_id = make_created_key(managed_project["id"], second_user["id"], "sk_orphrevoker1234")
-    managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
+    assert resp.status_code == HTTPStatus.NO_CONTENT
     with app.app_context():
         from sqlalchemy import delete, text
 
@@ -1096,6 +1097,40 @@ def test_project_page_uses_revoke_wording(managed_auth_client, managed_project, 
     assert "delete-key-btn" not in html and ">Delete</button>" not in html
 
 
+def _key_row(client, project_id, key_id):
+    html = client.get(f"/projects/{project_id}").get_data(as_text=True)
+    row = re.search(r"\{\s*id: " + str(key_id) + r",.*?\}", html, re.S)
+    assert row is not None
+    return html, row.group(0)
+
+
+def test_revoked_badge_names_manager_revoker(managed_auth_client, managed_project, second_user, make_created_key):
+    key_id = make_created_key(managed_project["id"], second_user["id"], "sk_badgerevoker1234")
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    html, row = _key_row(managed_auth_client, managed_project["id"], key_id)
+    assert 'revoked_by: "Test User"' in row
+    assert "${k.revoked_by ? ' by ' + escHtml(k.revoked_by) : ''}" in html
+
+
+def test_revoked_badge_without_revoker_has_no_name(managed_auth_client, managed_project, second_user, make_created_key):
+    key_id = make_created_key(managed_project["id"], second_user["id"], "sk_badgenobody1234",
+                              revoked_at=datetime(2026, 9, 3, 8, 0))
+    _, row = _key_row(managed_auth_client, managed_project["id"], key_id)
+    assert "revoked_by: null" in row
+
+
+def test_repeat_revoke_keeps_first_revoker(app, managed_auth_client, managed_project, test_user, second_user,
+                                           make_created_key):
+    key_id = make_created_key(managed_project["id"], test_user["id"], "sk_repeatrevoke1234",
+                              revoked_at=datetime(2026, 9, 3, 8, 0), revoked_by=second_user["id"])
+    before = _key_state(app, key_id)
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    assert _key_state(app, key_id) == before
+    assert before[:2] == (datetime(2026, 9, 3, 8, 0), second_user["id"])
+
+
 def test_revoked_key_still_listed(managed_auth_client, managed_project, make_api_key):
     key_id, _ = make_api_key(managed_project["id"], raw_key="sk_listed12345678", name="gone-key")
     managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
@@ -1109,7 +1144,7 @@ def test_revoked_key_still_listed(managed_auth_client, managed_project, make_api
 @pytest.fixture
 def make_created_key(app):
     """Factory: create a key on a project with a given creator and usage stats. Returns key id."""
-    def _make(sid, creator_id, raw_key, revoked_at=None):
+    def _make(sid, creator_id, raw_key, revoked_at=None, revoked_by=None):
         with app.app_context():
             from lumen.extensions import db
             from lumen.models.api_key import APIKey
@@ -1117,7 +1152,7 @@ def make_created_key(app):
             key = APIKey(
                 entity_id=sid, created_by_entity_id=creator_id, name="rot-key",
                 key_hash=hash_api_key(raw_key), key_hint=f"{raw_key[:7]}...{raw_key[-4:]}", revoked_at=revoked_at,
-                requests=9, input_tokens=300, output_tokens=120, audio_seconds=3,
+                revoked_by_entity_id=revoked_by, requests=9, input_tokens=300, output_tokens=120, audio_seconds=3,
                 cost=Decimal("2.250000"), last_used_at=datetime(2026, 9, 2, 8, 0),
                 created_at=datetime(2026, 8, 2, 7, 0),
             )

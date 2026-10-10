@@ -6,6 +6,7 @@ from http import HTTPStatus
 from flask import Blueprint, abort, g, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import aliased
 
 from lumen.decorators import is_admin as _is_admin
 from lumen.decorators import is_admin_eligible, login_required
@@ -243,19 +244,27 @@ def _build_project_list(eid: int) -> list:
 
 def _get_profile_data(eid: int) -> dict:
     chat_agg, conversation_count = _fetch_chat_stats(eid)
-    # One query per page view: the creator's name/email rides along via an
-    # outer join instead of a per-key lookup when rendering the key table.
+    # One query per page view: the creator's and revoker's name/email ride along
+    # via outer joins instead of per-key lookups when rendering the key table.
+    revoker = aliased(Entity)
     key_rows = db.session.execute(
-        select(APIKey, Entity.name.label("creator_name"), Entity.email.label("creator_email"))
+        select(APIKey, Entity.name.label("creator_name"), Entity.email.label("creator_email"),
+               revoker.name.label("revoker_name"), revoker.email.label("revoker_email"))
         .outerjoin(Entity, APIKey.created_by_entity_id == Entity.id)
+        .outerjoin(revoker, APIKey.revoked_by_entity_id == revoker.id)
         .filter(APIKey.entity_id == eid)
         .order_by(APIKey.created_at)
     ).all()
-    api_keys = [key for key, _, _ in key_rows]
+    api_keys = [row[0] for row in key_rows]
     key_creators = {
         key.id: ("Unknown" if key.created_by_entity_id is None
                  else creator_name or creator_email or "Unknown")
-        for key, creator_name, creator_email in key_rows
+        for key, creator_name, creator_email, _, _ in key_rows
+    }
+    # None when nobody is recorded (legacy keys, OAuth replay, deleted revoker).
+    key_revokers = {
+        key.id: (None if key.revoked_by_entity_id is None else revoker_name or revoker_email)
+        for key, _, _, revoker_name, revoker_email in key_rows
     }
     # Fetch model context once and build both the usage list and the access list from it.
     all_models, eps_by_model, access_statuses, consent_map = _fetch_model_context(eid)
@@ -269,6 +278,7 @@ def _get_profile_data(eid: int) -> dict:
         "conversation_count": conversation_count,
         "api_keys": api_keys,
         "key_creators": key_creators,
+        "key_revokers": key_revokers,
         "model_usage": model_usage,
         "model_access_list": model_access_list,
         "coin_pool": coin_pool,

@@ -110,7 +110,7 @@ response = project.chat.completions.create(
 | **Last Used** | Timestamp of the last API call |
 | **Actions** | Rotate (keys you created) and Revoke buttons for active keys |
 
-Revoking a key deactivates it immediately and keeps its usage. Use **Show revoked keys** to view revoked keys (deactivated, usage kept); hover over or focus a key's **revoked** badge to see when it was revoked, in your local time. Times for keys revoked before this was recorded are approximate. Use the search box to filter by key name or creator (by name only for users).
+Revoking a key deactivates it immediately and keeps its usage. Use **Show revoked keys** to view revoked keys (deactivated, usage kept); hover over or focus a key's **revoked** badge to see when it was revoked, in your local time, and who revoked it (e.g. *Revoked 10/10/2026, 2:15 PM by Jane Doe*). The name is left out when no revoker is recorded: keys revoked before this was recorded, keys revoked automatically because an OAuth code was replayed, or keys whose revoker was deleted. Times for keys revoked before this was recorded are approximate. Use the search box to filter by key name or creator (by name only for users).
 
 ### Rotating a Key
 
