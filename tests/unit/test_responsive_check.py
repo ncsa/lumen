@@ -77,6 +77,52 @@ def test_chat_with_hidden_input_fails():
     assert responsive_check.problems("chat", "/chat", row) == ["input hidden"]
 
 
+# ---------------------------------------------------------------------------
+# Chat columns must not resize while a reply streams (RK-299).
+# ---------------------------------------------------------------------------
+
+def _layout(sidebar_after=260.0, main_after=1020.0, flex=None, lst="3 conversations"):
+    return [{"list": lst, "flex": flex or dict(responsive_check.EXPECTED_FLEX),
+             "before": {"sidebar": 260.0, "main": 1020.0},
+             "after": {"sidebar": sidebar_after, "main": main_after}}]
+
+
+def test_stable_chat_layout_passes():
+    assert responsive_check.layout_problems(_layout()) == []
+
+
+def test_subpixel_drift_passes():
+    assert responsive_check.layout_problems(_layout(sidebar_after=260.6, main_after=1019.4)) == []
+
+
+def test_shrinking_sidebar_fails():
+    assert responsive_check.layout_problems(_layout(sidebar_after=194.0, main_after=1086.0, lst="empty list")) == [
+        "sidebar width 260→194px (empty list)", "main width 1020→1086px (empty list)"]
+
+
+def test_content_sized_flex_fails():
+    flex = {"sidebar": "0 1 auto", "main": "1 1 auto"}
+    assert responsive_check.layout_problems(_layout(flex=flex)) == [
+        "sidebar flex 0 1 auto, expected 0 0 260px (3 conversations)",
+        "main flex 1 1 auto, expected 1 1 0px (3 conversations)"]
+
+
+def test_missing_chat_columns_fail():
+    assert responsive_check.layout_problems(None) == ["chat columns missing"]
+
+
+def test_chat_layout_problems_fail_the_row():
+    row = _row(url="http://localhost:5001/chat", chat_input=True)
+    row["layout"] = _layout(sidebar_after=194.0, main_after=1086.0)
+    assert responsive_check.problems("chat", "/chat", row) == [
+        "sidebar width 260→194px (3 conversations)", "main width 1020→1086px (3 conversations)"]
+
+
+def test_phone_chat_row_has_no_layout_check():
+    row = _row(url="http://localhost:5001/chat", chat_input=True)
+    assert responsive_check.problems("chat", "/chat", row) == []
+
+
 def test_failed_rows_fail_the_report(tmp_path, monkeypatch):
     monkeypatch.setattr(responsive_check, "OUT", str(tmp_path))
     rows = {("chat", "admin", w, h): {"problems": ["HTTP 500, expected 200", "input missing"], "status": 500,

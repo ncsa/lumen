@@ -7,7 +7,13 @@ page/size it reports:
   - horizontal overflow (document scrollWidth > clientWidth) and the elements
     that cause it (outermost elements past the viewport edge whose removal
     shrinks the page);
-  - on chat, whether the input bar is fully visible without scrolling the page.
+  - on chat, whether the input bar is fully visible without scrolling the page;
+  - on chat at tablet and desktop widths (768 and up, where the sidebar is an
+    inline column), whether the #chatSidebar and .chat-main widths stay put
+    (within 1px) when a long thinking block and a long answer are injected into
+    #chat-messages, with the conversation list empty and with conversations, and
+    whether the columns still compute to flex 0 0 260px / 1 1 0px. The DOM is
+    injected directly because the dummy backend doesn't stream reasoning.
 
 Writes report.md (pass/fail table plus details) and full-page screenshots to
 OUTPUT_DIR (default responsive-audit/, git-ignored). Exits 1 if anything fails,
@@ -117,6 +123,95 @@ PROBE_JS = """() => {
 }"""
 
 
+# Layout-stability check for chat, for viewports where the sidebar is inline (CSS md breakpoint).
+LAYOUT_MIN_WIDTH = 768
+LAYOUT_TOLERANCE = 1  # px
+# Computed flex values that keep the columns sized from the row, not their content (app.css).
+EXPECTED_FLEX = {"sidebar": "0 0 260px", "main": "1 1 0px"}
+
+# Returns [{list, flex: {sidebar, main}, before: {sidebar, main}, after: {sidebar, main}}], one entry per
+# conversation-list state (emptied, then filled with three items), or null when the chat columns are
+# missing. Injects the same DOM shape as chat.html's streaming code and sidebar, then restores the page.
+LAYOUT_JS = """() => {
+  const sidebar = document.getElementById('chatSidebar');
+  const main = document.querySelector('.chat-main');
+  const messages = document.getElementById('chat-messages');
+  const list = document.getElementById('conv-list');
+  if (!sidebar || !main || !messages || !list) return null;
+  const widths = () => ({sidebar: sidebar.getBoundingClientRect().width, main: main.getBoundingClientRect().width});
+  const longLine = (word, n) => Array.from({length: n}, (_, i) => word + i).join(' ');
+  const measure = label => {
+    const flex = {sidebar: getComputedStyle(sidebar).flex, main: getComputedStyle(main).flex};
+    const before = widths();
+    const row = document.createElement('div');
+    row.className = 'd-flex mb-2 justify-content-start';
+    const wrapper = document.createElement('div');
+    wrapper.className = 'd-flex flex-column align-items-start';
+    wrapper.style.maxWidth = '65%';
+    const details = document.createElement('details');
+    details.className = 'thinking-block mb-1';
+    details.open = true;
+    const summary = document.createElement('summary');
+    summary.textContent = 'Thinking…';
+    const pre = document.createElement('pre');
+    pre.className = 'thinking-text';
+    pre.textContent = Array.from({length: 40}, () => longLine('reasoning', 60)).join('\\n')
+      + '\\n' + 'x'.repeat(600);
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble chat-bubble-assistant';
+    bubble.textContent = longLine('answer', 400) + ' ' + 'y'.repeat(600);
+    details.append(summary, pre);
+    wrapper.append(details, bubble);
+    row.appendChild(wrapper);
+    messages.appendChild(row);
+    const after = widths();
+    row.remove();
+    return {list: label, flex, before, after};
+  };
+  const convItem = i => {
+    const item = document.createElement('div');
+    item.className = 'conv-item d-flex align-items-center px-3 py-2';
+    const info = document.createElement('div');
+    info.className = 'flex-fill overflow-hidden me-1';
+    const title = document.createElement('div');
+    title.className = 'small fw-medium text-truncate';
+    title.textContent = `Chat ${i}`;  // short, so the list doesn't pin the sidebar's min-content width
+    const preview = document.createElement('div');
+    preview.className = 'msg-meta text-truncate';
+    preview.textContent = 'Hello';
+    const remove = document.createElement('button');
+    remove.className = 'conv-remove-btn btn btn-link btn-sm p-0 text-muted';
+    remove.textContent = '✕';
+    info.append(title, preview);
+    item.append(info, remove);
+    return item;
+  };
+  const saved = [...list.childNodes];
+  list.replaceChildren();
+  const runs = [measure('empty list')];
+  list.replaceChildren(...Array.from({length: 3}, (_, i) => convItem(i + 1)));
+  runs.push(measure('3 conversations'));
+  list.replaceChildren(...saved);
+  return runs;
+}"""
+
+
+def layout_problems(layout):
+    """Why the chat columns are unstable: a width that moved or a flex value that changed."""
+    if layout is None:
+        return ["chat columns missing"]
+    bad = []
+    for run in layout:
+        for col, expected in EXPECTED_FLEX.items():
+            if run["flex"][col] != expected:
+                bad.append(f"{col} flex {run['flex'][col]}, expected {expected} ({run['list']})")
+        for col in ("sidebar", "main"):
+            before, after = run["before"][col], run["after"][col]
+            if abs(after - before) > LAYOUT_TOLERANCE:
+                bad.append(f"{col} width {before:.0f}→{after:.0f}px ({run['list']})")
+    return bad
+
+
 def unknown_routes(only):
     """Names in ONLY that match no route, so a typo fails instead of auditing nothing."""
     return sorted(only - {name for name, _, _ in ROUTES})
@@ -208,6 +303,8 @@ def problems(name, path, r):
         bad.append("input missing")
     elif r["chatInput"] is False:
         bad.append("input hidden")
+    if "layout" in r:
+        bad += layout_problems(r["layout"])
     return bad
 
 
@@ -227,6 +324,8 @@ def audit(page, user, results):
             resp = page.goto(BASE + path, wait_until="networkidle")
             page.wait_for_timeout(600)  # JS-rendered tables and charts
             probe = page.evaluate(PROBE_JS)
+            if name == "chat" and w >= LAYOUT_MIN_WIDTH:
+                probe["layout"] = page.evaluate(LAYOUT_JS)
             probe["status"] = resp.status if resp else None
             probe["url"] = page.url
             probe["problems"] = problems(name, path, probe)

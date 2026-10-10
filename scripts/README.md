@@ -40,7 +40,9 @@ Audits every page at phone and tablet sizes (375×667, 768×1024, 1024×768) and
 1280×800, signed in as the dev admin (admin mode on) and as the non-admin demo
 user (the landing page signed out). For each page and size it reports horizontal
 overflow and names the elements causing it; on chat it also checks that the input
-bar is fully visible without scrolling. It writes `report.md` (a pass/fail table)
+bar is fully visible without scrolling, and at 768 and up that the sidebar and
+message pane keep their widths when a long thinking block and answer are added
+(with the conversation list empty and with conversations). It writes `report.md` (a pass/fail table)
 and full-page screenshots to `responsive-audit/` (git-ignored) and exits 1 if
 anything fails, including pages it could not measure properly (an unexpected HTTP
 status or redirect, a detail page with nothing to link to, or a chat page without
