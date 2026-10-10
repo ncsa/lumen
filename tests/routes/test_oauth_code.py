@@ -193,8 +193,10 @@ def test_replay_revokes_minted_key(client, auth_client, app):
     assert client.get("/v1/models", headers={"Authorization": f"Bearer {key}"}).status_code == HTTPStatus.UNAUTHORIZED
     # Soft delete: the row is kept, only revoked.
     with app.app_context():
-        [revoked_at] = [k.revoked_at for k in db.session.execute(select(APIKey)).scalars().all()]
-        assert abs(utcnow() - revoked_at) < timedelta(minutes=1)
+        [key] = db.session.execute(select(APIKey)).scalars().all()
+        assert abs(utcnow() - key.revoked_at) < timedelta(minutes=1)
+        # A system revocation: no user revoked the key.
+        assert key.revoked_by_entity_id is None
 
 
 def test_token_cors_and_no_store(client, auth_client, app):

@@ -43,3 +43,4 @@ class APIKey(db.Model):
     requested_by: Mapped[Optional[str]] = mapped_column(db.String(128), comment="Requester label from the OAuth request that minted this key; null for manually created keys")
     # Creator identity: a real FK, unlike the unverified requested_by label
     created_by_entity_id: Mapped[Optional[int]] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="SET NULL"), comment="Entity (user) that created this key; null for legacy keys or if the creator was deleted")
+    revoked_by_entity_id: Mapped[Optional[int]] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="SET NULL"), comment="Entity (user) that revoked this key; null while usable, for keys revoked before this column existed, for system revocations (OAuth code replay), or if the revoker was deleted")

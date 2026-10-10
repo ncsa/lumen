@@ -1,4 +1,4 @@
-"""Replace api_keys.active with revoked_at
+"""Replace api_keys.active with revoked_at and add revoked_by_entity_id
 
 Revision ID: a9b0c1d2e3f4
 Revises: f8a9b0c1d2e3
@@ -9,7 +9,10 @@ Adds a nullable ``revoked_at`` (naive UTC) to ``api_keys`` and drops the
 were already inactive have no recorded revocation time, so they are backfilled
 with ``COALESCE(last_used_at, created_at)`` -- the latest time the key is known
 to have been live; a row with neither falls back to the migration time so it
-stays revoked. The downgrade restores ``active`` as ``revoked_at IS NULL``.
+stays revoked. Also adds a nullable ``revoked_by_entity_id`` FK recording which
+user revoked each key (``ON DELETE SET NULL``, like ``created_by_entity_id``);
+the revoker of an already revoked key is unknown, so it stays NULL. The
+downgrade drops it and restores ``active`` as ``revoked_at IS NULL``.
 batch_alter_table keeps the statements portable; SQLite dev uses
 ``create_all`` + stamp head and never runs this chain.
 """
@@ -28,6 +31,10 @@ _REVOKED_AT_COMMENT = (
     "UTC time the key was revoked; null while the key is usable; "
     "approximate for keys revoked before this column existed"
 )
+_REVOKED_BY_COMMENT = (
+    "Entity (user) that revoked this key; null while usable, for keys revoked before "
+    "this column existed, for system revocations (OAuth code replay), or if the revoker was deleted"
+)
 _ACTIVE_COMMENT = "Inactive keys are rejected on all requests"
 
 
@@ -43,6 +50,20 @@ def _q(text):
 def upgrade():
     with op.batch_alter_table("api_keys") as batch_op:
         batch_op.add_column(sa.Column("revoked_at", sa.DateTime(), nullable=True))
+        batch_op.add_column(
+            sa.Column(
+                "revoked_by_entity_id",
+                sa.Integer(),
+                # Explicit name = PostgreSQL's implicit naming, so migrated and
+                # create_all databases match, and SQLite batch recreate has a name.
+                sa.ForeignKey(
+                    "entities.id",
+                    ondelete="SET NULL",
+                    name="api_keys_revoked_by_entity_id_fkey",
+                ),
+                nullable=True,
+            )
+        )
 
     op.execute(
         sa.text(
@@ -56,6 +77,7 @@ def upgrade():
 
     if _is_postgresql():
         op.execute(f"COMMENT ON COLUMN api_keys.revoked_at IS {_q(_REVOKED_AT_COMMENT)}")
+        op.execute(f"COMMENT ON COLUMN api_keys.revoked_by_entity_id IS {_q(_REVOKED_BY_COMMENT)}")
 
 
 def downgrade():
@@ -66,6 +88,7 @@ def downgrade():
 
     with op.batch_alter_table("api_keys") as batch_op:
         batch_op.alter_column("active", existing_type=sa.Boolean(), nullable=False)
+        batch_op.drop_column("revoked_by_entity_id")
         batch_op.drop_column("revoked_at")
 
     if _is_postgresql():

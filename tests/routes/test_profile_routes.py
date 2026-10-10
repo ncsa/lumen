@@ -213,15 +213,16 @@ def _personal_key_state(app, kid):
         from lumen.models.api_key import APIKey
         k = db.session.get(APIKey, kid)
         assert k is not None
-        return k.revoked_at, k.requests, k.input_tokens, k.output_tokens, k.audio_seconds, k.cost
+        return k.revoked_at, k.revoked_by_entity_id, k.requests, k.input_tokens, k.output_tokens, k.audio_seconds, k.cost
 
 
 def test_delete_key_soft_deletes(app, auth_client, test_user):
     kid = _make_personal_key(app, test_user["id"], "sk_" + "s" * 32)
     resp = auth_client.delete(f"/profile/keys/{kid}")
     assert resp.status_code == HTTPStatus.NO_CONTENT
-    revoked_at, *counters = _personal_key_state(app, kid)
+    revoked_at, revoked_by, *counters = _personal_key_state(app, kid)
     assert abs(utcnow() - revoked_at) < timedelta(minutes=1)
+    assert revoked_by == test_user["id"]
     assert counters == [9, 300, 120, 3, Decimal("2.250000")]
 
 

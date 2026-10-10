@@ -36,6 +36,7 @@ erDiagram
         string client_id
         string requested_by
         int created_by_entity_id FK
+        int revoked_by_entity_id FK
     }
 
     auth_requests {
@@ -248,6 +249,7 @@ erDiagram
 
     entities ||--o{ api_keys : "owns"
     entities |o--o{ api_keys : "created"
+    entities |o--o{ api_keys : "revoked"
     entities |o--o{ auth_requests : "approves"
     api_keys |o--o{ auth_requests : "minted at claim"
     entities ||--o| entity_limits : "has"
@@ -329,7 +331,7 @@ Unified table for both human users (authenticated via OAuth) and programmatic pr
 - `fk_entities_owner_membership` — `FOREIGN KEY (owner_entity_id, id) REFERENCES entity_managers (user_entity_id, project_entity_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED`. The owner's manager row cannot be deleted while they own the project (transfer ownership first). Deferred so a project and its owner's manager row can be inserted in the same transaction. Not enforced on SQLite, which runs without foreign keys.
 
 **Notes:**
-- All foreign keys that reference `entities.id` cascade on delete, except `model_configs.owner_entity_id`, `api_keys.created_by_entity_id`, and the `request_logs` FKs, which use `SET NULL`.
+- All foreign keys that reference `entities.id` cascade on delete, except `model_configs.owner_entity_id`, `api_keys.created_by_entity_id`, `api_keys.revoked_by_entity_id`, and the `request_logs` FKs, which use `SET NULL`.
 - Acknowledgement (`needs_ack`) is a property of the model, not of the entity.
 - Deleting a user who owns a project fails on `fk_entities_owner_membership`; transfer ownership first.
 
@@ -357,6 +359,7 @@ API keys that entities (users or projects) use to authenticate against the proxy
 | `client_id` | String(128) | YES | Application label the key was requested through via the OAuth flows; null for keys created on the profile page |
 | `requested_by` | String(128) | YES | Requester-supplied author label from the OAuth request (unverified) |
 | `created_by_entity_id` | Integer (FK → entities) | YES | The user who created this key (the approving user for OAuth claims). Null for legacy keys; SET NULL on creator deletion. |
+| `revoked_by_entity_id` | Integer (FK → entities) | YES | The user who revoked this key (the approving user for an OAuth overwrite). Null while the key is usable, for keys revoked before this column existed, for system revocations (OAuth authorization-code replay), and when the revoker is deleted (SET NULL). |
 
 ---
 

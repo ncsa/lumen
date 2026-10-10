@@ -1021,16 +1021,50 @@ def _key_state(app, key_id):
         from lumen.models.api_key import APIKey
         k = db.session.get(APIKey, key_id)
         assert k is not None
-        return k.revoked_at, k.requests, k.input_tokens, k.output_tokens, k.audio_seconds, k.cost
+        return k.revoked_at, k.revoked_by_entity_id, k.requests, k.input_tokens, k.output_tokens, k.audio_seconds, k.cost
 
 
 def test_delete_key_soft_deletes(app, managed_auth_client, managed_project, test_user, make_created_key):
     key_id = make_created_key(managed_project["id"], test_user["id"], "sk_todelete12345678")
     resp = managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
     assert resp.status_code == HTTPStatus.NO_CONTENT
-    revoked_at, *counters = _key_state(app, key_id)
+    revoked_at, revoked_by, *counters = _key_state(app, key_id)
     assert abs(utcnow() - revoked_at) < timedelta(minutes=1)
+    assert revoked_by == test_user["id"]
     assert counters == [9, 300, 120, 3, Decimal("2.250000")]
+
+
+def test_manager_revoking_member_key_records_revoker(app, managed_auth_client, managed_project, test_user,
+                                                     second_user, make_created_key):
+    key_id = make_created_key(managed_project["id"], second_user["id"], "sk_memberkey1234567")
+    resp = managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    _, revoked_by, *_ = _key_state(app, key_id)
+    assert revoked_by == test_user["id"]
+
+
+def test_deleting_revoker_keeps_key_with_null_revoker(app, managed_auth_client, managed_project, test_user,
+                                                      second_user, make_created_key):
+    key_id = make_created_key(managed_project["id"], second_user["id"], "sk_orphrevoker1234")
+    managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
+    with app.app_context():
+        from sqlalchemy import delete, text
+
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        from lumen.models.entity import Entity
+        # Same pattern as test_deleting_creator_keeps_key_with_null_creator.
+        try:
+            db.session.execute(text("PRAGMA foreign_keys=ON"))
+            db.session.execute(delete(Entity).where(Entity.id == test_user["id"]))
+            db.session.commit()
+            key = db.session.get(APIKey, key_id)
+            assert key is not None and key.revoked_at is not None
+            assert key.revoked_by_entity_id is None
+        finally:
+            db.session.rollback()
+            db.session.execute(text("PRAGMA foreign_keys=OFF"))
+            db.session.commit()
 
 
 def test_revoked_project_key_is_rejected(client, managed_auth_client, managed_project, test_user, make_created_key):

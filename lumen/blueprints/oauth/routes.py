@@ -505,6 +505,7 @@ def _mint(req: AuthRequest):
         now = utcnow()
         for stale in existing:
             stale.revoked_at = now
+            stale.revoked_by_entity_id = req.entity_id
     elif existing:
         db.session.rollback()
         return _oauth_error("invalid_grant", "key name now in use, run again")

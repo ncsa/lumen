@@ -1,4 +1,4 @@
-"""``api_keys.revoked_at`` as the migration chain actually builds it.
+"""``api_keys.revoked_at`` and ``revoked_by_entity_id`` as the migration chain builds them.
 
 The SQLite suite builds the schema with ``create_all`` and never runs Alembic,
 so the backfill of keys that were already inactive, the column comment, and the
@@ -21,6 +21,10 @@ _USED = datetime(2026, 2, 1, 12, 0, 0)
 _REVOKED_AT_COMMENT = (
     "UTC time the key was revoked; null while the key is usable; "
     "approximate for keys revoked before this column existed"
+)
+_REVOKED_BY_COMMENT = (
+    "Entity (user) that revoked this key; null while usable, for keys revoked before "
+    "this column existed, for system revocations (OAuth code replay), or if the revoker was deleted"
 )
 
 
@@ -60,17 +64,28 @@ def test_upgrade_backfills_inactive_keys_and_downgrade_restores_active(pg_blank)
     assert "active" not in _columns(engine)
     with engine.connect() as conn:
         revoked = dict(conn.execute(text("SELECT name, revoked_at FROM api_keys")).all())
-        comment = conn.execute(text("""
-            SELECT col_description('api_keys'::regclass, attnum)
+        revokers = dict(conn.execute(text("SELECT name, revoked_by_entity_id FROM api_keys")).all())
+        comments = dict(conn.execute(text("""
+            SELECT attname, col_description('api_keys'::regclass, attnum)
             FROM pg_attribute
-            WHERE attrelid = 'api_keys'::regclass AND attname = 'revoked_at'
+            WHERE attrelid = 'api_keys'::regclass AND attname IN ('revoked_at', 'revoked_by_entity_id')
+        """)).all())
+        fk = conn.execute(text("""
+            SELECT con.confdeltype FROM pg_constraint con
+            JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
+            WHERE con.contype = 'f' AND con.conrelid = 'api_keys'::regclass
+              AND att.attname = 'revoked_by_entity_id'
         """)).scalar()
     assert revoked == {"live": None, "used_then_revoked": _USED, "never_used_revoked": _CREATED}
-    assert comment == _REVOKED_AT_COMMENT
+    # The revoker of a key revoked before this revision is unknown.
+    assert revokers == {"live": None, "used_then_revoked": None, "never_used_revoked": None}
+    assert comments == {"revoked_at": _REVOKED_AT_COMMENT, "revoked_by_entity_id": _REVOKED_BY_COMMENT}
+    assert fk == "n", f"revoked_by_entity_id FK uses ON DELETE type {fk!r}, expected 'n' (SET NULL)"
     engine.dispose()
 
     flask_db(url, "downgrade", _BEFORE)
     assert "revoked_at" not in _columns(engine)
+    assert "revoked_by_entity_id" not in _columns(engine)
     with engine.connect() as conn:
         active = dict(conn.execute(text("SELECT name, active FROM api_keys")).all())
         nullable = conn.execute(text(

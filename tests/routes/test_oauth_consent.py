@@ -143,6 +143,7 @@ def test_overwrite_soft_deletes_old_key(client, auth_client, app, test_user):
         old = db.session.get(APIKey, old_id)
         # The old row and its usage counters survive; only revoked_at is set.
         assert old is not None and abs(utcnow() - old.revoked_at) < timedelta(minutes=1)
+        assert old.revoked_by_entity_id == test_user["id"]
         assert (old.requests, old.input_tokens, old.output_tokens, float(old.cost)) == (7, 100, 50, 1.25)
         keys = db.session.execute(select(APIKey).where(APIKey.name == "opencode")).scalars().all()
         assert sorted(k.revoked_at is None for k in keys) == [False, True]

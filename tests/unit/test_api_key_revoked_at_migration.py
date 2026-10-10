@@ -1,4 +1,4 @@
-"""Round-trip the api_keys.revoked_at revision on SQLite.
+"""Round-trip the api_keys.revoked_at / revoked_by_entity_id revision on SQLite.
 
 The full chain is PostgreSQL-only, but each revision must stay dialect-portable.
 This executes the revision's upgrade()/downgrade() directly against a SQLite
@@ -107,6 +107,23 @@ def test_upgrade_backfills_revoked_at_and_drops_active(pre_migration_sqlite):
     }
 
 
+def test_upgrade_adds_nullable_revoker_with_set_null_fk(pre_migration_sqlite):
+    _run(pre_migration_sqlite, _revision_module().upgrade)
+
+    col = next(c for c in sa.inspect(pre_migration_sqlite).get_columns("api_keys")
+               if c["name"] == "revoked_by_entity_id")
+    assert col["nullable"] is True
+    fks = [fk for fk in sa.inspect(pre_migration_sqlite).get_foreign_keys("api_keys")
+           if fk["constrained_columns"] == ["revoked_by_entity_id"]]
+    assert fks and fks[0]["referred_table"] == "entities"
+    assert fks[0]["options"].get("ondelete") == "SET NULL"
+    # The revoker of a key revoked before this revision is unknown.
+    with pre_migration_sqlite.connect() as conn:
+        assert conn.execute(sa.text(
+            "SELECT COUNT(*) FROM api_keys WHERE revoked_by_entity_id IS NOT NULL"
+        )).scalar() == 0
+
+
 def test_upgrade_keeps_revoked_key_revoked_without_timestamps(pre_migration_sqlite):
     with pre_migration_sqlite.begin() as conn:
         conn.exec_driver_sql("UPDATE api_keys SET created_at = NULL WHERE name = 'never_used_revoked'")
@@ -121,6 +138,9 @@ def test_downgrade_restores_active(pre_migration_sqlite):
     _run(pre_migration_sqlite, module.downgrade)
 
     assert "revoked_at" not in _columns(pre_migration_sqlite)
+    assert "revoked_by_entity_id" not in _columns(pre_migration_sqlite)
+    assert not [fk for fk in sa.inspect(pre_migration_sqlite).get_foreign_keys("api_keys")
+                if fk["constrained_columns"] == ["revoked_by_entity_id"]]
     col = next(c for c in sa.inspect(pre_migration_sqlite).get_columns("api_keys") if c["name"] == "active")
     assert col["nullable"] is False
     with pre_migration_sqlite.connect() as conn:

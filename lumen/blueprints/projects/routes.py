@@ -722,6 +722,7 @@ def delete_project_key(sid, kid):
 
     if api_key.revoked_at is None:
         api_key.revoked_at = utcnow()
+        api_key.revoked_by_entity_id = entity_id
     db.session.commit()
     return "", HTTPStatus.NO_CONTENT
 
