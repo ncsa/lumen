@@ -463,6 +463,22 @@ def test_projects_data_lists_active_project(admin_client, service_project):
     assert service_project["name"] in names
 
 
+def test_projects_data_manager_count_excludes_users(app, admin_client, managed_project, test_user):
+    """managers counts only role='manager' rows (the owner and test_user), not 'user' members."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        from lumen.models.entity_manager import EntityManager
+        member = Entity(entity_type="user", email="member@example.com", name="Member", initials="ME", active=True)
+        db.session.add(member)
+        db.session.flush()
+        db.session.add(EntityManager(user_entity_id=member.id, project_entity_id=managed_project["id"], role="user"))
+        db.session.commit()
+    resp = admin_client.get("/projects/data")
+    row = next(c for c in resp.get_json()["projects"] if c["name"] == managed_project["name"])
+    assert row["managers"] == 2
+
+
 def test_projects_data_includes_disabled(admin_client, service_project):
     admin_client.post(f"/projects/{service_project['id']}/toggle")  # deactivate
     resp = admin_client.get("/projects/data")

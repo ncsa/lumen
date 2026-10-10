@@ -144,3 +144,95 @@ def test_owner_pointer_downgrade_restores_is_owner(tmp_path):
         assert [tuple(r) for r in owners] == [(10, 2), (11, 3)]
         assert conn.execute(sa.text("SELECT COUNT(*) FROM entity_managers")).scalar() == 6
     engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# f8a9b0c1d2e3: entity_managers.role
+# ---------------------------------------------------------------------------
+
+_ROLE_REVISION_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "migrations" / "versions" / "f8a9b0c1d2e3_entity_managers_role.py"
+)
+
+
+def _role_revision():
+    spec = importlib.util.spec_from_file_location("member_role_revision", _ROLE_REVISION_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _make_pre_role_db(path):
+    """entity_managers as e7f8a9b0c1d2 left it: users 1-3 are members of project 10, owned by user 1."""
+    engine = sa.create_engine(f"sqlite:///{path}")
+    with engine.begin() as conn:
+        conn.exec_driver_sql(
+            "CREATE TABLE entities (id INTEGER PRIMARY KEY, entity_type VARCHAR(8) NOT NULL,"
+            " owner_entity_id INTEGER)"
+        )
+        conn.exec_driver_sql("INSERT INTO entities VALUES (10, 'project', 1)")
+        conn.exec_driver_sql(
+            """
+            CREATE TABLE entity_managers (
+                id INTEGER PRIMARY KEY,
+                user_entity_id INTEGER NOT NULL,
+                project_entity_id INTEGER NOT NULL,
+                CONSTRAINT entity_managers_user_entity_id_project_entity_id_key
+                    UNIQUE (user_entity_id, project_entity_id)
+            )
+            """
+        )
+        for uid in (1, 2, 3):
+            conn.exec_driver_sql(
+                f"INSERT INTO entity_managers (user_entity_id, project_entity_id) VALUES ({uid}, 10)"
+            )
+    return engine
+
+
+def test_role_upgrade_makes_existing_rows_managers(tmp_path):
+    engine = _make_pre_role_db(tmp_path / "role.db")
+    _run_revision(engine, _role_revision().upgrade)
+
+    insp = sa.inspect(engine)
+    role = next(c for c in insp.get_columns("entity_managers") if c["name"] == "role")
+    assert role["nullable"] is False
+    assert "ck_entity_managers_role" in {c["name"] for c in insp.get_check_constraints("entity_managers")}
+
+    with engine.connect() as conn:
+        roles = conn.execute(sa.text("SELECT role FROM entity_managers")).scalars().all()
+        assert roles == ["manager"] * 3
+        # New rows default to manager; 'user' is allowed; anything else is rejected.
+        conn.execute(sa.text("INSERT INTO entity_managers (user_entity_id, project_entity_id) VALUES (4, 10)"))
+        conn.execute(sa.text(
+            "INSERT INTO entity_managers (user_entity_id, project_entity_id, role) VALUES (5, 10, 'user')"
+        ))
+        assert conn.execute(sa.text("SELECT role FROM entity_managers WHERE user_entity_id = 4")).scalar() == "manager"
+        with pytest.raises(sa.exc.IntegrityError):
+            conn.execute(sa.text(
+                "INSERT INTO entity_managers (user_entity_id, project_entity_id, role) VALUES (6, 10, 'owner')"
+            ))
+    engine.dispose()
+
+
+def test_role_downgrade_drops_column_and_user_rows(tmp_path):
+    engine = _make_pre_role_db(tmp_path / "role.db")
+    module = _role_revision()
+    _run_revision(engine, module.upgrade)
+    with engine.begin() as conn:
+        conn.execute(sa.text(
+            "INSERT INTO entity_managers (user_entity_id, project_entity_id, role) VALUES (5, 10, 'user')"
+        ))
+        # The owner's own row is kept even as 'user': fk_entities_owner_membership
+        # (RESTRICT) would reject deleting it on PostgreSQL.
+        conn.execute(sa.text("UPDATE entity_managers SET role = 'user' WHERE user_entity_id = 1"))
+    _run_revision(engine, module.downgrade)
+
+    insp = sa.inspect(engine)
+    assert "role" not in {c["name"] for c in insp.get_columns("entity_managers")}
+    assert not insp.get_check_constraints("entity_managers")
+    with engine.connect() as conn:
+        users = conn.execute(sa.text("SELECT user_entity_id FROM entity_managers ORDER BY user_entity_id")).scalars().all()
+        # The non-owner 'user' member is removed, not promoted; the owner stays.
+        assert users == [1, 2, 3]
+    engine.dispose()
