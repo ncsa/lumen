@@ -238,7 +238,8 @@ def test_deleted_key_is_rejected(app, client, auth_client, test_user):
     kid = _make_personal_key(app, test_user["id"], raw)
     headers = {"Authorization": f"Bearer {raw}"}
     assert client.get("/v1/models", headers=headers).status_code == HTTPStatus.OK
-    assert auth_client.delete(f"/profile/keys/{kid}").status_code == HTTPStatus.NO_CONTENT
+    resp = auth_client.delete(f"/profile/keys/{kid}")
+    assert resp.status_code == HTTPStatus.NO_CONTENT
     assert client.get("/v1/models", headers=headers).status_code == HTTPStatus.UNAUTHORIZED
 
 
