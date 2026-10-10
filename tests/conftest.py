@@ -163,6 +163,32 @@ def make_group_with_member(entity_id, name="test-group", active=True):
     return g.id
 
 
+def make_project(name, owner_id=None, **fields):
+    """Create a project with its required owner; returns the Entity. Call inside an app context; commits.
+
+    Every project must have an owner who is also one of its managers
+    (ck_entities_project_owner, fk_entities_owner_membership). With no
+    owner_id, a dedicated owner user is created for the project.
+    """
+    from lumen.extensions import db
+    from lumen.models.entity import Entity
+    from lumen.models.entity_manager import EntityManager
+    if owner_id is None:
+        owner = Entity(entity_type="user", email=f"owner-{name.replace(' ', '-')}@example.invalid",
+                       name=f"Owner of {name}", initials="OW", active=True)
+        db.session.add(owner)
+        db.session.flush()
+        owner_id = owner.id
+    fields.setdefault("initials", name[:2].upper())
+    fields.setdefault("active", True)
+    project = Entity(entity_type="project", name=name, owner_entity_id=owner_id, **fields)
+    db.session.add(project)
+    db.session.flush()
+    db.session.add(EntityManager(user_entity_id=owner_id, project_entity_id=project.id))
+    db.session.commit()
+    return project
+
+
 @pytest.fixture
 def admin_user(app):
     with app.app_context():

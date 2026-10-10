@@ -7,7 +7,7 @@ from lumen.services.llm import (
     get_pool_limit,
     has_model_consent,
 )
-from tests.conftest import grant_model_to_group, make_group_with_member, set_model_owner
+from tests.conftest import grant_model_to_group, make_group_with_member, make_project, set_model_owner
 
 
 @pytest.fixture
@@ -53,7 +53,7 @@ def test_public_model_allowed_for_user(app, ids):
 def test_public_model_allowed_for_project(app, ids):
     _, model_id = ids
     with app.app_context():
-        project_id = _make_entity(entity_type="project", email="proj@example.com", name="Proj")
+        project_id = make_project("Proj", email="proj@example.com").id
         assert get_model_access_status(project_id, model_id) == "allowed"
 
 
@@ -93,7 +93,7 @@ def test_group_grant_allows_project_member(app, ids):
     _, model_id = ids
     with app.app_context():
         owner_id = _make_entity()
-        project_id = _make_entity(entity_type="project", email="proj@example.com", name="Proj")
+        project_id = make_project("Proj", email="proj@example.com").id
         set_model_owner(model_id, owner_id)
         group_id = make_group_with_member(project_id)
         grant_model_to_group(model_id, group_id)

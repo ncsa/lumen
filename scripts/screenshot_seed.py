@@ -30,6 +30,7 @@ from lumen.extensions import db
 from lumen.models.api_key import APIKey
 from lumen.models.conversation import Conversation
 from lumen.models.entity import Entity
+from lumen.models.entity_manager import EntityManager
 from lumen.models.entity_stat import EntityStat
 from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
@@ -118,9 +119,11 @@ def main():
             select(Entity).filter_by(name="example-bot", entity_type="project")
         ).scalar_one_or_none()
         if not proj:
-            proj = Entity(entity_type="project", name="example-bot", initials="EB", active=True)
+            proj = Entity(entity_type="project", name="example-bot", initials="EB", active=True,
+                          owner_entity_id=user.id)
             db.session.add(proj)
             db.session.flush()
+            db.session.add(EntityManager(user_entity_id=user.id, project_entity_id=proj.id))
             k = "sk_example_0123456789abcdef"
             db.session.add(APIKey(entity_id=proj.id, name="example-key",
                                   created_by_entity_id=user.id,

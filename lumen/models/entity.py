@@ -16,9 +16,32 @@ class Entity(db.Model):
     """
 
     __tablename__ = "entities"
-    __table_args__ = {"comment": "Human users (OAuth) and programmatic projects (API key); entity_type distinguishes them"}
+    __table_args__ = (
+        # Every project has exactly one owner; users never have one.
+        db.CheckConstraint(
+            "(entity_type = 'project' AND owner_entity_id IS NOT NULL)"
+            " OR (entity_type <> 'project' AND owner_entity_id IS NULL)",
+            name="ck_entities_project_owner",
+        ),
+        # The owner must be a member of the project, and their membership row
+        # cannot be deleted while they own it. Deferred so a project and its
+        # owner's membership row can be inserted in one transaction; use_alter
+        # because entity_managers references entities in turn.
+        db.ForeignKeyConstraint(
+            ["owner_entity_id", "id"],
+            ["entity_managers.user_entity_id", "entity_managers.project_entity_id"],
+            name="fk_entities_owner_membership",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+            use_alter=True,
+        ),
+        {"comment": "Human users (OAuth) and programmatic projects (API key); entity_type distinguishes them"},
+    )
 
-    id: Mapped[int] = mapped_column(db.Integer, primary_key=True, comment="Primary key")
+    # autoincrement is explicit: id is also part of fk_entities_owner_membership,
+    # and SQLAlchemy does not auto-increment a primary key that is in a FK.
+    id: Mapped[int] = mapped_column(db.Integer, primary_key=True, autoincrement=True, comment="Primary key")
     # 'user' for human users authenticated via OAuth; 'project' for API projects
     entity_type: Mapped[str] = mapped_column(db.String(8), comment="'user' for OAuth users, 'project' for API projects")
     # Populated for users; null for projects. Unique across the table.
@@ -31,6 +54,8 @@ class Entity(db.Model):
     active: Mapped[bool] = mapped_column(db.Boolean, default=True, comment="Inactive entities are blocked from making requests")
     # When False, webchat conversations are not persisted for this user
     store_conversations: Mapped[bool] = mapped_column(db.Boolean, default=True, comment="Whether webchat conversations are persisted for this user")
+    # Owning user of a project; points at a manager row of that project
+    owner_entity_id: Mapped[Optional[int]] = mapped_column(db.Integer, comment="Owning user; required for projects, null for users")
     created_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, default=utcnow, comment="UTC creation timestamp")
 
     # foreign_keys pinned to entity_id: the table also has created_by_entity_id

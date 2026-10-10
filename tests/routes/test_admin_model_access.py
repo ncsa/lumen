@@ -37,11 +37,8 @@ def group_id(app):
 @pytest.fixture
 def project_entity(app):
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity import Entity
-        p = Entity(entity_type="project", email="project@example.com", name="Project", active=True)
-        db.session.add(p)
-        db.session.commit()
+        from tests.conftest import make_project
+        p = make_project("Project", email="project@example.com")
         return {"id": p.id, "email": p.email}
 
 

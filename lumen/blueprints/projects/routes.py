@@ -2,7 +2,7 @@ import hashlib
 from http import HTTPStatus
 
 from flask import Blueprint, abort, jsonify, render_template, request, session, url_for
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from lumen.blueprints.admin.routes import apply_coin_pool_edit
@@ -186,12 +186,6 @@ def data():
 
     # Per-row data for the inline edit dialog: whether the caller owns the
     # project, and the project's own coin limit (None = inherited pool).
-    owner_ids = {
-        em.project_entity_id
-        for em in db.session.execute(
-            select(EntityManager).filter_by(user_entity_id=entity_id, is_owner=True)
-        ).scalars().all()
-    }
     page_ids = [c.id for c, *_ in rows]
     limits = {
         lim.entity_id: lim
@@ -214,7 +208,7 @@ def data():
                 "cost": float(cost),
                 "created": c.created_at.strftime("%Y-%m-%dT%H:%M:%SZ") if c.created_at else None,
                 "detail_url": url_for("projects.detail", sid=c.id),
-                "is_owner": c.id in owner_ids,
+                "is_owner": c.owner_entity_id == entity_id,
                 "max_coins": float(limits[c.id].max_coins) if c.id in limits else None,
                 "refresh_coins": float(limits[c.id].refresh_coins) if c.id in limits else None,
             }
@@ -346,11 +340,14 @@ def create_project():
     if not owner_user:
         return jsonify({"error": "Owner user not found"}), HTTPStatus.NOT_FOUND
 
+    # The owner pointer's FK into entity_managers is deferred, so the project
+    # and the owner's membership row only have to agree at commit.
     project = Entity(
         entity_type="project",
         name=name,
         initials=name[:2].upper(),
         active=True,
+        owner_entity_id=owner_user.id,
     )
     db.session.add(project)
     db.session.flush()
@@ -358,7 +355,6 @@ def create_project():
     db.session.add(EntityManager(
         user_entity_id=owner_user.id,
         project_entity_id=project.id,
-        is_owner=True,
     ))
 
     db.session.commit()
@@ -445,7 +441,7 @@ def remove_project_manager(sid, uid):
     entity_id = session["entity_id"]
     _require_project_admin(entity_id, sid)
 
-    db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
+    project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
 
     target_assoc = db.session.execute(
         select(EntityManager).filter_by(user_entity_id=uid, project_entity_id=sid)
@@ -453,11 +449,16 @@ def remove_project_manager(sid, uid):
     if not target_assoc:
         return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
 
-    if target_assoc.is_owner:
+    if project.owner_entity_id == uid:
         return jsonify({"error": "Transfer ownership before removing the owner"}), HTTPStatus.CONFLICT
 
     db.session.delete(target_assoc)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # fk_entities_owner_membership: ownership moved to this user concurrently.
+        db.session.rollback()
+        return jsonify({"error": "Transfer ownership before removing the owner"}), HTTPStatus.CONFLICT
     return "", HTTPStatus.NO_CONTENT
 
 
@@ -472,7 +473,7 @@ def search_owner_candidates(sid):
     """
     entity_id = session["entity_id"]
     _require_project_admin(entity_id, sid)
-    db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
+    project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
 
     q = (request.args.get("q") or "").strip()
     if len(q) < 2:
@@ -483,7 +484,7 @@ def search_owner_candidates(sid):
         .join(EntityManager, EntityManager.user_entity_id == Entity.id)
         .where(
             EntityManager.project_entity_id == sid,
-            EntityManager.is_owner == False,  # noqa: E712 — SQL comparison, not a truth check
+            Entity.id != project.owner_entity_id,
             Entity.entity_type == "user",
             Entity.active == True,  # noqa: E712 — SQL comparison, not a truth check
             db.or_(Entity.email.ilike(f"%{q}%"), Entity.name.ilike(f"%{q}%")),
@@ -510,39 +511,42 @@ def transfer_ownership(sid):
     if not new_owner_id:
         return jsonify({"error": "user_id required"}), HTTPStatus.BAD_REQUEST
 
-    db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
+    project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
     new_owner = db.session.execute(
         select(Entity).filter_by(id=new_owner_id, entity_type="user")
     ).scalar_one_or_none()
     if not new_owner:
         return jsonify({"error": "User not found"}), HTTPStatus.NOT_FOUND
 
-    old_owner_assoc = db.session.execute(
-        select(EntityManager).filter_by(project_entity_id=sid, is_owner=True)
-    ).scalar_one_or_none()
-
     new_assoc = db.session.execute(
-        select(EntityManager).filter_by(user_entity_id=new_owner_id, project_entity_id=sid)
+        select(EntityManager).filter_by(user_entity_id=new_owner.id, project_entity_id=sid)
     ).scalar_one_or_none()
     if new_assoc is None:
         return jsonify(
             {"error": "The new owner must already be a manager of this project"}
         ), HTTPStatus.BAD_REQUEST
-    if new_assoc is old_owner_assoc:
+    # A non-admin was authorized as the owner, so only their ownership may be
+    # handed on: re-reading the pointer here could pick up an owner that a
+    # concurrent transfer installed after the authorization check.
+    entity = db.session.get(Entity, entity_id)
+    old_owner_id = project.owner_entity_id if is_admin(entity) else entity_id
+    if old_owner_id == new_owner.id:
         return jsonify({"error": "User is already the owner"}), HTTPStatus.CONFLICT
 
-    if old_owner_assoc:
-        # Demote and flush BEFORE promoting: SQLAlchemy flushes UPDATEs in
-        # primary-key order, so promoting a lower-id row first would
-        # transiently put two owners under the non-deferrable unique index.
-        old_owner_assoc.is_owner = False
-        db.session.flush()
-    new_assoc.is_owner = True
-
+    # Compare-and-set on the owner pointer: a concurrent transfer that
+    # committed first leaves no row matching the owner we read.
+    moved = db.session.execute(
+        update(Entity)
+        .where(Entity.id == sid, Entity.owner_entity_id == old_owner_id)
+        .values(owner_entity_id=new_owner.id)
+    ).rowcount
+    if moved != 1:
+        db.session.rollback()
+        return jsonify({"error": "Ownership changed concurrently; reload and try again"}), HTTPStatus.CONFLICT
     try:
         db.session.commit()
     except IntegrityError:
-        # uq_entity_managers_owner: a concurrent transfer committed first.
+        # fk_entities_owner_membership: the new owner was removed concurrently.
         db.session.rollback()
         return jsonify({"error": "Ownership changed concurrently; reload and try again"}), HTTPStatus.CONFLICT
     return jsonify({"owner_id": new_owner_id}), HTTPStatus.OK

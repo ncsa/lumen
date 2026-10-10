@@ -40,6 +40,7 @@ def main():
     from lumen.models.entity import Entity
     from lumen.models.entity_balance import EntityBalance
     from lumen.models.entity_limit import EntityLimit
+    from lumen.models.entity_manager import EntityManager
     from lumen.models.entity_model_consent import EntityModelConsent
     from lumen.models.group import Group
     from lumen.models.group_member import GroupMember
@@ -81,6 +82,18 @@ def main():
                 )
                 sys.exit(1)
 
+        # Every project needs an owner who also manages it; one shared
+        # placeholder user owns all the load-test projects.
+        owner_email = f"{args.prefix}-owner@example.invalid"
+        owner = db.session.execute(
+            select(Entity).filter_by(email=owner_email, entity_type="user")
+        ).scalar_one_or_none()
+        if owner is None:
+            owner = Entity(entity_type="user", email=owner_email, name=f"{args.prefix} owner",
+                           initials=args.prefix[:4].upper(), active=True)
+            db.session.add(owner)
+            db.session.flush()
+
         raw_keys = []
         for i in range(1, args.count + 1):
             name = f"{args.prefix}-{i}"
@@ -90,9 +103,11 @@ def main():
                 name=name,
                 initials=args.prefix[:4].upper(),
                 active=True,
+                owner_entity_id=owner.id,
             )
             db.session.add(entity)
             db.session.flush()  # populate entity.id
+            db.session.add(EntityManager(user_entity_id=owner.id, project_entity_id=entity.id))
 
             raw_key = "sk_" + secrets.token_urlsafe(32)
             api_key = APIKey(

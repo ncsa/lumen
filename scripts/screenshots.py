@@ -61,19 +61,6 @@ def ensure_demo_data(app):
             db.session.add(user)
         # Models without an owner are visible to everyone, so no access setup is needed.
 
-        project = db.session.execute(
-            select(Entity).filter_by(name="example-bot", entity_type="project")
-        ).scalar_one_or_none()
-        if not project:
-            project = Entity(entity_type="project", name="example-bot", initials="EB", active=True)
-            db.session.add(project)
-            db.session.flush()
-            key = "sk_example_0123456789abcdef"
-            db.session.add(APIKey(entity_id=project.id, name="example-key",
-                                  created_by_entity_id=user.id,
-                                  key_hash=hash_api_key(key),
-                                  key_hint=f"{key[:7]}...{key[-4:]}", active=True))
-
         # The dev user must manage the demo project or /projects renders no
         # link to it (admins browse as normal users by default).
         dev_email = app.config.get("DEV_USER")
@@ -84,11 +71,30 @@ def ensure_demo_data(app):
             dev = Entity(entity_type="user", email=dev_email, name="Dev User",
                          initials="DU", active=True)
             db.session.add(dev)
+        db.session.flush()
+
+        project = db.session.execute(
+            select(Entity).filter_by(name="example-bot", entity_type="project")
+        ).scalar_one_or_none()
+        if not project:
+            # A project needs its owner, and the owner's manager row, from the start.
+            owner = dev or user
+            project = Entity(entity_type="project", name="example-bot", initials="EB", active=True,
+                             owner_entity_id=owner.id)
+            db.session.add(project)
             db.session.flush()
+            db.session.add(EntityManager(user_entity_id=owner.id, project_entity_id=project.id))
+            key = "sk_example_0123456789abcdef"
+            db.session.add(APIKey(entity_id=project.id, name="example-key",
+                                  created_by_entity_id=user.id,
+                                  key_hash=hash_api_key(key),
+                                  key_hint=f"{key[:7]}...{key[-4:]}", active=True))
+            db.session.flush()
+
         if dev and not db.session.execute(
             select(EntityManager).filter_by(user_entity_id=dev.id, project_entity_id=project.id)
         ).scalar_one_or_none():
-            db.session.add(EntityManager(user_entity_id=dev.id, project_entity_id=project.id, is_owner=True))
+            db.session.add(EntityManager(user_entity_id=dev.id, project_entity_id=project.id))
 
         # Give one model an owner and a group grant so the admin Access card
         # (model-access.png) shows a populated example instead of "Everyone".
