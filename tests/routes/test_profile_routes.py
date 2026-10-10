@@ -233,7 +233,7 @@ def test_delete_inactive_key_is_noop(app, auth_client, test_user):
     assert _personal_key_state(app, kid) == before
 
 
-def test_deleted_key_is_rejected(app, client, auth_client, test_user):
+def test_revoked_key_is_rejected(app, client, auth_client, test_user):
     raw = "sk_" + "z" * 32
     kid = _make_personal_key(app, test_user["id"], raw)
     headers = {"Authorization": f"Bearer {raw}"}

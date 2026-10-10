@@ -1033,7 +1033,7 @@ def test_delete_key_soft_deletes(app, managed_auth_client, managed_project, test
     assert counters == [9, 300, 120, 3, Decimal("2.250000")]
 
 
-def test_deleted_project_key_is_rejected(client, managed_auth_client, managed_project, test_user, make_created_key):
+def test_revoked_project_key_is_rejected(client, managed_auth_client, managed_project, test_user, make_created_key):
     raw = "sk_revoked401key123"
     key_id = make_created_key(managed_project["id"], test_user["id"], raw)
     headers = {"Authorization": f"Bearer {raw}"}
