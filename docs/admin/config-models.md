@@ -129,6 +129,8 @@ These fields tell the UI what the model can do and help users pick the right one
 | `output_modalities` | What the model produces: typically `["text"]` |
 | `notice` | Optional admin note shown to users on the model detail page |
 
+On Update, `supports_reasoning` comes from the serving backend's reasoning parser when its `/server_info` is reachable (SGLang always; vLLM only in dev mode), and otherwise from the models.dev provider consensus.
+
 All fields except `name`, `input_cost_per_million`, and `output_cost_per_million` are optional. Everything else fills in the UI and API responses.
 
 ## Endpoints

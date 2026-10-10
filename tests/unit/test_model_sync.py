@@ -303,7 +303,7 @@ def test_consensus_without_dev_id_is_none():
     assert model_sync._consensus_bool({"reasoning": True}, index, "reasoning") is None
 
 
-# ── fetch_endpoint_model: SGLang /get_server_info first ────────────────────────
+# ── fetch_endpoint_model: server info first ────────────────────────────────────
 
 class _Resp:
     def __init__(self, payload, ok=True):
@@ -322,7 +322,7 @@ def _patch_probe(monkeypatch, fake_get):
 
 
 def test_sglang_server_info_preferred_over_v1_models(monkeypatch):
-    """/get_server_info is called first; when it 200s, /v1/models is never hit.
+    """The server info is read first; when it 200s, /v1/models is never hit.
     SGLang's max_req_input_len wins over /v1/models' theoretical max_model_len."""
     calls = []
     def fake_get(url, **kw):
@@ -441,6 +441,144 @@ def test_get_model_info_fallback(monkeypatch):
     _patch_probe(monkeypatch, fake_get)
     r = model_sync.fetch_endpoint_model({"url": "http://x", "api_key": "k"})
     assert r["max_model_len"] == 8192
+
+
+# ── reasoning from the backend's /server_info ─────────────────────────────────
+
+def _sync_with_probe(monkeypatch, fake_get, dev_flags, current=None):
+    """Run sync_model with a stubbed probe and models.dev providers reporting dev_flags."""
+    _patch_probe(monkeypatch, fake_get)
+    dev_models = _reasoning_models(*dev_flags)
+    monkeypatch.setattr(model_sync, "get_modelsdev", lambda: (dev_models, model_sync._build_price_index(dev_models)))
+    monkeypatch.setattr(model_sync, "find_in_modelsdev", lambda *a, **k: dev_models[0])
+    model_def = {"name": "m", "endpoints": [{"url": "http://x/v1"}]}
+    if current is not None:
+        model_def["supports_reasoning"] = current
+    return model_sync.sync_model(model_def)
+
+
+def _sglang_server_info(reasoning_parser):
+    def fake_get(url):
+        if url == "http://x/server_info?config_format=json":
+            return _Resp({"max_req_input_len": 32768, "served_model_name": "m", "is_embedding": False,
+                          "enable_multimodal": None, "reasoning_parser": reasoning_parser})
+        return _Resp({}, ok=False)
+    return fake_get
+
+
+def _vllm_server_info(server_info):
+    def fake_get(url):
+        if url == "http://x/server_info?config_format=json":
+            return server_info
+        if url == "http://x/v1/models":
+            return _Resp({"data": [{"id": "m", "max_model_len": 32768}]})
+        return _Resp({}, ok=False)
+    return fake_get
+
+
+def _vllm_config(reasoning_parser):
+    return {"vllm_config": {"structured_outputs_config": {"reasoning_parser": reasoning_parser}}}
+
+
+def test_sglang_reasoning_parser_set_overrides_dev_false(monkeypatch):
+    result = _sync_with_probe(monkeypatch, _sglang_server_info("qwen3"), [False, False])
+    assert result["updates"]["supports_reasoning"] is True
+
+
+def test_sglang_reasoning_parser_null_overrides_dev_true(monkeypatch):
+    result = _sync_with_probe(monkeypatch, _sglang_server_info(None), [True, True], current=True)
+    assert result["updates"]["supports_reasoning"] is False
+
+
+def test_sglang_reasoning_parser_null_with_missing_key_is_no_change(monkeypatch):
+    """Backend false + unset field: no update, even when models.dev says true."""
+    result = _sync_with_probe(monkeypatch, _sglang_server_info(None), [True, True])
+    assert "supports_reasoning" not in result["updates"]
+
+
+def test_old_sglang_get_server_info_falls_back_to_dev_consensus(monkeypatch):
+    """/server_info 404 → /get_server_info without reasoning_parser: models.dev
+    decides reasoning; the context and modality flags still come through."""
+    calls = []
+    def fake_get(url):
+        calls.append(url)
+        if url == "http://x/get_server_info":
+            return _Resp({"max_req_input_len": 500410, "served_model_name": "m",
+                          "is_embedding": False, "enable_multimodal": False})
+        return _Resp({}, ok=False)
+    _patch_probe(monkeypatch, fake_get)
+    r = model_sync.fetch_endpoint_model({"url": "http://x/v1", "api_key": "k"})
+    assert calls[:2] == ["http://x/server_info?config_format=json", "http://x/get_server_info"]
+    assert r["backend"] == "sglang"
+    assert r["max_model_len"] == 500410
+    assert "reasoning" not in r
+
+    result = _sync_with_probe(monkeypatch, fake_get, [False, True, True])
+    assert result["updates"]["supports_reasoning"] is True
+    assert result["updates"]["context_window"] == 500410
+    assert result["updates"]["input_modalities"] == ["text"]
+
+
+def test_vllm_dev_mode_reasoning_parser_set(monkeypatch):
+    fake_get = _vllm_server_info(_Resp(_vllm_config("qwen3")))
+    _patch_probe(monkeypatch, fake_get)
+    r = model_sync.fetch_endpoint_model({"url": "http://x/v1", "api_key": "k"})
+    assert r == {"id": "m", "max_model_len": 32768, "backend": "vllm", "reasoning": True}
+
+    result = _sync_with_probe(monkeypatch, fake_get, [False, False])
+    assert result["updates"]["supports_reasoning"] is True
+
+
+def test_vllm_dev_mode_reasoning_parser_empty(monkeypatch):
+    result = _sync_with_probe(monkeypatch, _vllm_server_info(_Resp(_vllm_config(""))), [True, True], current=True)
+    assert result["updates"]["supports_reasoning"] is False
+
+
+def test_vllm_config_without_reasoning_parser_falls_back_to_dev(monkeypatch):
+    fake_get = _vllm_server_info(_Resp({"vllm_config": {"model_config": {}}}))
+    _patch_probe(monkeypatch, fake_get)
+    r = model_sync.fetch_endpoint_model({"url": "http://x/v1", "api_key": "k"})
+    assert r["backend"] == "vllm"
+    assert "reasoning" not in r
+
+
+def test_vllm_server_info_404_falls_back_to_dev(monkeypatch):
+    fake_get = _vllm_server_info(_Resp({}, ok=False))
+    _patch_probe(monkeypatch, fake_get)
+    r = model_sync.fetch_endpoint_model({"url": "http://x/v1", "api_key": "k"})
+    assert "backend" not in r
+    assert "reasoning" not in r
+
+    result = _sync_with_probe(monkeypatch, fake_get, [False, True, True])
+    assert result["updates"]["supports_reasoning"] is True
+
+
+def test_vllm_text_format_falls_back_to_dev(monkeypatch):
+    """The default text format returns vllm_config as one string: unreadable, so models.dev decides."""
+    fake_get = _vllm_server_info(_Resp({"vllm_config": "model='m', reasoning_parser='qwen3', ..."}))
+    _patch_probe(monkeypatch, fake_get)
+    r = model_sync.fetch_endpoint_model({"url": "http://x/v1", "api_key": "k"})
+    assert "backend" not in r
+    assert "reasoning" not in r
+
+    result = _sync_with_probe(monkeypatch, fake_get, [True, False, False], current=True)
+    assert result["updates"]["supports_reasoning"] is False
+
+
+def test_server_info_non_json_falls_back_to_get_server_info(monkeypatch):
+    class _BadJson(_Resp):
+        def json(self):
+            raise ValueError("not json")
+    def fake_get(url):
+        if url.endswith("/server_info?config_format=json"):
+            return _BadJson({})
+        if url.endswith("/get_server_info"):
+            return _Resp({"max_req_input_len": 8192, "reasoning_parser": "deepseek-r1"})
+        return _Resp({}, ok=False)
+    _patch_probe(monkeypatch, fake_get)
+    r = model_sync.fetch_endpoint_model({"url": "http://x", "api_key": "k"})
+    assert r["max_model_len"] == 8192
+    assert r["reasoning"] is True
 
 
 # ── server-authoritative modalities ───────────────────────────────────────────
