@@ -6,8 +6,8 @@ updates the ``model_configs.owner_entity_id`` and ``groups`` comments that
 mentioned grants. Downgrade recreates the table and index empty — the old
 grants are NOT restored.
 
-Revision ID: f8a9b0c1d2e3
-Revises: d6e7f8a9b0c1
+Revision ID: a9b0c1d2e3f4
+Revises: f8a9b0c1d2e3
 Create Date: 2026-10-08 00:00:00.000000
 
 """
@@ -15,8 +15,8 @@ Create Date: 2026-10-08 00:00:00.000000
 import sqlalchemy as sa
 from alembic import op
 
-revision = "f8a9b0c1d2e3"
-down_revision = "d6e7f8a9b0c1"
+revision = "a9b0c1d2e3f4"
+down_revision = "f8a9b0c1d2e3"
 branch_labels = None
 depends_on = None
 

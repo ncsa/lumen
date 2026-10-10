@@ -151,7 +151,7 @@ def test_migration_is_at_a_single_head(pg_migrated):
 
 
 def test_model_group_access_dropped_and_downgrade_recreates_it(pg_migrated_isolated):
-    """f8a9b0c1d2e3 drops the table; downgrade recreates it empty with its index.
+    """a9b0c1d2e3f4 drops the table; downgrade recreates it empty with its index.
 
     Uses a private database so a failed downgrade/upgrade cannot leave the
     shared session database off head.
@@ -176,7 +176,7 @@ def test_model_group_access_dropped_and_downgrade_recreates_it(pg_migrated_isola
     assert groups_comment == "Named collections of entities for coin limit policy assignment"
 
     # An explicit revision: click would parse "-1" as an option.
-    flask_db(url, "downgrade", "d6e7f8a9b0c1")
+    flask_db(url, "downgrade", "f8a9b0c1d2e3")
     table, index, owner_comment, groups_comment = state()
     assert table == "model_group_access"
     assert index == "ix_model_group_access_group_id"
