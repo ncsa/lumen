@@ -272,6 +272,7 @@ def detail(sid):
     if plain_user:
         data["api_keys"] = [k for k in data["api_keys"] if k.created_by_entity_id == entity_id]
         data["key_creators"] = {k.id: data["key_creators"][k.id] for k in data["api_keys"]}
+        data["key_revokers"] = {k.id: data["key_revokers"][k.id] for k in data["api_keys"]}
 
     owner = get_project_owner(sid)
     owner_id = owner.id if owner else None

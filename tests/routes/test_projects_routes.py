@@ -936,32 +936,42 @@ def test_created_by_null_for_keys_made_without_a_creator(app, service_project, m
         assert key.created_by_entity_id is None
 
 
+def _delete_entity_enforcing_fks(app, entity_id):
+    """Delete an entity with SQLite FK enforcement on, so ON DELETE SET NULL runs.
+
+    SQLite enables FKs per connection, and the PRAGMA is ignored inside an open
+    transaction. Use a dedicated connection, check the PRAGMA took effect, and
+    invalidate the connection afterwards so enforcement can never leak into the
+    pooled connections later tests (and the autouse cleanup) reuse.
+    """
+    with app.app_context():
+        from sqlalchemy import delete
+
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        conn = db.engine.connect()
+        try:
+            conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+            assert conn.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1
+            conn.execute(delete(Entity).where(Entity.id == entity_id))
+            conn.commit()
+        finally:
+            conn.invalidate()
+            conn.close()
+
+
 def test_deleting_creator_keeps_key_with_null_creator(app, managed_auth_client, managed_project, test_user):
     resp = managed_auth_client.post(
         f"/projects/{managed_project['id']}/keys",
         json={"name": "orphan", "key": "sk_orphcreator123"},
     )
     assert resp.status_code == HTTPStatus.CREATED
+    _delete_entity_enforcing_fks(app, test_user["id"])
     with app.app_context():
-        from sqlalchemy import delete, text
-
         from lumen.extensions import db
         from lumen.models.api_key import APIKey
-        from lumen.models.entity import Entity
-        # SQLite only enforces FKs per connection; enable it to exercise the
-        # ON DELETE SET NULL clause the schema actually carries. The session
-        # fixture keeps this connection pooled for later tests, so the finally
-        # must hand it back with enforcement off, as it was found.
-        try:
-            db.session.execute(text("PRAGMA foreign_keys=ON"))
-            db.session.execute(delete(Entity).where(Entity.id == test_user["id"]))
-            db.session.commit()
-            key = db.session.execute(select(APIKey).filter_by(entity_id=managed_project["id"], name="orphan")).scalar_one()
-            assert key.created_by_entity_id is None
-        finally:
-            db.session.rollback()
-            db.session.execute(text("PRAGMA foreign_keys=OFF"))
-            db.session.commit()
+        key = db.session.execute(select(APIKey).filter_by(entity_id=managed_project["id"], name="orphan")).scalar_one()
+        assert key.created_by_entity_id is None
 
 
 def test_detail_shows_key_creator_and_unknown_for_legacy(managed_auth_client, managed_project, make_api_key):
@@ -1048,24 +1058,13 @@ def test_deleting_revoker_keeps_key_with_null_revoker(app, managed_auth_client, 
     key_id = make_created_key(managed_project["id"], second_user["id"], "sk_orphrevoker1234")
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
+    _delete_entity_enforcing_fks(app, test_user["id"])
     with app.app_context():
-        from sqlalchemy import delete, text
-
         from lumen.extensions import db
         from lumen.models.api_key import APIKey
-        from lumen.models.entity import Entity
-        # Same pattern as test_deleting_creator_keeps_key_with_null_creator.
-        try:
-            db.session.execute(text("PRAGMA foreign_keys=ON"))
-            db.session.execute(delete(Entity).where(Entity.id == test_user["id"]))
-            db.session.commit()
-            key = db.session.get(APIKey, key_id)
-            assert key is not None and key.revoked_at is not None
-            assert key.revoked_by_entity_id is None
-        finally:
-            db.session.rollback()
-            db.session.execute(text("PRAGMA foreign_keys=OFF"))
-            db.session.commit()
+        key = db.session.get(APIKey, key_id)
+        assert key is not None and key.revoked_at is not None
+        assert key.revoked_by_entity_id is None
 
 
 def test_revoked_project_key_is_rejected(client, managed_auth_client, managed_project, test_user, make_created_key):
