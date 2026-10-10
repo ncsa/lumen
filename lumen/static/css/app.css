@@ -50,7 +50,12 @@ body.fill-viewport > :has(> #main-content) > footer {
     }
 }
 
+/* Size both columns from the row, not from their content: with flex-basis auto
+   a long streamed line inflated .chat-main's basis and squeezed the sidebar,
+   so the layout shifted while a reply streamed. !important beats Bootstrap's
+   flex-fill (flex: 1 1 auto !important) on the same element. */
 .chat-main {
+    flex: 1 1 0 !important;
     min-width: 0;
     min-height: 0;
 }
@@ -108,6 +113,7 @@ body.fill-viewport > :has(> #main-content) > footer {
         transform: none !important;
         visibility: visible !important;
         width: 260px !important;
+        flex: 0 0 260px;
         height: 100%;
         border-right: 1px solid #dee2e6;
         z-index: auto;
