@@ -7,7 +7,9 @@ Usage:
 
 Checks each model against:
   - Its vLLM or SGLang endpoint  → context_window, max_output_tokens
-  - models.dev                   → knowledge_cutoff, supports_reasoning, input_modalities, output_modalities
+  - Its /server_info             → supports_reasoning (when the backend reports its reasoning parser)
+  - models.dev                   → knowledge_cutoff, supports_reasoning (provider consensus),
+                                   input_modalities, output_modalities
 
 Shows proposed changes one model at a time and prompts before writing.
 Inline comments in the config file are preserved.
@@ -52,34 +54,68 @@ def _sglang_root(base: str) -> str:
     return base[:-3] if base.lower().endswith("/v1") else base
 
 
+def _server_info_flags(info) -> dict:
+    """Return the capability flags from a /server_info or /get_server_info body.
+
+    SGLang (the body has one of the SGLang keys we consume) gives
+    backend="sglang", is_embedding and enable_multimodal. vLLM (the body has a
+    ``vllm_config`` object, only in JSON format) gives backend="vllm".
+    ``reasoning`` is added only when the backend reports its reasoning parser,
+    so older servers fall through to models.dev. Returns {} for any other body,
+    including vLLM's text format where ``vllm_config`` is a string.
+    Mirrors lumen.services.model_sync._server_info_flags.
+    """
+    if not isinstance(info, dict):
+        return {}
+    if any(k in info for k in ("max_req_input_len", "is_embedding", "enable_multimodal")):
+        flags = {
+            "backend": "sglang",
+            "is_embedding": bool(info.get("is_embedding")),
+            "enable_multimodal": info.get("enable_multimodal"),
+        }
+        if "reasoning_parser" in info:
+            flags["reasoning"] = bool(info["reasoning_parser"])
+        return flags
+    vllm_config = info.get("vllm_config")
+    if isinstance(vllm_config, dict):
+        flags = {"backend": "vllm"}
+        so_config = vllm_config.get("structured_outputs_config")
+        if isinstance(so_config, dict) and "reasoning_parser" in so_config:
+            flags["reasoning"] = bool(so_config["reasoning_parser"])
+        return flags
+    return {}
+
+
 def fetch_endpoint_model(endpoint: dict) -> dict | None:
     base = endpoint["url"].rstrip("/")
     root = _sglang_root(base)
     headers = {"Authorization": f"Bearer {endpoint['api_key']}"}
 
-    # SGLang: /get_server_info is the authoritative source — it exposes
-    # max_req_input_len (the real per-request limit from --context-length,
-    # not the model's theoretical max), is_embedding, and enable_multimodal.
-    # A 200 alone doesn't prove it's SGLang (a proxy/gateway in front of vLLM
-    # could return 200 for that path), so we only tag backend="sglang" when the
-    # body actually contains at least one SGLang-specific key we consume.
+    # Server info: SGLang always serves it, vLLM only in dev mode
+    # (VLLM_SERVER_DEV_MODE=1). Try the current /server_info first (JSON format,
+    # which SGLang ignores) and fall back to SGLang's deprecated
+    # /get_server_info alias. SGLang exposes max_req_input_len (the real
+    # per-request limit from --context-length, not the model's theoretical max),
+    # is_embedding, enable_multimodal and reasoning_parser. A 200 alone doesn't
+    # prove the backend (a proxy/gateway could answer 200 for that path), so a
+    # response is only used when it has a recognizable shape.
     # The endpoint is served at the server root (see _sglang_root), not /v1.
-    sglang_flags: dict = {}
-    try:
-        r = requests.get(f"{root}/get_server_info", headers=headers, timeout=TIMEOUT)
-        if r.ok:
-            info = r.json()
-            if any(k in info for k in ("max_req_input_len", "is_embedding", "enable_multimodal")):
-                sglang_flags = {
-                    "backend": "sglang",
-                    "is_embedding": bool(info.get("is_embedding")),
-                    "enable_multimodal": info.get("enable_multimodal"),
-                }
-                mrl = info.get("max_req_input_len")
-                if mrl is not None:
-                    return {"id": info.get("served_model_name") or "", "max_model_len": mrl, **sglang_flags}
-    except Exception:
-        pass
+    server_flags: dict = {}
+    for path in ("/server_info?config_format=json", "/get_server_info"):
+        try:
+            r = requests.get(f"{root}{path}", headers=headers, timeout=TIMEOUT)
+            if r.ok:
+                info = r.json()
+                server_flags = _server_info_flags(info)
+                if server_flags:
+                    mrl = info.get("max_req_input_len")
+                    if mrl is not None:
+                        return {"id": info.get("served_model_name") or "", "max_model_len": mrl, **server_flags}
+                    # Both paths describe the same server, so the alias adds
+                    # nothing; the context length comes from the fallbacks below.
+                    break
+        except Exception:
+            pass  # unreachable or non-JSON: try the next path
 
     # vLLM (or SGLang without max_req_input_len): /v1/models gives id + max_model_len.
     model_id = None
@@ -90,7 +126,7 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
             model_id = models[0].get("id")
             mml = models[0].get("max_model_len")
             if mml is not None:
-                return {"id": model_id or "", "max_model_len": mml, **sglang_flags}
+                return {"id": model_id or "", "max_model_len": mml, **server_flags}
     except Exception:
         pass
 
@@ -99,14 +135,14 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
         r = requests.get(f"{root}/get_model_info", headers=headers, timeout=TIMEOUT)
         info = r.json()
         if "context_length" in info:
-            return {"id": model_id or info.get("model_path", ""), "max_model_len": info["context_length"], **sglang_flags}
+            return {"id": model_id or info.get("model_path", ""), "max_model_len": info["context_length"], **server_flags}
     except Exception:
         pass
 
-    # SGLang responded with capability flags but no context length anywhere —
-    # still return them so the modality override can fire.
-    if sglang_flags:
-        return {"id": model_id or "", "max_model_len": None, **sglang_flags}
+    # The server info responded with capability flags but no context length
+    # anywhere — still return them so the modality and reasoning overrides fire.
+    if server_flags:
+        return {"id": model_id or "", "max_model_len": None, **server_flags}
 
     return None
 
@@ -234,6 +270,26 @@ def _average_price(dev_model: dict, price_index: dict[str, list[dict]]) -> tuple
     return avg_in, avg_out
 
 
+def _consensus_bool(dev_model: dict, price_index: dict[str, list[dict]], key: str) -> bool | None:
+    """Majority vote on a boolean field across every models.dev provider that
+    lists the same base model. Providers that don't report a boolean are
+    ignored, so a single reporting provider is a unanimous consensus. Votes are
+    counted per listing, not per provider: a provider listing the same base
+    model twice (e.g. ``m`` and ``m:free``) votes twice. Returns None on a tie
+    or when no provider reports a value.
+    Mirrors lumen.services.model_sync._consensus_bool.
+    """
+    needle = _normalize_id(dev_model.get("id", ""))
+    if not needle:
+        return None
+    votes = [m[key] for m in price_index.get(needle, []) if isinstance(m.get(key), bool)]
+    yes = sum(votes)
+    no = len(votes) - yes
+    if yes == no:
+        return None
+    return yes > no
+
+
 # ---------------------------------------------------------------------------
 # Server-authoritative modalities
 # ---------------------------------------------------------------------------
@@ -300,12 +356,19 @@ def compute_changes(
     if dev_model:
         for field, new_val in [
             ("knowledge_cutoff",   _normalize_knowledge(dev_model.get("knowledge"))),
-            ("supports_reasoning", dev_model.get("reasoning")),
             ("input_modalities",   (dev_model.get("modalities") or {}).get("input")),
             ("output_modalities",  (dev_model.get("modalities") or {}).get("output")),
         ]:
             if new_val is not None and model_def.get(field) != new_val:
                 changes[field] = (model_def.get(field), new_val)
+
+        # Reasoning: models.dev providers disagree on this flag, so take the
+        # majority across providers of the same base model rather than whichever
+        # listing matched first. A missing value counts as false, so an unset
+        # field isn't reported as a change when the consensus is false.
+        reasoning = _consensus_bool(dev_model, price_index or {}, "reasoning")
+        if reasoning is not None and bool(model_def.get("supports_reasoning")) != reasoning:
+            changes["supports_reasoning"] = (model_def.get("supports_reasoning"), reasoning)
 
         # Description: only fill in when the operator left it blank — never
         # overwrite a hand-written description with the models.dev blurb.
@@ -322,6 +385,15 @@ def compute_changes(
                 changes["input_cost_per_million"] = (model_def.get("input_cost_per_million"), avg_in)
             if avg_out is not None and model_def.get("output_cost_per_million") != avg_out:
                 changes["output_cost_per_million"] = (model_def.get("output_cost_per_million"), avg_out)
+
+    # A reasoning parser reported by the backend's server info is authoritative
+    # over models.dev: Lumen only receives thinking separately when the server
+    # runs one. A missing value still counts as false.
+    if ep_model and "reasoning" in ep_model:
+        if bool(model_def.get("supports_reasoning")) != ep_model["reasoning"]:
+            changes["supports_reasoning"] = (model_def.get("supports_reasoning"), ep_model["reasoning"])
+        else:
+            changes.pop("supports_reasoning", None)
 
     # SGLang /get_server_info capability flags are authoritative over models.dev
     # when set explicitly — they reflect what the operator configured on the
