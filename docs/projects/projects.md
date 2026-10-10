@@ -22,9 +22,12 @@ Think of a project as a shared identity for automated tools: it has a name (e.g.
 | Role | Visibility |
 |------|-----------|
 | **Admin** | All projects in the system |
-| **Manager** | Only projects they are assigned to manage |
+| **Manager** | Projects they manage |
+| **User** | Projects they are a member of (view usage and model access, grant model consent, create one active API key at a time) |
 
-If you are a manager of one or more projects, you will see them listed here. If you don't see the Projects page at all, your account has not been assigned as a manager of any project.
+See [What Each Role Can Do](projects-detail.md#what-each-role-can-do) for the full list of what each project role allows.
+
+If you are a member of one or more projects (as owner, manager or user), you will see them listed here. If you don't see the Projects page at all, your account has not been added to any project.
 
 ## Summary Cards
 
@@ -53,7 +56,7 @@ At the top of the page, four cards summarize the projects you can see:
 
 Click any column header to sort. Use the search box to filter by name.
 
-Each row has an edit (pencil) button that opens a dialog to change the project's name and active flag (admins can also set Max Coins and Refill Rate). The button is enabled for the project's owner and for admins; other managers see it disabled with a note explaining why. Admins additionally get view-usage, reset-coins (refill to the starting balance), and activate/deactivate buttons — the same actions as on the admin Users page.
+Each row has an edit (pencil) button that opens a dialog to change the project's name and active flag (admins can also set Max Coins and Refill Rate). The button is enabled for the project's owner and for admins; other members see it disabled with a note explaining why. Admins additionally get view-usage, reset-coins (refill to the starting balance), and activate/deactivate buttons — the same actions as on the admin Users page.
 
 ## Creating a Project
 
