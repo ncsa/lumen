@@ -28,7 +28,7 @@ The owner and admins see an **Edit** button above the stat cards. It opens a dia
 Everyone who can open the project is a member, and every member has one role. The **Role** column shows it as a text badge:
 
 - **Owner**: the one manager the project belongs to. Every project always has exactly one owner.
-- **Manager**: can create and delete any of the project's API keys, and add or remove users.
+- **Manager**: can create and revoke any of the project's API keys, and add or remove users.
 - **User**: can create one API key at a time and sees only the keys they created.
 
 The list shows the owner first, then managers, then users, sorted A–Z by name within each group. A **user** sees only themselves, the owner and the managers, not the other users. Managers, the owner and admins see every member.
@@ -60,7 +60,7 @@ Click **Make Owner** on a manager's row and confirm. The button appears only on 
 | View the project, its usage and model access | ✓ | ✓ | ✓ | ✓ |
 | Grant model consent for this project | — | ✓ | ✓ | ✓ |
 | Create API keys | One at a time | ✓ | ✓ | ✓ |
-| See and delete API keys | Own keys only | All | All | All |
+| See and revoke API keys | Own keys only | All | All | All |
 | Rotate API keys: creator only | ✓ | ✓ | ✓ | ✓ |
 | Add / remove users | — | ✓ | ✓ | ✓ |
 | Add / remove managers, promote / demote | — | — | ✓ | ✓ |
@@ -81,7 +81,7 @@ Managers, the owner and admins see every key in the project. A **user** sees onl
 3. Give the key a descriptive name (e.g., `production`, `staging`, `ci-runner`).
 4. Click **Save Key**.
 
-If you are a **user** and already have an active key, **+ New API Key** is disabled and the page explains why. Delete your key to create a new one.
+If you are a **user** and already have an active key, **+ New API Key** is disabled and the page explains why. Revoke your key to create a new one.
 
 Keys follow the same `sk_...` format as personal API keys. Use them exactly the same way in code:
 
@@ -108,9 +108,9 @@ response = project.chat.completions.create(
 | **Hint** | First 4 + last 4 characters for identification |
 | **Requests / Tokens / Coins** | Usage tracked on this key |
 | **Last Used** | Timestamp of the last API call |
-| **Actions** | Rotate (keys you created) and Delete buttons for active keys |
+| **Actions** | Rotate (keys you created) and Revoke buttons for active keys |
 
-Use **Show deleted keys** to view previously revoked keys. Use the search box to filter by key name or creator (by name only for users).
+Revoking a key deactivates it immediately and keeps its usage. Use **Show revoked keys** to view revoked keys (deactivated, usage kept); hover over or focus a key's **revoked** badge to see when it was revoked, in your local time. Times for keys revoked before this was recorded are approximate. Use the search box to filter by key name or creator (by name only for users).
 
 ### Rotating a Key
 

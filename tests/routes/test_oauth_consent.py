@@ -122,7 +122,7 @@ def test_existing_key_requires_overwrite(client, auth_client, app, test_user):
     assert client.get("/v1/models", headers={"Authorization": f"Bearer {old_key}"}).status_code == HTTPStatus.UNAUTHORIZED
 
 
-def test_overwrite_soft_deletes_old_key(client, auth_client, app, test_user):
+def test_overwrite_revokes_old_key(client, auth_client, app, test_user):
     _make_manual_key(app, test_user["id"], "opencode")
     with app.app_context():
         old = db.session.execute(select(APIKey)).scalar_one()

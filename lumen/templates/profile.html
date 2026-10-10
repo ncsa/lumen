@@ -204,8 +204,8 @@
 </div>
 <div class="d-flex justify-content-between align-items-center mt-2 mb-1 flex-wrap gap-2">
   <div class="d-flex align-items-center gap-1">
-    <input type="checkbox" id="show-deleted-cb" class="form-check-input mt-0" aria-label="Show deleted keys">
-    <label for="show-deleted-cb" class="form-check-label small">Show deleted keys</label>
+    <input type="checkbox" id="show-revoked-cb" class="form-check-input mt-0" aria-label="Show revoked keys">
+    <label for="show-revoked-cb" class="form-check-label small">Show revoked keys</label>
   </div>
   <div class="d-flex align-items-center gap-2 flex-grow-1 flex-sm-grow-0">
     <label for="key-search" class="text-muted small mb-0">Search:</label>
@@ -589,14 +589,17 @@ const KEY_ROWS = [
   {% endfor %}
 ];
 
+function revokedBadge(k) {
+  return `<span class="badge bg-secondary" tabindex="0" data-bs-toggle="tooltip" data-bs-title="Revoked ${escHtml(fmtDate(k.revoked_at).text)}">revoked</span>`;
+}
 const keyState = { col: 'name', dir: 'asc' };
-let keyFilter = '', showDeleted = false;
+let keyFilter = '', showRevoked = false;
 const keyTbody = document.getElementById('key-tbody');
 const keyEmpty = document.getElementById('key-empty');
 
 function renderKeys() {
   const f = keyFilter.toLowerCase();
-  let rows = KEY_ROWS.filter(k => (showDeleted || !k.revoked_at) && (!f || k.name.toLowerCase().includes(f)));
+  let rows = KEY_ROWS.filter(k => (showRevoked || !k.revoked_at) && (!f || k.name.toLowerCase().includes(f)));
   rows.sort((a, b) => {
     let av, bv;
     if (keyState.col === 'name') { av = a.name.toLowerCase(); bv = b.name.toLowerCase(); }
@@ -613,14 +616,14 @@ function renderKeys() {
     keyEmpty.hidden = true;
     keyTbody.innerHTML = rows.map(k => {
       const dt = fmtDate(k.last_used);
-      const deletedClass = !k.revoked_at ? '' : ' class="table-secondary text-decoration-line-through text-muted"';
+      const revokedClass = !k.revoked_at ? '' : ' class="table-secondary text-decoration-line-through text-muted"';
       const action = IS_ADMIN_VIEW
-        ? (!k.revoked_at ? '' : `<span class="badge bg-secondary">deleted</span>`)
+        ? (!k.revoked_at ? '' : revokedBadge(k))
         : (!k.revoked_at
           ? `<button class="btn btn-sm btn-outline-secondary rotate-key-btn" data-id="${k.id}" data-name="${escHtml(k.name)}" aria-label="Rotate key ${escHtml(k.name)}">Rotate</button>
-             <button class="btn btn-sm btn-outline-danger delete-key-btn" data-id="${k.id}" aria-label="Delete key ${escHtml(k.name)}">Delete</button>`
-          : `<span class="badge bg-secondary">deleted</span>`);
-      return `<tr${deletedClass}>
+             <button class="btn btn-sm btn-outline-danger revoke-key-btn" data-id="${k.id}" aria-label="Revoke key ${escHtml(k.name)}">Revoke</button>`
+          : revokedBadge(k));
+      return `<tr${revokedClass}>
         <td><span data-bs-toggle="tooltip" data-bs-title="${escHtml(k.hint)}${k.source ? '&#10;' + escHtml(k.source) : ''}">${escHtml(k.name)}</span></td>
         <td class="text-end">${k.requests.toLocaleString()}</td>
         <td class="text-end">${k.tokens.toLocaleString()}</td>
@@ -630,12 +633,12 @@ function renderKeys() {
       </tr>`;
     }).join('');
     keyTbody.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
-    keyTbody.querySelectorAll('.delete-key-btn').forEach(btn => {
+    keyTbody.querySelectorAll('.revoke-key-btn').forEach(btn => {
       btn.addEventListener('click', async function () {
-        if (!await appConfirm("Delete this API key? Usage history is kept.", { title: "Delete API Key", okLabel: "Delete", okClass: "btn-danger" })) return;
-        const resp = await fetch("/profile/keys/" + this.dataset.id, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } });
+        if (!await appConfirm("Revoke this API key? It stops working immediately. Its usage history stays visible under Show revoked keys.", { title: "Revoke API Key", okLabel: "Revoke", okClass: "btn-danger" })) return;
+        const resp = await fetch("/profile/keys/" + this.dataset.id + "/revoke", { method: "POST", headers: { "X-CSRFToken": csrfToken } });
         if (resp.ok) location.reload();
-        else appAlert("Failed to delete key.");
+        else appAlert("Failed to revoke key.");
       });
     });
     keyTbody.querySelectorAll('.rotate-key-btn').forEach(btn => {
@@ -645,7 +648,7 @@ function renderKeys() {
 }
 
 makeSortable('key-table', keyState, new Set(['requests','tokens','cost','last_used']), renderKeys);
-document.getElementById('show-deleted-cb').addEventListener('change', e => { showDeleted = e.target.checked; renderKeys(); });
+document.getElementById('show-revoked-cb').addEventListener('change', e => { showRevoked = e.target.checked; renderKeys(); });
 let keyDebounce;
 document.getElementById('key-search').addEventListener('input', e => {
   clearTimeout(keyDebounce);

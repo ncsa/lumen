@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+**Upgrade warning:** The database migration replaces `api_keys.active` with `revoked_at`, and older versions cannot run against the new schema. Stop every running replica before starting this version; a rolling update is not supported.
+
 ### Added
 
 - Models can be set to take their price automatically from models.dev; manually set prices are no longer overwritten by Update. ([#117](https://github.com/ncsa/lumen/pull/117))
@@ -36,7 +38,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Fixed
 
-- Deleting an API key (project, personal or OAuth-minted) deactivates it instead of removing it, so its usage history is kept.
+- API keys are revoked instead of deleted: revoking a project, personal or OAuth-replaced key deactivates it, records when it was revoked, and keeps its usage history.
 - Fix model Update resetting input modalities to text-only on SGLang endpoints.
 
 ## [2.1.0] - 2026-09-20

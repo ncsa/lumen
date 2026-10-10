@@ -335,7 +335,7 @@ def _new_key_fields(key: str):
 def rotate_key_secret(api_key: APIKey):
     """Replace api_key's secret with the request's key, keeping usage stats. Commits."""
     if api_key.revoked_at is not None:
-        return jsonify({"error": "Key is inactive"}), HTTPStatus.CONFLICT
+        return jsonify({"error": "Key is revoked"}), HTTPStatus.CONFLICT
 
     data = request.get_json()
     key = data.get("key") if isinstance(data, dict) else None
@@ -383,8 +383,14 @@ def create_key():
 
 
 @profile_bp.route("/profile/keys/<int:kid>", methods=["DELETE"])
+def delete_key_removed(kid):
+    # Keys are revoked, not deleted; answer the old URL with 405 instead of 404.
+    return jsonify({"error": "Use POST /profile/keys/<id>/revoke"}), HTTPStatus.METHOD_NOT_ALLOWED
+
+
+@profile_bp.route("/profile/keys/<int:kid>/revoke", methods=["POST"])
 @login_required
-def delete_key(kid):
+def revoke_key(kid):
     entity_id = session["entity_id"]
     api_key = db.get_or_404(APIKey, kid)
 

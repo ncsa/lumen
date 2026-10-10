@@ -88,6 +88,8 @@ def test_inactive_api_key_401(client, test_model, inactive_api_key):
         headers={"Authorization": f"Bearer {inactive_api_key}"},
     )
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
+    assert resp.get_json()["error"]["type"] == "authentication_error"
+    assert resp.get_json()["error"]["message"] == "Invalid or revoked API key"
 
 
 def test_inactive_entity_403(app, client, test_user, api_key):
