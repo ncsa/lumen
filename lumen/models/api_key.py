@@ -29,7 +29,7 @@ class APIKey(db.Model):
     key_hash: Mapped[str] = mapped_column(db.String(64), unique=True, comment="SHA-256 hash of the raw key")
     # Last few characters of the raw key shown in the UI for identification
     key_hint: Mapped[Optional[str]] = mapped_column(db.String(32), comment="Last few characters of the raw key shown in the UI for identification")
-    active: Mapped[bool] = mapped_column(db.Boolean, default=True, comment="Inactive keys are rejected on all requests")
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, comment="UTC time the key was revoked; null while the key is usable; approximate for keys revoked before this column existed")
     requests: Mapped[int] = mapped_column(db.Integer, default=0, comment="Cumulative request count made with this key")
     input_tokens: Mapped[int] = mapped_column(db.BigInteger, default=0, comment="Cumulative input tokens consumed via this key")
     output_tokens: Mapped[int] = mapped_column(db.BigInteger, default=0, comment="Cumulative output tokens produced via this key")

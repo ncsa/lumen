@@ -301,7 +301,7 @@ def detail(sid):
     # Flags for the template only; the routes below enforce the same rules.
     can_manage = admin or caller_role == "owner"
     can_add_members = can_manage or caller_role == "manager"
-    key_limit_reached = plain_user and any(k.active for k in data["api_keys"])
+    key_limit_reached = plain_user and any(k.revoked_at is None for k in data["api_keys"])
 
     h = hashlib.md5(project.name.strip().lower().encode(), usedforsecurity=False).hexdigest()
     gravatar_url = f"https://www.gravatar.com/avatar/{h}?s=230&d=identicon&f=y"
@@ -584,7 +584,7 @@ def update_project_member(sid, uid):
             select(func.count(APIKey.id)).where(
                 APIKey.entity_id == sid,
                 APIKey.created_by_entity_id == uid,
-                APIKey.active.is_(True),
+                APIKey.revoked_at.is_(None),
             )
         )
         if active_keys > 1:
@@ -680,7 +680,7 @@ def create_project_key(sid):
             select(APIKey.id).where(
                 APIKey.entity_id == sid,
                 APIKey.created_by_entity_id == entity_id,
-                APIKey.active.is_(True),
+                APIKey.revoked_at.is_(None),
             ).limit(1)
         )
         if has_key is not None:
@@ -699,7 +699,6 @@ def create_project_key(sid):
         entity_id=sid,
         created_by_entity_id=entity_id,
         name=name or "Unnamed Key",
-        active=True,
         **fields,
     )
     db.session.add(api_key)
@@ -721,7 +720,8 @@ def delete_project_key(sid, kid):
     if _is_plain_user(entity_id, sid) and api_key.created_by_entity_id != entity_id:
         return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
 
-    api_key.active = False
+    if api_key.revoked_at is None:
+        api_key.revoked_at = utcnow()
     db.session.commit()
     return "", HTTPStatus.NO_CONTENT
 

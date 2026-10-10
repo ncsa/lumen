@@ -115,7 +115,6 @@ def main():
                 name=name,
                 key_hash=hash_api_key(raw_key),
                 key_hint=f"{raw_key[:7]}...{raw_key[-4:]}",
-                active=True,
             )
             db.session.add(api_key)
 

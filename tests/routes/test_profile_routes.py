@@ -1,10 +1,12 @@
 """Tests for the profile blueprint routes."""
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from http import HTTPStatus
 
 import pytest
+
+from lumen.timeutils import utcnow
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -190,14 +192,14 @@ def test_delete_key_success(app, auth_client, test_user):
     assert resp.status_code == HTTPStatus.NO_CONTENT
 
 
-def _make_personal_key(app, entity_id, raw, active=True):
+def _make_personal_key(app, entity_id, raw, revoked_at=None):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.api_key import APIKey
         from lumen.services.crypto import hash_api_key
         ak = APIKey(
             entity_id=entity_id, created_by_entity_id=entity_id, name="usage key",
-            key_hash=hash_api_key(raw), key_hint=f"{raw[:8]}...{raw[-4:]}", active=active,
+            key_hash=hash_api_key(raw), key_hint=f"{raw[:8]}...{raw[-4:]}", revoked_at=revoked_at,
             requests=9, input_tokens=300, output_tokens=120, audio_seconds=3, cost=Decimal("2.250000"),
         )
         db.session.add(ak)
@@ -211,24 +213,33 @@ def _personal_key_state(app, kid):
         from lumen.models.api_key import APIKey
         k = db.session.get(APIKey, kid)
         assert k is not None
-        return k.active, k.requests, k.input_tokens, k.output_tokens, k.audio_seconds, k.cost
+        return k.revoked_at, k.requests, k.input_tokens, k.output_tokens, k.audio_seconds, k.cost
 
 
 def test_delete_key_soft_deletes(app, auth_client, test_user):
     kid = _make_personal_key(app, test_user["id"], "sk_" + "s" * 32)
     resp = auth_client.delete(f"/profile/keys/{kid}")
     assert resp.status_code == HTTPStatus.NO_CONTENT
-    active, *counters = _personal_key_state(app, kid)
-    assert active is False
+    revoked_at, *counters = _personal_key_state(app, kid)
+    assert abs(utcnow() - revoked_at) < timedelta(minutes=1)
     assert counters == [9, 300, 120, 3, Decimal("2.250000")]
 
 
 def test_delete_inactive_key_is_noop(app, auth_client, test_user):
-    kid = _make_personal_key(app, test_user["id"], "sk_" + "i" * 32, active=False)
+    kid = _make_personal_key(app, test_user["id"], "sk_" + "i" * 32, revoked_at=datetime(2026, 9, 2, 8, 0))
     before = _personal_key_state(app, kid)
     resp = auth_client.delete(f"/profile/keys/{kid}")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     assert _personal_key_state(app, kid) == before
+
+
+def test_deleted_key_is_rejected(app, client, auth_client, test_user):
+    raw = "sk_" + "z" * 32
+    kid = _make_personal_key(app, test_user["id"], raw)
+    headers = {"Authorization": f"Bearer {raw}"}
+    assert client.get("/v1/models", headers=headers).status_code == HTTPStatus.OK
+    assert auth_client.delete(f"/profile/keys/{kid}").status_code == HTTPStatus.NO_CONTENT
+    assert client.get("/v1/models", headers=headers).status_code == HTTPStatus.UNAUTHORIZED
 
 
 def test_delete_key_forbidden(app, auth_client, admin_user):
@@ -243,7 +254,6 @@ def test_delete_key_forbidden(app, auth_client, admin_user):
             name="admin key",
             key_hash=hash_api_key(raw),
             key_hint="sk_eeeee...eeee",
-            active=True,
         )
         db.session.add(ak)
         db.session.commit()
@@ -268,7 +278,7 @@ def test_delete_key_requires_login(client):
 # rotate_key
 # ---------------------------------------------------------------------------
 
-def _seed_key_with_usage(app, entity_id, raw, active=True):
+def _seed_key_with_usage(app, entity_id, raw, revoked_at=None):
     """Insert a key with non-zero usage counters; return its id."""
     from lumen.extensions import db
     from lumen.models.api_key import APIKey
@@ -276,7 +286,7 @@ def _seed_key_with_usage(app, entity_id, raw, active=True):
     with app.app_context():
         ak = APIKey(
             entity_id=entity_id, created_by_entity_id=entity_id, name="rotating",
-            key_hash=hash_api_key(raw), key_hint=f"{raw[:7]}...{raw[-4:]}", active=active,
+            key_hash=hash_api_key(raw), key_hint=f"{raw[:7]}...{raw[-4:]}", revoked_at=revoked_at,
             requests=5, input_tokens=100, output_tokens=40, audio_seconds=7,
             cost=Decimal("1.500000"), last_used_at=datetime(2026, 9, 1, 12, 0),
             created_at=datetime(2026, 8, 1, 9, 0),
@@ -293,7 +303,7 @@ def _key_snapshot(app, kid):
         ak = db.session.get(APIKey, kid)
         return {c: getattr(ak, c) for c in (
             "requests", "input_tokens", "output_tokens", "audio_seconds", "cost",
-            "last_used_at", "name", "created_at", "created_by_entity_id", "entity_id", "active",
+            "last_used_at", "name", "created_at", "created_by_entity_id", "entity_id", "revoked_at",
             "key_hash", "key_hint",
         )}
 
@@ -328,7 +338,7 @@ def test_rotate_key_forbidden_for_other_user(app, auth_client, admin_user):
 
 
 def test_rotate_key_inactive_returns_409(app, auth_client, test_user):
-    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "i" * 32, active=False)
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "i" * 32, revoked_at=datetime(2026, 9, 2, 8, 0))
     resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": "sk_" + "j" * 32})
     assert resp.status_code == HTTPStatus.CONFLICT
 
