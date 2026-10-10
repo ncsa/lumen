@@ -37,6 +37,7 @@ All notable changes to Lumen will be documented in this file.
 ### Fixed
 
 - Fix model Update resetting input modalities to text-only on SGLang endpoints.
+- Model Update no longer flips or repeatedly reports reasoning; reasoning support is read from the serving backend's `/server_info` when available, otherwise from models.dev provider consensus.
 
 ## [2.1.0] - 2026-09-20
 
