@@ -25,7 +25,6 @@ All notable changes to Lumen will be documented in this file.
 - Admins can reset a user's coins from the Coins Available card on their profile.
 - API-key consumers can acknowledge model requirements and inspect consent state through the API; `GET /v1/models?include_unacknowledged=true` also lists models still awaiting acknowledgment. ([#92](https://github.com/ncsa/lumen/issues/92))
 - Log a warning with email, affiliation and IdP when a login matches no auto-join group.
-- `scripts/responsive_check.py` audits pages for horizontal overflow at phone and tablet widths, and a UI test guards that server-rendered data tables sit in a `.table-responsive` wrapper.
 
 ### Changed
 
@@ -40,6 +39,8 @@ All notable changes to Lumen will be documented in this file.
 - Config editor model list is sorted A–Z, with disabled models listed after enabled ones; the first model in that order is selected by default.
 - Pages are usable on phones and tablets: tables scroll, toolbars wrap, and chat/help/config fill the screen on any device.
 - Remove usage stats from group pages. ([#116](https://github.com/ncsa/lumen/pull/116))
+- API keys are revoked instead of deleted: Revoke replaces Delete on the profile and project pages, keeps the key's usage history and records when and by whom it was revoked.
+- Model Update no longer overwrites prices from models.dev unless the model sets `auto_price: true` (config file or the Automatic price checkbox in the config editor). ([#115](https://github.com/ncsa/lumen/pull/115), [#117](https://github.com/ncsa/lumen/pull/117))
 
 ### Removed
 
@@ -49,7 +50,6 @@ All notable changes to Lumen will be documented in this file.
 
 ### Fixed
 
-- API keys are revoked instead of deleted: revoking a project, personal or OAuth-replaced key deactivates it, records when it was revoked, and keeps its usage history.
 - Fix model Update resetting input modalities to text-only on SGLang endpoints.
 - Model Update no longer flips or repeatedly reports reasoning; reasoning support is read from the serving backend's `/server_info` when available, otherwise from models.dev provider consensus.
 - Chat sidebar and message pane no longer resize while a reply streams.
