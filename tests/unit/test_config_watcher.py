@@ -811,6 +811,8 @@ def test_apply_hot_config_does_not_set_api_consent(app, restore_config):
     with app.app_context():
         apply_hot_config(app, {"version": 3, "api": {}})
     assert "API_REQUIRE_MODEL_CONSENT" not in app.config
+
+
 # ---------------------------------------------------------------------------
 # validate_config_structure
 # ---------------------------------------------------------------------------
@@ -867,7 +869,7 @@ def test_validate_config_rejects_removed_api_consent(consent):
     from lumen.services.config_watcher import removed_config_key_errors, validate_config_structure
     cfg = _valid_config()
     cfg["api"] = {"consent": consent}
-    expected = "`api.consent` was removed; API requests always require model acknowledgment. Delete the key."
+    expected = "`api.consent` was removed; API requests always require model acknowledgment. Delete the key"
     assert removed_config_key_errors(cfg) == [expected]
     assert expected in validate_config_structure(cfg)
 
