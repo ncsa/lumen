@@ -343,51 +343,14 @@ def detail(gid):
     entity = db.session.get(Entity, entity_id)
     can_manage = is_admin(entity) or owner_id == entity_id
 
-    # An ownerless group exposes neither its member list nor its rolled-up
-    # usage to a non-admin (see _owned_group_ids). The member count alone is
-    # not sensitive and is always shown.
+    # An ownerless group does not expose its member list to a non-admin
+    # (see _owned_group_ids). The member count alone is not sensitive and is
+    # always shown.
     show_members = is_admin(entity) or owner_id is not None
 
     member_count = db.session.scalar(
         select(func.count()).select_from(GroupMember).where(GroupMember.group_id == gid)
     )
-    total_requests = total_tokens = None
-    total_cost = None
-    if show_members:
-        agg = db.session.execute(
-            select(
-                func.coalesce(func.sum(EntityStat.requests), 0),
-                func.coalesce(func.sum(EntityStat.input_tokens + EntityStat.output_tokens), 0),
-                func.coalesce(func.sum(EntityStat.cost), 0),
-            )
-            .select_from(GroupMember)
-            .join(EntityStat, EntityStat.entity_id == GroupMember.entity_id)
-            .where(GroupMember.group_id == gid)
-        ).one()
-        total_requests, total_tokens, total_cost = int(agg[0]), int(agg[1]), float(agg[2])
-
-    granted = db.session.execute(
-        select(ModelGroupAccess, ModelConfig)
-        .join(ModelConfig, ModelConfig.id == ModelGroupAccess.model_config_id)
-        .where(ModelGroupAccess.group_id == gid)
-        .order_by(ModelConfig.model_name)
-    ).all()
-    owner_names = {}
-    owner_entity_ids = {mc.owner_entity_id for _, mc in granted if mc.owner_entity_id}
-    if owner_entity_ids:
-        owner_names = {
-            e.id: e.name
-            for e in db.session.execute(select(Entity).where(Entity.id.in_(owner_entity_ids))).scalars().all()
-        }
-    granted_models = [
-        {
-            "id": mc.id,
-            "model_name": mc.model_name,
-            "owner_name": owner_names.get(mc.owner_entity_id, "—"),
-            "url": url_for("models_page.detail", model_name=mc.model_name),
-        }
-        for _, mc in granted
-    ]
 
     h = hashlib.md5(group.name.strip().lower().encode(), usedforsecurity=False).hexdigest()
     gravatar_url = f"https://www.gravatar.com/avatar/{h}?s=230&d=identicon&f=y"
@@ -405,11 +368,6 @@ def detail(gid):
         group_limit=group_limit,
         member_count=member_count,
         show_members=show_members,
-        granted_models=granted_models,
-        total_requests=total_requests,
-        total_tokens=total_tokens,
-        total_cost=total_cost,
-        addable_model_count=len(_addable_models(entity_id, gid)),
     )
 
 
