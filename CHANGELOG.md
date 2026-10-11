@@ -4,7 +4,7 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
-**Upgrade warning:** The database migration replaces `api_keys.active` with `revoked_at`, and older versions cannot run against the new schema. Stop every running replica before starting this version; a rolling update is not supported.
+**Upgrade warning:** The database migration replaces `api_keys.active` with `revoked_at`, and older versions cannot run against the new schema. Stop every running replica before starting this version; a rolling update is not supported. This migration now has revision `a827b0223638` and runs after `a9b0c1d2e3f4` (model_group_access drop). If you added `revoked_at` by hand while upgrades were failing, the upgrade fails at `a827b0223638` with a duplicate-column error. Do not just `flask db stamp` it: stamping also skips `revoked_by_entity_id` and its FK, the backfill of inactive keys, dropping `active`, and the column comments. Stamp only after checking all of those are in place and `a9b0c1d2e3f4` has run; otherwise undo the manual change and let the migration run.
 
 **Breaking:** API requests now always require model acknowledgment and the `api.consent` setting has been removed. If your config.yaml or Helm values set `api.consent` (true or false), remove it, or Lumen will refuse to start. Before upgrading, have users acknowledge models on their profile or model page and project managers on the project page; API keys cannot use unacknowledged models. (#48)
 
