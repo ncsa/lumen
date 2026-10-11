@@ -246,7 +246,6 @@ The following secrets can be supplied via environment variables, which take prec
 | `OAUTH2_CLIENT_ID` | `oauth2.client_id` |
 | `OAUTH2_CLIENT_SECRET` | `oauth2.client_secret` |
 | `OAUTH2_SERVER_METADATA_URL` | `oauth2.server_metadata_url` |
-| `OAUTH2_REDIRECT_URI` | `oauth2.redirect_uri` |
 | `OAUTH2_SCOPES` | `oauth2.scopes` |
 
 > **Warning:** Rotating `encryption_key` (or `LUMEN_ENCRYPTION_KEY`) invalidates all existing user API keys — users will need to generate new ones. It also makes the endpoint API keys encrypted in the database unreadable until the next startup, when they are re-synced (re-encrypted) from `config.yaml`.

@@ -289,20 +289,6 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
     return _access_statuses(entity_id, baseline), consent_map
 
 
-def get_model_status(mc) -> str:
-    """Return 'ok', 'degraded', 'down', or 'disabled' for a ModelConfig."""
-    if not mc.active:
-        return "disabled"
-    endpoints = [ep for ep in mc.endpoints if ep.active]
-    if not endpoints:
-        return "down"
-    healthy = sum(1 for e in endpoints if e.healthy)
-    if healthy == 0:
-        return "down"
-    if healthy < len(endpoints):
-        return "degraded"
-    return "ok"
-
 _rr_counters: dict = {}
 _rr_lock = threading.Lock()
 

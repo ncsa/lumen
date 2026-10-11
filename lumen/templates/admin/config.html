@@ -118,7 +118,6 @@ const SECTIONS = [
 // ── Helpers ────────────────────────────────────────────────────────────────
 const $  = id => document.getElementById(id);
 const esc  = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-const escJs = s => String(s ?? '').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
 const val    = id => ($(`${id}`)?.value ?? '');
 const numVal = id => { const v = val(id); return v === '' ? undefined : Number(v); };
 const boolVal = id => !!($(`${id}`)?.checked);

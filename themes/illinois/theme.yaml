@@ -1,7 +1,6 @@
 institution: National Center for Supercomputing Applications
 institution_url: https://ncsa.illinois.edu
 primary_color: "#13294B"
-accent_color: "#e84a27"
 logo: img/block-i.png
 logo_alt: University of Illinois Block I logo
 css:
@@ -9,7 +8,6 @@ css:
 js:
   - type: module
     src: https://cdn.toolkit.illinois.edu/3/toolkit.js
-skipto_color_theme: illinois
 footer_actions:
   - label: Illinois Chat
     url: https://chat.illinois.edu

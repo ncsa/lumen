@@ -18,7 +18,7 @@ deprecated `_WSGIMiddleware` — and four things break silently at once:
 This is not hypothetical: `loadtesting/run_loadtest.sh` predated `asgi.py` and was
 never revisited when the bridge landed, so a 500-user load test measured a 40-slot
 ceiling (4 processes x uvicorn's 10 threads) and recorded NULL for every queue
-column. See plans/ and lumen/services/wsgi_disconnect.py.
+column. See lumen/services/wsgi_disconnect.py.
 """
 import re
 from pathlib import Path

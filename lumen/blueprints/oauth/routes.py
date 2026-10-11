@@ -106,14 +106,6 @@ def _valid_redirect_uri(uri: str) -> bool:
     return parts.scheme == "http" and host in ("localhost", "127.0.0.1", "::1")
 
 
-def _origin_of(uri: str) -> str:
-    parts = urlsplit(uri)
-    origin = f"{parts.scheme}://{parts.hostname}"
-    if parts.port:
-        origin += f":{parts.port}"
-    return origin
-
-
 def cleanup_expired_auth_requests():
     """Delete auth requests older than their expiry plus a grace window.
 

@@ -421,7 +421,7 @@ def create_app():
         return _send_from_directory(theme_dir, filename)
 
     oauth2_cfg = yaml_data.get("oauth2", {})
-    for key in ("client_id", "client_secret", "server_metadata_url", "redirect_uri", "scopes"):
+    for key in ("client_id", "client_secret", "server_metadata_url", "scopes"):
         env_val = os.environ.get(f"OAUTH2_{key.upper()}")
         if env_val:
             app.config[f"OAUTH2_{key.upper()}"] = env_val

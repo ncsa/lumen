@@ -235,7 +235,6 @@ All of the following environment variables take precedence over the correspondin
 | `OAUTH2_CLIENT_ID` | `oauth2.client_id` |
 | `OAUTH2_CLIENT_SECRET` | `oauth2.client_secret` |
 | `OAUTH2_SERVER_METADATA_URL` | `oauth2.server_metadata_url` |
-| `OAUTH2_REDIRECT_URI` | `oauth2.redirect_uri` |
 | `OAUTH2_SCOPES` | `oauth2.scopes` |
 
 `app.secret_key` and `app.encryption_key` must each be a random string of at least 32 characters, set either in `config.yaml` or via their environment variables. Generate separate values (for example, with `openssl rand -hex 32`); the app will not start with missing or shorter keys.

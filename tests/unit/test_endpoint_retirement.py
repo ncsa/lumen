@@ -17,7 +17,7 @@ from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.request_log import RequestLog
 from lumen.services.health import check_all_endpoints
-from lumen.services.llm import get_model_status, get_next_endpoint
+from lumen.services.llm import get_next_endpoint
 from lumen.services.metrics_snapshot import refresh_snapshot
 from lumen.timeutils import utcnow
 
@@ -141,7 +141,6 @@ def test_retired_endpoint_is_excluded_from_live_consumers(app, admin_client, adm
             ep.healthy = active_healthy if ep.active else True
         db.session.commit()
         model_id = model.id
-        assert get_model_status(model) == ("ok" if active_healthy else "down")
         for _ in range(3):
             selected = get_next_endpoint(model_id)
             assert (selected.url if selected else None) == (a if active_healthy else None)
