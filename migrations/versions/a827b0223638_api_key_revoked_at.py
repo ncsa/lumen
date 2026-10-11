@@ -87,9 +87,7 @@ def downgrade():
     op.execute("UPDATE api_keys SET active = (revoked_at IS NULL)")
 
     with op.batch_alter_table("api_keys") as batch_op:
-        batch_op.alter_column(
-            "active", existing_type=sa.Boolean(), nullable=False, server_default=sa.text("true")
-        )
+        batch_op.alter_column("active", existing_type=sa.Boolean(), nullable=False)
         batch_op.drop_column("revoked_by_entity_id")
         batch_op.drop_column("revoked_at")
 
