@@ -182,8 +182,6 @@ config live **under `api:`** (e.g. `api.monitoring.token`, `api.prometheus.enabl
 
 ```yaml
 api:
-  consent: true        # set to false to exempt API requests from the model acknowledgement requirement
-
   monitoring:
     token: "my-secret-token"
 
@@ -194,9 +192,9 @@ api:
     multiproc_dir: ""  # path for multi-worker aggregation (e.g. /tmp/prometheus_multiproc)
 ```
 
-| Field | Description |
-|-------|-------------|
-| `consent` | When `true` (default), API requests to models with `needs_ack: true` require recorded acknowledgement, just like the web UI. Set to `false` to exempt API requests from the acknowledgement requirement. |
+API requests always require model acknowledgment, just like the web UI: an API key cannot list or use a model with `needs_ack` or `early_access` until its user or project has acknowledged it. See [API access to models awaiting acknowledgment](../guides/connect.md#models-awaiting-acknowledgment).
+
+> **Upgrading:** the `api.consent` setting has been removed. If `config.yaml` still sets `api.consent` (to `true` or `false`), Lumen refuses to start, and a hot reload or admin-editor save with the key is rejected. If your Helm values still set it, `helm template` / `helm upgrade` fails values validation and names the key. Before upgrading from a deployment that used `api.consent: false`, have users acknowledge the models they use on their [Profile](../guides/profile.md#model-access) or [model detail](../models/model-detail.md#access-status) page, and project managers on the [project page](../projects/projects-detail.md#model-access); then delete the `api.consent` key.
 
 ### api.monitoring
 

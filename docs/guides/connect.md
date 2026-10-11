@@ -39,6 +39,23 @@ setx LUMEN_API_KEY "sk_…"        # Windows (applies to new terminals)
 
 The base URL is your Lumen host with `/v1` appended, for example `https://lumen.example.com/v1`.
 
+## Models awaiting acknowledgment
+
+An API key can only use a model after the key's user or project has acknowledged it. Until a model's acknowledgment requirements (its notice, an early-access warning, or both) are accepted, the API treats it as follows:
+
+| Request | Response |
+|---------|----------|
+| `GET /v1/models` | The model is not listed |
+| `GET /v1/models/<id>` | `404 Not Found` |
+| `POST /v1/chat/completions`, `POST /v1/completions`, `POST /v1/audio/transcriptions`, `POST /v1/audio/translations` | `403 Forbidden` (`No access to this model`) |
+
+Acknowledgment is recorded through the Lumen web pages, not through the API:
+
+- **Personal keys:** acknowledge the model on your [Profile page](./profile.md#model-access) or on the [model detail page](../models/model-detail.md#access-status).
+- **Project keys:** a project manager or the owner acknowledges the model on the [project page](../projects/projects-detail.md#model-access), which enables it for every key of the project.
+
+Once acknowledged, API requests for the model are no longer refused for acknowledgment (they still need coins and a healthy endpoint). If a model later gains a new requirement, for example it becomes early access, API requests are refused again until the new requirement is acknowledged.
+
 ## Desktop chat clients
 
 Beyond command-line and coding tools, most **graphical chat clients** that talk to OpenAI can be pointed at Lumen with the same two pieces of information: the **base URL** (`https://lumen.example.com/v1`) and your **API key**. This keeps your chats on your own computer — Lumen is designed not to store or leak your chats and their responses, so your conversation content is not retained. Only usage metadata (request counts, tokens, and cost) is recorded and shown on your [Usage page](https://lumen.example.com/usage); see [Profile](./profile.md) for details on what Lumen retains.
@@ -62,7 +79,7 @@ The steps below walk through a concrete example using [ChatWise](https://chatwis
 4. Click **Fetch Models** (sometimes *List Models* or *Test Connection*). The client will pull the list of models Lumen hosts; pick one from the [Model Dashboard](https://lumen.example.com/models).
 5. Back in the client's main window, select a Lumen model and start chatting.
 
-> **Model acknowledgement:** Some models ask you to accept their license once before first use. On the [Profile page](https://lumen.example.com/profile), the **Models** tab lists models whose access badge reads **Needs consent** — click it to acknowledge, then the model works from any client. See [Model Access](./profile.md) for the full list of badges.
+> **Model acknowledgment:** Some models must be acknowledged once before any client can use them. See [Models awaiting acknowledgment](#models-awaiting-acknowledgment).
 
 ## OpenCode
 
