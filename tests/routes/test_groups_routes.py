@@ -1,9 +1,9 @@
-"""Tests for the groups blueprint (list, detail, members, ownership, model grants)."""
+"""Tests for the groups blueprint (list, detail, members, ownership)."""
 from http import HTTPStatus
 
 import pytest
 
-from tests.conftest import set_model_owner
+from tests.conftest import grant_model_to_group, set_model_owner
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -102,7 +102,7 @@ def _summary_cards(client):
         r'<div class="text-muted small mb-1">([^<]+)</div>\s*<div class="fs-4 fw-semibold">([\d,]+)</div>',
         html,
     )
-    return {k: int(v.replace(",", "")) for k, v in pairs if k in ("Total Members", "Total Requests")}
+    return {k: int(v.replace(",", "")) for k, v in pairs}
 
 
 # ---------------------------------------------------------------------------
@@ -178,22 +178,49 @@ def test_data_search_filters_by_name(auth_client, app, test_user):
     assert [g["name"] for g in data["groups"]] == ["alpha"]
 
 
-def test_data_aggregates_member_usage(auth_client, app, owned_group, test_user, second_user):
+def test_index_omits_usage_cards_and_columns(admin_client, owned_group):
+    html = admin_client.get("/groups").data.decode()
+    for label in ("Total Requests", "Total Tokens Used", 'data-col="models"', 'data-col="last_used"',
+                  'data-col="requests"', 'data-col="tokens"', 'data-col="cost"'):
+        assert label not in html
+    row = admin_client.get("/groups/data").get_json()["groups"][0]
+    assert not {"models", "last_used", "requests", "tokens", "cost"} & row.keys()
+
+
+@pytest.mark.parametrize("sort", ["name", "members", "active", "max_coins", "refresh_coins", "created"])
+def test_data_sorts_by_remaining_columns(admin_client, app, test_user, second_user, sort):
+    from datetime import datetime
+    a = _make_group(app, name="a-group", owner_id=test_user["id"])
+    b = _make_group(app, name="b-group", owner_id=test_user["id"], active=False)
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_stat import EntityStat
+        from lumen.models.group import Group
+        from lumen.models.group_limit import GroupLimit
         from lumen.models.group_member import GroupMember
-        db.session.add(GroupMember(group_id=owned_group, entity_id=second_user["id"]))
-        db.session.add(EntityStat(entity_id=test_user["id"], requests=3, input_tokens=10,
-                                  output_tokens=5, cost=1.5))
-        db.session.add(EntityStat(entity_id=second_user["id"], requests=2, input_tokens=1,
-                                  output_tokens=4, cost=0.5))
+        db.session.add(GroupMember(group_id=a, entity_id=second_user["id"]))
+        db.session.add(GroupLimit(group_id=a, max_coins=50, refresh_coins=5, starting_coins=50))
+        db.session.add(GroupLimit(group_id=b, max_coins=10, refresh_coins=1, starting_coins=10))
+        db.session.get(Group, a).created_at = datetime(2026, 2, 1)
+        db.session.get(Group, b).created_at = datetime(2026, 1, 1)
         db.session.commit()
-    row = auth_client.get("/groups/data").get_json()["groups"][0]
-    assert row["requests"] == 5
-    assert row["tokens"] == 20
-    assert row["cost"] == pytest.approx(2.0)
-    assert row["members"] == 2
+    names = lambda order: [g["name"] for g in admin_client.get(  # noqa: E731
+        f"/groups/data?sort={sort}&order={order}").get_json()["groups"]]
+    # a-group has more members, coins, a later created date and is active.
+    high_first = ["a-group", "b-group"]
+    if sort == "name":
+        assert names("asc") == high_first
+    else:
+        assert names("desc") == high_first
+        assert names("asc") == high_first[::-1]
+
+
+@pytest.mark.parametrize("sort", ["models", "requests", "tokens", "cost", "last_used"])
+def test_data_removed_sort_keys_fall_back_to_name(admin_client, app, test_user, sort):
+    _make_group(app, name="b-group", owner_id=test_user["id"])
+    _make_group(app, name="a-group", owner_id=test_user["id"])
+    resp = admin_client.get(f"/groups/data?sort={sort}&order=asc")
+    assert resp.status_code == HTTPStatus.OK
+    assert [g["name"] for g in resp.get_json()["groups"]] == ["a-group", "b-group"]
 
 
 def test_data_includes_coin_policy(admin_client, app, owned_group):
@@ -658,84 +685,19 @@ def test_transfer_forbidden_for_plain_member(auth_client, member_group, test_use
 
 
 # ---------------------------------------------------------------------------
-# Model grants
+# Model grant endpoints are gone
 # ---------------------------------------------------------------------------
 
-def test_addable_models_only_lists_owned(auth_client, app, owned_group, test_model, test_user):
-    assert auth_client.get(f"/groups/{owned_group}/models").get_json()["models"] == []
-    with app.app_context():
-        set_model_owner(test_model["id"], test_user["id"])
-    models = auth_client.get(f"/groups/{owned_group}/models").get_json()["models"]
-    assert [m["model_name"] for m in models] == ["test-model"]
-
-
-def test_addable_models_excludes_already_granted(auth_client, app, owned_group, test_model, test_user):
-    with app.app_context():
-        set_model_owner(test_model["id"], test_user["id"])
-    auth_client.post(f"/groups/{owned_group}/models", json={"model_config_id": test_model["id"]})
-    assert auth_client.get(f"/groups/{owned_group}/models").get_json()["models"] == []
-
-
-def test_add_model_grants_access(auth_client, app, owned_group, test_model, test_user):
-    with app.app_context():
-        set_model_owner(test_model["id"], test_user["id"])
-    resp = auth_client.post(f"/groups/{owned_group}/models", json={"model_config_id": test_model["id"]})
-    assert resp.status_code == HTTPStatus.CREATED
-
-
-def test_add_model_not_owned_forbidden(auth_client, app, owned_group, test_model, second_user):
-    with app.app_context():
-        set_model_owner(test_model["id"], second_user["id"])
-    resp = auth_client.post(f"/groups/{owned_group}/models", json={"model_config_id": test_model["id"]})
-    assert resp.status_code == HTTPStatus.FORBIDDEN
-
-
-def test_add_unowned_model_rejected(auth_client, owned_group, test_model):
-    """A model with no owner is public already, so granting it is meaningless."""
-    resp = auth_client.post(f"/groups/{owned_group}/models", json={"model_config_id": test_model["id"]})
-    assert resp.status_code == HTTPStatus.FORBIDDEN
-
-
-def test_admin_can_grant_any_owned_model(admin_client, app, owned_group, test_model, second_user):
-    with app.app_context():
-        set_model_owner(test_model["id"], second_user["id"])
+def test_group_model_endpoints_removed(admin_client, owned_group, test_model):
+    assert admin_client.get(f"/groups/{owned_group}/models").status_code == HTTPStatus.NOT_FOUND
     resp = admin_client.post(f"/groups/{owned_group}/models", json={"model_config_id": test_model["id"]})
-    assert resp.status_code == HTTPStatus.CREATED
-
-
-def test_add_model_duplicate_conflicts(auth_client, app, owned_group, test_model, test_user):
-    with app.app_context():
-        set_model_owner(test_model["id"], test_user["id"])
-    auth_client.post(f"/groups/{owned_group}/models", json={"model_config_id": test_model["id"]})
-    resp = auth_client.post(f"/groups/{owned_group}/models", json={"model_config_id": test_model["id"]})
-    assert resp.status_code == HTTPStatus.CONFLICT
-
-
-def test_add_model_unknown_404(auth_client, owned_group):
-    resp = auth_client.post(f"/groups/{owned_group}/models", json={"model_config_id": 999999})
     assert resp.status_code == HTTPStatus.NOT_FOUND
-
-
-def test_remove_model_grant(auth_client, app, owned_group, test_model, test_user):
-    with app.app_context():
-        set_model_owner(test_model["id"], test_user["id"])
-    auth_client.post(f"/groups/{owned_group}/models", json={"model_config_id": test_model["id"]})
-    resp = auth_client.delete(f"/groups/{owned_group}/models/{test_model['id']}")
-    assert resp.status_code == HTTPStatus.NO_CONTENT
-    assert auth_client.get(f"/groups/{owned_group}/models").get_json()["models"]
-
-
-def test_remove_model_grant_unknown_404(auth_client, owned_group, test_model):
-    resp = auth_client.delete(f"/groups/{owned_group}/models/{test_model['id']}")
+    resp = admin_client.delete(f"/groups/{owned_group}/models/{test_model['id']}")
     assert resp.status_code == HTTPStatus.NOT_FOUND
-
-
-def test_model_grants_forbidden_for_plain_member(auth_client, member_group):
-    assert auth_client.get(f"/groups/{member_group}/models").status_code == HTTPStatus.FORBIDDEN
 
 
 # ---------------------------------------------------------------------------
-# End to end: a grant made through the UI really opens access
+# End to end: a group grant really opens access
 # ---------------------------------------------------------------------------
 
 def test_user_member_gains_access_through_group(auth_client, app, owned_group, test_model,
@@ -743,7 +705,7 @@ def test_user_member_gains_access_through_group(auth_client, app, owned_group, t
     """A user granted a model via the group can use it; a non-member still cannot."""
     with app.app_context():
         set_model_owner(test_model["id"], test_user["id"])
-    auth_client.post(f"/groups/{owned_group}/models", json={"model_config_id": test_model["id"]})
+        grant_model_to_group(test_model["id"], owned_group)
     auth_client.post(f"/groups/{owned_group}/members", json={"entity_id": second_user["id"]})
 
     with app.app_context():
@@ -771,7 +733,7 @@ def test_project_member_gains_access_and_pool_through_group(auth_client, app, ow
         from lumen.models.group_limit import GroupLimit
         db.session.add(GroupLimit(group_id=owned_group, max_coins=30, refresh_coins=3, starting_coins=30))
         db.session.commit()
-    auth_client.post(f"/groups/{owned_group}/models", json={"model_config_id": test_model["id"]})
+        grant_model_to_group(test_model["id"], owned_group)
     auth_client.post(f"/groups/{owned_group}/members", json={"entity_id": test_project["id"]})
 
     with app.app_context():
@@ -805,19 +767,8 @@ def test_auto_join_group_membership_locked_even_for_admin(admin_client, config_g
     assert "auto-join rules" in resp.get_json()["error"]
 
 
-def test_auto_join_group_admin_can_grant_models(admin_client, app, config_group, test_model, test_user):
-    """Model grants are policy, not membership — still editable on auto groups."""
-    with app.app_context():
-        set_model_owner(test_model["id"], test_user["id"])
-    resp = admin_client.post(f"/groups/{config_group}/models", json={"model_config_id": test_model["id"]})
-    assert resp.status_code == HTTPStatus.CREATED
-    resp = admin_client.delete(f"/groups/{config_group}/models/{test_model['id']}")
-    assert resp.status_code == HTTPStatus.NO_CONTENT
-
-
 # ---------------------------------------------------------------------------
-# Ownerless groups withhold the member list and rolled-up stats from
-# non-admins; the member count alone is not sensitive and stays visible
+# Ownerless groups withhold the member list from non-admins; the member count alone is not sensitive and stays visible
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -826,51 +777,21 @@ def ownerless_group(app, test_user, second_user):
     gid = _make_group(app, name="ownerless")
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.entity_stat import EntityStat
         from lumen.models.group_member import GroupMember
         db.session.add(GroupMember(group_id=gid, entity_id=test_user["id"]))
         db.session.add(GroupMember(group_id=gid, entity_id=second_user["id"]))
-        db.session.add(EntityStat(entity_id=test_user["id"], requests=7, input_tokens=10,
-                                  output_tokens=5, cost=2.5))
         db.session.commit()
     return gid
 
 
-def test_ownerless_group_hides_stats_but_shows_member_count_in_list(auth_client, ownerless_group):
+def test_ownerless_group_shows_member_count_in_list(auth_client, ownerless_group):
     row = next(g for g in auth_client.get("/groups/data").get_json()["groups"]
                if g["id"] == ownerless_group)
     assert row["has_owner"] is False
     assert row["members"] == 2
-    assert row["requests"] is None
-    assert row["tokens"] is None
-    assert row["cost"] is None
     # Name, active and the coin policy stay visible — they affect the member.
     assert row["name"] == "ownerless"
     assert row["active"] is True
-
-
-def test_ownerless_group_shows_everything_to_admin(admin_client, ownerless_group):
-    row = next(g for g in admin_client.get("/groups/data").get_json()["groups"]
-               if g["id"] == ownerless_group)
-    assert row["has_owner"] is False
-    assert row["members"] == 2
-    assert row["requests"] == 7
-    assert row["tokens"] == 15
-    assert row["cost"] == pytest.approx(2.5)
-
-
-def test_owned_group_still_shows_stats_to_member(auth_client, app, member_group, test_user):
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_stat import EntityStat
-        db.session.add(EntityStat(entity_id=test_user["id"], requests=4, input_tokens=2,
-                                  output_tokens=1, cost=0.5))
-        db.session.commit()
-    row = next(g for g in auth_client.get("/groups/data").get_json()["groups"]
-               if g["id"] == member_group)
-    assert row["has_owner"] is True
-    assert row["members"] == 2
-    assert row["requests"] == 4
 
 
 def test_ownerless_group_members_api_forbidden_for_member(auth_client, ownerless_group):
@@ -899,38 +820,17 @@ def test_ownerless_group_detail_shows_members_tab_to_admin(admin_client, ownerle
     assert b'id="tab-members"' in resp.data
 
 
-def test_ownerless_group_excluded_from_usage_summary_cards(auth_client, app, ownerless_group, test_user):
-    """Withheld usage must not silently inflate the totals; the membership
-    count covers every visible group."""
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_stat import EntityStat
-        st = db.session.get(EntityStat, test_user["id"])
-        st.requests = 7
-        db.session.commit()
-    # Total Requests comes only from owned groups (none here); Total Members
-    # counts every visible group's memberships.
-    assert _summary_cards(auth_client) == {"Total Members": 2, "Total Requests": 0}
-    data = auth_client.get("/groups/data").get_json()
-    assert all(isinstance(g["members"], int) for g in data["groups"])
+def test_summary_cards_count_ownerless_group_members(auth_client, ownerless_group):
+    """Total Members counts every visible group's memberships, owned or not."""
+    assert _summary_cards(auth_client) == {"Groups": 1, "Total Members": 2}
 
 
-def test_summary_cards_count_ownerless_group_for_admin(admin_client, app, ownerless_group, test_user):
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_stat import EntityStat
-        st = db.session.get(EntityStat, test_user["id"])
-        st.requests = 7
-        db.session.commit()
-    assert _summary_cards(admin_client) == {"Total Members": 2, "Total Requests": 7}
-
-
-def test_transferring_ownership_reveals_stats(admin_client, app, ownerless_group, test_user):
-    """Assigning an owner makes the withheld data visible to members again."""
+def test_transferring_ownership_reveals_members(admin_client, app, ownerless_group, test_user):
+    """Assigning an owner makes the withheld member list visible to members again."""
     client = admin_client
     resp = client.post(f"/groups/{ownerless_group}/owner", json={"entity_id": test_user["id"]})
     assert resp.status_code == HTTPStatus.OK
-    # test_user is the owner now, so as a plain member they see the numbers.
+    # test_user is the owner now, so as a plain member they see the group as owned.
     with client.session_transaction() as sess:
         sess["entity_id"] = test_user["id"]
         sess.pop("admin_mode", None)
