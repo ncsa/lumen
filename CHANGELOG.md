@@ -6,6 +6,8 @@ All notable changes to Lumen will be documented in this file.
 
 **Upgrade warning:** The database migration replaces `api_keys.active` with `revoked_at`, and older versions cannot run against the new schema. Stop every running replica before starting this version; a rolling update is not supported.
 
+**Breaking:** API requests now always require model acknowledgment and the `api.consent` setting has been removed. If your config.yaml or Helm values set `api.consent` (true or false), remove it, or Lumen will refuse to start. Before upgrading, have users acknowledge models on their profile or model page and project managers on the project page; API keys cannot use unacknowledged models. (#48)
+
 ### Added
 
 - Models can be set to take their price automatically from models.dev; manually set prices are no longer overwritten by Update. ([#117](https://github.com/ncsa/lumen/pull/117))
