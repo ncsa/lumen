@@ -444,7 +444,7 @@ def _add_api_key(entity_id, token):
     from lumen.extensions import db
     from lumen.models.api_key import APIKey
     from lumen.services.crypto import hash_api_key
-    db.session.add(APIKey(entity_id=entity_id, name="consent-key", key_hash=hash_api_key(token), active=True))
+    db.session.add(APIKey(entity_id=entity_id, name="consent-key", key_hash=hash_api_key(token)))
     db.session.commit()
 
 
