@@ -102,11 +102,11 @@ def test_usage_reports_entity_coin_balance(app, client, test_user, restore_confi
     assert balance_for("pooled-token") == -2
 
 
-def test_usage_rejects_monitor_token(app, client):
-    app.config["YAML_DATA"] = {
+def test_usage_rejects_monitor_token(app, client, monkeypatch):
+    monkeypatch.setitem(app.config, "YAML_DATA", {
         **app.config.get("YAML_DATA", {}),
         "api": {"monitoring": {"token": "monitor-token"}},
-    }
+    })
 
     response = client.get("/v1/usage", headers={"Authorization": "Bearer monitor-token"})
 

@@ -200,7 +200,7 @@ def test_consent_page_shows_models_and_existing_key_hint(client, auth_client, ap
     assert hint in page  # existing key identity surfaced
 
 
-def test_consent_page_model_ack_flow(client, auth_client, app):
+def test_consent_page_model_ack_flow(client, auth_client, app, test_user):
     """needs_ack models offer the ack dialog; accepting records consent and the
     page then reflects the accepted state."""
     with app.app_context():
@@ -210,6 +210,7 @@ def test_consent_page_model_ack_flow(client, auth_client, app):
         )
         db.session.add(m)
         db.session.commit()
+        model_id = m.id
 
     body = _issue(client)
     page = auth_client.get(f"/device?code={body['user_code']}").get_data()
@@ -220,7 +221,8 @@ def test_consent_page_model_ack_flow(client, auth_client, app):
 
     with app.app_context():
         row = db.session.execute(select(EntityModelConsent)).scalars().one()
-        assert row.entity_id == 1 or row.entity_id is not None
+        assert row.entity_id == test_user["id"]
+        assert row.model_config_id == model_id
         assert row.consented_at is not None
 
     page = auth_client.get(f"/device?code={body['user_code']}").get_data()
