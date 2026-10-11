@@ -1,7 +1,7 @@
 """Replace api_keys.active with revoked_at and add revoked_by_entity_id
 
-Revision ID: a9b0c1d2e3f4
-Revises: f8a9b0c1d2e3
+Revision ID: a827b0223638
+Revises: a9b0c1d2e3f4
 Create Date: 2026-10-10 00:00:00.000000
 
 Adds a nullable ``revoked_at`` (naive UTC) to ``api_keys`` and drops the
@@ -22,8 +22,8 @@ from alembic import op
 
 from lumen.timeutils import utcnow
 
-revision = "a9b0c1d2e3f4"
-down_revision = "f8a9b0c1d2e3"
+revision = "a827b0223638"
+down_revision = "a9b0c1d2e3f4"
 branch_labels = None
 depends_on = None
 

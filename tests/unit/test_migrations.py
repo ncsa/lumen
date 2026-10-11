@@ -1,4 +1,5 @@
 """Sanity checks on the Alembic migration graph, and SQLite round trips of single revisions."""
+import ast
 import importlib.util
 from pathlib import Path
 
@@ -19,6 +20,17 @@ def _script_dir():
 def test_single_migration_head():
     heads = _script_dir().get_heads()
     assert len(heads) == 1, f"Expected 1 migration head, got {len(heads)}: {heads}"
+
+
+def test_migration_revision_ids_are_unique():
+    """Alembic silently keeps one of two files sharing a revision id; catch it here."""
+    revisions = {}
+    for path in sorted(Path("migrations/versions").glob("*.py")):
+        for node in ast.parse(path.read_text()).body:
+            if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "revision" for t in node.targets):
+                revisions.setdefault(node.value.value, []).append(path.name)
+    duplicates = {rev: files for rev, files in revisions.items() if len(files) > 1}
+    assert not duplicates, f"Duplicate migration revision ids: {duplicates}"
 
 
 # ---------------------------------------------------------------------------

@@ -15,10 +15,10 @@ from alembic.operations import Operations
 
 _REVISION_PATH = (
     Path(__file__).resolve().parents[2]
-    / "migrations" / "versions" / "a9b0c1d2e3f4_api_key_revoked_at.py"
+    / "migrations" / "versions" / "a827b0223638_api_key_revoked_at.py"
 )
 
-# api_keys exactly as the previous head (f8a9b0c1d2e3) left it.
+# api_keys exactly as the previous head (a9b0c1d2e3f4) left it.
 _OLD_API_KEYS = """
     CREATE TABLE api_keys (
         id INTEGER PRIMARY KEY,

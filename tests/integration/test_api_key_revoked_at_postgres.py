@@ -14,8 +14,8 @@ from .conftest import flask_db
 
 pytestmark = pytest.mark.postgres
 
-_BEFORE = "f8a9b0c1d2e3"
-_REVISION = "a9b0c1d2e3f4"
+_BEFORE = "a9b0c1d2e3f4"
+_REVISION = "a827b0223638"
 _CREATED = datetime(2026, 1, 1, 12, 0, 0)
 _USED = datetime(2026, 2, 1, 12, 0, 0)
 _REVOKED_AT_COMMENT = (
