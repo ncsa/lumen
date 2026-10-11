@@ -1,5 +1,7 @@
 """End-to-end tests for lumen.sh against a fake Lumen server."""
 import json
+import os
+import stat
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -219,6 +221,28 @@ def test_rc_block_pairs_key_and_server_per_shell(home, lumen_server, shell_name,
     rc = (home / rc_file).read_text()
     assert line_fmt.format(k="API_KEY", v=TEST_KEY) in rc
     assert line_fmt.format(k="BASE_URL", v=f"http://127.0.0.1:{port}") in rc
+
+
+@pytest.mark.parametrize("existing_mode", [None, 0o644, 0o600])
+def test_rc_file_restricted_to_owner(home, lumen_server, existing_mode):
+    port = lumen_server.server_address[1]
+    bashrc = home / ".bashrc"
+    if existing_mode is not None:
+        bashrc.write_text("alias ll='ls -l'\n")
+        bashrc.chmod(existing_mode)
+    lumen_server.token_queue = [
+        (200, {"access_token": TEST_KEY, "token_type": "Bearer", "approved_by": "a@b"}),
+    ]
+    # A permissive umask, so a newly created rc file would default to 644.
+    old_umask = os.umask(0o022)
+    try:
+        r = run_script(home, port, args=["--no-opencode"])
+    finally:
+        os.umask(old_umask)
+    assert r.returncode == 0, r.stderr
+    assert stat.S_IMODE(bashrc.stat().st_mode) == 0o600
+    assert f"export LUMEN_API_KEY='{TEST_KEY}'" in bashrc.read_text()
+    assert (b"readable by other users" in r.stderr) == (existing_mode == 0o644)
 
 
 @pytest.mark.parametrize("field", ["interval", "expires_in"])

@@ -186,6 +186,18 @@ install_rc_key() {
     printf '%s\n' "${lines[@]}"
     printf '%s\n' "$RC_BLOCK_END"
   } >> "$tmp"
+  # The rc file now holds the key in plaintext: restrict it to the owner
+  # before writing, as keys.json is. ls -lL works on both GNU and BSD.
+  if [[ -e "$rc" ]]; then
+    local mode
+    mode=$(ls -lLd "$rc")
+    if [[ "${mode:4:1}" == r || "${mode:7:1}" == r ]]; then
+      echo "warning: $rc was readable by other users; setting it to mode 600" >&2
+    fi
+  else
+    (umask 077 && : > "$rc")
+  fi
+  chmod 600 "$rc"
   cat "$tmp" > "$rc"
   rm -f "$tmp"
 }
