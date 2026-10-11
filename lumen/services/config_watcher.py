@@ -41,7 +41,7 @@ def config_version_ok(yaml_data: dict) -> bool:
 
 
 def removed_config_key_errors(data: dict) -> list[str]:
-    """Return version-2 policy keys that version 3 must never ignore."""
+    """Return removed config keys (version-2 policy and the api.consent flag) that must never be ignored."""
     if not isinstance(data, dict):
         return []
 
