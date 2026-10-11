@@ -465,11 +465,12 @@ def _token_code():
     now = utcnow()
     if req.status == "claimed":
         # RFC 6749 §4.1.2: a redeemed authorization code presented twice means
-        # the code leaked; revoke the key minted from it.
+        # the code leaked; revoke the key minted from it. Keys are soft deleted
+        # so their usage history is kept.
         if req.api_key_id is not None:
             key = db.session.get(APIKey, req.api_key_id)
-            if key is not None:
-                db.session.delete(key)
+            if key is not None and key.active:
+                key.active = False
                 db.session.commit()
         return _oauth_error("invalid_grant", "authorization code replay detected; key revoked")
     if req.status != "approved":
@@ -502,7 +503,7 @@ def _mint(req: AuthRequest):
     ).scalars().all()
     if req.overwrite:
         for stale in existing:
-            db.session.delete(stale)
+            stale.active = False
     elif existing:
         db.session.rollback()
         return _oauth_error("invalid_grant", "key name now in use, run again")
