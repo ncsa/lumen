@@ -33,7 +33,7 @@ class ModelConfig(db.Model):
     audio_cost_per_hour: Mapped[Optional[Decimal]] = mapped_column(db.Numeric(12, 6), comment="USD cost per hour of audio; only set for speech-to-text models")
     # Owning user entity; NULL means the model is available to everyone.
     # ondelete=SET NULL: deleting the owner makes the model public again.
-    owner_entity_id: Mapped[Optional[int]] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="SET NULL"), comment="Owning user entity; NULL = available to everyone. When set, only the owner and members of granted groups may use the model")
+    owner_entity_id: Mapped[Optional[int]] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="SET NULL"), comment="Owning user entity; NULL = available to everyone. When set, only the owner may use the model")
     # Requires user acknowledgement before use; model-level only, not overridable by scopes
     needs_ack: Mapped[bool] = mapped_column(db.Boolean, nullable=False, default=False, server_default=db.false(), comment="Requires user acknowledgement before use; sticky model-level property, not overridable by scopes")
     # Per-model acknowledgement message; overrides the global defaults.models.ack_message
@@ -66,7 +66,6 @@ class ModelConfig(db.Model):
     stats: Mapped[list["ModelStat"]] = relationship(backref="model_config", lazy="select", passive_deletes=True)
     aliases: Mapped[list["ModelAlias"]] = relationship(backref="model_config", lazy="select", cascade="all, delete-orphan", passive_deletes=True)
     owner: Mapped[Optional["Entity"]] = relationship(foreign_keys=[owner_entity_id])
-    group_grants: Mapped[list["ModelGroupAccess"]] = relationship(backref="model_config", lazy="select", cascade="all, delete-orphan", passive_deletes=True)
 
     @hybrid_property
     def active(self) -> bool:

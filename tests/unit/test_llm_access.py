@@ -7,7 +7,7 @@ from lumen.services.llm import (
     get_pool_limit,
     has_model_consent,
 )
-from tests.conftest import grant_model_to_group, make_group_with_member, make_project, set_model_owner
+from tests.conftest import make_group_with_member, make_project, set_model_owner
 
 
 @pytest.fixture
@@ -79,13 +79,12 @@ def test_owned_model_blocked_for_non_owner(app, ids):
 
 
 def test_group_member_blocked_from_owned_model(app, ids):
-    """Group membership never grants an owned model, even with a leftover grant row."""
+    """Group membership never grants an owned model."""
     entity_id, model_id = ids
     with app.app_context():
         owner_id = _make_entity()
         set_model_owner(model_id, owner_id)
-        group_id = make_group_with_member(entity_id)
-        grant_model_to_group(model_id, group_id)
+        make_group_with_member(entity_id)
         assert get_model_access_status(entity_id, model_id) == "blocked"
         assert get_model_access(entity_id, model_id) is False
 
@@ -96,8 +95,7 @@ def test_project_group_member_blocked_from_owned_model(app, ids):
         owner_id = _make_entity()
         project_id = make_project("Proj", email="proj@example.com").id
         set_model_owner(model_id, owner_id)
-        group_id = make_group_with_member(project_id)
-        grant_model_to_group(model_id, group_id)
+        make_group_with_member(project_id)
         assert get_model_access_status(project_id, model_id) == "blocked"
 
 

@@ -2,7 +2,7 @@
 
 > 🔒 **Admin only.** This page documents administrator features. Configuration lives in `config.yaml` and the in-app Config editor (`/admin/config`), which are only available to administrators.
 
-Lumen uses a group-based system to assign coin budgets and grant access to owned models. `config.yaml` carries a single user-management section: `admins:`. Everything about groups — coin pools, memberships (users and projects), model grants, and login auto-join rules — lives in the database and is managed on the [Groups pages](../groups/groups.md).
+Lumen uses a group-based system to assign coin budgets. `config.yaml` carries a single user-management section: `admins:`. Everything about groups — coin pools, memberships (users and projects), and login auto-join rules — lives in the database and is managed on the [Groups pages](../groups/groups.md).
 
 ## Admins
 

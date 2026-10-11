@@ -142,14 +142,6 @@ def set_model_owner(model_id, owner_entity_id):
     db.session.commit()
 
 
-def grant_model_to_group(model_id, group_id):
-    """Grant an owned model to a group. Call inside an app context; commits."""
-    from lumen.extensions import db
-    from lumen.models.model_group_access import ModelGroupAccess
-    db.session.add(ModelGroupAccess(model_config_id=model_id, group_id=group_id))
-    db.session.commit()
-
-
 def make_group_with_member(entity_id, name="test-group", active=True):
     """Create a group containing entity_id; returns the group id. Call inside an app context; commits."""
     from lumen.extensions import db

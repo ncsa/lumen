@@ -23,7 +23,7 @@ def parse_args():
     p.add_argument("--model", default="dummy", help="Model name to grant coins for (default: dummy)")
     p.add_argument("--coins", type=int, default=20, help="Coins to grant per user (default: 20)")
     p.add_argument("--prefix", default="loadtest", help="Entity name prefix (default: loadtest)")
-    p.add_argument("--group", default=None, help="Add each entity to this group (e.g. staff) for model access")
+    p.add_argument("--group", default=None, help="Add each entity to this group (e.g. staff) for its coin policy")
     p.add_argument("--write-config", action="store_true", help="Update loadtesting/config.yaml with the new keys")
     return p.parse_args()
 
@@ -45,7 +45,6 @@ def main():
     from lumen.models.group import Group
     from lumen.models.group_member import GroupMember
     from lumen.models.model_config import ModelConfig
-    from lumen.models.model_group_access import ModelGroupAccess
     from lumen.services.crypto import hash_api_key
     from lumen.timeutils import utcnow
 
@@ -68,19 +67,12 @@ def main():
                 sys.exit(1)
 
         if model_config.owner_entity_id is not None:
-            granted = group is not None and db.session.execute(
-                select(ModelGroupAccess.id).where(
-                    ModelGroupAccess.model_config_id == model_config.id,
-                    ModelGroupAccess.group_id == group.id,
-                )
-            ).scalar_one_or_none() is not None
-            if not granted:
-                print(
-                    f"ERROR: Model '{args.model}' is owned. Pass --group for a group already "
-                    "granted access to that model.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+            print(
+                f"ERROR: Model '{args.model}' is owned and only its owner can use it. "
+                "Load-test users need a public (unowned) model.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
         # Every project needs an owner who also manages it; one shared
         # placeholder user owns all the load-test projects.

@@ -15,7 +15,6 @@ from .message import Message
 from .model_alias import ModelAlias
 from .model_config import ModelConfig
 from .model_endpoint import ModelEndpoint
-from .model_group_access import ModelGroupAccess
 from .model_stat import ModelStat
 from .request_log import RequestLog
 
@@ -38,6 +37,5 @@ __all__ = [
     "GroupMember",
     "GroupRule",
     "GroupLimit",
-    "ModelGroupAccess",
     "RequestLog",
 ]

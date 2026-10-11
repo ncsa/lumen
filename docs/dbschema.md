@@ -162,13 +162,6 @@ erDiagram
         numeric starting_coins
     }
 
-    model_group_access {
-        int id PK
-        int model_config_id FK
-        int group_id FK
-        datetime created_at
-    }
-
     entity_managers {
         int id PK
         int user_entity_id FK
@@ -266,12 +259,10 @@ erDiagram
     groups ||--o{ group_members : "contains"
     groups ||--o{ group_rules : "auto-join rules"
     groups ||--o| group_limits : "has"
-    groups ||--o{ model_group_access : "granted"
 
     model_configs ||--o{ model_endpoints : "served by"
     model_configs ||--o{ model_aliases : "versioned as"
     model_configs ||--o{ entity_model_consents : "consented via"
-    model_configs ||--o{ model_group_access : "granted to"
     model_configs ||--o{ model_stats : "accumulates"
     model_configs ||--o{ request_logs : "logs"
 
@@ -295,7 +286,6 @@ erDiagram
 - [group\_members](#group_members)
 - [group\_rules](#group_rules)
 - [group\_limits](#group_limits)
-- [model\_group\_access](#model_group_access)
 - [entity\_managers](#entity_managers)
 - [model\_stats](#model_stats)
 - [entity\_stats](#entity_stats)
@@ -403,7 +393,7 @@ Configuration and metadata for each AI model that Lumen can proxy. One row per l
 | `input_cost_per_million` | Numeric(12,6) | NO | USD cost per one million input tokens |
 | `output_cost_per_million` | Numeric(12,6) | NO | USD cost per one million output tokens |
 | `audio_cost_per_hour` | Numeric(12,6) | YES | USD cost per hour of audio; only set for speech-to-text (ASR) models |
-| `owner_entity_id` | Integer (FK → entities) | YES | Owning user entity; NULL = available to everyone. When set, only the owner and members of granted groups may use the model. `SET NULL` on delete — deleting the owner makes the model public again. |
+| `owner_entity_id` | Integer (FK → entities) | YES | Owning user entity; NULL = available to everyone. When set, only the owner may use the model. `SET NULL` on delete — deleting the owner makes the model public again. |
 | `needs_ack` | Boolean | NO | Requires user acknowledgement before use; a sticky model-level property that no scope can add or remove. Default `false`. |
 | `ack_message` | Text | YES | Per-model acknowledgement message; overrides the global `defaults.models.ack_message`. |
 | `early_access` | Boolean | NO | Early-access model: users must acknowledge it may change or be removed before use. A sticky model-level property like `needs_ack`. Default `false`. |
@@ -423,7 +413,7 @@ Configuration and metadata for each AI model that Lumen can proxy. One row per l
 
 **Notes:**
 - `active` is a derived, read-only property (`active = not disabled and (end_date is null or end_date > now)`), not a stored column. It replaces the old `active` column.
-- `owner_entity_id` and the `model_group_access` grants are DB-managed (edited via the model detail page), never synced from `config.yaml`.
+- `owner_entity_id` is DB-managed (edited via the model detail page), never synced from `config.yaml`.
 
 ---
 
@@ -529,7 +519,7 @@ Association table linking entities to groups. An entity may belong to multiple g
 | `group_id` | Integer (FK → groups) | NO | The group. Cascades on delete. |
 | `entity_id` | Integer (FK → entities) | NO | The entity that belongs to the group. Cascades on delete. |
 | `config_managed` | Boolean | NO | When `true`, assigned automatically at login by the group's auto-join rules; reconciled (added/removed) at each login. Manual memberships are `false`. |
-| `is_owner` | Boolean | NO | True for the group owner; at most one owner per group (enforced by app logic). The owner may add/remove members, transfer ownership, grant models they own, and deactivate the group. |
+| `is_owner` | Boolean | NO | True for the group owner; at most one owner per group (enforced by app logic). The owner may add/remove members, transfer ownership, and deactivate the group. |
 | `joined_at` | DateTime | YES | UTC timestamp when the membership was created; `NULL` for memberships that predate the column (join time unknown) |
 
 **Constraints:** `UNIQUE(group_id, entity_id)`
@@ -563,21 +553,6 @@ Coin budget configuration for a group. Works identically to `entity_limits` but 
 | `max_coins` | Numeric(12,6) | NO | Maximum coins the group may hold at any time. `-2` = unlimited, `0` = blocked. |
 | `refresh_coins` | Numeric(12,6) | NO | Coins added at each periodic refill cycle |
 | `starting_coins` | Numeric(12,6) | NO | Coins granted when the group is first created or reset |
-
----
-
-## model_group_access
-
-Group grants for owned models; a row gives all group members access to the model. Only meaningful for models with an `owner_entity_id` set — a model with no owner is available to everyone and needs no grants. Grants are edited by admins on the model detail page; deleting a granted group removes the grant.
-
-| Column | Type | Nullable | Description |
-|--------|------|----------|-------------|
-| `id` | Integer | NO | Primary key |
-| `model_config_id` | Integer (FK → model_configs) | NO | The owned model being granted. Cascades on delete. |
-| `group_id` | Integer (FK → groups) | NO | The group whose members receive access. Cascades on delete. |
-| `created_at` | DateTime | NO | UTC timestamp when the grant was created |
-
-**Constraints:** `UNIQUE(model_config_id, group_id)` (`uq_mga_model_group`); index `ix_model_group_access_group_id` on `group_id`
 
 ---
 
@@ -841,15 +816,15 @@ command with a dry run as its default.
 ```
 groups ──< group_members >── entities ──< api_keys
   │                              │
-  ├──< group_limits              ├──< entity_limits
-  │                              ├──< entity_balances
-  └──< model_group_access        ├──< entity_model_consents
+  └──< group_limits              ├──< entity_limits
+                                 ├──< entity_balances
+                                 ├──< entity_model_consents
                                  ├──< entity_managers (user→project)
 model_configs ──< model_endpoints├──< model_stats
      │                           ├──< conversations ──< messages
      ├──> entities (owner_entity_id, SET NULL)
-      ├──< model_aliases          ├──< auth_requests (approves)
-      ├──< model_group_access     └──< request_logs
+     ├──< model_aliases          ├──< auth_requests (approves)
+     │                           └──< request_logs
      └──< model_stats / request_logs
 ```
 
