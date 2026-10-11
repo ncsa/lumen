@@ -807,10 +807,9 @@ def test_shipped_config_example_has_no_removed_keys():
 def test_apply_hot_config_does_not_set_api_consent(app, restore_config):
     """The removed api.consent flag no longer maps to an app.config value."""
     from lumen.services.config_watcher import apply_hot_config
-    app.config.pop("API_REQUIRE_MODEL_CONSENT", None)
     with app.app_context():
         apply_hot_config(app, {"version": 3, "api": {}})
-    assert "API_REQUIRE_MODEL_CONSENT" not in app.config
+    assert not [k for k in app.config if "CONSENT" in k]
 
 
 # ---------------------------------------------------------------------------

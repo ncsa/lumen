@@ -345,20 +345,19 @@ def model_notices(mc) -> tuple:
     return ack_notice, early_notice
 
 
-def get_model_access(entity_id: int, model_config_id: int, require_consent: bool = True) -> bool:
+def get_model_access(entity_id: int, model_config_id: int) -> bool:
     """
     Return True if entity can access the given model, False otherwise.
 
-    For models that require acknowledgement, requires prior consent (EntityModelConsent)
-    unless require_consent is False (used to exempt API requests from the consent gate).
+    For models that require acknowledgement (needs_ack and/or early_access), requires
+    prior consent (EntityModelConsent) covering every current requirement. There is
+    no way to skip this gate: chat and API requests are held to the same rule.
     """
     access_statuses, consent_map = bulk_model_access_info(entity_id, [model_config_id])
     status = access_statuses[model_config_id]
     if status == "blocked":
         return False
     if status == "needs_ack":
-        if not require_consent:
-            return True
         return model_config_id in consent_map
     return True
 
@@ -433,14 +432,15 @@ def entity_has_unlimited_pool(entity_id_column):
     return own_unlimited_exists | (~own_limit_exists & inherited_unlimited)
 
 
-def get_effective_limit(entity_id: int, model_config_id: int, require_consent: bool = True):
+def get_effective_limit(entity_id: int, model_config_id: int):
     """
     Return (max_coins, refresh_coins, starting_coins) or None if blocked/no access.
 
-    Checks model access first, then returns the entity's coin pool.
+    Checks model access (including acknowledgement) first, then returns the
+    entity's coin pool.
     max_coins == -2 means unlimited.
     """
-    if not get_model_access(entity_id, model_config_id, require_consent=require_consent):
+    if not get_model_access(entity_id, model_config_id):
         return None
     return get_pool_limit(entity_id)
 
@@ -490,21 +490,21 @@ def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float, effec
     db.session.flush()
 
 
-def _observe_denial_quietly(entity_id: int, model_config_id: int, require_consent: bool,
+def _observe_denial_quietly(entity_id: int, model_config_id: int,
                             source: str, model_name: str) -> None:
     """Count a 403 under the reason it was actually decided for.
 
     ``get_effective_limit`` collapses "blocked" and "requires an acknowledgement
     nobody has given" into one None, and the taxonomy needs them apart: the
     second is the user's to fix from the model detail page, the first is not.
-    Re-resolving the status costs a query on a path that is already refusing the
-    request. Never raises, for the same reason ``observe_rejection_quietly``
-    does not.
+    The reason is ``needs_consent`` iff the model awaits an acknowledgement the
+    entity has not given, otherwise ``no_access``. Re-resolving the status
+    costs a query on a path that is already refusing the request. Never
+    raises, for the same reason ``observe_rejection_quietly`` does not.
     """
     try:
         needs_consent = (
-            require_consent
-            and get_model_access_status(entity_id, model_config_id) == "needs_ack"
+            get_model_access_status(entity_id, model_config_id) == "needs_ack"
             and not has_model_consent(entity_id, model_config_id)
         )
     except Exception:  # noqa: BLE001 - instrumentation must never escalate
@@ -512,7 +512,7 @@ def _observe_denial_quietly(entity_id: int, model_config_id: int, require_consen
     observe_rejection_quietly("needs_consent" if needs_consent else "no_access", source, model_name)
 
 
-def check_coin_budget(entity_id: int, model_config_id: int, require_consent: bool = True,
+def check_coin_budget(entity_id: int, model_config_id: int,
                       source: str = None, model_name: str = ""):
     """Check coin budget. Returns (ok, http_code, error_message, effective).
 
@@ -531,10 +531,10 @@ def check_coin_budget(entity_id: int, model_config_id: int, require_consent: boo
     zeroed by subtract_coins afterward. This is intentional — the budget is a soft
     spending limit, not a hard reservation.
     """
-    effective = get_effective_limit(entity_id, model_config_id, require_consent=require_consent)
+    effective = get_effective_limit(entity_id, model_config_id)
     if effective is None:
         if source:
-            _observe_denial_quietly(entity_id, model_config_id, require_consent, source, model_name)
+            _observe_denial_quietly(entity_id, model_config_id, source, model_name)
         return False, HTTPStatus.FORBIDDEN, "No access to this model", None
     max_coins, _, _starting = effective
     if max_coins == -2:

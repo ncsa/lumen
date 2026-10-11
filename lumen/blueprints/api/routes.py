@@ -338,16 +338,11 @@ def list_models():
         model_ids = [c.id for c in configs]
         access_statuses, consent_map = bulk_model_access_info(entity_id, model_ids)
         pool = get_pool_limit(entity_id)
-        consent_required = current_app.config.get("API_REQUIRE_MODEL_CONSENT", True)
         permitted = [
             c for c in configs
             if pool is not None
             and access_statuses.get(c.id, "allowed") != "blocked"
-            and (
-                not consent_required
-                or access_statuses.get(c.id, "allowed") != "needs_ack"
-                or c.id in consent_map
-            )
+            and (access_statuses.get(c.id, "allowed") != "needs_ack" or c.id in consent_map)
         ]
     data = []
     for c in permitted:
@@ -373,8 +368,7 @@ def get_model(model_id):
     if not config:
         return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
     if not g.monitor:
-        consent_required = current_app.config.get("API_REQUIRE_MODEL_CONSENT", True)
-        if get_effective_limit(g.entity.id, config.id, require_consent=consent_required) is None:
+        if get_effective_limit(g.entity.id, config.id) is None:
             return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
     eps = db.session.execute(
         select(ModelEndpoint).where(ModelEndpoint.model_config_id == config.id, ModelEndpoint.active.is_(True))
@@ -399,10 +393,8 @@ def _preflight(model_name: str):
     model_config = resolve_model_config(model_name)
     if not model_config:
         return None, None, None, _err(f"Model '{model_name}' not found", status=HTTPStatus.NOT_FOUND)
-    consent_required = current_app.config.get("API_REQUIRE_MODEL_CONSENT", True)
     ok, code, msg, effective = check_coin_budget(
-        g.entity.id, model_config.id, require_consent=consent_required,
-        source="api", model_name=model_name,
+        g.entity.id, model_config.id, source="api", model_name=model_name,
     )
     if not ok:
         if code == HTTPStatus.TOO_MANY_REQUESTS:
