@@ -146,3 +146,17 @@ def test_downgrade_restores_active(pre_migration_sqlite):
     with pre_migration_sqlite.connect() as conn:
         rows = dict(conn.execute(sa.text("SELECT name, active FROM api_keys")).all())
     assert rows == {"live": True, "used_then_revoked": False, "never_used_revoked": False}
+
+
+def test_downgrade_restores_active_server_default(pre_migration_sqlite):
+    module = _revision_module()
+    _run(pre_migration_sqlite, module.upgrade)
+    _run(pre_migration_sqlite, module.downgrade)
+
+    # v2.1.0 had server_default=true; a raw insert that omits active must still work.
+    with pre_migration_sqlite.begin() as conn:
+        conn.exec_driver_sql(
+            "INSERT INTO api_keys (entity_id, name, key_hash, requests, input_tokens,"
+            " output_tokens, audio_seconds, cost) VALUES (1, 'raw', 'raw', 0, 0, 0, 0, 0)"
+        )
+        assert conn.execute(sa.text("SELECT active FROM api_keys WHERE name = 'raw'")).scalar() == 1

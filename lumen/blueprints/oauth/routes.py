@@ -22,7 +22,7 @@ from http import HTTPStatus
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from flask import Blueprint, jsonify, make_response, redirect, render_template, request, session, url_for
-from sqlalchemy import case, select, update
+from sqlalchemy import case, delete, select, update
 from sqlalchemy.exc import IntegrityError
 
 from lumen.decorators import login_required
@@ -115,13 +115,10 @@ def cleanup_expired_auth_requests():
     """
     cutoff = utcnow() - timedelta(seconds=CLEANUP_GRACE)
     deleted = db.session.execute(
-        select(AuthRequest).where(AuthRequest.expires_at < cutoff)
-    ).scalars().all()
-    for row in deleted:
-        db.session.delete(row)
-    if deleted:
-        db.session.commit()
-    return len(deleted)
+        delete(AuthRequest).where(AuthRequest.expires_at < cutoff)
+    ).rowcount
+    db.session.commit()
+    return deleted
 
 
 def start_auth_request_janitor(app):
@@ -422,14 +419,15 @@ def _token_device():
     now = utcnow()
     if req.last_polled_at and now - req.last_polled_at < timedelta(seconds=POLL_INTERVAL):
         return _oauth_error("slow_down", "polling too fast")
-    req.last_polled_at = now
 
     if req.status == "pending":
+        req.last_polled_at = now
         db.session.commit()
         if req.expires_at <= now:
             return _oauth_error("expired_token", "the request expired")
         return _oauth_error("authorization_pending", "waiting for user approval")
     if req.status == "approved":
+        req.last_polled_at = now
         if req.expires_at <= now:
             db.session.commit()
             return _oauth_error("expired_token", "the claim window expired")

@@ -251,3 +251,17 @@ def test_role_downgrade_drops_column_and_user_rows(tmp_path):
         # The non-owner 'user' member is removed, not promoted; the owner stays.
         assert users == [1, 2, 3]
     engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# q1w2e3r4t5y6: auth_requests unique indexes
+# ---------------------------------------------------------------------------
+
+def test_auth_request_unique_index_names_match_migration():
+    """create_all must name the unique indexes as q1w2e3r4t5y6 does."""
+    from lumen.models.auth_request import AuthRequest
+
+    unique = {i.name: [c.name for c in i.columns] for i in AuthRequest.__table__.indexes if i.unique}
+    assert unique["uq_auth_requests_device_code_hash"] == ["device_code_hash"]
+    assert unique["uq_auth_requests_auth_code_hash"] == ["auth_code_hash"]
+    assert not [c for c in AuthRequest.__table__.constraints if isinstance(c, sa.UniqueConstraint)]
