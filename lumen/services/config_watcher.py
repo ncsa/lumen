@@ -68,7 +68,7 @@ def removed_config_key_errors(data: dict) -> list[str]:
 
     api = data.get("api")
     if isinstance(api, dict) and "consent" in api:
-        errors.append("`api.consent` was removed; API requests always require model acknowledgment. Delete the key.")
+        errors.append("`api.consent` was removed; API requests always require model acknowledgment. Delete the key")
 
     return errors
 
