@@ -127,26 +127,36 @@ store_key() {
   install_rc_key "$1" "$SERVER"
 }
 
+# Single-quotes $1 for an rc file so the shell reading it never expands it;
+# an embedded ' becomes '\'' (sh, csh) or \' (fish).
+rc_quote() {
+  local q="'\\''"
+  [[ "$2" == fish ]] && q="\\'"
+  printf "'%s'" "${1//\'/$q}"
+}
+
 install_rc_key() {
-  local shell rc tmp
+  local shell rc tmp key url
   shell=$(basename "${SHELL:-}")
+  key=$(rc_quote "$1" "$shell")
+  url=$(rc_quote "$2" "$shell")
   local -a lines
   case "$shell" in
     bash)
       rc="$HOME/.bashrc"
-      lines=("export LUMEN_API_KEY=\"$1\"" "export LUMEN_BASE_URL=\"$2\"")
+      lines=("export LUMEN_API_KEY=$key" "export LUMEN_BASE_URL=$url")
       ;;
     zsh)
       rc="$HOME/.zshrc"
-      lines=("export LUMEN_API_KEY=\"$1\"" "export LUMEN_BASE_URL=\"$2\"")
+      lines=("export LUMEN_API_KEY=$key" "export LUMEN_BASE_URL=$url")
       ;;
     csh|tcsh)
       rc="$HOME/.cshrc"
-      lines=("setenv LUMEN_API_KEY \"$1\"" "setenv LUMEN_BASE_URL \"$2\"")
+      lines=("setenv LUMEN_API_KEY $key" "setenv LUMEN_BASE_URL $url")
       ;;
     fish)
       rc="$HOME/.config/fish/config.fish"
-      lines=("set -gx LUMEN_API_KEY \"$1\"" "set -gx LUMEN_BASE_URL \"$2\"")
+      lines=("set -gx LUMEN_API_KEY $key" "set -gx LUMEN_BASE_URL $url")
       ;;
     *)
       echo "unknown shell '$shell': key stored in $KEYS_JSON only" >&2
@@ -166,6 +176,13 @@ install_rc_key() {
   rm -f "$tmp"
 }
 
+# Prints $1 if it is a plain positive integer, else the default $2. Server
+# values reach $(( )), which would evaluate expressions (and command
+# substitutions in array subscripts) hidden in them.
+positive_int() {
+  if [[ "$1" =~ ^[1-9][0-9]{0,8}$ ]]; then printf '%s' "$1"; else printf '%s' "$2"; fi
+}
+
 device_login() {
   local interval expires_in deadline approved_by
   if ! http_post "$SERVER/oauth/device_authorization" \
@@ -178,14 +195,15 @@ device_login() {
   local device_code user_code
   device_code=$(jq -r .device_code <<<"$RESP_BODY")
   user_code=$(jq -r .user_code <<<"$RESP_BODY")
-  interval=$(jq -r '.interval // 5' <<<"$RESP_BODY")
-  expires_in=$(jq -r '.expires_in // 600' <<<"$RESP_BODY")
+  interval=$(positive_int "$(jq -r '.interval // 5' <<<"$RESP_BODY")" 5)
+  expires_in=$(positive_int "$(jq -r '.expires_in // 600' <<<"$RESP_BODY")" 600)
   echo "To authorize '$KEYNAME' for $CLIENT_ID:"
   echo "  1. open $(jq -r .verification_uri <<<"$RESP_BODY")"
   echo "  2. enter code $user_code"
   local vfull
   vfull=$(jq -r '.verification_uri_complete // empty' <<<"$RESP_BODY")
-  if [[ -n "$vfull" ]]; then
+  # Only open links on the server itself, never another scheme or host.
+  if [[ "$vfull" == "$SERVER/"* ]]; then
     if command -v open >/dev/null 2>&1; then open "$vfull" >/dev/null 2>&1 || true
     elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$vfull" >/dev/null 2>&1 || true
     fi
@@ -202,7 +220,7 @@ device_login() {
     if [[ "$RESP_CODE" == "200" ]]; then
       local key
       key=$(jq -r '.access_token // empty' <<<"$RESP_BODY")
-      [[ -n "$key" ]] || die "unexpected token response"
+      [[ "$key" =~ ^sk_[A-Za-z0-9_-]+$ ]] || die "unexpected token response"
       approved_by=$(jq -r '.approved_by // "an account"' <<<"$RESP_BODY")
       echo "Approved by $approved_by."
       store_key "$key"

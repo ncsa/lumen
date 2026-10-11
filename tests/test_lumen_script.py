@@ -55,6 +55,7 @@ class FakeLumen(BaseHTTPRequestHandler):
                 "device_code": "devcode-1", "user_code": "QQQQ-QQQQ",
                 "verification_uri": "http://127.0.0.1:1/device",
                 "interval": 1, "expires_in": 30,
+                **s.auth_extra,
             })
         elif self.path == "/oauth/token":
             assert form["grant_type"][0] == "urn:ietf:params:oauth:grant-type:device_code"
@@ -80,6 +81,7 @@ def lumen_server():
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeLumen)
     server.hits = {}
     server.token_queue = []
+    server.auth_extra = {}
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield server
@@ -155,8 +157,8 @@ def test_device_flow_stores_key_and_rc_block(home, lumen_server):
     assert keys[host_key(port)] == TEST_KEY
     bashrc = (home / ".bashrc").read_text()
     assert "# >>> lumen >>>" in bashrc
-    assert f'export LUMEN_API_KEY="{TEST_KEY}"' in bashrc
-    assert f'export LUMEN_BASE_URL="http://127.0.0.1:{port}"' in bashrc
+    assert f"export LUMEN_API_KEY='{TEST_KEY}'" in bashrc
+    assert f"export LUMEN_BASE_URL='http://127.0.0.1:{port}'" in bashrc
     import stat
     mode = stat.S_IMODE((home / ".config" / "lumen" / "keys.json").stat().st_mode)
     assert mode == 0o600
@@ -196,14 +198,14 @@ def test_relogin_replaces_stored_key_without_prompt(home, lumen_server):
     assert json.loads(keys.read_text())[host_key(port)] == TEST_KEY
     bashrc = (home / ".bashrc").read_text()
     assert bashrc.count("# >>> lumen >>>") == 1
-    assert f'export LUMEN_API_KEY="{TEST_KEY}"' in bashrc
+    assert f"export LUMEN_API_KEY='{TEST_KEY}'" in bashrc
     assert "sk_old_key" not in bashrc
 
 
 @pytest.mark.parametrize("shell_name,rc_file,line_fmt", [
-    ("zsh", ".zshrc", 'export LUMEN_{k}="{v}"'),
-    ("csh", ".cshrc", 'setenv LUMEN_{k} "{v}"'),
-    ("fish", ".config/fish/config.fish", 'set -gx LUMEN_{k} "{v}"'),
+    ("zsh", ".zshrc", "export LUMEN_{k}='{v}'"),
+    ("csh", ".cshrc", "setenv LUMEN_{k} '{v}'"),
+    ("fish", ".config/fish/config.fish", "set -gx LUMEN_{k} '{v}'"),
 ])
 def test_rc_block_pairs_key_and_server_per_shell(home, lumen_server, shell_name, rc_file, line_fmt):
     port = lumen_server.server_address[1]
@@ -217,6 +219,76 @@ def test_rc_block_pairs_key_and_server_per_shell(home, lumen_server, shell_name,
     rc = (home / rc_file).read_text()
     assert line_fmt.format(k="API_KEY", v=TEST_KEY) in rc
     assert line_fmt.format(k="BASE_URL", v=f"http://127.0.0.1:{port}") in rc
+
+
+@pytest.mark.parametrize("field", ["interval", "expires_in"])
+def test_non_numeric_timing_values_are_not_evaluated(home, lumen_server, tmp_path, field):
+    port = lumen_server.server_address[1]
+    marker = tmp_path / "INJECTED"
+    lumen_server.auth_extra = {field: f"BASH_VERSINFO[$(touch {marker})]"}
+    lumen_server.token_queue = [
+        (400, {"error": "slow_down"}),
+        (200, {"access_token": TEST_KEY, "token_type": "Bearer", "approved_by": "a@b"}),
+    ] if field == "expires_in" else [
+        (200, {"access_token": TEST_KEY, "token_type": "Bearer", "approved_by": "a@b"}),
+    ]
+    r = run_script(home, port, args=["--no-opencode"], timeout=40)
+    assert r.returncode == 0, r.stderr
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("token", ['sk_x"; touch INJECTED; "', "sk_$(id)", "not_sk_token"])
+def test_malformed_access_token_rejected(home, lumen_server, token):
+    port = lumen_server.server_address[1]
+    lumen_server.token_queue = [
+        (200, {"access_token": token, "token_type": "Bearer", "approved_by": "a@b"}),
+    ]
+    r = run_script(home, port, args=["--no-opencode"])
+    assert r.returncode != 0
+    assert b"unexpected token response" in r.stderr
+    assert not (home / ".bashrc").exists()
+    assert not (home / ".config" / "lumen" / "keys.json").exists()
+
+
+def test_rc_block_values_are_literal_when_sourced(home, lumen_server):
+    port = lumen_server.server_address[1]
+    lumen_server.token_queue = [
+        (200, {"access_token": TEST_KEY, "token_type": "Bearer", "approved_by": "a@b"}),
+    ]
+    r = run_script(home, port, args=["--no-opencode"])
+    assert r.returncode == 0, r.stderr
+    out = subprocess.run(
+        ["bash", "-c", 'source "$1"; printf "%s\\n%s" "$LUMEN_API_KEY" "$LUMEN_BASE_URL"',
+         "_", str(home / ".bashrc")],
+        capture_output=True, check=True, env={"PATH": "/usr/bin:/bin"},
+    ).stdout.decode()
+    assert out == f"{TEST_KEY}\nhttp://127.0.0.1:{port}"
+
+
+@pytest.mark.parametrize("uri,opened", [
+    ("file:///etc/passwd", False),
+    ("https://evil.example/device?code=Q", False),
+    ("{server}/device?code=Q", True),
+])
+def test_verification_uri_complete_opened_only_on_server(home, lumen_server, tmp_path, uri, opened):
+    port = lumen_server.server_address[1]
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "opened"
+    for name in ("open", "xdg-open"):
+        fake = bindir / name
+        fake.write_text(f'#!/bin/sh\nprintf "%s\\n" "$1" >> {log}\n')
+        fake.chmod(0o755)
+    lumen_server.auth_extra = {
+        "verification_uri_complete": uri.format(server=f"http://127.0.0.1:{port}"),
+    }
+    lumen_server.token_queue = [
+        (200, {"access_token": TEST_KEY, "token_type": "Bearer", "approved_by": "a@b"}),
+    ]
+    r = run_script(home, port, args=["--no-opencode"],
+                   env_extra={"PATH": f"{bindir}:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"})
+    assert r.returncode == 0, r.stderr
+    assert log.exists() == opened
 
 
 def test_env_key_not_sent_to_different_server(home, lumen_server):
