@@ -149,7 +149,7 @@ gateway:
 
 ### Group Rules
 
-The chart emits a **version 3** `config.yaml`. Groups — memberships, coin pools, model grants, and login auto-join rules — are managed in the app (database), not in config. Auto-join rules are edited on each group's Rules tab; there is no `config.groupRules` value.
+The chart emits a **version 3** `config.yaml`. Groups — memberships, coin pools, and login auto-join rules — are managed in the app (database), not in config. Auto-join rules are edited on each group's Rules tab; there is no `config.groupRules` value.
 
 ### Models
 

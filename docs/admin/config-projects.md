@@ -32,6 +32,6 @@ Setting Max Coins from the Edit dialog also sets the starting balance (what an a
 
 ### Model Access and Groups
 
-Projects get model access the same way users do: every public (unowned) model is available to every project. An owned model is available only to its owner, which is always a user, so a model that a project needs must stay public. Acknowledgement is a model-level property (`needs_ack` — see [Configuring Models](config-models.md#access-control)); project members (owner, managers or users) grant acknowledgement on a project's behalf through the UI.
+Projects get model access the same way users do: every public (unowned) model is available to every project. An owned model is available only to its owner, which is always a user, so a model that a project needs must stay public. Acknowledgement is a model-level property (`needs_ack` — see [Configuring Models](config-models.md#access-control)); project managers or the owner grant acknowledgement on a project's behalf through the UI.
 
 > **Migration note:** older Lumen versions synced per-project budgets, model access, and groups from a `projects:` section in `config.yaml`. Rows created by that sync remain in effect in the database; the config section itself is no longer read.

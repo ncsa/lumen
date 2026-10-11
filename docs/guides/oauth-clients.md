@@ -8,7 +8,7 @@ Lumen mints every key itself; the plaintext is returned exactly once and Lumen k
 
 Best for anything without a browser callback. Follows the shape of RFC 8628 with small differences noted below.
 
-1. **Request a code** (form-encoded, rate limited 10/min):
+1. **Request a code** (form-encoded, rate limited 500/min per IP):
 
    ```
    POST /oauth/device_authorization

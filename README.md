@@ -9,7 +9,7 @@ Lumen is a self-hosted AI gateway. It provides a web chat interface and an OpenA
 - File and document uploads in chat (text, PDF, images — configurable per deployment)
 - Login via your institution's identity provider through CILogon
 - Token budgets per user and group — with optional auto-refresh
-- Ownership-based model access: models are available to everyone unless an owner is assigned, then only the owner and explicitly granted groups can use them; models can additionally require a one-time user acknowledgment
+- Ownership-based model access: models are available to everyone unless an owner is assigned, then only the owner can use them; models can additionally require a one-time user acknowledgment
 - Admin panel to manage users, groups, usage, and analytics charts
 - Institutional theming (built-in: `default`, `illinois`, `uic`, `uis`)
 - Round-robin load balancing across multiple model backends
@@ -316,10 +316,10 @@ Model access is **ownership-based** and managed in the web UI, not in `config.ya
 
 1. A `disabled` model or one past its `end_date` is blocked for everyone.
 2. A model **without an owner** is available to everyone (users and projects).
-3. An **owned** model is available only to its owner and to members of active groups the model has been granted to.
+3. An **owned** model is available only to its owner.
 4. A visible model with `needs_ack` or `early_access` requires a one-time acknowledgment before use.
 
-Admins assign the owner and group grants from the **Access** card on the model's detail page (`/models/<name>`): pick an owner via user search, or click **Make public** to clear it, and check the groups that should have access.
+Admins assign the owner from the **Access** card on the model's detail page (`/models/<name>`): pick an owner via the user typeahead, or click **Make public** to clear it.
 
 ### Groups and coin budgets
 
