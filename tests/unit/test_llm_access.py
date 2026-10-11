@@ -194,35 +194,6 @@ def test_needs_ack_allows_chat_with_consent(app, ids):
         assert get_model_access(entity_id, model_id) is True
 
 
-# ---------------------------------------------------------------------------
-# require_consent=False bypasses the consent gate for needs_ack models
-# ---------------------------------------------------------------------------
-
-def test_needs_ack_allows_access_when_require_consent_false(app, ids):
-    """require_consent=False skips the consent DB check — needs_ack treated as allowed."""
-    entity_id, model_id = ids
-    with app.app_context():
-        _set_needs_ack(app, model_id)
-        assert get_model_access(entity_id, model_id, require_consent=False) is True
-
-
-def test_needs_ack_still_blocked_when_require_consent_true(app, ids):
-    """require_consent=True (default) still gates on consent for needs_ack models."""
-    entity_id, model_id = ids
-    with app.app_context():
-        _set_needs_ack(app, model_id)
-        assert get_model_access(entity_id, model_id, require_consent=True) is False
-
-
-def test_blocked_model_still_blocked_when_require_consent_false(app, ids):
-    """require_consent=False never overrides a hard block (ownership)."""
-    entity_id, model_id = ids
-    with app.app_context():
-        owner_id = _make_entity()
-        set_model_owner(model_id, owner_id)
-        assert get_model_access(entity_id, model_id, require_consent=False) is False
-
-
 def test_has_model_consent_unknown_model_fails_closed(app, ids):
     entity_id, _ = ids
     with app.app_context():
@@ -494,19 +465,21 @@ def test_unacknowledged_model_is_counted_as_needs_consent(app, ids, test_model, 
         assert recorded == [("needs_consent", "chat", test_model["model_name"])]
 
 
-def test_consent_exempt_caller_on_a_blocked_model_is_no_access(app, ids, test_model, monkeypatch):
-    """With the consent gate off, a needs_ack model is not a consent rejection."""
+def test_acknowledged_blocked_model_is_counted_as_no_access(app, ids, test_model, monkeypatch):
+    """Consent on a model the entity cannot see is still a no_access rejection."""
+    from lumen.extensions import db
+    from lumen.models.entity_model_consent import EntityModelConsent
     from lumen.services.llm import check_coin_budget
+    from lumen.timeutils import utcnow
     entity_id, model_id = ids
     with app.app_context():
         _set_needs_ack(app, model_id)
+        db.session.add(EntityModelConsent(entity_id=entity_id, model_config_id=model_id, consented_at=utcnow()))
+        db.session.commit()
         owner_id = _make_entity()
         set_model_owner(model_id, owner_id)
         recorded = _recorder(monkeypatch)
-        check_coin_budget(
-            entity_id, model_id, require_consent=False, source="api",
-            model_name=test_model["model_name"],
-        )
+        check_coin_budget(entity_id, model_id, source="api", model_name=test_model["model_name"])
         assert recorded == [("no_access", "api", test_model["model_name"])]
 
 
