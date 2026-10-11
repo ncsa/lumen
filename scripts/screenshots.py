@@ -20,6 +20,8 @@ Env vars: BASE_URL (default http://localhost:5001), OUTPUT_DIR (default docs/img
 MODEL (default: first active model), CHROME_PATH (fallback browser executable).
 """
 import os
+from datetime import timedelta
+from decimal import Decimal
 
 from playwright.sync_api import sync_playwright
 from sqlalchemy import select
@@ -31,6 +33,7 @@ from lumen.models.entity import Entity
 from lumen.models.entity_manager import EntityManager
 from lumen.models.model_config import ModelConfig
 from lumen.services.crypto import hash_api_key
+from lumen.timeutils import utcnow
 
 BASE = os.environ.get("BASE_URL", "http://localhost:5001").rstrip("/")
 OUT = os.environ.get("OUTPUT_DIR", "docs/img")
@@ -91,6 +94,21 @@ def ensure_demo_data(app):
                                   key_hash=hash_api_key(key),
                                   key_hint=f"{key[:7]}...{key[-4:]}"))
             db.session.flush()
+
+        # An active and a revoked personal key, so the profile shot shows Revoke and the badge.
+        if dev:
+            now = utcnow()
+            for name, raw, revoked_at, requests, tokens_in, tokens_out, cost, last_used in (
+                ("my-script", "sk_myscript_0123456789abcd", None, 42, 9800, 3100, "0.84",
+                 now - timedelta(hours=2)),
+                ("old-notebook", "sk_oldnotebook_0123456789ab", now - timedelta(days=3), 17, 4200, 1300, "0.31",
+                 now - timedelta(days=4)),
+            ):
+                if not db.session.execute(select(APIKey).filter_by(entity_id=dev.id, name=name)).scalar_one_or_none():
+                    db.session.add(APIKey(entity_id=dev.id, created_by_entity_id=dev.id, name=name,
+                                          key_hash=hash_api_key(raw), key_hint=f"{raw[:7]}...{raw[-4:]}",
+                                          revoked_at=revoked_at, requests=requests, input_tokens=tokens_in,
+                                          output_tokens=tokens_out, cost=Decimal(cost), last_used_at=last_used))
 
         if dev and not db.session.execute(
             select(EntityManager).filter_by(user_entity_id=dev.id, project_entity_id=project.id)
@@ -176,8 +194,11 @@ def main():
         page.screenshot(path=f"{OUT}/chat.png")
         print("chat.png")
 
-        def shot(path, name, full=False):
+        def shot(path, name, full=False, check=None):
             page.goto(BASE + path, wait_until="networkidle")
+            if check:
+                page.check(check)
+                page.evaluate("document.activeElement.blur()")
             page.wait_for_timeout(1200)
             hide_chrome(page)
             page.screenshot(path=f"{OUT}/{name}.png", full_page=full)
@@ -189,7 +210,7 @@ def main():
         page.goto(BASE + "/projects", wait_until="networkidle")
         href = page.eval_on_selector("a[href*='/projects/']", "e => e.getAttribute('href')")
         shot(href, "project-detail", full=True)
-        shot("/profile", "profile", full=True)
+        shot("/profile", "profile", full=True, check="#show-revoked-cb")
 
         # Admin-only Access card on an owned model's detail page (cropped to the
         # card). The card renders only in admin mode, so flip the toggle first.

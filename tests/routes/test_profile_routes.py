@@ -1,5 +1,6 @@
 """Tests for the profile blueprint routes."""
 import json
+import re
 from datetime import datetime, timedelta
 from decimal import Decimal
 from http import HTTPStatus
@@ -176,23 +177,23 @@ def test_create_key_requires_login(client):
 
 
 # ---------------------------------------------------------------------------
-# delete_key
+# revoke_key
 # ---------------------------------------------------------------------------
 
-def test_delete_key_success(app, auth_client, test_user):
+def test_revoke_key_success(app, auth_client, test_user):
     key = "sk_" + "d" * 32
     create_resp = auth_client.post(
         "/profile/keys",
-        data=json.dumps({"name": "to delete", "key": key}),
+        data=json.dumps({"name": "to revoke", "key": key}),
         content_type="application/json",
     )
     kid = create_resp.get_json()["id"]
 
-    resp = auth_client.delete(f"/profile/keys/{kid}")
+    resp = auth_client.post(f"/profile/keys/{kid}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
 
 
-def _make_personal_key(app, entity_id, raw, revoked_at=None):
+def _make_personal_key(app, entity_id, raw, revoked_at=None, revoked_by=None):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.api_key import APIKey
@@ -200,6 +201,7 @@ def _make_personal_key(app, entity_id, raw, revoked_at=None):
         ak = APIKey(
             entity_id=entity_id, created_by_entity_id=entity_id, name="usage key",
             key_hash=hash_api_key(raw), key_hint=f"{raw[:8]}...{raw[-4:]}", revoked_at=revoked_at,
+            revoked_by_entity_id=revoked_by,
             requests=9, input_tokens=300, output_tokens=120, audio_seconds=3, cost=Decimal("2.250000"),
         )
         db.session.add(ak)
@@ -216,9 +218,9 @@ def _personal_key_state(app, kid):
         return k.revoked_at, k.revoked_by_entity_id, k.requests, k.input_tokens, k.output_tokens, k.audio_seconds, k.cost
 
 
-def test_delete_key_soft_deletes(app, auth_client, test_user):
+def test_revoke_key_sets_revoked_at(app, auth_client, test_user):
     kid = _make_personal_key(app, test_user["id"], "sk_" + "s" * 32)
-    resp = auth_client.delete(f"/profile/keys/{kid}")
+    resp = auth_client.post(f"/profile/keys/{kid}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     revoked_at, revoked_by, *counters = _personal_key_state(app, kid)
     assert abs(utcnow() - revoked_at) < timedelta(minutes=1)
@@ -226,12 +228,47 @@ def test_delete_key_soft_deletes(app, auth_client, test_user):
     assert counters == [9, 300, 120, 3, Decimal("2.250000")]
 
 
-def test_delete_inactive_key_is_noop(app, auth_client, test_user):
+def test_revoke_revoked_key_is_noop(app, auth_client, test_user):
     kid = _make_personal_key(app, test_user["id"], "sk_" + "i" * 32, revoked_at=datetime(2026, 9, 2, 8, 0))
     before = _personal_key_state(app, kid)
-    resp = auth_client.delete(f"/profile/keys/{kid}")
+    resp = auth_client.post(f"/profile/keys/{kid}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     assert _personal_key_state(app, kid) == before
+
+
+def test_profile_page_uses_revoke_wording(app, auth_client, test_user):
+    _make_personal_key(app, test_user["id"], "sk_" + "w" * 32, revoked_at=datetime(2026, 9, 2, 8, 0))
+    html = auth_client.get("/profile").get_data(as_text=True)
+    assert "Show revoked keys" in html
+    assert 'revoke-key-btn' in html and '>Revoke</button>' in html
+    assert ">revoked</span>" in html and 'data-bs-title="Revoked ${' in html
+    assert 'revoked_at: "2026-09-02T08:00:00Z"' in html
+    assert "Show deleted keys" not in html
+    assert "delete-key-btn" not in html and ">Delete</button>" not in html
+
+
+def test_profile_badge_names_revoker(app, auth_client, test_user):
+    kid = _make_personal_key(app, test_user["id"], "sk_" + "n" * 32)
+    assert auth_client.post(f"/profile/keys/{kid}/revoke").status_code == HTTPStatus.NO_CONTENT
+    html = auth_client.get("/profile").get_data(as_text=True)
+    assert re.search(r"id: " + str(kid) + r",.*?revoked_by: \"Test User\"", html, re.S)
+    assert "${k.revoked_by ? ' by ' + escHtml(k.revoked_by) : ''}" in html
+
+
+def test_profile_badge_without_revoker_has_no_name(app, auth_client, test_user):
+    kid = _make_personal_key(app, test_user["id"], "sk_" + "m" * 32, revoked_at=datetime(2026, 9, 2, 8, 0))
+    html = auth_client.get("/profile").get_data(as_text=True)
+    row = re.search(r"\{\s*id: " + str(kid) + r",.*?\}", html, re.S)
+    assert row is not None and "revoked_by: null" in row.group(0)
+
+
+def test_repeat_revoke_keeps_first_revoker(app, auth_client, test_user, admin_user):
+    kid = _make_personal_key(app, test_user["id"], "sk_" + "r" * 32,
+                             revoked_at=datetime(2026, 9, 2, 8, 0), revoked_by=admin_user["id"])
+    before = _personal_key_state(app, kid)
+    assert auth_client.post(f"/profile/keys/{kid}/revoke").status_code == HTTPStatus.NO_CONTENT
+    assert _personal_key_state(app, kid) == before
+    assert before[:2] == (datetime(2026, 9, 2, 8, 0), admin_user["id"])
 
 
 def test_revoked_key_is_rejected(app, client, auth_client, test_user):
@@ -239,13 +276,13 @@ def test_revoked_key_is_rejected(app, client, auth_client, test_user):
     kid = _make_personal_key(app, test_user["id"], raw)
     headers = {"Authorization": f"Bearer {raw}"}
     assert client.get("/v1/models", headers=headers).status_code == HTTPStatus.OK
-    resp = auth_client.delete(f"/profile/keys/{kid}")
+    resp = auth_client.post(f"/profile/keys/{kid}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     assert client.get("/v1/models", headers=headers).status_code == HTTPStatus.UNAUTHORIZED
 
 
-def test_delete_key_forbidden(app, auth_client, admin_user):
-    """Key owned by admin_user cannot be deleted by auth_client (test_user)."""
+def test_revoke_key_forbidden(app, auth_client, admin_user):
+    """Key owned by admin_user cannot be revoked by auth_client (test_user)."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.api_key import APIKey
@@ -262,16 +299,28 @@ def test_delete_key_forbidden(app, auth_client, admin_user):
         db.session.refresh(ak)
         kid = ak.id
 
-    resp = auth_client.delete(f"/profile/keys/{kid}")
+    resp = auth_client.post(f"/profile/keys/{kid}/revoke")
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_delete_key_not_found(auth_client):
-    resp = auth_client.delete("/profile/keys/999999")
+def test_revoke_key_not_found(auth_client):
+    resp = auth_client.post("/profile/keys/999999/revoke")
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
-def test_delete_key_requires_login(client):
+def test_revoke_key_requires_login(client):
+    resp = client.post("/profile/keys/1/revoke", follow_redirects=False)
+    assert resp.status_code == HTTPStatus.FOUND
+
+
+def test_old_delete_key_url_returns_405(app, auth_client, test_user):
+    kid = _make_personal_key(app, test_user["id"], "sk_" + "q" * 32)
+    resp = auth_client.delete(f"/profile/keys/{kid}")
+    assert resp.status_code == HTTPStatus.METHOD_NOT_ALLOWED
+    assert _personal_key_state(app, kid)[0] is None
+
+
+def test_old_delete_key_url_requires_login(client):
     resp = client.delete("/profile/keys/1", follow_redirects=False)
     assert resp.status_code == HTTPStatus.FOUND
 
@@ -339,10 +388,11 @@ def test_rotate_key_forbidden_for_other_user(app, auth_client, admin_user):
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_rotate_key_inactive_returns_409(app, auth_client, test_user):
+def test_rotate_revoked_key_returns_409(app, auth_client, test_user):
     kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "i" * 32, revoked_at=datetime(2026, 9, 2, 8, 0))
     resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": "sk_" + "j" * 32})
     assert resp.status_code == HTTPStatus.CONFLICT
+    assert resp.get_json()["error"] == "Key is revoked"
 
 
 @pytest.mark.parametrize("payload", [

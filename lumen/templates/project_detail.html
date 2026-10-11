@@ -227,13 +227,13 @@
 </div>
 {% if key_limit_reached %}
 <p id="key-limit-note" class="text-muted small mt-2 mb-0">
-  You already have an API key for this project. Users can have only one active key; delete it to create a new one.
+  You already have an API key for this project. Users can have only one active key; revoke it to create a new one.
 </p>
 {% endif %}
 <div class="d-flex justify-content-between align-items-center mt-2 mb-1 flex-wrap gap-2">
   <div class="d-flex align-items-center gap-1">
-    <input type="checkbox" id="show-deleted-cb" class="form-check-input mt-0" aria-label="Show deleted keys">
-    <label for="show-deleted-cb" class="form-check-label small">Show deleted keys</label>
+    <input type="checkbox" id="show-revoked-cb" class="form-check-input mt-0" aria-label="Show revoked keys">
+    <label for="show-revoked-cb" class="form-check-label small">Show revoked keys</label>
   </div>
   <div class="d-flex align-items-center gap-2 flex-grow-1 flex-sm-grow-0">
     <label for="key-search" class="text-muted small mb-0">Search:</label>
@@ -489,20 +489,24 @@ const KEY_ROWS = [
     cost: {{ "%.6f"|format(key.cost|float) }},
     last_used: {{ key.last_used_at.strftime('%Y-%m-%dT%H:%M:%SZ') | tojson if key.last_used_at else 'null' }},
     revoked_at: {{ key.revoked_at.strftime('%Y-%m-%dT%H:%M:%SZ') | tojson if key.revoked_at else 'null' }},
+    revoked_by: {{ key_revokers.get(key.id) | tojson }},
     can_rotate: {{ (key.id in rotatable_key_ids) | tojson }},
   },
   {% endfor %}
 ];
 
 const SHOW_KEY_CREATORS = {{ show_key_creators | tojson }};
+function revokedBadge(k) {
+  return `<span class="badge bg-secondary" tabindex="0" data-bs-toggle="tooltip" data-bs-title="Revoked ${escHtml(fmtDate(k.revoked_at).text)}${k.revoked_by ? ' by ' + escHtml(k.revoked_by) : ''}">revoked</span>`;
+}
 const keyState = { col: 'name', dir: 'asc' };
-let keyFilter = '', showDeleted = false;
+let keyFilter = '', showRevoked = false;
 const keyTbody = document.getElementById('key-tbody');
 const keyEmpty = document.getElementById('key-empty');
 
 function renderKeys() {
   const f = keyFilter.toLowerCase();
-  let rows = KEY_ROWS.filter(k => (showDeleted || !k.revoked_at) && (!f || k.name.toLowerCase().includes(f) || k.created_by.toLowerCase().includes(f)));
+  let rows = KEY_ROWS.filter(k => (showRevoked || !k.revoked_at) && (!f || k.name.toLowerCase().includes(f) || k.created_by.toLowerCase().includes(f)));
   rows.sort((a, b) => {
     let av, bv;
     if (keyState.col === 'name' || keyState.col === 'created_by') { av = a[keyState.col].toLowerCase(); bv = b[keyState.col].toLowerCase(); }
@@ -519,14 +523,14 @@ function renderKeys() {
     keyEmpty.hidden = true;
     keyTbody.innerHTML = rows.map(k => {
       const dt = fmtDate(k.last_used);
-      const deletedClass = !k.revoked_at ? '' : ' class="table-secondary text-decoration-line-through text-muted"';
+      const revokedClass = !k.revoked_at ? '' : ' class="table-secondary text-decoration-line-through text-muted"';
       const rotate = k.can_rotate
         ? `<button class="btn btn-sm btn-outline-secondary rotate-key-btn" data-id="${k.id}" data-name="${escHtml(k.name)}" aria-label="Rotate key ${escHtml(k.name)}">Rotate</button> `
         : '';
       const action = !k.revoked_at
-        ? `${rotate}<button class="btn btn-sm btn-outline-danger delete-key-btn" data-id="${k.id}" aria-label="Delete key ${escHtml(k.name)}">Delete</button>`
-        : `<span class="badge bg-secondary">deleted</span>`;
-      return `<tr${deletedClass}>
+        ? `${rotate}<button class="btn btn-sm btn-outline-danger revoke-key-btn" data-id="${k.id}" aria-label="Revoke key ${escHtml(k.name)}">Revoke</button>`
+        : revokedBadge(k);
+      return `<tr${revokedClass}>
         <td><span data-bs-toggle="tooltip" data-bs-title="${escHtml(k.hint)}">${escHtml(k.name)}</span></td>
         ${SHOW_KEY_CREATORS ? `<td>${escHtml(k.created_by)}</td>` : ''}
         <td class="text-end">${k.requests.toLocaleString()}</td>
@@ -537,12 +541,12 @@ function renderKeys() {
       </tr>`;
     }).join('');
     keyTbody.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
-    keyTbody.querySelectorAll('.delete-key-btn').forEach(btn => {
+    keyTbody.querySelectorAll('.revoke-key-btn').forEach(btn => {
       btn.addEventListener('click', async function () {
-        if (!await appConfirm("Delete this API key? Usage history is kept.", { title: "Delete API Key", okLabel: "Delete", okClass: "btn-danger" })) return;
-        const resp = await fetch("/projects/" + PROJECT_ID + "/keys/" + this.dataset.id, { method: "DELETE", headers: { "X-CSRFToken": csrfToken } });
+        if (!await appConfirm("Revoke this API key? It stops working immediately. Its usage history stays visible under Show revoked keys.", { title: "Revoke API Key", okLabel: "Revoke", okClass: "btn-danger" })) return;
+        const resp = await fetch("/projects/" + PROJECT_ID + "/keys/" + this.dataset.id + "/revoke", { method: "POST", headers: { "X-CSRFToken": csrfToken } });
         if (resp.ok) location.reload();
-        else appAlert("Failed to delete key.");
+        else appAlert("Failed to revoke key.");
       });
     });
     keyTbody.querySelectorAll('.rotate-key-btn').forEach(btn => {
@@ -552,8 +556,8 @@ function renderKeys() {
 }
 
 makeSortable('key-table', keyState, new Set(['requests','tokens','cost','last_used']), renderKeys);
-const showDeletedCb = document.getElementById('show-deleted-cb');
-showDeletedCb.addEventListener('change', () => { showDeleted = showDeletedCb.checked; renderKeys(); });
+const showRevokedCb = document.getElementById('show-revoked-cb');
+showRevokedCb.addEventListener('change', () => { showRevoked = showRevokedCb.checked; renderKeys(); });
 let keyDebounce;
 document.getElementById('key-search').addEventListener('input', e => {
   clearTimeout(keyDebounce);

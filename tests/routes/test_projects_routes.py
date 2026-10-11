@@ -936,32 +936,42 @@ def test_created_by_null_for_keys_made_without_a_creator(app, service_project, m
         assert key.created_by_entity_id is None
 
 
+def _delete_entity_enforcing_fks(app, entity_id):
+    """Delete an entity with SQLite FK enforcement on, so ON DELETE SET NULL runs.
+
+    SQLite enables FKs per connection, and the PRAGMA is ignored inside an open
+    transaction. Use a dedicated connection, check the PRAGMA took effect, and
+    invalidate the connection afterwards so enforcement can never leak into the
+    pooled connections later tests (and the autouse cleanup) reuse.
+    """
+    with app.app_context():
+        from sqlalchemy import delete
+
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        conn = db.engine.connect()
+        try:
+            conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+            assert conn.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1
+            conn.execute(delete(Entity).where(Entity.id == entity_id))
+            conn.commit()
+        finally:
+            conn.invalidate()
+            conn.close()
+
+
 def test_deleting_creator_keeps_key_with_null_creator(app, managed_auth_client, managed_project, test_user):
     resp = managed_auth_client.post(
         f"/projects/{managed_project['id']}/keys",
         json={"name": "orphan", "key": "sk_orphcreator123"},
     )
     assert resp.status_code == HTTPStatus.CREATED
+    _delete_entity_enforcing_fks(app, test_user["id"])
     with app.app_context():
-        from sqlalchemy import delete, text
-
         from lumen.extensions import db
         from lumen.models.api_key import APIKey
-        from lumen.models.entity import Entity
-        # SQLite only enforces FKs per connection; enable it to exercise the
-        # ON DELETE SET NULL clause the schema actually carries. The session
-        # fixture keeps this connection pooled for later tests, so the finally
-        # must hand it back with enforcement off, as it was found.
-        try:
-            db.session.execute(text("PRAGMA foreign_keys=ON"))
-            db.session.execute(delete(Entity).where(Entity.id == test_user["id"]))
-            db.session.commit()
-            key = db.session.execute(select(APIKey).filter_by(entity_id=managed_project["id"], name="orphan")).scalar_one()
-            assert key.created_by_entity_id is None
-        finally:
-            db.session.rollback()
-            db.session.execute(text("PRAGMA foreign_keys=OFF"))
-            db.session.commit()
+        key = db.session.execute(select(APIKey).filter_by(entity_id=managed_project["id"], name="orphan")).scalar_one()
+        assert key.created_by_entity_id is None
 
 
 def test_detail_shows_key_creator_and_unknown_for_legacy(managed_auth_client, managed_project, make_api_key):
@@ -1009,9 +1019,9 @@ def test_detail_key_table_has_sortable_created_by_column(managed_auth_client, ma
     assert "'requests','tokens','cost','last_used'" in html  # created_by not numeric → asc first click
 
 
-def test_delete_key_forbidden_for_non_manager(auth_client, service_project, make_api_key):
-    key_id, _ = make_api_key(service_project["id"], raw_key="sk_delkey1234567890", name="k")
-    resp = auth_client.delete(f"/projects/{service_project['id']}/keys/{key_id}")
+def test_revoke_key_forbidden_for_non_manager(auth_client, service_project, make_api_key):
+    key_id, _ = make_api_key(service_project["id"], raw_key="sk_revkey1234567890", name="k")
+    resp = auth_client.post(f"/projects/{service_project['id']}/keys/{key_id}/revoke")
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
@@ -1024,9 +1034,9 @@ def _key_state(app, key_id):
         return k.revoked_at, k.revoked_by_entity_id, k.requests, k.input_tokens, k.output_tokens, k.audio_seconds, k.cost
 
 
-def test_delete_key_soft_deletes(app, managed_auth_client, managed_project, test_user, make_created_key):
-    key_id = make_created_key(managed_project["id"], test_user["id"], "sk_todelete12345678")
-    resp = managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
+def test_revoke_key_sets_revoked_at(app, managed_auth_client, managed_project, test_user, make_created_key):
+    key_id = make_created_key(managed_project["id"], test_user["id"], "sk_torevoke12345678")
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     revoked_at, revoked_by, *counters = _key_state(app, key_id)
     assert abs(utcnow() - revoked_at) < timedelta(minutes=1)
@@ -1037,7 +1047,7 @@ def test_delete_key_soft_deletes(app, managed_auth_client, managed_project, test
 def test_manager_revoking_member_key_records_revoker(app, managed_auth_client, managed_project, test_user,
                                                      second_user, make_created_key):
     key_id = make_created_key(managed_project["id"], second_user["id"], "sk_memberkey1234567")
-    resp = managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     _, revoked_by, *_ = _key_state(app, key_id)
     assert revoked_by == test_user["id"]
@@ -1046,25 +1056,15 @@ def test_manager_revoking_member_key_records_revoker(app, managed_auth_client, m
 def test_deleting_revoker_keeps_key_with_null_revoker(app, managed_auth_client, managed_project, test_user,
                                                       second_user, make_created_key):
     key_id = make_created_key(managed_project["id"], second_user["id"], "sk_orphrevoker1234")
-    managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    _delete_entity_enforcing_fks(app, test_user["id"])
     with app.app_context():
-        from sqlalchemy import delete, text
-
         from lumen.extensions import db
         from lumen.models.api_key import APIKey
-        from lumen.models.entity import Entity
-        # Same pattern as test_deleting_creator_keeps_key_with_null_creator.
-        try:
-            db.session.execute(text("PRAGMA foreign_keys=ON"))
-            db.session.execute(delete(Entity).where(Entity.id == test_user["id"]))
-            db.session.commit()
-            key = db.session.get(APIKey, key_id)
-            assert key is not None and key.revoked_at is not None
-            assert key.revoked_by_entity_id is None
-        finally:
-            db.session.rollback()
-            db.session.execute(text("PRAGMA foreign_keys=OFF"))
-            db.session.commit()
+        key = db.session.get(APIKey, key_id)
+        assert key is not None and key.revoked_at is not None
+        assert key.revoked_by_entity_id is None
 
 
 def test_revoked_project_key_is_rejected(client, managed_auth_client, managed_project, test_user, make_created_key):
@@ -1072,22 +1072,67 @@ def test_revoked_project_key_is_rejected(client, managed_auth_client, managed_pr
     key_id = make_created_key(managed_project["id"], test_user["id"], raw)
     headers = {"Authorization": f"Bearer {raw}"}
     assert client.get("/v1/models", headers=headers).status_code == HTTPStatus.OK
-    managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
+    managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
     assert client.get("/v1/models", headers=headers).status_code == HTTPStatus.UNAUTHORIZED
 
 
-def test_delete_inactive_key_is_noop(app, managed_auth_client, managed_project, test_user, make_created_key):
+def test_revoke_revoked_key_is_noop(app, managed_auth_client, managed_project, test_user, make_created_key):
     key_id = make_created_key(managed_project["id"], test_user["id"], "sk_inactive12345678",
                               revoked_at=datetime(2026, 9, 3, 8, 0))
     before = _key_state(app, key_id)
-    resp = managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     assert _key_state(app, key_id) == before
 
 
-def test_deleted_key_still_listed_as_inactive(managed_auth_client, managed_project, make_api_key):
+def test_project_page_uses_revoke_wording(managed_auth_client, managed_project, make_api_key):
+    key_id, _ = make_api_key(managed_project["id"], raw_key="sk_wording12345678", name="k")
+    managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
+    html = managed_auth_client.get(f"/projects/{managed_project['id']}").get_data(as_text=True)
+    assert "Show revoked keys" in html
+    assert 'revoke-key-btn' in html and '>Revoke</button>' in html
+    assert ">revoked</span>" in html and 'data-bs-title="Revoked ${' in html
+    assert "Show deleted keys" not in html
+    assert "delete-key-btn" not in html and ">Delete</button>" not in html
+
+
+def _key_row(client, project_id, key_id):
+    html = client.get(f"/projects/{project_id}").get_data(as_text=True)
+    row = re.search(r"\{\s*id: " + str(key_id) + r",.*?\}", html, re.S)
+    assert row is not None
+    return html, row.group(0)
+
+
+def test_revoked_badge_names_manager_revoker(managed_auth_client, managed_project, second_user, make_created_key):
+    key_id = make_created_key(managed_project["id"], second_user["id"], "sk_badgerevoker1234")
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    html, row = _key_row(managed_auth_client, managed_project["id"], key_id)
+    assert 'revoked_by: "Test User"' in row
+    assert "${k.revoked_by ? ' by ' + escHtml(k.revoked_by) : ''}" in html
+
+
+def test_revoked_badge_without_revoker_has_no_name(managed_auth_client, managed_project, second_user, make_created_key):
+    key_id = make_created_key(managed_project["id"], second_user["id"], "sk_badgenobody1234",
+                              revoked_at=datetime(2026, 9, 3, 8, 0))
+    _, row = _key_row(managed_auth_client, managed_project["id"], key_id)
+    assert "revoked_by: null" in row
+
+
+def test_repeat_revoke_keeps_first_revoker(app, managed_auth_client, managed_project, test_user, second_user,
+                                           make_created_key):
+    key_id = make_created_key(managed_project["id"], test_user["id"], "sk_repeatrevoke1234",
+                              revoked_at=datetime(2026, 9, 3, 8, 0), revoked_by=second_user["id"])
+    before = _key_state(app, key_id)
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    assert _key_state(app, key_id) == before
+    assert before[:2] == (datetime(2026, 9, 3, 8, 0), second_user["id"])
+
+
+def test_revoked_key_still_listed(managed_auth_client, managed_project, make_api_key):
     key_id, _ = make_api_key(managed_project["id"], raw_key="sk_listed12345678", name="gone-key")
-    managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
+    managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
     html = managed_auth_client.get(f"/projects/{managed_project['id']}").get_data(as_text=True)
     row = re.search(r"\{\s*id: " + str(key_id) + r",.*?\}", html, re.S)
     assert row is not None
@@ -1098,7 +1143,7 @@ def test_deleted_key_still_listed_as_inactive(managed_auth_client, managed_proje
 @pytest.fixture
 def make_created_key(app):
     """Factory: create a key on a project with a given creator and usage stats. Returns key id."""
-    def _make(sid, creator_id, raw_key, revoked_at=None):
+    def _make(sid, creator_id, raw_key, revoked_at=None, revoked_by=None):
         with app.app_context():
             from lumen.extensions import db
             from lumen.models.api_key import APIKey
@@ -1106,7 +1151,7 @@ def make_created_key(app):
             key = APIKey(
                 entity_id=sid, created_by_entity_id=creator_id, name="rot-key",
                 key_hash=hash_api_key(raw_key), key_hint=f"{raw_key[:7]}...{raw_key[-4:]}", revoked_at=revoked_at,
-                requests=9, input_tokens=300, output_tokens=120, audio_seconds=3,
+                revoked_by_entity_id=revoked_by, requests=9, input_tokens=300, output_tokens=120, audio_seconds=3,
                 cost=Decimal("2.250000"), last_used_at=datetime(2026, 9, 2, 8, 0),
                 created_at=datetime(2026, 8, 2, 7, 0),
             )
@@ -1390,14 +1435,14 @@ def test_project_key_lists_accessible_model(
     assert test_model["model_name"] in ids
 
 
-def test_project_key_blocked_after_soft_delete(
+def test_project_key_blocked_after_revoke(
     client, managed_auth_client, managed_project, test_model_endpoint, unlimited_pool
 ):
-    """Key deactivated via DELETE /projects/<sid>/keys/<kid> returns 401."""
+    """Key revoked via POST /projects/<sid>/keys/<kid>/revoke returns 401."""
     # Create key
     resp = managed_auth_client.post(
         f"/projects/{managed_project['id']}/keys",
-        json={"name": "del-key", "key": "sk_deletekey12345678"},
+        json={"name": "rev-key", "key": "sk_revokekey12345678"},
     )
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.get_json()
@@ -1407,8 +1452,8 @@ def test_project_key_blocked_after_soft_delete(
     resp = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == HTTPStatus.OK
 
-    # Soft-delete the key
-    resp = managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{kid}")
+    # Revoke the key
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
 
     # Now it should be rejected
@@ -1684,7 +1729,7 @@ def test_user_can_have_only_one_active_key(app, user_auth_client, user_project):
     assert second.status_code == HTTPStatus.CONFLICT
     assert second.get_json()["error"] == "Users can have only one API key"
 
-    resp = user_auth_client.delete(f"{url}/{first.get_json()['id']}")
+    resp = user_auth_client.post(f"{url}/{first.get_json()['id']}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     with app.app_context():
         from lumen.extensions import db
@@ -1720,9 +1765,9 @@ def test_manager_can_create_many_keys(managed_auth_client, managed_project):
     assert resp.status_code == HTTPStatus.CREATED
 
 
-def test_user_deleting_another_members_key_returns_404(app, user_auth_client, user_project, make_api_key):
+def test_user_revoking_another_members_key_returns_404(app, user_auth_client, user_project, make_api_key):
     kid, _ = make_api_key(user_project["id"], raw_key="sk_ownerkey_abcdef", name="owner-key")
-    resp = user_auth_client.delete(f"/projects/{user_project['id']}/keys/{kid}")
+    resp = user_auth_client.post(f"/projects/{user_project['id']}/keys/{kid}/revoke")
     assert resp.status_code == HTTPStatus.NOT_FOUND
     with app.app_context():
         from lumen.extensions import db
@@ -1730,10 +1775,22 @@ def test_user_deleting_another_members_key_returns_404(app, user_auth_client, us
         assert db.session.get(APIKey, kid) is not None
 
 
-def test_manager_can_delete_any_key(app, managed_auth_client, managed_project, make_api_key):
+def test_manager_can_revoke_any_key(app, managed_auth_client, managed_project, make_api_key):
     kid, _ = make_api_key(managed_project["id"], raw_key="sk_ownerkey_abcdef", name="owner-key")
-    resp = managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{kid}")
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
+
+
+def test_old_delete_key_url_returns_405(app, managed_auth_client, managed_project, make_api_key):
+    kid, _ = make_api_key(managed_project["id"], raw_key="sk_olddelete_abcdef", name="old-url-key")
+    resp = managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{kid}")
+    assert resp.status_code == HTTPStatus.METHOD_NOT_ALLOWED
+    assert _key_state(app, kid)[0] is None
+
+
+def test_old_delete_key_url_requires_login(client):
+    resp = client.delete("/projects/1/keys/1", follow_redirects=False)
+    assert resp.status_code == HTTPStatus.FOUND
 
 
 def _keys_on_page(client, project_id):
@@ -1826,6 +1883,7 @@ def test_demoting_manager_with_several_active_keys_returns_409(app, owner_auth_c
     resp = owner_auth_client.patch(url, json={"role": "user"})
     assert resp.status_code == HTTPStatus.CONFLICT
     assert "2 active API keys" in resp.get_json()["error"]
+    assert "revoke the extra keys first" in resp.get_json()["error"]
     assert _member_role(app, owned_project["id"], second_user["id"]) == "manager"
 
 
@@ -2012,9 +2070,9 @@ def test_new_key_button_disabled_once_user_has_a_key(user_auth_client, user_proj
     resp = user_auth_client.post(f"/projects/{user_project['id']}/keys", json={"name": "k", "key": "sk_onlykey_0001"})
     soup, btn = new_key_button()
     assert btn.has_attr("disabled")
-    assert "only one active key" in soup.find(id=btn["aria-describedby"]).get_text()
+    assert "only one active key; revoke it to create a new one" in soup.find(id=btn["aria-describedby"]).get_text()
 
-    user_auth_client.delete(f"/projects/{user_project['id']}/keys/{resp.get_json()['id']}")
+    user_auth_client.post(f"/projects/{user_project['id']}/keys/{resp.get_json()['id']}/revoke")
     _, btn = new_key_button()
     assert not btn.has_attr("disabled")
 
