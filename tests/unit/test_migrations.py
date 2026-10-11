@@ -24,8 +24,11 @@ def test_single_migration_head():
 
 def test_migration_revision_ids_are_unique():
     """Alembic silently keeps one of two files sharing a revision id; catch it here."""
+    versions = Path(__file__).resolve().parents[2] / "migrations" / "versions"
+    paths = sorted(versions.glob("*.py"))
+    assert paths, f"no migrations found in {versions}"
     revisions = {}
-    for path in sorted(Path("migrations/versions").glob("*.py")):
+    for path in paths:
         for node in ast.parse(path.read_text()).body:
             if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "revision" for t in node.targets):
                 revisions.setdefault(node.value.value, []).append(path.name)
