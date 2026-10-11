@@ -75,7 +75,7 @@ Following rules are here to help the AI avoid the same mistakes again:
 - When bumping the version in pyproject.toml, also run `uv lock` to update uv.lock.
 - When bumping the version for a release, also update `version` and `appVersion` in chart/Chart.yaml to match.
 - When cutting a release, first pull the latest dependencies (`uv lock --upgrade`) and then run the full test suite (`uv run pytest`) before tagging — upgraded dependencies can introduce breaking changes, so the release must not go out unless the tests pass.
-- When uploading the changelog for a release, add Contributors at the bottom as a list ith link to their github profile, icon and name.
+- When uploading the changelog for a release, add Contributors at the bottom as a list with a link to their github profile, icon and name.
 - For local testing without OAuth or a real LLM: set `app.dev_user` in config.yaml and use `uv run dummy` (dummy backend on port 9999). See the "Local Development" section in README.md.
 - Keep the help docs in `docs/` up to date: any change to a user-facing screen (chat, profile, usage, models, model detail, projects, admin) must be reflected in the matching page under `docs/guides/`, `docs/models/`, `docs/projects/`, or `docs/admin/`, including re-capturing affected screenshots (see next rule). Schema changes go in `docs/dbschema.md` (see below).
 - New documentation added to docs, should also be reflected in mkdocs.yml

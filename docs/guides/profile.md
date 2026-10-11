@@ -93,7 +93,7 @@ Keys requested through a CLI or web app via [OAuth](./oauth-clients.md) show tha
 | Column | Description |
 |--------|------------|
 | **Name** | The label you chose |
-| **Hint** | First 4 + last 4 characters of the key, for identification |
+| **Hint** | First 7 + last 4 characters of the key, for identification |
 | **Requests** | Total API calls made with this key |
 | **Tokens** | Total input + output tokens |
 | **Coins** | Total coins spent |

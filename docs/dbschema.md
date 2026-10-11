@@ -329,14 +329,14 @@ Unified table for both human users (authenticated via OAuth) and programmatic pr
 
 ## api_keys
 
-API keys that entities (users or projects) use to authenticate against the proxy API. Keys are stored only as a bcrypt hash; the plaintext is shown once at creation.
+API keys that entities (users or projects) use to authenticate against the proxy API. Keys are stored only as an HMAC-SHA256 hash; the plaintext is shown once at creation.
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `id` | Integer | NO | Primary key |
 | `entity_id` | Integer (FK → entities) | NO | The entity that owns this key. Cascades on delete. |
 | `name` | String(128) | NO | Human-readable label for the key (e.g., "Production bot") |
-| `key_hash` | String(64) | NO | SHA-256 hash of the raw key. Unique. |
+| `key_hash` | String(64) | NO | HMAC-SHA256 hash of the raw key. Unique. |
 | `key_hint` | String(32) | YES | Last few characters of the raw key shown in the UI for identification |
 | `revoked_at` | DateTime | YES | UTC time the key was revoked; null while the key is usable. Approximate (`last_used_at`, else `created_at`, else the migration time) for keys revoked before this column existed. |
 | `requests` | Integer | NO | Cumulative request count made with this key |
@@ -846,7 +846,7 @@ Independently, if the model has `needs_ack = true` or `early_access = true`, an 
 
 When determining an entity's coin pool, Lumen evaluates in this priority order:
 
-1. **Entity-level** `entity_limits` row → if present, use it (wins over all group limits). Set via `users:` in `config.yaml`. `max_coins = 0` blocks the entity; `max_coins = -2` grants unlimited access.
+1. **Entity-level** `entity_limits` row → if present, use it (wins over all group limits). Set by an admin on the user or project detail page. `max_coins = 0` blocks the entity; `max_coins = -2` grants unlimited access.
 2. **Group-level** `group_limits` rows → if no entity limit exists, the most generous group limit is used. `-2` (unlimited) beats any positive value; among positive values, the highest `max_coins` wins.
 3. **No limit** → access is denied (entity cannot use any model).
 

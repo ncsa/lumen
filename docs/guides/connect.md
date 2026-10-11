@@ -18,6 +18,8 @@ Lumen exposes an **OpenAI-compatible API**, so most tools that speak to OpenAI c
 | `-s`, `--server URL` | Server to log in to (default: `$LUMEN_BASE_URL`, else production; plain `http` only for localhost dev servers) |
 | `-k`, `--keyname NAME` | Name for the requested key (default `opencode`) |
 | `--author LABEL` | Label shown to the approver (default `$USER`) |
+| `--client-id ID` | `client_id` sent to Lumen (default `lumen-cli`) |
+| `--opencode` | Sync the model catalog into `opencode.json` (default) |
 | `--no-opencode` | Only log in and store the key |
 | `--relogin` | Request a new key even if one is stored; the new key always replaces the stored one |
 | `--no-aliases` | Skip model aliases when syncing |

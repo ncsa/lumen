@@ -55,8 +55,8 @@ input and output tokens, their total, audio seconds, coins spent (`cost`), coins
 
 `last_used_at` is `null` for a key that has never been used. `coins_available` is the coin balance
 of the account that owns the key, so it is shared with that account's other keys and browser chat;
-`-2` means the account has an unlimited coin pool and `null` that no pool is configured or that
-the account is disabled. This endpoint does not add to the request count. It does not include
+`-2` means the account has an unlimited coin pool and `null` that the account has no coin pool
+(none configured for it, its groups or the global default) or a blocked one (Max Coins `0`). This endpoint does not add to the request count. It does not include
 usage from other keys, browser chat, or earlier periods before the key was created.
 
 ---

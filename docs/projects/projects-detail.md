@@ -105,7 +105,7 @@ response = project.chat.completions.create(
 |--------|-------------|
 | **Name** | Label you chose |
 | **Created By** | User who created the key (email if no display name); **Unknown** for keys created before this was tracked, or whose creator was deleted. Not shown to users. |
-| **Hint** | First 4 + last 4 characters for identification |
+| **Hint** | First 7 + last 4 characters for identification |
 | **Requests / Tokens / Coins** | Usage tracked on this key |
 | **Last Used** | Timestamp of the last API call |
 | **Actions** | Rotate (keys you created) and Revoke buttons for active keys |
