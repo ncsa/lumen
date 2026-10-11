@@ -255,7 +255,6 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "consent": { "type": "boolean" },
         "prometheus": {
           "type": "object",
           "additionalProperties": false,

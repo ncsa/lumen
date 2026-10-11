@@ -168,8 +168,6 @@ config:
 
 ## API ------------------------------------------------------------------------------
 api:
-  # -- Require model acknowledgement (needs_ack) for API requests. Set false to exempt the API.
-  consent: true
   prometheus:
     # -- Expose /metrics in Prometheus format
     enabled: false

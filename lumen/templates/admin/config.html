@@ -468,9 +468,6 @@ function renderApi() {
   const p = a.prometheus || {};
   const m = a.monitoring || {};
   $('cfg-body').innerHTML =
-    card('API Flags', `
-      ${cbi('api-consent', !!a.consent, 'Require acknowledgement consent for API requests (/v1/*)')}
-    `) +
     card('Prometheus Metrics', `
       ${cbi('prom-on', !!p.enabled, 'Enable /metrics endpoint')}
       <div class="mt-2">${field('prom-tok','Auth Token',ti('prom-tok',p.token),'blank = no authentication')}</div>
@@ -484,7 +481,6 @@ function collectApi() {
   const prom = { enabled: boolVal('prom-on') || undefined, token: val('prom-tok') || undefined, multiproc_dir: val('prom-dir') || undefined };
   const mon  = val('mon-tok') ? { token: val('mon-tok') } : undefined;
   state.data.api = {
-    consent:    boolVal('api-consent') ? undefined : false,
     prometheus: Object.values(prom).some(v => v !== undefined) ? prom : undefined,
     monitoring: mon,
   };

@@ -63,8 +63,6 @@ admins:
   - admin@example.com
 
 api:
-  consent: true  # set to false to exempt API requests from the model acknowledgement (needs_ack) requirement
-
   prometheus:
     enabled: false
     token: ""          # Required when enabled: set to a long random string. A blank token disables

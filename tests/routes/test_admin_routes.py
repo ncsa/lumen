@@ -336,6 +336,21 @@ def test_config_post_rejects_removed_policy_keys(app, admin_client, tmp_path):
         app.config["CONFIG_YAML"] = original
 
 
+def test_config_post_rejects_removed_api_consent(app, admin_client, tmp_path):
+    """The editor cannot save the removed api.consent flag."""
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("version: 3\napp:\n  name: Original\n")
+    original = app.config["CONFIG_YAML"]
+    app.config["CONFIG_YAML"] = str(cfg)
+    try:
+        resp = admin_client.post("/admin/api/config", json={"version": 3, "api": {"consent": False}})
+        assert resp.status_code == HTTPStatus.BAD_REQUEST
+        assert "api.consent" in resp.get_json()["error"]
+        assert "consent" not in cfg.read_text()
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
 def test_config_post_succeeds_when_backup_unwritable(app, admin_client, tmp_path):
     """A failed .bak copy (e.g. read-only dir in a container) must not block the save."""
     from unittest.mock import patch
