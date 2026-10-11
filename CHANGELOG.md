@@ -37,6 +37,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Fixed
 
+- Deleting an API key (project, personal or OAuth-minted) deactivates it instead of removing it, so its usage history is kept.
 - Fix model Update resetting input modalities to text-only on SGLang endpoints.
 - Model Update no longer flips or repeatedly reports reasoning; reasoning support is read from the serving backend's `/server_info` when available, otherwise from models.dev provider consensus.
 - Chat sidebar and message pane no longer resize while a reply streams.

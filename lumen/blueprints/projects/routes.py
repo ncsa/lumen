@@ -721,7 +721,7 @@ def delete_project_key(sid, kid):
     if _is_plain_user(entity_id, sid) and api_key.created_by_entity_id != entity_id:
         return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
 
-    db.session.delete(api_key)
+    api_key.active = False
     db.session.commit()
     return "", HTTPStatus.NO_CONTENT
 
