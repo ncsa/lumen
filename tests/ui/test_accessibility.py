@@ -307,7 +307,7 @@ def test_project_detail_members_tab_accessibility(app, auth_client, test_user, r
 
 def test_project_detail_key_limit_reason_is_visible_text(app, auth_client, test_user):
     sid = _project_with_members(app, test_user["id"], "user")
-    auth_client.post(f"/projects/{sid}/keys", json={"name": "mine", "key": "sk_a11ykey_0001"})
+    auth_client.post(f"/projects/{sid}/keys", json={"name": "mine", "key": "sk_a11y00000000000000000000key_0001"})
     url = f"/projects/{sid}"
     resp = auth_client.get(url)
     _run_all_checks(resp.data, url)

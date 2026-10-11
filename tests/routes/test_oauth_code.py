@@ -229,3 +229,20 @@ def test_deny_redirects_after_consent_with_error(auth_client, app):
     assert query.get("error") == ["access_denied"]
     assert query.get("state") == ["xyz789"]
     assert resp.headers["Location"].startswith("https://portal.example.org/")
+
+
+@pytest.mark.parametrize("action", ["approve", "deny"])
+def test_state_never_crosses_concurrent_flows(auth_client, app, action):
+    """A second /oauth/authorize in the same browser must not hand its state
+    to the first request's redirect."""
+    auth_client.get(_authorize_url(state="first")[0])
+    auth_client.get(_authorize_url(state="second")[0])
+    with app.app_context():
+        first_id, _second_id = db.session.execute(select(AuthRequest.id).order_by(AuthRequest.id)).scalars().all()
+    # Consent page for the first request shown again in this session.
+    with auth_client.session_transaction() as sess:
+        sess["oauth_consent_request_id"] = first_id
+    resp = auth_client.post("/oauth/consent", data={"request_id": first_id, "action": action})
+    assert resp.status_code == HTTPStatus.FOUND
+    query = parse_qs(urlsplit(resp.headers["Location"]).query)
+    assert "state" not in query

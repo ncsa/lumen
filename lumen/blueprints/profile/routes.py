@@ -1,4 +1,5 @@
 import hashlib
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
@@ -327,12 +328,17 @@ def generate_key():
     return jsonify({"key": key})
 
 
+_CLIENT_KEY_RE = re.compile(r"sk_[A-Za-z0-9_-]{32,}")
+
+
 def _new_key_fields(key: str):
     """Validate a client-supplied raw key for create/rotate.
 
     Returns ({"key_hash", "key_hint"}, None) on success, or (None, error response).
     """
-    if not key or not key.startswith("sk_"):
+    # Same shape as /profile/keys/generate mints, so a client cannot pick a
+    # trivially guessable secret.
+    if not _CLIENT_KEY_RE.fullmatch(key):
         return None, (jsonify({"error": "Invalid key"}), HTTPStatus.BAD_REQUEST)
 
     key_hash = hash_api_key(key)

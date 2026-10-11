@@ -146,10 +146,11 @@ def test_create_key_records_creator(app, auth_client, test_user):
         assert api_key.created_by_entity_id == test_user["id"]
 
 
-def test_create_key_invalid_key(auth_client):
+@pytest.mark.parametrize("key", ["badkey", "sk_1", "sk_" + "a" * 31, "sk_" + "a" * 31 + "!"])
+def test_create_key_invalid_key(auth_client, key):
     resp = auth_client.post(
         "/profile/keys",
-        data=json.dumps({"key": "badkey"}),
+        data=json.dumps({"key": key}),
         content_type="application/json",
     )
     assert resp.status_code == HTTPStatus.BAD_REQUEST
@@ -396,7 +397,7 @@ def test_rotate_revoked_key_returns_409(app, auth_client, test_user):
 
 
 @pytest.mark.parametrize("payload", [
-    {}, {"key": ""}, {"key": "badkey"}, {"key": 123}, {"key": ["sk_" + "v" * 32]}, ["sk_" + "v" * 32],
+    {}, {"key": ""}, {"key": "badkey"}, {"key": "sk_1"}, {"key": "sk_" + "w" * 31}, {"key": 123}, {"key": ["sk_" + "v" * 32]}, ["sk_" + "v" * 32],
 ])
 def test_rotate_key_invalid_key_returns_400(app, auth_client, test_user, payload):
     kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "v" * 32)

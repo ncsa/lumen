@@ -93,7 +93,7 @@ def managed_auth_client(auth_client, managed_project):
 @pytest.fixture
 def make_api_key(app):
     """Factory: create an APIKey row for any entity_id. Returns (key_id, raw_key)."""
-    def _make(entity_id, raw_key="sk_testkey12345678", name="test-key"):
+    def _make(entity_id, raw_key="sk_test00000000000000000key12345678", name="test-key"):
         with app.app_context():
             from lumen.extensions import db
             from lumen.models.api_key import APIKey
@@ -850,7 +850,7 @@ def test_plain_non_manager_forbidden_on_owner_routes(auth_client, service_projec
 def test_create_key_forbidden_for_non_manager(auth_client, service_project):
     resp = auth_client.post(
         f"/projects/{service_project['id']}/keys",
-        json={"name": "prod", "key": "sk_test123"},
+        json={"name": "prod", "key": "sk_test0000000000000000000000000123"},
     )
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
@@ -866,7 +866,7 @@ def test_create_key_invalid_prefix_returns_400(managed_auth_client, managed_proj
 def test_create_key_succeeds(app, managed_auth_client, managed_project):
     resp = managed_auth_client.post(
         f"/projects/{managed_project['id']}/keys",
-        json={"name": "prod", "key": "sk_testkey12345678"},
+        json={"name": "prod", "key": "sk_test00000000000000000key12345678"},
     )
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.get_json()
@@ -882,11 +882,11 @@ def test_create_key_succeeds(app, managed_auth_client, managed_project):
 def test_create_key_duplicate_returns_409(managed_auth_client, managed_project):
     managed_auth_client.post(
         f"/projects/{managed_project['id']}/keys",
-        json={"name": "key1", "key": "sk_dupekey123456789"},
+        json={"name": "key1", "key": "sk_dupe0000000000000000key123456789"},
     )
     resp = managed_auth_client.post(
         f"/projects/{managed_project['id']}/keys",
-        json={"name": "key2", "key": "sk_dupekey123456789"},
+        json={"name": "key2", "key": "sk_dupe0000000000000000key123456789"},
     )
     assert resp.status_code == HTTPStatus.CONFLICT
 
@@ -894,7 +894,7 @@ def test_create_key_duplicate_returns_409(managed_auth_client, managed_project):
 def test_create_key_admin_succeeds(app, admin_client, service_project):
     resp = admin_client.post(
         f"/projects/{service_project['id']}/keys",
-        json={"name": "admin-key", "key": "sk_adminkey123456"},
+        json={"name": "admin-key", "key": "sk_admi000000000000000000nkey123456"},
     )
     assert resp.status_code == HTTPStatus.CREATED
 
@@ -902,7 +902,7 @@ def test_create_key_admin_succeeds(app, admin_client, service_project):
 def test_create_key_records_manager_as_creator(app, managed_auth_client, managed_project, test_user):
     resp = managed_auth_client.post(
         f"/projects/{managed_project['id']}/keys",
-        json={"name": "prod", "key": "sk_mgrcreator12345"},
+        json={"name": "prod", "key": "sk_mgrc00000000000000000reator12345"},
     )
     assert resp.status_code == HTTPStatus.CREATED
     with app.app_context():
@@ -916,7 +916,7 @@ def test_create_key_records_non_manager_admin(app, admin_client, service_project
     """A global admin who is not a manager of the project is still the creator."""
     resp = admin_client.post(
         f"/projects/{service_project['id']}/keys",
-        json={"name": "ops", "key": "sk_admincreator123"},
+        json={"name": "ops", "key": "sk_admi00000000000000000ncreator123"},
     )
     assert resp.status_code == HTTPStatus.CREATED
     with app.app_context():
@@ -928,7 +928,7 @@ def test_create_key_records_non_manager_admin(app, admin_client, service_project
 
 def test_created_by_null_for_keys_made_without_a_creator(app, service_project, make_api_key):
     """Keys seeded directly (standing in for legacy rows) keep a NULL creator."""
-    make_api_key(service_project["id"], raw_key="sk_legacykey123456", name="legacy")
+    make_api_key(service_project["id"], raw_key="sk_lega00000000000000000cykey123456", name="legacy")
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.api_key import APIKey
@@ -963,7 +963,7 @@ def _delete_entity_enforcing_fks(app, entity_id):
 def test_deleting_creator_keeps_key_with_null_creator(app, managed_auth_client, managed_project, test_user):
     resp = managed_auth_client.post(
         f"/projects/{managed_project['id']}/keys",
-        json={"name": "orphan", "key": "sk_orphcreator123"},
+        json={"name": "orphan", "key": "sk_orph000000000000000000creator123"},
     )
     assert resp.status_code == HTTPStatus.CREATED
     _delete_entity_enforcing_fks(app, test_user["id"])
@@ -978,10 +978,10 @@ def test_detail_shows_key_creator_and_unknown_for_legacy(managed_auth_client, ma
     """The detail page embeds the creator's display name per key, Unknown for NULL."""
     resp = managed_auth_client.post(
         f"/projects/{managed_project['id']}/keys",
-        json={"name": "prod", "key": "sk_detailcreator12"},
+        json={"name": "prod", "key": "sk_deta00000000000000000ilcreator12"},
     )
     assert resp.status_code == HTTPStatus.CREATED
-    make_api_key(managed_project["id"], raw_key="sk_detaillegacy123", name="legacy")
+    make_api_key(managed_project["id"], raw_key="sk_deta00000000000000000illegacy123", name="legacy")
     page = managed_auth_client.get(f"/projects/{managed_project['id']}")
     assert page.status_code == HTTPStatus.OK
     html = page.get_data(as_text=True)
@@ -1001,7 +1001,7 @@ def test_detail_key_creator_falls_back_to_email(app, managed_auth_client, manage
         db.session.flush()
         db.session.add(APIKey(
             entity_id=managed_project["id"], name="silent-key",
-            created_by_entity_id=silent.id, key_hash=hash_api_key("sk_emailfallback1"),
+            created_by_entity_id=silent.id, key_hash=hash_api_key("sk_emai000000000000000000lfallback1"),
             key_hint="sk_emai...1234",
         ))
         db.session.commit()
@@ -1020,7 +1020,7 @@ def test_detail_key_table_has_sortable_created_by_column(managed_auth_client, ma
 
 
 def test_revoke_key_forbidden_for_non_manager(auth_client, service_project, make_api_key):
-    key_id, _ = make_api_key(service_project["id"], raw_key="sk_revkey1234567890", name="k")
+    key_id, _ = make_api_key(service_project["id"], raw_key="sk_revk0000000000000000ey1234567890", name="k")
     resp = auth_client.post(f"/projects/{service_project['id']}/keys/{key_id}/revoke")
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
@@ -1035,7 +1035,7 @@ def _key_state(app, key_id):
 
 
 def test_revoke_key_sets_revoked_at(app, managed_auth_client, managed_project, test_user, make_created_key):
-    key_id = make_created_key(managed_project["id"], test_user["id"], "sk_torevoke12345678")
+    key_id = make_created_key(managed_project["id"], test_user["id"], "sk_tore0000000000000000voke12345678")
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     revoked_at, revoked_by, *counters = _key_state(app, key_id)
@@ -1046,7 +1046,7 @@ def test_revoke_key_sets_revoked_at(app, managed_auth_client, managed_project, t
 
 def test_manager_revoking_member_key_records_revoker(app, managed_auth_client, managed_project, test_user,
                                                      second_user, make_created_key):
-    key_id = make_created_key(managed_project["id"], second_user["id"], "sk_memberkey1234567")
+    key_id = make_created_key(managed_project["id"], second_user["id"], "sk_memb0000000000000000erkey1234567")
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     _, revoked_by, *_ = _key_state(app, key_id)
@@ -1055,7 +1055,7 @@ def test_manager_revoking_member_key_records_revoker(app, managed_auth_client, m
 
 def test_deleting_revoker_keeps_key_with_null_revoker(app, managed_auth_client, managed_project, test_user,
                                                       second_user, make_created_key):
-    key_id = make_created_key(managed_project["id"], second_user["id"], "sk_orphrevoker1234")
+    key_id = make_created_key(managed_project["id"], second_user["id"], "sk_orph00000000000000000revoker1234")
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     _delete_entity_enforcing_fks(app, test_user["id"])
@@ -1068,7 +1068,7 @@ def test_deleting_revoker_keeps_key_with_null_revoker(app, managed_auth_client, 
 
 
 def test_revoked_project_key_is_rejected(client, managed_auth_client, managed_project, test_user, make_created_key):
-    raw = "sk_revoked401key123"
+    raw = "sk_revo0000000000000000ked401key123"
     key_id = make_created_key(managed_project["id"], test_user["id"], raw)
     headers = {"Authorization": f"Bearer {raw}"}
     assert client.get("/v1/models", headers=headers).status_code == HTTPStatus.OK
@@ -1077,7 +1077,7 @@ def test_revoked_project_key_is_rejected(client, managed_auth_client, managed_pr
 
 
 def test_revoke_revoked_key_is_noop(app, managed_auth_client, managed_project, test_user, make_created_key):
-    key_id = make_created_key(managed_project["id"], test_user["id"], "sk_inactive12345678",
+    key_id = make_created_key(managed_project["id"], test_user["id"], "sk_inac0000000000000000tive12345678",
                               revoked_at=datetime(2026, 9, 3, 8, 0))
     before = _key_state(app, key_id)
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
@@ -1086,7 +1086,7 @@ def test_revoke_revoked_key_is_noop(app, managed_auth_client, managed_project, t
 
 
 def test_project_page_uses_revoke_wording(managed_auth_client, managed_project, make_api_key):
-    key_id, _ = make_api_key(managed_project["id"], raw_key="sk_wording12345678", name="k")
+    key_id, _ = make_api_key(managed_project["id"], raw_key="sk_word00000000000000000ing12345678", name="k")
     managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
     html = managed_auth_client.get(f"/projects/{managed_project['id']}").get_data(as_text=True)
     assert "Show revoked keys" in html
@@ -1104,7 +1104,7 @@ def _key_row(client, project_id, key_id):
 
 
 def test_revoked_badge_names_manager_revoker(managed_auth_client, managed_project, second_user, make_created_key):
-    key_id = make_created_key(managed_project["id"], second_user["id"], "sk_badgerevoker1234")
+    key_id = make_created_key(managed_project["id"], second_user["id"], "sk_badg0000000000000000erevoker1234")
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     html, row = _key_row(managed_auth_client, managed_project["id"], key_id)
@@ -1113,7 +1113,7 @@ def test_revoked_badge_names_manager_revoker(managed_auth_client, managed_projec
 
 
 def test_revoked_badge_without_revoker_has_no_name(managed_auth_client, managed_project, second_user, make_created_key):
-    key_id = make_created_key(managed_project["id"], second_user["id"], "sk_badgenobody1234",
+    key_id = make_created_key(managed_project["id"], second_user["id"], "sk_badg00000000000000000enobody1234",
                               revoked_at=datetime(2026, 9, 3, 8, 0))
     _, row = _key_row(managed_auth_client, managed_project["id"], key_id)
     assert "revoked_by: null" in row
@@ -1121,7 +1121,7 @@ def test_revoked_badge_without_revoker_has_no_name(managed_auth_client, managed_
 
 def test_repeat_revoke_keeps_first_revoker(app, managed_auth_client, managed_project, test_user, second_user,
                                            make_created_key):
-    key_id = make_created_key(managed_project["id"], test_user["id"], "sk_repeatrevoke1234",
+    key_id = make_created_key(managed_project["id"], test_user["id"], "sk_repe0000000000000000atrevoke1234",
                               revoked_at=datetime(2026, 9, 3, 8, 0), revoked_by=second_user["id"])
     before = _key_state(app, key_id)
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
@@ -1131,7 +1131,7 @@ def test_repeat_revoke_keeps_first_revoker(app, managed_auth_client, managed_pro
 
 
 def test_revoked_key_still_listed(managed_auth_client, managed_project, make_api_key):
-    key_id, _ = make_api_key(managed_project["id"], raw_key="sk_listed12345678", name="gone-key")
+    key_id, _ = make_api_key(managed_project["id"], raw_key="sk_list000000000000000000ed12345678", name="gone-key")
     managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{key_id}/revoke")
     html = managed_auth_client.get(f"/projects/{managed_project['id']}").get_data(as_text=True)
     row = re.search(r"\{\s*id: " + str(key_id) + r",.*?\}", html, re.S)
@@ -1171,7 +1171,7 @@ def _add_manager(app, sid, user_id):
 
 def test_rotate_project_key_by_creator_keeps_stats(app, client, managed_auth_client, managed_project, test_user,
                                                    make_created_key, unlimited_pool):
-    old, new = "sk_rotold123456789", "sk_rotnew123456789"
+    old, new = "sk_roto00000000000000000ld123456789", "sk_rotn00000000000000000ew123456789"
     kid = make_created_key(managed_project["id"], test_user["id"], old)
     fields = ("requests", "input_tokens", "output_tokens", "audio_seconds", "cost",
               "last_used_at", "name", "created_at", "created_by_entity_id", "entity_id", "revoked_at")
@@ -1201,34 +1201,34 @@ def test_rotate_project_key_by_creator_keeps_stats(app, client, managed_auth_cli
 def test_rotate_project_key_forbidden_for_other_manager(app, managed_auth_client, managed_project, second_user,
                                                         make_created_key):
     _add_manager(app, managed_project["id"], second_user["id"])
-    kid = make_created_key(managed_project["id"], second_user["id"], "sk_othermgr1234567")
+    kid = make_created_key(managed_project["id"], second_user["id"], "sk_othe00000000000000000rmgr1234567")
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/rotate",
-                                    json={"key": "sk_othermgrnew1234"})
+                                    json={"key": "sk_othe00000000000000000rmgrnew1234"})
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
 def test_rotate_project_key_forbidden_for_owner(app, owner_auth_client, owned_project, second_user,
                                                 make_created_key):
     _add_manager(app, owned_project["id"], second_user["id"])
-    kid = make_created_key(owned_project["id"], second_user["id"], "sk_ownerrot1234567")
+    kid = make_created_key(owned_project["id"], second_user["id"], "sk_owne00000000000000000rrot1234567")
     resp = owner_auth_client.post(f"/projects/{owned_project['id']}/keys/{kid}/rotate",
-                                  json={"key": "sk_ownerrotnew1234"})
+                                  json={"key": "sk_owne00000000000000000rrotnew1234"})
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
 def test_rotate_project_key_forbidden_for_legacy_null_creator(managed_auth_client, managed_project, make_created_key):
-    kid = make_created_key(managed_project["id"], None, "sk_legacyrot123456")
+    kid = make_created_key(managed_project["id"], None, "sk_lega00000000000000000cyrot123456")
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/rotate",
-                                    json={"key": "sk_legacyrotnew123"})
+                                    json={"key": "sk_lega00000000000000000cyrotnew123"})
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
 def test_rotate_project_key_forbidden_for_non_manager(app, auth_client, service_project, second_user,
                                                       make_created_key):
     _add_manager(app, service_project["id"], second_user["id"])
-    kid = make_created_key(service_project["id"], second_user["id"], "sk_nonmgrrot123456")
+    kid = make_created_key(service_project["id"], second_user["id"], "sk_nonm00000000000000000grrot123456")
     resp = auth_client.post(f"/projects/{service_project['id']}/keys/{kid}/rotate",
-                            json={"key": "sk_nonmgrrotnew123"})
+                            json={"key": "sk_nonm00000000000000000grrotnew123"})
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
@@ -1236,36 +1236,36 @@ def test_rotate_project_key_from_other_project_returns_404(app, managed_auth_cli
                                                            make_created_key):
     with app.app_context():
         other_id = make_project("other-svc", initials="OS").id
-    kid = make_created_key(other_id, test_user["id"], "sk_otherproj123456")
+    kid = make_created_key(other_id, test_user["id"], "sk_othe00000000000000000rproj123456")
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/rotate",
-                                    json={"key": "sk_otherprojnew123"})
+                                    json={"key": "sk_othe00000000000000000rprojnew123"})
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 def test_rotate_project_key_inactive_returns_409(managed_auth_client, managed_project, test_user, make_created_key):
-    kid = make_created_key(managed_project["id"], test_user["id"], "sk_inactiverot1234",
+    kid = make_created_key(managed_project["id"], test_user["id"], "sk_inac00000000000000000tiverot1234",
                            revoked_at=datetime(2026, 9, 3, 8, 0))
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/rotate",
-                                    json={"key": "sk_inactiverotnew1"})
+                                    json={"key": "sk_inac00000000000000000tiverotnew1"})
     assert resp.status_code == HTTPStatus.CONFLICT
 
 
 @pytest.mark.parametrize("payload", [
-    {}, {"key": "bad-key-no-prefix"}, {"key": 123}, {"key": ["sk_invalidrotnew12"]}, ["sk_invalidrotnew12"],
+    {}, {"key": "bad-key-no-prefix"}, {"key": 123}, {"key": ["sk_inva00000000000000000lidrotnew12"]}, ["sk_inva00000000000000000lidrotnew12"],
 ])
 def test_rotate_project_key_invalid_key_returns_400(managed_auth_client, managed_project, test_user,
                                                     make_created_key, payload):
-    kid = make_created_key(managed_project["id"], test_user["id"], "sk_invalidrot12345")
+    kid = make_created_key(managed_project["id"], test_user["id"], "sk_inva00000000000000000lidrot12345")
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/rotate", json=payload)
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
 def test_rotate_project_key_duplicate_returns_409(managed_auth_client, managed_project, test_user,
                                                   make_created_key):
-    kid = make_created_key(managed_project["id"], test_user["id"], "sk_duperot1234567")
-    make_created_key(managed_project["id"], test_user["id"], "sk_dupetaken123456")
+    kid = make_created_key(managed_project["id"], test_user["id"], "sk_dupe000000000000000000rot1234567")
+    make_created_key(managed_project["id"], test_user["id"], "sk_dupe00000000000000000taken123456")
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/rotate",
-                                    json={"key": "sk_dupetaken123456"})
+                                    json={"key": "sk_dupe00000000000000000taken123456"})
     assert resp.status_code == HTTPStatus.CONFLICT
 
 
@@ -1274,14 +1274,14 @@ def test_rotate_project_key_concurrent_duplicate_returns_409(managed_auth_client
     """A secret committed by another request after the duplicate check yields 409, not 500."""
     from lumen.blueprints.profile import routes as profile_routes
     from lumen.services.crypto import hash_api_key
-    kid = make_created_key(managed_project["id"], test_user["id"], "sk_raceoriginal123")
-    make_created_key(managed_project["id"], test_user["id"], "sk_racetaken123456")
+    kid = make_created_key(managed_project["id"], test_user["id"], "sk_race00000000000000000original123")
+    make_created_key(managed_project["id"], test_user["id"], "sk_race00000000000000000taken123456")
     # Skip the pre-check so the unique constraint on key_hash is what catches the duplicate.
     monkeypatch.setattr(profile_routes, "_new_key_fields",
                         lambda key: ({"key_hash": hash_api_key(key), "key_hint": "sk_race...3456"}, None))
 
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/rotate",
-                                    json={"key": "sk_racetaken123456"})
+                                    json={"key": "sk_race00000000000000000taken123456"})
     assert resp.status_code == HTTPStatus.CONFLICT
 
 
@@ -1295,11 +1295,11 @@ def test_detail_rotate_only_on_own_active_keys(app, managed_auth_client, managed
                                                make_created_key):
     _add_manager(app, managed_project["id"], second_user["id"])
     sid = managed_project["id"]
-    own = make_created_key(sid, test_user["id"], "sk_ownrotui1234567")
-    own_inactive = make_created_key(sid, test_user["id"], "sk_owninactui12345",
+    own = make_created_key(sid, test_user["id"], "sk_ownr00000000000000000otui1234567")
+    own_inactive = make_created_key(sid, test_user["id"], "sk_owni00000000000000000nactui12345",
                                     revoked_at=datetime(2026, 9, 3, 8, 0))
-    other = make_created_key(sid, second_user["id"], "sk_otherrotui12345")
-    legacy = make_created_key(sid, None, "sk_legacyrotui1234")
+    other = make_created_key(sid, second_user["id"], "sk_othe00000000000000000rrotui12345")
+    legacy = make_created_key(sid, None, "sk_lega00000000000000000cyrotui1234")
 
     html = managed_auth_client.get(f"/projects/{sid}").get_data(as_text=True)
     assert _key_rows_can_rotate(html) == {own: True, own_inactive: True, other: False, legacy: False}
@@ -1312,14 +1312,14 @@ def test_detail_rotate_only_on_own_active_keys(app, managed_auth_client, managed
 
 
 def test_detail_admin_cannot_rotate_others_keys(admin_client, service_project, test_user, make_created_key):
-    kid = make_created_key(service_project["id"], test_user["id"], "sk_adminrotui12345")
+    kid = make_created_key(service_project["id"], test_user["id"], "sk_admi00000000000000000nrotui12345")
     html = admin_client.get(f"/projects/{service_project['id']}").get_data(as_text=True)
     assert _key_rows_can_rotate(html) == {kid: False}
 
 
 def test_rotate_project_key_requires_login(client, service_project):
     resp = client.post(f"/projects/{service_project['id']}/keys/1/rotate",
-                       json={"key": "sk_nologin12345678"}, follow_redirects=False)
+                       json={"key": "sk_nolo00000000000000000gin12345678"}, follow_redirects=False)
     assert resp.status_code == HTTPStatus.FOUND
 
 
@@ -1408,7 +1408,7 @@ def test_project_key_created_via_route_can_authenticate(
     # Create key via the projects route
     resp = managed_auth_client.post(
         f"/projects/{managed_project['id']}/keys",
-        json={"name": "e2e-key", "key": "sk_e2etest1234567890"},
+        json={"name": "e2e-key", "key": "sk_e2et000000000000000est1234567890"},
     )
     assert resp.status_code == HTTPStatus.CREATED
     token = resp.get_json()["key"]
@@ -1425,7 +1425,7 @@ def test_project_key_lists_accessible_model(
     """Project key sees models it has access to."""
     resp = managed_auth_client.post(
         f"/projects/{managed_project['id']}/keys",
-        json={"name": "model-key", "key": "sk_modelkey12345678"},
+        json={"name": "model-key", "key": "sk_mode0000000000000000lkey12345678"},
     )
     token = resp.get_json()["key"]
 
@@ -1442,7 +1442,7 @@ def test_project_key_blocked_after_revoke(
     # Create key
     resp = managed_auth_client.post(
         f"/projects/{managed_project['id']}/keys",
-        json={"name": "rev-key", "key": "sk_revokekey12345678"},
+        json={"name": "rev-key", "key": "sk_revo000000000000000kekey12345678"},
     )
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.get_json()
@@ -1469,7 +1469,7 @@ def test_project_key_no_pool_returns_403(
 
     resp = managed_auth_client.post(
         f"/projects/{managed_project['id']}/keys",
-        json={"name": "nopool-key", "key": "sk_nopoolkey12345678"},
+        json={"name": "nopool-key", "key": "sk_nopo000000000000000olkey12345678"},
     )
     token = resp.get_json()["key"]
 
@@ -1722,10 +1722,10 @@ def test_transfer_ownership_to_user_rejected(app, owner_auth_client, owned_proje
 
 def test_user_can_have_only_one_active_key(app, user_auth_client, user_project):
     url = f"/projects/{user_project['id']}/keys"
-    first = user_auth_client.post(url, json={"name": "one", "key": "sk_userkey_one_1234"})
+    first = user_auth_client.post(url, json={"name": "one", "key": "sk_user0000000000000000key_one_1234"})
     assert first.status_code == HTTPStatus.CREATED
 
-    second = user_auth_client.post(url, json={"name": "two", "key": "sk_userkey_two_1234"})
+    second = user_auth_client.post(url, json={"name": "two", "key": "sk_user0000000000000000key_two_1234"})
     assert second.status_code == HTTPStatus.CONFLICT
     assert second.get_json()["error"] == "Users can have only one API key"
 
@@ -1736,7 +1736,7 @@ def test_user_can_have_only_one_active_key(app, user_auth_client, user_project):
         from lumen.models.api_key import APIKey
         assert db.session.get(APIKey, first.get_json()["id"]).revoked_at is not None
 
-    third = user_auth_client.post(url, json={"name": "three", "key": "sk_userkey_three_1234"})
+    third = user_auth_client.post(url, json={"name": "three", "key": "sk_user00000000000000key_three_1234"})
     assert third.status_code == HTTPStatus.CREATED
 
 
@@ -1752,21 +1752,21 @@ def test_user_key_limit_ignores_inactive_and_other_members_keys(app, user_auth_c
         ])
         db.session.commit()
     resp = user_auth_client.post(
-        f"/projects/{user_project['id']}/keys", json={"name": "mine", "key": "sk_userkey_mine_1234"},
+        f"/projects/{user_project['id']}/keys", json={"name": "mine", "key": "sk_user000000000000000key_mine_1234"},
     )
     assert resp.status_code == HTTPStatus.CREATED
 
 
 def test_manager_can_create_many_keys(managed_auth_client, managed_project):
     url = f"/projects/{managed_project['id']}/keys"
-    resp = managed_auth_client.post(url, json={"key": "sk_mgrkey_one_1234"})
+    resp = managed_auth_client.post(url, json={"key": "sk_mgrk00000000000000000ey_one_1234"})
     assert resp.status_code == HTTPStatus.CREATED
-    resp = managed_auth_client.post(url, json={"key": "sk_mgrkey_two_1234"})
+    resp = managed_auth_client.post(url, json={"key": "sk_mgrk00000000000000000ey_two_1234"})
     assert resp.status_code == HTTPStatus.CREATED
 
 
 def test_user_revoking_another_members_key_returns_404(app, user_auth_client, user_project, make_api_key):
-    kid, _ = make_api_key(user_project["id"], raw_key="sk_ownerkey_abcdef", name="owner-key")
+    kid, _ = make_api_key(user_project["id"], raw_key="sk_owne00000000000000000rkey_abcdef", name="owner-key")
     resp = user_auth_client.post(f"/projects/{user_project['id']}/keys/{kid}/revoke")
     assert resp.status_code == HTTPStatus.NOT_FOUND
     with app.app_context():
@@ -1776,13 +1776,13 @@ def test_user_revoking_another_members_key_returns_404(app, user_auth_client, us
 
 
 def test_manager_can_revoke_any_key(app, managed_auth_client, managed_project, make_api_key):
-    kid, _ = make_api_key(managed_project["id"], raw_key="sk_ownerkey_abcdef", name="owner-key")
+    kid, _ = make_api_key(managed_project["id"], raw_key="sk_owne00000000000000000rkey_abcdef", name="owner-key")
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
 
 
 def test_old_delete_key_url_returns_405(app, managed_auth_client, managed_project, make_api_key):
-    kid, _ = make_api_key(managed_project["id"], raw_key="sk_olddelete_abcdef", name="old-url-key")
+    kid, _ = make_api_key(managed_project["id"], raw_key="sk_oldd0000000000000000elete_abcdef", name="old-url-key")
     resp = managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{kid}")
     assert resp.status_code == HTTPStatus.METHOD_NOT_ALLOWED
     assert _key_state(app, kid)[0] is None
@@ -1798,9 +1798,9 @@ def _keys_on_page(client, project_id):
 
 
 def test_user_detail_shows_only_own_keys(app, user_auth_client, user_project, make_api_key):
-    make_api_key(user_project["id"], raw_key="sk_otherkey_zq9x", name="someone-elses-key")
+    make_api_key(user_project["id"], raw_key="sk_othe0000000000000000000rkey_zq9x", name="someone-elses-key")
     user_auth_client.post(
-        f"/projects/{user_project['id']}/keys", json={"name": "my-own-key", "key": "sk_minekey_m7w3"},
+        f"/projects/{user_project['id']}/keys", json={"name": "my-own-key", "key": "sk_mine00000000000000000000key_m7w3"},
     )
     page = _keys_on_page(user_auth_client, user_project["id"])
     assert "my-own-key" in page
@@ -1810,9 +1810,9 @@ def test_user_detail_shows_only_own_keys(app, user_auth_client, user_project, ma
 
 
 def test_manager_and_owner_detail_show_all_keys(app, client, user_project, test_user, second_user, make_api_key):
-    make_api_key(user_project["id"], raw_key="sk_otherkey_zq9x", name="someone-elses-key")
+    make_api_key(user_project["id"], raw_key="sk_othe0000000000000000000rkey_zq9x", name="someone-elses-key")
     _login_as(client, test_user["id"])
-    client.post(f"/projects/{user_project['id']}/keys", json={"name": "my-own-key", "key": "sk_minekey_m7w3"})
+    client.post(f"/projects/{user_project['id']}/keys", json={"name": "my-own-key", "key": "sk_mine00000000000000000000key_m7w3"})
 
     _add_member(app, user_project["id"], second_user["id"], "manager")
     for viewer in (second_user["id"], user_project["owner_id"]):
@@ -1932,7 +1932,7 @@ def test_create_key_refused_when_membership_removed_before_lock(app, user_auth_c
     event.listen(Session, "do_orm_execute", remove_before_lock)
     try:
         resp = user_auth_client.post(
-            f"/projects/{user_project['id']}/keys", json={"name": "late", "key": "sk_removedkey_1234"},
+            f"/projects/{user_project['id']}/keys", json={"name": "late", "key": "sk_remo00000000000000000vedkey_1234"},
         )
     finally:
         event.remove(Session, "do_orm_execute", remove_before_lock)
@@ -2067,7 +2067,7 @@ def test_new_key_button_disabled_once_user_has_a_key(user_auth_client, user_proj
     assert not btn.has_attr("disabled")
     assert soup.find(id="key-limit-note") is None
 
-    resp = user_auth_client.post(f"/projects/{user_project['id']}/keys", json={"name": "k", "key": "sk_onlykey_0001"})
+    resp = user_auth_client.post(f"/projects/{user_project['id']}/keys", json={"name": "k", "key": "sk_only00000000000000000000key_0001"})
     soup, btn = new_key_button()
     assert btn.has_attr("disabled")
     assert "only one active key; revoke it to create a new one" in soup.find(id=btn["aria-describedby"]).get_text()
@@ -2078,7 +2078,7 @@ def test_new_key_button_disabled_once_user_has_a_key(user_auth_client, user_proj
 
 
 def test_new_key_button_stays_enabled_for_managers(app, managed_auth_client, managed_project):
-    managed_auth_client.post(f"/projects/{managed_project['id']}/keys", json={"name": "k", "key": "sk_mgrkey_0001"})
+    managed_auth_client.post(f"/projects/{managed_project['id']}/keys", json={"name": "k", "key": "sk_mgrk000000000000000000000ey_0001"})
     soup = _members_page(managed_auth_client, managed_project["id"])
     assert not soup.find("button", string=lambda t: t and "New API Key" in t).has_attr("disabled")
 
@@ -2133,7 +2133,7 @@ def test_make_owner_only_on_manager_rows_for_owner_and_admin(app, client, admin_
 
 def test_user_key_table_hides_created_by(app, client, user_project, test_user, second_user):
     _login_as(client, test_user["id"])
-    client.post(f"/projects/{user_project['id']}/keys", json={"name": "mine", "key": "sk_minekey_h1d3"})
+    client.post(f"/projects/{user_project['id']}/keys", json={"name": "mine", "key": "sk_mine00000000000000000000key_h1d3"})
     soup = _members_page(client, user_project["id"])
     headers = [th.get_text(" ", strip=True) for th in soup.select("#key-table thead th")]
     assert not any(h.startswith("Created By") for h in headers)

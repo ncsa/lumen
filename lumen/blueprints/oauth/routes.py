@@ -273,7 +273,9 @@ def authorize():
     )
     db.session.add(req)
     db.session.commit()
-    session["oauth_consent_state"] = state
+    # Keyed by request id so a later flow in the same browser never hands its
+    # state to an earlier one.
+    session["oauth_consent_state"] = {"request_id": req.id, "state": state}
     return _render_consent(req)
 
 
@@ -340,7 +342,7 @@ def consent():
             req.auth_code_expires_at = now + timedelta(seconds=AUTH_CODE_TTL)
             db.session.commit()
             query = {"code": auth_code}
-            state = session.pop("oauth_consent_state", None)
+            state = _pop_consent_state(req.id)
             if state:
                 query["state"] = state
             return _append_query_redirect(req.redirect_uri, query)
@@ -365,7 +367,7 @@ def consent():
     db.session.commit()
     if req.flow == "code":
         query = {"error": "access_denied"}
-        state = session.pop("oauth_consent_state", None)
+        state = _pop_consent_state(req.id)
         if state:
             query["state"] = state
         return _append_query_redirect(req.redirect_uri, query)
@@ -574,6 +576,14 @@ def _consent_model_rows(entity_id: int):
             "early_notice": early_notice,
         })
     return rows
+
+
+def _pop_consent_state(request_id: int) -> str | None:
+    """Pop the code-flow state stored by authorize(), only if it belongs to request_id."""
+    saved = session.pop("oauth_consent_state", None)
+    if isinstance(saved, dict) and saved.get("request_id") == request_id:
+        return saved.get("state")
+    return None
 
 
 def _render_consent(req: AuthRequest, error: str | None = None):
