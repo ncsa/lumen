@@ -4,9 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
-**Upgrade warning:** The database migration replaces `api_keys.active` with `revoked_at`, and older versions cannot run against the new schema. Stop every running replica before starting this version; a rolling update is not supported. This migration now has revision `a827b0223638` and runs after `a9b0c1d2e3f4` (model_group_access drop). If you added `revoked_at` by hand while upgrades were failing, the upgrade fails at `a827b0223638` with a duplicate-column error. Do not just `flask db stamp` it: stamping also skips `revoked_by_entity_id` and its FK, the backfill of inactive keys, dropping `active`, and the column comments. Stamp only after checking all of those are in place and `a9b0c1d2e3f4` has run; otherwise undo the manual change and let the migration run.
+**Upgrade warning:** Back up the database first. The migrations drop `api_keys.active` (replaced by `revoked_at`), `entity_managers.is_owner` (replaced by `entities.owner_entity_id`) and the `model_group_access` table, so older versions cannot run against the new schema: stop every replica before starting this version; a rolling update is not supported. The upgrade stops if any project has no owner and lists their IDs; give every project an owner (Change Owner on the project page) before upgrading. Downgrading does not restore group model grants or project user memberships; restore the backup instead.
 
-**Breaking:** API requests now always require model acknowledgment and the `api.consent` setting has been removed. If your config.yaml or Helm values set `api.consent` (true or false), remove it, or Lumen will refuse to start. Before upgrading, have users acknowledge models on their profile or model page and project managers on the project page; API keys cannot use unacknowledged models. (#48)
+**Breaking:** API requests always require model acknowledgment and `api.consent` has been removed. Remove it from config.yaml (Lumen refuses to start) and from Helm values (the chart schema rejects it). Have users acknowledge models before upgrading. (#48)
 
 ### Added
 
@@ -36,10 +36,16 @@ All notable changes to Lumen will be documented in this file.
 - The model dashboard lists each model's accepted inputs (text/image/audio) as pills next to its name. ([#79](https://github.com/ncsa/lumen/issues/79))
 - Require an owner when creating a project, with a user search in the owner field.
 - Only admins in admin mode can create groups.
-- **Breaking (Helm chart):** the chart no longer deploys vLLM/SGLang model servers; `models` is copied verbatim into `config.yaml` and uses the config format (snake_case keys, `endpoints` list).
+- Helm chart `models` is copied verbatim into `config.yaml` and uses the config format (snake_case keys, `endpoints` list).
 - Config editor model list is sorted A–Z, with disabled models listed after enabled ones; the first model in that order is selected by default.
 - Pages are usable on phones and tablets: tables scroll, toolbars wrap, and chat/help/config fill the screen on any device.
-- Remove usage stats and model grants from group pages; owned models are now usable only by their owner. ([#116](https://github.com/ncsa/lumen/pull/116))
+- Remove usage stats from group pages. ([#116](https://github.com/ncsa/lumen/pull/116))
+
+### Removed
+
+- The `api.consent` setting; API requests always require model acknowledgment. ([#48](https://github.com/ncsa/lumen/issues/48))
+- **Breaking:** Group grants for owned models: an owned model is usable only by its owner, and the migration drops existing grants. ([#116](https://github.com/ncsa/lumen/pull/116), [#121](https://github.com/ncsa/lumen/pull/121), [#122](https://github.com/ncsa/lumen/pull/122))
+- **Breaking (Helm chart):** In-cluster vLLM/SGLang model deployment; the `models[].replicas`, `engine`, `image`, `gpu` and `storage` values are gone.
 
 ### Fixed
 
