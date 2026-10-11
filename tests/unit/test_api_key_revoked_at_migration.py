@@ -153,7 +153,8 @@ def test_downgrade_restores_active_server_default(pre_migration_sqlite):
     _run(pre_migration_sqlite, module.upgrade)
     _run(pre_migration_sqlite, module.downgrade)
 
-    # v2.1.0 had server_default=true; a raw insert that omits active must still work.
+    # The downgrade adds a server default (v2.1.0 only had a client-side one), so a
+    # raw insert that omits active still works after a downgrade.
     with pre_migration_sqlite.begin() as conn:
         conn.exec_driver_sql(
             "INSERT INTO api_keys (entity_id, name, key_hash, requests, input_tokens,"

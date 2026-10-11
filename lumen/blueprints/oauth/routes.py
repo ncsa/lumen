@@ -112,6 +112,7 @@ def cleanup_expired_auth_requests():
     Single rule, any status: an approved-but-never-claimed request expires
     without a key ever having been minted, and a claimed row only matters for
     authorization-code replay detection during the (far shorter) code lifetime.
+    Always commits, so any pending changes on the session are committed too.
     """
     cutoff = utcnow() - timedelta(seconds=CLEANUP_GRACE)
     deleted = db.session.execute(
