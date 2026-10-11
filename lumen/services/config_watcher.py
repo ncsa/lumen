@@ -41,7 +41,7 @@ def config_version_ok(yaml_data: dict) -> bool:
 
 
 def removed_config_key_errors(data: dict) -> list[str]:
-    """Return version-2 policy keys that version 3 must never ignore."""
+    """Return removed config keys (version-2 policy and the api.consent flag) that must never be ignored."""
     if not isinstance(data, dict):
         return []
 
@@ -65,6 +65,10 @@ def removed_config_key_errors(data: dict) -> list[str]:
             label = model.get("name") or f"models[{i}]"
             for key in sorted(REMOVED_MODEL_POLICY_KEYS.intersection(model)):
                 errors.append(f"removed key '{label}.{key}' must be migrated before upgrading")
+
+    api = data.get("api")
+    if isinstance(api, dict) and "consent" in api:
+        errors.append("`api.consent` was removed; API requests always require model acknowledgment. Delete the key")
 
     return errors
 
@@ -246,8 +250,6 @@ def apply_hot_config(app, yaml_data: dict):
     app.config["OAUTH2_PARAMS"] = oauth2_cfg.get("params") or {}
     app.config["OAUTH2_ALLOW_UNVERIFIED_EMAIL"] = bool(oauth2_cfg.get("allow_unverified_email", False))
     app.config["EMAIL_THEMES"] = app_cfg.get("email_themes") or {}
-    api_cfg = yaml_data.get("api", {})
-    app.config["API_REQUIRE_MODEL_CONSENT"] = api_cfg.get("consent", True)
 
     # Bounds on upstream LLM calls. read_timeout is the maximum gap *between
     # chunks* of a streaming response, not the total call duration — a
