@@ -465,11 +465,12 @@ def test_blocked_model_is_counted_as_no_access(app, ids, test_model, monkeypatch
         owner_id = _make_entity()
         set_model_owner(model_id, owner_id)
         recorded = _recorder(monkeypatch)
-        ok, code, _msg, _eff = check_coin_budget(
+        ok, code, _msg, _eff, reason = check_coin_budget(
             entity_id, model_id, source="api", model_name=test_model["model_name"],
         )
         assert ok is False
         assert code == HTTPStatus.FORBIDDEN
+        assert reason == "no_access"
         assert recorded == [("no_access", "api", test_model["model_name"])]
 
 
@@ -486,11 +487,12 @@ def test_unacknowledged_model_is_counted_as_needs_consent(app, ids, test_model, 
     with app.app_context():
         _set_needs_ack(app, model_id)
         recorded = _recorder(monkeypatch)
-        ok, code, _msg, _eff = check_coin_budget(
+        ok, code, _msg, _eff, reason = check_coin_budget(
             entity_id, model_id, source="chat", model_name=test_model["model_name"],
         )
         assert ok is False
         assert code == HTTPStatus.FORBIDDEN
+        assert reason == "needs_consent"
         assert recorded == [("needs_consent", "chat", test_model["model_name"])]
 
 
@@ -523,7 +525,7 @@ def test_access_counting_never_breaks_the_rejection(app, ids, test_model, monkey
     with app.app_context():
         _set_needs_ack(app, model_id)
         monkeypatch.setattr("lumen.blueprints.metrics.middleware.observe_rejection", boom)
-        ok, code, msg, _eff = check_coin_budget(
+        ok, code, msg, _eff, _reason = check_coin_budget(
             entity_id, model_id, source="chat", model_name=test_model["model_name"],
         )
         assert ok is False

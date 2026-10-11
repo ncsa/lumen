@@ -20,6 +20,7 @@ See [Profile → API Keys](../guides/profile.md#api-keys) to create a key.
 |--------|------|-------------|
 | `GET` | `/v1/models` | List available models |
 | `GET` | `/v1/models/<id>` | Retrieve details for a single model |
+| `POST` | `/v1/models/<id>/acknowledge` | Acknowledge a model that requires consent |
 | `GET` | `/v1/usage` | Get cumulative usage for the bearer API key |
 | `POST` | `/v1/chat/completions` | Send a chat message and receive a reply |
 | `POST` | `/v1/completions` | Legacy text-completion endpoint (prefer `/v1/chat/completions`) |
@@ -69,6 +70,58 @@ curl https://lumen.example.com/v1/models \
 
 Returns a list of model IDs you can use in chat completion requests.
 Aliases of renamed models are listed as additional IDs whose `parent` field names the canonical model; standalone models have `parent: null`.
+
+Each model may carry consent-state fields for the calling account:
+
+| Field | Meaning |
+|-------|---------|
+| `tags` | The acknowledgment requirements still open for your account: `needs_ack`, `early_access`, both, or `[]`. A non-empty `tags` means you cannot use the model until you acknowledge it (see below). |
+| `acknowledged_at` | Timestamp of your most recent acknowledgment, `null` while any requirement is still open. |
+| `notice` | The model's acknowledgment / early-access notice text, present only while a requirement is open so you can read it before acknowledging. |
+
+Models you are blocked from (owned by someone else without a grant, disabled, or expired) are omitted entirely.
+
+---
+
+## Retrieve a Model
+
+```bash
+curl https://lumen.example.com/v1/models/qwen-coder-cc \
+  -H "Authorization: Bearer sk_your_api_key_here"
+```
+
+Returns the same metadata as the list, for one model. A model specified by alias returns its metadata under the requested alias with `parent` naming the canonical model.
+
+`GET /v1/models/<id>` returns **404** for blocked, disabled, expired, deleted, or unknown models. A model that merely awaits your acknowledgment is returned so you can read its `notice` before acknowledging.
+
+---
+
+## Acknowledge a Model
+
+Models that require a one-time acknowledgment (`needs_ack`) or early-access acknowledgment (`early_access`) block use until you consent. Over the API, acknowledge once per model:
+
+```bash
+curl -X POST https://lumen.example.com/v1/models/qwen-coder-cc/acknowledge \
+  -H "Authorization: Bearer sk_your_api_key_here"
+```
+
+`<id>` may be an alias or the canonical name. Consent is recorded per account (shared across all of its API keys, matching the web UI), and one call satisfies every currently-open requirement — `needs_ack` and/or `early_access`. The endpoint is idempotent: repeating it returns the same `200` shape, so callers can safely retry after a timeout. Acking a blocked, disabled, expired, deleted, or unknown model returns `404`.
+
+Response (`200`):
+
+```json
+{
+  "id": "qwen-coder-cc",
+  "tags": [],
+  "acknowledged_at": "2026-10-05T16:00:00Z",
+  "notice": "This model was trained in a US government designated Country of Concern. It may exhibit biases based on differences in geopolitical environments, cultural norms, policy constraints, or censorship behaviors."
+}
+```
+
+- `tags` is `[]` after a successful acknowledgment. If the model later gains a new requirement (for example it becomes early access), `tags` reports it and you must acknowledge once more.
+- `notice` echoes the text you acknowledged; a model with no requirements returns `tags: []` and no `notice` as a no-op.
+- If your account cannot use the model, an un-acknowledged consume call above returns `403` with `code: "consent_required"` and a message pointing at this endpoint.
+- If the server disables API model consent (`api.consent: false` in `config.yaml`), no requirement is enforced over the API: `tags` is always `[]` and `acknowledge` records nothing.
 
 ---
 
@@ -340,3 +393,24 @@ OpenAI SDK honours it. A coin budget that never refills automatically sends no
 | `404` | Model not found |
 | `429` | Rate limit exceeded, or coin budget exhausted (see Rate Limits) |
 | `503` | Model backend is currently unavailable |
+
+A `403` on a consume endpoint either means the model is blocked for your account
+or — for a model that requires acknowledgment you have not given — that you must
+acknowledge it first. The two need opposite reactions, so they are told apart by
+`code`:
+
+```json
+{
+  "error": {
+    "message": "This model requires acknowledgment before use. Acknowledge it via POST /v1/models/qwen-coder-cc/acknowledge.",
+    "type": "invalid_request_error",
+    "code": "consent_required"
+  }
+}
+```
+
+A `code: "consent_required"` means the model merely awaits your acknowledgment
+(see [Acknowledge a Model](#acknowledge-a-model)); a `403` without a `code` means
+the model is blocked for your account. This is the same `code`-disambiguation
+pattern used for `429`, where `insufficient_quota` (stop until the budget
+refills) is distinguished from a plain rate limit.

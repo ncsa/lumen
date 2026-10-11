@@ -18,6 +18,7 @@ All notable changes to Lumen will be documented in this file.
 - API keys record OAuth provenance (`client_id`, `requested_by`), shown in the profile key list tooltip.
 - Admins can add and remove a user's groups from the Edit User dialog.
 - Admins can reset a user's coins from the Coins Available card on their profile.
+- API-key consumers can acknowledge model requirements and inspect consent state through the API. ([#92](https://github.com/ncsa/lumen/issues/92))
 - Log a warning with email, affiliation and IdP when a login matches no auto-join group.
 - `scripts/responsive_check.py` audits pages for horizontal overflow at phone and tablet widths, and a UI test guards that server-rendered data tables sit in a `.table-responsive` wrapper.
 

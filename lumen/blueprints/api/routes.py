@@ -19,6 +19,7 @@ from lumen.extensions import db, limiter
 from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
+from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.request_log import RequestLog
@@ -31,9 +32,10 @@ from lumen.services.llm import (
     check_coin_budget,
     coin_retry_after,
     estimate_abort_usage,
-    get_effective_limit,
+    get_model_access_status,
     get_next_endpoint,
     get_pool_limit,
+    model_notices,
     observe_rejection_quietly,
     record_stream_abort,
     subtract_coins,
@@ -165,8 +167,46 @@ def _get_request_rates() -> dict:
     return result
 
 
-def _model_dict(c, rates: dict, eps: list) -> dict:
-    """Serialize a ModelConfig to an OpenAI/vLLM-compatible response dict."""
+def _ack_fields(config, row):
+    """Describe a model's open acknowledgement requirements for an entity.
+
+    Returns (tags, acknowledged_at, notice). ``tags`` lists the requirements the
+    entity has still not satisfied (``"needs_ack"`` and/or ``"early_access"``);
+    ``acknowledged_at`` is the most recent acknowledgement timestamp, or None
+    while a requirement is still open (same "when complete, else null" rule the
+    web UI's "acknowledged on" display uses); ``notice`` is the combined
+    acknowledgement + early-access text the model carries — the text the web ack
+    dialog shows — or None for a model with no requirements.
+    With api.consent=false the API enforces no acknowledgement, so no
+    requirement is ever open and ``tags`` is always empty.
+    """
+    tags = []
+    if current_app.config.get("API_REQUIRE_MODEL_CONSENT", True):
+        if config.needs_ack and (row is None or row.consented_at is None):
+            tags.append("needs_ack")
+        if config.early_access and (row is None or row.early_access_at is None):
+            tags.append("early_access")
+
+    if tags:
+        acknowledged_at = None
+    else:
+        times = [t for t in ((row.consented_at if row else None), (row.early_access_at if row else None)) if t is not None]
+        acknowledged_at = max(times) if times else None
+
+    notice = None
+    if config.needs_ack or config.early_access:
+        ack_notice, early_notice = model_notices(config)
+        notice = "\n\n".join(n for n in (ack_notice, early_notice) if n) or None
+
+    return tags, acknowledged_at, notice
+
+
+def _model_dict(c, rates: dict, eps: list, ack_fields=None) -> dict:
+    """Serialize a ModelConfig to an OpenAI/vLLM-compatible response dict.
+
+    ``ack_fields`` ((tags, acknowledged_at, notice)) is None for the monitor
+    token, which has no entity and sees no consent state.
+    """
     zero = {"last_minute": 0, "last_hour": 0, "last_day": 0}
     healthy_count = sum(1 for e in eps if e.healthy)
     if not eps or healthy_count == 0:
@@ -213,11 +253,20 @@ def _model_dict(c, rates: dict, eps: list) -> dict:
         if val is not None:
             d[field] = val
 
+    # Consent state for the calling entity; omitted for the monitor token.
+    if ack_fields is not None:
+        tags, acknowledged_at, notice = ack_fields
+        d["tags"] = tags
+        d["acknowledged_at"] = acknowledged_at.isoformat() + "Z" if acknowledged_at else None
+        # The notice is shown only while a requirement is still open (the thing
+        # the caller has not yet acknowledged); once acked it need not be echoed.
+        if tags and notice:
+            d["notice"] = notice
+
     return d
 
 
-def _err(msg: str, err_type: str = "invalid_request_error", status: HTTPStatus = HTTPStatus.BAD_REQUEST,
-         err_code: str = None, headers: dict = None):
+def _err(msg: str, err_type: str = "invalid_request_error", status: HTTPStatus = HTTPStatus.BAD_REQUEST, err_code: str = None, headers: dict = None):
     body = {"message": msg, "type": err_type}
     if err_code:
         body["code"] = err_code
@@ -332,26 +381,34 @@ def list_models():
         eps_by_model.setdefault(ep.model_config_id, []).append(ep)
     rates = _get_request_rates()
     if g.monitor:
+        # The monitor token has no entity: it sees every active model, with no
+        # consent state attached.
         permitted = configs
+        consent_rows = {}
+        entity_id = None
     else:
         entity_id = g.entity.id
         model_ids = [c.id for c in configs]
-        access_statuses, consent_map = bulk_model_access_info(entity_id, model_ids)
+        access_statuses, _ = bulk_model_access_info(entity_id, model_ids)
         pool = get_pool_limit(entity_id)
-        consent_required = current_app.config.get("API_REQUIRE_MODEL_CONSENT", True)
         permitted = [
             c for c in configs
             if pool is not None
             and access_statuses.get(c.id, "allowed") != "blocked"
-            and (
-                not consent_required
-                or access_statuses.get(c.id, "allowed") != "needs_ack"
-                or c.id in consent_map
-            )
         ]
+        consent_rows = {
+            r.model_config_id: r
+            for r in db.session.execute(
+                select(EntityModelConsent).where(
+                    EntityModelConsent.entity_id == entity_id,
+                    EntityModelConsent.model_config_id.in_(model_ids),
+                )
+            ).scalars().all()
+        }
     data = []
     for c in permitted:
-        entry = _model_dict(c, rates, eps_by_model.get(c.id, []))
+        ack = _ack_fields(c, consent_rows.get(c.id)) if entity_id is not None else None
+        entry = _model_dict(c, rates, eps_by_model.get(c.id, []), ack)
         data.append(entry)
         # Expose each alias as a discoverable ID so clients that validate their
         # configured model against discovery keep working. Aliases inherit the
@@ -373,20 +430,78 @@ def get_model(model_id):
     if not config:
         return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
     if not g.monitor:
-        consent_required = current_app.config.get("API_REQUIRE_MODEL_CONSENT", True)
-        if get_effective_limit(g.entity.id, config.id, require_consent=consent_required) is None:
+        entity_id = g.entity.id
+        # Blocked, disabled, expired, deleted, and unknown models stay hidden.
+        # A model that merely awaits acknowledgement is visible so the caller can
+        # read its notice.
+        if get_model_access_status(entity_id, config.id) == "blocked" or get_pool_limit(entity_id) is None:
             return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
     eps = db.session.execute(
         select(ModelEndpoint).where(ModelEndpoint.model_config_id == config.id, ModelEndpoint.active.is_(True))
     ).scalars().all()
     rates = _get_request_rates()
-    d = _model_dict(config, rates, list(eps))
+    ack = None
+    if not g.monitor:
+        row = db.session.execute(select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=config.id)).scalar_one_or_none()
+        ack = _ack_fields(config, row)
+    d = _model_dict(config, rates, list(eps), ack)
     # Requested via an alias? Return metadata under the requested ID so clients
     # that validate their configured model against discovery keep working.
     if model_id != config.model_name:
         d["id"] = model_id
         d["parent"] = config.model_name
     return jsonify(d)
+
+
+@api_bp.route("/models/<model_id>/acknowledge", methods=["POST"])
+@api_key_required
+@limiter.limit(_api_limit, key_func=_api_key_id)
+def acknowledge_model(model_id):
+    """Record entity-level consent for a model that requires acknowledgement.
+
+    Mirrors the web UI's single-click acknowledge (profile/routes.py user_consent)
+    for API-key consumers. Consent is per-entity, shared across all of the
+    entity's keys, and one call satisfies every currently-open requirement
+    (``needs_ack`` and/or ``early_access``). Idempotent: a repeated call on an
+    already-acknowledged model returns the same 200 shape. The monitor token
+    cannot reach this endpoint (api_key_required's endpoint allowlist).
+    """
+    config = resolve_model_config(model_id)
+    if not config:
+        return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
+    entity_id = g.entity.id
+    # Blocked, disabled, expired, deleted, and unknown models are ineligible,
+    # the same hiding semantics as GET /v1/models/<id>. Only models the entity
+    # is otherwise permitted to use can be acknowledged.
+    if get_model_access_status(entity_id, config.id) == "blocked" or get_pool_limit(entity_id) is None:
+        return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
+
+    # Capture the text that is being acknowledged (same content the web dialog
+    # shows) before the write flips the model to fully-acknowledged.
+    ack_notice, early_notice = model_notices(config)
+    notice = "\n\n".join(n for n in (ack_notice, early_notice) if n) or None
+
+    row = db.session.execute(select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=config.id)).scalar_one_or_none()
+    if current_app.config.get("API_REQUIRE_MODEL_CONSENT", True) and (config.needs_ack or config.early_access):
+        if row is None:
+            row = EntityModelConsent(entity_id=entity_id, model_config_id=config.id)
+            db.session.add(row)
+        now = utcnow()
+        if config.needs_ack and row.consented_at is None:
+            row.consented_at = now
+        if config.early_access and row.early_access_at is None:
+            row.early_access_at = now
+        db.session.commit()
+
+    tags, acknowledged_at, _ = _ack_fields(config, row)
+    resp = {
+        "id": model_id,
+        "tags": tags,
+        "acknowledged_at": acknowledged_at.isoformat() + "Z" if acknowledged_at else None,
+    }
+    if notice:
+        resp["notice"] = notice
+    return jsonify(resp)
 
 
 def _preflight(model_name: str):
@@ -400,7 +515,7 @@ def _preflight(model_name: str):
     if not model_config:
         return None, None, None, _err(f"Model '{model_name}' not found", status=HTTPStatus.NOT_FOUND)
     consent_required = current_app.config.get("API_REQUIRE_MODEL_CONSENT", True)
-    ok, code, msg, effective = check_coin_budget(
+    ok, code, msg, effective, reason = check_coin_budget(
         g.entity.id, model_config.id, require_consent=consent_required,
         source="api", model_name=model_name,
     )
@@ -416,6 +531,18 @@ def _preflight(model_name: str):
             return None, None, None, _err(
                 msg, "insufficient_quota", code,
                 err_code="insufficient_quota", headers=headers,
+            )
+        if reason == "needs_consent":
+            # A 403 here means one of two things with opposite fixes: the entity
+            # is blocked from the model (nothing they can do), or it simply
+            # hasn't acknowledged the model's notice yet (a single call fixes
+            # it). Disambiguate with a `code`, mirroring the 429 taxonomy above.
+            # The requested name works on the ack endpoint whether it is a
+            # canonical name or an alias.
+            return None, None, None, _err(
+                f"This model requires acknowledgment before use. Acknowledge it via POST /v1/models/{model_name}/acknowledge.",
+                status=code,
+                err_code="consent_required",
             )
         return None, None, None, _err(msg, status=code)
     endpoint = get_next_endpoint(model_config.id)

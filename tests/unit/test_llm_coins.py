@@ -260,11 +260,12 @@ def test_coin_budget_rejection_is_counted(app, test_user, test_model, monkeypatc
     with app.app_context():
         _exhaust(app, entity_id)
         recorded = _recorder(monkeypatch)
-        ok, code, _msg, _eff = check_coin_budget(
+        ok, code, _msg, _eff, reason = check_coin_budget(
             entity_id, model_id, source="chat", model_name=test_model["model_name"],
         )
         assert ok is False
         assert code == HTTPStatus.TOO_MANY_REQUESTS
+        assert reason == "coin_budget"
         assert recorded == [("coin_budget", "chat", test_model["model_name"])]
 
 
@@ -281,7 +282,7 @@ def test_coin_budget_counting_never_breaks_the_rejection(app, test_user, test_mo
             raise RuntimeError("prometheus is unhappy")
 
         monkeypatch.setattr("lumen.blueprints.metrics.middleware.observe_rejection", boom)
-        ok, code, msg, _eff = check_coin_budget(
+        ok, code, msg, _eff, _reason = check_coin_budget(
             entity_id, model_id, source="chat", model_name=test_model["model_name"],
         )
         assert ok is False

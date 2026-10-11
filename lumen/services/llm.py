@@ -490,34 +490,38 @@ def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float, effec
     db.session.flush()
 
 
-def _observe_denial_quietly(entity_id: int, model_config_id: int, require_consent: bool,
-                            source: str, model_name: str) -> None:
-    """Count a 403 under the reason it was actually decided for.
+def _denial_reason(entity_id: int, model_config_id: int, require_consent: bool) -> str:
+    """Return the 403 reason for an entity denied access to a model.
 
     ``get_effective_limit`` collapses "blocked" and "requires an acknowledgement
     nobody has given" into one None, and the taxonomy needs them apart: the
-    second is the user's to fix from the model detail page, the first is not.
-    Re-resolving the status costs a query on a path that is already refusing the
-    request. Never raises, for the same reason ``observe_rejection_quietly``
-    does not.
+    second is the caller's to fix by acknowledging, the first is not. Returns
+    "needs_consent" or "no_access". Never raises, for the same reason
+    ``observe_rejection_quietly`` does not.
     """
     try:
-        needs_consent = (
+        if (
             require_consent
             and get_model_access_status(entity_id, model_config_id) == "needs_ack"
             and not has_model_consent(entity_id, model_config_id)
-        )
+        ):
+            return "needs_consent"
     except Exception:  # noqa: BLE001 - instrumentation must never escalate
-        return
-    observe_rejection_quietly("needs_consent" if needs_consent else "no_access", source, model_name)
+        pass
+    return "no_access"
 
 
 def check_coin_budget(entity_id: int, model_config_id: int, require_consent: bool = True,
                       source: str = None, model_name: str = ""):
-    """Check coin budget. Returns (ok, http_code, error_message, effective).
+    """Check coin budget. Returns (ok, http_code, error_message, effective, reason).
 
     ``effective`` is the resolved coin pool limit (or None); pass it to subtract_coins
     afterward to avoid re-resolving model access and the pool limit per request.
+
+    ``reason`` labels a failed check so the caller can disambiguate a 403
+    (``"needs_consent"`` from ``"no_access"``) and a 429 (``"coin_budget"``); it
+    is None on success. The web and API surfaces keep their own messages — the
+    API uses the reason to emit a ``consent_required`` error code.
 
     ``source`` ("chat" or "api", matching ``request_logs.source``) and
     ``model_name`` are only used to label the rejection counter; pass them from
@@ -533,18 +537,19 @@ def check_coin_budget(entity_id: int, model_config_id: int, require_consent: boo
     """
     effective = get_effective_limit(entity_id, model_config_id, require_consent=require_consent)
     if effective is None:
+        reason = _denial_reason(entity_id, model_config_id, require_consent)
         if source:
-            _observe_denial_quietly(entity_id, model_config_id, require_consent, source, model_name)
-        return False, HTTPStatus.FORBIDDEN, "No access to this model", None
+            observe_rejection_quietly(reason, source, model_name)
+        return False, HTTPStatus.FORBIDDEN, "No access to this model", None, reason
     max_coins, _, _starting = effective
     if max_coins == -2:
-        return True, None, None, effective
+        return True, None, None, effective, None
     balance = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()
     if balance is not None and float(balance.coins_left) <= 0:
         if source:
             observe_rejection_quietly("coin_budget", source, model_name)
-        return False, HTTPStatus.TOO_MANY_REQUESTS, "Coin budget exhausted", None
-    return True, None, None, effective
+        return False, HTTPStatus.TOO_MANY_REQUESTS, "Coin budget exhausted", None, "coin_budget"
+    return True, None, None, effective, None
 
 
 def coin_retry_after(entity_id: int) -> Optional[int]:
