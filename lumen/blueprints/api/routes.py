@@ -279,7 +279,7 @@ def api_key_required(f):
 
         g.monitor = False
         api_key = db.session.execute(select(APIKey).filter_by(key_hash=hash_api_key(token))).scalar_one_or_none()
-        if not api_key or not api_key.active:
+        if not api_key or api_key.revoked_at is not None:
             return _err("Invalid or inactive API key", "authentication_error", HTTPStatus.UNAUTHORIZED)
 
         entity = db.session.get(Entity, api_key.entity_id)

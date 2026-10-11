@@ -394,8 +394,7 @@ def test_oauth_consent_page_with_existing_key_accessibility(client, auth_client,
     raw = "sk_" + "a" * 40
     with app.app_context():
         db.session.add(APIKey(entity_id=test_user["id"], name="opencode",
-                              key_hash=hash_api_key(raw), key_hint="sk_aaaa...aaaa",
-                              active=True))
+                              key_hash=hash_api_key(raw), key_hint="sk_aaaa...aaaa"))
         db.session.commit()
     body = _issue_device(client)
     url = f"/device?code={body['user_code']}"

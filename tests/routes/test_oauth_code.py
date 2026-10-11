@@ -191,9 +191,12 @@ def test_replay_revokes_minted_key(client, auth_client, app):
     assert replay.get_json()["error"] == "invalid_grant"
     # RFC 6749 §4.1.2: the key minted from the leaked code is revoked.
     assert client.get("/v1/models", headers={"Authorization": f"Bearer {key}"}).status_code == HTTPStatus.UNAUTHORIZED
-    # Soft delete: the row is kept, only deactivated.
+    # Soft delete: the row is kept, only revoked.
     with app.app_context():
-        assert [k.active for k in db.session.execute(select(APIKey)).scalars().all()] == [False]
+        [key] = db.session.execute(select(APIKey)).scalars().all()
+        assert abs(utcnow() - key.revoked_at) < timedelta(minutes=1)
+        # A system revocation: no user revoked the key.
+        assert key.revoked_by_entity_id is None
 
 
 def test_token_cors_and_no_store(client, auth_client, app):

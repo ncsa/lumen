@@ -1,12 +1,13 @@
 """Tests for the projects blueprint (/projects/*)."""
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from http import HTTPStatus
 
 import pytest
 from sqlalchemy import func, select
 
+from lumen.timeutils import utcnow
 from tests.conftest import make_project
 
 # ---------------------------------------------------------------------------
@@ -102,7 +103,6 @@ def make_api_key(app):
                 name=name,
                 key_hash=hash_api_key(raw_key),
                 key_hint=f"{raw_key[:8]}...{raw_key[-4:]}",
-                active=True,
             )
             db.session.add(key)
             db.session.commit()
@@ -876,7 +876,7 @@ def test_create_key_succeeds(app, managed_auth_client, managed_project):
         from lumen.models.api_key import APIKey
         key = db.session.execute(select(APIKey).filter_by(entity_id=managed_project["id"], name="prod")).scalar_one_or_none()
         assert key is not None
-        assert key.active is True
+        assert key.revoked_at is None
 
 
 def test_create_key_duplicate_returns_409(managed_auth_client, managed_project):
@@ -992,7 +992,7 @@ def test_detail_key_creator_falls_back_to_email(app, managed_auth_client, manage
         db.session.add(APIKey(
             entity_id=managed_project["id"], name="silent-key",
             created_by_entity_id=silent.id, key_hash=hash_api_key("sk_emailfallback1"),
-            key_hint="sk_emai...1234", active=True,
+            key_hint="sk_emai...1234",
         ))
         db.session.commit()
     page = managed_auth_client.get(f"/projects/{managed_project['id']}")
@@ -1021,20 +1021,64 @@ def _key_state(app, key_id):
         from lumen.models.api_key import APIKey
         k = db.session.get(APIKey, key_id)
         assert k is not None
-        return k.active, k.requests, k.input_tokens, k.output_tokens, k.audio_seconds, k.cost
+        return k.revoked_at, k.revoked_by_entity_id, k.requests, k.input_tokens, k.output_tokens, k.audio_seconds, k.cost
 
 
 def test_delete_key_soft_deletes(app, managed_auth_client, managed_project, test_user, make_created_key):
     key_id = make_created_key(managed_project["id"], test_user["id"], "sk_todelete12345678")
     resp = managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
     assert resp.status_code == HTTPStatus.NO_CONTENT
-    active, *counters = _key_state(app, key_id)
-    assert active is False
+    revoked_at, revoked_by, *counters = _key_state(app, key_id)
+    assert abs(utcnow() - revoked_at) < timedelta(minutes=1)
+    assert revoked_by == test_user["id"]
     assert counters == [9, 300, 120, 3, Decimal("2.250000")]
 
 
+def test_manager_revoking_member_key_records_revoker(app, managed_auth_client, managed_project, test_user,
+                                                     second_user, make_created_key):
+    key_id = make_created_key(managed_project["id"], second_user["id"], "sk_memberkey1234567")
+    resp = managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    _, revoked_by, *_ = _key_state(app, key_id)
+    assert revoked_by == test_user["id"]
+
+
+def test_deleting_revoker_keeps_key_with_null_revoker(app, managed_auth_client, managed_project, test_user,
+                                                      second_user, make_created_key):
+    key_id = make_created_key(managed_project["id"], second_user["id"], "sk_orphrevoker1234")
+    managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
+    with app.app_context():
+        from sqlalchemy import delete, text
+
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        from lumen.models.entity import Entity
+        # Same pattern as test_deleting_creator_keeps_key_with_null_creator.
+        try:
+            db.session.execute(text("PRAGMA foreign_keys=ON"))
+            db.session.execute(delete(Entity).where(Entity.id == test_user["id"]))
+            db.session.commit()
+            key = db.session.get(APIKey, key_id)
+            assert key is not None and key.revoked_at is not None
+            assert key.revoked_by_entity_id is None
+        finally:
+            db.session.rollback()
+            db.session.execute(text("PRAGMA foreign_keys=OFF"))
+            db.session.commit()
+
+
+def test_revoked_project_key_is_rejected(client, managed_auth_client, managed_project, test_user, make_created_key):
+    raw = "sk_revoked401key123"
+    key_id = make_created_key(managed_project["id"], test_user["id"], raw)
+    headers = {"Authorization": f"Bearer {raw}"}
+    assert client.get("/v1/models", headers=headers).status_code == HTTPStatus.OK
+    managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
+    assert client.get("/v1/models", headers=headers).status_code == HTTPStatus.UNAUTHORIZED
+
+
 def test_delete_inactive_key_is_noop(app, managed_auth_client, managed_project, test_user, make_created_key):
-    key_id = make_created_key(managed_project["id"], test_user["id"], "sk_inactive12345678", active=False)
+    key_id = make_created_key(managed_project["id"], test_user["id"], "sk_inactive12345678",
+                              revoked_at=datetime(2026, 9, 3, 8, 0))
     before = _key_state(app, key_id)
     resp = managed_auth_client.delete(f"/projects/{managed_project['id']}/keys/{key_id}")
     assert resp.status_code == HTTPStatus.NO_CONTENT
@@ -1048,20 +1092,20 @@ def test_deleted_key_still_listed_as_inactive(managed_auth_client, managed_proje
     row = re.search(r"\{\s*id: " + str(key_id) + r",.*?\}", html, re.S)
     assert row is not None
     assert '"gone-key"' in row.group(0)
-    assert "active: false" in row.group(0)
+    assert re.search(r'revoked_at: "\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ"', row.group(0))
 
 
 @pytest.fixture
 def make_created_key(app):
     """Factory: create a key on a project with a given creator and usage stats. Returns key id."""
-    def _make(sid, creator_id, raw_key, active=True):
+    def _make(sid, creator_id, raw_key, revoked_at=None):
         with app.app_context():
             from lumen.extensions import db
             from lumen.models.api_key import APIKey
             from lumen.services.crypto import hash_api_key
             key = APIKey(
                 entity_id=sid, created_by_entity_id=creator_id, name="rot-key",
-                key_hash=hash_api_key(raw_key), key_hint=f"{raw_key[:7]}...{raw_key[-4:]}", active=active,
+                key_hash=hash_api_key(raw_key), key_hint=f"{raw_key[:7]}...{raw_key[-4:]}", revoked_at=revoked_at,
                 requests=9, input_tokens=300, output_tokens=120, audio_seconds=3,
                 cost=Decimal("2.250000"), last_used_at=datetime(2026, 9, 2, 8, 0),
                 created_at=datetime(2026, 8, 2, 7, 0),
@@ -1085,7 +1129,7 @@ def test_rotate_project_key_by_creator_keeps_stats(app, client, managed_auth_cli
     old, new = "sk_rotold123456789", "sk_rotnew123456789"
     kid = make_created_key(managed_project["id"], test_user["id"], old)
     fields = ("requests", "input_tokens", "output_tokens", "audio_seconds", "cost",
-              "last_used_at", "name", "created_at", "created_by_entity_id", "entity_id", "active")
+              "last_used_at", "name", "created_at", "created_by_entity_id", "entity_id", "revoked_at")
 
     def snapshot():
         with app.app_context():
@@ -1154,7 +1198,8 @@ def test_rotate_project_key_from_other_project_returns_404(app, managed_auth_cli
 
 
 def test_rotate_project_key_inactive_returns_409(managed_auth_client, managed_project, test_user, make_created_key):
-    kid = make_created_key(managed_project["id"], test_user["id"], "sk_inactiverot1234", active=False)
+    kid = make_created_key(managed_project["id"], test_user["id"], "sk_inactiverot1234",
+                           revoked_at=datetime(2026, 9, 3, 8, 0))
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/rotate",
                                     json={"key": "sk_inactiverotnew1"})
     assert resp.status_code == HTTPStatus.CONFLICT
@@ -1206,7 +1251,8 @@ def test_detail_rotate_only_on_own_active_keys(app, managed_auth_client, managed
     _add_manager(app, managed_project["id"], second_user["id"])
     sid = managed_project["id"]
     own = make_created_key(sid, test_user["id"], "sk_ownrotui1234567")
-    own_inactive = make_created_key(sid, test_user["id"], "sk_owninactui12345", active=False)
+    own_inactive = make_created_key(sid, test_user["id"], "sk_owninactui12345",
+                                    revoked_at=datetime(2026, 9, 3, 8, 0))
     other = make_created_key(sid, second_user["id"], "sk_otherrotui12345")
     legacy = make_created_key(sid, None, "sk_legacyrotui1234")
 
@@ -1643,7 +1689,7 @@ def test_user_can_have_only_one_active_key(app, user_auth_client, user_project):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.api_key import APIKey
-        assert db.session.get(APIKey, first.get_json()["id"]).active is False
+        assert db.session.get(APIKey, first.get_json()["id"]).revoked_at is not None
 
     third = user_auth_client.post(url, json={"name": "three", "key": "sk_userkey_three_1234"})
     assert third.status_code == HTTPStatus.CREATED
@@ -1655,9 +1701,9 @@ def test_user_key_limit_ignores_inactive_and_other_members_keys(app, user_auth_c
         from lumen.models.api_key import APIKey
         db.session.add_all([
             APIKey(entity_id=user_project["id"], created_by_entity_id=test_user["id"],
-                   name="old", key_hash="a" * 64, active=False),
+                   name="old", key_hash="a" * 64, revoked_at=datetime(2026, 9, 3, 8, 0)),
             APIKey(entity_id=user_project["id"], created_by_entity_id=user_project["owner_id"],
-                   name="owner", key_hash="b" * 64, active=True),
+                   name="owner", key_hash="b" * 64),
         ])
         db.session.commit()
     resp = user_auth_client.post(
@@ -1772,7 +1818,7 @@ def test_demoting_manager_with_several_active_keys_returns_409(app, owner_auth_c
         from lumen.models.api_key import APIKey
         db.session.add_all([
             APIKey(entity_id=owned_project["id"], created_by_entity_id=second_user["id"],
-                   name=f"k{i}", key_hash=str(i) * 64, active=True)
+                   name=f"k{i}", key_hash=str(i) * 64)
             for i in (1, 2)
         ])
         db.session.commit()
@@ -1790,9 +1836,9 @@ def test_demoting_manager_with_one_active_key_succeeds(app, owner_auth_client, o
         from lumen.models.api_key import APIKey
         db.session.add_all([
             APIKey(entity_id=owned_project["id"], created_by_entity_id=second_user["id"],
-                   name="live", key_hash="1" * 64, active=True),
+                   name="live", key_hash="1" * 64),
             APIKey(entity_id=owned_project["id"], created_by_entity_id=second_user["id"],
-                   name="old", key_hash="2" * 64, active=False),
+                   name="old", key_hash="2" * 64, revoked_at=datetime(2026, 9, 3, 8, 0)),
         ])
         db.session.commit()
     resp = owner_auth_client.patch(

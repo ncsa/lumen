@@ -309,7 +309,7 @@ def consent():
         overwrite = request.form.get("overwrite") == "on"
         existing = db.session.execute(
             select(APIKey).where(APIKey.entity_id == entity_id, APIKey.name == req.requested_name,
-                                 APIKey.active.is_(True))
+                                 APIKey.revoked_at.is_(None))
         ).scalars().all()
         if existing and not overwrite:
             return _render_consent(req, error='Tick "Overwrite key" to replace your existing key.')
@@ -469,8 +469,8 @@ def _token_code():
         # so their usage history is kept.
         if req.api_key_id is not None:
             key = db.session.get(APIKey, req.api_key_id)
-            if key is not None and key.active:
-                key.active = False
+            if key is not None and key.revoked_at is None:
+                key.revoked_at = now
                 db.session.commit()
         return _oauth_error("invalid_grant", "authorization code replay detected; key revoked")
     if req.status != "approved":
@@ -499,11 +499,13 @@ def _mint(req: AuthRequest):
 
     existing = db.session.execute(
         select(APIKey).where(APIKey.entity_id == req.entity_id, APIKey.name == req.requested_name,
-                             APIKey.active.is_(True))
+                             APIKey.revoked_at.is_(None))
     ).scalars().all()
     if req.overwrite:
+        now = utcnow()
         for stale in existing:
-            stale.active = False
+            stale.revoked_at = now
+            stale.revoked_by_entity_id = req.entity_id
     elif existing:
         db.session.rollback()
         return _oauth_error("invalid_grant", "key name now in use, run again")
@@ -515,7 +517,6 @@ def _mint(req: AuthRequest):
         name=req.requested_name,
         key_hash=hash_api_key(key),
         key_hint=f"{key[:7]}...{key[-4:]}",
-        active=True,
         client_id=req.client_id,
         requested_by=req.author,
     )
@@ -587,7 +588,7 @@ def _render_consent(req: AuthRequest, error: str | None = None):
     entity_id = session["entity_id"]
     existing_key = db.session.execute(
         select(APIKey).where(APIKey.entity_id == entity_id, APIKey.name == req.requested_name,
-                             APIKey.active.is_(True)).order_by(APIKey.created_at.desc())
+                             APIKey.revoked_at.is_(None)).order_by(APIKey.created_at.desc())
     ).scalars().first()
     session["oauth_consent_request_id"] = req.id
     origin = full_uri = ""

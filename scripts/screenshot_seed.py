@@ -128,7 +128,7 @@ def main():
             db.session.add(APIKey(entity_id=proj.id, name="example-key",
                                   created_by_entity_id=user.id,
                                   key_hash=hash_api_key(k),
-                                  key_hint=f"{k[:7]}...{k[-4:]}", active=True))
+                                  key_hint=f"{k[:7]}...{k[-4:]}"))
             db.session.commit()
 
         models = db.session.execute(

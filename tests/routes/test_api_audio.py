@@ -23,7 +23,6 @@ def api_key(app, test_user):
             entity_id=test_user["id"],
             name="audio-key",
             key_hash=hash_api_key(token),
-            active=True,
         )
         db.session.add(ak)
         db.session.commit()

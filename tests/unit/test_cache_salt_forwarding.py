@@ -111,7 +111,7 @@ def billable_key(app, test_user, test_model_endpoint):
         from lumen.models.entity_limit import EntityLimit
         from lumen.services.crypto import hash_api_key
         db.session.add(EntityLimit(entity_id=test_user["id"], max_coins=-2, refresh_coins=0, starting_coins=0))
-        db.session.add(APIKey(entity_id=test_user["id"], name="k", key_hash=hash_api_key("lk_bill_tok"), active=True))
+        db.session.add(APIKey(entity_id=test_user["id"], name="k", key_hash=hash_api_key("lk_bill_tok")))
         db.session.commit()
     return "lk_bill_tok"
 

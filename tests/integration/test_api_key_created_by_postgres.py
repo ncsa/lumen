@@ -82,7 +82,7 @@ def test_migrated_creator_fk_is_set_null_and_commented(pg_app):
         db.session.flush()
         db.session.add(EntityManager(user_entity_id=owner.id, project_entity_id=project.id))
         key = APIKey(entity_id=project.id, created_by_entity_id=creator.id,
-                     name="k", key_hash=hash_api_key("sk_pgsetnull12345678"), active=True)
+                     name="k", key_hash=hash_api_key("sk_pgsetnull12345678"))
         db.session.add(key)
         db.session.commit()
         key_id, creator_id, project_id = key.id, creator.id, project.id

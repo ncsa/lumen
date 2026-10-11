@@ -45,7 +45,7 @@ def test_usage_requires_active_api_key(app, client, test_user):
     with app.app_context():
         db.session.add(APIKey(
             entity_id=test_user["id"], name="inactive", key_hash=hash_api_key("inactive-token"),
-            active=False,
+            revoked_at=datetime(2026, 1, 1),
         ))
         db.session.commit()
 

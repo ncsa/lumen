@@ -54,7 +54,7 @@ def _make_manual_key(app, entity_id, name):
     with app.app_context():
         db.session.add(APIKey(
             entity_id=entity_id, name=name, key_hash=hash_api_key(raw),
-            key_hint=f"{raw[:7]}...{raw[-4:]}", active=True,
+            key_hint=f"{raw[:7]}...{raw[-4:]}",
         ))
         db.session.commit()
     return raw
@@ -141,11 +141,12 @@ def test_overwrite_soft_deletes_old_key(client, auth_client, app, test_user):
 
     with app.app_context():
         old = db.session.get(APIKey, old_id)
-        # The old row and its usage counters survive; only active flips.
-        assert old is not None and old.active is False
+        # The old row and its usage counters survive; only revoked_at is set.
+        assert old is not None and abs(utcnow() - old.revoked_at) < timedelta(minutes=1)
+        assert old.revoked_by_entity_id == test_user["id"]
         assert (old.requests, old.input_tokens, old.output_tokens, float(old.cost)) == (7, 100, 50, 1.25)
         keys = db.session.execute(select(APIKey).where(APIKey.name == "opencode")).scalars().all()
-        assert sorted(k.active for k in keys) == [False, True]
+        assert sorted(k.revoked_at is None for k in keys) == [False, True]
 
 
 def test_name_conflict_between_approval_and_mint(client, auth_client, app, test_user):

@@ -302,7 +302,7 @@ def api_token(app, test_user):
     with app.app_context():
         db.session.add(APIKey(
             entity_id=test_user["id"], name="disconnect-test",
-            key_hash=hash_api_key(token), active=True,
+            key_hash=hash_api_key(token),
         ))
         db.session.commit()
     return token

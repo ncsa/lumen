@@ -334,7 +334,7 @@ def _new_key_fields(key: str):
 
 def rotate_key_secret(api_key: APIKey):
     """Replace api_key's secret with the request's key, keeping usage stats. Commits."""
-    if not api_key.active:
+    if api_key.revoked_at is not None:
         return jsonify({"error": "Key is inactive"}), HTTPStatus.CONFLICT
 
     data = request.get_json()
@@ -374,7 +374,6 @@ def create_key():
         entity_id=entity_id,
         created_by_entity_id=entity_id,
         name=name or "Unnamed Key",
-        active=True,
         **fields,
     )
     db.session.add(api_key)
@@ -392,7 +391,9 @@ def delete_key(kid):
     if api_key.entity_id != entity_id:
         return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
 
-    api_key.active = False
+    if api_key.revoked_at is None:
+        api_key.revoked_at = utcnow()
+        api_key.revoked_by_entity_id = entity_id
     db.session.commit()
     return "", HTTPStatus.NO_CONTENT
 
