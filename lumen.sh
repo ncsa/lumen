@@ -127,12 +127,26 @@ store_key() {
   install_rc_key "$1" "$SERVER"
 }
 
-# Single-quotes $1 for an rc file so the shell reading it never expands it;
-# an embedded ' becomes '\'' (sh, csh) or \' (fish).
+# Single-quotes $1 for an rc file so the shell reading it never expands it.
+# An embedded ' becomes '\'' (sh, csh) or \' (fish); fish also needs \
+# doubled. A character loop avoids ${//} replacement quirks of bash 3.2.
 rc_quote() {
-  local q="'\\''"
-  [[ "$2" == fish ]] && q="\\'"
-  printf "'%s'" "${1//\'/$q}"
+  local s="$1" out="" c i
+  for (( i = 0; i < ${#s}; i++ )); do
+    c="${s:i:1}"
+    if [[ "$2" == fish ]]; then
+      case "$c" in
+        "'") out+="\\'" ;;
+        "\\") out+="\\\\" ;;
+        *) out+="$c" ;;
+      esac
+    elif [[ "$c" == "'" ]]; then
+      out+="'\\''"
+    else
+      out+="$c"
+    fi
+  done
+  printf "'%s'" "$out"
 }
 
 install_rc_key() {

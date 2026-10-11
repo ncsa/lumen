@@ -265,6 +265,35 @@ def test_rc_block_values_are_literal_when_sourced(home, lumen_server):
     assert out == f"{TEST_KEY}\nhttp://127.0.0.1:{port}"
 
 
+def rc_quote(value, shell):
+    """Runs lumen.sh's rc_quote on its own, without the rest of the script."""
+    prog = 'eval "$(sed -n "/^rc_quote()/,/^}/p" "$0")"; rc_quote "$1" "$2"'
+    return subprocess.run(
+        ["bash", "-c", prog, SCRIPT, value, shell],
+        capture_output=True, check=True, env={"PATH": "/usr/bin:/bin"},
+    ).stdout.decode()
+
+
+@pytest.mark.parametrize("shell,value,expected", [
+    ("bash", "https://h/a'b", "'https://h/a'\\''b'"),
+    ("csh", "https://h/a'b", "'https://h/a'\\''b'"),
+    ("bash", "https://h/a\\", "'https://h/a\\'"),
+    ("fish", "https://h/a'b", "'https://h/a\\'b'"),
+    ("fish", "https://h/a\\", "'https://h/a\\\\'"),
+])
+def test_rc_quote_emitted_bytes(shell, value, expected):
+    assert rc_quote(value, shell) == expected
+
+
+@pytest.mark.parametrize("value", ["a'b", "it's $(id) `id` \\ %s", "trailing\\", "''"])
+def test_rc_quote_round_trips_in_bash(value):
+    out = subprocess.run(
+        ["bash", "-c", f"v={rc_quote(value, 'bash')}; printf %s \"$v\""],
+        capture_output=True, check=True, env={"PATH": "/usr/bin:/bin"},
+    ).stdout.decode()
+    assert out == value
+
+
 @pytest.mark.parametrize("uri,opened", [
     ("file:///etc/passwd", False),
     ("https://evil.example/device?code=Q", False),
