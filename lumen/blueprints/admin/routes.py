@@ -4,7 +4,7 @@ from http import HTTPStatus
 
 import yaml
 from flask import Blueprint, current_app, jsonify, redirect, render_template, request, session, url_for
-from sqlalchemy import case, delete, func, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from lumen.blueprints.profile.routes import (
@@ -25,7 +25,6 @@ from lumen.models.group import Group
 from lumen.models.group_limit import GroupLimit
 from lumen.models.group_member import GroupMember
 from lumen.models.model_config import ModelConfig
-from lumen.models.model_group_access import ModelGroupAccess
 from lumen.services.config_watcher import (
     RESTART_REQUIRED,
     _find_unrestorable_masks,
@@ -574,96 +573,42 @@ def users_search_api():
 
 
 def _model_access_payload(mc):
-    """JSON payload describing a model's owner and group grants for the Access dialog."""
+    """JSON payload describing a model's owner for the Access dialog."""
     owner = db.session.get(Entity, mc.owner_entity_id) if mc.owner_entity_id else None
-    granted_group_ids = [
-        g.group_id for g in db.session.execute(
-            select(ModelGroupAccess).filter_by(model_config_id=mc.id)
-        ).scalars().all()
-    ]
-    # Grants through inactive groups have no effect, so offer only active
-    # groups — plus any inactive group already granted, so the stale grant
-    # stays visible and removable.
-    groups = db.session.execute(
-        select(Group).where(
-            db.or_(Group.active == True, Group.id.in_(granted_group_ids))  # noqa: E712
-        ).order_by(Group.name)
-    ).scalars().all()
     return {
         "owner": {"id": owner.id, "name": owner.name, "email": owner.email} if owner else None,
-        "granted_group_ids": granted_group_ids,
-        "groups": [{"id": g.id, "name": g.name, "active": g.active} for g in groups],
     }
 
 
 def apply_model_access_edit(mc, data):
-    """Set a model's owner and group grants from an Access dialog payload.
+    """Set a model's owner from an Access dialog payload.
 
-    owner_email blank/null makes the model public and drops all its grants
-    (a public model has no grants). group_ids replaces the grant set and is
-    only honored when the model has an owner. Returns an error message, or
-    None on success (caller commits).
+    owner_email blank/null makes the model public. Any other key (such as the
+    retired group_ids) is ignored. Returns an error message, or None on
+    success (caller commits).
     """
-    # Validate everything before mutating so an error response leaves no partial edit.
-    new_owner_id = mc.owner_entity_id
-    if "owner_email" in data:
-        owner_email = (data.get("owner_email") or "").strip()
-        if not owner_email:
-            new_owner_id = None
-        else:
-            owner = db.session.execute(
-                select(Entity).where(
-                    Entity.entity_type == "user",
-                    db.func.lower(Entity.email) == owner_email.lower(),
-                )
-            ).scalar_one_or_none()
-            if owner is None:
-                return "no user with that email"
-            new_owner_id = owner.id
-
-    if new_owner_id is None:
-        mc.owner_entity_id = None
-        db.session.execute(delete(ModelGroupAccess).where(ModelGroupAccess.model_config_id == mc.id))
+    if "owner_email" not in data:
         return None
-
-    if "group_ids" in data:
-        raw_ids = data.get("group_ids") or []
-        if not isinstance(raw_ids, list) or not all(isinstance(g, int) for g in raw_ids):
-            return "group_ids must be a list of group ids"
-        desired = set(raw_ids)
-        current = {
-            row.group_id: row for row in db.session.execute(
-                select(ModelGroupAccess).filter_by(model_config_id=mc.id)
-            ).scalars().all()
-        }
-        groups_by_id = {
-            group.id: group for group in db.session.execute(
-                select(Group).where(Group.id.in_(desired))
-            ).scalars().all()
-        } if desired else {}
-        unknown = desired - groups_by_id.keys()
-        if unknown:
-            return "unknown group id(s): " + ", ".join(str(g) for g in sorted(unknown))
-        inactive_new = sorted(
-            group_id for group_id in desired - current.keys()
-            if not groups_by_id[group_id].active
+    owner_email = (data.get("owner_email") or "").strip()
+    if not owner_email:
+        mc.owner_entity_id = None
+        return None
+    owner = db.session.execute(
+        select(Entity).where(
+            Entity.entity_type == "user",
+            db.func.lower(Entity.email) == owner_email.lower(),
         )
-        if inactive_new:
-            return "inactive group id(s): " + ", ".join(str(g) for g in inactive_new)
-        for group_id, row in current.items():
-            if group_id not in desired:
-                db.session.delete(row)
-        for group_id in desired:
-            if group_id not in current:
-                db.session.add(ModelGroupAccess(model_config_id=mc.id, group_id=group_id))
-    mc.owner_entity_id = new_owner_id
+    ).scalar_one_or_none()
+    if owner is None:
+        return "no user with that email"
+    mc.owner_entity_id = owner.id
     return None
 
 
 @admin_bp.route("/api/models/<int:mid>/access")
 @admin_required
 def model_access_api_get(mid):
-    """Owner + group grants for the model detail Access dialog."""
+    """Owner for the model detail Access dialog."""
     mc = db.get_or_404(ModelConfig, mid)
     return jsonify(_model_access_payload(mc))
 
@@ -671,7 +616,7 @@ def model_access_api_get(mid):
 @admin_bp.route("/api/models/<int:mid>/access", methods=["PATCH"])
 @admin_required
 def model_access_api_patch(mid):
-    """Update a model's owner and group grants from the Access dialog."""
+    """Update a model's owner from the Access dialog."""
     mc = db.get_or_404(ModelConfig, mid)
     data = request.get_json(force=True, silent=True)
     if not isinstance(data, dict):

@@ -64,6 +64,6 @@ The Edit User dialog's **Groups** field shows the user's groups as pills. Type p
 
 ## Groups and Model Access
 
-Model access follows ownership: a model with no owner is available to everyone; an owned model is available only to its owner and to members of groups the model has been granted to. Grants are managed by admins on the model detail page (see [Configuring Models](config-models.md#access-control)) — never in `config.yaml`.
+Model access follows ownership: a model with no owner is available to everyone; an owned model is available only to its owner. Ownership is managed by admins on the model detail page (see [Configuring Models](config-models.md#access-control)) — never in `config.yaml`.
 
 Acknowledgement is also not a group setting — it lives on the model via `needs_ack`; if an accessible model has `needs_ack: true`, members still acknowledge it once before use.

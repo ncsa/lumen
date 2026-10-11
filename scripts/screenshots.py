@@ -119,21 +119,14 @@ def ensure_demo_data(app):
                 db.session.add(EntityManager(user_entity_id=member.id, project_entity_id=project.id,
                                              role=role))
 
-        # Give one model an owner and a group grant so the admin Access card
-        # (model-access.png) shows a populated example instead of "Everyone".
-        from lumen.models.group import Group
-        from lumen.models.model_group_access import ModelGroupAccess
+        # Give one model an owner so the admin Access card (model-access.png)
+        # shows a populated example instead of "Everyone".
         owned = db.session.execute(
             select(ModelConfig).where(ModelConfig.active).order_by(ModelConfig.model_name)
         ).scalars().all()
         owned = owned[1] if len(owned) > 1 else None
         if dev and owned:
             owned.owner_entity_id = dev.id
-            grp = db.session.execute(select(Group).filter_by(name="staff")).scalar_one_or_none()
-            if grp and not db.session.execute(
-                select(ModelGroupAccess).filter_by(model_config_id=owned.id, group_id=grp.id)
-            ).scalar_one_or_none():
-                db.session.add(ModelGroupAccess(model_config_id=owned.id, group_id=grp.id))
         db.session.commit()
         owned_name = owned.model_name if owned else None
 

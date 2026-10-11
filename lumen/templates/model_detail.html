@@ -226,21 +226,11 @@
         </div>
         <div class="card-body">
           <p class="mb-1 small text-muted">Owner</p>
-          <p class="mb-2" id="model-access-owner">
+          <p class="mb-0" id="model-access-owner">
             {%- if config.owner -%}
               {{ config.owner.name }} <span class="text-muted small">({{ config.owner.email }})</span>
             {%- else -%}
               Everyone (public)
-            {%- endif -%}
-          </p>
-          <p class="mb-1 small text-muted">Granted groups</p>
-          <p class="mb-0" id="model-access-groups">
-            {%- if granted_group_names -%}
-              {%- for name in granted_group_names %}<span class="badge text-bg-secondary me-1">{{ name }}</span>{% endfor -%}
-            {%- elif config.owner -%}
-              <span class="text-muted">None</span>
-            {%- else -%}
-              <span class="text-muted">Not applicable — public model</span>
             {%- endif -%}
           </p>
         </div>
@@ -283,7 +273,7 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close Edit Access dialog"></button>
       </div>
       <div class="modal-body">
-        <p class="text-muted small mb-3">A model without an owner is available to everyone. An owned model is available only to its owner and to members of the granted groups.</p>
+        <p class="text-muted small mb-3">A model without an owner is available to everyone. An owned model is available only to its owner.</p>
         <div class="mb-3">
           <label class="form-label" for="access-owner-input">Owner (name or email)</label>
           <div class="d-flex gap-2">
@@ -297,11 +287,6 @@
           </div>
           <div class="form-text">Clear the owner to make the model available to everyone.</div>
         </div>
-        <fieldset class="mb-3">
-          <legend class="form-label fs-6">Granted groups</legend>
-          <div id="access-groups-list" class="border rounded p-2" style="max-height: 200px; overflow: auto;"></div>
-          <div class="form-text">Only applies when the model has an owner.</div>
-        </fieldset>
         <div id="access-edit-error" class="text-danger small" role="alert" aria-live="assertive" hidden></div>
       </div>
       <div class="modal-footer">
@@ -326,42 +311,18 @@
   const editBtn = document.getElementById('model-access-edit-btn');
   const modalEl = document.getElementById('editAccessModal');
   const ownerInput = document.getElementById('access-owner-input');
-  const groupsList = document.getElementById('access-groups-list');
   const errorEl = document.getElementById('access-edit-error');
   const modal = new bootstrap.Modal(modalEl);
-  const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
   initUserSearch({
     inputId: 'access-owner-input',
     listId: 'access-owner-list',
     searchUrl: {{ url_for('admin.users_search_api') | tojson }} + '?q=',
-    onChoose: () => syncGroupsEnabled(),
   });
-  ownerInput.addEventListener('input', syncGroupsEnabled);
   document.getElementById('access-owner-clear-btn').addEventListener('click', () => {
     ownerInput.value = '';
-    syncGroupsEnabled();
     ownerInput.focus();
   });
-
-  function syncGroupsEnabled() {
-    const hasOwner = ownerInput.value.trim() !== '';
-    groupsList.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.disabled = !hasOwner; });
-  }
-
-  function renderGroups(groups, grantedIds) {
-    if (!groups.length) {
-      groupsList.innerHTML = '<span class="text-muted small">No groups exist yet.</span>';
-      return;
-    }
-    groupsList.innerHTML = groups.map(g => `
-      <div class="form-check">
-        <input class="form-check-input" type="checkbox" id="access-group-${g.id}" value="${g.id}"
-               ${grantedIds.includes(g.id) ? 'checked' : ''}>
-        <label class="form-check-label" for="access-group-${g.id}">${esc(g.name)}${g.active ? '' : ' <span class="text-muted small">(inactive — members get no access)</span>'}</label>
-      </div>`).join('');
-    syncGroupsEnabled();
-  }
 
   editBtn.addEventListener('click', async () => {
     errorEl.hidden = true;
@@ -370,7 +331,6 @@
       if (!r.ok) throw new Error('load failed');
       const data = await r.json();
       ownerInput.value = data.owner ? data.owner.email : '';
-      renderGroups(data.groups, data.granted_group_ids);
       modal.show();
       setTimeout(() => ownerInput.focus(), 200);
     } catch (_) {
@@ -384,11 +344,10 @@
 
   document.getElementById('access-save-btn').addEventListener('click', async () => {
     errorEl.hidden = true;
-    const groupIds = [...groupsList.querySelectorAll('input[type="checkbox"]:checked')].map(cb => parseInt(cb.value, 10));
     const resp = await fetch(ACCESS_URL, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
-      body: JSON.stringify({ owner_email: ownerInput.value.trim(), group_ids: groupIds }),
+      body: JSON.stringify({ owner_email: ownerInput.value.trim() }),
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) {

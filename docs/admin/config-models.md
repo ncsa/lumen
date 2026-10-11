@@ -25,7 +25,7 @@ models:
 
 ## Access Control
 
-Who may use a model is **not** configured in `config.yaml`. A model may have an **owner** (a user): a model with no owner is available to everyone (users and projects), while an owned model is available only to its owner and to members of groups the model has been explicitly granted to. Other users and projects cannot list the model or retrieve its detail-page or README metadata. Models awaiting acknowledgment remain visible because acknowledgment is a consent requirement, not an access grant. Ownership and group grants live in the database and are edited by admins via the **Access** card on the model detail page (`/models/<name>`) — see [Model Detail](../models/model-detail.md#access-admin-only). Config sync never touches them; the per-model `access:` key was removed in config version 3. If it remains in a config, Lumen ignores it and it does not restrict access; assign an owner and group grants in the UI instead.
+Who may use a model is **not** configured in `config.yaml`. A model may have an **owner** (a user): a model with no owner is available to everyone (users and projects), while an owned model is available only to its owner. Other users and projects cannot list the model or retrieve its detail-page or README metadata. Models awaiting acknowledgment remain visible because acknowledgment is a consent requirement, not an access grant. Ownership lives in the database and is edited by admins via the **Access** card on the model detail page (`/models/<name>`) — see [Model Detail](../models/model-detail.md#access-admin-only). Config sync never touches it; the per-model `access:` key was removed in config version 3. If it remains in a config, Lumen ignores it and it does not restrict access; assign an owner in the UI instead.
 
 > **Upgrading:** after upgrading from a version that used the config-based allow/block system, all non-disabled models are **public** until an admin assigns owners.
 
@@ -60,7 +60,7 @@ models:
 
 ### `disabled` is a hard off
 
-Setting `disabled: true` blocks the model for everyone — it disappears from the chat UI and the API, regardless of ownership or group grants. This replaces the old `active: false`. To **permanently** remove a model, delete its entry from `config.yaml` entirely.
+Setting `disabled: true` blocks the model for everyone — it disappears from the chat UI and the API, regardless of ownership. This replaces the old `active: false`. To **permanently** remove a model, delete its entry from `config.yaml` entirely.
 
 > The legacy `active:` key is still accepted as input (with a deprecation warning): `active: false` maps to `disabled: true`. Prefer `disabled` in new configs.
 

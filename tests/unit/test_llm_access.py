@@ -78,18 +78,19 @@ def test_owned_model_blocked_for_non_owner(app, ids):
         assert get_model_access(entity_id, model_id) is False
 
 
-def test_group_grant_allows_user_member(app, ids):
+def test_group_member_blocked_from_owned_model(app, ids):
+    """Group membership never grants an owned model, even with a leftover grant row."""
     entity_id, model_id = ids
     with app.app_context():
         owner_id = _make_entity()
         set_model_owner(model_id, owner_id)
         group_id = make_group_with_member(entity_id)
         grant_model_to_group(model_id, group_id)
-        assert get_model_access_status(entity_id, model_id) == "allowed"
-        assert get_model_access(entity_id, model_id) is True
+        assert get_model_access_status(entity_id, model_id) == "blocked"
+        assert get_model_access(entity_id, model_id) is False
 
 
-def test_group_grant_allows_project_member(app, ids):
+def test_project_group_member_blocked_from_owned_model(app, ids):
     _, model_id = ids
     with app.app_context():
         owner_id = _make_entity()
@@ -97,29 +98,7 @@ def test_group_grant_allows_project_member(app, ids):
         set_model_owner(model_id, owner_id)
         group_id = make_group_with_member(project_id)
         grant_model_to_group(model_id, group_id)
-        assert get_model_access_status(project_id, model_id) == "allowed"
-
-
-def test_inactive_granted_group_blocked(app, ids):
-    entity_id, model_id = ids
-    with app.app_context():
-        owner_id = _make_entity()
-        set_model_owner(model_id, owner_id)
-        group_id = make_group_with_member(entity_id, active=False)
-        grant_model_to_group(model_id, group_id)
-        assert get_model_access_status(entity_id, model_id) == "blocked"
-
-
-def test_non_member_of_granted_group_blocked(app, ids):
-    entity_id, model_id = ids
-    with app.app_context():
-        owner_id = _make_entity()
-        member_id = _make_entity(email="member@example.com", name="Member")
-        set_model_owner(model_id, owner_id)
-        group_id = make_group_with_member(member_id)
-        grant_model_to_group(model_id, group_id)
-        assert get_model_access_status(entity_id, model_id) == "blocked"
-        assert get_model_access(entity_id, model_id) is False
+        assert get_model_access_status(project_id, model_id) == "blocked"
 
 
 # ---------------------------------------------------------------------------
@@ -169,17 +148,6 @@ def test_needs_ack_for_owner(app, ids):
         assert get_model_access_status(entity_id, model_id) == "needs_ack"
 
 
-def test_needs_ack_for_granted_member(app, ids):
-    entity_id, model_id = ids
-    with app.app_context():
-        owner_id = _make_entity()
-        set_model_owner(model_id, owner_id)
-        group_id = make_group_with_member(entity_id)
-        grant_model_to_group(model_id, group_id)
-        _set_needs_ack(app, model_id)
-        assert get_model_access_status(entity_id, model_id) == "needs_ack"
-
-
 def test_early_access_resolves_to_needs_ack(app, ids):
     entity_id, model_id = ids
     with app.app_context():
@@ -191,17 +159,6 @@ def test_early_access_for_owner(app, ids):
     entity_id, model_id = ids
     with app.app_context():
         set_model_owner(model_id, entity_id)
-        _set_early_access(app, model_id)
-        assert get_model_access_status(entity_id, model_id) == "needs_ack"
-
-
-def test_early_access_for_granted_member(app, ids):
-    entity_id, model_id = ids
-    with app.app_context():
-        owner_id = _make_entity()
-        set_model_owner(model_id, owner_id)
-        group_id = make_group_with_member(entity_id)
-        grant_model_to_group(model_id, group_id)
         _set_early_access(app, model_id)
         assert get_model_access_status(entity_id, model_id) == "needs_ack"
 

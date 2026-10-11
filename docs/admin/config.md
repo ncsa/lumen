@@ -21,7 +21,7 @@ Lumen 2.0 requires the integer **version 3** and refuses to start on any other v
 | `users:` | Explicit group memberships and per-user coin pools live in the database (edited from the user's profile page). For auto-assignment at login, use each group's Rules tab |
 | `projects:` | Projects live entirely in the database (see [Configuring Projects](config-projects.md)) |
 | `clients:` | Same as projects |
-| `groups:` | Groups — coin pools, memberships, model grants, and login auto-join rules — live in the database, managed on the Groups pages (a leftover `group_rules:` section is ignored with a startup warning; remove it and recreate the rules on each group's Rules tab) |
+| `groups:` | Groups — coin pools, memberships, and login auto-join rules — live in the database, managed on the Groups pages (a leftover `group_rules:` section is ignored with a startup warning; remove it and recreate the rules on each group's Rules tab) |
 | `access:` on a model, `model_access` on groups/users, `defaults.models.access`, legacy `whitelist`/`blacklist`/`graylist` | DB-managed model ownership (see [Model Access Resolution](#model-access-resolution)) |
 
 Existing database rows created by older config syncs (groups, memberships, pools) keep working and are fully manageable on the Groups pages. Login auto-join rules are edited per group on its Rules tab — see [User Groups and Access Control](config-users.md#auto-join-rules).
@@ -49,22 +49,21 @@ defaults:
 
 ## Model Access Resolution
 
-Model access is based on **ownership** and lives in the database — it is not configured in `config.yaml`. A model may have an owner (a user); ownership and group grants are edited by admins via the **Access** card on the model detail page (`/models/<name>`). For an entity (user or project) and a model, access resolves in this order:
+Model access is based on **ownership** and lives in the database — it is not configured in `config.yaml`. A model may have an owner (a user); ownership is edited by admins via the **Access** card on the model detail page (`/models/<name>`). For an entity (user or project) and a model, access resolves in this order:
 
 1. **Disabled or expired** — `disabled: true` or a past `end_date` → blocked, for everyone, not overridable.
 2. **No owner** — the model is **public**: available to every user and project.
 3. **Owner** — the entity is the model's owner → allowed.
-4. **Granted group** — the entity is a member of an active group the model has been granted to → allowed.
-5. **Otherwise** → blocked.
+4. **Otherwise** → blocked. Group membership never opens an owned model.
 
 Two model-level properties sit outside this chain and remain config keys:
 
 - **`needs_ack: true`** does not affect access; it adds the one-time acknowledgement gate (the existing consent flow) for any user who has access to the model. `early_access` works the same way.
 - **`disabled: true`** takes the model offline for everyone (step 1 above).
 
-Config sync never touches owners or grants; the config keys that used to control access (`access:` on a model, `model_access` on groups or users, `defaults.models.access`) were removed in version 3 — a config that still contains them is rejected at startup. Deleting the owner user makes the model public again; deleting a granted group removes the grant.
+Config sync never touches owners; the config keys that used to control access (`access:` on a model, `model_access` on groups or users, `defaults.models.access`) were removed in version 3 — a config that still contains them is rejected at startup. Deleting the owner user makes the model public again.
 
-So to **restrict `model-a` to a small set of test users**: assign `model-a` an owner from its detail page, put the test users in a group, and grant that group access to the model.
+So to **restrict `model-a`** to a single user, assign that user as its owner from the model's detail page. An owned model cannot currently be shared with other users or groups.
 
 > **Upgrading:** after upgrading from the config-based allow/block system, all non-disabled models are **public** until an admin assigns owners. This is a breaking change — assign owners before inviting users if some models should be restricted.
 

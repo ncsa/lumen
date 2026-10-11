@@ -287,7 +287,7 @@ Core proxy logic. Key functions:
 |---|---|
 | `get_next_endpoint(model)` | Round-robin load balancing across healthy endpoints only |
 | `bulk_model_access_info(entity, models)` | Batch-resolve access + consent for many models in O(n) DB queries |
-| `get_model_access_status(entity, model)` | Access resolution: disabled/expired → no owner (public) → entity is owner → granted group |
+| `get_model_access_status(entity, model)` | Access resolution: disabled/expired → no owner (public) → entity is owner |
 | `check_coin_budget(entity)` | Validate balance > 0 before forwarding; respects unlimited (-2) and blocked (0) sentinels |
 | `subtract_coins(entity, cost)` | Decrement `EntityBalance.coins_left`; uses `SELECT ... FOR UPDATE` |
 | `send_message_stream()` | Wraps OpenAI SDK streaming as SSE; accumulates token counts for post-request accounting |
@@ -321,12 +321,12 @@ For local development, set `app.dev_user.email` in `config.yaml` to bypass OAuth
 
 Auto-join rules live in the database (`group_rules` table, edited on each group's Rules tab) and are evaluated against OAuth claims at every login (matching lives in `lumen/blueprints/auth/routes.py`). There is no `group_rules:` config section — a leftover one from an older config is ignored with a startup warning.
 
-A user is added to a group if the group is active, has auto-join enabled, and **all** of its rules match; the assignment runs on every login, so rule-based memberships stay in sync with IdP claims (and are removed when they stop matching). Groups themselves (pools, memberships, model grants, rules) are entirely DB-managed.
+A user is added to a group if the group is active, has auto-join enabled, and **all** of its rules match; the assignment runs on every login, so rule-based memberships stay in sync with IdP claims (and are removed when they stop matching). Groups themselves (pools, memberships, rules) are entirely DB-managed.
 
 ### Model Access Resolution (ownership)
 
-A model may have an owner (a user). Ownership and group grants live in the DB and
-are edited by admins on the model detail page; config sync never touches them.
+A model may have an owner (a user). Ownership lives in the DB and
+is edited by admins on the model detail page; config sync never touches it.
 
 ```
 1. Disabled / expired  (model_configs.disabled or past end_date → blocked)
@@ -335,12 +335,10 @@ are edited by admins on the model detail page; config sync never touches them.
         ↓ otherwise
 3. Entity is owner     (entity == owner_entity_id → allowed)
         ↓ otherwise
-4. Granted group       (entity in an active group with a ModelGroupAccess row → allowed)
-        ↓ otherwise
-5. Blocked
+4. Blocked
 ```
 
-`needs_ack` / `early_access` add a one-time acknowledgement gate (`EntityModelConsent`) on top of an allowed result without changing the access decision. Deleting the owner user makes the model public again (FK `SET NULL`); deleting a granted group removes the grant (cascade).
+`needs_ack` / `early_access` add a one-time acknowledgement gate (`EntityModelConsent`) on top of an allowed result without changing the access decision. Deleting the owner user makes the model public again (FK `SET NULL`).
 
 ### API Key Auth (programmatic access)
 
@@ -376,7 +374,7 @@ Coin values use sentinel semantics: `-2` = unlimited, `0` = blocked, positive = 
 
 ## Configuration Management
 
-`config.yaml` is the single source of truth for runtime configuration (integer version 3 is required; every other value is rejected at startup). On each `create_app` call, models are synced to the database. Groups — memberships, coin pools, model grants, and auto-join rules — are DB-managed and never touched by config sync (a leftover `group_rules:` section only triggers a startup warning).
+`config.yaml` is the single source of truth for runtime configuration (integer version 3 is required; every other value is rejected at startup). On each `create_app` call, models are synced to the database. Groups — memberships, coin pools, and auto-join rules — are DB-managed and never touched by config sync (a leftover `group_rules:` section only triggers a startup warning).
 
 | Section | Controls |
 |---|---|
@@ -577,7 +575,7 @@ Footer content is driven by optional `theme.yaml` keys that each theme's `templa
 | Flask + SQLAlchemy 2.x (synchronous) | Simplicity; most latency is in LLM I/O (seconds), not request setup (ms). Synchronous code is easier to reason about for correctness. The tradeoff is thread-per-connection worker exhaustion at high concurrency. |
 | TimescaleDB hypertable for `request_logs` | Time-series partitioning enables fast time-range analytics and retention policies without schema changes. Falls back to a plain PostgreSQL table on SQLite. |
 | Coin economy abstraction | Decouples billing model from raw token counts; allows group-level budgets and refresh rates without exposing per-user pricing details to end users. |
-| Ownership-based model access (no owner = public; owned = owner + granted groups) | One simple, DB-managed rule replaces the old six-tier allow/block precedence chain. Public models need zero configuration; restricting a model is a single owner assignment plus group grants, edited on the model detail page rather than in `config.yaml`. |
+| Ownership-based model access (no owner = public; owned = owner only) | One simple, DB-managed rule replaces the old six-tier allow/block precedence chain. Public models need zero configuration; restricting a model is a single owner assignment, edited on the model detail page rather than in `config.yaml`. |
 | `config.yaml` as single source of truth with hot-reload | Operators can add/update models and groups without restarting the service; GitOps-friendly (config in a repo, applied automatically). |
 | Themes as Jinja2 loader overlays | Universities can fully brand the UI without forking application code or maintaining a separate deployment. |
 | HMAC-SHA256 API key hashing with `encryption_key` | Keys are never stored in plaintext; compromise of the DB alone does not expose usable keys. HMAC over plain SHA-256 binds the hash to the server secret. |

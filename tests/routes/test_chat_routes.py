@@ -428,27 +428,6 @@ def test_chat_stream_counts_conversation_when_storing_disabled(app, auth_client,
         assert db.session.scalar(select(func.count(Conversation.id))) == 0
 
 
-def test_chat_stream_group_grant_passes_access(app, auth_client, test_user, test_model):
-    """A group grant on an owned model clears the access gate (stream starts, fails at LLM level)."""
-    with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity import Entity
-        from tests.conftest import grant_model_to_group, make_group_with_member, set_model_owner
-        _grant_unlimited_pool(app, test_user["id"])
-        owner = Entity(entity_type="user", email="owner@example.com", name="Owner", active=True)
-        db.session.add(owner)
-        db.session.commit()
-        set_model_owner(test_model["id"], owner.id)
-        group_id = make_group_with_member(test_user["id"])
-        grant_model_to_group(test_model["id"], group_id)
-
-    resp = auth_client.post("/chat/stream", json={
-        "messages": [{"role": "user", "content": "hi"}],
-        "model": test_model["model_name"],
-    })
-    assert resp.status_code != HTTPStatus.FORBIDDEN
-
-
 def test_chat_stream_expired_model_rejected(app, auth_client, test_user, test_model):
     """A model past its end_date is treated like an unknown model on /chat/stream."""
     from datetime import timedelta

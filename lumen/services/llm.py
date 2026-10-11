@@ -26,7 +26,6 @@ from lumen.models.group_limit import GroupLimit
 from lumen.models.group_member import GroupMember
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
-from lumen.models.model_group_access import ModelGroupAccess
 from lumen.models.model_stat import ModelStat
 from lumen.models.request_log import RequestLog
 from lumen.services.cost import calculate_cost
@@ -155,7 +154,6 @@ def upstream_call_bounds(*, streaming: bool):
 def _resolve_single_access(
     is_owner: bool,
     owner_entity_id,
-    granted: bool,
     model_needs_ack: bool = False,
     model_disabled: bool = False,
     model_early_access: bool = False,
@@ -166,14 +164,13 @@ def _resolve_single_access(
     - 'disabled' models and models past their end_date short-circuit to 'blocked'
       and cannot be overridden.
     - A model without an owner (owner_entity_id is None) is visible to everyone;
-      an owned model is visible only to its owner and to members of groups the
-      model has been granted to (granted).
+      an owned model is visible only to its owner.
     - 'needs_ack' means the model has acknowledgement requirements (needs_ack
       and/or early_access); these are model-level properties.
     """
     if model_disabled or (model_end_date is not None and model_end_date <= utcnow()):
         return "blocked"
-    if owner_entity_id is not None and not is_owner and not granted:
+    if owner_entity_id is not None and not is_owner:
         return "blocked"
     return "needs_ack" if (model_needs_ack or model_early_access) else "allowed"
 
@@ -210,7 +207,8 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
     {model_config_id: "allowed"|"blocked"|"needs_ack"} and consent_map is a dict
     {model_config_id: acknowledged_at} for models where the entity has satisfied
     ALL of the model's acknowledgement requirements (needs_ack and early_access);
-    the value is the most recent acknowledgement timestamp.
+    the value is the most recent acknowledgement timestamp. A model without an
+    owner is public; an owned model is allowed only for its owner.
 
     Issues a fixed set of queries regardless of the number of models — replaces N+1
     per-model calls to get_model_access_status / has_model_consent.
@@ -231,20 +229,6 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
     unknown = set(model_config_ids) - baseline.keys()
     if unknown:
         raise ValueError(f"unknown model_config_id(s): {sorted(unknown)}")
-
-    # Group grants only matter for owned models the entity does not own itself.
-    granted_ids: set = set()
-    if any(r.owner_entity_id is not None and r.owner_entity_id != entity_id for r in baseline.values()):
-        group_ids = _get_active_group_ids(entity_id)
-        if group_ids:
-            granted_ids = {
-                mc_id for (mc_id,) in db.session.execute(
-                    select(ModelGroupAccess.model_config_id).where(
-                        ModelGroupAccess.group_id.in_(group_ids),
-                        ModelGroupAccess.model_config_id.in_(model_config_ids),
-                    )
-                ).all()
-            }
 
     # Only models whose acknowledgement requirements are ALL satisfied appear in
     # consent_map; a requirement added after consent leaves its timestamp NULL,
@@ -268,7 +252,6 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
         access_statuses[mc_id] = _resolve_single_access(
             mc.owner_entity_id == entity_id,
             mc.owner_entity_id,
-            mc_id in granted_ids,
             model_needs_ack=mc.needs_ack,
             model_disabled=mc.disabled,
             model_early_access=mc.early_access,
@@ -325,7 +308,7 @@ def get_model_access_status(entity_id: int, model_config_id: int) -> str:
     Return 'allowed', 'blocked', or 'needs_ack' for the given entity + model.
 
     A model without an owner is allowed for everyone; an owned model is allowed
-    only for its owner and members of groups it has been granted to.
+    only for its owner.
     """
     access_statuses, _ = bulk_model_access_info(entity_id, [model_config_id])
     return access_statuses[model_config_id]

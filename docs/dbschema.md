@@ -860,8 +860,7 @@ When determining whether an entity (user or project) may use a model, Lumen eval
 1. **Disabled or expired** — `model_configs.disabled = true` or `end_date` in the past → blocked, not overridable.
 2. **No owner** — `model_configs.owner_entity_id` is NULL → allowed (the model is available to everyone).
 3. **Entity is the owner** — the entity is `owner_entity_id` → allowed.
-4. **Granted group** — the entity is a member of an **active** group that has a `model_group_access` row for the model → allowed.
-5. **Otherwise** → blocked.
+4. **Otherwise** → blocked. Group membership never opens an owned model.
 
 Independently, if the model has `needs_ack = true` or `early_access = true`, an allowed entity must still record acknowledgement in `entity_model_consents` before using the model ("needs_ack" until consent).
 
