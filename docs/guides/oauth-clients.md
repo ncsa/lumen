@@ -40,7 +40,7 @@ Best for anything without a browser callback. Follows the shape of RFC 8628 with
    | `access_denied` | User clicked **Deny** — fail cleanly |
    | `invalid_grant` | Unknown `device_code` / `client_id` mismatch, or a retry after claim |
 
-   On approval you get `200 {"access_token": "sk_…", "token_type": "Bearer", "approved_by": "alice@example.edu"}` — store the key immediately; it is never returned again. `approved_by` tells you whose account approved, which is worth printing. Responses carry `Cache-Control: no-store`, and `/oauth/token` answers `OPTIONS` preflights with `Access-Control-Allow-Origin: *` so browser-based tools can poll it too.
+   On approval you get `200 {"access_token": "sk_…", "token_type": "Bearer", "approved_by": "alice@example.edu"}` — store the key immediately; it is never returned again. `approved_by` tells you whose account approved, which is worth printing. Responses carry `Cache-Control: no-store`, and `/oauth/token` answers `OPTIONS` preflights with `Access-Control-Allow-Origin: *` so browser-based tools can poll it too. The `/v1` API allows cross-origin requests as well, so a browser app can use the key it gets here directly (see [CORS](api-reference.md#cors-browser-apps)).
 
    Once approved, the request stays claimable for 60 s (the *claim window*) so a CLI that lost a network round trip can still pick the key up; an abandoned approval simply expires and creates nothing.
 

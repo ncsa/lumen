@@ -48,6 +48,40 @@ logger = logging.getLogger(__name__)
 
 api_bp = Blueprint("api", __name__, url_prefix="/v1")
 
+# CORS for every /v1 response, so browser apps on any origin can call the API.
+# A wildcard origin is safe because the only credential is the Bearer token,
+# which a browser never attaches on its own; no cookies, so never
+# Allow-Credentials. Beyond Authorization/Content-Type, the request headers are
+# the ones the official OpenAI JS SDK sends.
+_CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": ", ".join([
+        "Authorization", "Content-Type",
+        "OpenAI-Organization", "OpenAI-Project", "OpenAI-Beta",
+        "X-Stainless-Lang", "X-Stainless-Package-Version", "X-Stainless-OS",
+        "X-Stainless-Arch", "X-Stainless-Runtime", "X-Stainless-Runtime-Version",
+        "X-Stainless-Retry-Count", "X-Stainless-Timeout",
+    ]),
+    "Access-Control-Expose-Headers": "Retry-After",
+    "Access-Control-Max-Age": "600",
+}
+
+
+@api_bp.before_request
+def _cors_preflight():
+    """Answer a CORS preflight before auth, the DB or the per-key rate limit."""
+    if request.method == "OPTIONS":
+        return Response(status=HTTPStatus.NO_CONTENT)
+    return None
+
+
+@api_bp.after_request
+def _cors(resp):
+    """Add the CORS headers to every /v1 response, errors and streams included."""
+    resp.headers.update(_CORS_HEADERS)
+    return resp
+
 # Per-worker in-memory cache. Under multi-worker deployments each worker holds its own
 # copy; effective cache lifetime is correct per-worker but not shared across workers.
 _rates_cache: dict = {"data": {}, "expires_at": 0.0}

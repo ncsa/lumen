@@ -10,6 +10,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Added
 
+- The `/v1` API allows cross-origin browser requests (CORS).
 - Models can be set to take their price automatically from models.dev; manually set prices are no longer overwritten by Update. ([#117](https://github.com/ncsa/lumen/pull/117))
 - API keys can be rotated in place, issuing a new secret while keeping the key's name and usage stats; project keys can only be rotated by the user who created them.
 - Projects support users: users can create one API key, managers can add/remove users, only the owner can add/remove managers, and every project always has exactly one owner.

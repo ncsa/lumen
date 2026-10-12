@@ -197,6 +197,8 @@ Every request through `@api_key_required`:
 3. Enforces rate limits (Flask-Limiter, per authenticated entity)
 4. After response: logs to `RequestLog`, deducts coins, updates `ModelStat` and `EntityStat`
 
+A CORS preflight (`OPTIONS`) is answered `204` by the blueprint before any of these steps, and every `/v1` response, errors and streams included, carries `Access-Control-Allow-Origin: *` so browser apps can call the API (see the [API reference](guides/api-reference.md#cors-browser-apps)).
+
 The chat blueprint's `/chat/<id>/message` SSE endpoint is functionally a web-UI wrapper around the same proxy logic; it reuses access control and coin deduction from `services/llm.py`.
 
 ---
