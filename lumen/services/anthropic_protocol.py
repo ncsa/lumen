@@ -453,6 +453,12 @@ def translate_request(data: dict, require_max_tokens: bool = True):
             raise AnthropicError(f"Unsupported message role: {role!r}")
 
     messages = _join_turns(messages)
+    # A final assistant turn is an Anthropic prefill: the reply continues it.
+    # Whether an OpenAI backend continues it or starts a new turn after it
+    # depends on the backend (vLLM starts a new one by default), so it is
+    # refused rather than sent with a different meaning.
+    if messages and messages[-1]["role"] == "assistant":
+        raise AnthropicError("A final assistant message (prefill) is unsupported")
 
     system = _system_text(data.get("system"))
     if system:

@@ -117,12 +117,14 @@ def test_system_role_inside_messages_stays_in_place_as_a_reminder():
         {"role": "user", "content": "hi"},
         {"role": "system", "content": [{"type": "text", "text": "new rules"}]},
         {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "next"},
     ]))
     # Appended to the user turn before it: some templates require roles to alternate.
     assert messages == [
         {"role": "system", "content": "base"},
         {"role": "user", "content": "hi\n\n<system-reminder>\nnew rules\n</system-reminder>"},
         {"role": "assistant", "content": "ok"},
+        {"role": "user", "content": "next"},
     ]
 
 
@@ -190,6 +192,23 @@ def test_user_text_after_tool_results_follows_them():
     ]))
     assert [m["role"] for m in messages] == ["user", "assistant", "tool", "user"]
     assert messages[3]["content"] == [{"type": "text", "text": "and"}, {"type": "text", "text": "more"}]
+
+
+def test_a_final_assistant_message_is_refused():
+    """A prefill: the backend might start a new turn after it instead of continuing it."""
+    with pytest.raises(AnthropicError, match="prefill"):
+        translate_request(_req(messages=[
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "{\"answer\":"},
+        ]))
+
+
+def test_a_final_thinking_only_assistant_message_is_not_a_prefill():
+    _, messages, _, _, _ = translate_request(_req(messages=[
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": [{"type": "thinking", "thinking": "hmm", "signature": ""}]},
+    ]))
+    assert messages == [{"role": "user", "content": "hi"}]
 
 
 def test_a_run_of_turns_translates_as_the_one_turn_anthropic_makes_of_it():
@@ -327,6 +346,7 @@ def test_thinking_blocks_are_dropped():
             {"type": "thinking", "thinking": "hmm", "signature": "sig"},
             {"type": "text", "text": "answer"},
         ]},
+        {"role": "user", "content": "go on"},
     ]))
     assert messages[0] == {"role": "assistant", "content": "answer"}
 
@@ -542,6 +562,7 @@ def test_non_object_tool_arguments_are_wrapped(arguments):
     translate_request(_req(messages=[
         {"role": "user", "content": "hi"},
         {"role": "assistant", "content": out["content"]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "c", "content": "done"}]},
     ]))
 
 
