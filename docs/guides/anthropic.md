@@ -70,7 +70,7 @@ Lumen's server log records every request it rejects with a 400 as `anthropic req
 
 ## Refused
 
-Requests that use any of the following get a 400 rather than being quietly dropped: extended thinking controls, context management, `output_config` fields other than `effort`, service tiers other than `auto`, server-side tools (web search, code execution, computer use), tools with `strict: true`, a final assistant message (prefill), `mcp_servers`, `container`, unknown `anthropic-beta` values, and any other content block type. `output_config.effort` and `cache_control` are accepted and ignored.
+Requests that use any of the following get a 400 rather than being quietly dropped: extended thinking controls, context management, `output_config` fields other than `effort`, service tiers other than `auto`, server-side tools (web search, code execution, computer use), tools with `strict: true`, a final assistant message with text (prefill) on `/v1/messages`, `mcp_servers`, `container`, unknown `anthropic-beta` values, and any other content block type. `output_config.effort` and `cache_control` are accepted and ignored.
 
 ## Error format
 

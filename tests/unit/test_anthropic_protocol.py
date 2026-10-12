@@ -203,6 +203,14 @@ def test_a_final_assistant_message_is_refused():
         ]))
 
 
+def test_token_counting_accepts_a_final_assistant_message():
+    _, messages, _, _, _ = translate_request({"model": "m", "messages": [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "answer"},
+    ]}, require_max_tokens=False)
+    assert [m["role"] for m in messages] == ["user", "assistant"]
+
+
 def test_a_final_thinking_only_assistant_message_is_not_a_prefill():
     _, messages, _, _, _ = translate_request(_req(messages=[
         {"role": "user", "content": "hi"},

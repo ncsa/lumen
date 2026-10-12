@@ -383,7 +383,9 @@ def _concat_content(contents):
 def translate_request(data: dict, require_max_tokens: bool = True):
     """Translate to (model, messages, stream, kwargs, extra_body).
 
-    Token counting does not require max_tokens. top_k travels in extra_body."""
+    Token counting (require_max_tokens=False) does not require max_tokens and,
+    generating nothing, accepts a final assistant message. top_k travels in
+    extra_body."""
     if not isinstance(data, dict):
         raise AnthropicError("Request body must be a JSON object")
 
@@ -457,7 +459,7 @@ def translate_request(data: dict, require_max_tokens: bool = True):
     # Whether an OpenAI backend continues it or starts a new turn after it
     # depends on the backend (vLLM starts a new one by default), so it is
     # refused rather than sent with a different meaning.
-    if messages and messages[-1]["role"] == "assistant":
+    if require_max_tokens and messages and messages[-1]["role"] == "assistant":
         raise AnthropicError("A final assistant message (prefill) is unsupported")
 
     system = _system_text(data.get("system"))
