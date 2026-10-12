@@ -320,9 +320,9 @@ def _join_turns(messages):
     """Merge consecutive user or assistant messages into one, as Anthropic does.
 
     Some chat templates (Gemma's, older Mistral's) require strictly alternating
-    roles. Runs arise from consecutive same-role turns in the request, from
-    mid-conversation system turns sent as user text, and from assistant turns
-    dropped for holding only thinking. Tool messages are never merged, so tool
+    roles. Runs left after _combine_turns arise from mid-conversation system
+    turns sent as user text and from assistant turns dropped for holding only
+    thinking. Tool messages are never merged, so tool
     calls and their results keep their order. Merging only joins messages that
     were already adjacent, so each request still extends the previous one.
     """
@@ -343,6 +343,41 @@ def _join_turns(messages):
             if tool_calls:
                 last["tool_calls"] = tool_calls
     return out
+
+
+def _combine_turns(raw_messages):
+    """Yield (role, content), with consecutive user or assistant messages as one.
+
+    Anthropic combines such a run into a single turn, so it is translated as
+    that turn: its blocks in order, which keeps parallel tool results split over
+    two user messages contiguous after the assistant's tool calls. A message on
+    its own is yielded unchanged.
+    """
+    run_role, run = None, []
+    for message in raw_messages:
+        if not isinstance(message, dict):
+            raise AnthropicError("each message must be an object")
+        role = message.get("role")
+        content = message.get("content")
+        if not isinstance(content, (str, list)):
+            raise AnthropicError("message content must be a string or a list of blocks")
+        if run and role == run_role and role in ("user", "assistant"):
+            run.append(content)
+            continue
+        if run:
+            yield run_role, _concat_content(run)
+        run_role, run = role, [content]
+    if run:
+        yield run_role, _concat_content(run)
+
+
+def _concat_content(contents):
+    if len(contents) == 1:
+        return contents[0]
+    blocks = []
+    for content in contents:
+        blocks.extend([{"type": "text", "text": content}] if isinstance(content, str) else content)
+    return blocks
 
 
 def translate_request(data: dict, require_max_tokens: bool = True):
@@ -393,13 +428,7 @@ def translate_request(data: dict, require_max_tokens: bool = True):
 
     messages = []
 
-    for message in raw_messages:
-        if not isinstance(message, dict):
-            raise AnthropicError("each message must be an object")
-        role = message.get("role")
-        content = message.get("content")
-        if not isinstance(content, (str, list)):
-            raise AnthropicError("message content must be a string or a list of blocks")
+    for role, content in _combine_turns(raw_messages):
         if role == "user":
             messages.extend(_translate_user_message(content))
         elif role == "assistant":

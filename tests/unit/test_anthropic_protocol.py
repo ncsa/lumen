@@ -174,7 +174,7 @@ def test_consecutive_assistant_turns_are_combined_keeping_tool_calls():
             {"type": "tool_result", "tool_use_id": "t2", "content": "r2"}]},
     ]))
     assert [m["role"] for m in messages] == ["user", "assistant", "tool", "tool"]
-    assert messages[1]["content"] == "first\n\nsecond"
+    assert messages[1]["content"] == "first\nsecond"
     assert [c["id"] for c in messages[1]["tool_calls"]] == ["t1", "t2"]
     assert [m["tool_call_id"] for m in messages[2:]] == ["t1", "t2"]
 
@@ -189,7 +189,26 @@ def test_user_text_after_tool_results_follows_them():
         {"role": "user", "content": "more"},
     ]))
     assert [m["role"] for m in messages] == ["user", "assistant", "tool", "user"]
-    assert messages[3]["content"] == "and\n\nmore"
+    assert messages[3]["content"] == [{"type": "text", "text": "and"}, {"type": "text", "text": "more"}]
+
+
+def test_a_run_of_turns_translates_as_the_one_turn_anthropic_makes_of_it():
+    split = [
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t1", "name": "a", "input": {}},
+            {"type": "tool_use", "id": "t2", "name": "b", "input": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAA"}}]}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "content": "r2"}]},
+    ]
+    combined = split[:2] + [{"role": "user", "content": split[2]["content"] + split[3]["content"]}]
+    _, from_split, _, _, _ = translate_request(_req(messages=split))
+    _, from_combined, _, _, _ = translate_request(_req(messages=combined))
+    assert from_split == from_combined
+    # Parallel tool results split over two user messages stay contiguous after
+    # the tool calls, with the image after both.
+    assert [m["role"] for m in from_split] == ["user", "assistant", "tool", "tool", "user"]
 
 
 def test_a_dropped_thinking_turn_leaves_alternating_roles():
