@@ -13,7 +13,7 @@ import logging
 from functools import wraps
 from http import HTTPStatus
 
-from flask import Blueprint, Response, current_app, g, jsonify, request
+from flask import Blueprint, Response, g, jsonify, request
 
 from lumen.blueprints.api.routes import (
     _api_key_id,
@@ -238,8 +238,7 @@ def count_tokens_view():
     # Same rule as GET /v1/models/<id>: a model the caller may not use answers
     # as a missing one, so an owned model's existence is not discoverable.
     config = resolve_model_config(model_name)
-    consent_required = current_app.config.get("API_REQUIRE_MODEL_CONSENT", True)
-    if not config or get_effective_limit(g.entity.id, config.id, require_consent=consent_required) is None:
+    if not config or get_effective_limit(g.entity.id, config.id) is None:
         return _anthropic_err(f"Model '{model_name}' not found", "not_found_error")
 
     return jsonify({"input_tokens": count_tokens(msgs, kwargs.get("tools"))})
