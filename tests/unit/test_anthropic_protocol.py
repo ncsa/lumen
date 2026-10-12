@@ -693,6 +693,11 @@ def test_count_tokens_estimates_from_characters():
     assert count_tokens([{"role": "user", "content": "x" * 40}]) == 10
 
 
+def test_count_tokens_reports_a_short_prompt_as_at_least_one_token():
+    assert count_tokens([{"role": "user", "content": "hi"}]) == 1
+    assert count_tokens([]) == 0
+
+
 def test_count_tokens_includes_the_tool_catalogue():
     """An agentic client sends its whole tool catalogue on every request, and for
     Claude Code it outweighs the conversation."""

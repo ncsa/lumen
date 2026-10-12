@@ -781,5 +781,8 @@ def count_tokens(messages, tools=None) -> int:
         for call in message.get("tool_calls") or ():
             extra.append(json.dumps(call.get("function") or {}))
     # Counted through the same estimator rather than re-deriving its ratio here.
-    return estimate_prompt_tokens(messages) + estimate_prompt_tokens(
+    estimate = estimate_prompt_tokens(messages) + estimate_prompt_tokens(
         [{"role": "user", "content": "".join(extra)}])
+    # The estimator rounds a short prompt ("hi") down to 0; a request with
+    # messages is reported as at least one token.
+    return max(estimate, 1) if messages else estimate
