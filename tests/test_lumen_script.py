@@ -61,8 +61,8 @@ class FakeLumen(BaseHTTPRequestHandler):
             })
         elif self.path == "/oauth/token":
             assert form["grant_type"][0] == "urn:ietf:params:oauth:grant-type:device_code"
-            code, obj = s.token_queue.pop(0) if s.token_queue else (400, {"error": "expired_token"})
-            self._json(code, obj)
+            code, obj, *headers = s.token_queue.pop(0) if s.token_queue else (400, {"error": "expired_token"})
+            self._json(code, obj, *headers)
         else:
             self._json(404, {"error": "not_found"})
 
@@ -140,6 +140,20 @@ def test_empty_path_segment_rejected():
     r = run_script(None, "https://x.example.edu//api", args=["--no-opencode"])
     assert r.returncode != 0
     assert b"empty segments" in r.stderr
+
+
+@pytest.mark.parametrize("url", [
+    "https://x.example.edu/a b",
+    "https://x.example.edu/$(id)",
+    "https://x.example.edu/api?x=1",
+    "https://user@x.example.edu",
+    "https://x.example.edu/\x1b[31m",
+])
+def test_server_url_character_whitelist(url):
+    r = run_script(None, url, args=["--no-opencode"])
+    assert r.returncode != 0
+    assert b"invalid characters" in r.stderr
+    assert b"\x1b" not in r.stderr
 
 
 # --- device flow ------------------------------------------------------------
@@ -449,3 +463,119 @@ def test_sync_reports_added_and_removed(home, lumen_server):
     assert r.returncode == 0, r.stderr
     assert b"+ gpt-demo" in r.stdout
     assert b"- gone-model" in r.stdout
+
+
+# --- hostile server values ----------------------------------------------------
+
+def fake_bin(tmp_path, start=1_000_000, step=0):
+    """Fake sleep (logs its argument, returns at once) and date (returns
+    start, then advances by step on every later call) on a PATH prefix."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    sleeps = tmp_path / "sleeps"
+    clock = tmp_path / "clock"
+    (bindir / "sleep").write_text(f'#!/bin/sh\nprintf "%s\\n" "$1" >> {sleeps}\n')
+    (bindir / "date").write_text(
+        f'#!/bin/sh\nt=$(cat {clock} 2>/dev/null || echo {start - step})\n'
+        f't=$((t + {step}))\necho $t > {clock}\necho $t\n'
+    )
+    for f in bindir.iterdir():
+        f.chmod(0o755)
+    env = {"PATH": f"{bindir}:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"}
+    return env, sleeps
+
+
+def logged_sleeps(sleeps):
+    return [int(x) for x in sleeps.read_text().split()]
+
+
+def test_interval_clamped(home, lumen_server, tmp_path):
+    port = lumen_server.server_address[1]
+    env, sleeps = fake_bin(tmp_path)
+    lumen_server.auth_extra = {"interval": 999999999}
+    lumen_server.token_queue = [
+        (400, {"error": "slow_down"}),
+        (200, {"access_token": TEST_KEY, "token_type": "Bearer", "approved_by": "a@b"}),
+    ]
+    r = run_script(home, port, args=["--no-opencode"], env_extra=env)
+    assert r.returncode == 0, r.stderr
+    assert max(logged_sleeps(sleeps)) == 60
+
+
+def test_expires_in_clamped(home, lumen_server, tmp_path):
+    """With expires_in clamped to 1800 s, a clock that jumps 1801 s per poll
+    times out on the first poll instead of waiting out the server's value."""
+    port = lumen_server.server_address[1]
+    env, _ = fake_bin(tmp_path, step=1801)
+    lumen_server.auth_extra = {"expires_in": 999999999}
+    lumen_server.token_queue = [
+        (200, {"access_token": TEST_KEY, "token_type": "Bearer", "approved_by": "a@b"}),
+    ]
+    r = run_script(home, port, args=["--no-opencode"], env_extra=env)
+    assert r.returncode != 0
+    assert b"timed out" in r.stderr
+    assert "/oauth/token" not in lumen_server.hits
+
+
+@pytest.mark.parametrize("retry_after,expected", [
+    ("999999", 60),
+    ("30", 30),
+    ("Wed, 21 Oct 2026 07:28:00 GMT", 6),  # not a number: interval + 5
+    ("$(id)", 6),
+])
+def test_retry_after_validated_and_clamped(home, lumen_server, tmp_path, retry_after, expected):
+    port = lumen_server.server_address[1]
+    env, sleeps = fake_bin(tmp_path)
+    lumen_server.token_queue = [
+        (429, {"error": "rate_limited"}, {"Retry-After": retry_after}),
+        (200, {"access_token": TEST_KEY, "token_type": "Bearer", "approved_by": "a@b"}),
+    ]
+    r = run_script(home, port, args=["--no-opencode"], env_extra=env)
+    assert r.returncode == 0, r.stderr
+    assert logged_sleeps(sleeps) == [1, expected, 1]
+
+
+def test_server_text_control_characters_stripped(home, lumen_server):
+    port = lumen_server.server_address[1]
+    lumen_server.auth_extra = {
+        "user_code": "QQQQ\x1b[2J-QQQQ",
+        "verification_uri": "http://127.0.0.1:1/device\x1b]0;pwned\x07",
+    }
+    lumen_server.token_queue = [
+        (200, {"access_token": TEST_KEY, "token_type": "Bearer",
+               "approved_by": "alice\x1b[31m@example.edu\r\n"}),
+    ]
+    r = run_script(home, port, args=["--no-opencode"])
+    assert r.returncode == 0, r.stderr
+    out = r.stdout.decode()
+    assert "\x1b" not in out and "\x07" not in out and "\r" not in out
+    assert "Approved by alice[31m@example.edu." in out
+    assert "enter code QQQQ[2J-QQQQ" in out
+
+
+def test_malformed_stored_key_ignored(home, lumen_server):
+    port = lumen_server.server_address[1]
+    keys = home / ".config" / "lumen" / "keys.json"
+    keys.parent.mkdir(parents=True)
+    keys.write_text(json.dumps({host_key(port): "sk_bad$(id)"}))
+    lumen_server.token_queue = [
+        (200, {"access_token": TEST_KEY, "token_type": "Bearer", "approved_by": "a@b"}),
+    ]
+    r = run_script(home, port, args=["--no-opencode"])
+    assert r.returncode == 0, r.stderr
+    assert b"ignoring malformed key" in r.stderr
+    assert lumen_server.hits.get("/oauth/device_authorization") == 1
+    assert json.loads(keys.read_text())[host_key(port)] == TEST_KEY
+    assert "sk_bad" not in r.stdout.decode()
+
+
+def test_malformed_env_key_ignored(home, lumen_server):
+    port = lumen_server.server_address[1]
+    keys = home / ".config" / "lumen" / "keys.json"
+    keys.parent.mkdir(parents=True)
+    keys.write_text(json.dumps({host_key(port): "sk_stored_key_000"}))
+    r = run_script(home, port, args=["--no-opencode"],
+                   env_extra={"LUMEN_API_KEY": "not a key"})
+    assert r.returncode == 0, r.stderr
+    assert b"ignoring malformed LUMEN_API_KEY" in r.stderr
+    assert "LUMEN_API_KEY=sk_stored_key_000" in r.stdout.decode()
