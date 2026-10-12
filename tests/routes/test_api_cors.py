@@ -22,6 +22,14 @@ PREFLIGHT_HEADERS = {
     "Access-Control-Request-Method": "POST",
     "Access-Control-Request-Headers": "authorization, content-type",
 }
+# Every header the official OpenAI JS SDK can send; a browser lists each one in
+# Access-Control-Request-Headers, so a missing one fails the preflight.
+OPENAI_JS_SDK_HEADERS = {
+    "authorization", "content-type", "openai-organization", "openai-project", "openai-beta",
+    "x-stainless-lang", "x-stainless-package-version", "x-stainless-os", "x-stainless-arch",
+    "x-stainless-runtime", "x-stainless-runtime-version", "x-stainless-retry-count",
+    "x-stainless-timeout", "x-stainless-helper-method",
+}
 V1_PATHS = ["/v1/models", "/v1/usage", "/v1/chat/completions", "/v1/audio/transcriptions"]
 
 
@@ -103,7 +111,7 @@ def test_preflight_answers_without_auth_or_db(app, client, path):
     _assert_cors(resp)
     assert resp.headers["Access-Control-Allow-Methods"] == "GET, POST, OPTIONS"
     allowed = {h.strip().lower() for h in resp.headers["Access-Control-Allow-Headers"].split(",")}
-    assert {"authorization", "content-type", "openai-organization", "x-stainless-lang"} <= allowed
+    assert OPENAI_JS_SDK_HEADERS <= allowed
     assert resp.headers["Access-Control-Max-Age"] == "600"
 
 
@@ -194,6 +202,25 @@ def test_insufficient_quota_has_cors_and_exposes_retry_after(
     assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS
     assert resp.get_json()["error"]["code"] == "insufficient_quota"
     assert "Retry-After" in resp.headers
+    _assert_cors(resp)
+
+
+@pytest.mark.parametrize("method, path, status", [
+    ("POST", "/v1/nope", HTTPStatus.NOT_FOUND),
+    ("OPTIONS", "/v1/nope", HTTPStatus.NOT_FOUND),
+    ("GET", "/v1/chat/completions", HTTPStatus.METHOD_NOT_ALLOWED),
+])
+def test_routing_errors_under_v1_have_cors(client, method, path, status):
+    resp = client.open(path, method=method, headers=PREFLIGHT_HEADERS)
+    assert resp.status_code == status
+    _assert_cors(resp)
+
+
+def test_plain_options_is_not_treated_as_preflight(client):
+    """Without Access-Control-Request-Method, Flask's automatic OPTIONS answers."""
+    resp = client.options("/v1/models")
+    assert resp.status_code == HTTPStatus.OK
+    assert "GET" in resp.headers["Allow"]
     _assert_cors(resp)
 
 

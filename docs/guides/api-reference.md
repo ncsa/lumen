@@ -338,12 +338,14 @@ Every `/v1` endpoint allows cross-origin requests, so a web page on any origin c
 ```
 Access-Control-Allow-Origin: *
 Access-Control-Allow-Methods: GET, POST, OPTIONS
-Access-Control-Allow-Headers: Authorization, Content-Type, OpenAI-Organization, OpenAI-Project, OpenAI-Beta, X-Stainless-*
+Access-Control-Allow-Headers: Authorization, Content-Type, OpenAI-Organization, OpenAI-Project, OpenAI-Beta,
+    X-Stainless-Lang, X-Stainless-Package-Version, X-Stainless-OS, X-Stainless-Arch, X-Stainless-Runtime,
+    X-Stainless-Runtime-Version, X-Stainless-Retry-Count, X-Stainless-Timeout, X-Stainless-Helper-Method
 Access-Control-Expose-Headers: Retry-After
 Access-Control-Max-Age: 600
 ```
 
-(`X-Stainless-*` stands for the individual headers the OpenAI JS SDK sends.) Preflight `OPTIONS` requests are answered `204` without an API key and do not count against your rate limit. Credentials are never allowed: the browser sends no cookies, and the page must attach the `Authorization: Bearer` header itself. Any script on that page can read the key, so treat a key held in the browser like any other secret and revoke it on your [Profile](../guides/profile.md#api-keys) if it leaks.
+(Beyond `Authorization` and `Content-Type`, these are the headers the OpenAI JS SDK sends.) Preflight `OPTIONS` requests are answered `204` without an API key and do not count against your rate limit. Credentials are never allowed: the browser sends no cookies, and the page must attach the `Authorization: Bearer` header itself. Any script on that page can read the key, so treat a key held in the browser like any other secret and revoke it on your [Profile](../guides/profile.md#api-keys) if it leaks.
 
 `Retry-After` is exposed so browser code can honour it on a `429` (see Rate Limits).
 

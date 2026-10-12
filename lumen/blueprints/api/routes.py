@@ -61,7 +61,7 @@ _CORS_HEADERS = {
         "OpenAI-Organization", "OpenAI-Project", "OpenAI-Beta",
         "X-Stainless-Lang", "X-Stainless-Package-Version", "X-Stainless-OS",
         "X-Stainless-Arch", "X-Stainless-Runtime", "X-Stainless-Runtime-Version",
-        "X-Stainless-Retry-Count", "X-Stainless-Timeout",
+        "X-Stainless-Retry-Count", "X-Stainless-Timeout", "X-Stainless-Helper-Method",
     ]),
     "Access-Control-Expose-Headers": "Retry-After",
     "Access-Control-Max-Age": "600",
@@ -71,15 +71,20 @@ _CORS_HEADERS = {
 @api_bp.before_request
 def _cors_preflight():
     """Answer a CORS preflight before auth, the DB or the per-key rate limit."""
-    if request.method == "OPTIONS":
+    if request.method == "OPTIONS" and "Access-Control-Request-Method" in request.headers:
         return Response(status=HTTPStatus.NO_CONTENT)
     return None
 
 
-@api_bp.after_request
+@api_bp.after_app_request
 def _cors(resp):
-    """Add the CORS headers to every /v1 response, errors and streams included."""
-    resp.headers.update(_CORS_HEADERS)
+    """Add the CORS headers to every /v1 response, errors and streams included.
+
+    App-wide and keyed on the path rather than a blueprint hook, so routing
+    errors under /v1 (unknown path 404, wrong method 405) carry them too.
+    """
+    if request.path.startswith("/v1/"):
+        resp.headers.update(_CORS_HEADERS)
     return resp
 
 # Per-worker in-memory cache. Under multi-worker deployments each worker holds its own
