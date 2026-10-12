@@ -109,6 +109,7 @@ lumen/                   # Main Python package
 │   ├── auth/
 │   ├── chat/
 │   ├── api/             # OpenAI-compatible /v1 routes
+│   ├── anthropic/       # Anthropic Messages /v1/messages, translated to the api routes
 │   ├── admin/
 │   ├── projects/
 │   ├── profile/
@@ -171,6 +172,7 @@ The app factory (`create_app`) wires all layers together: it initialises extensi
 | `auth` | `/` | Landing page, OAuth2 login/callback/logout, group auto-assignment |
 | `chat` | `/chat` | Web chat UI (SSE streaming) + conversation management |
 | `api` | `/v1` | OpenAI-compatible completions, models, and embeddings endpoints |
+| `anthropic` | `/v1/messages` | Anthropic Messages API, translated to and from the `api` chat path |
 | `admin` | `/admin` | User/project management, analytics dashboard |
 | `projects` | `/projects` | Service account & API key management |
 | `profile` | `/profile` | Personal API keys, usage stats |
@@ -198,6 +200,15 @@ Every request through `@api_key_required`:
 4. After response: logs to `RequestLog`, deducts coins, updates `ModelStat` and `EntityStat`
 
 A CORS preflight (`OPTIONS`) is answered `204` by the blueprint before any of these steps, and every `/v1` response, errors and streams included, carries `Access-Control-Allow-Origin: *` so browser apps can call the API (see the [API reference](guides/api-reference.md#cors-browser-apps)).
+
+### Anthropic Messages API (`/v1/messages`)
+
+```
+POST /v1/messages              → Anthropic Messages, stream/non-stream
+POST /v1/messages/count_tokens → character-based prompt estimate (not billed)
+```
+
+The `anthropic` blueprint translates each request to an OpenAI chat request (`services/anthropic_protocol.py`) and calls the `api` blueprint's `_complete_and_bill` and `_do_chat`, so access, budget, rate limits, endpoint selection, billing and `RequestLog` are the chat completions path's. The response or SSE stream is translated back. Keys are read from `x-api-key` or `Authorization: Bearer`. User-facing details are in `docs/guides/anthropic.md`.
 
 The chat blueprint's `/chat/<id>/message` SSE endpoint is functionally a web-UI wrapper around the same proxy logic; it reuses access control and coin deduction from `services/llm.py`.
 
