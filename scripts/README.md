@@ -1,6 +1,9 @@
 # Dev scripts
 
 Helper scripts for local testing and for regenerating the help-doc screenshots.
+
+For a browser example of the OAuth (PKCE) key-request flow, with a reusable JS module, see
+[`web-oauth/`](web-oauth/README.md). It needs no Playwright; serve it with `python -m http.server`.
 Both drive a real browser with Playwright, so install the browser once:
 
 ```bash

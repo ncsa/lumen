@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Lumen redirects back here with a one-time ?code=…; never leak it in a Referer header. -->
+  <meta name="referrer" content="no-referrer">
+  <title>Lumen browser OAuth example</title>
+  <!-- An empty icon, so the browser does not request /favicon.ico and log a 404. -->
+  <link rel="icon" href="data:,">
+  <style>
+    /* Illinois navy and orange; every text/background pair meets WCAG AA 4.5:1. */
+    body { font-family: system-ui, sans-serif; margin: 0; color: #13294b; background: #fff; }
+    header { background: #13294b; color: #fff; padding: 1rem 1.5rem; }
+    header h1 { margin: 0; font-size: 1.5rem; }
+    main { padding: 1rem 1.5rem; max-width: 60rem; }
+    button { font: inherit; padding: .5rem 1rem; border: 2px solid #13294b; border-radius: .25rem;
+             background: #13294b; color: #fff; cursor: pointer; }
+    button.secondary { background: #fff; color: #13294b; }
+    button:focus-visible { outline: 3px solid #b5300c; outline-offset: 2px; }
+    #error { color: #b5300c; font-weight: bold; }
+    #error:empty, #status:empty { display: none; }
+    dl { display: grid; grid-template-columns: max-content auto; gap: .25rem 1rem; }
+    dt { font-weight: bold; }
+    dd { margin: 0; }
+    .table-wrap { overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; }
+    caption { text-align: left; font-weight: bold; padding: .5rem 0; }
+    th, td { border-bottom: 1px solid #c8c6c7; padding: .4rem .6rem; text-align: left; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <header><h1>Lumen browser OAuth example</h1></header>
+  <main>
+    <!-- Status messages are announced politely; errors are announced right away. -->
+    <p id="status" role="status" aria-live="polite"></p>
+    <p id="error" role="alert" aria-live="assertive"></p>
+
+    <p>
+      <button type="button" id="connect" hidden>Connect to Lumen</button>
+      <button type="button" id="forget" class="secondary" hidden>Forget key</button>
+    </p>
+
+    <section id="data" hidden aria-labelledby="usage-heading">
+      <h2 id="usage-heading" tabindex="-1">Usage of this key</h2>
+      <dl id="usage"></dl>
+
+      <h2>Models</h2>
+      <div class="table-wrap">
+        <table>
+          <caption>Models this key can use, with prices and requests across all users</caption>
+          <thead>
+            <tr>
+              <th scope="col">Model</th>
+              <th scope="col">Status</th>
+              <th scope="col" class="num">Input $/1M tokens</th>
+              <th scope="col" class="num">Output $/1M tokens</th>
+              <th scope="col" class="num">Requests, last hour</th>
+              <th scope="col" class="num">Requests, last day</th>
+            </tr>
+          </thead>
+          <tbody id="models"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

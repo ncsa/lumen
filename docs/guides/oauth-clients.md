@@ -78,6 +78,8 @@ For apps that can receive a browser redirect. Public clients only: no `client_se
 
 ### Minimal browser example
 
+For a complete, commented example that keeps the key in `localStorage`, shows the key's usage and a models table, and splits the logic into a reusable ES module (`lumen-oauth.js`), see [`scripts/web-oauth`](https://github.com/ncsa/lumen/tree/main/scripts/web-oauth) in the repository.
+
 Serve this from the page that hosts your callback (`redirect_uri`). Keep the server response for the callback route headers-only if you can; at minimum set `Referrer-Policy: no-referrer` so the code never leaks onward.
 
 ```html
