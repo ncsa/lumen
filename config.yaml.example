@@ -48,7 +48,6 @@ oauth2:
   client_secret:
   # Example (CILogon): https://cilogon.org/.well-known/openid-configuration
   server_metadata_url:
-  redirect_uri: http://localhost:5000/callback
   scopes: openid email profile org.cilogon.userinfo  # org.cilogon.userinfo enables affiliation, member_of, idp, ou for group rules
   # Accept logins whose provider reports the email as unverified (email_verified=false).
   # Off by default; a missing email_verified claim is always accepted.

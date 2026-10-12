@@ -204,8 +204,6 @@ oauth2:
   clientSecret: ""
   # -- OIDC provider metadata URL. Defaults to CILogon; set to any OIDC provider.
   serverMetadataUrl: "https://cilogon.org/.well-known/openid-configuration"
-  # -- OAuth2 redirect URI. Computed from ingress/gateway hostname when empty.
-  redirectUri: ""
   scopes: "openid email profile org.cilogon.userinfo"
   # -- Extra parameters passed to the authorization redirect (e.g. idphint, skin)
   params: {}

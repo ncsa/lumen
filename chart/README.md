@@ -65,9 +65,6 @@ oauth2:
   serverMetadataUrl: "https://accounts.google.com/.well-known/openid-configuration"
   clientId: "..."
   clientSecret: "..."
-  # redirectUri is auto-computed from ingress.host or gateway.hostname
-  # Override explicitly if needed:
-  redirectUri: "https://lumen.example.com/callback"
 ```
 
 ### PostgreSQL
@@ -197,7 +194,6 @@ models:
 | `config.llm.requestTimeout` | `600` | Non-streaming calls: bound on the whole generation |
 | `config.llm.maxRetries` | `1` | Retries for non-streaming upstream calls (streaming calls are never retried) |
 | `oauth2.serverMetadataUrl` | CILogon OIDC URL | OIDC provider metadata URL |
-| `oauth2.redirectUri` | `""` | Auto-computed from ingress/gateway if empty |
 | `existingSecret` | `""` | Name of pre-existing Secret with credentials |
 | `postgresql.enabled` | `true` | Deploy bundled PostgreSQL |
 | `postgresql.image` | `timescale/timescaledb:2.27.2-pg17` | PostgreSQL container image |

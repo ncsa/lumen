@@ -149,7 +149,6 @@
         "clientId": { "type": "string" },
         "clientSecret": { "type": "string" },
         "serverMetadataUrl": { "type": "string", "format": "uri" },
-        "redirectUri": { "type": "string" },
         "scopes": { "type": "string" },
         "params": { "type": "object" },
         "allowUnverifiedEmail": { "type": "boolean" }

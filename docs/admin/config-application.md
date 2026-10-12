@@ -102,7 +102,6 @@ Lumen uses [CILogon](https://cilogon.org) for authentication. Register your appl
 | `client_id` | CILogon application ID |
 | `client_secret` | CILogon application secret |
 | `server_metadata_url` | Well-known URL for the OAuth2 provider (CILogon example: `https://cilogon.org/.well-known/openid-configuration`) |
-| `redirect_uri` | Where CILogon sends users after login — matches the callback URL registered at CILogon |
 | `scopes` | CILogon scopes to request; `org.cilogon.userinfo` is required for group matching |
 | `params` | Optional extra parameters passed to CILogon (e.g. `idphint` to restrict login to a specific identity provider) |
 | `allow_unverified_email` | Accept logins whose provider reports the email as unverified (`email_verified: false`). Defaults to `false`. A missing `email_verified` claim is always accepted. |
@@ -112,7 +111,6 @@ oauth2:
   client_id: cilogon:/client_id/your-id
   client_secret: your-secret
   server_metadata_url: https://cilogon.org/.well-known/openid-configuration
-  redirect_uri: https://your-instance/callback
   scopes: openid email profile org.cilogon.userinfo
   allow_unverified_email: false
   params:

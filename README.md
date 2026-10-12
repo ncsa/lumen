@@ -44,7 +44,6 @@ cp config.yaml.example lumen/config.yaml
 At minimum, set:
 - `app.secret_key` — a long random string
 - `oauth2.client_id` and `oauth2.client_secret` — from CILogon
-- `oauth2.redirect_uri` — `https://your-domain/callback`
 - `admins` — your email address
 - `models` — at least one model endpoint (see below)
 
@@ -257,7 +256,6 @@ oauth2:
   client_id: cilogon:/client_id/...
   client_secret: ...
   server_metadata_url: https://cilogon.org/.well-known/openid-configuration
-  redirect_uri: https://your-domain/callback
   scopes: openid email profile org.cilogon.userinfo
   # Optional: restrict login to one institution
   # params:

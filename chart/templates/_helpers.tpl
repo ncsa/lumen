@@ -124,22 +124,6 @@ Returns empty string when redis is not configured → in-memory rate limiting.
 {{- end }}
 
 {{/*
-Compute the OAuth2 redirect URI.
-Falls back to https://<ingress.host>/callback or https://<gateway.hostname>/callback.
-*/}}
-{{- define "lumen.redirectUri" -}}
-{{- if .Values.oauth2.redirectUri -}}
-{{- .Values.oauth2.redirectUri -}}
-{{- else if and .Values.ingress.enabled .Values.ingress.host -}}
-{{- printf "https://%s/callback" .Values.ingress.host -}}
-{{- else if and .Values.gateway.enabled .Values.gateway.hostname -}}
-{{- printf "https://%s/callback" .Values.gateway.hostname -}}
-{{- else -}}
-{{- "" -}}
-{{- end -}}
-{{- end }}
-
-{{/*
 Image reference for the Lumen app.
 */}}
 {{- define "lumen.image" -}}
