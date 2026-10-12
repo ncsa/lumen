@@ -136,6 +136,12 @@ def test_traversal_path_rejected(lumen_server):
     assert b"'..'" in r.stderr
 
 
+def test_empty_host_rejected_before_whitelist():
+    r = run_script(None, "https:///x", args=["--no-opencode"])
+    assert r.returncode != 0
+    assert b"invalid server URL" in r.stderr
+
+
 def test_empty_path_segment_rejected():
     r = run_script(None, "https://x.example.edu//api", args=["--no-opencode"])
     assert r.returncode != 0
