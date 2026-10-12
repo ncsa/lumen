@@ -63,6 +63,9 @@ target-version = "py311"
 # Alembic revisions are generated from a template that imports sa/op whether or
 # not the revision uses them, and they are never edited after review.
 extend-exclude = ["migrations/versions"]
+# scripts/ files import their siblings (e.g. `from screenshots import ...`);
+# list scripts/ as a source root so isort treats those imports as first-party.
+src = [".", "scripts"]
 # Only used by `ruff format`; E501 is deliberately not enforced (see below).
 line-length = 160
 
