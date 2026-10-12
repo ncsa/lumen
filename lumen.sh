@@ -74,8 +74,9 @@ command -v jq >/dev/null 2>&1 || die "jq is required"
 # rc block built from it.
 SERVER_RE='^https?://[][A-Za-z0-9.:-]+(/[A-Za-z0-9._~/-]*)?$'
 validate_server() {
-  local url="$1" scheme hostpath hostport host
-  [[ "$url" == *"://"* ]] || die "invalid server URL: $url"
+  local url="$1" scheme hostpath hostport host shown
+  shown=$(sanitize "$url")
+  [[ "$url" == *"://"* ]] || die "invalid server URL: $shown"
   scheme="${url%%://*}"
   hostpath="${url#*://}"
   hostport="${hostpath%%/*}"
@@ -86,16 +87,16 @@ validate_server() {
       host="${hostport%:*}"
       case "$host" in
         localhost|127.0.0.1|\[::1\]|::1) : ;;
-        *) die "refusing plain http for non-local server: $url (use https)" ;;
+        *) die "refusing plain http for non-local server: $shown (use https)" ;;
       esac
       ;;
-    *) die "unsupported URL scheme in: $url" ;;
+    *) die "unsupported URL scheme in: $shown" ;;
   esac
-  [[ "$url" =~ $SERVER_RE ]] || die "invalid characters in server URL: $(sanitize "$url")"
-  [[ -n "$hostport" ]] || die "invalid server URL: $url"
-  [[ "$path" != *".."* ]] || die "server URL path must not contain '..': $url"
+  [[ -n "$hostport" ]] || die "invalid server URL: $shown"
+  [[ "$url" =~ $SERVER_RE ]] || die "invalid characters in server URL: $shown"
+  [[ "$path" != *".."* ]] || die "server URL path must not contain '..': $shown"
   if [[ "${path%/}" == *//* ]]; then
-    die "server URL path must not contain empty segments: $url"
+    die "server URL path must not contain empty segments: $shown"
   fi
 }
 validate_server "$SERVER"
@@ -246,7 +247,7 @@ device_login() {
   echo "  1. open $(sanitize "$(jq -r .verification_uri <<<"$RESP_BODY")")"
   echo "  2. enter code $user_code"
   local vfull
-  vfull=$(jq -r '.verification_uri_complete // empty' <<<"$RESP_BODY")
+  vfull=$(sanitize "$(jq -r '.verification_uri_complete // empty' <<<"$RESP_BODY")")
   # Only open links on the server itself, never another scheme or host.
   if [[ "$vfull" == "$SERVER/"* ]]; then
     if command -v open >/dev/null 2>&1; then open "$vfull" >/dev/null 2>&1 || true
@@ -277,7 +278,8 @@ device_login() {
     case "$error" in
       authorization_pending) sleep 0 ;;
       slow_down)
-        interval=$(positive_int $((interval + 5)) "$MAX_INTERVAL" "$MAX_INTERVAL")
+        interval=$((interval + 5))
+        (( interval > MAX_INTERVAL )) && interval=$MAX_INTERVAL
         sleep "$interval"
         ;;
       access_denied) die "authorization denied" ;;
@@ -308,7 +310,7 @@ resolve_key() {
     if [[ "$LUMEN_API_KEY" =~ $KEY_RE ]]; then
       return 0
     fi
-    echo "warning: ignoring malformed LUMEN_API_KEY" >&2
+    echo "warning: ignoring malformed LUMEN_API_KEY (unset it or run lumen.sh --relogin)" >&2
   fi
   if [[ $RELOGIN -eq 0 && -f "$KEYS_JSON" ]]; then
     local k
@@ -317,7 +319,7 @@ resolve_key() {
       export LUMEN_API_KEY="$k"
       return 0
     fi
-    [[ -z "$k" ]] || echo "warning: ignoring malformed key for $HOST in $KEYS_JSON" >&2
+    [[ -z "$k" ]] || echo "warning: ignoring malformed key for $HOST in $KEYS_JSON (run lumen.sh --relogin to replace it)" >&2
   fi
   device_login
 }
