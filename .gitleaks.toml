@@ -1,0 +1,14 @@
+# Gitleaks config for the secret-scanning job in .github/workflows/lint.yml.
+# Keep every default rule; only allowlist the repo's own known placeholders,
+# matched as whole secrets so a real key next to them is still reported.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Documentation and test placeholders"
+regexes = [
+  # docs/guides/api-reference.md curl examples
+  '''^sk_your_api_key_here$''',
+  # tests/test_lumen_script.py fixture key
+  '''^sk_test1234567890abcd$''',
+]

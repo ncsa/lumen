@@ -64,3 +64,36 @@ jobs:
       # Lints Chart.yaml, values.schema.json, and renders every template.
       - name: Helm lint
         run: helm lint chart
+
+  secrets:
+    name: Secrets (gitleaks)
+    runs-on: ubuntu-latest
+    env:
+      # The gitleaks CLI is used directly: gitleaks/gitleaks-action needs a paid
+      # license for organization repos. Bump both values together.
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history so the PR scan can diff against the base branch.
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          curl -sSfL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum --check --strict
+          tar -xzf gitleaks.tar.gz -C "${RUNNER_TEMP}" gitleaks
+          rm gitleaks.tar.gz
+
+      # Config is .gitleaks.toml (default rules plus placeholder allowlist).
+      - name: Scan working tree
+        run: ${RUNNER_TEMP}/gitleaks detect --source . --no-git --redact --exit-code 1
+
+      # Only the PR's own commits: full history still holds a rotated key.
+      - name: Scan pull request commits
+        if: github.event_name == 'pull_request'
+        run: >-
+          ${RUNNER_TEMP}/gitleaks detect --redact --exit-code 1
+          --log-opts="origin/${{ github.base_ref }}..HEAD"
