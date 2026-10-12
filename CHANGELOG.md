@@ -47,6 +47,7 @@ All notable changes to Lumen will be documented in this file.
 - The `api.consent` setting; API requests always require model acknowledgment. ([#48](https://github.com/ncsa/lumen/issues/48))
 - **Breaking:** Group grants for owned models: an owned model is usable only by its owner, and the migration drops existing grants. ([#116](https://github.com/ncsa/lumen/pull/116), [#121](https://github.com/ncsa/lumen/pull/121), [#122](https://github.com/ncsa/lumen/pull/122))
 - **Breaking (Helm chart):** In-cluster vLLM/SGLang model deployment; the `models[].replicas`, `engine`, `image`, `gpu` and `storage` values are gone.
+- **Breaking (Helm chart):** the unused `oauth2.redirectUri` value; delete it from your values file before upgrading or the chart schema rejects it. Lumen computes the callback URL itself.
 
 ### Fixed
 
