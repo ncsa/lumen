@@ -173,7 +173,7 @@ Or with the official OpenAI JS SDK, which needs `dangerouslyAllowBrowser`
 because the key is visible to the page (see above):
 
 ```js
-const { default: OpenAI } = await import("https://esm.sh/openai");
+const { default: OpenAI } = await import("https://esm.sh/openai@7.32.0");
 const openai = new OpenAI({
   baseURL: "http://localhost:5001/v1",
   apiKey: localStorage.getItem("lumen-api-key"),
