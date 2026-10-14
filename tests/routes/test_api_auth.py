@@ -1222,7 +1222,7 @@ def test_list_models_hides_unacknowledged_by_default(client, api_key, ack_models
     assert "notice" not in entry
 
 
-@pytest.mark.parametrize("value", ["true", "True", "1"])
+@pytest.mark.parametrize("value", ["true", "True", "1", "yes"])
 def test_list_models_include_unacknowledged_lists_all(client, api_key, ack_models, value):
     token, _ = api_key
     needs_ack, early, acked = ack_models
@@ -1246,6 +1246,27 @@ def test_list_models_include_unacknowledged_false_hides(client, api_key, ack_mod
     assert needs_ack not in ids
     assert early not in ids
     assert acked in ids
+
+
+def test_include_unacknowledged_keeps_blocked_model_hidden(app, client, api_key, ack_models):
+    """The opt-in only reveals models awaiting acknowledgement, never blocked ones."""
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    token, _ = api_key
+    needs_ack, _, _ = ack_models
+    with app.app_context():
+        mc = db.session.execute(select(ModelConfig).filter_by(model_name=needs_ack)).scalar_one()
+        _make_model_blocked(mc.id)
+    assert _find(_list(client, token, include_unacknowledged=True), needs_ack) is None
+
+
+def test_include_unacknowledged_without_pool_lists_nothing(app, client, test_user, api_key):
+    """A caller with no pool sees no models, with or without the opt-in."""
+    token, _ = api_key
+    with app.app_context():
+        _add_model("ack-open", needs_ack=True)
+        _add_model("plain")
+    assert _list(client, token, include_unacknowledged=True) == []
 
 
 def test_list_models_hides_aliases_of_unacknowledged_model(app, client, api_key, ack_models):

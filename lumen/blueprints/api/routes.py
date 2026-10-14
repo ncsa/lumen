@@ -388,7 +388,8 @@ def list_models():
     data = []
     for c in permitted:
         ack = _ack_fields(c, rows.get(c.id)) if entity_id is not None else None
-        if ack is not None and ack[0] and not include_unacked:
+        open_tags = ack[0] if ack is not None else []
+        if open_tags and not include_unacked:
             continue
         entry = _model_dict(c, rates, eps_by_model.get(c.id, []), ack)
         data.append(entry)

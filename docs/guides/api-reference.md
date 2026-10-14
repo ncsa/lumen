@@ -83,7 +83,7 @@ Models you are blocked from (owned by someone else without a grant, disabled, or
 
 By default the list also omits models you cannot use until you acknowledge them (any `needs_ack` or `early_access` requirement still open), so OpenAI-compatible clients only see models they can call. Every listed model then has `tags: []`.
 
-Add `?include_unacknowledged=true` to also list those models, each with its open `tags` and its `notice`:
+Add `?include_unacknowledged=true` to also list those models, each with its open `tags` and its `notice`. The parameter also accepts `1` or `yes` (case-insensitive); any other value, including an empty one, keeps them hidden.
 
 ```bash
 curl "https://lumen.example.com/v1/models?include_unacknowledged=true" \
