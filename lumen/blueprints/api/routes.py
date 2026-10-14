@@ -370,7 +370,6 @@ def list_models():
         # The monitor token has no entity: it sees every active model, with no
         # consent state attached.
         permitted = configs
-        rows = {}
         entity_id = None
     else:
         entity_id = g.entity.id
