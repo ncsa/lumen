@@ -393,10 +393,7 @@ OpenAI SDK honours it. A coin budget that never refills automatically sends no
 | `429` | Rate limit exceeded, or coin budget exhausted (see Rate Limits) |
 | `503` | Model backend is currently unavailable |
 
-A `403` on a consume endpoint either means the model is blocked for your account
-or — for a model that requires acknowledgment you have not given — that you must
-acknowledge it first. The two need opposite reactions, so they are told apart by
-`code`:
+A `403` on a consume endpoint either means the model is blocked for your account or — for a model that requires acknowledgment you have not given — that you must acknowledge it first. The two need opposite reactions, so they are told apart by `code`:
 
 ```json
 {
@@ -408,8 +405,4 @@ acknowledge it first. The two need opposite reactions, so they are told apart by
 }
 ```
 
-A `code: "consent_required"` means the model merely awaits your acknowledgment
-(see [Acknowledge a Model](#acknowledge-a-model)); a `403` without a `code` means
-the model is blocked for your account. This is the same `code`-disambiguation
-pattern used for `429`, where `insufficient_quota` (stop until the budget
-refills) is distinguished from a plain rate limit.
+A `code: "consent_required"` means the model merely awaits your acknowledgment (see [Acknowledge a Model](#acknowledge-a-model)); a `403` without a `code` means the model is blocked for your account. This is the same `code`-disambiguation pattern used for `429`, where `insufficient_quota` (stop until the budget refills) is distinguished from a plain rate limit.

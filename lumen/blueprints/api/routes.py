@@ -252,7 +252,8 @@ def _model_dict(c, rates: dict, eps: list, ack_fields=None) -> dict:
     return d
 
 
-def _err(msg: str, err_type: str = "invalid_request_error", status: HTTPStatus = HTTPStatus.BAD_REQUEST, err_code: str = None, headers: dict = None):
+def _err(msg: str, err_type: str = "invalid_request_error", status: HTTPStatus = HTTPStatus.BAD_REQUEST,
+         err_code: str = None, headers: dict = None):
     body = {"message": msg, "type": err_type}
     if err_code:
         body["code"] = err_code

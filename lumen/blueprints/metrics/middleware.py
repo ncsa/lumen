@@ -148,6 +148,11 @@ def observe_rejection(reason: str, source: str, model: str = "") -> None:
     ``needs_consent``, ``no_healthy_endpoint``, ``queue_shed``. ``source`` is the
     request source as recorded in ``request_logs`` ("chat" or "api").
 
+    ``no_access`` also covers an entity with no usable coin pool, even on a
+    model that needs acknowledgment: acknowledging cannot fix that denial (the
+    acknowledge endpoint refuses such an entity), so it is not counted as
+    ``needs_consent``.
+
     ``model`` is legitimately EMPTY for ``rate_limit`` (and for ``queue_shed``):
     the limiter runs before the request body has been parsed, so at that point
     nothing in the process knows which model was asked for. Reporting "" says
