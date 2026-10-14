@@ -234,12 +234,16 @@ def _deactivate_removed_models(yaml_model_names):
 
 # Maximum length of an alias/ID (must match the model_aliases.alias column).
 _ALIAS_MAX_LEN = 128
+# POST /v1/models/<id>/acknowledge would be ambiguous for an id ending in this.
+RESERVED_MODEL_ID_SUFFIX = "/acknowledge"
 
 
 def model_alias_config_errors(models) -> list[str]:
     """Validate the ``aliases`` of every model definition.
 
-    Names are exact and case-sensitive. Returns human-readable error strings
+    Names are exact and case-sensitive. Neither a model name nor an alias may
+    end in ``/acknowledge``: ``POST /v1/models/<id>/acknowledge`` would be
+    ambiguous for it. Returns human-readable error strings
     (empty when valid). The canonical names are collected from the whole list
     first so an alias can never collide with a model name that appears later.
 
@@ -257,6 +261,8 @@ def model_alias_config_errors(models) -> list[str]:
             continue
         name = model.get("name")
         label = name if isinstance(name, str) and name else f"models[{i}]"
+        if isinstance(name, str) and name.endswith(RESERVED_MODEL_ID_SUFFIX):
+            errors.append(f"{label}: model name cannot end in '{RESERVED_MODEL_ID_SUFFIX}' (reserved for the acknowledge endpoint)")
         aliases = model.get("aliases")
         if aliases is None:
             continue
@@ -269,6 +275,9 @@ def model_alias_config_errors(models) -> list[str]:
                 continue
             if len(alias) > _ALIAS_MAX_LEN:
                 errors.append(f"{label}: alias '{alias}' exceeds {_ALIAS_MAX_LEN} characters")
+                continue
+            if alias.endswith(RESERVED_MODEL_ID_SUFFIX):
+                errors.append(f"{label}: alias '{alias}' cannot end in '{RESERVED_MODEL_ID_SUFFIX}' (reserved for the acknowledge endpoint)")
                 continue
             if alias == name:
                 errors.append(f"{label}: alias '{alias}' cannot equal the model's own name")

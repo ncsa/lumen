@@ -1015,6 +1015,21 @@ def test_acknowledge_slashed_model_and_alias(app, client, test_user, test_model,
     assert body["tags"] == []
 
 
+@pytest.mark.parametrize("model_id", ["plain", "org/m"])
+def test_get_acknowledge_path_returns_405(app, client, test_user, test_model, api_key, model_id):
+    """GET on the acknowledge endpoint is 405, not a 404 for model '<id>/acknowledge'."""
+    token, _ = api_key
+    with app.app_context():
+        _grant_unlimited_pool(app, test_user["id"])
+        _set_model_flag(app, test_model, needs_ack=True, model_name=model_id)
+
+    resp = client.get(f"/v1/models/{model_id}/acknowledge",
+                      headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == HTTPStatus.METHOD_NOT_ALLOWED
+    assert resp.headers["Allow"] == "POST"
+    assert resp.get_json()["error"]["type"] == "invalid_request_error"
+
+
 def test_acknowledge_concurrent_first_ack_returns_persisted_state(
     app, client, test_user, test_model, api_key, monkeypatch,
 ):

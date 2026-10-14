@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from lumen.blueprints.metrics.middleware import observe_stream_abort
+from lumen.commands import RESERVED_MODEL_ID_SUFFIX
 from lumen.extensions import db, limiter
 from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
@@ -425,6 +426,10 @@ def list_models():
 @api_bp.route("/models/<path:model_id>", methods=["GET"])
 @api_key_required
 def get_model(model_id):
+    # <path:model_id> also swallows ".../acknowledge"; config validation
+    # reserves that suffix, so it is always the POST-only acknowledge endpoint.
+    if model_id.endswith(RESERVED_MODEL_ID_SUFFIX):
+        return _err("Method not allowed. Use POST to acknowledge a model.", status=HTTPStatus.METHOD_NOT_ALLOWED, headers={"Allow": "POST"})
     config = resolve_model_config(model_id)
     if not config:
         return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)

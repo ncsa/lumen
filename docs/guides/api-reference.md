@@ -119,6 +119,7 @@ Response (`200`):
 
 - `tags` is `[]` after a successful acknowledgment. If the model later gains a new requirement (for example it becomes early access), `tags` reports it and you must acknowledge once more.
 - `notice` is included only while `tags` is non-empty, matching `GET /v1/models/<id>`; read the notice there before acknowledging. A model with no requirements returns `tags: []` as a no-op.
+- `GET /v1/models/<id>/acknowledge` returns `405` with `Allow: POST`. The `/acknowledge` suffix is reserved: config validation rejects a model name or alias ending in `/acknowledge`, so `POST /v1/models/<id>/acknowledge` always means this endpoint.
 - If your account cannot use the model, an un-acknowledged consume call above returns `403` with `code: "consent_required"` and a message pointing at this endpoint.
 
 ---

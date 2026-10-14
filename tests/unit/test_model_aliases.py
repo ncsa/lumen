@@ -167,6 +167,18 @@ def test_alias_must_be_list(app):
     assert any("must be a list" in e for e in errs)
 
 
+def test_acknowledge_suffix_reserved_for_names_and_aliases(app):
+    """``/acknowledge`` is the ack endpoint's suffix, so no model id may end in it."""
+    from lumen.commands import model_alias_config_errors
+    errs = model_alias_config_errors([{**_valid_models()[0], "name": "org/acknowledge"}])
+    assert any("model name cannot end in '/acknowledge'" in e for e in errs)
+    errs = model_alias_config_errors([{**_valid_models()[0], "aliases": ["team/acknowledge"]}])
+    assert any("alias 'team/acknowledge' cannot end in '/acknowledge'" in e for e in errs)
+    # Only the path suffix is reserved, not the word itself.
+    assert model_alias_config_errors([{**_valid_models()[0], "name": "acknowledge",
+                                       "aliases": ["org/acknowledged", "acknowledge-me"]}]) == []
+
+
 def test_validate_config_structure_rejects_bad_aliases(app):
     from lumen.services.config_watcher import validate_config_structure
     cfg = {"version": 3, "models": [{"name": "a", "aliases": ["a"],
@@ -264,6 +276,22 @@ def test_sync_invalid_aliases_rejected_before_any_writes(app):
         from lumen.commands import sync_models_from_yaml
         with pytest.raises(ValueError):
             sync_models_from_yaml({"models": bad})
+    with app.app_context():
+        from lumen.models.model_config import ModelConfig
+        assert db.session.execute(select(ModelConfig)).scalars().all() == []
+
+
+@pytest.mark.parametrize("model", [
+    {"name": "org/acknowledge"},
+    {"name": "org/m", "aliases": ["team/acknowledge"]},
+])
+def test_sync_reserved_acknowledge_suffix_rejected_before_any_writes(app, model):
+    good = {"name": "good-model", "input_cost_per_million": 1.0, "output_cost_per_million": 2.0}
+    bad = {**model, "input_cost_per_million": 1.0, "output_cost_per_million": 2.0}
+    with app.app_context():
+        from lumen.commands import sync_models_from_yaml
+        with pytest.raises(ValueError, match="/acknowledge"):
+            sync_models_from_yaml({"models": [good, bad]})
     with app.app_context():
         from lumen.models.model_config import ModelConfig
         assert db.session.execute(select(ModelConfig)).scalars().all() == []
