@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from functools import wraps
 from http import HTTPStatus
+from urllib.parse import quote
 
 import openai
 from flask import Blueprint, Response, current_app, g, jsonify, request
@@ -474,20 +475,19 @@ def acknowledge_model(model_id):
     if get_model_access_status(entity_id, config.id) == "blocked" or get_pool_limit(entity_id) is None:
         return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
 
-    # Capture the text that is being acknowledged (same content the web dialog
-    # shows) before the write flips the model to fully-acknowledged.
-    ack_notice, early_notice = model_notices(config)
-    notice = "\n\n".join(n for n in (ack_notice, early_notice) if n) or None
-
     row = db.session.execute(select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=config.id)).scalar_one_or_none()
     if config.needs_ack or config.early_access:
         now = utcnow()
+
+        def fill_missing(r):
+            if config.needs_ack and r.consented_at is None:
+                r.consented_at = now
+            if config.early_access and r.early_access_at is None:
+                r.early_access_at = now
+
         if row is None:
             row = EntityModelConsent(entity_id=entity_id, model_config_id=config.id)
-            if config.needs_ack:
-                row.consented_at = now
-            if config.early_access:
-                row.early_access_at = now
+            fill_missing(row)
             # Race-safe first insert (same pattern as subtract_coins): two
             # concurrent first acks — overlapping retries, or two keys of one
             # entity — would otherwise make the loser's commit raise
@@ -496,25 +496,28 @@ def acknowledge_model(model_id):
                 with db.session.begin_nested():
                     db.session.add(row)
             except IntegrityError:
-                # The winner's row is the persisted state; report that. If it
-                # vanished (winner aborted), the requirement is honestly open.
+                # The winner's row may satisfy only some requirements (e.g. an
+                # earlier ack before the model gained early_access), so fill in
+                # whatever it lacks. If it vanished (winner aborted), the
+                # requirement is honestly open.
                 row = db.session.execute(
                     select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=config.id)
                 ).scalar_one_or_none()
+                if row is not None:
+                    fill_missing(row)
         else:
-            if config.needs_ack and row.consented_at is None:
-                row.consented_at = now
-            if config.early_access and row.early_access_at is None:
-                row.early_access_at = now
+            fill_missing(row)
         db.session.commit()
 
-    tags, acknowledged_at, _ = _ack_fields(config, row)
+    tags, acknowledged_at, notice = _ack_fields(config, row)
     resp = {
         "id": model_id,
         "tags": tags,
         "acknowledged_at": acknowledged_at.isoformat() + "Z" if acknowledged_at else None,
     }
-    if notice:
+    # Same shape as _model_dict: the notice is only shown while a requirement
+    # is still open.
+    if tags and notice:
         resp["notice"] = notice
     return jsonify(resp)
 
@@ -553,7 +556,7 @@ def _preflight(model_name: str):
             # The requested name works on the ack endpoint whether it is a
             # canonical name or an alias.
             return None, None, None, _err(
-                f"This model requires acknowledgment before use. Acknowledge it via POST /v1/models/{model_name}/acknowledge.",
+                f"This model requires acknowledgment before use. Acknowledge it via POST /v1/models/{quote(model_name, safe='/')}/acknowledge.",
                 status=code,
                 err_code="consent_required",
             )

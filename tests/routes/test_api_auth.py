@@ -730,7 +730,7 @@ def test_acknowledge_unacked_model_creates_consent(
     app, client, test_user, test_model, test_model_endpoint, api_key,
 ):
     """Acking an un-acknowledged needs-ack model records entity-level consent
-    and returns the acknowledged notice; the model then shows fully-acked."""
+    and the model then shows fully-acked, with no notice left to read."""
     token, _ = api_key
     with app.app_context():
         _grant_unlimited_pool(app, test_user["id"])
@@ -747,7 +747,7 @@ def test_acknowledge_unacked_model_creates_consent(
     assert body["id"] == test_model["model_name"]
     assert body["tags"] == []
     assert body["acknowledged_at"].endswith("Z")
-    assert body["notice"] == "Be good."
+    assert "notice" not in body
 
     with app.app_context():
         row = db.session.execute(
@@ -775,17 +775,12 @@ def test_acknowledge_is_idempotent(app, client, test_user, test_model, api_key):
 
     headers = {"Authorization": f"Bearer {token}"}
     url = f"/v1/models/{test_model['model_name']}/acknowledge"
-    first = client.post(url, headers=headers).get_json()
-    second = client.post(url, headers=headers).get_json()
-    assert first["tags"] == []
-    assert first["notice"] == "Read me."
-    assert second == first
-    with app.app_context():
-        _set_model_flag(app, test_model, ack_message="Changed after ack.")
-    third = client.post(url, headers=headers).get_json()
-    assert third["tags"] == []
-    # The notice reflects what the model carries, not the history of acks.
-    assert third["notice"] == "Changed after ack."
+    first = client.post(url, headers=headers)
+    second = client.post(url, headers=headers)
+    assert first.status_code == second.status_code == HTTPStatus.OK
+    assert first.get_json()["tags"] == []
+    assert "notice" not in first.get_json()
+    assert second.get_json() == first.get_json()
 
 
 def test_acknowledge_via_alias_consents_canonical_model(
@@ -834,7 +829,7 @@ def test_acknowledge_early_access_only(app, client, test_user, test_model, api_k
     assert resp.status_code == HTTPStatus.OK
     body = resp.get_json()
     assert body["tags"] == []
-    assert body["notice"]
+    assert "notice" not in body
     with app.app_context():
         row = db.session.execute(
             select(EntityModelConsent).filter_by(
@@ -1063,6 +1058,57 @@ def test_acknowledge_concurrent_first_ack_returns_persisted_state(
     assert body["acknowledged_at"] == winner_at.isoformat() + "Z"
 
 
+def test_acknowledge_race_fills_requirements_missing_from_winner(
+    app, client, test_user, test_model, test_model_endpoint, api_key, upstream_ok,
+    fresh_rate_limit, monkeypatch,
+):
+    """Losing the insert race to a row that has only consented_at still
+    satisfies early_access: the call fills what the winner's row lacks, so
+    the next consume call is not refused with consent_required."""
+    token, _ = api_key
+    with app.app_context():
+        _grant_unlimited_pool(app, test_user["id"])
+        _set_model_flag(app, test_model, needs_ack=True, early_access=True)
+
+    from datetime import timedelta
+
+    from sqlalchemy import insert as sa_insert
+
+    from lumen.extensions import db
+    from lumen.models.entity_model_consent import EntityModelConsent
+
+    winner_at = utcnow() - timedelta(hours=1)
+    orig_init = EntityModelConsent.__init__
+
+    def racing_init(self, **kw):
+        db.session.execute(sa_insert(EntityModelConsent).values(
+            **kw, consented_at=winner_at,
+        ))
+        orig_init(self, **kw)
+
+    monkeypatch.setattr(EntityModelConsent, "__init__", racing_init)
+    resp = client.post(
+        f"/v1/models/{test_model['model_name']}/acknowledge",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    monkeypatch.setattr(EntityModelConsent, "__init__", orig_init)
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.get_json()
+    assert body["tags"] == []
+    assert "notice" not in body
+
+    with app.app_context():
+        row = db.session.execute(
+            select(EntityModelConsent).filter_by(
+                entity_id=test_user["id"], model_config_id=test_model["id"],
+            )
+        ).scalar_one()
+        assert row.consented_at == winner_at
+        assert row.early_access_at is not None
+
+    assert _api_allows(client, token, test_model["model_name"], "chat") is True
+
+
 def test_list_models_includes_unacked_needs_ack_with_fields(
     app, client, test_user, test_model, test_model_endpoint, api_key,
 ):
@@ -1171,6 +1217,27 @@ def test_chat_completions_unacked_returns_consent_required_code(
     err = resp.get_json()["error"]
     assert "code" not in err
     assert err["message"] == "No access to this model"
+
+
+def test_consent_required_hint_percent_encodes_model_name(
+    app, client, test_user, test_model, api_key,
+):
+    """A model name with URL-reserved characters yields a working hint path."""
+    token, _ = api_key
+    with app.app_context():
+        _grant_unlimited_pool(app, test_user["id"])
+        _set_model_flag(app, test_model, needs_ack=True, model_name="my model?#%")
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": "my model?#%",
+              "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    err = resp.get_json()["error"]
+    assert err["code"] == "consent_required"
+    assert "/v1/models/my%20model%3F%23%25/acknowledge" in err["message"]
 
 
 def test_zero_pool_unacked_returns_generic_403(

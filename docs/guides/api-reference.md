@@ -113,13 +113,12 @@ Response (`200`):
 {
   "id": "qwen-coder-cc",
   "tags": [],
-  "acknowledged_at": "2026-10-05T16:00:00Z",
-  "notice": "This model was trained in a US government designated Country of Concern. It may exhibit biases based on differences in geopolitical environments, cultural norms, policy constraints, or censorship behaviors."
+  "acknowledged_at": "2026-10-05T16:00:00Z"
 }
 ```
 
 - `tags` is `[]` after a successful acknowledgment. If the model later gains a new requirement (for example it becomes early access), `tags` reports it and you must acknowledge once more.
-- `notice` echoes the text you acknowledged; a model with no requirements returns `tags: []` and no `notice` as a no-op.
+- `notice` is included only while `tags` is non-empty, matching `GET /v1/models/<id>`; read the notice there before acknowledging. A model with no requirements returns `tags: []` as a no-op.
 - If your account cannot use the model, an un-acknowledged consume call above returns `403` with `code: "consent_required"` and a message pointing at this endpoint.
 
 ---
