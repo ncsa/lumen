@@ -382,9 +382,14 @@ def list_models():
             and access_statuses.get(c.id, "allowed") != "blocked"
         ]
         rows = consent_rows(entity_id, [c.id for c in permitted])
+    # Models with an open acknowledgement requirement can't be used yet, so they
+    # are hidden unless the caller opts in to see them (tagged, with notice).
+    include_unacked = request.args.get("include_unacknowledged", "").lower() in ("1", "true", "yes")
     data = []
     for c in permitted:
         ack = _ack_fields(c, rows.get(c.id)) if entity_id is not None else None
+        if ack is not None and ack[0] and not include_unacked:
+            continue
         entry = _model_dict(c, rates, eps_by_model.get(c.id, []), ack)
         data.append(entry)
         # Expose each alias as a discoverable ID so clients that validate their

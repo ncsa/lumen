@@ -493,6 +493,18 @@ def _call_list(client, token, model_name):
     return client.get("/v1/models", headers={"Authorization": f"Bearer {token}"})
 
 
+def _list(client, token, include_unacknowledged=False):
+    """Return the ``data`` of GET /v1/models, optionally with unacknowledged models."""
+    query = "?include_unacknowledged=true" if include_unacknowledged else ""
+    resp = client.get(f"/v1/models{query}", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == HTTPStatus.OK, resp.get_data(as_text=True)
+    return resp.get_json()["data"]
+
+
+def _find(data, model_name):
+    return next((m for m in data if m["id"] == model_name), None)
+
+
 def _call_detail(client, token, model_name):
     return client.get(f"/v1/models/{model_name}", headers={"Authorization": f"Bearer {token}"})
 
@@ -533,18 +545,24 @@ _GENERATION = ("chat", "completions", "transcriptions")
 def _api_allows(client, token, model_name, endpoint):
     """True if the endpoint lets the key use the model, False if it refuses it.
 
-    Listing and detail SHOW a model awaiting acknowledgement — that is how a
-    client discovers the requirement and its notice — so on those two surfaces
-    the consent state is read from ``tags`` (no open requirement == usable).
-    Generation answers 403. Any other answer is a test failure rather than a
-    quiet False.
+    The default listing hides a model awaiting acknowledgement; the opt-in
+    listing and detail SHOW it — that is how a client discovers the requirement
+    and its notice — so there the consent state is read from ``tags`` (no open
+    requirement == usable). Generation answers 403. Any other answer is a test
+    failure rather than a quiet False.
     """
     resp = _ENDPOINTS[endpoint](client, token, model_name)
     if endpoint in ("list", "detail"):
         assert resp.status_code == HTTPStatus.OK, resp.get_data(as_text=True)
         if endpoint == "list":
-            entry = next((m for m in resp.get_json()["data"] if m["id"] == model_name), None)
-            assert entry is not None, f"{model_name} missing from /v1/models"
+            listed = _find(resp.get_json()["data"], model_name)
+            opt_in = _find(_list(client, token, include_unacknowledged=True), model_name)
+            assert opt_in is not None, f"{model_name} missing from /v1/models?include_unacknowledged=true"
+            if listed is None:
+                assert opt_in["tags"], f"{model_name} hidden from /v1/models without open tags"
+                return False
+            assert listed == opt_in
+            entry = listed
         else:
             entry = resp.get_json()
         return not entry["tags"]
@@ -885,7 +903,8 @@ def test_gained_requirement_needs_second_ack(
 
     # Consent no longer covers all requirements: the open one is early_access,
     # and consented_at from the first ack is untouched.
-    listed = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"}).get_json()["data"]
+    assert _find(_list(client, token), test_model["model_name"]) is None
+    listed = _list(client, token, include_unacknowledged=True)
     entry = next(m for m in listed if m["id"] == test_model["model_name"])
     assert entry["tags"] == ["early_access"]
     assert entry["acknowledged_at"] is None
@@ -1124,18 +1143,18 @@ def test_acknowledge_race_fills_requirements_missing_from_winner(
     assert _api_allows(client, token, test_model["model_name"], "chat") is True
 
 
-def test_list_models_includes_unacked_needs_ack_with_fields(
+def test_list_models_include_unacknowledged_lists_needs_ack_with_fields(
     app, client, test_user, test_model, test_model_endpoint, api_key,
 ):
-    """An un-acknowledged needs-ack model appears in /v1/models, tagged, with
-    its notice readable — instead of being hidden."""
+    """With include_unacknowledged=true an un-acknowledged needs-ack model
+    appears in /v1/models, tagged, with its notice readable."""
     token, _ = api_key
     with app.app_context():
         _grant_unlimited_pool(app, test_user["id"])
         _set_model_flag(app, test_model, needs_ack=True, ack_message="Be good.")
 
-    data = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"}).get_json()["data"]
-    entry = next(m for m in data if m["id"] == test_model["model_name"])
+    data = _list(client, token, include_unacknowledged=True)
+    entry = _find(data, test_model["model_name"])
     assert entry["tags"] == ["needs_ack"]
     assert entry["acknowledged_at"] is None
     assert entry["notice"] == "Be good."
@@ -1147,8 +1166,8 @@ def test_list_models_early_access_tag(app, client, test_user, test_model, api_ke
         _grant_unlimited_pool(app, test_user["id"])
         _set_model_flag(app, test_model, early_access=True)
 
-    data = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"}).get_json()["data"]
-    entry = next(m for m in data if m["id"] == test_model["model_name"])
+    data = _list(client, token, include_unacknowledged=True)
+    entry = _find(data, test_model["model_name"])
     assert entry["tags"] == ["early_access"]
     assert entry["notice"]
 
@@ -1164,6 +1183,109 @@ def test_list_models_allowed_model_has_empty_tags(
     assert entry["tags"] == []
     assert entry["acknowledged_at"] is None
     assert "notice" not in entry
+
+
+def _add_model(name, **flags):
+    """Create an active model with the given requirement flags; returns its name."""
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    db.session.add(ModelConfig(model_name=name, input_cost_per_million=1.0, output_cost_per_million=2.0, **flags))
+    db.session.commit()
+    return name
+
+
+@pytest.fixture
+def ack_models(app, test_user):
+    """Unacknowledged needs_ack and early_access models plus a fully acknowledged
+    needs_ack + early_access one, for a caller with a pool."""
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    with app.app_context():
+        _grant_unlimited_pool(app, test_user["id"])
+        needs_ack = _add_model("ack-open", needs_ack=True, ack_message="Be good.")
+        early = _add_model("early-open", early_access=True)
+        acked = _add_model("ack-done", needs_ack=True, early_access=True)
+        mc = db.session.execute(select(ModelConfig).filter_by(model_name=acked)).scalar_one()
+        _record_consent(test_user["id"], mc.id)
+    return needs_ack, early, acked
+
+
+def test_list_models_hides_unacknowledged_by_default(client, api_key, ack_models):
+    token, _ = api_key
+    needs_ack, early, acked = ack_models
+    data = _list(client, token)
+    assert _find(data, needs_ack) is None
+    assert _find(data, early) is None
+    entry = _find(data, acked)
+    assert entry["tags"] == []
+    assert entry["acknowledged_at"].endswith("Z")
+    assert "notice" not in entry
+
+
+@pytest.mark.parametrize("value", ["true", "True", "1"])
+def test_list_models_include_unacknowledged_lists_all(client, api_key, ack_models, value):
+    token, _ = api_key
+    needs_ack, early, acked = ack_models
+    resp = client.get(f"/v1/models?include_unacknowledged={value}", headers={"Authorization": f"Bearer {token}"})
+    data = resp.get_json()["data"]
+    assert _find(data, needs_ack)["tags"] == ["needs_ack"]
+    assert _find(data, needs_ack)["notice"] == "Be good."
+    assert _find(data, early)["tags"] == ["early_access"]
+    assert _find(data, early)["notice"]
+    entry = _find(data, acked)
+    assert entry["tags"] == []
+    assert "notice" not in entry
+
+
+@pytest.mark.parametrize("value", ["false", "0", ""])
+def test_list_models_include_unacknowledged_false_hides(client, api_key, ack_models, value):
+    token, _ = api_key
+    needs_ack, early, acked = ack_models
+    resp = client.get(f"/v1/models?include_unacknowledged={value}", headers={"Authorization": f"Bearer {token}"})
+    ids = [m["id"] for m in resp.get_json()["data"]]
+    assert needs_ack not in ids
+    assert early not in ids
+    assert acked in ids
+
+
+def test_list_models_hides_aliases_of_unacknowledged_model(app, client, api_key, ack_models):
+    from lumen.extensions import db
+    from lumen.models.model_alias import ModelAlias
+    from lumen.models.model_config import ModelConfig
+    token, _ = api_key
+    needs_ack, _, _ = ack_models
+    with app.app_context():
+        mc = db.session.execute(select(ModelConfig).filter_by(model_name=needs_ack)).scalar_one()
+        db.session.add(ModelAlias(alias="ack-open-alias", model_config_id=mc.id))
+        db.session.commit()
+    assert _find(_list(client, token), "ack-open-alias") is None
+    alias = _find(_list(client, token, include_unacknowledged=True), "ack-open-alias")
+    assert alias["parent"] == needs_ack
+    assert alias["tags"] == ["needs_ack"]
+
+
+def test_get_model_returns_unacknowledged_models(client, api_key, ack_models):
+    token, _ = api_key
+    needs_ack, early, _ = ack_models
+    for name, tag in ((needs_ack, "needs_ack"), (early, "early_access")):
+        resp = client.get(f"/v1/models/{name}", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == HTTPStatus.OK
+        assert resp.get_json()["tags"] == [tag]
+        assert resp.get_json()["notice"]
+
+
+def test_monitor_token_list_ignores_include_unacknowledged(app, client, ack_models, monkeypatch):
+    """The monitor token has no consent state: it sees every model either way, untagged."""
+    monitor = "monitor-secret-token-include"
+    monkeypatch.setitem(app.config, "YAML_DATA", {**app.config.get("YAML_DATA", {}),
+                                                  "api": {"monitoring": {"token": monitor}}})
+    for query in ("", "?include_unacknowledged=true"):
+        data = client.get(f"/v1/models{query}", headers={"Authorization": f"Bearer {monitor}"}).get_json()["data"]
+        for name in ack_models:
+            entry = _find(data, name)
+            assert entry is not None
+            assert "tags" not in entry
+            assert "notice" not in entry
 
 
 def _consent_queries_during_list(app, client, token):

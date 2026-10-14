@@ -81,6 +81,15 @@ Each model may carry consent-state fields for the calling account:
 
 Models you are blocked from (owned by someone else without a grant, disabled, or expired) are omitted entirely.
 
+By default the list also omits models you cannot use until you acknowledge them (any `needs_ack` or `early_access` requirement still open), so OpenAI-compatible clients only see models they can call. Every listed model then has `tags: []`.
+
+Add `?include_unacknowledged=true` to also list those models, each with its open `tags` and its `notice`:
+
+```bash
+curl "https://lumen.example.com/v1/models?include_unacknowledged=true" \
+  -H "Authorization: Bearer sk_your_api_key_here"
+```
+
 ---
 
 ## Retrieve a Model
