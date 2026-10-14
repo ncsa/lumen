@@ -566,7 +566,7 @@ def _consent_model_rows(entity_id: int):
             continue
         notice, early_notice = model_notices(c)
         row = consent_rows.get(c.id)
-        accepted = _consent_satisfied(row, c.needs_ack, c.early_access)
+        accepted = _consent_satisfied(row, c)
         accepted_at = None
         if accepted and row is not None:
             times = [t for t in (row.consented_at, row.early_access_at) if t is not None]

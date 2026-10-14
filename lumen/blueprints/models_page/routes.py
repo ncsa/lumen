@@ -100,7 +100,7 @@ def detail(model_name):
     effective_notice = ack_notice if access_status == "needs_ack" else config.notice
     # Consent is satisfied only when every acknowledgement requirement has its
     # timestamp; a requirement added later re-shows the acknowledge button.
-    consented = _consent_satisfied(consent, config.needs_ack, config.early_access)
+    consented = _consent_satisfied(consent, config)
     consent_display_at = None
     if consented and consent is not None:
         times = [t for t in (consent.consented_at, consent.early_access_at) if t is not None]

@@ -1,7 +1,13 @@
+from datetime import datetime
+from types import SimpleNamespace
+
 import pytest
 
 from lumen.services.llm import (
+    _consent_satisfied,
+    ack_notice_text,
     bulk_model_access_info,
+    consent_state,
     get_model_access,
     get_model_access_status,
     get_pool_limit,
@@ -541,3 +547,69 @@ def test_access_counting_never_breaks_the_rejection(app, ids, test_model, monkey
         assert ok is False
         assert code == HTTPStatus.FORBIDDEN
         assert msg == "No access to this model"
+
+
+# ---------------------------------------------------------------------------
+# consent_state: the single "consent satisfied" rule
+# ---------------------------------------------------------------------------
+
+_T1 = datetime(2026, 1, 1, 12, 0)
+_T2 = datetime(2026, 2, 1, 12, 0)
+
+
+def _mc(needs_ack=False, early_access=False):
+    return SimpleNamespace(needs_ack=needs_ack, early_access=early_access)
+
+
+def _row(consented_at=None, early_access_at=None):
+    return SimpleNamespace(consented_at=consented_at, early_access_at=early_access_at)
+
+
+@pytest.mark.parametrize(
+    "mc, row, expected",
+    [
+        # needs_ack only
+        (_mc(needs_ack=True), None, (["needs_ack"], None)),
+        (_mc(needs_ack=True), _row(), (["needs_ack"], None)),
+        (_mc(needs_ack=True), _row(consented_at=_T1), ([], _T1)),
+        # early_access only
+        (_mc(early_access=True), None, (["early_access"], None)),
+        (_mc(early_access=True), _row(), (["early_access"], None)),
+        (_mc(early_access=True), _row(early_access_at=_T1), ([], _T1)),
+        # both requirements: none, partial (either half), full
+        (_mc(True, True), None, (["needs_ack", "early_access"], None)),
+        (_mc(True, True), _row(), (["needs_ack", "early_access"], None)),
+        (_mc(True, True), _row(consented_at=_T1), (["early_access"], None)),
+        (_mc(True, True), _row(early_access_at=_T1), (["needs_ack"], None)),
+        (_mc(True, True), _row(consented_at=_T1, early_access_at=_T2), ([], _T2)),
+        (_mc(True, True), _row(consented_at=_T2, early_access_at=_T1), ([], _T2)),
+        # no requirements
+        (_mc(), None, ([], None)),
+        (_mc(), _row(consented_at=_T1), ([], _T1)),
+    ],
+)
+def test_consent_state(mc, row, expected):
+    assert consent_state(mc, row) == expected
+
+
+@pytest.mark.parametrize(
+    "mc, row, expected",
+    [
+        (_mc(True, True), None, False),
+        (_mc(True, True), _row(consented_at=_T1), False),
+        (_mc(True, True), _row(consented_at=_T1, early_access_at=_T2), True),
+        (_mc(needs_ack=True), _row(consented_at=_T1), True),
+        # No row is never "consented", even for a model with no requirements.
+        (_mc(), None, False),
+    ],
+)
+def test_consent_satisfied_follows_consent_state(mc, row, expected):
+    assert _consent_satisfied(row, mc) is expected
+
+
+def test_ack_notice_text_joins_both_notices(app):
+    mc = SimpleNamespace(needs_ack=True, early_access=True, ack_message="Be good.")
+    with app.app_context():
+        app.config["MODEL_DEFAULTS"] = {"early_access_message": "Early bird."}
+        assert ack_notice_text(mc) == "Be good.\n\nEarly bird."
+        assert ack_notice_text(SimpleNamespace(needs_ack=False, early_access=False, ack_message=None)) is None

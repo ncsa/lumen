@@ -199,6 +199,65 @@ def best_group_pool_limit(group_limits):
     return max(candidates, key=lambda x: x.max_coins)
 
 
+def _model_baseline(model_config_ids: list) -> dict:
+    """Load the access-relevant ModelConfig columns for ``model_config_ids``, keyed by id."""
+    baseline = {
+        r.id: r
+        for r in db.session.execute(
+            select(ModelConfig.id, ModelConfig.owner_entity_id, ModelConfig.needs_ack, ModelConfig.disabled,
+                   ModelConfig.early_access, ModelConfig.end_date)
+            .where(ModelConfig.id.in_(model_config_ids))
+        ).all()
+    }
+    # Ids that don't resolve to a model are a caller bug; resolving them to a
+    # status here would silently fail open (no owner row -> public).
+    unknown = set(model_config_ids) - baseline.keys()
+    if unknown:
+        raise ValueError(f"unknown model_config_id(s): {sorted(unknown)}")
+    return baseline
+
+
+def _access_statuses(entity_id: int, baseline: dict) -> dict:
+    return {
+        mc_id: _resolve_single_access(
+            mc.owner_entity_id == entity_id,
+            mc.owner_entity_id,
+            model_needs_ack=mc.needs_ack,
+            model_disabled=mc.disabled,
+            model_early_access=mc.early_access,
+            model_end_date=mc.end_date,
+        )
+        for mc_id, mc in baseline.items()
+    }
+
+
+def bulk_model_access_statuses(entity_id: int, model_config_ids: list) -> dict:
+    """
+    Return {model_config_id: "allowed"|"blocked"|"needs_ack"} for one entity.
+
+    The access half of bulk_model_access_info, for callers that read consent
+    rows themselves (see consent_rows) and so don't need the consent query.
+    """
+    if not model_config_ids:
+        return {}
+    return _access_statuses(entity_id, _model_baseline(model_config_ids))
+
+
+def consent_rows(entity_id: int, model_config_ids: list) -> dict:
+    """Return {model_config_id: EntityModelConsent} for the entity's existing consent rows."""
+    if not model_config_ids:
+        return {}
+    return {
+        r.model_config_id: r
+        for r in db.session.execute(
+            select(EntityModelConsent).where(
+                EntityModelConsent.entity_id == entity_id,
+                EntityModelConsent.model_config_id.in_(model_config_ids),
+            )
+        ).scalars().all()
+    }
+
+
 def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
     """
     Bulk-resolve model access status and consents for one entity across many models.
@@ -216,49 +275,18 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
     if not model_config_ids:
         return {}, {}
 
-    baseline = {
-        r.id: r
-        for r in db.session.execute(
-            select(ModelConfig.id, ModelConfig.owner_entity_id, ModelConfig.needs_ack, ModelConfig.disabled,
-                   ModelConfig.early_access, ModelConfig.end_date)
-            .where(ModelConfig.id.in_(model_config_ids))
-        ).all()
-    }
-    # Ids that don't resolve to a model are a caller bug; resolving them to a
-    # status here would silently fail open (no owner row -> public).
-    unknown = set(model_config_ids) - baseline.keys()
-    if unknown:
-        raise ValueError(f"unknown model_config_id(s): {sorted(unknown)}")
+    baseline = _model_baseline(model_config_ids)
 
     # Only models whose acknowledgement requirements are ALL satisfied appear in
     # consent_map; a requirement added after consent leaves its timestamp NULL,
     # so the model drops out and the UI re-prompts.
     consent_map = {}
-    for r in db.session.execute(
-        select(EntityModelConsent).where(
-            EntityModelConsent.entity_id == entity_id,
-            EntityModelConsent.model_config_id.in_(model_config_ids),
-        )
-    ).scalars().all():
-        mc = baseline.get(r.model_config_id)
-        if _consent_satisfied(r, mc.needs_ack if mc else False, mc.early_access if mc else False):
-            times = [t for t in (r.consented_at, r.early_access_at) if t is not None]
-            if times:
-                consent_map[r.model_config_id] = max(times)
+    for mc_id, row in consent_rows(entity_id, model_config_ids).items():
+        open_tags, acknowledged_at = consent_state(baseline[mc_id], row)
+        if not open_tags and acknowledged_at is not None:
+            consent_map[mc_id] = acknowledged_at
 
-    access_statuses: dict = {}
-    for mc_id in model_config_ids:
-        mc = baseline[mc_id]
-        access_statuses[mc_id] = _resolve_single_access(
-            mc.owner_entity_id == entity_id,
-            mc.owner_entity_id,
-            model_needs_ack=mc.needs_ack,
-            model_disabled=mc.disabled,
-            model_early_access=mc.early_access,
-            model_end_date=mc.end_date,
-        )
-
-    return access_statuses, consent_map
+    return _access_statuses(entity_id, baseline), consent_map
 
 
 def get_model_status(mc) -> str:
@@ -314,12 +342,35 @@ def get_model_access_status(entity_id: int, model_config_id: int) -> str:
     return access_statuses[model_config_id]
 
 
-def _consent_satisfied(row, needs_ack: bool, early_access: bool) -> bool:
+def consent_state(mc, row) -> tuple:
+    """Return (open_tags, acknowledged_at) for a model and an entity's consent row.
+
+    ``mc`` is anything with ``needs_ack`` and ``early_access`` attributes (a
+    ModelConfig or a column row); ``row`` is the entity's EntityModelConsent, or
+    None. ``open_tags`` lists the requirements still unsatisfied
+    (``"needs_ack"`` and/or ``"early_access"``). ``acknowledged_at`` is the most
+    recent acknowledgement timestamp once none are open, else None. This is the
+    single definition of "consent satisfied" behind both enforcement
+    (get_model_access, check_coin_budget) and the consent state the UI and API
+    report.
+    """
+    open_tags = []
+    if mc.needs_ack and (row is None or row.consented_at is None):
+        open_tags.append("needs_ack")
+    if mc.early_access and (row is None or row.early_access_at is None):
+        open_tags.append("early_access")
+    if open_tags or row is None:
+        return open_tags, None
+    times = [t for t in (row.consented_at, row.early_access_at) if t is not None]
+    return open_tags, max(times) if times else None
+
+
+def _consent_satisfied(row, mc) -> bool:
     """True if a consent row covers all of a model's acknowledgement requirements."""
     if row is None:
         return False
-    return (not needs_ack or row.consented_at is not None) and \
-           (not early_access or row.early_access_at is not None)
+    open_tags, _ = consent_state(mc, row)
+    return not open_tags
 
 
 def has_model_consent(entity_id: int, model_config_id: int) -> bool:
@@ -330,7 +381,7 @@ def has_model_consent(entity_id: int, model_config_id: int) -> bool:
     row = db.session.execute(
         select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=model_config_id)
     ).scalar_one_or_none()
-    return _consent_satisfied(row, mc.needs_ack, mc.early_access)
+    return _consent_satisfied(row, mc)
 
 
 def model_notices(mc) -> tuple:
@@ -343,6 +394,15 @@ def model_notices(mc) -> tuple:
     ack_notice = (mc.ack_message or defaults.get("ack_message")) if mc.needs_ack else None
     early_notice = defaults.get("early_access_message") if mc.early_access else None
     return ack_notice, early_notice
+
+
+def ack_notice_text(mc):
+    """Return the combined acknowledgement + early-access notice for a model.
+
+    This is the text the web ack dialog shows, or None for a model with no
+    notice text.
+    """
+    return "\n\n".join(n for n in model_notices(mc) if n) or None
 
 
 def get_model_access(entity_id: int, model_config_id: int) -> bool:

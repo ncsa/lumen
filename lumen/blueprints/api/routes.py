@@ -30,15 +30,17 @@ from lumen.services.cost import calculate_audio_cost, calculate_cost
 from lumen.services.crypto import cache_salt_for_entity, hash_api_key
 from lumen.services.live_state import get_live_state
 from lumen.services.llm import (
-    bulk_model_access_info,
+    ack_notice_text,
+    bulk_model_access_statuses,
     capture_request_timing,
     check_coin_budget,
     coin_retry_after,
+    consent_rows,
+    consent_state,
     estimate_abort_usage,
     get_model_access_status,
     get_next_endpoint,
     get_pool_limit,
-    model_notices,
     observe_rejection_quietly,
     record_stream_abort,
     subtract_coins,
@@ -181,24 +183,8 @@ def _ack_fields(config, row):
     acknowledgement + early-access text the model carries — the text the web ack
     dialog shows — or None for a model with no requirements.
     """
-    tags = []
-    if config.needs_ack and (row is None or row.consented_at is None):
-        tags.append("needs_ack")
-    if config.early_access and (row is None or row.early_access_at is None):
-        tags.append("early_access")
-
-    if tags:
-        acknowledged_at = None
-    else:
-        times = [t for t in ((row.consented_at if row else None), (row.early_access_at if row else None)) if t is not None]
-        acknowledged_at = max(times) if times else None
-
-    notice = None
-    if config.needs_ack or config.early_access:
-        ack_notice, early_notice = model_notices(config)
-        notice = "\n\n".join(n for n in (ack_notice, early_notice) if n) or None
-
-    return tags, acknowledged_at, notice
+    tags, acknowledged_at = consent_state(config, row)
+    return tags, acknowledged_at, ack_notice_text(config)
 
 
 def _model_dict(c, rates: dict, eps: list, ack_fields=None) -> dict:
@@ -384,30 +370,21 @@ def list_models():
         # The monitor token has no entity: it sees every active model, with no
         # consent state attached.
         permitted = configs
-        consent_rows = {}
+        rows = {}
         entity_id = None
     else:
         entity_id = g.entity.id
-        model_ids = [c.id for c in configs]
-        access_statuses, _ = bulk_model_access_info(entity_id, model_ids)
+        access_statuses = bulk_model_access_statuses(entity_id, [c.id for c in configs])
         pool = get_pool_limit(entity_id)
         permitted = [
             c for c in configs
             if pool is not None
             and access_statuses.get(c.id, "allowed") != "blocked"
         ]
-        consent_rows = {
-            r.model_config_id: r
-            for r in db.session.execute(
-                select(EntityModelConsent).where(
-                    EntityModelConsent.entity_id == entity_id,
-                    EntityModelConsent.model_config_id.in_(model_ids),
-                )
-            ).scalars().all()
-        }
+        rows = consent_rows(entity_id, [c.id for c in permitted])
     data = []
     for c in permitted:
-        ack = _ack_fields(c, consent_rows.get(c.id)) if entity_id is not None else None
+        ack = _ack_fields(c, rows.get(c.id)) if entity_id is not None else None
         entry = _model_dict(c, rates, eps_by_model.get(c.id, []), ack)
         data.append(entry)
         # Expose each alias as a discoverable ID so clients that validate their

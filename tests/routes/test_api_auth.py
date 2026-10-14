@@ -1166,6 +1166,44 @@ def test_list_models_allowed_model_has_empty_tags(
     assert "notice" not in entry
 
 
+def _consent_queries_during_list(app, client, token):
+    """Return the SQL statements that read consent rows during GET /v1/models."""
+    from sqlalchemy import event
+
+    from lumen.extensions import db
+    statements = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        if "entity_model_consents" in statement:
+            statements.append(statement)
+
+    with app.app_context():
+        engine = db.engine
+    event.listen(engine, "before_cursor_execute", _record)
+    try:
+        resp = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == HTTPStatus.OK
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+    return statements
+
+
+def test_list_models_reads_consent_rows_once(app, client, test_user, test_model, api_key):
+    token, _ = api_key
+    with app.app_context():
+        _grant_unlimited_pool(app, test_user["id"])
+        _set_model_flag(app, test_model, needs_ack=True)
+    assert len(_consent_queries_during_list(app, client, token)) == 1
+
+
+def test_list_models_skips_consent_rows_when_nothing_permitted(app, client, test_user, test_model, api_key):
+    """No pool means nothing is listed, so consent rows are never read."""
+    token, _ = api_key
+    with app.app_context():
+        _set_model_flag(app, test_model, needs_ack=True)
+    assert _consent_queries_during_list(app, client, token) == []
+
+
 def test_get_model_unacked_needs_ack_returns_metadata_and_notice(
     app, client, test_user, test_model, test_model_endpoint, api_key,
 ):
