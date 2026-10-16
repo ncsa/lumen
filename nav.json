@@ -1,0 +1,54 @@
+[
+  {
+    "slug": "",
+    "section": "introduction",
+    "title": "Introduction",
+    "filename": "introduction.md"
+  },
+  {
+    "section": "guides",
+    "title": "Guides",
+    "items": [
+      {"slug": "chat",  "title": "Chat",             "filename": "chat.md"},
+      {"slug": "profile", "title": "Profile & API Keys",  "filename": "profile.md"},
+      {"slug": "connect", "title": "Connect Your Tools",  "filename": "connect.md"},
+      {"slug": "usage", "title": "Usage",            "filename": "usage.md"},
+      {"slug": "api",   "title": "API Reference",     "filename": "api-reference.md"}
+    ]
+  },
+  {
+    "section": "models",
+    "title": "Models",
+    "items": [
+      {"slug": "models",        "title": "Model Dashboard", "filename": "models.md"},
+      {"slug": "models/detail", "title": "Model Detail",    "filename": "model-detail.md"}
+    ]
+  },
+  {
+    "section": "projects",
+    "title": "Projects",
+    "items": [
+      {"slug": "projects",        "title": "Projects Overview",   "filename": "projects.md"},
+      {"slug": "projects/detail", "title": "Project Management",  "filename": "projects-detail.md"}
+    ]
+  },
+  {
+    "section": "groups",
+    "title": "Groups",
+    "items": [
+      {"slug": "groups",        "title": "Groups Overview",     "filename": "groups.md"},
+      {"slug": "groups/detail", "title": "Group Management",    "filename": "groups-detail.md"}
+    ]
+  },
+  {
+    "section": "admin",
+    "title": "Admin Guide",
+    "items": [
+      {"slug": "admin/config",          "title": "Configuration Overview",      "filename": "config.md"},
+      {"slug": "admin/config/apps",     "title": "Application Settings",        "filename": "config-application.md"},
+      {"slug": "admin/config/users",    "title": "Users & Access Control",      "filename": "config-users.md"},
+      {"slug": "admin/config/projects",  "title": "Configuring Projects",         "filename": "config-projects.md"},
+      {"slug": "admin/config/models",   "title": "Configuring Models",          "filename": "config-models.md"}
+    ]
+  }
+]
