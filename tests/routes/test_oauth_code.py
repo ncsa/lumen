@@ -199,6 +199,41 @@ def test_replay_revokes_minted_key(client, auth_client, app):
         assert key.revoked_by_entity_id is None
 
 
+def test_overwrite_refreshes_key_then_replay_revokes_it(client, auth_client, app, test_user):
+    from lumen.services.crypto import hash_api_key
+
+    old_raw = "sk_" + secrets.token_urlsafe(32)
+    with app.app_context():
+        old = APIKey(entity_id=test_user["id"], name="portal-key", key_hash=hash_api_key(old_raw),
+                     key_hint=f"{old_raw[:7]}...{old_raw[-4:]}", requests=3, input_tokens=40)
+        db.session.add(old)
+        db.session.commit()
+        old_id = old.id
+
+    url, verifier = _authorize_url()
+    assert auth_client.get(url).status_code == HTTPStatus.OK
+    with app.app_context():
+        req_id = db.session.execute(select(AuthRequest)).scalars().one().id
+    resp = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve", "overwrite": "on"})
+    assert resp.status_code == HTTPStatus.FOUND
+    code = parse_qs(urlsplit(resp.headers["Location"]).query)["code"][0]
+
+    key = _redeem(client, code, verifier).get_json()["access_token"]
+    assert client.get("/v1/models", headers={"Authorization": f"Bearer {key}"}).status_code == HTTPStatus.OK
+    assert client.get("/v1/models", headers={"Authorization": f"Bearer {old_raw}"}).status_code == HTTPStatus.UNAUTHORIZED
+    with app.app_context():
+        [row] = db.session.execute(select(APIKey)).scalars().all()
+        assert row.id == old_id and row.revoked_at is None
+
+    # Replaying the code revokes the refreshed key; its row and counters are kept.
+    assert _redeem(client, code, verifier).get_json()["error"] == "invalid_grant"
+    assert client.get("/v1/models", headers={"Authorization": f"Bearer {key}"}).status_code == HTTPStatus.UNAUTHORIZED
+    with app.app_context():
+        [row] = db.session.execute(select(APIKey)).scalars().all()
+        assert row.id == old_id and row.revoked_at is not None
+        assert (row.requests, row.input_tokens) == (3, 40)
+
+
 def test_token_cors_and_no_store(client, auth_client, app):
     pre = client.options("/oauth/token")
     assert pre.status_code == HTTPStatus.NO_CONTENT
