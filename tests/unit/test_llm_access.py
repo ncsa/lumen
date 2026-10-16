@@ -378,19 +378,21 @@ def _sql_unlimited(entity_id):
 
 
 @pytest.mark.parametrize(
-    "own_max, group_max, expected",
+    "own_max, group_max, group_active, expected",
     [
         # No own limit, no group: the unlimited default applies.
-        (None, None, True),
+        (None, None, True, True),
         # A positive group limit overrides the unlimited default.
-        (None, 100, False),
+        (None, 100, True, False),
         # A zero group limit is not usable, so the default still applies.
-        (None, 0, True),
+        (None, 0, True, True),
         # An own unlimited limit wins over a positive group limit.
-        (-2, 100, True),
+        (-2, 100, True, True),
+        # An inactive group's positive limit is ignored, so the default still applies.
+        (None, 100, False, True),
     ],
 )
-def test_entity_has_unlimited_pool_under_unlimited_default(app, ids, monkeypatch, own_max, group_max, expected):
+def test_entity_has_unlimited_pool_under_unlimited_default(app, ids, monkeypatch, own_max, group_max, group_active, expected):
     """SQL unlimited-pool probe matches get_pool_limit when TOKEN_DEFAULTS is unlimited."""
     entity_id, _ = ids
     monkeypatch.setitem(app.config, "TOKEN_DEFAULTS", {"max": -2, "refresh": 0, "starting": 0})
@@ -401,7 +403,7 @@ def test_entity_has_unlimited_pool_under_unlimited_default(app, ids, monkeypatch
         if own_max is not None:
             db.session.add(EntityLimit(entity_id=entity_id, max_coins=own_max, refresh_coins=0, starting_coins=0))
         if group_max is not None:
-            group_id = make_group_with_member(entity_id)
+            group_id = make_group_with_member(entity_id, active=group_active)
             db.session.add(GroupLimit(group_id=group_id, max_coins=group_max, refresh_coins=0, starting_coins=0))
         db.session.commit()
         assert _sql_unlimited(entity_id) is expected
