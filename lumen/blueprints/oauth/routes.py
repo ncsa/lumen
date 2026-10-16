@@ -25,6 +25,7 @@ from flask import Blueprint, jsonify, make_response, redirect, render_template, 
 from sqlalchemy import case, delete, select, update
 from sqlalchemy.exc import IntegrityError
 
+from lumen.blueprints.profile.routes import key_secret_fields, set_key_secret
 from lumen.decorators import login_required
 from lumen.extensions import _chat_entity_id, _chat_limit, db, limiter
 from lumen.models.api_key import APIKey
@@ -32,7 +33,6 @@ from lumen.models.auth_request import AuthRequest
 from lumen.models.entity import Entity
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
-from lumen.services.crypto import hash_api_key
 from lumen.services.llm import _consent_satisfied, bulk_model_access_info, model_notices
 from lumen.timeutils import utcnow
 
@@ -492,30 +492,36 @@ def _mint(req: AuthRequest):
 
     existing = db.session.execute(
         select(APIKey).where(APIKey.entity_id == req.entity_id, APIKey.name == req.requested_name,
-                             APIKey.revoked_at.is_(None))
+                             APIKey.revoked_at.is_(None)).order_by(APIKey.created_at.desc())
     ).scalars().all()
-    if req.overwrite:
-        now = utcnow()
-        for stale in existing:
-            stale.revoked_at = now
-            stale.revoked_by_entity_id = req.entity_id
-    elif existing:
+    if existing and not req.overwrite:
         db.session.rollback()
         return _oauth_error("invalid_grant", "key name now in use, run again")
 
     key = "sk_" + secrets.token_urlsafe(32)
-    api_key = APIKey(
-        entity_id=req.entity_id,
-        created_by_entity_id=req.entity_id,
-        name=req.requested_name,
-        key_hash=hash_api_key(key),
-        key_hint=f"{key[:7]}...{key[-4:]}",
-        client_id=req.client_id,
-        requested_by=req.author,
-    )
-    db.session.add(api_key)
-    db.session.flush()
-    req.api_key_id = api_key.id
+    provenance = {"client_id": req.client_id, "requested_by": req.author}
+    # Overwrite refreshes the newest key with this name in place (the one the
+    # consent page showed), keeping its id and usage stats. If it was revoked
+    # meanwhile, mint a new row instead.
+    target, duplicates = (existing[0], existing[1:]) if existing else (None, [])
+    if target is not None and set_key_secret(target.id, key, **provenance):
+        req.api_key_id = target.id
+    else:
+        api_key = APIKey(
+            entity_id=req.entity_id,
+            created_by_entity_id=req.entity_id,
+            name=req.requested_name,
+            **key_secret_fields(key),
+            **provenance,
+        )
+        db.session.add(api_key)
+        db.session.flush()
+        req.api_key_id = api_key.id
+    # Manual duplicates with the same name are revoked, leaving one active key.
+    now = utcnow()
+    for stale in duplicates:
+        stale.revoked_at = now
+        stale.revoked_by_entity_id = req.entity_id
     approver_email = db.session.execute(
         select(Entity.email).where(Entity.id == req.entity_id)
     ).scalar_one_or_none()

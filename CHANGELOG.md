@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+- OAuth key requests that replace an existing key now refresh its secret in place, keeping its name and usage stats, instead of revoking it.
+
 ## [2.2.1] - 2026-10-16
 
 ### Fixed
