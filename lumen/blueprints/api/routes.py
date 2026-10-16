@@ -28,6 +28,7 @@ from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.request_log import RequestLog
 from lumen.services.cost import calculate_audio_cost, calculate_cost
 from lumen.services.crypto import cache_salt_for_entity, hash_api_key
+from lumen.services.key_expiry import revoke_if_expired
 from lumen.services.live_state import get_live_state
 from lumen.services.llm import (
     ack_notice_text,
@@ -354,7 +355,7 @@ def api_key_required(f):
 
         g.monitor = False
         api_key = db.session.execute(select(APIKey).filter_by(key_hash=hash_api_key(token))).scalar_one_or_none()
-        if not api_key or api_key.revoked_at is not None:
+        if not api_key or api_key.revoked_at is not None or revoke_if_expired(api_key):
             return _err("Invalid or revoked API key", "authentication_error", HTTPStatus.UNAUTHORIZED)
 
         entity = db.session.get(Entity, api_key.entity_id)

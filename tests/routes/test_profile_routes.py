@@ -117,6 +117,21 @@ def test_create_key_success(auth_client):
     assert "id" in data
 
 
+@pytest.mark.parametrize("cap", [0, 30 * 86400])
+def test_create_key_expires_at_from_cap(app, auth_client, restore_config, cap):
+    app.config["KEY_TTL"] = cap
+    resp = auth_client.post("/profile/keys", json={"name": "ttl", "key": "sk_" + "t" * 32})
+    assert resp.status_code == HTTPStatus.CREATED
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    with app.app_context():
+        expires_at = db.session.get(APIKey, resp.get_json()["id"]).expires_at
+    if cap:
+        assert abs(expires_at - (utcnow() + timedelta(seconds=cap))) < timedelta(minutes=1)
+    else:
+        assert expires_at is None
+
+
 def test_create_key_default_name(auth_client):
     key = "sk_" + "b" * 32
     resp = auth_client.post(
@@ -330,7 +345,7 @@ def test_old_delete_key_url_requires_login(client):
 # rotate_key
 # ---------------------------------------------------------------------------
 
-def _seed_key_with_usage(app, entity_id, raw, revoked_at=None):
+def _seed_key_with_usage(app, entity_id, raw, revoked_at=None, expires_at=None):
     """Insert a key with non-zero usage counters; return its id."""
     from lumen.extensions import db
     from lumen.models.api_key import APIKey
@@ -341,7 +356,7 @@ def _seed_key_with_usage(app, entity_id, raw, revoked_at=None):
             key_hash=hash_api_key(raw), key_hint=f"{raw[:7]}...{raw[-4:]}", revoked_at=revoked_at,
             requests=5, input_tokens=100, output_tokens=40, audio_seconds=7,
             cost=Decimal("1.500000"), last_used_at=datetime(2026, 9, 1, 12, 0),
-            created_at=datetime(2026, 8, 1, 9, 0),
+            created_at=datetime(2026, 8, 1, 9, 0), expires_at=expires_at,
         )
         db.session.add(ak)
         db.session.commit()
@@ -356,7 +371,7 @@ def _key_snapshot(app, kid):
         return {c: getattr(ak, c) for c in (
             "requests", "input_tokens", "output_tokens", "audio_seconds", "cost",
             "last_used_at", "name", "created_at", "created_by_entity_id", "entity_id", "revoked_at",
-            "key_hash", "key_hint",
+            "key_hash", "key_hint", "expires_at", "revoked_by_entity_id",
         )}
 
 
@@ -387,6 +402,25 @@ def test_rotate_key_forbidden_for_other_user(app, auth_client, admin_user):
     kid = _seed_key_with_usage(app, admin_user["id"], "sk_" + "o" * 32)
     resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": "sk_" + "p" * 32})
     assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_rotate_keeps_expires_at(app, auth_client, test_user):
+    expires_at = utcnow() + timedelta(days=3)
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "e" * 32, expires_at=expires_at)
+    resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": "sk_" + "f" * 32})
+    assert resp.status_code == HTTPStatus.OK
+    assert _key_snapshot(app, kid)["expires_at"] == expires_at
+
+
+def test_rotate_overdue_key_returns_409_and_revokes(app, auth_client, test_user):
+    expires_at = utcnow() - timedelta(minutes=1)
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "g" * 32, expires_at=expires_at)
+    resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": "sk_" + "h" * 32})
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert resp.get_json()["error"] == "Key is revoked"
+    after = _key_snapshot(app, kid)
+    assert (after["revoked_at"], after["revoked_by_entity_id"]) == (expires_at, None)
+    assert after["key_hint"] == "sk_gggg...gggg"  # the secret was not swapped
 
 
 def test_rotate_revoked_key_returns_409(app, auth_client, test_user):

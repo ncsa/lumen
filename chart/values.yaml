@@ -163,6 +163,12 @@ config:
     # retried: a retry restarts the whole generation while the first attempt may
     # still be draining upstream.
     maxRetries: 1
+  api:
+    keys:
+      # -- Maximum and default API key lifetime: "0" (keys never expire) or a
+      # duration such as "12h", "30d" or "8w". Applies to keys created afterwards;
+      # an expired key is revoked.
+      ttl: "0"
   # -- Raw YAML appended verbatim to config.yaml (for settings not covered by chart values)
   extraConfig: ""
 

@@ -20,6 +20,7 @@ class APIKey(db.Model):
     __tablename__ = "api_keys"
     __table_args__ = (
         db.Index("ix_api_keys_entity_id", "entity_id"),
+        db.Index("ix_api_keys_expires_at", "expires_at"),
         {"comment": "API keys for entity authentication; only the SHA-256 hash is stored, never the plaintext"},
     )
 
@@ -30,6 +31,7 @@ class APIKey(db.Model):
     # Last few characters of the raw key shown in the UI for identification
     key_hint: Mapped[Optional[str]] = mapped_column(db.String(32), comment="Last few characters of the raw key shown in the UI for identification")
     revoked_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, comment="UTC time the key was revoked; null while the key is usable; approximate for keys revoked before this column existed")
+    expires_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, comment="UTC time the key expires and is revoked (revoked_at set to this value); null if the key never expires")
     requests: Mapped[int] = mapped_column(db.Integer, default=0, comment="Cumulative request count made with this key")
     input_tokens: Mapped[int] = mapped_column(db.BigInteger, default=0, comment="Cumulative input tokens consumed via this key")
     output_tokens: Mapped[int] = mapped_column(db.BigInteger, default=0, comment="Cumulative output tokens produced via this key")
@@ -43,4 +45,4 @@ class APIKey(db.Model):
     requested_by: Mapped[Optional[str]] = mapped_column(db.String(128), comment="Requester label from the OAuth request that minted this key; null for manually created keys")
     # Creator identity: a real FK, unlike the unverified requested_by label
     created_by_entity_id: Mapped[Optional[int]] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="SET NULL"), comment="Entity (user) that created this key; null for legacy keys or if the creator was deleted")
-    revoked_by_entity_id: Mapped[Optional[int]] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="SET NULL"), comment="Entity (user) that revoked this key; null while usable, for keys revoked before this column existed, for system revocations (OAuth code replay), or if the revoker was deleted")
+    revoked_by_entity_id: Mapped[Optional[int]] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="SET NULL"), comment="Entity (user) that revoked this key; null while usable, for keys revoked before this column existed, for system revocations (OAuth code replay, key expiry), or if the revoker was deleted")

@@ -33,6 +33,7 @@ from lumen.models.entity import Entity
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.services.crypto import hash_api_key
+from lumen.services.key_expiry import key_expires_at, resolve_key_ttl
 from lumen.services.llm import _consent_satisfied, bulk_model_access_info, model_notices
 from lumen.timeutils import utcnow
 
@@ -512,6 +513,7 @@ def _mint(req: AuthRequest):
         key_hint=f"{key[:7]}...{key[-4:]}",
         client_id=req.client_id,
         requested_by=req.author,
+        expires_at=key_expires_at(resolve_key_ttl()),
     )
     db.session.add(api_key)
     db.session.flush()

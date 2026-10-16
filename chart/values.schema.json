@@ -139,6 +139,24 @@
             "maxRetries": { "type": "integer", "minimum": 0 }
           }
         },
+        "api": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "keys": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "ttl": {
+                  "anyOf": [
+                    { "type": "string", "pattern": "^(0|[0-9]+[hdw])$" },
+                    { "const": 0 }
+                  ]
+                }
+              }
+            }
+          }
+        },
         "extraConfig": { "type": "string" }
       }
     },

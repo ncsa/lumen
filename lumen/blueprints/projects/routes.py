@@ -23,6 +23,7 @@ from lumen.models.entity_manager import (
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.entity_stat import EntityStat
 from lumen.models.model_config import ModelConfig
+from lumen.services.key_expiry import key_expires_at, resolve_key_ttl
 from lumen.services.llm import entity_has_unlimited_pool, get_model_access_status
 from lumen.timeutils import utcnow
 
@@ -700,6 +701,7 @@ def create_project_key(sid):
         entity_id=sid,
         created_by_entity_id=entity_id,
         name=name or "Unnamed Key",
+        expires_at=key_expires_at(resolve_key_ttl()),
         **fields,
     )
     db.session.add(api_key)
