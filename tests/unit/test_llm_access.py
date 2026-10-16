@@ -8,6 +8,7 @@ from lumen.services.llm import (
     ack_notice_text,
     bulk_model_access_info,
     consent_state,
+    entity_has_unlimited_pool,
     get_model_access,
     get_model_access_status,
     get_pool_limit,
@@ -364,6 +365,47 @@ def test_get_pool_limit_global_token_defaults_fallback(app, ids):
             assert get_pool_limit(entity_id) == (250.0, 25.0, 250.0)
         finally:
             app.config["TOKEN_DEFAULTS"] = old
+
+
+def _sql_unlimited(entity_id):
+    from sqlalchemy import select
+
+    from lumen.extensions import db
+    from lumen.models.entity import Entity
+    return db.session.execute(
+        select(entity_has_unlimited_pool(Entity.id)).where(Entity.id == entity_id)
+    ).scalar()
+
+
+@pytest.mark.parametrize(
+    "own_max, group_max, expected",
+    [
+        # No own limit, no group: the unlimited default applies.
+        (None, None, True),
+        # A positive group limit overrides the unlimited default.
+        (None, 100, False),
+        # A zero group limit is not usable, so the default still applies.
+        (None, 0, True),
+        # An own unlimited limit wins over a positive group limit.
+        (-2, 100, True),
+    ],
+)
+def test_entity_has_unlimited_pool_under_unlimited_default(app, ids, monkeypatch, own_max, group_max, expected):
+    """SQL unlimited-pool probe matches get_pool_limit when TOKEN_DEFAULTS is unlimited."""
+    entity_id, _ = ids
+    monkeypatch.setitem(app.config, "TOKEN_DEFAULTS", {"max": -2, "refresh": 0, "starting": 0})
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.models.group_limit import GroupLimit
+        if own_max is not None:
+            db.session.add(EntityLimit(entity_id=entity_id, max_coins=own_max, refresh_coins=0, starting_coins=0))
+        if group_max is not None:
+            group_id = make_group_with_member(entity_id)
+            db.session.add(GroupLimit(group_id=group_id, max_coins=group_max, refresh_coins=0, starting_coins=0))
+        db.session.commit()
+        assert _sql_unlimited(entity_id) is expected
+        assert ((get_pool_limit(entity_id) or (None,))[0] == -2) is expected
 
 
 # ---------------------------------------------------------------------------
