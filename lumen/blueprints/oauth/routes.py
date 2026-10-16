@@ -492,7 +492,8 @@ def _mint(req: AuthRequest):
 
     existing = db.session.execute(
         select(APIKey).where(APIKey.entity_id == req.entity_id, APIKey.name == req.requested_name,
-                             APIKey.revoked_at.is_(None)).order_by(APIKey.created_at.desc())
+                             APIKey.revoked_at.is_(None))
+        .order_by(APIKey.created_at.desc(), APIKey.id.desc())
     ).scalars().all()
     if existing and not req.overwrite:
         db.session.rollback()
@@ -519,9 +520,8 @@ def _mint(req: AuthRequest):
         db.session.flush()
         req.api_key_id = api_key.id
     # Manual duplicates with the same name are revoked, leaving one active key.
-    now = utcnow()
     for stale in duplicates:
-        stale.revoked_at = now
+        stale.revoked_at = utcnow()
         stale.revoked_by_entity_id = req.entity_id
     approver_email = db.session.execute(
         select(Entity.email).where(Entity.id == req.entity_id)
@@ -596,7 +596,8 @@ def _render_consent(req: AuthRequest, error: str | None = None):
     entity_id = session["entity_id"]
     existing_key = db.session.execute(
         select(APIKey).where(APIKey.entity_id == entity_id, APIKey.name == req.requested_name,
-                             APIKey.revoked_at.is_(None)).order_by(APIKey.created_at.desc())
+                             APIKey.revoked_at.is_(None))
+        .order_by(APIKey.created_at.desc(), APIKey.id.desc())
     ).scalars().first()
     session["oauth_consent_request_id"] = req.id
     origin = full_uri = ""
