@@ -153,11 +153,16 @@ def _client(pg_app, eid):
 
 
 def _covers(pg_app, period):
+    # The coverage lookups are cached per process, and the test below seeds
+    # older history between two reads; clear the cache so each read sees the
+    # database as it is now, the way a request did when they were cached on g.
     with pg_app.test_request_context():
         from lumen.blueprints.profile.routes import (
             _entity_aggregate_covers,
+            _reset_usage_source_cache,
             _usage_period_start,
         )
+        _reset_usage_source_cache()
         return _entity_aggregate_covers(_usage_period_start(period))
 
 
@@ -177,6 +182,8 @@ def _seed(engine, name, when):
 
 
 def _heatmap(pg_app, eid, period):
+    from lumen.blueprints.profile.routes import _reset_usage_source_cache
+    _reset_usage_source_cache()  # see _covers
     response = _client(pg_app, eid).get(f"/api/usage/heatmap?period={period}")
     assert response.status_code == HTTPStatus.OK
     return response.get_json()
