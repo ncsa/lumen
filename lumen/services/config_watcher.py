@@ -294,7 +294,8 @@ def apply_hot_config(app, yaml_data: dict):
     app.config["LLM_MAX_RETRIES"] = _non_negative_int(llm_cfg.get("max_retries"), 1, "max_retries")
 
     # Max and default API key lifetime; fixed into each key's expires_at when it is created.
-    keys_cfg = (yaml_data.get("api") or {}).get("keys") or {}
+    api_cfg = yaml_data.get("api")
+    keys_cfg = (api_cfg.get("keys") if isinstance(api_cfg, dict) else None) or {}
     app.config["KEY_TTL"] = _key_ttl(keys_cfg if isinstance(keys_cfg, dict) else {})
 
     # The in-app config editor is on by default; Helm sets it false for git-managed configs.

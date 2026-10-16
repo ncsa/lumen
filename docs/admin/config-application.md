@@ -197,7 +197,7 @@ API requests always require model acknowledgment, just like the web UI: an API k
 
 ### api.keys
 
-`ttl` is both the maximum and the default lifetime of an API key: `0` (the default) means keys never expire, otherwise a whole number of hours, days or weeks such as `12h`, `30d` or `8w`. Every key created on the profile page, on a project or through an OAuth key request gets an expiry of creation time plus this TTL. An expired key is revoked: a background job checks every minute, and an API request with an overdue key is rejected and revokes it on the spot. Rotating a key keeps its expiry.
+`ttl` is both the maximum and the default lifetime of an API key: `0` (the default) means keys never expire, otherwise a whole number of hours, days or weeks such as `12h`, `30d` or `8w`, up to 100 years. Every key created on the profile page, on a project or through an OAuth key request gets an expiry of creation time plus this TTL. An expired key is revoked: a background job checks every minute, and an API request with an overdue key is rejected and revokes it on the spot. Rotating a key keeps its expiry.
 
 Changes take effect without a restart, for keys created afterwards; existing keys keep the expiry they were given. An invalid value is logged as a warning and treated as `0`, and the config editor refuses to save it. In the Helm chart this is `config.api.keys.ttl`.
 

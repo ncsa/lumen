@@ -24,6 +24,8 @@ from lumen.timeutils import utcnow
 logger = logging.getLogger(__name__)
 
 EXPIRE_INTERVAL = 60
+# Upper bound on any TTL, so a typo like 999999999w cannot overflow the expiry datetime.
+MAX_KEY_TTL = 100 * 365 * 86400
 
 _TTL_RE = re.compile(r"(0|([0-9]+)([hdw]))")
 _TTL_UNIT_SECONDS = {"h": 3600, "d": 86400, "w": 7 * 86400}
@@ -32,7 +34,8 @@ _TTL_UNIT_SECONDS = {"h": 3600, "d": 86400, "w": 7 * 86400}
 def parse_key_ttl(value) -> int:
     """Seconds for an ``api.keys.ttl`` value: ``0`` or ``<n>h``/``<n>d``/``<n>w``.
 
-    Raises ValueError for anything else (garbage, negative, blank, a bare number).
+    Raises ValueError for anything else (garbage, negative, blank, a bare number,
+    or more than MAX_KEY_TTL).
     """
     if isinstance(value, bool):
         raise ValueError(f"invalid key TTL {value!r}")
@@ -41,7 +44,10 @@ def parse_key_ttl(value) -> int:
         raise ValueError(f"invalid key TTL {value!r}")
     if match.group(1) == "0":
         return 0
-    return int(match.group(2)) * _TTL_UNIT_SECONDS[match.group(3)]
+    seconds = int(match.group(2)) * _TTL_UNIT_SECONDS[match.group(3)]
+    if seconds > MAX_KEY_TTL:
+        raise ValueError(f"key TTL {value!r} exceeds 100 years")
+    return seconds
 
 
 def resolve_key_ttl(requested: Optional[int] = None) -> int:
@@ -49,7 +55,7 @@ def resolve_key_ttl(requested: Optional[int] = None) -> int:
 
     Nothing requested gives the cap (0 = never). With a cap above 0 the request
     must be between 1 second and the cap; with no cap any value from 0 (never)
-    up is allowed. Raises ValueError for a disallowed request.
+    up to MAX_KEY_TTL is allowed. Raises ValueError for a disallowed request.
     """
     cap = current_app.config.get("KEY_TTL", 0)
     if requested is None:
@@ -58,8 +64,8 @@ def resolve_key_ttl(requested: Optional[int] = None) -> int:
         raise ValueError("ttl must be a whole number of seconds, 0 or more")
     if cap and requested == 0:
         raise ValueError("keys must expire: ttl cannot be 0 (never)")
-    if cap and requested > cap:
-        raise ValueError(f"ttl cannot exceed {cap} seconds")
+    if requested > (cap or MAX_KEY_TTL):
+        raise ValueError(f"ttl cannot exceed {cap or MAX_KEY_TTL} seconds")
     return requested
 
 
