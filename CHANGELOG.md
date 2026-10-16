@@ -4,6 +4,10 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** Upgrade to SQLAlchemy 2.1; the PostgreSQL driver is now psycopg 3 (`psycopg[binary]`) and psycopg2 is no longer installed. `postgresql://` and `postgres://` URLs need no change; a database URL that names `postgresql+psycopg2://` fails at startup and must be changed to `postgresql://`.
+
 ## [2.2.1] - 2026-10-16
 
 ### Fixed

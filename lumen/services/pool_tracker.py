@@ -411,7 +411,7 @@ def format_holders(min_age: float = STRANDED_AFTER, limit: int = 5) -> str:
             lines.append("  connection record collected — stale tracker entry, no connection held")
             continue
         dbapi = getattr(rec, "dbapi_connection", None)
-        # psycopg2/psycopg expose .closed (0 = open); other drivers may not.
+        # psycopg exposes .closed (False = open); other drivers may not.
         closed = getattr(dbapi, "closed", "unknown") if dbapi is not None else "no connection"
         lines.append(f"  dbapi_connection: {'present' if dbapi is not None else 'None'}  closed={closed}")
         fairy_ref = getattr(rec, "fairy_ref", None)
