@@ -502,7 +502,8 @@ def _mint(req: AuthRequest):
     provenance = {"client_id": req.client_id, "requested_by": req.author}
     # Overwrite refreshes the newest key with this name in place (the one the
     # consent page showed), keeping its id and usage stats. If it was revoked
-    # meanwhile, mint a new row instead.
+    # meanwhile, mint a new row instead. Unlike rotate_key_secret, no
+    # IntegrityError handling: a fresh token_urlsafe(32) secret cannot collide.
     target, duplicates = (existing[0], existing[1:]) if existing else (None, [])
     if target is not None and set_key_secret(target.id, key, **provenance):
         req.api_key_id = target.id
