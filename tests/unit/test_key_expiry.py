@@ -9,6 +9,7 @@ from lumen.extensions import db
 from lumen.models.api_key import APIKey
 from lumen.services.config_watcher import apply_hot_config, validate_config_structure
 from lumen.services.key_expiry import (
+    MAX_KEY_TTL,
     expire_keys,
     key_expires_at,
     parse_key_ttl,
@@ -27,7 +28,8 @@ def test_parse_key_ttl(value, seconds):
     assert parse_key_ttl(value) == seconds
 
 
-@pytest.mark.parametrize("value", ["abc", "-1d", "-1", "", "  ", None, "30", 3600, "1.5d", "1m", "1D", True, [], {}])
+@pytest.mark.parametrize("value", ["abc", "-1d", "-1", "", "  ", None, "30", 3600, "1.5d", "1m", "1D", True, [], {},
+                                   "5219w", "36501d", "999999999999999999999w"])
 def test_parse_key_ttl_rejects(value):
     with pytest.raises(ValueError):
         parse_key_ttl(value)
@@ -41,7 +43,11 @@ def test_hot_config_sets_key_ttl(app, restore_config, caplog, ttl, seconds):
     assert "api.keys.ttl" not in caplog.text
 
 
-@pytest.mark.parametrize("ttl", ["garbage", "-1d", "-5", "", None])
+def test_parse_key_ttl_accepts_up_to_100_years():
+    assert parse_key_ttl("36500d") == MAX_KEY_TTL
+
+
+@pytest.mark.parametrize("ttl", ["garbage", "-1d", "-5", "", None, "999999999999999999999w"])
 def test_hot_config_invalid_ttl_warns_and_falls_back(app, restore_config, caplog, ttl):
     app.config["KEY_TTL"] = 99
     with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
@@ -57,6 +63,13 @@ def test_hot_config_absent_ttl_is_zero_without_warning(app, restore_config, capl
     assert "api.keys.ttl" not in caplog.text
 
 
+@pytest.mark.parametrize("api", ["oops", ["keys"], {"keys": "oops"}])
+def test_hot_config_malformed_api_section_is_zero(app, restore_config, api):
+    app.config["KEY_TTL"] = 99
+    apply_hot_config(app, {"api": api})
+    assert app.config["KEY_TTL"] == 0
+
+
 def test_hot_reload_updates_key_ttl(app, restore_config):
     apply_hot_config(app, {"api": {"keys": {"ttl": "30d"}}})
     assert app.config["KEY_TTL"] == 30 * DAY
@@ -70,7 +83,7 @@ def _valid_config(**api):
     return {"version": 3, "models": [], "api": api}
 
 
-@pytest.mark.parametrize("ttl", ["abc", "-1d", "", None, "30", 5])
+@pytest.mark.parametrize("ttl", ["abc", "-1d", "", None, "30", 5, "999999999999999999999w"])
 def test_validate_config_structure_rejects_bad_ttl(ttl):
     errors = validate_config_structure(_valid_config(keys={"ttl": ttl}))
     assert any("api.keys.ttl" in e for e in errors)
@@ -96,6 +109,7 @@ CAP = 30 * DAY
     (0, DAY, DAY),
     (0, CAP, CAP),
     (0, 10 * CAP, 10 * CAP),
+    (0, MAX_KEY_TTL, MAX_KEY_TTL),
     (CAP, None, CAP),
     (CAP, 1, 1),
     (CAP, DAY, DAY),
@@ -112,6 +126,7 @@ def test_resolve_key_ttl_allowed(app, restore_config, cap, requested, expected):
     (CAP, CAP + 1),    # above the cap
     (CAP, -1),
     (0, -1),
+    (0, MAX_KEY_TTL + 1),  # no cap still has the overflow ceiling
     (0, "30"),
     (0, 1.5),
     (CAP, True),
