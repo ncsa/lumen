@@ -182,6 +182,42 @@ def test_overwrite_target_revoked_before_claim_mints_new_key(client, auth_client
         assert new.id != old_id and new.name == "opencode"
 
 
+def test_overwrite_target_revoked_during_claim_mints_new_key(client, auth_client, app, test_user, monkeypatch):
+    """A revoke landing between _mint's select and its guarded update wins: zero
+    rows are refreshed and the claim falls back to minting a new key."""
+    import lumen.blueprints.oauth.routes as oauth_routes
+    from lumen.blueprints.profile.routes import set_key_secret
+
+    old_key = _make_manual_key(app, test_user["id"], "opencode")
+    with app.app_context():
+        old_id = db.session.execute(select(APIKey)).scalar_one().id
+    revoked_at = utcnow() - timedelta(seconds=5)
+    results = []
+
+    def revoke_then_set(api_key_id, key, **values):
+        # The target was already selected as active; revoke it before the real update runs.
+        db.session.execute(sa_update(APIKey).where(APIKey.id == api_key_id).values(revoked_at=revoked_at))
+        results.append(set_key_secret(api_key_id, key, **values))
+        return results[-1]
+
+    monkeypatch.setattr(oauth_routes, "set_key_secret", revoke_then_set)
+    body = _approve_overwrite(client, auth_client, app)
+    resp = _poll(client, body)
+    assert results == [False]  # the active-key guard matched zero rows
+    assert resp.status_code == HTTPStatus.OK
+    new_key = resp.get_json()["access_token"]
+    assert _auth_status(client, new_key) == HTTPStatus.OK
+    assert _auth_status(client, old_key) == HTTPStatus.UNAUTHORIZED
+
+    with app.app_context():
+        old = db.session.get(APIKey, old_id)
+        assert old.revoked_at == revoked_at and old.key_hint == f"{old_key[:7]}...{old_key[-4:]}"
+        [new] = db.session.execute(select(APIKey).where(APIKey.revoked_at.is_(None))).scalars().all()
+        assert new.id != old_id and new.name == "opencode"
+        assert new.key_hint == f"{new_key[:7]}...{new_key[-4:]}"
+        assert _request_row(app, body["user_code"]).api_key_id == new.id
+
+
 def test_overwrite_refreshes_newest_and_revokes_duplicates(client, auth_client, app, test_user):
     older_key = _make_manual_key(app, test_user["id"], "opencode")
     newer_key = _make_manual_key(app, test_user["id"], "opencode")
