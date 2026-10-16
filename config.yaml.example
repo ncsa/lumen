@@ -72,6 +72,11 @@ api:
   monitoring:
     token: ""   # Set to a long random string; leave empty to disable
 
+  keys:
+    ttl: "0"    # Maximum and default API key lifetime: 0 = keys never expire, or a duration
+                # such as 12h, 30d or 8w. Users may pick a shorter TTL; an expired key is revoked.
+                # Applies to keys created afterwards; existing keys keep their expiry.
+
 # Bounds on the calls Lumen makes to the upstream model endpoints. Without these
 # the OpenAI SDK defaults apply (600s timeout, 2 retries), so one stalled backend
 # can hold a worker thread for ~30 minutes.

@@ -33,6 +33,7 @@ from lumen.models.auth_request import AuthRequest
 from lumen.models.entity import Entity
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
+from lumen.services.key_expiry import key_expires_at, resolve_key_ttl
 from lumen.services.llm import _consent_satisfied, bulk_model_access_info, model_notices
 from lumen.timeutils import utcnow
 
@@ -501,12 +502,14 @@ def _mint(req: AuthRequest):
 
     key = "sk_" + secrets.token_urlsafe(32)
     provenance = {"client_id": req.client_id, "requested_by": req.author}
+    # Both paths count the expiry from now, under the current api.keys.ttl cap.
+    expires_at = key_expires_at(resolve_key_ttl())
     # Overwrite refreshes the newest key with this name in place (the one the
     # consent page showed), keeping its id and usage stats. If it was revoked
     # meanwhile, mint a new row instead. Unlike rotate_key_secret, no
     # IntegrityError handling: a fresh token_urlsafe(32) secret cannot collide.
     target, duplicates = (existing[0], existing[1:]) if existing else (None, [])
-    if target is not None and set_key_secret(target.id, key, **provenance):
+    if target is not None and set_key_secret(target.id, key, expires_at=expires_at, **provenance):
         req.api_key_id = target.id
     else:
         api_key = APIKey(
@@ -515,6 +518,7 @@ def _mint(req: AuthRequest):
             name=req.requested_name,
             **key_secret_fields(key),
             **provenance,
+            expires_at=expires_at,
         )
         db.session.add(api_key)
         db.session.flush()

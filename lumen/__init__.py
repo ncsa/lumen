@@ -781,6 +781,9 @@ def create_app():
         from lumen.blueprints.oauth.routes import start_auth_request_janitor
         start_auth_request_janitor(app)
 
+        from lumen.services.key_expiry import start_key_expirer
+        start_key_expirer(app)
+
     # Deliberately outside the guard above: BACKGROUND_WORKER=false keeps extra
     # workers from duplicating *shared* work, but the snapshot is per-process
     # in-memory state, so skipping it would leave that worker serving an empty

@@ -26,6 +26,7 @@ erDiagram
         string key_hash
         string key_hint
         datetime revoked_at
+        datetime expires_at
         int requests
         bigint input_tokens
         bigint output_tokens
@@ -339,6 +340,7 @@ API keys that entities (users or projects) use to authenticate against the proxy
 | `key_hash` | String(64) | NO | HMAC-SHA256 hash of the raw key. Unique. |
 | `key_hint` | String(32) | YES | Last few characters of the raw key shown in the UI for identification |
 | `revoked_at` | DateTime | YES | UTC time the key was revoked; null while the key is usable. Approximate (`last_used_at`, else `created_at`, else the migration time) for keys revoked before this column existed. |
+| `expires_at` | DateTime | YES | UTC time the key expires; null if it never expires. Set from the `api.keys.ttl` cap when the key is created, and again when an OAuth overwrite refreshes it in place. A background job (and the API on use) revokes an overdue key by setting `revoked_at` to this value, with `revoked_by_entity_id` left null. Indexed. |
 | `requests` | Integer | NO | Cumulative request count made with this key |
 | `input_tokens` | BigInteger | NO | Cumulative input tokens consumed via this key |
 | `output_tokens` | BigInteger | NO | Cumulative output tokens produced via this key |
@@ -349,7 +351,7 @@ API keys that entities (users or projects) use to authenticate against the proxy
 | `client_id` | String(128) | YES | Application label the key was requested through via the OAuth flows; null for keys created on the profile page |
 | `requested_by` | String(128) | YES | Requester-supplied author label from the OAuth request (unverified) |
 | `created_by_entity_id` | Integer (FK → entities) | YES | The user who created this key (the approving user for OAuth claims). Null for legacy keys; SET NULL on creator deletion. |
-| `revoked_by_entity_id` | Integer (FK → entities) | YES | The user who revoked this key (the approving user when an OAuth overwrite revokes an extra key with the same name). Null while the key is usable, for keys revoked before this column existed, for system revocations (OAuth authorization-code replay), and when the revoker is deleted (SET NULL). |
+| `revoked_by_entity_id` | Integer (FK → entities) | YES | The user who revoked this key (the approving user when an OAuth overwrite revokes an extra key with the same name). Null while the key is usable, for keys revoked before this column existed, for system revocations (OAuth authorization-code replay, key expiry), and when the revoker is deleted (SET NULL). |
 
 ---
 

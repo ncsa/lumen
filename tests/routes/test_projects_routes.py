@@ -879,6 +879,24 @@ def test_create_key_succeeds(app, managed_auth_client, managed_project):
         assert key.revoked_at is None
 
 
+@pytest.mark.parametrize("cap", [0, 7 * 86400])
+def test_create_key_expires_at_from_cap(app, managed_auth_client, managed_project, restore_config, cap):
+    app.config["KEY_TTL"] = cap
+    resp = managed_auth_client.post(
+        f"/projects/{managed_project['id']}/keys",
+        json={"name": "ttl", "key": "sk_ttl000000000000000000key12345678"},
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        expires_at = db.session.get(APIKey, resp.get_json()["id"]).expires_at
+    if cap:
+        assert abs(expires_at - (utcnow() + timedelta(seconds=cap))) < timedelta(minutes=1)
+    else:
+        assert expires_at is None
+
+
 def test_create_key_duplicate_returns_409(managed_auth_client, managed_project):
     managed_auth_client.post(
         f"/projects/{managed_project['id']}/keys",
@@ -1248,6 +1266,23 @@ def test_rotate_project_key_inactive_returns_409(managed_auth_client, managed_pr
     resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/rotate",
                                     json={"key": "sk_inac00000000000000000tiverotnew1"})
     assert resp.status_code == HTTPStatus.CONFLICT
+
+
+def test_rotate_project_key_overdue_returns_409_and_revokes(app, managed_auth_client, managed_project, test_user,
+                                                            make_created_key):
+    kid = make_created_key(managed_project["id"], test_user["id"], "sk_over00000000000000000duerot12345")
+    expires_at = utcnow() - timedelta(minutes=1)
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        db.session.get(APIKey, kid).expires_at = expires_at
+        db.session.commit()
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/rotate",
+                                    json={"key": "sk_over00000000000000000duerotnew12"})
+    assert resp.status_code == HTTPStatus.CONFLICT
+    with app.app_context():
+        key = db.session.get(APIKey, kid)
+        assert (key.revoked_at, key.revoked_by_entity_id) == (expires_at, None)
 
 
 @pytest.mark.parametrize("payload", [
@@ -1755,6 +1790,26 @@ def test_user_key_limit_ignores_inactive_and_other_members_keys(app, user_auth_c
         f"/projects/{user_project['id']}/keys", json={"name": "mine", "key": "sk_user000000000000000key_mine_1234"},
     )
     assert resp.status_code == HTTPStatus.CREATED
+
+
+def test_user_key_limit_ignores_key_revoked_by_expirer(app, user_auth_client, user_project):
+    url = f"/projects/{user_project['id']}/keys"
+    first = user_auth_client.post(url, json={"name": "one", "key": "sk_user0000000000000000expd_one_1234"})
+    assert first.status_code == HTTPStatus.CREATED
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        from lumen.services.key_expiry import expire_keys
+        db.session.get(APIKey, first.get_json()["id"]).expires_at = utcnow() - timedelta(minutes=1)
+        db.session.commit()
+        # Overdue but not yet expired by the job: it still counts.
+        assert user_auth_client.post(
+            url, json={"name": "two", "key": "sk_user0000000000000000expd_two_1234"},
+        ).status_code == HTTPStatus.CONFLICT
+        assert expire_keys() == 1
+
+    third = user_auth_client.post(url, json={"name": "three", "key": "sk_user000000000000000expd_three_1234"})
+    assert third.status_code == HTTPStatus.CREATED
 
 
 def test_manager_can_create_many_keys(managed_auth_client, managed_project):

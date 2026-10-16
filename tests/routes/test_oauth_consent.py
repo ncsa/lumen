@@ -12,6 +12,7 @@ from lumen.models.api_key import APIKey
 from lumen.models.auth_request import AuthRequest
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
+from lumen.services.key_expiry import expire_keys
 from lumen.timeutils import utcnow
 
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
@@ -242,6 +243,44 @@ def test_overwrite_refreshes_newest_and_revokes_duplicates(client, auth_client, 
             select(APIKey).where(APIKey.name == "opencode", APIKey.revoked_at.is_(None))
         ).scalars().all()
         assert [k.id for k in active] == [newer_id]
+
+
+def test_key_revoked_by_expirer_no_longer_blocks_same_name(client, auth_client, app, test_user):
+    _make_manual_key(app, test_user["id"], "opencode")
+    with app.app_context():
+        old = db.session.execute(select(APIKey)).scalar_one()
+        old.expires_at = utcnow() - timedelta(minutes=1)
+        db.session.commit()
+        assert expire_keys() == 1
+
+    body = _issue(client, name="opencode")
+    page = auth_client.get(f"/device?code={body['user_code']}")
+    assert b"Overwrite key" not in page.data
+    req_id = _request_row(app, body["user_code"]).id
+    assert auth_client.post("/oauth/consent", data={
+        "request_id": req_id, "action": "approve",
+    }).status_code == HTTPStatus.OK
+    resp = _poll(client, body)
+    assert resp.status_code == HTTPStatus.OK
+    assert client.get("/v1/models", headers={
+        "Authorization": f"Bearer {resp.get_json()['access_token']}",
+    }).status_code == HTTPStatus.OK
+
+
+@pytest.mark.parametrize("cap", [0, 86400])
+def test_minted_key_expires_at_from_cap(client, auth_client, app, restore_config, cap):
+    app.config["KEY_TTL"] = cap
+    body = _issue(client, name="capped")
+    auth_client.get(f"/device?code={body['user_code']}")
+    req_id = _request_row(app, body["user_code"]).id
+    auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
+    assert _poll(client, body).status_code == HTTPStatus.OK
+    with app.app_context():
+        expires_at = db.session.execute(select(APIKey.expires_at).where(APIKey.name == "capped")).scalar_one()
+    if cap:
+        assert abs(expires_at - (utcnow() + timedelta(seconds=cap))) < timedelta(minutes=1)
+    else:
+        assert expires_at is None
 
 
 def test_name_conflict_between_approval_and_mint(client, auth_client, app, test_user):

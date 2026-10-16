@@ -180,6 +180,9 @@ config live **under `api:`** (e.g. `api.monitoring.token`, `api.prometheus.enabl
 
 ```yaml
 api:
+  keys:
+    ttl: "0"           # max and default API key lifetime: 0 = never, or e.g. 12h, 30d, 8w
+
   monitoring:
     token: "my-secret-token"
 
@@ -191,6 +194,12 @@ api:
 ```
 
 API requests always require model acknowledgment, just like the web UI: an API key cannot list or use a model with `needs_ack` or `early_access` until its user or project has acknowledged it. See [API access to models awaiting acknowledgment](../guides/connect.md#models-awaiting-acknowledgment).
+
+### api.keys
+
+`ttl` is both the maximum and the default lifetime of an API key: `0` (the default) means keys never expire, otherwise a whole number of hours, days or weeks such as `12h`, `30d` or `8w`. Every key created on the profile page, on a project or through an OAuth key request gets an expiry of creation time plus this TTL. An expired key is revoked: a background job checks every minute, and an API request with an overdue key is rejected and revokes it on the spot. Rotating a key keeps its expiry.
+
+Changes take effect without a restart, for keys created afterwards; existing keys keep the expiry they were given. An invalid value is logged as a warning and treated as `0`, and the config editor refuses to save it. In the Helm chart this is `config.api.keys.ttl`.
 
 ### api.monitoring
 
