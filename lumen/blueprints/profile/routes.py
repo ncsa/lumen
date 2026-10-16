@@ -1,10 +1,11 @@
 import hashlib
 import re
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 
-from flask import Blueprint, abort, g, jsonify, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
@@ -595,6 +596,33 @@ def _usage_entity_id():
 # near-empty from the instant of deploy until a human remembered the CLI.
 
 
+# Per-process cache for the coverage lookups below. ``usage.html`` fires all
+# five endpoints in parallel on every page load, and each one would otherwise
+# re-run the catalog lookup and both ``MIN`` queries — values that only move
+# when the refresh policy materialises older history or retention drops a raw
+# chunk. A stale answer within the TTL picks the other arm for at most that
+# long, and both arms answer the same question. ``None`` results are cached
+# too: an empty table is the common state right after a deploy. Lock-free on
+# purpose; a race between threads costs one duplicate query.
+_USAGE_SOURCE_TTL = 15 * 60
+_usage_source_cache = {}
+
+
+def _usage_source_cached(key, compute):
+    entry = _usage_source_cache.get(key)
+    now = time.monotonic()
+    if entry is not None and entry[1] > now:
+        return entry[0]
+    value = compute()
+    _usage_source_cache[key] = (value, now + _USAGE_SOURCE_TTL)
+    return value
+
+
+def _reset_usage_source_cache():
+    """Forget every cached coverage value. For tests."""
+    _usage_source_cache.clear()
+
+
 def _entity_aggregate_earliest_bucket():
     """Earliest *materialized* bucket held by ``request_counts_hourly_by_entity``
     (None if empty).
@@ -608,25 +636,37 @@ def _entity_aggregate_earliest_bucket():
     fast ``MIN`` regardless of backfill lag. Resolved via the catalog — the
     same approach as ``commands.py`` (which, to be precise, also resolves the
     bucket *column*; here that column is hardcoded to ``bucket``, the
-    aggregate's first column). Then cached on ``g``. PostgreSQL only; every
+    aggregate's first column). The table name and the ``MIN`` are both cached
+    per process for ``_USAGE_SOURCE_TTL`` seconds. PostgreSQL only; every
     caller sits behind a dialect check.
     """
-    if "usage_entity_agg_earliest" not in g:
-        mat_table = db.session.execute(text(
+    def mat_table():
+        return db.session.execute(text(
             "SELECT materialization_hypertable_schema || '.' || "
             "materialization_hypertable_name "
             "FROM timescaledb_information.continuous_aggregates "
             "WHERE view_name = 'request_counts_hourly_by_entity'"
         )).scalar()
+
+    def earliest():
         # The catalog row exists whenever the aggregate does (the pair is
         # created atomically), so this None-guard only protects against a
         # dialect the caller should have filtered out. Falling back to the view
         # name keeps an unexpected state from turning into a confusing
         # "FROM None" instead of a normal query error.
-        g.usage_entity_agg_earliest = db.session.execute(
-            text(f"SELECT MIN(bucket) FROM {mat_table or 'request_counts_hourly_by_entity'}")
+        table = _usage_source_cached("agg_table", mat_table)
+        return db.session.execute(
+            text(f"SELECT MIN(bucket) FROM {table or 'request_counts_hourly_by_entity'}")
         ).scalar()
-    return g.usage_entity_agg_earliest
+
+    return _usage_source_cached("agg_earliest", earliest)
+
+
+def _raw_earliest_time():
+    """Oldest surviving ``request_logs.time`` (None if empty), cached like the above."""
+    return _usage_source_cached("raw_earliest", lambda: db.session.execute(
+        text("SELECT MIN(time) FROM request_logs")
+    ).scalar())
 
 
 def _entity_aggregate_covers(start):
@@ -637,18 +677,15 @@ def _entity_aggregate_covers(start):
     what makes "All time" (``start is None``) answerable, and it is also what
     stays true after retention drops raw chunks, since the raw table is then
     the younger of the two. The second query only runs when the first test
-    fails, and its result is cached alongside the first.
+    fails; both results are cached per process (see ``_USAGE_SOURCE_TTL``).
     """
     earliest = _entity_aggregate_earliest_bucket()
     if earliest is None:
         return False
     if start is not None and earliest <= start:
         return True
-    if "usage_raw_earliest" not in g:
-        g.usage_raw_earliest = db.session.execute(
-            text("SELECT MIN(time) FROM request_logs")
-        ).scalar()
-    return g.usage_raw_earliest is None or earliest <= g.usage_raw_earliest
+    raw_earliest = _raw_earliest_time()
+    return raw_earliest is None or earliest <= raw_earliest
 
 
 # ``request_logs.entity_id`` is ON DELETE SET NULL, so a hard-deleted entity's

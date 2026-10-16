@@ -44,6 +44,9 @@ here is equality, not existence:
 8. A hard-deleted entity answers the same through either arm. The foreign key
    nulls the raw rows; the aggregate materialised the id and never re-checks it.
 
+9. The coverage lookups are cached per process: a second request within the
+   TTL runs no ``MIN`` query, and one past it runs them again.
+
 This module runs against ``pg_migrated_isolated`` — a database of its own — for
 the reasons that fixture's docstring gives.
 """
@@ -170,6 +173,19 @@ def _insert(conn, *, eid, model, when, inp=10, out=20, cost="0.25", dur=1.5, ttf
 # --------------------------------------------------------------------------
 # Fixtures
 # --------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _fresh_usage_source_cache():
+    """Each test sees the database as it is now, not as an earlier test left it.
+
+    The coverage lookups are cached per process, so without this a test that
+    seeds older history would be answered from whatever the previous test saw.
+    """
+    from lumen.blueprints.profile.routes import _reset_usage_source_cache
+    _reset_usage_source_cache()
+    yield
+    _reset_usage_source_cache()
+
 
 @pytest.fixture(scope="module")
 def pg_migrated(pg_migrated_isolated):
@@ -856,3 +872,52 @@ def test_a_deleted_entitys_history_is_gone_from_both_arms(pg_app, pg_migrated, d
         resp = client.get(f"{path}?entity_id={gone}&period=week")
         assert resp.status_code == HTTPStatus.OK
         assert resp.get_json() == [], path
+
+
+# --------------------------------------------------------------------------
+# 9. The per-process coverage cache.
+# --------------------------------------------------------------------------
+
+@pytest.mark.postgres
+def test_coverage_lookups_are_cached_until_the_ttl_expires(pg_app, main_client, monkeypatch):
+    """``usage.html`` fires five endpoints per page load; none of them should
+    re-run the catalog lookup or either ``MIN`` while the cached values are fresh.
+
+    ``period=all`` is the case that matters: ``start is None``, so the
+    short-circuit never fires and both ``MIN`` queries run on a cold cache.
+    """
+    from sqlalchemy import event
+
+    from lumen.blueprints.profile import routes
+    from lumen.extensions import db
+
+    statements = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    def _min_queries():
+        return [s for s in statements if "MIN(" in s.upper()]
+
+    with pg_app.app_context():
+        engine = db.engine
+    event.listen(engine, "before_cursor_execute", _record)
+    try:
+        _json(main_client, "/api/usage/summary", "all")
+        assert len(_min_queries()) == 2, (
+            "a cold cache should run both MIN queries for period=all, so the "
+            f"counter is not seeing them: {_min_queries()}"
+        )
+
+        statements.clear()
+        _json(main_client, "/api/usage/summary", "all")
+        assert _min_queries() == [], "the second request re-ran a coverage lookup"
+        assert not any("continuous_aggregates" in s for s in statements)
+
+        clock = routes.time.monotonic() + routes._USAGE_SOURCE_TTL + 1
+        monkeypatch.setattr(routes, "time", type("_Clock", (), {"monotonic": staticmethod(lambda: clock)}))
+        statements.clear()
+        _json(main_client, "/api/usage/summary", "all")
+        assert len(_min_queries()) == 2, "the cache outlived its TTL"
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
