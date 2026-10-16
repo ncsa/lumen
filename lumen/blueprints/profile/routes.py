@@ -600,17 +600,23 @@ def _usage_entity_id():
 # five endpoints in parallel on every page load, and each one would otherwise
 # re-run the catalog lookup and both ``MIN`` queries — values that only move
 # when the refresh policy materialises older history or retention drops a raw
-# chunk. A stale answer within the TTL picks the other arm for at most that
-# long, and both arms answer the same question. ``None`` results are cached
-# too: an empty table is the common state right after a deploy. Lock-free on
-# purpose; a race between threads costs one duplicate query.
+# chunk. Within the TTL a stale answer can pick the wrong arm: raw rows
+# written below the aggregate's earliest bucket after ``raw_earliest`` was
+# cached are missed by the aggregate arm until the entry expires, and chunks
+# dropped by retention keep the raw arm in use a little longer than needed.
+# That staleness budget is accepted. ``None`` results are cached too: an empty
+# table is the common state right after a deploy. Lock-free on purpose; a race
+# between threads costs one duplicate query.
 _USAGE_SOURCE_TTL = 15 * 60
 _usage_source_cache = {}
+# Looked up at call time so tests can move the clock without patching the
+# ``time`` module for everyone.
+_usage_source_clock = time.monotonic
 
 
 def _usage_source_cached(key, compute):
     entry = _usage_source_cache.get(key)
-    now = time.monotonic()
+    now = _usage_source_clock()
     if entry is not None and entry[1] > now:
         return entry[0]
     value = compute()

@@ -174,19 +174,6 @@ def _insert(conn, *, eid, model, when, inp=10, out=20, cost="0.25", dur=1.5, ttf
 # Fixtures
 # --------------------------------------------------------------------------
 
-@pytest.fixture(autouse=True)
-def _fresh_usage_source_cache():
-    """Each test sees the database as it is now, not as an earlier test left it.
-
-    The coverage lookups are cached per process, so without this a test that
-    seeds older history would be answered from whatever the previous test saw.
-    """
-    from lumen.blueprints.profile.routes import _reset_usage_source_cache
-    _reset_usage_source_cache()
-    yield
-    _reset_usage_source_cache()
-
-
 @pytest.fixture(scope="module")
 def pg_migrated(pg_migrated_isolated):
     return pg_migrated_isolated[1]
@@ -914,8 +901,8 @@ def test_coverage_lookups_are_cached_until_the_ttl_expires(pg_app, main_client, 
         assert _min_queries() == [], "the second request re-ran a coverage lookup"
         assert not any("continuous_aggregates" in s for s in statements)
 
-        clock = routes.time.monotonic() + routes._USAGE_SOURCE_TTL + 1
-        monkeypatch.setattr(routes, "time", type("_Clock", (), {"monotonic": staticmethod(lambda: clock)}))
+        clock = routes._usage_source_clock() + routes._USAGE_SOURCE_TTL + 1
+        monkeypatch.setattr(routes, "_usage_source_clock", lambda: clock)
         statements.clear()
         _json(main_client, "/api/usage/summary", "all")
         assert len(_min_queries()) == 2, "the cache outlived its TTL"

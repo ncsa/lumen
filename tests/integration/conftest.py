@@ -193,3 +193,20 @@ def pg_migrated_isolated():
             ), {"n": name})
             conn.execute(text(f'DROP DATABASE IF EXISTS "{name}"'))
         admin.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_usage_source_cache():
+    """Each test sees the database as it is now, not as an earlier test left it.
+
+    ``lumen.blueprints.profile.routes`` caches the per-user /usage coverage
+    lookups per process, with no notion of which database they describe, so
+    without this a test would be answered from whatever an earlier test — or
+    another module's database — left behind. Clearing an empty dict is harmless
+    for tests that never touch it. A test that changes coverage *within* itself
+    must still reset between its own reads.
+    """
+    from lumen.blueprints.profile.routes import _reset_usage_source_cache
+    _reset_usage_source_cache()
+    yield
+    _reset_usage_source_cache()
