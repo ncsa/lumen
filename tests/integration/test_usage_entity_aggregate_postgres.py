@@ -3,8 +3,8 @@
 Contract item (a) of the plan is blunt about why this file exists — creating
 ``request_counts_hourly_by_entity`` protects nothing on its own. Until the five
 ``if eid:`` branches in ``lumen/blueprints/profile/routes.py`` actually read it,
-enabling retention truncates every individual's "All Time" history while the
-org-wide charts, fed by ``request_counts_hourly``, keep going. So what is proven
+every individual's "All Time" chart scans raw ``request_logs`` while the
+org-wide charts read ``request_counts_hourly``. So what is proven
 here is equality, not existence:
 
 1. Each rewritten endpoint returns exactly what the raw ``request_logs`` query
@@ -23,28 +23,24 @@ here is equality, not existence:
    bucket)`` collapses every row to hour 0 and the 7x24 grid becomes a single
    column, with no error anywhere — contract item (b).
 
-4. Retention-drop simulation: chunks are dropped out from under the raw table
-   and the per-user charts still render, from the aggregate, while
-   ``entity_stats`` lifetime totals are untouched.
-
-5. The fallback fires. The aggregate is created ``WITH NO DATA`` by a migration
+4. The fallback fires. The aggregate is created ``WITH NO DATA`` by a migration
    that ``entrypoint.sh`` runs at container start, while the backfill is a
    manual command; history the policy never materialised is *invisible* through
    the view, not merely stale. A window starting before the aggregate's
    earliest bucket must therefore be answered from raw.
 
-6. The SQLite early return still short-circuits before any of this SQL runs.
+5. The SQLite early return still short-circuits before any of this SQL runs.
 
-7. The window's first hour is only partial — ``start`` is ``now - offset``, which
-   is mid-hour in general, while ``bucket`` is the hour's start. Section 7 seeds
+6. The window's first hour is only partial — ``start`` is ``now - offset``, which
+   is mid-hour in general, while ``bucket`` is the hour's start. Section 6 seeds
    a row inside ``[start, next hour)`` for week/month/year, which the fixture
    above structurally cannot: its rows are at fixed whole-day and whole-hour
    depths.
 
-8. A hard-deleted entity answers the same through either arm. The foreign key
+7. A hard-deleted entity answers the same through either arm. The foreign key
    nulls the raw rows; the aggregate materialised the id and never re-checks it.
 
-9. The coverage lookups are cached per process: a second request within the
+8. The coverage lookups are cached per process: a second request within the
    TTL runs no ``MIN`` query, and one past it runs them again.
 
 This module runs against ``pg_migrated_isolated`` — a database of its own — for
@@ -63,15 +59,13 @@ from .conftest import TEST_CONFIG
 SOURCE = "ph8q"  # request_logs.source is VARCHAR(8)
 VIEW = "request_counts_hourly_by_entity"
 
-# Depths, in days, kept far apart on purpose: each test owns one and they must
-# not share a 7-day chunk, because the retention test drops one by range.
+# Depths, in days, kept far apart on purpose: each test owns one.
 MAIN_OLD = 200
 HEAT_DAY = 10
-RETENTION_OLD = 300
 FALLBACK_OLD = 500
 
 # The five endpoints and the periods each is asserted over. 'week' is the page
-# default; 'all' is the one retention would have silently emptied.
+# default; 'all' is the one that reaches furthest back.
 PERIODS = ["week", "month", "year", "all"]
 
 
@@ -247,7 +241,7 @@ def entity_usage(pg_app, pg_migrated):
             for i in (1, 2)
         ]
         ents = {}
-        for key in ("main", "heat", "ret", "fb"):
+        for key in ("main", "heat", "fb"):
             ents[key] = conn.execute(text(
                 "INSERT INTO entities (entity_type, name, initials, active) "
                 "VALUES ('user', :n, 'PQ', true) RETURNING id"
@@ -273,17 +267,6 @@ def entity_usage(pg_app, pg_migrated):
                       f"+ INTERVAL '{hour} hours'"),
             )
 
-        # --- retention-drop simulation: a chunk of its own, far from every
-        # other depth used here, so it can be dropped by range.
-        for _ in range(3):
-            _insert(conn, eid=ents["ret"], model=models[0],
-                    when=f"now() - INTERVAL '{RETENTION_OLD} days'", inp=100, out=200)
-
-        conn.execute(text(
-            "INSERT INTO entity_stats (entity_id, requests, input_tokens, output_tokens, "
-            "audio_seconds, cost, conversations) VALUES (:e, 4, 400, 800, 0, 1.0, 0)"
-        ), {"e": ents["ret"]})
-
     _refresh(pg_migrated)
 
     # --- and only now the current hour, above the watermark.
@@ -294,7 +277,6 @@ def entity_usage(pg_app, pg_migrated):
             "cost": "0.25", "dur": 1.5, "ttft": 0.75}).scalar()
         _insert(conn, eid=ents["main"], model=models[1], when="now()", inp=17, out=27)
         _insert(conn, eid=ents["heat"], model=models[0], when="now()")
-        _insert(conn, eid=ents["ret"], model=models[0], when="now()", inp=100, out=200)
 
     yield {"entities": ents, "models": models, "now": now}
 
@@ -491,57 +473,7 @@ def test_heatmap_returns_twenty_four_distinct_hours_from_the_aggregate(pg_app, e
 
 
 # --------------------------------------------------------------------------
-# 4. Retention-drop simulation.
-# --------------------------------------------------------------------------
-
-@pytest.mark.postgres
-def test_charts_survive_dropped_chunks_and_lifetime_totals_are_unchanged(
-    pg_app, pg_migrated, entity_usage
-):
-    """Drop the raw chunk and read the same numbers back out of the aggregate.
-
-    This is the failure the whole phase exists to prevent, run forwards: before
-    the rewrite these endpoints scanned ``request_logs``, so dropping a chunk
-    erased that history from every per-user chart while the org-wide charts,
-    fed by ``request_counts_hourly``, carried on. ``entity_stats`` is asserted
-    alongside because it is the cumulative record the UI promises survives
-    retention.
-    """
-    eid = entity_usage["entities"]["ret"]
-    client = _client(pg_app, eid)
-
-    before_summary = _json(client, "/api/usage/summary", "all")
-    before_requests = _json(client, "/api/usage/requests", "all")
-    with pg_migrated.connect() as conn:
-        before_stats = conn.execute(text(
-            "SELECT requests, input_tokens, output_tokens, cost FROM entity_stats WHERE entity_id = :e"
-        ), {"e": eid}).one()
-    assert before_summary["requests"] == 4
-
-    with _autocommit(pg_migrated) as conn:
-        dropped = conn.execute(text(
-            "SELECT drop_chunks('request_logs', "
-            f"older_than => now() - INTERVAL '{RETENTION_OLD - 10} days', "
-            f"newer_than => now() - INTERVAL '{RETENTION_OLD + 10} days')"
-        )).scalars().all()
-    assert dropped, "no chunk was dropped, so this test proves nothing about retention"
-
-    with pg_migrated.connect() as conn:
-        surviving_raw = conn.execute(text(
-            "SELECT COUNT(*) FROM request_logs WHERE entity_id = :e"
-        ), {"e": eid}).scalar()
-        after_stats = conn.execute(text(
-            "SELECT requests, input_tokens, output_tokens, cost FROM entity_stats WHERE entity_id = :e"
-        ), {"e": eid}).one()
-
-    assert surviving_raw == 1, "the raw history is supposed to be gone by now"
-    assert _json(client, "/api/usage/summary", "all") == before_summary
-    assert _json(client, "/api/usage/requests", "all") == before_requests
-    assert tuple(after_stats) == tuple(before_stats), "retention touched the lifetime totals"
-
-
-# --------------------------------------------------------------------------
-# 5. The fallback to raw.
+# 4. The fallback to raw.
 # --------------------------------------------------------------------------
 
 @pytest.fixture
@@ -607,7 +539,7 @@ def test_a_covered_window_still_uses_the_aggregate_while_older_history_is_unback
 
 
 # --------------------------------------------------------------------------
-# 6. The SQLite early return.
+# 5. The SQLite early return.
 # --------------------------------------------------------------------------
 
 @pytest.mark.parametrize("path,empty", [
@@ -636,7 +568,7 @@ def test_sqlite_usage_page_still_renders(auth_client):
 
 
 # --------------------------------------------------------------------------
-# 7. The window's first, partial hour.
+# 6. The window's first, partial hour.
 # --------------------------------------------------------------------------
 #
 # ``bucket`` is ``time_bucket('1 hour', time)`` — the hour's *start*. So
@@ -773,7 +705,7 @@ def test_the_windows_first_partial_hour_is_not_dropped(
 
 
 # --------------------------------------------------------------------------
-# 8. A hard-deleted entity.
+# 7. A hard-deleted entity.
 # --------------------------------------------------------------------------
 
 @pytest.fixture
@@ -862,7 +794,7 @@ def test_a_deleted_entitys_history_is_gone_from_both_arms(pg_app, pg_migrated, d
 
 
 # --------------------------------------------------------------------------
-# 9. The per-process coverage cache.
+# 8. The per-process coverage cache.
 # --------------------------------------------------------------------------
 
 @pytest.mark.postgres

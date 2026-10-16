@@ -597,11 +597,11 @@ def create_app():
         return render_template("errors/500.html"), HTTPStatus.INTERNAL_SERVER_ERROR
 
     # Register CLI commands
-    from lumen.commands import backfill_aggregate_cmd, enable_retention_cmd, init_db_cmd, reassign_model_cmd
+    from lumen.commands import backfill_aggregate_cmd, check_aggregate_cmd, init_db_cmd, reassign_model_cmd
     app.cli.add_command(init_db_cmd)
     app.cli.add_command(reassign_model_cmd)
     app.cli.add_command(backfill_aggregate_cmd)
-    app.cli.add_command(enable_retention_cmd)
+    app.cli.add_command(check_aggregate_cmd)
 
     # Context processor: inject app_name and nav_projects into all templates
     @app.context_processor

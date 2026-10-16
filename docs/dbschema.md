@@ -654,7 +654,7 @@ Individual turns within a conversation. Both user and assistant messages are sto
 
 ## request_logs
 
-Append-only log of every proxied request. On PostgreSQL this table is converted to a TimescaleDB hypertable partitioned by `time`, enabling efficient time-range queries and retention policies. On SQLite it behaves as a plain table.
+Append-only log of every proxied request. On PostgreSQL this table is converted to a TimescaleDB hypertable partitioned by `time`, enabling efficient time-range queries and compression. It is never pruned: no retention policy, `drop_chunks` or `DELETE` touches it. On SQLite it behaves as a plain table.
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
@@ -694,8 +694,8 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 ## Continuous aggregates
 
 PostgreSQL only. TimescaleDB continuous aggregates over `request_logs`, refreshed by
-background policies. They are what makes the usage charts survive a retention policy
-dropping raw chunks — anything not carried here is unrecoverable once the raw rows are gone.
+background policies. They are what keeps the usage charts fast; `request_logs` itself is never
+pruned, so every aggregate can always be recomputed from it.
 
 All three views below are **real-time**: they set `timescaledb.materialized_only = false`, so
 a query unions the materialised rows with a live scan of the raw rows newer than the
@@ -709,9 +709,8 @@ so its comment is set with `COMMENT ON VIEW`.
 **Rows older than a policy's `start_offset` are invisible until backfilled.** Once the scheduled
 policy runs, the watermark advances past them, and real-time aggregation only scans raw rows
 *above* the watermark — so history that was never materialised silently disappears from queries.
-That is why the full-history backfill is a deliberate operator command, and why refreshing a
-window whose raw chunks have already been dropped is destructive: it recomputes the window as
-empty and deletes the materialised rows, without erroring.
+That is why the full-history backfill is a deliberate operator command; `flask check-aggregate`
+reports whether it has run far enough back.
 
 ### request_counts_hourly
 
@@ -731,8 +730,8 @@ scheduled run.
 ### request_counts_hourly_by_entity
 
 Answers *"what did this user do, and how did it feel?"* — the per-entity `/usage` charts read it
-instead of raw `request_logs`, so an individual's "All Time" history is not truncated when
-retention drops raw chunks.
+instead of raw `request_logs`, so an individual's "All Time" chart does not scan every raw row
+of their history.
 
 **Grouped by:** `bucket` (`time_bucket('1 hour', time)`), `entity_id`, `model_config_id`, `source`
 
@@ -765,8 +764,6 @@ Created `WITH NO DATA`; full history is materialised by the operator backfill co
 - **A NULL `ttft_visible` counts in none of the buckets and not in `ttft_count`.** Rows predating
   the timing columns have NULL there; counting them would make every historical bucket read as
   uniformly fast.
-- **`start_offset` (30 days) must stay comfortably inside the retention window (13 months).**
-  If they cross, the scheduled refresh reaches into dropped chunks and erases materialised history.
 - Cardinality is bounded by *active* user-hours: a student uses one or two models in an hour, so a
   300-student class produces a few hundred rows per hour, not users × models × hours.
 
@@ -807,10 +804,9 @@ compressed chunks on TimescaleDB 2.27; only `NOT NULL` *without* a default is re
 The residual cost of compression is I/O — servicing an `ADD COLUMN` rewrites compressed chunks
 across the whole window.
 
-**Retention is not enabled by any migration, deliberately.** `entrypoint.sh` runs
-`flask db upgrade` at container start, so a migration adding a retention policy would begin
-deleting production data automatically on the next deploy. Retention is an explicit operator
-command with a dry run as its default.
+**`request_logs` is never pruned.** No migration, command or background job adds a retention
+policy, calls `drop_chunks`, or deletes from it (#167); `tests/unit/test_request_logs_never_pruned.py`
+enforces this. `flask check-aggregate` exits 1 if a retention policy was added by hand.
 
 ---
 

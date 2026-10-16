@@ -21,8 +21,8 @@ from lumen.models.model_endpoint import ModelEndpoint
 from .extensions import db
 
 # The entity-dimensioned continuous aggregate the per-entity /usage queries read.
-# `enable-retention` refuses while this is empty: dropping raw chunks then destroys
-# history that exists in no aggregate.
+# `check-aggregate` reports whether it covers every request_logs row. request_logs
+# itself is never pruned (#167), so this is about chart speed, not about saving data.
 ENTITY_AGGREGATE = "request_counts_hourly_by_entity"
 
 # Deduplicate deprecation warnings; the config watcher re-runs sync every 5s.
@@ -412,7 +412,7 @@ def reassign_model_cmd(from_id, to_id):
 
 
 # --------------------------------------------------------------------------- #
-# TimescaleDB lifecycle (Phase 8): aggregate backfill and retention.           #
+# TimescaleDB lifecycle (Phase 8): aggregate backfill and coverage check.      #
 # --------------------------------------------------------------------------- #
 
 def _autocommit_connection():
@@ -517,7 +517,8 @@ def _refresh_window(conn, name, start, end):
 @click.option("--from", "from_month", metavar="YYYY-MM", default=None,
               help="First month to refresh. Defaults to the month of the oldest request_logs row.")
 @click.option("--force", is_flag=True,
-              help="Refresh months starting before the retention boundary anyway. Read the refusal first.")
+              help="Refresh months before a retention boundary anyway, erasing those months' "
+                   "aggregate rows. Never touches raw request_logs rows. Read the refusal first.")
 @with_appcontext
 def backfill_aggregate_cmd(name, from_month, force):
     """Materialise a continuous aggregate's full history, month by month.
@@ -555,10 +556,10 @@ def backfill_aggregate_cmd(name, from_month, force):
                 return
 
         # Contract (d): refreshing a window whose raw chunks were dropped recomputes it
-        # as EMPTY and DELETES the materialised rows, with no error at all. A backfill
-        # run a year after retention was enabled would erase every user's pre-retention
-        # history in one call, which is strictly worse than the truncation the whole
-        # phase exists to avoid — so refuse rather than trust the operator's arithmetic.
+        # as EMPTY and DELETES the materialised rows, with no error at all. Lumen never
+        # adds a retention policy to request_logs (#167), so this is a defensive no-op
+        # unless someone added one by hand in SQL — in which case refuse rather than
+        # erase aggregate history on top of the raw history already lost.
         drop_after = _retention_drop_after(conn)
         if drop_after is not None:
             boundary = conn.execute(text("SELECT now() - CAST(:d AS interval)"),
@@ -632,118 +633,54 @@ def backfill_aggregate_cmd(name, from_month, force):
         click.echo("Backfill complete: no months to refresh.")
 
 
-@click.command("enable-retention")
-@click.option("--window", default="13 months", show_default=True,
-              help="Drop request_logs chunks older than this interval.")
-@click.option("--dry-run/--force", "dry_run", default=True,
-              help="Dry run (the default) only reports; --force adds the retention policy.")
+@click.command("check-aggregate")
 @with_appcontext
-def enable_retention_cmd(window, dry_run):
-    """Report — and only with --force, enable — the request_logs retention policy.
+def check_aggregate_cmd():
+    """Report whether the entity aggregate covers all of request_logs. Read-only.
 
-    Deliberately an operator command rather than a migration: ``entrypoint.sh`` runs
-    ``flask db upgrade`` at container start, so a migration calling
-    ``add_retention_policy`` would begin deleting data on the next deploy and make the
-    "dry run first" gate unenforceable.
+    ``request_logs`` is never pruned (#167). Exits 1 if a retention policy exists on
+    it, or if the aggregate does not reach back to its oldest row; the per-user /usage
+    charts then fall back to slow raw scans until ``flask backfill-aggregate`` is run.
     """
     if db.engine.dialect.name != "postgresql":
-        click.echo(f"enable-retention requires PostgreSQL/TimescaleDB; nothing to do on "
+        click.echo(f"check-aggregate requires PostgreSQL/TimescaleDB; nothing to do on "
                    f"{db.engine.dialect.name}.")
         return
 
-    with _autocommit_connection() as conn:
-        existing = _retention_drop_after(conn)
-        if existing is not None:
-            click.echo(f"request_logs already has a retention policy (drop_after = {existing}); "
-                       f"no change made. The requested --window '{window}' was NOT applied — "
-                       f"this command never edits an existing policy. To change the window run "
-                       f"SELECT remove_retention_policy('request_logs') and then re-run.")
-            return
+    with db.engine.connect() as conn:
+        failed = False
+        drop_after = _retention_drop_after(conn)
+        if drop_after is not None:
+            click.echo(f"Error: request_logs has a retention policy (drop_after = {drop_after}).\n"
+                       f"  request_logs must never be pruned. Remove it with\n"
+                       f"  SELECT remove_retention_policy('request_logs');")
+            failed = True
 
-        try:
-            conn.execute(text("SELECT CAST(:w AS interval)"), {"w": window}).scalar()
-        except DBAPIError:
-            click.echo(f"Error: --window '{window}' is not a valid PostgreSQL interval.")
+        if ENTITY_AGGREGATE not in _continuous_aggregates(conn):
+            click.echo(f"Error: '{ENTITY_AGGREGATE}' does not exist. Run 'flask db upgrade' first.")
             raise SystemExit(1)
-
-        click.echo(f"Retention window: {window}")
-        dropped, oldest, newest = conn.execute(text(
-            "SELECT COUNT(*), MIN(time), MAX(time) FROM request_logs "
-            "WHERE time < now() - CAST(:w AS interval)"
-        ), {"w": window}).one()
-        click.echo(f"request_logs rows that would eventually be dropped: {dropped}"
-                   + (f" ({_fmt(oldest)} .. {_fmt(newest)})" if dropped else ""))
-
-        aggregates = _continuous_aggregates(conn)
-        for view in aggregates:
-            earliest = conn.execute(text(
-                f'SELECT MIN("{_bucket_column(conn, view)}") FROM "{view}"'
-            )).scalar()
-            start_offset = conn.execute(text(
-                "SELECT config->>'start_offset' FROM timescaledb_information.jobs "
-                "WHERE proc_name = 'policy_refresh_continuous_aggregate' AND hypertable_name = :v"
-            ), {"v": view}).scalar()
-            click.echo(f"  {view}: earliest bucket {_fmt(earliest)}, "
-                       f"refresh start_offset {start_offset or 'none'}")
-            if earliest is not None and start_offset is not None:
-                floor_, wider = conn.execute(text(
-                    "SELECT now() - CAST(:o AS interval), "
-                    "CAST(:o AS interval) > CAST(:w AS interval)"
-                ), {"o": start_offset, "w": window}).one()
-                click.echo("      earliest bucket is "
-                           + ("outside" if earliest < floor_ else "inside")
-                           + f" the refresh window (start_offset floor {_fmt(floor_)})")
-                if wider:
-                    # Contract (d): a scheduled refresh reaching past the retention
-                    # boundary recomputes those buckets as empty and deletes them.
-                    click.echo(f"      WARNING: start_offset ({start_offset}) is wider than the "
-                               f"retention window ({window}); the refresh policy would reach into "
-                               f"dropped chunks and silently erase materialised rows.")
-
-        if ENTITY_AGGREGATE not in aggregates:
-            click.echo(f"Error: '{ENTITY_AGGREGATE}' does not exist. Retention would destroy "
-                       f"per-entity history that is in no aggregate. Run 'flask db upgrade' first.")
-            raise SystemExit(1)
-        # Retention deletes raw chunks, so everything it deletes has to be materialised
-        # already. "Not empty" cannot answer that: the aggregate is created WITH NO DATA
-        # but carries materialized_only = false and an hourly refresh policy with a
-        # 30-day start_offset, so ordinary traffic makes it non-empty within an hour of
-        # deploy — a COUNT(*) guard passes forever after while no historical backfill has
-        # ever run. The question that decides whether history survives is the one
-        # _entity_aggregate_covers asks of this same aggregate before the per-entity
-        # charts are allowed to read it: is its earliest materialised bucket at or before
-        # the oldest raw row that still exists? If it is, everything retention can drop is
-        # held twice. If it is not, the gap between those two timestamps lives only in the
-        # chunks retention is about to delete.
+        # Read the materialisation hypertable, never the view: with
+        # materialized_only = false the view answers from raw above the watermark, so a
+        # never-refreshed aggregate would look fully covered through it. The question is
+        # the one _entity_aggregate_covers asks before the per-entity charts read the
+        # aggregate: is its earliest materialised bucket at or before the oldest raw row?
         earliest = conn.execute(text(
             f'SELECT MIN("{_bucket_column(conn, ENTITY_AGGREGATE)}") '
             f'FROM {_materialization_hypertable(conn, ENTITY_AGGREGATE)}'
         )).scalar()
         raw_oldest = conn.execute(text("SELECT MIN(time) FROM request_logs")).scalar()
-        if earliest is None:
-            click.echo(f"Error: '{ENTITY_AGGREGATE}' is empty — the backfill has not been run. "
-                       f"Enabling retention now would destroy per-entity history that is in no "
-                       f"aggregate. Run 'flask backfill-aggregate' first.")
-            raise SystemExit(1)
-        if raw_oldest is not None and earliest > raw_oldest:
-            hint = raw_oldest.astimezone(timezone.utc)
-            click.echo(
-                f"Error: '{ENTITY_AGGREGATE}' does not cover the history retention would drop.\n"
-                f"  earliest materialised bucket:      {_fmt(earliest)}\n"
-                f"  oldest surviving request_logs row: {_fmt(raw_oldest)}\n"
-                f"  Everything between those two timestamps is held only in raw chunks, and\n"
-                f"  retention deletes them. Run 'flask backfill-aggregate --from {hint:%Y-%m}'\n"
-                f"  first, then re-run this command."
-            )
-            raise SystemExit(1)
-        click.echo(f"{ENTITY_AGGREGATE} covers request_logs back to {_fmt(earliest)} "
-                   f"(oldest raw row {_fmt(raw_oldest)}).")
+        click.echo(f"earliest materialised bucket: {_fmt(earliest)}")
+        click.echo(f"oldest request_logs row:      {_fmt(raw_oldest)}")
 
-        if dry_run:
-            click.echo("Dry run: no policy added. Re-run with --force to enable retention.")
-            return
+        if raw_oldest is None:
+            click.echo("request_logs is empty; nothing to cover.")
+        elif earliest is None or earliest > raw_oldest:
+            state = "is empty" if earliest is None else "does not cover request_logs"
+            click.echo(f"Error: '{ENTITY_AGGREGATE}' {state}. Run "
+                       f"'flask backfill-aggregate --from {raw_oldest.astimezone(timezone.utc):%Y-%m}'.")
+            failed = True
+        else:
+            click.echo(f"{ENTITY_AGGREGATE} covers request_logs.")
 
-        job_id = conn.execute(text(
-            "SELECT add_retention_policy('request_logs', drop_after => CAST(:w AS interval))"
-        ), {"w": window}).scalar()
-        click.echo(f"Retention enabled on request_logs (drop_after = {window}, job {job_id}).")
+    if failed:
+        raise SystemExit(1)
