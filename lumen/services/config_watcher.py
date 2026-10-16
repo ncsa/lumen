@@ -8,6 +8,7 @@ import yaml
 from markupsafe import Markup
 
 from lumen.commands import model_alias_config_errors, sync_models_from_yaml
+from lumen.services.key_expiry import parse_key_ttl
 
 _ANNOUNCEMENT_ALLOWED_TAGS = {"a", "b", "br", "em", "i", "li", "ol", "p", "strong", "ul"}
 _ANNOUNCEMENT_ALLOWED_ATTRS = {"a": ["href", "title", "target"]}
@@ -87,6 +88,12 @@ def validate_config_structure(data) -> list:
     if not config_version_ok(data):
         errors.append("version: 3 is required")
     errors.extend(removed_config_key_errors(data))
+    keys_cfg = _resolve_path(data, ("api", "keys"))
+    if isinstance(keys_cfg, dict) and "ttl" in keys_cfg:
+        try:
+            parse_key_ttl(keys_cfg["ttl"])
+        except ValueError:
+            errors.append("api.keys.ttl must be 0 or a duration such as 12h, 30d or 8w")
     models = data.get("models") or []
     if not isinstance(models, list):
         return errors + ["models: must be a list"]
@@ -193,6 +200,24 @@ def _non_negative_int(value, default: int, key: str) -> int:
     return parsed
 
 
+def _key_ttl(keys_cfg: dict) -> int:
+    """``api.keys.ttl`` in seconds, or 0 (keys never expire) with a warning if invalid.
+
+    Absent means 0 silently; a present but blank, negative or malformed value warns.
+    """
+    if "ttl" not in keys_cfg:
+        return 0
+    try:
+        return parse_key_ttl(keys_cfg["ttl"])
+    except ValueError:
+        logger.warning(
+            "config.yaml: api.keys.ttl must be 0 or a duration such as 12h, 30d or 8w, "
+            "got %r — using 0 (keys never expire)",
+            keys_cfg["ttl"],
+        )
+        return 0
+
+
 def apply_hot_config(app, yaml_data: dict):
     """Apply hot-reloadable yaml settings to app.config. Called at startup and on config reload."""
     app_cfg = yaml_data.get("app", {})
@@ -267,6 +292,11 @@ def apply_hot_config(app, yaml_data: dict):
     # transcription legitimately takes minutes.
     app.config["LLM_REQUEST_TIMEOUT"] = _positive_seconds(llm_cfg.get("request_timeout"), 600.0, "request_timeout")
     app.config["LLM_MAX_RETRIES"] = _non_negative_int(llm_cfg.get("max_retries"), 1, "max_retries")
+
+    # Max and default API key lifetime; fixed into each key's expires_at when it is created.
+    api_cfg = yaml_data.get("api")
+    keys_cfg = (api_cfg.get("keys") if isinstance(api_cfg, dict) else None) or {}
+    app.config["KEY_TTL"] = _key_ttl(keys_cfg if isinstance(keys_cfg, dict) else {})
 
     # The in-app config editor is on by default; Helm sets it false for git-managed configs.
     app.config["CONFIG_EDITOR"] = bool(app_cfg.get("config_editor", True))

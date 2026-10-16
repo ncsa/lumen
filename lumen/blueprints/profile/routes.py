@@ -27,6 +27,7 @@ from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
 from lumen.services.crypto import hash_api_key
+from lumen.services.key_expiry import key_expires_at, resolve_key_ttl, revoke_if_expired
 from lumen.services.llm import bulk_model_access_info, get_model_access_status, get_pool_limit, model_notices
 from lumen.timeutils import utcnow
 
@@ -350,7 +351,7 @@ def _new_key_fields(key: str):
 
 def rotate_key_secret(api_key: APIKey):
     """Replace api_key's secret with the request's key, keeping usage stats. Commits."""
-    if api_key.revoked_at is not None:
+    if api_key.revoked_at is not None or revoke_if_expired(api_key):
         return jsonify({"error": "Key is revoked"}), HTTPStatus.CONFLICT
 
     data = request.get_json()
@@ -390,6 +391,7 @@ def create_key():
         entity_id=entity_id,
         created_by_entity_id=entity_id,
         name=name or "Unnamed Key",
+        expires_at=key_expires_at(resolve_key_ttl()),
         **fields,
     )
     db.session.add(api_key)

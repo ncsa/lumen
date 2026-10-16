@@ -1,4 +1,5 @@
 """Tests for the /v1 API key authentication decorator (api_key_required)."""
+from datetime import timedelta
 from http import HTTPStatus
 
 import pytest
@@ -91,6 +92,35 @@ def test_inactive_api_key_401(client, test_model, inactive_api_key):
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
     assert resp.get_json()["error"]["type"] == "authentication_error"
     assert resp.get_json()["error"]["message"] == "Invalid or revoked API key"
+
+
+def _set_expires_at(app, key_id, expires_at):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        db.session.get(APIKey, key_id).expires_at = expires_at
+        db.session.commit()
+
+
+def test_overdue_api_key_401_and_revoked_before_expirer_runs(app, client, api_key):
+    token, key_id = api_key
+    expires_at = utcnow() - timedelta(seconds=1)
+    _set_expires_at(app, key_id, expires_at)
+
+    resp = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+    assert resp.get_json()["error"]["type"] == "authentication_error"
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        key = db.session.get(APIKey, key_id)
+        assert (key.revoked_at, key.revoked_by_entity_id) == (expires_at, None)
+
+
+def test_api_key_before_expiry_is_accepted(app, client, api_key):
+    token, key_id = api_key
+    _set_expires_at(app, key_id, utcnow() + timedelta(hours=1))
+    assert client.get("/v1/models", headers={"Authorization": f"Bearer {token}"}).status_code == HTTPStatus.OK
 
 
 def test_inactive_entity_403(app, client, test_user, api_key):

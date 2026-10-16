@@ -4,6 +4,10 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- API keys can expire: users choose or change a key's TTL, capped by and defaulting to api.keys.ttl (admin API settings; 0 = never); expired keys are revoked (#71)
+
 ## [2.2.1] - 2026-10-16
 
 ### Fixed
