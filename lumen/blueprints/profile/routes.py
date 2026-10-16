@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 
 from flask import Blueprint, abort, g, jsonify, redirect, render_template, request, session, url_for
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 
@@ -341,11 +341,31 @@ def _new_key_fields(key: str):
     if not _CLIENT_KEY_RE.fullmatch(key):
         return None, (jsonify({"error": "Invalid key"}), HTTPStatus.BAD_REQUEST)
 
-    key_hash = hash_api_key(key)
-    if db.session.execute(select(APIKey).filter_by(key_hash=key_hash)).scalar_one_or_none():
+    fields = key_secret_fields(key)
+    if db.session.execute(select(APIKey).filter_by(key_hash=fields["key_hash"])).scalar_one_or_none():
         return None, (jsonify({"error": "Key already exists"}), HTTPStatus.CONFLICT)
 
-    return {"key_hash": key_hash, "key_hint": f"{key[:7]}...{key[-4:]}"}, None
+    return fields, None
+
+
+def key_secret_fields(key: str) -> dict:
+    """The stored columns for a raw key: its hash and the hint shown in the UI."""
+    return {"key_hash": hash_api_key(key), "key_hint": f"{key[:7]}...{key[-4:]}"}
+
+
+def set_key_secret(api_key_id: int, key: str, **values) -> bool:
+    """Replace an active key's secret in place, keeping its id, name and usage stats.
+
+    Guarded on the key still being active, so a concurrent revoke wins. Extra
+    column values are set in the same update. Returns False when no active key
+    was updated. Does not commit; raises IntegrityError if the secret is taken.
+    """
+    result = db.session.execute(
+        update(APIKey)
+        .where(APIKey.id == api_key_id, APIKey.revoked_at.is_(None))
+        .values(**key_secret_fields(key), **values)
+    )
+    return result.rowcount > 0
 
 
 def rotate_key_secret(api_key: APIKey):
@@ -359,18 +379,19 @@ def rotate_key_secret(api_key: APIKey):
         return jsonify({"error": "Invalid key"}), HTTPStatus.BAD_REQUEST
 
     key = key.strip()
-    fields, error = _new_key_fields(key)
+    _, error = _new_key_fields(key)
     if error:
         return error
 
-    api_key.key_hash = fields["key_hash"]
-    api_key.key_hint = fields["key_hint"]
     try:
+        updated = set_key_secret(api_key.id, key)
         db.session.commit()
     except IntegrityError:
         # A concurrent create/rotate committed the same secret after the duplicate check.
         db.session.rollback()
         return jsonify({"error": "Key already exists"}), HTTPStatus.CONFLICT
+    if not updated:
+        return jsonify({"error": "Key is revoked"}), HTTPStatus.CONFLICT
     return jsonify({"id": api_key.id, "name": api_key.name, "key": key}), HTTPStatus.OK
 
 
