@@ -71,12 +71,33 @@ def test_missing_timescaledb_catalog_is_skipped_quietly(app, monkeypatch, caplog
     assert _logged(caplog) == []
 
 
-def test_query_failure_is_a_warning_and_leaves_the_session_usable(app, monkeypatch, caplog):
-    """The real query against SQLite fails; startup carries on with a clean session."""
+def test_query_failure_is_a_warning(app, monkeypatch, caplog):
+    """The real catalog query fails on SQLite; startup carries on with a WARNING."""
+    with app.app_context(), caplog.at_level(logging.WARNING):
+        _as_postgres(monkeypatch)
+        _warn_if_request_logs_has_retention(app)
+    records = _logged(caplog)
+    assert [r.levelno for r in records] == [logging.WARNING]
+    assert "Could not check request_logs for a retention policy" in records[0].getMessage()
+
+
+def test_failure_leaves_the_session_usable(app, monkeypatch, caplog):
+    """A failure that needs a rollback is rolled back before startup continues.
+
+    A failed SELECT does not poison a SQLite session, so this fails a flush
+    instead: the session is then pending-rollback, and without the tripwire's
+    rollback the next statement raises PendingRollbackError.
+    """
+    from lumen.models.model_config import ModelConfig
+
+    def failing_flush(conn):
+        # Missing required cost fields: the flush raises IntegrityError.
+        db.session.add(ModelConfig(model_name="tripwire-flush-failure"))
+        db.session.flush()
+
+    monkeypatch.setattr("lumen.commands._retention_job", failing_flush)
     with app.app_context(), caplog.at_level(logging.WARNING):
         _as_postgres(monkeypatch)
         _warn_if_request_logs_has_retention(app)
         assert db.session.execute(db.text("SELECT 1")).scalar() == 1
-    records = _logged(caplog)
-    assert [r.levelno for r in records] == [logging.WARNING]
-    assert "Could not check request_logs for a retention policy" in records[0].getMessage()
+    assert [r.levelno for r in _logged(caplog)] == [logging.WARNING]

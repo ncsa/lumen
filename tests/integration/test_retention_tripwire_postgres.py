@@ -95,3 +95,26 @@ def test_no_retention_policy_logs_nothing_with_one_query(pg_engine, create_pg_ap
 
     assert _logged(caplog) == [], [r.getMessage() for r in _logged(caplog)]
     assert sum("policy_retention" in s for s in statements) == 1, statements
+
+
+def test_aborted_lookup_transaction_is_rolled_back(pg_engine, create_pg_app, monkeypatch, caplog):
+    """A failed lookup aborts the PostgreSQL transaction; the tripwire must roll it back.
+
+    Without the rollback every later statement in the app context fails with
+    "current transaction is aborted", which is what the startup steps after the
+    tripwire (metrics priming) would hit.
+    """
+    app = create_pg_app()
+
+    def aborting_lookup(conn):
+        conn.execute(text("SELECT 1 / 0"))
+
+    monkeypatch.setattr("lumen.commands._retention_job", aborting_lookup)
+    from lumen import _warn_if_request_logs_has_retention
+    from lumen.extensions import db
+    with app.app_context(), caplog.at_level(logging.WARNING):
+        _warn_if_request_logs_has_retention(app)
+        assert db.session.execute(text("SELECT 1")).scalar() == 1
+    records = _logged(caplog)
+    assert [r.levelno for r in records] == [logging.WARNING], [r.getMessage() for r in records]
+    assert "Could not check request_logs" in records[0].getMessage()
