@@ -134,8 +134,11 @@ def seed():
         # ------------------------------------------------------------------ #
         print("Refreshing continuous aggregate...")
         with db.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            # START/NOW are naive UTC; psycopg 3 would send them as timestamp to the
+            # polymorphic window arguments, so cast to the aggregate's timestamptz.
             conn.execute(db.text(
-                "CALL refresh_continuous_aggregate('request_counts_hourly', :start, :end)"
+                "CALL refresh_continuous_aggregate('request_counts_hourly', "
+                "CAST(:start AS timestamptz), CAST(:end AS timestamptz))"
             ), {"start": START, "end": NOW + timedelta(hours=2)})
         print("  done")
 
