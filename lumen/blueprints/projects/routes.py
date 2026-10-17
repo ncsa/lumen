@@ -6,7 +6,13 @@ from sqlalchemy import case, func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from lumen.blueprints.admin.routes import apply_coin_pool_edit
-from lumen.blueprints.profile.routes import _get_profile_data, _new_key_fields, rotate_key_secret
+from lumen.blueprints.profile.routes import (
+    _created_key_response,
+    _get_profile_data,
+    _new_key_fields,
+    _requested_key_expiry,
+    rotate_key_secret,
+)
 from lumen.decorators import admin_required, is_admin, login_required
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
@@ -23,7 +29,7 @@ from lumen.models.entity_manager import (
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.entity_stat import EntityStat
 from lumen.models.model_config import ModelConfig
-from lumen.services.key_expiry import key_expires_at, resolve_key_ttl
+from lumen.services.key_expiry import key_ttl_choices
 from lumen.services.llm import entity_has_unlimited_pool, get_model_access_status
 from lumen.timeutils import utcnow
 
@@ -331,6 +337,7 @@ def detail(sid):
         gravatar_url=gravatar_url,
         project_limit=project_limit,
         rotatable_key_ids=rotatable_key_ids,
+        key_ttl_choices=key_ttl_choices(),
         **data,
     )
 
@@ -693,6 +700,9 @@ def create_project_key(sid):
     name = (data.get("name") or "").strip()
     key = (data.get("key") or "").strip()
 
+    expires_at, error = _requested_key_expiry(data)
+    if error:
+        return error
     fields, error = _new_key_fields(key)
     if error:
         return error
@@ -701,13 +711,13 @@ def create_project_key(sid):
         entity_id=sid,
         created_by_entity_id=entity_id,
         name=name or "Unnamed Key",
-        expires_at=key_expires_at(resolve_key_ttl()),
+        expires_at=expires_at,
         **fields,
     )
     db.session.add(api_key)
     db.session.commit()
 
-    return jsonify({"id": api_key.id, "name": api_key.name, "key": key}), HTTPStatus.CREATED
+    return _created_key_response(api_key, key)
 
 
 @projects_bp.route("/projects/<int:sid>/keys/<int:kid>", methods=["DELETE"])

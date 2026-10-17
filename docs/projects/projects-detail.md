@@ -79,7 +79,8 @@ Managers, the owner and admins see every key in the project. A **user** sees onl
 1. Click **+ New API Key**.
 2. The key is generated and shown **once** in a dialog — copy it immediately.
 3. Give the key a descriptive name (e.g., `production`, `staging`, `ci-runner`).
-4. Click **Save Key**.
+4. Choose how long the key lasts in **Expires after**. The choices, and the default, follow the maximum key lifetime the same way as [on the Profile page](../guides/profile.md#key-expiry); the maximum applies to managers, the owner and admins too.
+5. Click **Save Key**.
 
 If you are a **user** and already have an active key, **+ New API Key** is disabled and the page explains why. Revoke your key to create a new one.
 
@@ -108,9 +109,10 @@ response = project.chat.completions.create(
 | **Hint** | First 7 + last 4 characters for identification |
 | **Requests / Tokens / Coins** | Usage tracked on this key |
 | **Last Used** | Timestamp of the last API call |
+| **Expires** | When the key expires, in your local time, or **Never** |
 | **Actions** | Rotate (keys you created) and Revoke buttons for active keys |
 
-Revoking a key deactivates it immediately and keeps its usage. Use **Show revoked keys** to view revoked keys (deactivated, usage kept); hover over or focus a key's **revoked** badge to see when it was revoked, in your local time, and who revoked it (e.g. *Revoked 10/10/2026, 2:15 PM by Jane Doe*). The name is left out when no revoker is recorded: keys revoked before this was recorded, keys revoked automatically because an OAuth code was replayed, or keys whose revoker was deleted. Times for keys revoked before this was recorded are approximate. Use the search box to filter by key name or creator (by name only for users).
+Revoking a key deactivates it immediately and keeps its usage. An expired key is revoked automatically. Use **Show revoked keys** to view revoked and expired keys (deactivated, usage kept). Hover over or focus an **expired** badge to see when the key expired, or a key's **revoked** badge to see when it was revoked, in your local time, and who revoked it (e.g. *Revoked 10/10/2026, 2:15 PM by Jane Doe*). The name is left out when no revoker is recorded: keys revoked before this was recorded, keys revoked automatically because an OAuth code was replayed, or keys whose revoker was deleted. Times for keys revoked before this was recorded are approximate. Use the search box to filter by key name or creator (by name only for users).
 
 ### Rotating a Key
 
