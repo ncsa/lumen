@@ -218,3 +218,23 @@ def test_key_ttl_choices(app, restore_config, cap, expected):
     app.config["KEY_TTL"] = cap
     with app.app_context():
         assert key_ttl_choices() == expected
+
+
+@pytest.mark.parametrize("cap, selected, expected", [
+    # An allowed preset is pre-selected instead of the cap.
+    (30 * DAY, 7 * DAY, [(DAY, "1 day", False), (7 * DAY, "7 days", True), (30 * DAY, "30 days", False)]),
+    # A non-preset is offered in order and pre-selected.
+    (30 * DAY, 2 * 3600, [(2 * 3600, "2 hours", True), (DAY, "1 day", False), (7 * DAY, "7 days", False),
+                          (30 * DAY, "30 days", False)]),
+    (0, 2 * DAY, [(DAY, "1 day", False), (2 * DAY, "2 days", True), (7 * DAY, "7 days", False),
+                  (30 * DAY, "30 days", False), (90 * DAY, "90 days", False), (365 * DAY, "1 year", False),
+                  (0, "Never", False)]),
+    # Nothing, or something the cap no longer allows, falls back to the cap.
+    (DAY, None, [(DAY, "1 day", True)]),
+    (DAY, 7 * DAY, [(DAY, "1 day", True)]),
+    (DAY, 0, [(DAY, "1 day", True)]),
+])
+def test_key_ttl_choices_selected(app, restore_config, cap, selected, expected):
+    app.config["KEY_TTL"] = cap
+    with app.app_context():
+        assert key_ttl_choices(selected) == expected

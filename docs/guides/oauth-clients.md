@@ -20,6 +20,7 @@ Best for anything without a browser callback. Follows the shape of RFC 8628 with
    | `client_id` | Your application label (required) |
    | `name` | Name the user's new key will get (required) |
    | `author` | Optional free-form label shown to the approver (e.g. the OS user running the CLI) |
+   | `ttl` | Optional key lifetime in whole seconds; `0` means never. See [Key expiry](#key-expiry) |
 
    The JSON response contains `device_code`, `user_code` (`XXXX-XXXX`), `verification_uri`, `verification_uri_complete`, `expires_in` (600 s) and `interval` (5 s). Show the code and open `verification_uri_complete`; all secrets stay in POST bodies — only the short user code ever appears in a URL.
 
@@ -40,7 +41,7 @@ Best for anything without a browser callback. Follows the shape of RFC 8628 with
    | `access_denied` | User clicked **Deny** — fail cleanly |
    | `invalid_grant` | Unknown `device_code` / `client_id` mismatch, or a retry after claim |
 
-   On approval you get `200 {"access_token": "sk_…", "token_type": "Bearer", "approved_by": "alice@example.edu"}` — store the key immediately; it is never returned again. `approved_by` tells you whose account approved, which is worth printing. Responses carry `Cache-Control: no-store`, and `/oauth/token` answers `OPTIONS` preflights with `Access-Control-Allow-Origin: *` so browser-based tools can poll it too. The `/v1` API allows cross-origin requests as well, so a browser app can use the key it gets here directly (see [CORS](api-reference.md#cors-browser-apps)).
+   On approval you get `200 {"access_token": "sk_…", "token_type": "Bearer", "approved_by": "alice@example.edu", "expires_at": "2026-11-16T12:00:00Z"}` — store the key immediately; it is never returned again. `approved_by` tells you whose account approved, which is worth printing. Responses carry `Cache-Control: no-store`, and `/oauth/token` answers `OPTIONS` preflights with `Access-Control-Allow-Origin: *` so browser-based tools can poll it too. The `/v1` API allows cross-origin requests as well, so a browser app can use the key it gets here directly (see [CORS](api-reference.md#cors-browser-apps)).
 
    Once approved, the request stays claimable for 60 s (the *claim window*) so a CLI that lost a network round trip can still pick the key up; an abandoned approval simply expires and creates nothing.
 
@@ -54,12 +55,12 @@ For apps that can receive a browser redirect. Public clients only: no `client_se
 
    ```
    GET /oauth/authorize?response_type=code
-       &client_id=my-app&name=my-app-key&author=alice
+       &client_id=my-app&name=my-app-key&author=alice&ttl=2592000
        &redirect_uri=https://portal.example.org/cb
        &state=<random>&code_challenge=<S256>&code_challenge_method=S256
    ```
 
-   `redirect_uri` must be absolute `https` (or `http` to a localhost port for development) with no fragment or credentials. Validation failures render an error page and **never** redirect, since the destination is unverified at that point.
+   `author` and `ttl` are optional, as in the device flow. `redirect_uri` must be absolute `https` (or `http` to a localhost port for development) with no fragment or credentials. Validation failures (including a `ttl` the server does not allow) render an error page and **never** redirect, since the destination is unverified at that point.
 
 2. The user signs in (you get bounced through login and back), sees the consent page — destination origin shown prominently, models with per-model consent, replace checkbox when relevant — and approves or denies.
 
@@ -128,6 +129,15 @@ location.search ? callback() : document.getElementById("start").onclick = start;
 The example is deliberately naive about key custody: a page whose only job is to obtain a key should **show it once for copying and keep nothing**. If your app holds the key in browser state, remember any script running on your origin can read it too.
 
 
+## Key expiry
+
+A Lumen administrator can make keys expire with `api.keys.ttl`, which is both the longest lifetime a key may have and the default. Its default is `0`: no maximum, and keys never expire unless one is asked for.
+
+- Send `ttl` (seconds) to ask for a shorter lifetime. A value that is not a whole number, is above the maximum, or is `0` (never) while the server has a maximum is rejected with `invalid_request`. Leave it out to get the server's maximum.
+- The approver sees an **Expires after** choice on the consent page, pre-selected with your `ttl` (or the maximum) and may change it; the server checks the choice again.
+- The key's lifetime counts from the moment it is minted, at `/oauth/token`. The token response's `expires_at` gives the expiry in UTC (ISO 8601, e.g. `2026-11-16T12:00:00Z`), or `null` when the key never expires.
+- An expired key is revoked: `/v1` answers `401`, and your tool should run the key request again. Users can also change an existing key's expiry on their [Profile](./profile.md).
+
 ## Consent-page behavior
 
 ![Lumen's consent page for a device-flow request](../img/oauth-consent.png)
@@ -135,5 +145,6 @@ The example is deliberately naive about key custody: a page whose only job is to
 - Users must be signed in; you never see or handle credentials.
 - Every unverified `client_id` is shown under an **Unverified application** warning banner.
 - The model list is a table with an **Acknowledgment** column, matching the Models page: **required** pills with an **Acknowledge** button for models needing consent (the same dialog as the profile page, recorded immediately when confirmed, independent of the approve button), **acknowledged** pills with the acceptance date, and **early access** pills.
+- An **Expires after** dropdown sets how long the key stays valid, counted from when the application collects it. It offers choices up to the server's maximum, pre-selects the requested `ttl` (or the maximum), and the server checks the choice again on approval.
 - Approving does not change any existing keys unless the user ticked **Replace the secret of key …** for a same-name key; the page then shows the key's current hint so users recognize what they're replacing. That key keeps its name and usage stats and only gets a new secret, once the application collects it.
 - Keys created through these flows record their `client_id` (and `author`) as provenance, visible on the user's [Profile](./profile.md) key list tooltip, so users can see which tool asked for each key and revoke it there. A revoked key is deactivated and its usage kept; it stays listed under **Show revoked keys**, with the revocation time and, when known, who revoked it in the badge tooltip. A key revoked automatically because its authorization code was replayed shows no name. Times for keys revoked before this was recorded are approximate.

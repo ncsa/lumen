@@ -384,6 +384,12 @@ def test_oauth_consent_page_accessibility(client, auth_client):
     # The unverified-application warning must not rely on color alone.
     soup = _soup(resp.data)
     assert "Unverified application" in soup.get_text()
+    # The key-expiry dropdown is labelled and submitted with the form.
+    ttl = soup.find("select", id="consent-key-ttl")
+    assert ttl is not None and ttl.get("name") == "ttl"
+    assert ttl.find_parent("form") is not None
+    label = soup.find("label", attrs={"for": "consent-key-ttl"})
+    assert label is not None and label.get_text(strip=True) == "Expires after"
 
 
 def test_oauth_consent_page_with_existing_key_accessibility(client, auth_client, app, test_user):

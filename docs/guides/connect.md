@@ -18,7 +18,7 @@ curl -fsSL https://raw.githubusercontent.com/ncsa/lumen/main/lumen.sh | bash -s 
 Each run works like this:
 
 1. It uses `$LUMEN_API_KEY` only when it belongs to the target server — that is, when `$LUMEN_BASE_URL` names the same server (or is unset and the default is meant), so a key issued by one Lumen is never sent to another. Otherwise it reuses a key saved for this server in `~/.config/lumen/keys.json`.
-2. Otherwise it starts a **device login**: it prints a one-time code (like `QKRT-M2BX`) and opens Lumen's approval page. Sign in, check what is being requested, and approve — the CLI then receives a fresh API key exactly once.
+2. Otherwise it starts a **device login**: it prints a one-time code (like `QKRT-M2BX`) and opens Lumen's approval page. Sign in, check what is being requested, pick how long the key stays valid, and approve — the CLI then receives a fresh API key exactly once and prints when it expires (or that it never expires).
 3. The key is saved to `~/.config/lumen/keys.json` (mode `600`, keyed by server host) and written into a managed `# >>> lumen >>>` block in your shell's rc file (`~/.zshrc`, `~/.bashrc`, `setenv` for csh), which exports both `LUMEN_API_KEY` and `LUMEN_BASE_URL`. A plain `lumen.sh` therefore targets the server you last logged in to.
 4. Unless you pass `--no-opencode`, the Lumen provider block in `~/.config/opencode/opencode.json` is refreshed with every active model that accepts text input. Models without text input (for example audio-only models) are skipped; models whose input modalities are unknown are still added.
 
@@ -28,10 +28,13 @@ Each run works like this:
 | `-k`, `--keyname NAME` | Name for the requested key (default `opencode`) |
 | `--author LABEL` | Label shown to the approver (default `$USER`) |
 | `--client-id ID` | `client_id` sent to Lumen (default `lumen-cli`) |
+| `--ttl DURATION` | Ask for a key that expires after `DURATION`: `0` (never) or hours, days or weeks such as `12h`, `30d`, `8w` (default: the server's maximum, `api.keys.ttl`). Pre-selects the approval page's **Expires after** choice, which the approver can change; the server rejects a value above its maximum, and `0` when keys must expire. Only used when a new key is requested |
 | `--opencode` | Sync the model catalog into `opencode.json` (default) |
 | `--no-opencode` | Only log in and store the key |
 | `--relogin` | Request a new key even if one is stored; the new key always replaces the stored one |
 | `--no-aliases` | Skip model aliases when syncing |
+
+When a stored key stops working because it expired or was revoked, `lumen.sh` stops with `key expired or revoked — run lumen.sh --relogin`; run that to request a new key.
 
 The approval page shows the requesting application, the destination it will redirect to (for web apps), and the model-consent table, and it requires an explicit replace confirmation when you already hold a key with the same name. Replacing keeps that key, with its name and usage stats, and gives it a new secret. See [OAuth for client developers](./oauth-clients.md) to implement the same flows in your own tool.
 

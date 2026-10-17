@@ -1,10 +1,11 @@
 {# "Expires after" dropdown for an API key's TTL. Needs key_ttl_choices
    ((seconds, label, selected) from services.key_expiry.key_ttl_choices);
-   set ttl_select_id to change the select's id (default key-ttl-select). #}
+   set ttl_select_id to change the select's id (default key-ttl-select), and
+   ttl_select_name to submit it with a form. #}
 {% set ttl_select_id = ttl_select_id | default('key-ttl-select') %}
 <div class="mb-3">
   <label class="form-label" for="{{ ttl_select_id }}">Expires after</label>
-  <select id="{{ ttl_select_id }}" class="form-select">
+  <select id="{{ ttl_select_id }}"{% if ttl_select_name %} name="{{ ttl_select_name }}"{% endif %} class="form-select">
     {% for seconds, label, selected in key_ttl_choices %}
     <option value="{{ seconds }}"{% if selected %} selected{% endif %}>{{ label }}</option>
     {% endfor %}
