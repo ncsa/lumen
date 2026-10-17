@@ -363,7 +363,7 @@ def _requested_key_expiry(data: dict):
     return key_expires_at(ttl), None
 
 
-def created_key_response(api_key: APIKey, key: str):
+def _created_key_response(api_key: APIKey, key: str):
     """201 response for a newly created key, with its expiry (null = never)."""
     expires_at = api_key.expires_at.strftime("%Y-%m-%dT%H:%M:%SZ") if api_key.expires_at else None
     return jsonify({"id": api_key.id, "name": api_key.name, "key": key, "expires_at": expires_at}), HTTPStatus.CREATED
@@ -420,7 +420,7 @@ def create_key():
     db.session.add(api_key)
     db.session.commit()
 
-    return created_key_response(api_key, key)
+    return _created_key_response(api_key, key)
 
 
 @profile_bp.route("/profile/keys/<int:kid>", methods=["DELETE"])

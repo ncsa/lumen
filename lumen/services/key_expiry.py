@@ -80,7 +80,7 @@ def resolve_key_ttl(requested: Optional[int] = None) -> int:
 
 def _ttl_label(seconds: int) -> str:
     """Human label for a TTL that is not a preset, in the largest whole unit."""
-    for unit, size in (("week", 7 * 86400), ("day", 86400), ("hour", 3600)):
+    for unit, size in (("year", 365 * 86400), ("week", 7 * 86400), ("day", 86400), ("hour", 3600)):
         if seconds % size == 0:
             n = seconds // size
             return f"{n} {unit}{'' if n == 1 else 's'}"

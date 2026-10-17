@@ -7,10 +7,10 @@ from sqlalchemy.exc import IntegrityError
 
 from lumen.blueprints.admin.routes import apply_coin_pool_edit
 from lumen.blueprints.profile.routes import (
+    _created_key_response,
     _get_profile_data,
     _new_key_fields,
     _requested_key_expiry,
-    created_key_response,
     rotate_key_secret,
 )
 from lumen.decorators import admin_required, is_admin, login_required
@@ -717,7 +717,7 @@ def create_project_key(sid):
     db.session.add(api_key)
     db.session.commit()
 
-    return created_key_response(api_key, key)
+    return _created_key_response(api_key, key)
 
 
 @projects_bp.route("/projects/<int:sid>/keys/<int:kid>", methods=["DELETE"])

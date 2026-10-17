@@ -209,8 +209,10 @@ def test_revoke_if_expired(app, test_user):
     (12 * 3600, [(12 * 3600, "12 hours", True)]),
     (DAY, [(DAY, "1 day", True)]),
     (10 * DAY, [(DAY, "1 day", False), (7 * DAY, "7 days", False), (10 * DAY, "10 days", True)]),
+    (730 * DAY, [(DAY, "1 day", False), (7 * DAY, "7 days", False), (30 * DAY, "30 days", False),
+                 (90 * DAY, "90 days", False), (365 * DAY, "1 year", False), (730 * DAY, "2 years", True)]),
     (3650 * DAY, [(DAY, "1 day", False), (7 * DAY, "7 days", False), (30 * DAY, "30 days", False),
-                  (90 * DAY, "90 days", False), (365 * DAY, "1 year", False), (3650 * DAY, "3650 days", True)]),
+                  (90 * DAY, "90 days", False), (365 * DAY, "1 year", False), (3650 * DAY, "10 years", True)]),
 ])
 def test_key_ttl_choices(app, restore_config, cap, expected):
     app.config["KEY_TTL"] = cap
