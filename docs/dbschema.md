@@ -58,6 +58,7 @@ erDiagram
         datetime auth_code_expires_at
         int entity_id FK
         bool overwrite
+        bigint ttl
         datetime approved_at
         int api_key_id FK
     }
@@ -340,7 +341,7 @@ API keys that entities (users or projects) use to authenticate against the proxy
 | `key_hash` | String(64) | NO | HMAC-SHA256 hash of the raw key. Unique. |
 | `key_hint` | String(32) | YES | Last few characters of the raw key shown in the UI for identification |
 | `revoked_at` | DateTime | YES | UTC time the key was revoked; null while the key is usable. Approximate (`last_used_at`, else `created_at`, else the migration time) for keys revoked before this column existed. |
-| `expires_at` | DateTime | YES | UTC time the key expires; null if it never expires. Set from the `api.keys.ttl` cap when the key is created. A background job (and the API on use) revokes an overdue key by setting `revoked_at` to this value, with `revoked_by_entity_id` left null. Indexed. |
+| `expires_at` | DateTime | YES | UTC time the key expires; null if it never expires. Set when the key is created, from the chosen TTL (capped by and defaulting to `api.keys.ttl`; for OAuth keys, the approved `auth_requests.ttl` counted from mint), and when its expiry is edited. A background job (and the API on use) revokes an overdue key by setting `revoked_at` to this value, with `revoked_by_entity_id` left null. Indexed. |
 | `requests` | Integer | NO | Cumulative request count made with this key |
 | `input_tokens` | BigInteger | NO | Cumulative input tokens consumed via this key |
 | `output_tokens` | BigInteger | NO | Cumulative output tokens produced via this key |
@@ -378,6 +379,7 @@ Pending or handled API-key requests created by the OAuth device flow (`/oauth/de
 | `auth_code_expires_at` | DateTime | YES | UTC expiry of the authorization code (60s after approval) |
 | `entity_id` | Integer (FK → entities) | YES | Approving entity; set at approval. Cascades on delete. |
 | `overwrite` | Boolean | NO | Approver agreed to replace an existing same-name key (executed at mint). Default `false`. |
+| `ttl` | BigInteger | YES | Key TTL in seconds (`0` = never): the `ttl` the request asked for (null if none), replaced at approval by the approver's choice, checked against the `api.keys.ttl` cap. The minted key's `expires_at` is mint time plus this. |
 | `approved_at` | DateTime | YES | UTC approval timestamp |
 | `api_key_id` | Integer (FK → api_keys) | YES | Key minted at claim; retained to revoke on authorization-code replay. SET NULL on key delete. |
 

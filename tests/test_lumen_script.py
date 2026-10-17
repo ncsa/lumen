@@ -53,6 +53,7 @@ class FakeLumen(BaseHTTPRequestHandler):
         s.hits[self.path] = s.hits.get(self.path, 0) + 1
         if self.path == "/oauth/device_authorization":
             assert form.get("client_id") and form.get("name")
+            s.auth_forms.append(form)
             self._json(200, {
                 "device_code": "devcode-1", "user_code": "QQQQ-QQQQ",
                 "verification_uri": "http://127.0.0.1:1/device",
@@ -69,8 +70,8 @@ class FakeLumen(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/v1/models":
             auth = self.headers.get("Authorization", "")
-            if not auth.startswith("Bearer sk_"):
-                self._json(401, {"error": {"message": "no key"}})
+            if not auth.startswith("Bearer sk_") or self.server.models_status == 401:
+                self._json(401, {"error": {"message": "Invalid, revoked, or expired API key"}})
                 return
             self.server.hits["/v1/models"] = self.server.hits.get("/v1/models", 0) + 1
             self._json(200, MODELS)
@@ -84,6 +85,8 @@ def lumen_server():
     server.hits = {}
     server.token_queue = []
     server.auth_extra = {}
+    server.auth_forms = []
+    server.models_status = 200
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield server
@@ -599,3 +602,73 @@ def test_malformed_env_key_ignored(home, lumen_server):
     assert r.returncode == 0, r.stderr
     assert b"ignoring malformed LUMEN_API_KEY" in r.stderr
     assert "LUMEN_API_KEY=sk_stored_key_000" in r.stdout.decode()
+
+
+# --- key TTL ------------------------------------------------------------------
+
+@pytest.mark.parametrize("ttl, seconds", [("12h", 43200), ("2d", 172800), ("8w", 4838400), ("0", 0)])
+def test_ttl_forwarded_and_expiry_printed(home, lumen_server, ttl, seconds):
+    port = lumen_server.server_address[1]
+    expires = "2026-11-01T12:00:00Z" if seconds else None
+    lumen_server.token_queue = [
+        (200, {"access_token": TEST_KEY, "token_type": "Bearer",
+               "approved_by": "alice@example.edu", "expires_at": expires}),
+    ]
+    r = run_script(home, port, args=["--no-opencode", "--ttl", ttl], timeout=25)
+    assert r.returncode == 0, r.stderr
+    assert lumen_server.auth_forms[0]["ttl"] == [str(seconds)]
+    if expires:
+        assert b"The key expires at 2026-11-01T12:00:00Z." in r.stdout
+    else:
+        assert b"The key never expires." in r.stdout
+
+
+def test_no_ttl_sends_none_and_old_server_prints_no_expiry(home, lumen_server):
+    port = lumen_server.server_address[1]
+    lumen_server.token_queue = [
+        (200, {"access_token": TEST_KEY, "token_type": "Bearer", "approved_by": "alice@example.edu"}),
+    ]
+    r = run_script(home, port, args=["--no-opencode"], timeout=25)
+    assert r.returncode == 0, r.stderr
+    assert "ttl" not in lumen_server.auth_forms[0]
+    assert b"expire" not in r.stdout
+
+
+def test_expiry_printed_without_control_characters(home, lumen_server):
+    port = lumen_server.server_address[1]
+    lumen_server.token_queue = [
+        (200, {"access_token": TEST_KEY, "token_type": "Bearer", "expires_at": "2026\u001b[31m-11-01"}),
+    ]
+    r = run_script(home, port, args=["--no-opencode", "--ttl", "1d"], timeout=25)
+    assert r.returncode == 0, r.stderr
+    assert b"\x1b" not in r.stdout
+    assert b"The key expires at 2026[31m-11-01." in r.stdout
+
+
+@pytest.mark.parametrize("ttl", ["5m", "-1", "abc", "1.5d", "1d2h", "01d", "9999999d", "$(id)"])
+def test_invalid_ttl_rejected_before_any_request(home, lumen_server, ttl):
+    port = lumen_server.server_address[1]
+    r = run_script(home, port, args=["--no-opencode", "--relogin", "--ttl", ttl])
+    assert r.returncode != 0
+    assert b"invalid --ttl" in r.stderr
+    assert lumen_server.hits == {}
+
+
+def test_ttl_ignored_when_key_already_stored(home, lumen_server):
+    port = lumen_server.server_address[1]
+    r = run_script(home, port, args=["--no-opencode", "--ttl", "8w"],
+                   env_extra={"LUMEN_API_KEY": "sk_unused_0000000"})
+    assert r.returncode == 0, r.stderr
+    assert "/oauth/device_authorization" not in lumen_server.hits
+
+
+def test_401_on_stored_key_shows_relogin_hint(home, lumen_server):
+    port = lumen_server.server_address[1]
+    keys = home / ".config" / "lumen" / "keys.json"
+    keys.parent.mkdir(parents=True)
+    keys.write_text(json.dumps({host_key(port): "sk_expired_key_000"}))
+    lumen_server.models_status = 401
+    r = run_script(home, port)
+    assert r.returncode != 0
+    assert "key expired or revoked — run lumen.sh --relogin" in r.stderr.decode()
+    assert json.loads((home / ".config" / "opencode" / "opencode.json").read_text()) == {}

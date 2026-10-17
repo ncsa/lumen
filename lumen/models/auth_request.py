@@ -64,6 +64,7 @@ class AuthRequest(db.Model):
     auth_code_expires_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, comment="UTC expiry of the authorization code (60s after approval)")
     entity_id: Mapped[Optional[int]] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), comment="Approving entity; set at approval")
     overwrite: Mapped[bool] = mapped_column(db.Boolean, default=False, comment="Approver agreed to replace an existing same-name key (executed at mint)")
+    ttl: Mapped[Optional[int]] = mapped_column(db.BigInteger, comment="Key TTL in seconds (0 = never): as requested (null if none was), replaced by the approver's choice at approval")
     approved_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, comment="UTC approval timestamp")
     # Kept after claim so a replayed authorization code can revoke the minted
     # key (RFC 6749 §4.1.2). SET NULL: deleting the key by other means must not

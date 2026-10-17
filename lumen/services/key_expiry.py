@@ -87,20 +87,30 @@ def _ttl_label(seconds: int) -> str:
     return f"{seconds} seconds"
 
 
-def key_ttl_choices() -> list[tuple[int, str, bool]]:
+def key_ttl_choices(selected: Optional[int] = None) -> list[tuple[int, str, bool]]:
     """``(seconds, label, selected)`` options for the "Expires after" dropdown.
 
     Presets at or below the KEY_TTL cap, plus the cap itself, which is always
     offered and pre-selected. "Never" (0) is offered, and pre-selected, only
-    when there is no cap.
+    when there is no cap. A ``selected`` TTL allowed under the cap is
+    pre-selected instead, and offered even when it is not a preset.
     """
     cap = current_app.config.get("KEY_TTL", 0)
     if not cap:
-        return [(s, label, False) for s, label in KEY_TTL_PRESETS] + [(0, "Never", True)]
-    choices = [(s, label, s == cap) for s, label in KEY_TTL_PRESETS if s <= cap]
-    if not any(s == cap for s, _, _ in choices):
-        choices.append((cap, _ttl_label(cap), True))
-    return choices
+        choices = [(s, label, False) for s, label in KEY_TTL_PRESETS] + [(0, "Never", False)]
+    else:
+        choices = [(s, label, False) for s, label in KEY_TTL_PRESETS if s <= cap]
+        if not any(s == cap for s, _, _ in choices):
+            choices.append((cap, _ttl_label(cap), False))
+    try:
+        selected = cap if selected is None else resolve_key_ttl(selected)
+    except ValueError:
+        selected = cap
+    if not any(s == selected for s, _, _ in choices):
+        choices.append((selected, _ttl_label(selected), False))
+        # Ascending, with "Never" (0) last.
+        choices.sort(key=lambda c: c[0] or float("inf"))
+    return [(s, label, s == selected) for s, label, _ in choices]
 
 
 def key_expires_at(ttl: int) -> Optional[datetime]:

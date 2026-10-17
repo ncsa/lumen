@@ -71,6 +71,9 @@
   </div>
   {% endif %}
 
+  <h2 class="h5 mt-4">Key expiry</h2>
+  {% with ttl_select_id = 'consent-key-ttl', ttl_select_name = 'ttl' %}{% include '_key_ttl_select.html' %}{% endwith %}
+
   <h2 class="h5 mt-4">Models</h2>
   <p>This key can use the following models:</p>
   <div class="table-responsive mb-3">
