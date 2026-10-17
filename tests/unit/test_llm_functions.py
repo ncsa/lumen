@@ -1,11 +1,15 @@
 """Additional LLM service tests: groups, endpoints, coin functions, stats."""
 import time
+import types
 from datetime import datetime, timezone
+from decimal import Decimal
 from http import HTTPStatus
 from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import func, select
+
+from lumen.services.llm import PoolLimit, best_group_pool_limit
 
 # Named test values — written as expressions so the static analyser
 # does not flag bare 3-digit literals on these definition lines.
@@ -370,6 +374,46 @@ def test_get_pool_limit_group_unlimited_when_no_user_limit(app, test_user, test_
         db.session.add(GroupLimit(group_id=g.id, max_coins=-2, refresh_coins=0, starting_coins=0))
         db.session.commit()
         assert get_pool_limit(entity_id) == (-2, 0, 0)
+
+
+# ---------------------------------------------------------------------------
+# best_group_pool_limit — pure selection over GroupLimit rows
+# ---------------------------------------------------------------------------
+
+def _gl(max_coins, refresh_coins=0, starting_coins=0):
+    """A GroupLimit-like row with the Decimal values the DB returns."""
+    return types.SimpleNamespace(max_coins=Decimal(max_coins), refresh_coins=Decimal(refresh_coins),
+                                 starting_coins=Decimal(starting_coins))
+
+
+def test_best_group_pool_limit_unlimited_normalizes_to_zero_refresh_and_starting():
+    """An unlimited (-2) row drops its own refresh/starting values."""
+    result = best_group_pool_limit([_gl(-2, refresh_coins=5, starting_coins=7)])
+    assert result == PoolLimit(-2, 0, 0)
+    assert result.refresh_coins == 0
+    assert result.starting_coins == 0
+
+
+def test_best_group_pool_limit_unlimited_wins_over_higher_finite():
+    result = best_group_pool_limit([_gl(_COIN_LIMIT_XL), _gl(0), _gl(-2, refresh_coins=5, starting_coins=7)])
+    assert result == PoolLimit(-2, 0, 0)
+
+
+def test_best_group_pool_limit_highest_max_coins_wins():
+    """The highest finite row wins with its own refresh/starting values; 0 rows are skipped."""
+    result = best_group_pool_limit([
+        _gl(_COIN_LIMIT, refresh_coins=1, starting_coins=2),
+        _gl(_COIN_LIMIT_XL, refresh_coins=3, starting_coins=4),
+        _gl(0),
+        _gl(_COIN_LIMIT_HI, refresh_coins=5, starting_coins=6),
+    ])
+    assert result == PoolLimit(float(_COIN_LIMIT_XL), 3.0, 4.0)
+    assert all(isinstance(v, float) for v in result)
+
+
+@pytest.mark.parametrize("rows", [[_gl(0), _gl(0)], []], ids=["all-zero", "empty"])
+def test_best_group_pool_limit_all_zero_returns_none(rows):
+    assert best_group_pool_limit(rows) is None
 
 
 # ---------------------------------------------------------------------------
