@@ -524,6 +524,128 @@ def test_rotate_key_requires_login(client):
 
 
 # ---------------------------------------------------------------------------
+# edit_key_ttl
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("cap, ttl", [
+    (30 * 86400, 7 * 86400),     # below the cap
+    (30 * 86400, 30 * 86400),    # at the cap
+    (0, 365 * 86400),            # no cap
+    (0, 0),                      # no cap: never allowed
+])
+def test_edit_key_ttl_counts_from_now(app, auth_client, test_user, restore_config, cap, ttl):
+    app.config["KEY_TTL"] = cap
+    # An old key close to expiry: the new expiry is counted from the edit, not created_at.
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "a" * 32, expires_at=utcnow() + timedelta(hours=1))
+    before = _key_snapshot(app, kid)
+
+    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": ttl})
+    assert resp.status_code == HTTPStatus.OK
+
+    after = _key_snapshot(app, kid)
+    expires_at = after.pop("expires_at")
+    before.pop("expires_at")
+    assert after == before  # nothing but the expiry changes
+    if ttl:
+        assert abs(expires_at - (utcnow() + timedelta(seconds=ttl))) < timedelta(minutes=1)
+        assert resp.get_json() == {"id": kid, "name": "rotating", "expires_at": expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    else:
+        assert expires_at is None
+        assert resp.get_json() == {"id": kid, "name": "rotating", "expires_at": None}
+
+
+@pytest.mark.parametrize("cap, payload", [
+    (30 * 86400, {"ttl": 30 * 86400 + 1}),  # above the cap
+    (30 * 86400, {"ttl": 0}),               # never while the cap is above 0
+    (30 * 86400, {"ttl": "86400"}),
+    (30 * 86400, {"ttl": True}),
+    (30 * 86400, {}),
+    (30 * 86400, {"ttl": None}),
+    (30 * 86400, [86400]),
+])
+def test_edit_key_ttl_invalid_returns_400(app, auth_client, test_user, restore_config, cap, payload):
+    app.config["KEY_TTL"] = cap
+    expires_at = utcnow() + timedelta(days=3)
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "b" * 32, expires_at=expires_at)
+    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json=payload)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert "ttl" in resp.get_json()["error"]
+    assert _key_snapshot(app, kid)["expires_at"] == expires_at
+
+
+def test_edit_key_ttl_checks_cap_at_edit_time(app, auth_client, test_user, restore_config):
+    app.config["KEY_TTL"] = 0
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "c" * 32)  # created under no cap: never expires
+    app.config["KEY_TTL"] = 7 * 86400
+    assert auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 30 * 86400}).status_code == HTTPStatus.BAD_REQUEST
+    assert auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 0}).status_code == HTTPStatus.BAD_REQUEST
+    assert _key_snapshot(app, kid)["expires_at"] is None
+
+
+def test_edit_key_ttl_overdue_key_returns_409_and_revokes(app, auth_client, test_user):
+    expires_at = utcnow() - timedelta(minutes=1)
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "d" * 32, expires_at=expires_at)
+    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert resp.get_json()["error"] == "Key is revoked"
+    after = _key_snapshot(app, kid)
+    assert (after["revoked_at"], after["revoked_by_entity_id"], after["expires_at"]) == (expires_at, None, expires_at)
+
+
+def test_edit_key_ttl_revoked_key_returns_409(app, auth_client, test_user):
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "e" * 32, revoked_at=datetime(2026, 9, 2, 8, 0))
+    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert _key_snapshot(app, kid)["expires_at"] is None
+
+
+def test_edit_key_ttl_concurrent_revoke_returns_409(app, auth_client, test_user, monkeypatch):
+    """A revoke that commits after the liveness check wins over the edit."""
+    from lumen.blueprints.profile import routes as profile_routes
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "f" * 32)
+    real_resolve = profile_routes.resolve_key_ttl
+
+    def resolve_then_revoke(requested):
+        db.session.execute(APIKey.__table__.update().where(APIKey.id == kid).values(revoked_at=utcnow()))
+        return real_resolve(requested)
+
+    monkeypatch.setattr(profile_routes, "resolve_key_ttl", resolve_then_revoke)
+    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert _key_snapshot(app, kid)["expires_at"] is None
+
+
+def test_edit_key_ttl_oauth_minted_key(app, auth_client, test_user):
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "g" * 32)
+    with app.app_context():
+        db.session.get(APIKey, kid).client_id = "opencode"
+        db.session.commit()
+    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.OK
+    assert _key_snapshot(app, kid)["expires_at"] is not None
+
+
+def test_edit_key_ttl_forbidden_for_other_user(app, auth_client, admin_user):
+    kid = _seed_key_with_usage(app, admin_user["id"], "sk_" + "h" * 32)
+    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert _key_snapshot(app, kid)["expires_at"] is None
+
+
+def test_edit_key_ttl_not_found(auth_client):
+    assert auth_client.post("/profile/keys/999999/ttl", json={"ttl": 86400}).status_code == HTTPStatus.NOT_FOUND
+
+
+def test_edit_key_ttl_requires_login(client):
+    resp = client.post("/profile/keys/1/ttl", json={"ttl": 86400}, follow_redirects=False)
+    assert resp.status_code == HTTPStatus.FOUND
+
+
+# ---------------------------------------------------------------------------
 # user_consent
 # ---------------------------------------------------------------------------
 

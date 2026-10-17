@@ -92,7 +92,7 @@ An API key is a secret token in the format `sk_...`. It identifies you to the AP
 - When there is a maximum, only choices up to it are shown. The maximum itself is always offered and is selected by default, and **Never** is not offered.
 - When there is no maximum (the default), every choice is offered and **Never** is selected by default.
 
-The expiry is fixed when the key is created; a later change to the maximum does not affect it. When a key expires it is revoked automatically and stops working, like a key you revoke yourself. Create a new key to replace it.
+The expiry is fixed when the key is created or its expiry is edited (see [Changing a Key's Expiry](#changing-a-keys-expiry)); a later change to the maximum does not affect it. When a key expires it is revoked automatically and stops working, like a key you revoke yourself. An expired key cannot be edited; create a new key to replace it.
 
 ### Viewing Your Keys
 
@@ -109,7 +109,16 @@ Keys requested through a CLI or web app via [OAuth](./oauth-clients.md) show tha
 | **Coins** | Total coins spent |
 | **Last Used** | Timestamp of the last API call |
 | **Expires** | When the key expires, in your local time, or **Never** |
-| **Actions** | Rotate and Revoke buttons for active keys |
+| **Actions** | Edit expiry, Rotate and Revoke buttons for active keys |
+
+### Changing a Key's Expiry
+
+Click **Edit expiry** on any active key, including keys requested through OAuth, to give it a new lifetime.
+
+1. Choose a new lifetime in **Expires after**. The choices follow the same maximum as [Key Expiry](#key-expiry), checked when you save.
+2. Click **Save**. The **Expires** column shows the new expiry.
+
+The new lifetime counts from now, not from when the key was created, so editing also renews the key. **Never** is only offered when there is no maximum. Revoked and expired keys cannot be edited.
 
 ### Rotating a Key
 

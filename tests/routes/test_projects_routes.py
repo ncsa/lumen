@@ -1409,6 +1409,159 @@ def test_rotate_project_key_requires_login(client, service_project):
 
 
 # ---------------------------------------------------------------------------
+# Edit a project key's TTL
+# ---------------------------------------------------------------------------
+
+def _project_key_expiry(app, kid):
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    with app.app_context():
+        key = db.session.get(APIKey, kid)
+        return key.expires_at, key.revoked_at, key.revoked_by_entity_id
+
+
+def _set_project_key_expiry(app, kid, expires_at):
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    with app.app_context():
+        db.session.get(APIKey, kid).expires_at = expires_at
+        db.session.commit()
+
+
+@pytest.mark.parametrize("cap, ttl", [
+    (30 * 86400, 7 * 86400),
+    (30 * 86400, 30 * 86400),
+    (0, 365 * 86400),
+    (0, 0),  # no cap: never allowed
+])
+def test_edit_project_key_ttl_counts_from_now(app, managed_auth_client, managed_project, test_user,
+                                              make_created_key, restore_config, cap, ttl):
+    app.config["KEY_TTL"] = cap
+    kid = make_created_key(managed_project["id"], test_user["id"], "sk_ttle00000000000000000dit1234567")
+    _set_project_key_expiry(app, kid, utcnow() + timedelta(hours=1))
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/ttl", json={"ttl": ttl})
+    assert resp.status_code == HTTPStatus.OK
+    expires_at, revoked_at, _ = _project_key_expiry(app, kid)
+    assert revoked_at is None
+    if ttl:
+        assert abs(expires_at - (utcnow() + timedelta(seconds=ttl))) < timedelta(minutes=1)
+        assert resp.get_json() == {"id": kid, "name": "rot-key", "expires_at": expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    else:
+        assert expires_at is None
+        assert resp.get_json() == {"id": kid, "name": "rot-key", "expires_at": None}
+
+
+@pytest.mark.parametrize("payload", [
+    {"ttl": 30 * 86400 + 1},  # above the cap
+    {"ttl": 0},               # never while the cap is above 0
+    {"ttl": -1},
+    {},
+])
+def test_edit_project_key_ttl_invalid_returns_400(app, managed_auth_client, managed_project, test_user,
+                                                  make_created_key, restore_config, payload):
+    app.config["KEY_TTL"] = 30 * 86400
+    kid = make_created_key(managed_project["id"], test_user["id"], "sk_ttlb00000000000000000adt1234567")
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/ttl", json=payload)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert _project_key_expiry(app, kid)[0] is None
+
+
+def test_edit_project_key_ttl_checks_cap_at_edit_time(app, managed_auth_client, managed_project, test_user,
+                                                      make_created_key, restore_config):
+    app.config["KEY_TTL"] = 0
+    kid = make_created_key(managed_project["id"], test_user["id"], "sk_ttlc00000000000000000ap01234567")
+    app.config["KEY_TTL"] = 7 * 86400
+    url = f"/projects/{managed_project['id']}/keys/{kid}/ttl"
+    assert managed_auth_client.post(url, json={"ttl": 30 * 86400}).status_code == HTTPStatus.BAD_REQUEST
+    assert managed_auth_client.post(url, json={"ttl": 0}).status_code == HTTPStatus.BAD_REQUEST
+    assert _project_key_expiry(app, kid)[0] is None
+
+
+def test_edit_project_key_ttl_concurrent_revoke_returns_409(app, managed_auth_client, managed_project, test_user,
+                                                            make_created_key, monkeypatch):
+    """A revoke that commits after the liveness check wins over the edit."""
+    from lumen.blueprints.profile import routes as profile_routes
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    kid = make_created_key(managed_project["id"], test_user["id"], "sk_ttlk00000000000000000rc01234567")
+    real_resolve = profile_routes.resolve_key_ttl
+
+    def resolve_then_revoke(requested):
+        db.session.execute(APIKey.__table__.update().where(APIKey.id == kid).values(revoked_at=utcnow()))
+        return real_resolve(requested)
+
+    monkeypatch.setattr(profile_routes, "resolve_key_ttl", resolve_then_revoke)
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert _project_key_expiry(app, kid)[0] is None
+
+
+def test_edit_project_key_ttl_overdue_returns_409_and_revokes(app, managed_auth_client, managed_project, test_user,
+                                                              make_created_key):
+    kid = make_created_key(managed_project["id"], test_user["id"], "sk_ttlo00000000000000000ver1234567")
+    expires_at = utcnow() - timedelta(minutes=1)
+    _set_project_key_expiry(app, kid, expires_at)
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert _project_key_expiry(app, kid) == (expires_at, expires_at, None)
+
+
+def test_edit_project_key_ttl_revoked_returns_409(app, managed_auth_client, managed_project, test_user,
+                                                  make_created_key):
+    kid = make_created_key(managed_project["id"], test_user["id"], "sk_ttlr00000000000000000evk1234567",
+                           revoked_at=datetime(2026, 9, 3, 8, 0))
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert _project_key_expiry(app, kid)[0] is None
+
+
+def test_edit_project_key_ttl_forbidden_for_other_manager(app, managed_auth_client, managed_project, second_user,
+                                                          make_created_key):
+    _add_manager(app, managed_project["id"], second_user["id"])
+    kid = make_created_key(managed_project["id"], second_user["id"], "sk_ttlm00000000000000000gr01234567")
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert _project_key_expiry(app, kid)[0] is None
+
+
+def test_edit_project_key_ttl_forbidden_for_owner(app, owner_auth_client, owned_project, second_user,
+                                                  make_created_key):
+    _add_manager(app, owned_project["id"], second_user["id"])
+    kid = make_created_key(owned_project["id"], second_user["id"], "sk_ttlw00000000000000000nr01234567")
+    resp = owner_auth_client.post(f"/projects/{owned_project['id']}/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_edit_project_key_ttl_forbidden_for_legacy_null_creator(managed_auth_client, managed_project,
+                                                                make_created_key):
+    kid = make_created_key(managed_project["id"], None, "sk_ttll00000000000000000eg01234567")
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_edit_project_key_ttl_forbidden_for_non_member(app, auth_client, service_project, second_user,
+                                                       make_created_key):
+    _add_manager(app, service_project["id"], second_user["id"])
+    kid = make_created_key(service_project["id"], second_user["id"], "sk_ttln00000000000000000on01234567")
+    resp = auth_client.post(f"/projects/{service_project['id']}/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_edit_project_key_ttl_from_other_project_returns_404(app, managed_auth_client, managed_project, test_user,
+                                                             make_created_key):
+    with app.app_context():
+        other_id = make_project("other-ttl", initials="OT").id
+    kid = make_created_key(other_id, test_user["id"], "sk_ttlx00000000000000000pr01234567")
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+def test_edit_project_key_ttl_requires_login(client, service_project):
+    resp = client.post(f"/projects/{service_project['id']}/keys/1/ttl", json={"ttl": 86400}, follow_redirects=False)
+    assert resp.status_code == HTTPStatus.FOUND
+
+
+# ---------------------------------------------------------------------------
 # Acknowledgement consent
 # ---------------------------------------------------------------------------
 

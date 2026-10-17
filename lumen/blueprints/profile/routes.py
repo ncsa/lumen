@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 
 from flask import Blueprint, abort, g, jsonify, redirect, render_template, request, session, url_for
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 
@@ -395,6 +395,36 @@ def rotate_key_secret(api_key: APIKey):
     return jsonify({"id": api_key.id, "name": api_key.name, "key": key}), HTTPStatus.OK
 
 
+def set_key_ttl(api_key: APIKey):
+    """Set api_key's expiry to now + the request's ``ttl`` (seconds; 0 = never). Commits.
+
+    A revoked or overdue key gets 409; a ttl not allowed under the api.keys.ttl
+    cap gets 400.
+    """
+    if api_key.revoked_at is not None or revoke_if_expired(api_key):
+        return jsonify({"error": "Key is revoked"}), HTTPStatus.CONFLICT
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or data.get("ttl") is None:
+        return jsonify({"error": "ttl is required"}), HTTPStatus.BAD_REQUEST
+    try:
+        expires_at = key_expires_at(resolve_key_ttl(data["ttl"]))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), HTTPStatus.BAD_REQUEST
+
+    # Guarded on revoked_at, so a concurrent revoke or the expirer wins.
+    updated = db.session.execute(
+        update(APIKey)
+        .where(APIKey.id == api_key.id, APIKey.revoked_at.is_(None))
+        .values(expires_at=expires_at)
+    ).rowcount
+    db.session.commit()
+    if not updated:
+        return jsonify({"error": "Key is revoked"}), HTTPStatus.CONFLICT
+    expires = expires_at.strftime("%Y-%m-%dT%H:%M:%SZ") if expires_at else None
+    return jsonify({"id": api_key.id, "name": api_key.name, "expires_at": expires}), HTTPStatus.OK
+
+
 @profile_bp.route("/profile/keys", methods=["POST"])
 @login_required
 def create_key():
@@ -456,6 +486,18 @@ def rotate_key(kid):
         return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
 
     return rotate_key_secret(api_key)
+
+
+@profile_bp.route("/profile/keys/<int:kid>/ttl", methods=["POST"])
+@login_required
+def edit_key_ttl(kid):
+    entity_id = session["entity_id"]
+    api_key = db.get_or_404(APIKey, kid)
+
+    if api_key.entity_id != entity_id:
+        return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
+
+    return set_key_ttl(api_key)
 
 
 def _purge_conversations(entity_id: int) -> int:

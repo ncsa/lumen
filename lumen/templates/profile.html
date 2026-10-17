@@ -346,6 +346,7 @@
 </div>
 
 {% include '_rotated_key_modal.html' %}
+{% include '_key_ttl_modal.html' %}
 
 <!-- Delete Conversations confirmation modal -->
 <div class="modal fade" id="purgeConversationsModal" tabindex="-1" aria-labelledby="purgeConversationsModal-title" aria-modal="true" role="dialog">
@@ -430,6 +431,7 @@
 <script src="{{ url_for('static', filename='js/ack-consent.js') }}"></script>
 {% if is_admin and profile_entity %}<script src="{{ url_for('static', filename='js/group-pills.js') }}"></script>{% endif %}
 {% if not viewing_user %}<script src="{{ url_for('static', filename='js/key-rotate.js') }}"></script>{% endif %}
+{% if not viewing_user %}<script src="{{ url_for('static', filename='js/key-ttl-edit.js') }}"></script>{% endif %}
 <script>
 const IS_ADMIN_VIEW = {{ (viewing_user is defined and viewing_user is not none) | tojson }};
 
@@ -629,7 +631,8 @@ function renderKeys() {
       const action = IS_ADMIN_VIEW
         ? (!k.revoked_at ? '' : revokedBadge(k))
         : (!k.revoked_at
-          ? `<button class="btn btn-sm btn-outline-secondary rotate-key-btn" data-id="${k.id}" data-name="${escHtml(k.name)}" aria-label="Rotate key ${escHtml(k.name)}">Rotate</button>
+          ? `<button class="btn btn-sm btn-outline-secondary ttl-key-btn" data-id="${k.id}" data-name="${escHtml(k.name)}" aria-label="Edit expiry of key ${escHtml(k.name)}">Edit expiry</button>
+             <button class="btn btn-sm btn-outline-secondary rotate-key-btn" data-id="${k.id}" data-name="${escHtml(k.name)}" aria-label="Rotate key ${escHtml(k.name)}">Rotate</button>
              <button class="btn btn-sm btn-outline-danger revoke-key-btn" data-id="${k.id}" aria-label="Revoke key ${escHtml(k.name)}">Revoke</button>`
           : revokedBadge(k));
       return `<tr${revokedClass}>
@@ -650,6 +653,12 @@ function renderKeys() {
         if (resp.ok) location.reload();
         else appAlert("Failed to revoke key.");
       });
+    });
+    keyTbody.querySelectorAll('.ttl-key-btn').forEach(btn => {
+      const id = Number(btn.dataset.id);
+      btn.addEventListener('click', () => editKeyTtl("/profile/keys/" + btn.dataset.id + "/ttl", btn.dataset.name,
+        data => { KEY_ROWS.find(k => k.id === id).expires_at = data.expires_at; renderKeys(); },
+        () => keyTbody.querySelector(`.ttl-key-btn[data-id="${id}"]`)));
     });
     keyTbody.querySelectorAll('.rotate-key-btn').forEach(btn => {
       btn.addEventListener('click', () => rotateApiKey("/profile/keys/" + btn.dataset.id + "/rotate", btn.dataset.name));
