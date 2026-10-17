@@ -36,6 +36,17 @@ def random_time(lo: datetime, hi: datetime) -> datetime:
     return lo + timedelta(seconds=random.random() * delta)
 
 
+def refresh_hourly_aggregate(engine, start: datetime, end: datetime) -> None:
+    """Materialise request_counts_hourly over [start, end) on its own AUTOCOMMIT connection."""
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        # START/NOW are naive UTC; psycopg 3 would send them as timestamp to the
+        # polymorphic window arguments, so cast to the aggregate's timestamptz.
+        conn.execute(db.text(
+            "CALL refresh_continuous_aggregate('request_counts_hourly', "
+            "CAST(:start AS timestamptz), CAST(:end AS timestamptz))"
+        ), {"start": start, "end": end})
+
+
 def seed():
     app = create_app()
     with app.app_context():
@@ -133,13 +144,7 @@ def seed():
         # Must run outside a transaction block (AUTOCOMMIT).                   #
         # ------------------------------------------------------------------ #
         print("Refreshing continuous aggregate...")
-        with db.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-            # START/NOW are naive UTC; psycopg 3 would send them as timestamp to the
-            # polymorphic window arguments, so cast to the aggregate's timestamptz.
-            conn.execute(db.text(
-                "CALL refresh_continuous_aggregate('request_counts_hourly', "
-                "CAST(:start AS timestamptz), CAST(:end AS timestamptz))"
-            ), {"start": START, "end": NOW + timedelta(hours=2)})
+        refresh_hourly_aggregate(db.engine, START, NOW + timedelta(hours=2))
         print("  done")
 
         print("\nSeeding complete.")
