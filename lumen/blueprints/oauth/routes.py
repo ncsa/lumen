@@ -33,7 +33,7 @@ from lumen.models.entity import Entity
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.services.crypto import hash_api_key
-from lumen.services.key_expiry import key_expires_at, resolve_key_ttl
+from lumen.services.key_expiry import key_expires_at, key_ttl_choices, resolve_key_ttl
 from lumen.services.llm import _consent_satisfied, bulk_model_access_info, model_notices
 from lumen.timeutils import utcnow
 
@@ -53,6 +53,7 @@ CLEANUP_GRACE = 300
 
 _LABEL_RE = re.compile(r"[A-Za-z0-9._-]{1,128}")
 _VERIFIER_RE = re.compile(r"[A-Za-z0-9_-]{43,128}")
+_TTL_RE = re.compile(r"[0-9]{1,10}")
 # Ambiguity-free alphabet: no I/O/0/1/L that users mistype from a terminal.
 _USER_CODE_ALPHABET = "BCDFGHJKMPQRTVWXY23456789"
 
@@ -72,6 +73,20 @@ def _normalize_user_code(raw: str) -> str:
     if len(compact) != 8:
         return ""
     return f"{compact[:4]}-{compact[4:]}"
+
+
+def _parse_ttl(raw: str | None) -> int | None:
+    """A key TTL in seconds from a request or form value; None when absent.
+
+    Raises ValueError when it is not a whole number of seconds or not allowed
+    under the api.keys.ttl cap (resolve_key_ttl).
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    if not _TTL_RE.fullmatch(raw):
+        raise ValueError("ttl must be a whole number of seconds, 0 or more")
+    return resolve_key_ttl(int(raw))
 
 
 def _oauth_error(error: str, description: str = "", status: HTTPStatus = HTTPStatus.BAD_REQUEST):
@@ -156,6 +171,10 @@ def device_authorization():
         return _oauth_error("invalid_request", "client_id and name are required, matching [A-Za-z0-9._-]{1,128}")
     if author and (len(author) > 128 or not re.fullmatch(r".{1,128}", author)):
         return _oauth_error("invalid_request", "author must be at most 128 characters")
+    try:
+        ttl = _parse_ttl(request.form.get("ttl"))
+    except ValueError as e:
+        return _oauth_error("invalid_request", str(e))
 
     device_code = secrets.token_urlsafe(32)
     req = None
@@ -165,6 +184,7 @@ def device_authorization():
             client_id=client_id,
             requested_name=name,
             author=author,
+            ttl=ttl,
             expires_at=utcnow() + timedelta(seconds=DEVICE_EXPIRY),
             device_code_hash=_token_hash(device_code),
             user_code=_gen_user_code(),
@@ -237,6 +257,7 @@ def authorize():
     state = request.args.get("state") or ""
     challenge = request.args.get("code_challenge") or ""
     method = request.args.get("code_challenge_method") or ""
+    ttl = None
 
     if request.args.get("response_type") != "code":
         error = "response_type must be 'code'"
@@ -254,6 +275,11 @@ def authorize():
         error = "code_challenge must be 43-128 unreserved characters"
     elif not state or len(state) > 512:
         error = "state is required (at most 512 characters)"
+    else:
+        try:
+            ttl = _parse_ttl(request.args.get("ttl"))
+        except ValueError as e:
+            error = str(e)
     if error:
         return _error_page("Invalid authorization request", error)
 
@@ -266,6 +292,7 @@ def authorize():
         client_id=client_id,
         requested_name=name,
         author=author,
+        ttl=ttl,
         expires_at=utcnow() + timedelta(seconds=AUTHORIZE_EXPIRY),
         redirect_uri=redirect_uri,
         code_challenge=challenge,
@@ -306,6 +333,13 @@ def consent():
         ).scalars().all()
         if existing and not overwrite:
             return _render_consent(req, error='Tick "Overwrite key" to replace your existing key.')
+        # The approver's choice from the dropdown, checked again here; a form
+        # without one keeps what the request asked for (or the cap).
+        try:
+            ttl = _parse_ttl(request.form.get("ttl"))
+            ttl = resolve_key_ttl(req.ttl if ttl is None else ttl)
+        except ValueError as e:
+            return _render_consent(req, error=f"Invalid expiry: {e}.")
 
         now = utcnow()
         extended = now + timedelta(seconds=CLAIM_WINDOW)
@@ -323,6 +357,7 @@ def consent():
                 status="approved",
                 entity_id=entity_id,
                 overwrite=overwrite,
+                ttl=ttl,
                 approved_at=now,
                 expires_at=case(
                     (AuthRequest.expires_at < extended, extended),
@@ -513,7 +548,8 @@ def _mint(req: AuthRequest):
         key_hint=f"{key[:7]}...{key[-4:]}",
         client_id=req.client_id,
         requested_by=req.author,
-        expires_at=key_expires_at(resolve_key_ttl()),
+        # The approved TTL counted from now; the cap for a row approved before ttl existed.
+        expires_at=key_expires_at(resolve_key_ttl() if req.ttl is None else req.ttl),
     )
     db.session.add(api_key)
     db.session.flush()
@@ -529,6 +565,7 @@ def _mint(req: AuthRequest):
         "access_token": key,
         "token_type": "Bearer",
         "approved_by": approver_email,
+        "expires_at": api_key.expires_at.strftime("%Y-%m-%dT%H:%M:%SZ") if api_key.expires_at else None,
     })), HTTPStatus.OK
 
 
@@ -605,6 +642,7 @@ def _render_consent(req: AuthRequest, error: str | None = None):
         req=req,
         error=error,
         existing_key=existing_key,
+        key_ttl_choices=key_ttl_choices(req.ttl),
         model_rows=_consent_model_rows(entity_id),
         destination_origin=origin,
         destination_uri=full_uri,

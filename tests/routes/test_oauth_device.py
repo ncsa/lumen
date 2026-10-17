@@ -299,3 +299,115 @@ def test_janitor_deletes_only_past_grace(app):
         assert cleanup_expired_auth_requests() == 1
         codes = {r.user_code for r in db.session.execute(select(AuthRequest)).scalars().all()}
         assert codes == {"CCCC-DDDD"}
+
+
+# ---------------------------------------------------------------------------
+# Key TTL requested with the device flow
+# ---------------------------------------------------------------------------
+
+def _approve_with_ttl(app, auth_client, user_code, ttl=None):
+    page = auth_client.get(f"/device?code={user_code}")
+    data = {"request_id": _request_row(app, user_code).id, "action": "approve"}
+    if ttl is not None:
+        data["ttl"] = ttl
+    return page, auth_client.post("/oauth/consent", data=data)
+
+
+def _minted_expires_at(app):
+    with app.app_context():
+        return db.session.execute(select(APIKey.expires_at)).scalar_one()
+
+
+def test_device_ttl_passed_through_and_counted_from_mint(client, auth_client, app, restore_config, monkeypatch):
+    app.config["KEY_TTL"] = 30 * 86400
+    resp = client.post("/oauth/device_authorization", data={
+        "client_id": "lumen-cli", "name": "opencode", "ttl": "7200",
+    })
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.get_json()
+    assert _request_row(app, body["user_code"]).ttl == 7200
+
+    page, approve = _approve_with_ttl(app, auth_client, body["user_code"], ttl="7200")
+    # The requested TTL is offered (even though it is not a preset) and pre-selected.
+    assert b'<option value="7200" selected>2 hours</option>' in page.data
+    assert approve.status_code == HTTPStatus.OK
+    assert b"Key approved" in approve.data
+
+    # Mint later than approval: the expiry counts from mint, not approval.
+    minted = utcnow().replace(microsecond=0) + timedelta(seconds=30)
+    monkeypatch.setattr("lumen.services.key_expiry.utcnow", lambda: minted)
+    token = _poll(client, body)
+    assert token.status_code == HTTPStatus.OK
+    expires_at = _minted_expires_at(app)
+    assert expires_at == minted + timedelta(seconds=7200)
+    assert token.get_json()["expires_at"] == expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@pytest.mark.parametrize("cap", [0, 86400])
+def test_device_ttl_defaults_to_cap(client, auth_client, app, restore_config, cap):
+    app.config["KEY_TTL"] = cap
+    body = _issue(client).get_json()
+    assert _request_row(app, body["user_code"]).ttl is None
+
+    page, approve = _approve_with_ttl(app, auth_client, body["user_code"])
+    selected = b'<option value="0" selected>Never</option>' if cap == 0 else b'<option value="86400" selected>1 day</option>'
+    assert selected in page.data
+    assert approve.status_code == HTTPStatus.OK
+    assert _request_row(app, body["user_code"]).ttl == cap
+
+    token = _poll(client, body).get_json()
+    expires_at = _minted_expires_at(app)
+    if cap:
+        assert abs(expires_at - (utcnow() + timedelta(seconds=cap))) < timedelta(minutes=1)
+        assert token["expires_at"] == expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    else:
+        assert expires_at is None
+        assert "expires_at" in token and token["expires_at"] is None
+
+
+@pytest.mark.parametrize("ttl", ["86401", "0", "-1", "1.5", "abc", "1d", "99999999999"])
+def test_device_ttl_rejected_above_cap_or_malformed(client, app, restore_config, ttl):
+    app.config["KEY_TTL"] = 86400
+    resp = client.post("/oauth/device_authorization", data={
+        "client_id": "lumen-cli", "name": "opencode", "ttl": ttl,
+    })
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json()["error"] == "invalid_request"
+    with app.app_context():
+        assert db.session.execute(select(AuthRequest)).first() is None
+
+
+@pytest.mark.parametrize("ttl", ["86401", "0", "abc", "-5"])
+def test_device_tampered_consent_ttl_rejected(client, auth_client, app, restore_config, ttl):
+    app.config["KEY_TTL"] = 86400
+    body = _issue(client).get_json()
+    _, approve = _approve_with_ttl(app, auth_client, body["user_code"], ttl=ttl)
+    assert approve.status_code == HTTPStatus.OK
+    assert b"Invalid expiry" in approve.data
+    assert b"Key approved" not in approve.data
+    assert _request_row(app, body["user_code"]).status == "pending"
+    assert _poll(client, body).get_json()["error"] == "authorization_pending"
+
+
+def test_device_approver_can_shorten_requested_ttl(client, auth_client, app, restore_config):
+    app.config["KEY_TTL"] = 30 * 86400
+    resp = client.post("/oauth/device_authorization", data={
+        "client_id": "lumen-cli", "name": "opencode", "ttl": str(30 * 86400),
+    })
+    body = resp.get_json()
+    _approve_with_ttl(app, auth_client, body["user_code"], ttl="86400")
+    _poll(client, body)
+    assert abs(_minted_expires_at(app) - (utcnow() + timedelta(days=1))) < timedelta(minutes=1)
+
+
+def test_device_requested_ttl_over_lowered_cap_needs_new_choice(client, auth_client, app, restore_config):
+    """A cap lowered after the request: the page falls back to the cap and a form without a ttl is refused."""
+    app.config["KEY_TTL"] = 30 * 86400
+    body = client.post("/oauth/device_authorization", data={
+        "client_id": "lumen-cli", "name": "opencode", "ttl": str(7 * 86400),
+    }).get_json()
+    app.config["KEY_TTL"] = 86400
+    page, approve = _approve_with_ttl(app, auth_client, body["user_code"])
+    assert b'<option value="86400" selected>1 day</option>' in page.data
+    assert b"Invalid expiry" in approve.data
+    assert _request_row(app, body["user_code"]).status == "pending"

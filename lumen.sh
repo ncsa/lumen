@@ -8,14 +8,18 @@ RC_BLOCK_END="# <<< lumen <<<"
 usage() {
   cat <<'EOF'
 usage: lumen.sh [-s SERVER] [-k|--keyname NAME] [--author LABEL]
-                [--client-id ID] [--opencode | --no-opencode] [--relogin]
-                [--no-aliases] [-h|--help]
+                [--client-id ID] [--ttl DURATION] [--opencode | --no-opencode]
+                [--relogin] [--no-aliases] [-h|--help]
 
   -s, --server URL     Lumen base URL (default: $LUMEN_BASE_URL or
                        https://lumen.ncsa.illinois.edu)
   -k, --keyname NAME   Name for the requested API key (default: opencode)
       --author LABEL   Label stored with the request (default: $USER)
       --client-id ID   client_id sent to Lumen (default: lumen-cli)
+      --ttl DURATION   Ask for a key that expires after DURATION: 0 (never)
+                       or a number of hours, days or weeks, e.g. 12h, 30d,
+                       8w (default: the server's maximum). Only used when a
+                       new key is requested; the approver can change it
       --opencode       Sync the model catalog into opencode.json (default)
       --no-opencode    Only authenticate and store the key
       --relogin        Request a new key even if one is stored; the newly
@@ -44,6 +48,7 @@ SERVER="${LUMEN_BASE_URL:-$DEFAULT_SERVER}"
 KEYNAME="opencode"
 AUTHOR="${USER:-$(id -un)}"
 CLIENT_ID="lumen-cli"
+TTL=""
 OPENCODE=1
 RELOGIN=0
 NO_ALIASES=0
@@ -54,6 +59,7 @@ while [[ $# -gt 0 ]]; do
     -k|--keyname)  KEYNAME="${2:?missing value for $1}"; shift 2 ;;
     --author)      AUTHOR="${2:?missing value for $1}"; shift 2 ;;
     --client-id)   CLIENT_ID="${2:?missing value for $1}"; shift 2 ;;
+    --ttl)         TTL="${2:?missing value for $1}"; shift 2 ;;
     --opencode)    OPENCODE=1; shift ;;
     --no-opencode) OPENCODE=0; shift ;;
     --relogin)     RELOGIN=1; shift ;;
@@ -62,6 +68,20 @@ while [[ $# -gt 0 ]]; do
     *) echo "unknown argument: $1" >&2; usage; exit 1 ;;
   esac
 done
+
+# --ttl in seconds, the unit the server takes. The digit limit keeps the
+# arithmetic far from overflow; the server enforces its own maximum.
+TTL_SECONDS=""
+if [[ -n "$TTL" ]]; then
+  [[ "$TTL" =~ ^(0|[1-9][0-9]{0,5}([hdw]))$ ]] \
+    || die "invalid --ttl: $(sanitize "$TTL") (use 0, or e.g. 12h, 30d, 8w)"
+  case "${BASH_REMATCH[2]}" in
+    h) TTL_SECONDS=$(( ${TTL%h} * 3600 )) ;;
+    d) TTL_SECONDS=$(( ${TTL%d} * 86400 )) ;;
+    w) TTL_SECONDS=$(( ${TTL%w} * 604800 )) ;;
+    *) TTL_SECONDS=0 ;;
+  esac
+fi
 
 SERVER="${SERVER%/}"
 command -v curl >/dev/null 2>&1 || die "curl is required"
@@ -231,8 +251,9 @@ MAX_RETRY_AFTER=60
 
 device_login() {
   local interval expires_in deadline approved_by
-  if ! http_post "$SERVER/oauth/device_authorization" \
-      "client_id=$CLIENT_ID" "name=$KEYNAME" "author=$AUTHOR"; then
+  local -a fields=("client_id=$CLIENT_ID" "name=$KEYNAME" "author=$AUTHOR")
+  [[ -z "$TTL_SECONDS" ]] || fields+=("ttl=$TTL_SECONDS")
+  if ! http_post "$SERVER/oauth/device_authorization" "${fields[@]}"; then
     die "cannot reach $SERVER"
   fi
   if [[ "$RESP_CODE" != "200" ]]; then
@@ -269,6 +290,14 @@ device_login() {
       [[ "$key" =~ $KEY_RE ]] || die "unexpected token response"
       approved_by=$(sanitize "$(jq -r '.approved_by // "an account"' <<<"$RESP_BODY")")
       echo "Approved by $approved_by."
+      # Older servers send no expires_at; null means the key never expires.
+      local expires
+      expires=$(sanitize "$(jq -r 'if has("expires_at") then (.expires_at // "never") else empty end' <<<"$RESP_BODY")")
+      if [[ "$expires" == never ]]; then
+        echo "The key never expires."
+      elif [[ -n "$expires" ]]; then
+        echo "The key expires at $expires."
+      fi
       store_key "$key"
       export LUMEN_API_KEY="$key"
       return 0
@@ -328,9 +357,15 @@ sync_models() {
   local config="${OPENCODE_CONFIG:-"$HOME/.config/opencode/opencode.json"}"
   [[ -f "$config" ]] || die "config not found: $config"
 
-  local models_json
-  if ! models_json=$(curl -fsS -H "Authorization: Bearer $LUMEN_API_KEY" "$SERVER/v1/models"); then
+  local models_json code
+  if ! models_json=$(curl -sS -H "Authorization: Bearer $LUMEN_API_KEY" -w $'\n%{http_code}' "$SERVER/v1/models"); then
     die "failed to fetch $SERVER/v1/models — check the key with: lumen.sh --relogin"
+  fi
+  code="${models_json##*$'\n'}"
+  models_json="${models_json%$'\n'*}"
+  [[ "$code" != "401" ]] || die "key expired or revoked — run lumen.sh --relogin"
+  if [[ "$code" != 2?? ]]; then
+    die "failed to fetch $SERVER/v1/models ($code) — check the key with: lumen.sh --relogin"
   fi
 
   local new_models model_count old_models added removed tmp
