@@ -338,6 +338,7 @@
 </div>
 
 {% include '_rotated_key_modal.html' %}
+{% include '_key_ttl_modal.html' %}
 
 {% if can_add_members %}
 <!-- Add Member Modal -->
@@ -423,6 +424,7 @@
 <script src="{{ url_for('static', filename='js/user-search.js') }}"></script>
 {% if can_acknowledge %}<script src="{{ url_for('static', filename='js/ack-consent.js') }}"></script>{% endif %}
 <script src="{{ url_for('static', filename='js/key-rotate.js') }}"></script>
+<script src="{{ url_for('static', filename='js/key-ttl-edit.js') }}"></script>
 <script>
 const PROJECT_ID = {{ project.id }};
 
@@ -533,7 +535,7 @@ function renderKeys() {
       const dt = fmtDate(k.last_used);
       const revokedClass = !k.revoked_at ? '' : ' class="table-secondary text-decoration-line-through text-muted"';
       const rotate = k.can_rotate
-        ? `<button class="btn btn-sm btn-outline-secondary rotate-key-btn" data-id="${k.id}" data-name="${escHtml(k.name)}" aria-label="Rotate key ${escHtml(k.name)}">Rotate</button> `
+        ? `<button class="btn btn-sm btn-outline-secondary ttl-key-btn" data-id="${k.id}" data-name="${escHtml(k.name)}" aria-label="Edit expiry of key ${escHtml(k.name)}">Edit expiry</button> <button class="btn btn-sm btn-outline-secondary rotate-key-btn" data-id="${k.id}" data-name="${escHtml(k.name)}" aria-label="Rotate key ${escHtml(k.name)}">Rotate</button> `
         : '';
       const action = !k.revoked_at
         ? `${rotate}<button class="btn btn-sm btn-outline-danger revoke-key-btn" data-id="${k.id}" aria-label="Revoke key ${escHtml(k.name)}">Revoke</button>`
@@ -557,6 +559,12 @@ function renderKeys() {
         if (resp.ok) location.reload();
         else appAlert("Failed to revoke key.");
       });
+    });
+    keyTbody.querySelectorAll('.ttl-key-btn').forEach(btn => {
+      const id = Number(btn.dataset.id);
+      btn.addEventListener('click', () => editKeyTtl("/projects/" + PROJECT_ID + "/keys/" + btn.dataset.id + "/ttl", btn.dataset.name,
+        data => { KEY_ROWS.find(k => k.id === id).expires_at = data.expires_at; renderKeys(); },
+        () => keyTbody.querySelector(`.ttl-key-btn[data-id="${id}"]`)));
     });
     keyTbody.querySelectorAll('.rotate-key-btn').forEach(btn => {
       btn.addEventListener('click', () => rotateApiKey("/projects/" + PROJECT_ID + "/keys/" + btn.dataset.id + "/rotate", btn.dataset.name));

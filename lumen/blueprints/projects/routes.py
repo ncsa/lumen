@@ -12,6 +12,7 @@ from lumen.blueprints.profile.routes import (
     _new_key_fields,
     _requested_key_expiry,
     rotate_key_secret,
+    set_key_ttl,
 )
 from lumen.decorators import admin_required, is_admin, login_required
 from lumen.extensions import db
@@ -320,7 +321,7 @@ def detail(sid):
         select(EntityLimit).filter_by(entity_id=sid)
     ).scalar_one_or_none()
 
-    # Only a key's creator may rotate it; pass ids, not creator ids, to the page.
+    # Only a key's creator may rotate it or edit its expiry; pass ids, not creator ids, to the page.
     rotatable_key_ids = {k.id for k in data["api_keys"] if k.created_by_entity_id == entity_id}
 
     return render_template(
@@ -761,6 +762,22 @@ def rotate_project_key(sid, kid):
         return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
 
     return rotate_key_secret(api_key)
+
+
+@projects_bp.route("/projects/<int:sid>/keys/<int:kid>/ttl", methods=["POST"])
+@login_required
+def edit_project_key_ttl(sid, kid):
+    entity_id = session["entity_id"]
+    _require_project_access(entity_id, sid)
+
+    api_key = db.get_or_404(APIKey, kid)
+    if api_key.entity_id != sid:
+        return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
+    # Same rule as rotation: only the key's creator may change its expiry.
+    if api_key.created_by_entity_id != entity_id:
+        return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
+
+    return set_key_ttl(api_key)
 
 
 @projects_bp.route("/projects/<int:sid>/consent/<path:model_name>", methods=["POST"])
