@@ -649,9 +649,15 @@ def check_aggregate_cmd():
 
     with db.engine.connect() as conn:
         failed = False
-        drop_after = _retention_drop_after(conn)
-        if drop_after is not None:
-            click.echo(f"Error: request_logs has a retention policy (drop_after = {drop_after}).\n"
+        # Match on the job's existence, not on its interval: a policy added with
+        # drop_created_before stores that key instead of drop_after.
+        retention = conn.execute(text(
+            "SELECT job_id, config::text FROM timescaledb_information.jobs "
+            "WHERE proc_name = 'policy_retention' AND hypertable_name = 'request_logs'"
+        )).first()
+        if retention is not None:
+            click.echo(f"Error: request_logs has a retention policy (job {retention[0]}, "
+                       f"config {retention[1]}).\n"
                        f"  request_logs must never be pruned. Remove it with\n"
                        f"  SELECT remove_retention_policy('request_logs');")
             failed = True

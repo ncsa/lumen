@@ -397,6 +397,68 @@ def test_check_aggregate_fails_when_request_logs_has_a_retention_policy(pg_url, 
     assert _retention_drop_after(recent_row) == "1 year 1 mon", "check-aggregate changed the policy"
 
 
+def _retention_jobs(engine):
+    with engine.connect() as conn:
+        return conn.execute(text(
+            "SELECT job_id, config::text FROM timescaledb_information.jobs "
+            "WHERE proc_name = 'policy_retention' AND hypertable_name = 'request_logs'"
+        )).all()
+
+
+def test_check_aggregate_fails_on_a_drop_created_before_retention_policy(pg_url, recent_row):
+    """A policy keyed on drop_created_before stores no drop_after, and must still fail."""
+    if not _aggregate_exists(recent_row, ENTITY_AGGREGATE):
+        pytest.skip(f"{ENTITY_AGGREGATE} migration is not on disk yet")
+
+    backfill = _run(pg_url, "backfill-aggregate", "--from", _months_ago(1))
+    assert backfill.returncode == 0, backfill.stdout + backfill.stderr
+    with _autocommit(recent_row) as conn:
+        conn.execute(text(
+            "SELECT add_retention_policy('request_logs', drop_created_before => INTERVAL '13 months')"
+        ))
+    before = _retention_jobs(recent_row)
+    assert len(before) == 1 and _retention_drop_after(recent_row) is None, \
+        "the policy must lack drop_after here or this test proves nothing"
+
+    result = _run(pg_url, "check-aggregate")
+    output = result.stdout + result.stderr
+    assert result.returncode == 1, output
+    assert "request_logs has a retention policy" in result.stdout, output
+    assert "drop_created_before" in result.stdout, output
+    assert "SELECT remove_retention_policy('request_logs');" in result.stdout, output
+    assert _retention_jobs(recent_row) == before, "check-aggregate changed the policy"
+
+
+def test_check_aggregate_fails_when_the_aggregate_does_not_exist(pg_url, lifecycle_db):
+    """The state before 'flask db upgrade' has created the aggregate.
+
+    Reproduced by renaming the aggregate out of the way, which removes it from
+    timescaledb_information.continuous_aggregates under its own name, and renaming it
+    back afterwards whatever the outcome.
+    """
+    if not _aggregate_exists(lifecycle_db, ENTITY_AGGREGATE):
+        pytest.skip(f"{ENTITY_AGGREGATE} migration is not on disk yet")
+
+    hidden = f"{ENTITY_AGGREGATE}_hidden"
+    jobs = _job_count(lifecycle_db)
+    with _autocommit(lifecycle_db) as conn:
+        conn.execute(text(f'ALTER MATERIALIZED VIEW "{ENTITY_AGGREGATE}" RENAME TO "{hidden}"'))
+    try:
+        assert not _aggregate_exists(lifecycle_db, ENTITY_AGGREGATE), \
+            "the aggregate must be absent here or this test proves nothing"
+        result = _run(pg_url, "check-aggregate")
+    finally:
+        with _autocommit(lifecycle_db) as conn:
+            conn.execute(text(f'ALTER MATERIALIZED VIEW "{hidden}" RENAME TO "{ENTITY_AGGREGATE}"'))
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 1, output
+    assert f"'{ENTITY_AGGREGATE}' does not exist" in result.stdout, output
+    assert "flask db upgrade" in result.stdout, output
+    assert _job_count(lifecycle_db) == jobs, "check-aggregate added a job"
+    assert _retention_drop_after(lifecycle_db) is None
+
+
 def test_enable_retention_is_gone(pg_url, lifecycle_db):
     help_ = _run(pg_url, "--help")
     assert "enable-retention" not in help_.stdout, help_.stdout
