@@ -35,10 +35,11 @@ def monitor_token(app):
     app.config["YAML_DATA"].pop("api", None)
 
 
-def _log(model_id, ago, source="api"):
+def _log(model_id, ago, source="api", input_tokens=0, output_tokens=0):
     from lumen.extensions import db
     from lumen.models.request_log import RequestLog
-    db.session.add(RequestLog(time=NOW - ago, model_config_id=model_id, source=source))
+    db.session.add(RequestLog(time=NOW - ago, model_config_id=model_id, source=source,
+                              input_tokens=input_tokens, output_tokens=output_tokens))
 
 
 @pytest.fixture
@@ -67,15 +68,20 @@ def seeded(app, test_model, test_model_endpoint):
     }
 
 
+def _requests(result):
+    """The request counts out of ``rates()``; token sums are covered in test_api_auth."""
+    return {model_id: metrics["requests"] for model_id, metrics in result.items()}
+
+
 def test_rates_all_models(app, seeded):
     with app.app_context():
-        result = request_rates.rates()
+        result = _requests(request_rates.rates())
     assert result == {seeded["a"]: seeded["expected_a"], seeded["b"]: seeded["expected_b"]}
 
 
 def test_rates_one_model(app, seeded):
     with app.app_context():
-        assert request_rates.rates(seeded["b"]) == {seeded["b"]: seeded["expected_b"]}
+        assert _requests(request_rates.rates(seeded["b"])) == {seeded["b"]: seeded["expected_b"]}
 
 
 def test_last_minute_is_the_previous_whole_minute(app, test_model):
@@ -88,7 +94,7 @@ def test_last_minute_is_the_previous_whole_minute(app, test_model):
         _log(test_model["id"], NOW - minute + timedelta(minutes=1))            # 11:59:00
         _log(test_model["id"], NOW - minute + timedelta(minutes=1, seconds=1))  # 11:58:59
         db.session.commit()
-        result = request_rates.rates(test_model["id"])[test_model["id"]]
+        result = request_rates.rates(test_model["id"])[test_model["id"]]["requests"]
     assert result == {"last_minute": 2, "last_hour": 4, "last_day": 4}
 
 
@@ -100,8 +106,28 @@ def test_rows_after_the_current_minute_are_not_counted(app, test_model):
         _log(test_model["id"], timedelta(seconds=-45))   # 12:01:00, next minute
         _log(test_model["id"], timedelta(minutes=-30))
         db.session.commit()
-        result = request_rates.rates(test_model["id"])[test_model["id"]]
+        result = request_rates.rates(test_model["id"])[test_model["id"]]["requests"]
     assert result == {"last_minute": 0, "last_hour": 1, "last_day": 1}
+
+
+def test_token_sums_share_the_request_windows(app, test_model):
+    """Token sums use the same whole-minute edges as the request count."""
+    with app.app_context():
+        from lumen.extensions import db
+        _log(test_model["id"], timedelta(seconds=30), input_tokens=1, output_tokens=2)       # previous minute
+        _log(test_model["id"], timedelta(seconds=5), input_tokens=10, output_tokens=20)      # current minute
+        _log(test_model["id"], timedelta(minutes=30), input_tokens=100, output_tokens=200)
+        _log(test_model["id"], timedelta(hours=5), input_tokens=1000, output_tokens=2000)
+        _log(test_model["id"], timedelta(days=2), input_tokens=10000, output_tokens=20000)
+        _log(test_model["id"], timedelta(seconds=-45), input_tokens=7, output_tokens=7)     # next minute
+        db.session.commit()
+        result = request_rates.rates(test_model["id"])[test_model["id"]]
+    assert result == {
+        "requests": {"last_minute": 1, "last_hour": 3, "last_day": 4},
+        "input_tokens": {"last_minute": 1, "last_hour": 111, "last_day": 1111},
+        "output_tokens": {"last_minute": 2, "last_hour": 222, "last_day": 2222},
+    }
+    assert all(type(v) is int for metric in result.values() for v in metric.values())
 
 
 def test_v1_models_reports_rates(client, monitor_token, seeded, test_model):

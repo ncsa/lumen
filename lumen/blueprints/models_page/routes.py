@@ -72,7 +72,7 @@ def detail(model_name):
     else:
         status = "ok"
 
-    counts = request_rates.rates(config.id).get(config.id, {})
+    counts = request_rates.rates(config.id).get(config.id, {}).get("requests", {})
     requests_last_hour = counts.get("last_hour", 0)
     requests_last_day = counts.get("last_day", 0)
 

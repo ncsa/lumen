@@ -5,7 +5,8 @@ rows; on PostgreSQL they now sum the real-time one-minute aggregate. Proven
 here:
 
 1. Rows for one model split across two ``source`` values are summed, and the
-   windows land on the same whole-minute edges the SQLite path uses.
+   windows land on the same whole-minute edges the SQLite path uses, for the
+   request count and the input and output token sums alike.
 2. A row in the current minute shows in ``last_hour``/``last_day`` with no
    refresh — it is above the watermark, so only real-time aggregation sees it —
    and not in ``last_minute``, which is the previous whole minute only.
@@ -103,10 +104,11 @@ def pinned_clock(monkeypatch, now):
     monkeypatch.setitem(api_routes._rates_cache, "expires_at", 0.0)
 
 
-def _log(model_id, when, source):
+def _log(model_id, when, source, input_tokens=0, output_tokens=0):
     from lumen.extensions import db
     from lumen.models.request_log import RequestLog
-    db.session.add(RequestLog(time=when, model_config_id=model_id, source=source))
+    db.session.add(RequestLog(time=when, model_config_id=model_id, source=source,
+                              input_tokens=input_tokens, output_tokens=output_tokens))
 
 
 @pytest.fixture(scope="module")
@@ -127,17 +129,17 @@ def seeded(pg_app, now):
         user = Entity(entity_type="user", email="rates@example.com", name="Rates", initials="RA", active=True)
         db.session.add_all([a, b, user])
         db.session.flush()
-        for when, source in [
-            (previous_minute, "api"),
-            (previous_minute, "chat"),
-            (now - timedelta(minutes=30), "api"),
-            (now - timedelta(minutes=30), "chat"),
-            (now - timedelta(minutes=30), "chat"),
-            (now - timedelta(hours=5), "api"),
-            (now - timedelta(days=2), "chat"),
+        for when, source, input_tokens, output_tokens in [
+            (previous_minute, "api", 1, 2),
+            (previous_minute, "chat", 10, 20),
+            (now - timedelta(minutes=30), "api", 100, 200),
+            (now - timedelta(minutes=30), "chat", 1000, 2000),
+            (now - timedelta(minutes=30), "chat", 1000, 2000),
+            (now - timedelta(hours=5), "api", 10000, 20000),
+            (now - timedelta(days=2), "chat", 100000, 200000),
         ]:
-            _log(a.id, when, source)
-        _log(b.id, now - timedelta(minutes=30), "api")
+            _log(a.id, when, source, input_tokens, output_tokens)
+        _log(b.id, now - timedelta(minutes=30), "api", 5, 6)
         _log(None, previous_minute, "api")
         db.session.commit()
         return {"a": a.id, "b": b.id, "user": user.id}
@@ -149,13 +151,31 @@ def _rates(pg_app, model_config_id=None):
         return request_rates.rates(model_config_id)
 
 
+def _windows(minute, hour, day):
+    return {"last_minute": minute, "last_hour": hour, "last_day": day}
+
+
+B_RATES = {
+    "requests": _windows(0, 1, 1),
+    "input_tokens": _windows(0, 5, 5),
+    "output_tokens": _windows(0, 6, 6),
+}
+
+
 @pytest.mark.postgres
 def test_rates_sum_sources_and_honour_the_windows(pg_app, seeded):
-    assert _rates(pg_app) == {
-        seeded["a"]: {"last_minute": 2, "last_hour": 5, "last_day": 6},
-        seeded["b"]: {"last_minute": 0, "last_hour": 1, "last_day": 1},
+    result = _rates(pg_app)
+    assert result == {
+        seeded["a"]: {
+            "requests": _windows(2, 5, 6),
+            "input_tokens": _windows(11, 2111, 12111),
+            "output_tokens": _windows(22, 4222, 24222),
+        },
+        seeded["b"]: B_RATES,
     }
-    assert _rates(pg_app, seeded["b"]) == {seeded["b"]: {"last_minute": 0, "last_hour": 1, "last_day": 1}}
+    # The aggregate's sums are numeric; the reader hands back plain ints.
+    assert all(type(v) is int for m in result.values() for w in m.values() for v in w.values())
+    assert _rates(pg_app, seeded["b"]) == {seeded["b"]: B_RATES}
 
 
 @pytest.mark.postgres
@@ -168,10 +188,14 @@ def test_current_minute_counts_without_a_refresh_and_survives_one(pg_app, pg_mig
     _refresh(pg_migrated)
     with pg_app.app_context():
         from lumen.extensions import db
-        _log(seeded["a"], now, "api")
+        _log(seeded["a"], now, "api", 7, 9)
         db.session.commit()
 
-    expected = {"last_minute": 2, "last_hour": 6, "last_day": 7}
+    expected = {
+        "requests": _windows(2, 6, 7),
+        "input_tokens": _windows(11, 2118, 12118),
+        "output_tokens": _windows(22, 4231, 24231),
+    }
     assert _rates(pg_app, seeded["a"]) == {seeded["a"]: expected}
 
     _refresh(pg_migrated)

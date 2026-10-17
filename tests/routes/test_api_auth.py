@@ -1,4 +1,5 @@
 """Tests for the /v1 API key authentication decorator (api_key_required)."""
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 
 import pytest
@@ -190,6 +191,118 @@ def test_get_model_unknown_returns_404(client, api_key):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+# ---------------------------------------------------------------------------
+# Per-model request and token counts
+# ---------------------------------------------------------------------------
+
+# 15 seconds into a minute, so a row 30 seconds old sits in the previous whole
+# minute, which is what last_minute counts, and a row 5 seconds old sits in the
+# current partial minute, which counts in last_hour and last_day only.
+RATES_NOW = datetime(2026, 10, 20, 12, 0, 15, tzinfo=timezone.utc)
+
+
+def _clear_rates_cache():
+    from lumen.blueprints.api.routes import _rates_cache
+    _rates_cache["data"] = {}
+    _rates_cache["expires_at"] = 0.0
+
+
+def _add_log(model_id, ago, input_tokens, output_tokens, **extra):
+    from lumen.extensions import db
+    from lumen.models.request_log import RequestLog
+    db.session.add(RequestLog(
+        time=RATES_NOW - ago, source="api", model_config_id=model_id,
+        input_tokens=input_tokens, output_tokens=output_tokens, **extra,
+    ))
+    db.session.commit()
+
+
+def _windows(minute, hour, day):
+    return {"last_minute": minute, "last_hour": hour, "last_day": day}
+
+
+@pytest.fixture
+def seeded_rates(app, test_user, test_model, monkeypatch):
+    """Seed request logs for test_model across the windows; return expected counts."""
+    from lumen.services import request_rates
+    monkeypatch.setattr(request_rates, "_now", lambda: RATES_NOW)
+    _clear_rates_cache()
+    with app.app_context():
+        _grant_unlimited_pool(app, test_user["id"])
+        _add_log(test_model["id"], timedelta(seconds=30), 1, 2)
+        # Audio rows carry no tokens but still count as requests.
+        _add_log(test_model["id"], timedelta(seconds=30), 0, 0, audio_seconds=12)
+        _add_log(test_model["id"], timedelta(seconds=5), 5, 7)
+        # Aborted rows count with their (estimated) tokens.
+        _add_log(test_model["id"], timedelta(minutes=30), 10, 20, aborted=True)
+        _add_log(test_model["id"], timedelta(hours=12), 100, 200)
+        _add_log(test_model["id"], timedelta(hours=40), 1000, 2000)
+    yield {
+        "requests": _windows(2, 4, 5),
+        "input_tokens": _windows(1, 16, 116),
+        "output_tokens": _windows(2, 29, 229),
+    }
+    _clear_rates_cache()
+
+
+def _rate_fields(d):
+    return {k: d[k] for k in ("requests", "input_tokens", "output_tokens")}
+
+
+def test_list_models_reports_request_and_token_counts(client, test_model, api_key, seeded_rates):
+    token, _ = api_key
+    resp = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == HTTPStatus.OK
+    assert _rate_fields(_find(resp.get_json()["data"], test_model["model_name"])) == seeded_rates
+
+
+def test_get_model_reports_request_and_token_counts(client, test_model, api_key, seeded_rates):
+    token, _ = api_key
+    resp = client.get(f"/v1/models/{test_model['model_name']}", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == HTTPStatus.OK
+    assert _rate_fields(resp.get_json()) == seeded_rates
+
+
+def test_model_without_traffic_reports_zero_counts(app, client, api_key, seeded_rates):
+    token, _ = api_key
+    with app.app_context():
+        _add_model("idle-model")
+    zeros = {k: _windows(0, 0, 0) for k in ("requests", "input_tokens", "output_tokens")}
+    resp = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"})
+    assert _rate_fields(_find(resp.get_json()["data"], "idle-model")) == zeros
+    resp = client.get("/v1/models/idle-model", headers={"Authorization": f"Bearer {token}"})
+    assert _rate_fields(resp.get_json()) == zeros
+
+
+def test_alias_reports_canonical_model_counts(app, client, test_model, api_key, seeded_rates):
+    alias = "test-model-alias"
+    token, _ = api_key
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_alias import ModelAlias
+        db.session.add(ModelAlias(alias=alias, model_config_id=test_model["id"]))
+        db.session.commit()
+    resp = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"})
+    assert _rate_fields(_find(resp.get_json()["data"], alias)) == seeded_rates
+    resp = client.get(f"/v1/models/{alias}", headers={"Authorization": f"Bearer {token}"})
+    assert _rate_fields(resp.get_json()) == seeded_rates
+
+
+def test_model_counts_are_cached(app, client, test_model, api_key, seeded_rates):
+    token, _ = api_key
+    url = f"/v1/models/{test_model['model_name']}"
+    headers = {"Authorization": f"Bearer {token}"}
+    assert _rate_fields(client.get(url, headers=headers).get_json()) == seeded_rates
+    with app.app_context():
+        _add_log(test_model["id"], timedelta(minutes=5), 3, 4)
+    assert _rate_fields(client.get(url, headers=headers).get_json()) == seeded_rates
+    _clear_rates_cache()
+    body = client.get(url, headers=headers).get_json()
+    assert body["requests"]["last_hour"] == 5
+    assert body["input_tokens"]["last_hour"] == 19
+    assert body["output_tokens"]["last_hour"] == 33
 
 
 # ---------------------------------------------------------------------------

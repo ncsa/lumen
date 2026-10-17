@@ -171,8 +171,13 @@ def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int
     )
 
 
-def _get_request_rates() -> dict:
-    """Return {model_config_id: {last_minute, last_hour, last_day}}, cached 30s per worker."""
+def _get_model_rates() -> dict:
+    """Return per-model request and token counts for the last minute, hour and day.
+
+    Shape: {model_config_id: {"requests": {...}, "input_tokens": {...},
+    "output_tokens": {...}}}, each holding last_minute, last_hour and last_day.
+    Cached 30s per worker.
+    """
     now = _time.monotonic()
     if now < _rates_cache["expires_at"]:
         return _rates_cache["data"]
@@ -209,6 +214,7 @@ def _model_dict(c, rates: dict, eps: list, ack_fields=None) -> dict:
     token, which has no entity and sees no consent state.
     """
     zero = {"last_minute": 0, "last_hour": 0, "last_day": 0}
+    model_rates = rates.get(c.id, {})
     healthy_count = sum(1 for e in eps if e.healthy)
     if not eps or healthy_count == 0:
         status = "down"
@@ -237,7 +243,9 @@ def _model_dict(c, rates: dict, eps: list, ack_fields=None) -> dict:
             "configured": len(eps),
             "healthy": healthy_count,
         },
-        "requests": rates.get(c.id, zero),
+        "requests": model_rates.get("requests", zero),
+        "input_tokens": model_rates.get("input_tokens", zero),
+        "output_tokens": model_rates.get("output_tokens", zero),
     }
 
     # Capability fields — omitted when null so clients can detect "unknown" vs "false"
@@ -381,7 +389,7 @@ def list_models():
         select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_([c.id for c in configs]), ModelEndpoint.active.is_(True))
     ).scalars().all():
         eps_by_model.setdefault(ep.model_config_id, []).append(ep)
-    rates = _get_request_rates()
+    rates = _get_model_rates()
     if g.monitor:
         # The monitor token has no entity: it sees every active model, with no
         # consent state attached.
@@ -441,7 +449,7 @@ def get_model(model_id):
     eps = db.session.execute(
         select(ModelEndpoint).where(ModelEndpoint.model_config_id == config.id, ModelEndpoint.active.is_(True))
     ).scalars().all()
-    rates = _get_request_rates()
+    rates = _get_model_rates()
     ack = None
     if not g.monitor:
         row = db.session.execute(select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=config.id)).scalar_one_or_none()
