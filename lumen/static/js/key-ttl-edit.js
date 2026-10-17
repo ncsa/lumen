@@ -30,17 +30,24 @@ document.addEventListener("DOMContentLoaded", () => {
     // response that lands after the close still updates the row.
     const edit = keyTtlEdit;
     const stillOpen = () => keyTtlEdit === edit;
+    const fail = msg => { if (stillOpen()) error.textContent = msg; else appAlert(msg); };
     saveBtn.disabled = true;
     try {
-      const resp = await fetch(edit.ttlUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
-        body: JSON.stringify({ ttl: parseInt(select.value, 10) }),
-      });
+      let resp;
+      try {
+        resp = await fetch(edit.ttlUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
+          body: JSON.stringify({ ttl: parseInt(select.value, 10) }),
+        });
+      } catch {
+        // No response (offline, dropped connection): the save may or may not have happened.
+        fail("Error: Could not reach the server, so the key's expiry may not have changed. Reload the page to check.");
+        return;
+      }
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        const msg = "Error: " + (data.error || "Failed to change the key's expiry.");
-        if (stillOpen()) error.textContent = msg; else appAlert(msg);
+        fail("Error: " + (data.error || "Failed to change the key's expiry."));
         return;
       }
       edit.onSaved(data);

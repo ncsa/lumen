@@ -258,3 +258,58 @@ def test_edit_expiry_closed_while_saving_still_updates_row(app, restore_config, 
     assert errors == []
     assert _row_cells(page, "live-key")[expires_idx] != before
     assert _focused_ttl_button_id(page) == str(kid)
+
+
+def test_edit_expiry_transport_error_shows_feedback(app, restore_config, open_page, key_page):
+    """A save whose request never gets a response tells the user and re-enables Save."""
+    path, _, _ = key_page
+    page, _ = open_page(path)
+    with app.app_context():
+        kid = db.session.execute(select(APIKey.id).filter_by(name="live-key")).scalar_one()
+    page.route("**/ttl", lambda route, request: route.abort("internetdisconnected"))
+    errors = []
+    page.on("pageerror", lambda e: errors.append(e))
+
+    page.locator(f".ttl-key-btn[data-id='{kid}']").click()
+    page.wait_for_selector("#keyTtlModal.show")
+    page.click("#key-ttl-save-btn")
+    page.wait_for_function("document.getElementById('key-ttl-error').textContent !== ''")
+    assert "Could not reach the server" in page.inner_text("#key-ttl-error")
+    assert page.locator("#keyTtlModal.show").count() == 1
+    assert page.is_enabled("#key-ttl-save-btn")
+    assert errors == []
+
+
+@pytest.mark.parametrize("failure", ["http", "transport"])
+def test_edit_expiry_error_after_close_alerts(app, restore_config, open_page, key_page, failure):
+    """A save that fails after its dialog was closed reports through the page's alert dialog."""
+    path, _, expires_idx = key_page
+    page, _ = open_page(path)
+    with app.app_context():
+        key = db.session.execute(select(APIKey).filter_by(name="live-key")).scalar_one()
+        kid = key.id
+    held = []
+    page.route("**/ttl", lambda route, request: held.append(route))
+
+    before = _row_cells(page, "live-key")[expires_idx]
+    page.locator(f".ttl-key-btn[data-id='{kid}']").click()
+    page.wait_for_selector("#keyTtlModal.show")
+    page.click("#key-ttl-save-btn")
+    page.wait_for_function("document.getElementById('key-ttl-save-btn').disabled")
+    page.keyboard.press("Escape")
+    page.wait_for_selector("#keyTtlModal", state="hidden")
+    if failure == "http":
+        with app.app_context():
+            db.session.get(APIKey, kid).revoked_at = utcnow()  # revoked meanwhile: the server answers 409
+            db.session.commit()
+        held[0].fallback()
+        expected = "Error: Key is revoked"
+    else:
+        held[0].abort("connectionreset")
+        expected = "Could not reach the server"
+
+    page.wait_for_function("!document.getElementById('key-ttl-save-btn').disabled")
+    page.wait_for_selector(".modal.show")
+    assert expected in page.locator(".modal.show .modal-body").inner_text()
+    assert page.inner_text("#key-ttl-error") == ""
+    assert _row_cells(page, "live-key")[expires_idx] == before
