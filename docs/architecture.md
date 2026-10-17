@@ -438,7 +438,7 @@ The lumen container runs `entrypoint.sh`:
 
 - **Uvicorn workers:** `--workers N` for multi-process throughput; `SERVER_IS_MAIN_WORKER` ensures background threads run only once
 - **Rate limiting:** Switch `rate_limiting.storage_url` to a Redis URI for distributed per-user state across workers
-- **Database:** Configure `app.db_pool` (pool_size, max_overflow, pool_timeout, pool_recycle, pool_pre_ping) for connection-pool tuning; TimescaleDB compression + data retention policies on `request_logs`
+- **Database:** Configure `app.db_pool` (pool_size, max_overflow, pool_timeout, pool_recycle, pool_pre_ping) for connection-pool tuning; TimescaleDB compression on `request_logs`, which is never pruned
 - **Kubernetes:** PostgreSQL StatefulSet, Lumen Deployment with `config.yaml` ConfigMap, optional Redis Deployment; Helm chart in `chart/`
 
 ### Build-time Metadata
@@ -572,7 +572,7 @@ Footer content is driven by optional `theme.yaml` keys that each theme's `templa
 | Decision | Rationale |
 |---|---|
 | Flask + SQLAlchemy 2.x (synchronous) | Simplicity; most latency is in LLM I/O (seconds), not request setup (ms). Synchronous code is easier to reason about for correctness. The tradeoff is thread-per-connection worker exhaustion at high concurrency. |
-| TimescaleDB hypertable for `request_logs` | Time-series partitioning enables fast time-range analytics and retention policies without schema changes. Falls back to a plain PostgreSQL table on SQLite. |
+| TimescaleDB hypertable for `request_logs` | Time-series partitioning enables fast time-range analytics and compression without schema changes. Falls back to a plain PostgreSQL table on SQLite. |
 | Coin economy abstraction | Decouples billing model from raw token counts; allows group-level budgets and refresh rates without exposing per-user pricing details to end users. |
 | Ownership-based model access (no owner = public; owned = owner only) | One simple, DB-managed rule replaces the old six-tier allow/block precedence chain. Public models need zero configuration; restricting a model is a single owner assignment, edited on the model detail page rather than in `config.yaml`. |
 | `config.yaml` as single source of truth with hot-reload | Operators can add/update models and groups without restarting the service; GitOps-friendly (config in a repo, applied automatically). |

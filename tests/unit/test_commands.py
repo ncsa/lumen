@@ -6,7 +6,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from lumen.commands import __file__ as commands_file
-from lumen.commands import backfill_aggregate_cmd, enable_retention_cmd, sync_models_from_yaml
+from lumen.commands import backfill_aggregate_cmd, check_aggregate_cmd, sync_models_from_yaml
 
 
 def test_sync_models_creates_model_config(app):
@@ -286,8 +286,8 @@ def test_backfill_aggregate_is_a_clean_noop_on_sqlite(app):
     assert "sqlite" in result.output
 
 
-def test_enable_retention_is_a_clean_noop_on_sqlite(app):
-    result = app.test_cli_runner().invoke(enable_retention_cmd, [])
+def test_check_aggregate_is_a_clean_noop_on_sqlite(app):
+    result = app.test_cli_runner().invoke(check_aggregate_cmd, [])
     assert result.exit_code == 0, result.output
     assert "requires PostgreSQL/TimescaleDB" in result.output
     assert "sqlite" in result.output

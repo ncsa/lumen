@@ -10,9 +10,9 @@ which is exactly the failure these tests exist to catch — so they invoke
 ``uv run flask ...`` the same way ``tests/integration/conftest.py`` invokes
 ``flask db upgrade``.
 
-These commands mutate state that is global to the database — they add and remove
-retention policies and they move every aggregate's watermark — so this module runs
-against ``pg_migrated_isolated`` rather than the shared ``pg_migrated``.
+These commands mutate state that is global to the database — they move every
+aggregate's watermark, and some tests add a retention policy by hand — so this
+module runs against ``pg_migrated_isolated`` rather than the shared ``pg_migrated``.
 
 ``request_counts_hourly_by_entity`` is created by a migration owned by another
 change; the tests that need it skip cleanly while it is absent.
@@ -273,55 +273,43 @@ def test_backfill_on_an_empty_request_logs_exits_clean(pg_url, lifecycle_db):
     assert "request_logs is empty; nothing to backfill." in result.stdout, output
 
 
-def test_enable_retention_dry_run_adds_no_policy(pg_url, lifecycle_db):
-    """The default is a report. Nothing about the database may change."""
-    result = _run(pg_url, "enable-retention")
-    assert "Retention window: 13 months" in result.stdout, result.stdout + result.stderr
-    assert "rows that would eventually be dropped" in result.stdout
-    assert "request_counts_hourly: earliest bucket" in result.stdout
-    assert _retention_drop_after(lifecycle_db) is None, "dry run added a retention policy"
+def _job_count(engine):
+    with engine.connect() as conn:
+        return conn.execute(text("SELECT COUNT(*) FROM timescaledb_information.jobs")).scalar()
 
 
-def test_enable_retention_dry_run_reports_and_exits_clean_once_backfilled(pg_url, recent_row):
+def test_check_aggregate_passes_once_backfilled_and_adds_no_jobs(pg_url, recent_row):
     if not _aggregate_exists(recent_row, ENTITY_AGGREGATE):
         pytest.skip(f"{ENTITY_AGGREGATE} migration is not on disk yet")
 
     backfill = _run(pg_url, "backfill-aggregate", "--from", _months_ago(1))
     assert backfill.returncode == 0, backfill.stdout + backfill.stderr
+    jobs = _job_count(recent_row)
 
-    result = _run(pg_url, "enable-retention")
+    result = _run(pg_url, "check-aggregate")
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
-    assert f"{ENTITY_AGGREGATE} covers request_logs back to" in result.stdout
-    assert "Dry run: no policy added." in result.stdout
-    assert _retention_drop_after(recent_row) is None, "dry run added a retention policy"
+    assert "earliest materialised bucket:" in result.stdout, output
+    assert "oldest request_logs row:" in result.stdout, output
+    assert f"{ENTITY_AGGREGATE} covers request_logs." in result.stdout, output
+    assert _job_count(recent_row) == jobs, "check-aggregate added a job"
+    assert _retention_drop_after(recent_row) is None, "check-aggregate added a retention policy"
 
 
-def test_enable_retention_force_refuses_without_a_backfilled_aggregate(pg_url, lifecycle_db):
-    """Retention over an empty entity aggregate destroys history held nowhere else."""
-    result = _run(pg_url, "enable-retention", "--force")
-    assert result.returncode != 0, result.stdout + result.stderr
-    if _aggregate_exists(lifecycle_db, ENTITY_AGGREGATE):
-        assert "is empty" in result.stdout
-        assert "flask backfill-aggregate" in result.stdout
-    else:
-        assert "does not exist" in result.stdout
-    assert _retention_drop_after(lifecycle_db) is None, "a refused run added a retention policy"
+def test_check_aggregate_on_an_empty_request_logs_exits_clean(pg_url, lifecycle_db):
+    result = _run(pg_url, "check-aggregate")
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "request_logs is empty; nothing to cover." in result.stdout, output
 
 
-def test_enable_retention_force_refuses_an_aggregate_that_was_never_backfilled(pg_url, recent_row):
-    """Non-empty, but holding only the last 30 days — the state a COUNT(*) guard cannot see.
+def test_check_aggregate_fails_on_an_aggregate_that_was_never_backfilled(pg_url, recent_row):
+    """Non-empty, but holding only the last 30 days — the state a COUNT(*) check cannot see.
 
-    ``request_counts_hourly_by_entity`` is created WITH NO DATA yet has
-    ``materialized_only = false`` and an hourly refresh policy with a 30-day
-    ``start_offset``, so within an hour of deploy ordinary traffic makes it non-empty
-    while no historical backfill has ever run. That is precisely the state in which
-    enabling retention destroys history: the aggregate holds 30 days, raw holds
-    everything, and retention deletes the difference — which lives in no aggregate.
-    Reproduced by refreshing only the recent window, which is what the policy job does.
-
-    The sibling test on an empty database cannot catch a guard weakened back to
-    "is it empty?", because an empty aggregate fails every guard. This one can.
+    The aggregate is created WITH NO DATA but has an hourly refresh policy with a
+    30-day ``start_offset``, so ordinary traffic makes it non-empty within an hour of
+    deploy while no historical backfill has ever run. Reproduced by refreshing only the
+    recent window, which is what the policy job does.
     """
     if not _aggregate_exists(recent_row, ENTITY_AGGREGATE):
         pytest.skip(f"{ENTITY_AGGREGATE} migration is not on disk yet")
@@ -335,15 +323,11 @@ def test_enable_retention_force_refuses_an_aggregate_that_was_never_backfilled(p
         holds = conn.execute(text(f'SELECT COUNT(*) FROM "{ENTITY_AGGREGATE}"')).scalar()
     assert holds > 0, "the aggregate must be non-empty here or this test proves nothing"
 
-    result = _run(pg_url, "enable-retention", "--force")
+    result = _run(pg_url, "check-aggregate")
     output = result.stdout + result.stderr
-    assert result.returncode != 0, output
-    assert "does not cover the history retention would drop" in result.stdout, output
-    # The refusal has to name both timestamps it compared and the command that fixes it.
-    assert "earliest materialised bucket" in result.stdout, result.stdout
-    assert "oldest surviving request_logs row" in result.stdout, result.stdout
-    assert f"flask backfill-aggregate --from {_months_ago(15)}" in result.stdout, result.stdout
-    assert _retention_drop_after(recent_row) is None, "a refused run added a retention policy"
+    assert result.returncode == 1, output
+    assert f"'{ENTITY_AGGREGATE}' does not cover request_logs" in result.stdout, output
+    assert f"flask backfill-aggregate --from {_months_ago(15)}" in result.stdout, output
 
 
 # What TimescaleDB stores as the watermark of a continuous aggregate that has never
@@ -352,15 +336,13 @@ def test_enable_retention_force_refuses_an_aggregate_that_was_never_backfilled(p
 _NEVER_REFRESHED_WATERMARK = -210866803200000000
 
 
-def test_enable_retention_force_refuses_a_never_refreshed_aggregate(pg_url, recent_row):
-    """The freshly-migrated state, where reading the *view* would fool the guard.
+def test_check_aggregate_fails_on_an_empty_aggregate_the_view_hides(pg_url, recent_row):
+    """The freshly-migrated state, where reading the *view* would fool the check.
 
     ``flask db upgrade`` creates the aggregate WITH NO DATA, so its watermark sits at
     the minimum timestamp and real-time aggregation answers every query from raw. Read
     through the view, ``MIN(bucket)`` is then the oldest raw row and the aggregate looks
-    like it covers everything while it holds nothing at all — and this is the state an
-    operator is in when they run ``flask db upgrade`` and ``flask enable-retention``
-    back to back, which is the whole reason the guard exists. Only the materialisation
+    like it covers everything while it holds nothing. Only the materialisation
     hypertable distinguishes the two. Reproduced by putting the watermark back where the
     migration left it; the cleanup fixture's refresh moves it forward again.
     """
@@ -386,62 +368,106 @@ def test_enable_retention_force_refuses_a_never_refreshed_aggregate(pg_url, rece
         through_the_view.astimezone(timezone.utc).strftime("%Y-%m") == _months_ago(15), \
         "the view must look fully covered here or this test proves nothing"
 
-    result = _run(pg_url, "enable-retention", "--force")
+    result = _run(pg_url, "check-aggregate")
     output = result.stdout + result.stderr
-    assert result.returncode != 0, output
-    assert "is empty" in result.stdout, result.stdout
-    assert "flask backfill-aggregate" in result.stdout, result.stdout
-    assert _retention_drop_after(recent_row) is None, "a refused run added a retention policy"
+    assert result.returncode == 1, output
+    assert "earliest materialised bucket: none" in result.stdout, output
+    assert f"'{ENTITY_AGGREGATE}' is empty" in result.stdout, output
+    assert f"flask backfill-aggregate --from {_months_ago(15)}" in result.stdout, output
 
 
-def test_enable_retention_warns_when_start_offset_is_wider_than_the_window(pg_url, recent_row):
-    """A refresh policy reaching past the retention boundary erases what it recomputes.
-
-    ``request_counts_hourly_by_entity`` refreshes 30 days back, so any window narrower
-    than that leaves the scheduled job reaching into dropped chunks — the same contract
-    (d) erasure the backfill refusal exists for, except nobody typed a command.
-    """
+def test_check_aggregate_fails_when_request_logs_has_a_retention_policy(pg_url, recent_row):
+    """A policy added by hand in SQL is reported even when the aggregate is covered."""
     if not _aggregate_exists(recent_row, ENTITY_AGGREGATE):
         pytest.skip(f"{ENTITY_AGGREGATE} migration is not on disk yet")
 
     backfill = _run(pg_url, "backfill-aggregate", "--from", _months_ago(1))
     assert backfill.returncode == 0, backfill.stdout + backfill.stderr
-
-    result = _run(pg_url, "enable-retention", "--window", "7 days")
-    output = result.stdout + result.stderr
-    assert result.returncode == 0, output
-    assert "WARNING: start_offset" in result.stdout, result.stdout
-    assert "wider than the retention window (7 days)" in result.stdout, result.stdout
-    assert _retention_drop_after(recent_row) is None, "a dry run added a retention policy"
-
-
-def test_enable_retention_says_when_an_existing_policy_ignores_the_window(pg_url, recent_row):
-    """--window against an existing policy changes nothing, and must say so."""
     with _autocommit(recent_row) as conn:
         conn.execute(text(
             "SELECT add_retention_policy('request_logs', drop_after => INTERVAL '13 months')"
         ))
 
-    result = _run(pg_url, "enable-retention", "--window", "6 months", "--force")
+    result = _run(pg_url, "check-aggregate")
     output = result.stdout + result.stderr
-    assert result.returncode == 0, output
-    assert "already has a retention policy" in result.stdout
-    assert "'6 months' was NOT applied" in result.stdout, result.stdout
-    assert _retention_drop_after(recent_row) == "1 year 1 mon", "the window was changed"
+    assert result.returncode == 1, output
+    assert "request_logs has a retention policy" in result.stdout, output
+    assert "SELECT remove_retention_policy('request_logs');" in result.stdout, output
+    assert f"{ENTITY_AGGREGATE} covers request_logs." in result.stdout, output
+    assert _retention_drop_after(recent_row) == "1 year 1 mon", "check-aggregate changed the policy"
 
 
-def test_enable_retention_force_enables_the_policy_after_a_backfill(pg_url, recent_row):
+def _retention_jobs(engine):
+    with engine.connect() as conn:
+        return conn.execute(text(
+            "SELECT job_id, config::text FROM timescaledb_information.jobs "
+            "WHERE proc_name = 'policy_retention' AND hypertable_name = 'request_logs'"
+        )).all()
+
+
+def test_check_aggregate_fails_on_a_drop_created_before_retention_policy(pg_url, recent_row):
+    """A policy keyed on drop_created_before stores no drop_after, and must still fail."""
     if not _aggregate_exists(recent_row, ENTITY_AGGREGATE):
         pytest.skip(f"{ENTITY_AGGREGATE} migration is not on disk yet")
 
     backfill = _run(pg_url, "backfill-aggregate", "--from", _months_ago(1))
     assert backfill.returncode == 0, backfill.stdout + backfill.stderr
+    with _autocommit(recent_row) as conn:
+        conn.execute(text(
+            "SELECT add_retention_policy('request_logs', drop_created_before => INTERVAL '13 months')"
+        ))
+    before = _retention_jobs(recent_row)
+    assert len(before) == 1 and _retention_drop_after(recent_row) is None, \
+        "the policy must lack drop_after here or this test proves nothing"
 
-    result = _run(pg_url, "enable-retention", "--window", "13 months", "--force")
+    result = _run(pg_url, "check-aggregate")
     output = result.stdout + result.stderr
-    assert result.returncode == 0, output
-    assert "Retention enabled on request_logs" in result.stdout
-    assert _retention_drop_after(recent_row) == "1 year 1 mon"
+    assert result.returncode == 1, output
+    assert "request_logs has a retention policy" in result.stdout, output
+    assert "drop_created_before" in result.stdout, output
+    assert "SELECT remove_retention_policy('request_logs');" in result.stdout, output
+    assert _retention_jobs(recent_row) == before, "check-aggregate changed the policy"
+
+
+def test_check_aggregate_fails_when_the_aggregate_does_not_exist(pg_url, lifecycle_db):
+    """The state before 'flask db upgrade' has created the aggregate.
+
+    Reproduced by renaming the aggregate out of the way, which removes it from
+    timescaledb_information.continuous_aggregates under its own name, and renaming it
+    back afterwards whatever the outcome.
+    """
+    if not _aggregate_exists(lifecycle_db, ENTITY_AGGREGATE):
+        pytest.skip(f"{ENTITY_AGGREGATE} migration is not on disk yet")
+
+    hidden = f"{ENTITY_AGGREGATE}_hidden"
+    jobs = _job_count(lifecycle_db)
+    with _autocommit(lifecycle_db) as conn:
+        conn.execute(text(f'ALTER MATERIALIZED VIEW "{ENTITY_AGGREGATE}" RENAME TO "{hidden}"'))
+    try:
+        assert not _aggregate_exists(lifecycle_db, ENTITY_AGGREGATE), \
+            "the aggregate must be absent here or this test proves nothing"
+        result = _run(pg_url, "check-aggregate")
+    finally:
+        with _autocommit(lifecycle_db) as conn:
+            conn.execute(text(f'ALTER MATERIALIZED VIEW "{hidden}" RENAME TO "{ENTITY_AGGREGATE}"'))
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 1, output
+    assert f"'{ENTITY_AGGREGATE}' does not exist" in result.stdout, output
+    assert "flask db upgrade" in result.stdout, output
+    assert _job_count(lifecycle_db) == jobs, "check-aggregate added a job"
+    assert _retention_drop_after(lifecycle_db) is None
+
+
+def test_enable_retention_is_gone(pg_url, lifecycle_db):
+    help_ = _run(pg_url, "--help")
+    assert "enable-retention" not in help_.stdout, help_.stdout
+    assert "check-aggregate" in help_.stdout, help_.stdout
+
+    result = _run(pg_url, "enable-retention", "--force")
+    assert result.returncode != 0
+    assert "No such command" in result.stderr, result.stdout + result.stderr
+    assert _retention_drop_after(lifecycle_db) is None
 
 
 def test_backfill_leaves_real_time_aggregation_working_for_the_current_bucket(pg_url, recent_row):
@@ -565,7 +591,7 @@ def test_backfill_is_idempotent_so_from_can_resume_mid_run(pg_url, recent_row):
 
     That is what makes the resume hint on a failed month safe: an operator can re-run
     from any month without double-counting or losing rows, as long as the raw chunks are
-    still there — which the retention guard is what enforces.
+    still there — and they always are: request_logs is never pruned (#167).
     """
     totals = []
     for _ in range(2):
