@@ -465,6 +465,19 @@ def _retention_drop_after(conn):
     )).scalar()
 
 
+def _retention_job(conn):
+    """``(job_id, config)`` of any retention policy on request_logs, or None.
+
+    Matches on the job's existence, not on its interval: a policy added with
+    drop_created_before stores that key instead of drop_after. Shared by
+    ``check-aggregate`` and the startup tripwire in ``create_app``.
+    """
+    return conn.execute(text(
+        "SELECT job_id, config::text FROM timescaledb_information.jobs "
+        "WHERE proc_name = 'policy_retention' AND hypertable_name = 'request_logs'"
+    )).first()
+
+
 def _fmt(dt):
     """Format a timestamp for the terminal. Always UTC — this is an operator tool."""
     if dt is None:
@@ -649,12 +662,7 @@ def check_aggregate_cmd():
 
     with db.engine.connect() as conn:
         failed = False
-        # Match on the job's existence, not on its interval: a policy added with
-        # drop_created_before stores that key instead of drop_after.
-        retention = conn.execute(text(
-            "SELECT job_id, config::text FROM timescaledb_information.jobs "
-            "WHERE proc_name = 'policy_retention' AND hypertable_name = 'request_logs'"
-        )).first()
+        retention = _retention_job(conn)
         if retention is not None:
             click.echo(f"Error: request_logs has a retention policy (job {retention[0]}, "
                        f"config {retention[1]}).\n"

@@ -4,7 +4,7 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
-**Upgrade:** `flask enable-retention` is removed — `request_logs` is never pruned; use the read-only `flask check-aggregate` and run `flask backfill-aggregate` before upgrading. (#167)
+**Upgrade:** `flask enable-retention` is removed — `request_logs` is never pruned; use the read-only `flask check-aggregate` and run `flask backfill-aggregate` before upgrading; startup logs an ERROR if a retention policy is found on `request_logs`. (#167)
 
 ## [2.2.1] - 2026-10-16
 
