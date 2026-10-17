@@ -13,6 +13,8 @@ import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
+from lumen.models.auth_request import AuthRequest
+
 _REVISION_PATH = (
     Path(__file__).resolve().parents[2]
     / "migrations" / "versions" / "c2d3e4f5a6b7_auth_request_ttl.py"
@@ -97,7 +99,9 @@ def test_upgrade_adds_nullable_ttl_and_leaves_existing_requests_null(pre_migrati
     inspector = sa.inspect(pre_migration_sqlite)
     col = next(c for c in inspector.get_columns("auth_requests") if c["name"] == "ttl")
     assert col["nullable"] is True
-    assert isinstance(col["type"], sa.Integer)
+    # BIGINT, like the model: allowed TTLs (up to 100 years) overflow a 32-bit integer.
+    assert isinstance(col["type"], sa.BigInteger)
+    assert isinstance(AuthRequest.__table__.c.ttl.type, sa.BigInteger)
     assert _INDEXES <= {ix["name"] for ix in inspector.get_indexes("auth_requests")}
     with pre_migration_sqlite.connect() as conn:
         rows = dict(conn.execute(sa.text("SELECT user_code, ttl FROM auth_requests")).all())
