@@ -33,7 +33,7 @@ Each run works like this:
 | `--relogin` | Request a new key even if one is stored; the new key always replaces the stored one |
 | `--no-aliases` | Skip model aliases when syncing |
 
-The approval page shows the requesting application, the destination it will redirect to (for web apps), and the model-consent table, and it requires an explicit overwrite confirmation when you already hold a key with the same name. See [OAuth for client developers](./oauth-clients.md) to implement the same flows in your own tool.
+The approval page shows the requesting application, the destination it will redirect to (for web apps), and the model-consent table, and it requires an explicit replace confirmation when you already hold a key with the same name. Replacing keeps that key, with its name and usage stats, and gives it a new secret. See [OAuth for client developers](./oauth-clients.md) to implement the same flows in your own tool.
 
 ## 1. Create an API key
 
