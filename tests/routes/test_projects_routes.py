@@ -927,8 +927,11 @@ def test_create_key_with_ttl(app, managed_auth_client, managed_project, restore_
 @pytest.mark.parametrize("cap, ttl", [
     (30 * 86400, 30 * 86400 + 1),  # above the cap
     (30 * 86400, 0),               # never while the cap is above 0
-    (30 * 86400, "86400"),
+    (0, 100 * 365 * 86400 + 1),    # above the 100-year bound
     (30 * 86400, -1),
+    (30 * 86400, "86400"),
+    (30 * 86400, True),
+    (30 * 86400, 1.5),
 ])
 def test_create_key_invalid_ttl_returns_400(app, managed_auth_client, managed_project, restore_config, cap, ttl):
     app.config["KEY_TTL"] = cap
