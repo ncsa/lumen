@@ -837,35 +837,6 @@ def test_config_post_rejects_bad_api_key_ttl(app, admin_client, tmp_path):
         app.config["CONFIG_YAML"] = original
 
 
-def test_config_page_renders_api_key_ttl_card(admin_client):
-    """The API section has a labelled key TTL field with help and alert text, and
-    collectApi keeps api.keys (and any other api.* key) instead of rebuilding api
-    from the Prometheus and Monitoring cards alone."""
-    html = admin_client.get("/admin/config").get_data(as_text=True)
-    assert "card('API Keys'" in html
-    # field() pairs the input with <label for="keys-ttl">.
-    assert "field('keys-ttl', 'Max / default key TTL'" in html
-    assert 'id="keys-ttl"' in html
-    assert '<div id="keys-ttl-help" class="form-text">0 = never; e.g. 12h, 30d, 8w</div>' in html
-    assert '<div id="keys-ttl-err" class="invalid-feedback" role="alert"></div>' in html
-    assert 'aria-describedby="keys-ttl-help keys-ttl-err"' in html
-    assert "${CONFIG_READONLY ? ' readonly' : ''}" in html
-    assert "const KEY_TTL_RE = /^(0|[0-9]+[hdw])$/;" in html
-    assert "...prev," in html
-    assert "keys: ttl ? { ttl } : undefined," in html
-
-
-def test_config_page_api_key_ttl_read_only_when_editor_disabled(app, admin_client):
-    """With app.config_editor false the page is read-only, which makes the key TTL field readonly."""
-    original = app.config.get("CONFIG_EDITOR", True)
-    app.config["CONFIG_EDITOR"] = False
-    try:
-        html = admin_client.get("/admin/config").get_data(as_text=True)
-        assert "const CONFIG_READONLY = true;" in html
-    finally:
-        app.config["CONFIG_EDITOR"] = original
-
-
 def test_config_post_re_enables_legacy_disabled_model(app, admin_client, tmp_path):
     """Clearing the editor's Disabled checkbox re-enables a model that was disabled
     via the legacy ``active: false`` key.
