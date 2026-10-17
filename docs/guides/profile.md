@@ -82,11 +82,21 @@ An API key is a secret token in the format `sk_...`. It identifies you to the AP
 2. A dialog opens and displays your new key in a read-only field.
 3. **Copy the key now.**
 4. Enter a descriptive name (e.g., `my-research-script` or `jupyter-notebook`).
-5. Click **Save Key**. The key now appears in the table.
+5. Choose how long the key lasts in **Expires after** (see below).
+6. Click **Save Key**. The key now appears in the table.
+
+#### Key Expiry
+
+**Expires after** offers 1 day, 7 days, 30 days, 90 days, 1 year and Never, limited by the maximum key lifetime your administrator set (`api.keys.ttl`, see [Application settings](../admin/config-application.md)):
+
+- When there is a maximum, only choices up to it are shown. The maximum itself is always offered and is selected by default, and **Never** is not offered.
+- When there is no maximum (the default), every choice is offered and **Never** is selected by default.
+
+The expiry is fixed when the key is created; a later change to the maximum does not affect it. When a key expires it is revoked automatically and stops working, like a key you revoke yourself. Create a new key to replace it.
 
 ### Viewing Your Keys
 
-The API Keys table shows all your active keys and lets you sort by name, requests, tokens, cost, or last used. Enable **Show revoked keys** to see revoked keys (deactivated, usage kept). They are displayed with strikethrough and a **revoked** badge; hover over or focus the badge to see when the key was revoked, in your local time, and who revoked it (e.g. *Revoked 10/10/2026, 2:15 PM by Jane Doe*). The name is left out when no revoker is recorded, such as for keys revoked before this was recorded or revoked automatically by an OAuth code replay. Times for keys revoked before this was recorded are approximate.
+The API Keys table shows all your active keys and lets you sort by name, requests, tokens, cost, last used, or expiry. Enable **Show revoked keys** to see revoked and expired keys (deactivated, usage kept). They are displayed with strikethrough and a **revoked** or **expired** badge. Hover over or focus an **expired** badge to see when the key expired. Hover over or focus a **revoked** badge to see when the key was revoked, in your local time, and who revoked it (e.g. *Revoked 10/10/2026, 2:15 PM by Jane Doe*). The name is left out when no revoker is recorded, such as for keys revoked before this was recorded or revoked automatically by an OAuth code replay. Times for keys revoked before this was recorded are approximate.
 
 Keys requested through a CLI or web app via [OAuth](./oauth-clients.md) show that provenance in the name tooltip (e.g. *Requested via lumen-cli by alice*); keys created with **+ New API Key** have no such note.
 
@@ -98,6 +108,7 @@ Keys requested through a CLI or web app via [OAuth](./oauth-clients.md) show tha
 | **Tokens** | Total input + output tokens |
 | **Coins** | Total coins spent |
 | **Last Used** | Timestamp of the last API call |
+| **Expires** | When the key expires, in your local time, or **Never** |
 | **Actions** | Rotate and Revoke buttons for active keys |
 
 ### Rotating a Key

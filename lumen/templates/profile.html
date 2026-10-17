@@ -223,11 +223,12 @@
         <th scope="col" class="sort-header text-end" data-col="tokens">Tokens <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th scope="col" class="sort-header text-end" data-col="cost">Coins <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th scope="col" class="sort-header" data-col="last_used">Last Used <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
+        <th scope="col" class="sort-header" data-col="expires_at">Expires <span class="sort-arrows"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></th>
         <th><span class="visually-hidden">Actions</span></th>
       </tr>
     </thead>
     <tbody id="key-tbody">
-      <tr><td colspan="6" class="text-muted text-center">Loading…</td></tr>
+      <tr><td colspan="7" class="text-muted text-center">Loading…</td></tr>
     </tbody>
   </table>
 </div>
@@ -298,7 +299,7 @@
       </tr>
     </thead>
     <tbody id="model-tbody">
-      <tr><td colspan="6" class="text-muted text-center">Loading…</td></tr>
+      <tr><td colspan="7" class="text-muted text-center">Loading…</td></tr>
     </tbody>
   </table>
 </div>
@@ -322,6 +323,7 @@
           <label class="form-label" for="key-name-input">Key Name</label>
           <input type="text" id="key-name-input" class="form-control" placeholder="e.g. My App">
         </div>
+        {% include '_key_ttl_select.html' %}
         <div class="mb-3">
           <label class="form-label" for="key-display">
             Generated Key
@@ -585,12 +587,17 @@ const KEY_ROWS = [
     cost: {{ "%.6f"|format(key.cost|float) }},
     last_used: {{ key.last_used_at.strftime('%Y-%m-%dT%H:%M:%SZ') | tojson if key.last_used_at else 'null' }},
     revoked_at: {{ key.revoked_at.strftime('%Y-%m-%dT%H:%M:%SZ') | tojson if key.revoked_at else 'null' }},
+    expires_at: {{ key.expires_at.strftime('%Y-%m-%dT%H:%M:%SZ') | tojson if key.expires_at else 'null' }},
     revoked_by: {{ key_revokers.get(key.id) | tojson }},
   },
   {% endfor %}
 ];
 
 function revokedBadge(k) {
+  // The expirer revokes a key with no revoker, at exactly its expiry time.
+  if (!k.revoked_by && k.revoked_at === k.expires_at) {
+    return `<span class="badge bg-secondary" tabindex="0" data-bs-toggle="tooltip" data-bs-title="Expired ${escHtml(fmtDate(k.expires_at).text)}">expired</span>`;
+  }
   return `<span class="badge bg-secondary" tabindex="0" data-bs-toggle="tooltip" data-bs-title="Revoked ${escHtml(fmtDate(k.revoked_at).text)}${k.revoked_by ? ' by ' + escHtml(k.revoked_by) : ''}">revoked</span>`;
 }
 const keyState = { col: 'name', dir: 'asc' };
@@ -605,6 +612,7 @@ function renderKeys() {
     let av, bv;
     if (keyState.col === 'name') { av = a.name.toLowerCase(); bv = b.name.toLowerCase(); }
     else if (keyState.col === 'last_used') { av = a.last_used || ''; bv = b.last_used || ''; }
+    else if (keyState.col === 'expires_at') { av = a.expires_at || '\uffff'; bv = b.expires_at || '\uffff'; }
     else { av = a[keyState.col]; bv = b[keyState.col]; }
     const cmp = av < bv ? -1 : av > bv ? 1 : 0;
     return keyState.dir === 'asc' ? cmp : -cmp;
@@ -630,6 +638,7 @@ function renderKeys() {
         <td class="text-end">${k.tokens.toLocaleString()}</td>
         <td class="text-end">${parseFloat(k.cost).toFixed(2)}</td>
         <td>${dt.text}</td>
+        <td>${k.expires_at ? fmtDate(k.expires_at).text : 'Never'}</td>
         <td>${action}</td>
       </tr>`;
     }).join('');
@@ -648,7 +657,7 @@ function renderKeys() {
   }
 }
 
-makeSortable('key-table', keyState, new Set(['requests','tokens','cost','last_used']), renderKeys);
+makeSortable('key-table', keyState, new Set(['requests','tokens','cost','last_used','expires_at']), renderKeys);
 document.getElementById('show-revoked-cb').addEventListener('change', e => { showRevoked = e.target.checked; renderKeys(); });
 let keyDebounce;
 document.getElementById('key-search').addEventListener('input', e => {
@@ -862,6 +871,8 @@ apiKeyModal.addEventListener("show.bs.modal", async function () {
   document.getElementById("key-display").value = "(generating…)";
   document.getElementById("generated-key").value = "";
   document.getElementById("save-key-btn").disabled = true;
+  const ttlSelect = document.getElementById("key-ttl-select");
+  ttlSelect.value = [...ttlSelect.options].find(o => o.defaultSelected).value;
 
   const resp = await fetch("/profile/keys/generate");
   const data = await resp.json();
@@ -887,7 +898,7 @@ document.getElementById("save-key-btn").addEventListener("click", async function
   const resp = await fetch("/profile/keys", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
-    body: JSON.stringify({ name, key }),
+    body: JSON.stringify({ name, key, ttl: parseInt(document.getElementById("key-ttl-select").value, 10) }),
   });
   if (resp.ok) {
     bootstrap.Modal.getInstance(apiKeyModal).hide();

@@ -95,19 +95,25 @@ def ensure_demo_data(app):
                                   key_hint=f"{key[:7]}...{key[-4:]}"))
             db.session.flush()
 
-        # An active and a revoked personal key, so the profile shot shows Revoke and the badge.
+        # An active, a revoked and an expired personal key, so the profile shot
+        # shows Revoke, the Expires column and both badges.
         if dev:
             now = utcnow()
-            for name, raw, revoked_at, requests, tokens_in, tokens_out, cost, last_used in (
-                ("my-script", "sk_myscript_0123456789abcd", None, 42, 9800, 3100, "0.84",
-                 now - timedelta(hours=2)),
-                ("old-notebook", "sk_oldnotebook_0123456789ab", now - timedelta(days=3), 17, 4200, 1300, "0.31",
-                 now - timedelta(days=4)),
+            expired_at = now - timedelta(days=1)
+            for name, raw, revoked_at, revoked_by, expires_at, requests, tokens_in, tokens_out, cost, last_used in (
+                ("my-script", "sk_myscript_0123456789abcd", None, None, now + timedelta(days=30),
+                 42, 9800, 3100, "0.84", now - timedelta(hours=2)),
+                ("old-notebook", "sk_oldnotebook_0123456789ab", now - timedelta(days=3), None, None,
+                 17, 4200, 1300, "0.31", now - timedelta(days=4)),
+                # Revoked by the expirer: no revoker, revoked_at == expires_at.
+                ("weekly-report", "sk_weeklyreport_0123456789a", expired_at, None, expired_at,
+                 8, 2100, 700, "0.15", now - timedelta(days=2)),
             ):
                 if not db.session.execute(select(APIKey).filter_by(entity_id=dev.id, name=name)).scalar_one_or_none():
                     db.session.add(APIKey(entity_id=dev.id, created_by_entity_id=dev.id, name=name,
                                           key_hash=hash_api_key(raw), key_hint=f"{raw[:7]}...{raw[-4:]}",
-                                          revoked_at=revoked_at, requests=requests, input_tokens=tokens_in,
+                                          revoked_at=revoked_at, revoked_by_entity_id=revoked_by,
+                                          expires_at=expires_at, requests=requests, input_tokens=tokens_in,
                                           output_tokens=tokens_out, cost=Decimal(cost), last_used_at=last_used))
 
         if dev and not db.session.execute(

@@ -30,6 +30,15 @@ MAX_KEY_TTL = 100 * 365 * 86400
 _TTL_RE = re.compile(r"(0|([0-9]+)([hdw]))")
 _TTL_UNIT_SECONDS = {"h": 3600, "d": 86400, "w": 7 * 86400}
 
+# Preset TTLs (seconds, label) offered by the "Expires after" dropdown.
+KEY_TTL_PRESETS = [
+    (86400, "1 day"),
+    (7 * 86400, "7 days"),
+    (30 * 86400, "30 days"),
+    (90 * 86400, "90 days"),
+    (365 * 86400, "1 year"),
+]
+
 
 def parse_key_ttl(value) -> int:
     """Seconds for an ``api.keys.ttl`` value: ``0`` or ``<n>h``/``<n>d``/``<n>w``.
@@ -67,6 +76,31 @@ def resolve_key_ttl(requested: Optional[int] = None) -> int:
     if requested > (cap or MAX_KEY_TTL):
         raise ValueError(f"ttl cannot exceed {cap or MAX_KEY_TTL} seconds")
     return requested
+
+
+def _ttl_label(seconds: int) -> str:
+    """Human label for a TTL that is not a preset, in the largest whole unit."""
+    for unit, size in (("week", 7 * 86400), ("day", 86400), ("hour", 3600)):
+        if seconds % size == 0:
+            n = seconds // size
+            return f"{n} {unit}{'' if n == 1 else 's'}"
+    return f"{seconds} seconds"
+
+
+def key_ttl_choices() -> list[tuple[int, str, bool]]:
+    """``(seconds, label, selected)`` options for the "Expires after" dropdown.
+
+    Presets at or below the KEY_TTL cap, plus the cap itself, which is always
+    offered and pre-selected. "Never" (0) is offered, and pre-selected, only
+    when there is no cap.
+    """
+    cap = current_app.config.get("KEY_TTL", 0)
+    if not cap:
+        return [(s, label, False) for s, label in KEY_TTL_PRESETS] + [(0, "Never", True)]
+    choices = [(s, label, s == cap) for s, label in KEY_TTL_PRESETS if s <= cap]
+    if not any(s == cap for s, _, _ in choices):
+        choices.append((cap, _ttl_label(cap), True))
+    return choices
 
 
 def key_expires_at(ttl: int) -> Optional[datetime]:

@@ -5,17 +5,12 @@ JSON directly cannot catch a collector that drops a setting. These tests load
 /admin/config in headless Chromium, with every same-origin request answered by
 the Flask test client (no live server), and drive the real save path.
 
-Uses Playwright's Chromium (`uv run python -m playwright install chromium`) or,
-failing that, the system Google Chrome. Outside CI the tests skip when neither
-starts; in CI (the CI env var is set) they fail instead.
+The browser comes from the `browser` fixture in tests/ui/conftest.py.
 """
-import os
 from urllib.parse import urlsplit
 
 import pytest
 import yaml
-from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import sync_playwright
 
 from tests.ui.test_accessibility import _run_all_checks
 
@@ -33,26 +28,6 @@ api:
   monitoring:
     token: real-mon-token
 """
-
-
-@pytest.fixture(scope="module")
-def browser():
-    with sync_playwright() as pw:
-        errors = []
-        # Playwright's own Chromium if installed, else the system Google Chrome
-        # (preinstalled on GitHub's Ubuntu runners).
-        for channel in (None, "chrome"):
-            try:
-                b = pw.chromium.launch(channel=channel)
-                break
-            except PlaywrightError as e:
-                errors.append(str(e).splitlines()[0])
-        else:
-            if os.environ.get("CI"):
-                pytest.fail(f"No browser could start: {errors}")
-            pytest.skip(f"No browser could start: {errors}")
-        yield b
-        b.close()
 
 
 @pytest.fixture
