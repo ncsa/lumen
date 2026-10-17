@@ -612,7 +612,7 @@ function renderKeys() {
     let av, bv;
     if (keyState.col === 'name') { av = a.name.toLowerCase(); bv = b.name.toLowerCase(); }
     else if (keyState.col === 'last_used') { av = a.last_used || ''; bv = b.last_used || ''; }
-    else if (keyState.col === 'expires_at') { av = a.expires_at || '\uffff'; bv = b.expires_at || '\uffff'; }
+    else if (keyState.col === 'expires_at') { av = a.expires_at || ''; bv = b.expires_at || ''; }
     else { av = a[keyState.col]; bv = b[keyState.col]; }
     const cmp = av < bv ? -1 : av > bv ? 1 : 0;
     return keyState.dir === 'asc' ? cmp : -cmp;
