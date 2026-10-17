@@ -1,0 +1,20 @@
+<!-- Edit API Key Expiry Modal (shared; see static/js/key-ttl-edit.js). Needs key_ttl_choices. -->
+<div class="modal fade" id="keyTtlModal" tabindex="-1" aria-labelledby="keyTtlModalLabel">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="keyTtlModalLabel">Edit Key Expiry</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close Edit Key Expiry dialog"></button>
+      </div>
+      <div class="modal-body">
+        <p>Choose how long <strong id="key-ttl-name"></strong> stays valid, counted from now.</p>
+        {% with ttl_select_id = 'edit-key-ttl-select' %}{% include '_key_ttl_select.html' %}{% endwith %}
+        <p id="key-ttl-error" class="text-danger mb-0" role="alert" aria-live="assertive"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="key-ttl-save-btn">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
