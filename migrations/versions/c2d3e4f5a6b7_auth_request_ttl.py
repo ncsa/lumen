@@ -8,6 +8,7 @@ Adds a nullable ``ttl`` (seconds) to ``auth_requests``: the key TTL an OAuth
 key request asked for (NULL when it asked for none), replaced by the
 approver's choice at approval. ``_mint`` counts the key's ``expires_at`` from
 it. Existing rows stay NULL and mint with the ``api.keys.ttl`` cap.
+BIGINT, because an allowed TTL (up to 100 years) does not fit a 32-bit integer.
 """
 
 import sqlalchemy as sa
@@ -26,7 +27,7 @@ _TTL_COMMENT = (
 
 def upgrade():
     with op.batch_alter_table("auth_requests") as batch_op:
-        batch_op.add_column(sa.Column("ttl", sa.Integer(), nullable=True, comment=_TTL_COMMENT))
+        batch_op.add_column(sa.Column("ttl", sa.BigInteger(), nullable=True, comment=_TTL_COMMENT))
 
 
 def downgrade():

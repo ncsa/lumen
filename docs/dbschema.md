@@ -58,7 +58,7 @@ erDiagram
         datetime auth_code_expires_at
         int entity_id FK
         bool overwrite
-        int ttl
+        bigint ttl
         datetime approved_at
         int api_key_id FK
     }
@@ -379,7 +379,7 @@ Pending or handled API-key requests created by the OAuth device flow (`/oauth/de
 | `auth_code_expires_at` | DateTime | YES | UTC expiry of the authorization code (60s after approval) |
 | `entity_id` | Integer (FK → entities) | YES | Approving entity; set at approval. Cascades on delete. |
 | `overwrite` | Boolean | NO | Approver agreed to replace an existing same-name key (executed at mint). Default `false`. |
-| `ttl` | Integer | YES | Key TTL in seconds (`0` = never): the `ttl` the request asked for (null if none), replaced at approval by the approver's choice, checked against the `api.keys.ttl` cap. The minted key's `expires_at` is mint time plus this. |
+| `ttl` | BigInteger | YES | Key TTL in seconds (`0` = never): the `ttl` the request asked for (null if none), replaced at approval by the approver's choice, checked against the `api.keys.ttl` cap. The minted key's `expires_at` is mint time plus this. |
 | `approved_at` | DateTime | YES | UTC approval timestamp |
 | `api_key_id` | Integer (FK → api_keys) | YES | Key minted at claim; retained to revoke on authorization-code replay. SET NULL on key delete. |
 
