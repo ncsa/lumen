@@ -897,6 +897,53 @@ def test_create_key_expires_at_from_cap(app, managed_auth_client, managed_projec
         assert expires_at is None
 
 
+@pytest.mark.parametrize("cap, ttl, expected", [
+    (30 * 86400, None, 30 * 86400),
+    (30 * 86400, 86400, 86400),
+    (30 * 86400, 30 * 86400, 30 * 86400),
+    (0, None, 0),
+    (0, 0, 0),
+    (0, 90 * 86400, 90 * 86400),
+])
+def test_create_key_with_ttl(app, managed_auth_client, managed_project, restore_config, cap, ttl, expected):
+    app.config["KEY_TTL"] = cap
+    body = {"name": "ttl", "key": "sk_ttl000000000000000000key_chosen1"}
+    if ttl is not None:
+        body["ttl"] = ttl
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys", json=body)
+    assert resp.status_code == HTTPStatus.CREATED
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        expires_at = db.session.get(APIKey, resp.get_json()["id"]).expires_at
+    if expected:
+        assert abs(expires_at - (utcnow() + timedelta(seconds=expected))) < timedelta(minutes=1)
+        assert resp.get_json()["expires_at"] == expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    else:
+        assert expires_at is None
+        assert resp.get_json()["expires_at"] is None
+
+
+@pytest.mark.parametrize("cap, ttl", [
+    (30 * 86400, 30 * 86400 + 1),  # above the cap
+    (30 * 86400, 0),               # never while the cap is above 0
+    (30 * 86400, "86400"),
+    (30 * 86400, -1),
+])
+def test_create_key_invalid_ttl_returns_400(app, managed_auth_client, managed_project, restore_config, cap, ttl):
+    app.config["KEY_TTL"] = cap
+    resp = managed_auth_client.post(
+        f"/projects/{managed_project['id']}/keys",
+        json={"name": "bad-ttl", "key": "sk_ttl000000000000000000key_badttl", "ttl": ttl},
+    )
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert "ttl" in resp.get_json()["error"]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        assert db.session.execute(select(APIKey).filter_by(name="bad-ttl")).first() is None
+
+
 def test_create_key_duplicate_returns_409(managed_auth_client, managed_project):
     managed_auth_client.post(
         f"/projects/{managed_project['id']}/keys",

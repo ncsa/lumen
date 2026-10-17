@@ -27,7 +27,7 @@ from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
 from lumen.services.crypto import hash_api_key
-from lumen.services.key_expiry import key_expires_at, resolve_key_ttl, revoke_if_expired
+from lumen.services.key_expiry import key_expires_at, key_ttl_choices, resolve_key_ttl, revoke_if_expired
 from lumen.services.llm import bulk_model_access_info, get_model_access_status, get_pool_limit, model_notices
 from lumen.timeutils import utcnow
 
@@ -313,6 +313,7 @@ def index():
         user_limit=user_limit,
         all_groups=_all_groups_for_picker() if admin else [],
         user_memberships=_memberships_by_entity([entity_id]).get(entity_id, []) if admin else [],
+        key_ttl_choices=key_ttl_choices(),
     )
 
 
@@ -349,6 +350,25 @@ def _new_key_fields(key: str):
     return {"key_hash": key_hash, "key_hint": f"{key[:7]}...{key[-4:]}"}, None
 
 
+def _requested_key_expiry(data: dict):
+    """expires_at for a new key from the request's optional ``ttl`` (seconds).
+
+    Returns (expires_at, None), or (None, error response) when the ttl is not
+    allowed under the api.keys.ttl cap. No ttl gives the cap.
+    """
+    try:
+        ttl = resolve_key_ttl(data.get("ttl"))
+    except ValueError as e:
+        return None, (jsonify({"error": str(e)}), HTTPStatus.BAD_REQUEST)
+    return key_expires_at(ttl), None
+
+
+def created_key_response(api_key: APIKey, key: str):
+    """201 response for a newly created key, with its expiry (null = never)."""
+    expires_at = api_key.expires_at.strftime("%Y-%m-%dT%H:%M:%SZ") if api_key.expires_at else None
+    return jsonify({"id": api_key.id, "name": api_key.name, "key": key, "expires_at": expires_at}), HTTPStatus.CREATED
+
+
 def rotate_key_secret(api_key: APIKey):
     """Replace api_key's secret with the request's key, keeping usage stats. Commits."""
     if api_key.revoked_at is not None or revoke_if_expired(api_key):
@@ -383,6 +403,9 @@ def create_key():
     name = (data.get("name") or "").strip()
     key = (data.get("key") or "").strip()
 
+    expires_at, error = _requested_key_expiry(data)
+    if error:
+        return error
     fields, error = _new_key_fields(key)
     if error:
         return error
@@ -391,13 +414,13 @@ def create_key():
         entity_id=entity_id,
         created_by_entity_id=entity_id,
         name=name or "Unnamed Key",
-        expires_at=key_expires_at(resolve_key_ttl()),
+        expires_at=expires_at,
         **fields,
     )
     db.session.add(api_key)
     db.session.commit()
 
-    return jsonify({"id": api_key.id, "name": api_key.name, "key": key}), HTTPStatus.CREATED
+    return created_key_response(api_key, key)
 
 
 @profile_bp.route("/profile/keys/<int:kid>", methods=["DELETE"])

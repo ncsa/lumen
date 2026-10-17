@@ -12,6 +12,7 @@ from lumen.services.key_expiry import (
     MAX_KEY_TTL,
     expire_keys,
     key_expires_at,
+    key_ttl_choices,
     parse_key_ttl,
     resolve_key_ttl,
     revoke_if_expired,
@@ -197,3 +198,21 @@ def test_revoke_if_expired(app, test_user):
         assert revoke_if_expired(never) is False
         assert _state("future") == (None, None)
         assert _state("never") == (None, None)
+
+
+@pytest.mark.parametrize("cap, expected", [
+    (0, [(DAY, "1 day", False), (7 * DAY, "7 days", False), (30 * DAY, "30 days", False),
+         (90 * DAY, "90 days", False), (365 * DAY, "1 year", False), (0, "Never", True)]),
+    (30 * DAY, [(DAY, "1 day", False), (7 * DAY, "7 days", False), (30 * DAY, "30 days", True)]),
+    (8 * 7 * DAY, [(DAY, "1 day", False), (7 * DAY, "7 days", False), (30 * DAY, "30 days", False),
+                   (56 * DAY, "8 weeks", True)]),
+    (12 * 3600, [(12 * 3600, "12 hours", True)]),
+    (DAY, [(DAY, "1 day", True)]),
+    (10 * DAY, [(DAY, "1 day", False), (7 * DAY, "7 days", False), (10 * DAY, "10 days", True)]),
+    (3650 * DAY, [(DAY, "1 day", False), (7 * DAY, "7 days", False), (30 * DAY, "30 days", False),
+                  (90 * DAY, "90 days", False), (365 * DAY, "1 year", False), (3650 * DAY, "3650 days", True)]),
+])
+def test_key_ttl_choices(app, restore_config, cap, expected):
+    app.config["KEY_TTL"] = cap
+    with app.app_context():
+        assert key_ttl_choices() == expected

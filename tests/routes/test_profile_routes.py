@@ -6,6 +6,7 @@ from decimal import Decimal
 from http import HTTPStatus
 
 import pytest
+from sqlalchemy import select
 
 from lumen.timeutils import utcnow
 
@@ -130,6 +131,53 @@ def test_create_key_expires_at_from_cap(app, auth_client, restore_config, cap):
         assert abs(expires_at - (utcnow() + timedelta(seconds=cap))) < timedelta(minutes=1)
     else:
         assert expires_at is None
+
+
+@pytest.mark.parametrize("cap, ttl, expected", [
+    (30 * 86400, None, 30 * 86400),       # no ttl: the cap
+    (30 * 86400, 7 * 86400, 7 * 86400),   # below the cap
+    (30 * 86400, 30 * 86400, 30 * 86400), # at the cap
+    (0, None, 0),                         # no cap, no ttl: never
+    (0, 0, 0),                            # no cap: never allowed
+    (0, 365 * 86400, 365 * 86400),
+])
+def test_create_key_with_ttl(app, auth_client, restore_config, cap, ttl, expected):
+    app.config["KEY_TTL"] = cap
+    body = {"name": "ttl", "key": "sk_" + "u" * 32}
+    if ttl is not None:
+        body["ttl"] = ttl
+    resp = auth_client.post("/profile/keys", json=body)
+    assert resp.status_code == HTTPStatus.CREATED
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    with app.app_context():
+        expires_at = db.session.get(APIKey, resp.get_json()["id"]).expires_at
+    if expected:
+        assert abs(expires_at - (utcnow() + timedelta(seconds=expected))) < timedelta(minutes=1)
+        assert resp.get_json()["expires_at"] == expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    else:
+        assert expires_at is None
+        assert resp.get_json()["expires_at"] is None
+
+
+@pytest.mark.parametrize("cap, ttl", [
+    (30 * 86400, 30 * 86400 + 1),  # above the cap
+    (30 * 86400, 0),               # never while the cap is above 0
+    (0, 100 * 365 * 86400 + 1),    # above the 100-year bound
+    (30 * 86400, -1),
+    (30 * 86400, "86400"),
+    (30 * 86400, True),
+    (30 * 86400, 1.5),
+])
+def test_create_key_invalid_ttl_returns_400(app, auth_client, restore_config, cap, ttl):
+    app.config["KEY_TTL"] = cap
+    resp = auth_client.post("/profile/keys", json={"name": "bad-ttl", "key": "sk_" + "v" * 32, "ttl": ttl})
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert "ttl" in resp.get_json()["error"]
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    with app.app_context():
+        assert db.session.execute(select(APIKey).filter_by(name="bad-ttl")).first() is None
 
 
 def test_create_key_default_name(auth_client):
