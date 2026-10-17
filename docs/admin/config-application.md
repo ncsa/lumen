@@ -201,6 +201,8 @@ API requests always require model acknowledgment, just like the web UI: an API k
 
 Changes take effect without a restart, for keys created afterwards; existing keys keep the expiry they were given. An invalid value is logged as a warning and treated as `0`, and the config editor refuses to save it. In the Helm chart this is `config.api.keys.ttl`.
 
+In the Config editor (`/admin/config`) this is the **Max / default key TTL** field on the **API Keys** card of the **API** section. The editor flags a malformed value as you type and will not save it; the server checks it again on save. Leaving the field blank removes the setting, which means `0`. When `app.config_editor` is `false` the field is read-only, like the rest of the editor.
+
 ### api.monitoring
 
 A read-only token for uptime monitoring tools (e.g. Uptime Kuma). Pass it as a Bearer token in the
