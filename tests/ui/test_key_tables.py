@@ -231,3 +231,30 @@ def test_edit_expiry_modal_shows_server_error(app, restore_config, open_page, ke
     page.wait_for_function("document.getElementById('key-ttl-error').textContent !== ''")
     assert page.inner_text("#key-ttl-error") == "Error: Key is revoked"
     assert page.locator("#keyTtlModal.show").count() == 1
+
+
+def test_edit_expiry_closed_while_saving_still_updates_row(app, restore_config, open_page, key_page):
+    app.config["KEY_TTL"] = 30 * DAY
+    path, _, expires_idx = key_page
+    page, _ = open_page(path)
+    with app.app_context():
+        kid = db.session.execute(select(APIKey.id).filter_by(name="live-key")).scalar_one()
+    held = []
+    page.route("**/ttl", lambda route, request: held.append(route))  # hold the POST until the dialog is closed
+
+    before = _row_cells(page, "live-key")[expires_idx]
+    page.locator(f".ttl-key-btn[data-id='{kid}']").click()
+    page.wait_for_selector("#keyTtlModal.show")
+    page.select_option("#edit-key-ttl-select", label="1 day")
+    page.click("#key-ttl-save-btn")
+    page.wait_for_function("document.getElementById('key-ttl-save-btn').disabled")
+    page.keyboard.press("Escape")
+    page.wait_for_selector("#keyTtlModal", state="hidden")
+    errors = []
+    page.on("pageerror", lambda e: errors.append(e))
+    held[0].fallback()  # the original handler answers it now
+
+    page.wait_for_function("!document.getElementById('key-ttl-save-btn').disabled")
+    assert errors == []
+    assert _row_cells(page, "live-key")[expires_idx] != before
+    assert _focused_ttl_button_id(page) == str(kid)

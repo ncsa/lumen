@@ -1466,6 +1466,36 @@ def test_edit_project_key_ttl_invalid_returns_400(app, managed_auth_client, mana
     assert _project_key_expiry(app, kid)[0] is None
 
 
+def test_edit_project_key_ttl_checks_cap_at_edit_time(app, managed_auth_client, managed_project, test_user,
+                                                      make_created_key, restore_config):
+    app.config["KEY_TTL"] = 0
+    kid = make_created_key(managed_project["id"], test_user["id"], "sk_ttlc00000000000000000ap01234567")
+    app.config["KEY_TTL"] = 7 * 86400
+    url = f"/projects/{managed_project['id']}/keys/{kid}/ttl"
+    assert managed_auth_client.post(url, json={"ttl": 30 * 86400}).status_code == HTTPStatus.BAD_REQUEST
+    assert managed_auth_client.post(url, json={"ttl": 0}).status_code == HTTPStatus.BAD_REQUEST
+    assert _project_key_expiry(app, kid)[0] is None
+
+
+def test_edit_project_key_ttl_concurrent_revoke_returns_409(app, managed_auth_client, managed_project, test_user,
+                                                            make_created_key, monkeypatch):
+    """A revoke that commits after the liveness check wins over the edit."""
+    from lumen.blueprints.profile import routes as profile_routes
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    kid = make_created_key(managed_project["id"], test_user["id"], "sk_ttlk00000000000000000rc01234567")
+    real_resolve = profile_routes.resolve_key_ttl
+
+    def resolve_then_revoke(requested):
+        db.session.execute(APIKey.__table__.update().where(APIKey.id == kid).values(revoked_at=utcnow()))
+        return real_resolve(requested)
+
+    monkeypatch.setattr(profile_routes, "resolve_key_ttl", resolve_then_revoke)
+    resp = managed_auth_client.post(f"/projects/{managed_project['id']}/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert _project_key_expiry(app, kid)[0] is None
+
+
 def test_edit_project_key_ttl_overdue_returns_409_and_revokes(app, managed_auth_client, managed_project, test_user,
                                                               make_created_key):
     kid = make_created_key(managed_project["id"], test_user["id"], "sk_ttlo00000000000000000ver1234567")
