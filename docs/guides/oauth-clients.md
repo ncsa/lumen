@@ -44,7 +44,7 @@ Best for anything without a browser callback. Follows the shape of RFC 8628 with
 
    Once approved, the request stays claimable for 60 s (the *claim window*) so a CLI that lost a network round trip can still pick the key up; an abandoned approval simply expires and creates nothing.
 
-3. If the user already has a key with the same `name`, the approval page requires them to tick an overwrite checkbox, and the old key is only deactivated when yours is minted. If the name is taken between approval and your poll, the claim fails with `invalid_grant` (`key name now in use`) and the approval stays open for a minute so they can retry after renaming.
+3. If the user already has a key with the same `name`, the approval page requires them to tick a replace checkbox. Approving then refreshes that key instead of creating a new one: when you claim, the same key gets a new secret, which is the one you receive, and it keeps its name and usage stats. The old secret keeps working until your claim, then stops working. If the user revoked that key in the meantime, you get a new key with the same name instead. If the name is taken between approval and your poll, the claim fails with `invalid_grant` (`key name now in use`) and the approval stays open for a minute so they can retry after renaming.
 
 ## Authorization-code flow with PKCE (web apps)
 
@@ -61,7 +61,7 @@ For apps that can receive a browser redirect. Public clients only: no `client_se
 
    `redirect_uri` must be absolute `https` (or `http` to a localhost port for development) with no fragment or credentials. Validation failures render an error page and **never** redirect, since the destination is unverified at that point.
 
-2. The user signs in (you get bounced through login and back), sees the consent page — destination origin shown prominently, models with per-model consent, overwrite checkbox when relevant — and approves or denies.
+2. The user signs in (you get bounced through login and back), sees the consent page — destination origin shown prominently, models with per-model consent, replace checkbox when relevant — and approves or denies.
 
    - Approve → `302` to `redirect_uri?code=<auth_code>&state=<state>`
    - Deny → `302` to `redirect_uri?error=access_denied&state=<state>`
@@ -135,5 +135,5 @@ The example is deliberately naive about key custody: a page whose only job is to
 - Users must be signed in; you never see or handle credentials.
 - Every unverified `client_id` is shown under an **Unverified application** warning banner.
 - The model list is a table with an **Acknowledgment** column, matching the Models page: **required** pills with an **Acknowledge** button for models needing consent (the same dialog as the profile page, recorded immediately when confirmed, independent of the approve button), **acknowledged** pills with the acceptance date, and **early access** pills.
-- Approving does not change any existing keys unless the user ticked **overwrite** for a same-name key; the page then shows the old key's hint so users recognize what they're replacing.
+- Approving does not change any existing keys unless the user ticked **Replace the secret of key …** for a same-name key; the page then shows the key's current hint so users recognize what they're replacing. That key keeps its name and usage stats and only gets a new secret, once the application collects it.
 - Keys created through these flows record their `client_id` (and `author`) as provenance, visible on the user's [Profile](./profile.md) key list tooltip, so users can see which tool asked for each key and revoke it there. A revoked key is deactivated and its usage kept; it stays listed under **Show revoked keys**, with the revocation time and, when known, who revoked it in the badge tooltip. A key revoked automatically because its authorization code was replayed shows no name. Times for keys revoked before this was recorded are approximate.

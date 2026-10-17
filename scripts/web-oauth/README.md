@@ -140,8 +140,11 @@ not store it at all; see the minimal example in
 
 Each key has a name (`keyName`). If the user already has a key with that name
 (for example, they connected before and then cleared their browser), the
-consent page asks them to tick **overwrite** before approving. Approving then
-revokes the old key and issues a new one with the same name. This is normal;
+consent page asks them to tick **Replace the secret of key …** before
+approving. Approving then keeps that key, with its name and usage stats, and
+gives it a new secret when your page collects it; the old secret stops working
+at that point. If the key was revoked in the meantime, a new key with the same
+name is issued instead. This is normal;
 use a `keyName` that identifies your app so users recognize it.
 
 ## Calling chat with the same key
