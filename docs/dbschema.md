@@ -731,7 +731,8 @@ scheduled run.
 
 Answers *"what did this user do, and how did it feel?"* — the per-entity `/usage` charts read it
 instead of raw `request_logs`, so an individual's "All Time" chart does not scan every raw row
-of their history.
+of their history. They read only this view, with no raw fallback, so history the refresh policy
+never reached appears only after `flask backfill-aggregate`.
 
 **Grouped by:** `bucket` (`time_bucket('1 hour', time)`), `entity_id`, `model_config_id`, `source`
 

@@ -162,7 +162,8 @@ flask backfill-aggregate [--name NAME] [--from YYYY-MM] [--force]
 | `--force` | Refresh months before a retention boundary anyway, erasing their *aggregate* rows. Raw rows are never touched. |
 
 Migrations create their aggregates `WITH NO DATA`, and the refresh policy only ever materialises its
-own `start_offset` window — so per-user "All Time" charts stay near-empty until this is run. **Run it
+own `start_offset` window — so per-user "All Time" charts stay near-empty until this is run: they read
+only `request_counts_hourly_by_entity` and no longer fall back to raw `request_logs`. **Run it
 right after `flask db upgrade` creates a new aggregate, and check the printed row counts.** It walks
 month by month because one `CALL refresh_continuous_aggregate(NULL, NULL)` over a production
 hypertable is a single long transaction with unbounded memory, and it never refreshes past `now()`,
@@ -192,8 +193,8 @@ flask check-aggregate
 It prints the aggregate's earliest *materialised* bucket (read from its materialisation hypertable,
 not the view, which answers from raw for anything never refreshed) and the oldest `request_logs`
 row. It exits 1 when the aggregate is empty or starts after the oldest raw row, printing the
-`flask backfill-aggregate --from YYYY-MM` that fixes it; until then the per-user "All Time" charts
-fall back to slow raw scans. It also exits 1 if a retention policy exists on `request_logs`, and
+`flask backfill-aggregate --from YYYY-MM` that fixes it; until then the per-user charts are missing
+that history. It also exits 1 if a retention policy exists on `request_logs`, and
 prints the `SELECT remove_retention_policy('request_logs');` that removes it. Run it before
 upgrading.
 
