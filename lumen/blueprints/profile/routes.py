@@ -1,7 +1,6 @@
 import hashlib
 import re
 import secrets
-import time
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 
@@ -576,131 +575,21 @@ def _usage_entity_id():
 
 # --- Per-entity usage source -------------------------------------------------
 #
-# The five per-entity /usage queries below read the
-# ``request_counts_hourly_by_entity`` continuous aggregate, with a fallback to
-# raw ``request_logs`` for any window the aggregate does not yet cover.
-#
-# TODO(phase8): delete ``_entity_aggregate_covers``, its helper, and the raw
-# arm of each of the five queries once ``flask backfill-aggregate`` is
-# confirmed to have run in production — i.e. once the aggregate's earliest
-# bucket is at or before the oldest surviving row in ``request_logs``.
-#
-# Why the fallback is not optional: ``entrypoint.sh`` runs ``flask db upgrade``
-# at container start, so the aggregate and its refresh policy exist from the
-# moment this code deploys, while the backfill is a separate manual command
-# that nothing gates on. Once the policy job runs it advances the view's
-# watermark, and real-time aggregation only scans raw rows *above* the
-# watermark — so history older than the policy's ``start_offset`` that was
-# never materialised is INVISIBLE through the view, not merely stale. Without
-# this fallback every user's All Time / Month / Week chart would read
-# near-empty from the instant of deploy until a human remembered the CLI.
-
-
-# Per-process cache for the coverage lookups below. ``usage.html`` fires all
-# five endpoints in parallel on every page load, and each one would otherwise
-# re-run the catalog lookup and both ``MIN`` queries — values that only move
-# when the refresh policy materialises older history or retention drops a raw
-# chunk. Within the TTL a stale answer can pick the wrong arm: raw rows
-# written below the aggregate's earliest bucket after ``raw_earliest`` was
-# cached are missed by the aggregate arm until the entry expires, and chunks
-# dropped by retention keep the raw arm in use a little longer than needed.
-# That staleness budget is accepted. ``None`` results are cached too: an empty
-# table is the common state right after a deploy. Lock-free on purpose; a race
-# between threads costs one duplicate query.
-_USAGE_SOURCE_TTL = 15 * 60
-_usage_source_cache = {}
-# Looked up at call time so tests can move the clock without patching the
-# ``time`` module for everyone.
-_usage_source_clock = time.monotonic
-
-
-def _usage_source_cached(key, compute):
-    entry = _usage_source_cache.get(key)
-    now = _usage_source_clock()
-    if entry is not None and entry[1] > now:
-        return entry[0]
-    value = compute()
-    _usage_source_cache[key] = (value, now + _USAGE_SOURCE_TTL)
-    return value
-
-
-def _reset_usage_source_cache():
-    """Forget every cached coverage value. For tests."""
-    _usage_source_cache.clear()
-
-
-def _entity_aggregate_earliest_bucket():
-    """Earliest *materialized* bucket held by ``request_counts_hourly_by_entity``
-    (None if empty).
-
-    Reads the aggregate's materialization hypertable, not the real-time view
-    itself: the view is ``materialized_only = false`` and in the un-backfilled
-    state it is created ``WITH NO DATA``, so ``MIN(bucket)`` against it scans
-    every raw ``request_logs`` row below the policy watermark. Only the
-    materialization hypertable holds what has actually been refreshed — which
-    is exactly what ``_entity_aggregate_covers`` needs to decide — and it is a
-    fast ``MIN`` regardless of backfill lag. Resolved via the catalog — the
-    same approach as ``commands.py`` (which, to be precise, also resolves the
-    bucket *column*; here that column is hardcoded to ``bucket``, the
-    aggregate's first column). The table name and the ``MIN`` are both cached
-    per process for ``_USAGE_SOURCE_TTL`` seconds. PostgreSQL only; every
-    caller sits behind a dialect check.
-    """
-    def mat_table():
-        return db.session.execute(text(
-            "SELECT materialization_hypertable_schema || '.' || "
-            "materialization_hypertable_name "
-            "FROM timescaledb_information.continuous_aggregates "
-            "WHERE view_name = 'request_counts_hourly_by_entity'"
-        )).scalar()
-
-    def earliest():
-        # The catalog row exists whenever the aggregate does (the pair is
-        # created atomically), so this None-guard only protects against a
-        # dialect the caller should have filtered out. Falling back to the view
-        # name keeps an unexpected state from turning into a confusing
-        # "FROM None" instead of a normal query error.
-        table = _usage_source_cached("agg_table", mat_table)
-        return db.session.execute(
-            text(f"SELECT MIN(bucket) FROM {table or 'request_counts_hourly_by_entity'}")
-        ).scalar()
-
-    return _usage_source_cached("agg_earliest", earliest)
-
-
-def _raw_earliest_time():
-    """Oldest surviving ``request_logs.time`` (None if empty), cached like the above."""
-    return _usage_source_cached("raw_earliest", lambda: db.session.execute(
-        text("SELECT MIN(time) FROM request_logs")
-    ).scalar())
-
-
-def _entity_aggregate_covers(start):
-    """True when the aggregate covers the window starting at ``start``.
-
-    Two ways it can. Either it reaches back past the window's own start, or it
-    reaches back past the oldest row that still exists at all — the second is
-    what makes "All time" (``start is None``) answerable, and it is also what
-    stays true after retention drops raw chunks, since the raw table is then
-    the younger of the two. The second query only runs when the first test
-    fails; both results are cached per process (see ``_USAGE_SOURCE_TTL``).
-    """
-    earliest = _entity_aggregate_earliest_bucket()
-    if earliest is None:
-        return False
-    if start is not None and earliest <= start:
-        return True
-    raw_earliest = _raw_earliest_time()
-    return raw_earliest is None or earliest <= raw_earliest
+# The five per-entity /usage queries below read only the
+# ``request_counts_hourly_by_entity`` continuous aggregate. History older than
+# the refresh policy's ``start_offset`` is visible through the view only once
+# ``flask backfill-aggregate`` has materialised it (``flask check-aggregate``
+# reports whether it has); per-user charts no longer fall back to raw
+# ``request_logs``.
 
 
 # ``request_logs.entity_id`` is ON DELETE SET NULL, so a hard-deleted entity's
 # raw rows answer for nobody. The aggregate materialised the id at refresh time
 # and never re-evaluates the foreign key, so it keeps that entity's groups for
-# as long as the view lives. Both arms carry this clause so they keep answering
-# alike: without it the same admin URL returns nothing before the refresh policy
-# first runs and a full history afterwards. For an entity that still exists it
-# is one primary-key probe, evaluated once.
+# as long as the view lives. Every per-entity query carries this clause so a
+# deleted entity answers with nothing, the same as its raw rows would, rather
+# than with whatever history happened to be materialised before the delete.
+# For an entity that still exists it is one primary-key probe, evaluated once.
 _ENTITY_STILL_EXISTS = " AND EXISTS (SELECT 1 FROM entities WHERE id = :eid)"
 
 
@@ -721,16 +610,12 @@ def usage_summary():
 
     if eid:
         params = {"eid": eid}
-        use_agg = _entity_aggregate_covers(start)
         where = "WHERE entity_id = :eid" + _ENTITY_STILL_EXISTS
         if start is not None:
             params["start"] = start
-            where += " AND bucket >= :start" if use_agg else " AND time >= :start"
-        # The two statements answer the same question over the same window and
-        # are kept side by side so that equality stays auditable by reading.
-        # The equality holds only because ``_usage_period_start`` floors to the
-        # hour: `bucket >= :start` and `time >= :start` are the same predicate
-        # on an hour-aligned start and on no other.
+            where += " AND bucket >= :start"
+        # `bucket >= :start` selects exactly the raw rows with `time >= :start`
+        # only because ``_usage_period_start`` floors to the hour.
         agg_sql = f"""
             SELECT
                 COALESCE(SUM(requests), 0),
@@ -739,15 +624,7 @@ def usage_summary():
             FROM request_counts_hourly_by_entity
             {where}
         """
-        raw_sql = f"""
-            SELECT
-                COALESCE(COUNT(*), 0),
-                COALESCE(SUM(input_tokens + output_tokens), 0),
-                COALESCE(SUM(cost), 0.0)
-            FROM request_logs
-            {where}
-        """
-        row = db.session.execute(text(agg_sql if use_agg else raw_sql), params).one()
+        row = db.session.execute(text(agg_sql), params).one()
         stat = db.session.execute(
             select(EntityStat).filter_by(entity_id=eid)
         ).scalar_one_or_none()
@@ -883,25 +760,17 @@ def usage_requests():
 
     if eid:
         params = {"bucket": bucket, "eid": eid}
-        use_agg = _entity_aggregate_covers(start)
         where = "WHERE entity_id = :eid" + _ENTITY_STILL_EXISTS
         if start is not None:
             params["start"] = start
-            where += " AND bucket >= :start" if use_agg else " AND time >= :start"
-        # Side by side so the equality stays auditable; see _entity_aggregate_covers.
+            where += " AND bucket >= :start"
         agg_sql = f"""
             SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period, SUM(requests) AS count
             FROM request_counts_hourly_by_entity
             {where}
             GROUP BY 1 ORDER BY 1
         """
-        raw_sql = f"""
-            SELECT time_bucket(CAST(:bucket AS INTERVAL), time) AS period, COUNT(*) AS count
-            FROM request_logs
-            {where}
-            GROUP BY 1 ORDER BY 1
-        """
-        rows = db.session.execute(text(agg_sql if use_agg else raw_sql), params).all()
+        rows = db.session.execute(text(agg_sql), params).all()
     elif start is not None:
         rows = db.session.execute(text("""
             SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period, SUM(requests) AS count
@@ -933,12 +802,10 @@ def usage_tokens():
 
     if eid:
         params = {"bucket": bucket, "eid": eid}
-        use_agg = _entity_aggregate_covers(start)
         where = "WHERE entity_id = :eid" + _ENTITY_STILL_EXISTS
         if start is not None:
             params["start"] = start
-            where += " AND bucket >= :start" if use_agg else " AND time >= :start"
-        # Side by side so the equality stays auditable; see _entity_aggregate_covers.
+            where += " AND bucket >= :start"
         agg_sql = f"""
             SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period,
                    SUM(input_tokens + output_tokens) AS tokens
@@ -946,14 +813,7 @@ def usage_tokens():
             {where}
             GROUP BY 1 ORDER BY 1
         """
-        raw_sql = f"""
-            SELECT time_bucket(CAST(:bucket AS INTERVAL), time) AS period,
-                   SUM(input_tokens + output_tokens) AS tokens
-            FROM request_logs
-            {where}
-            GROUP BY 1 ORDER BY 1
-        """
-        rows = db.session.execute(text(agg_sql if use_agg else raw_sql), params).all()
+        rows = db.session.execute(text(agg_sql), params).all()
     elif start is not None:
         rows = db.session.execute(text("""
             SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period,
@@ -984,13 +844,10 @@ def usage_models():
 
     if eid:
         params = {"eid": eid}
-        use_agg = _entity_aggregate_covers(start)
         where = "WHERE rl.entity_id = :eid" + _ENTITY_STILL_EXISTS
         if start is not None:
             params["start"] = start
-            where += " AND rl.bucket >= :start" if use_agg else " AND rl.time >= :start"
-        # Side by side so the equality stays auditable; see _entity_aggregate_covers.
-        # The alias stays `rl` in both arms so the shared WHERE clause fits either.
+            where += " AND rl.bucket >= :start"
         agg_sql = f"""
             SELECT mc.model_name, SUM(rl.requests) AS requests
             FROM request_counts_hourly_by_entity rl
@@ -998,14 +855,7 @@ def usage_models():
             {where}
             GROUP BY mc.model_name ORDER BY requests DESC
         """
-        raw_sql = f"""
-            SELECT mc.model_name, COUNT(*) AS requests
-            FROM request_logs rl
-            JOIN model_configs mc ON rl.model_config_id = mc.id
-            {where}
-            GROUP BY mc.model_name ORDER BY requests DESC
-        """
-        rows = db.session.execute(text(agg_sql if use_agg else raw_sql), params).all()
+        rows = db.session.execute(text(agg_sql), params).all()
     elif start is not None:
         rows = db.session.execute(text("""
             SELECT mc.model_name, SUM(rch.requests) AS requests
@@ -1036,12 +886,10 @@ def usage_heatmap():
 
     if eid:
         params = {"eid": eid}
-        use_agg = _entity_aggregate_covers(start)
         where = "WHERE entity_id = :eid" + _ENTITY_STILL_EXISTS
         if start is not None:
             params["start"] = start
-            where += " AND bucket >= :start" if use_agg else " AND time >= :start"
-        # Side by side so the equality stays auditable; see _entity_aggregate_covers.
+            where += " AND bucket >= :start"
         # EXTRACT(HOUR FROM bucket) is why the aggregate buckets hourly: on a
         # daily bucket every row would collapse to hour 0 and the 7x24 grid
         # would silently become a single column.
@@ -1054,16 +902,7 @@ def usage_heatmap():
             {where}
             GROUP BY 1, 2
         """
-        raw_sql = f"""
-            SELECT
-                EXTRACT(DOW FROM time)  AS dow,
-                EXTRACT(HOUR FROM time) AS hour,
-                COUNT(*) AS count
-            FROM request_logs
-            {where}
-            GROUP BY 1, 2
-        """
-        rows = db.session.execute(text(agg_sql if use_agg else raw_sql), params).all()
+        rows = db.session.execute(text(agg_sql), params).all()
     elif start is not None:
         rows = db.session.execute(text("""
             SELECT

@@ -653,7 +653,8 @@ def check_aggregate_cmd():
 
     ``request_logs`` is never pruned (#167). Exits 1 if a retention policy exists on
     it, or if the aggregate does not reach back to its oldest row; the per-user /usage
-    charts then fall back to slow raw scans until ``flask backfill-aggregate`` is run.
+    charts, which read only the aggregate, then miss that history until
+    ``flask backfill-aggregate`` is run.
     """
     if db.engine.dialect.name != "postgresql":
         click.echo(f"check-aggregate requires PostgreSQL/TimescaleDB; nothing to do on "
@@ -676,8 +677,8 @@ def check_aggregate_cmd():
         # Read the materialisation hypertable, never the view: with
         # materialized_only = false the view answers from raw above the watermark, so a
         # never-refreshed aggregate would look fully covered through it. The question is
-        # the one _entity_aggregate_covers asks before the per-entity charts read the
-        # aggregate: is its earliest materialised bucket at or before the oldest raw row?
+        # whether the per-entity charts, which read only the aggregate, see all of
+        # history: is its earliest materialised bucket at or before the oldest raw row?
         earliest = conn.execute(text(
             f'SELECT MIN("{_bucket_column(conn, ENTITY_AGGREGATE)}") '
             f'FROM {_materialization_hypertable(conn, ENTITY_AGGREGATE)}'

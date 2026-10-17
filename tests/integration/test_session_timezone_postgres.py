@@ -19,15 +19,13 @@ the day/week/month buckets land in the wrong period, and ``backfill-aggregate``
 picks the wrong starting month. None of it raises anything.
 
 Why the assertions here are absolute rather than comparative: the rest of the
-integration suite proves the aggregate arm equals the raw arm, and both arms run
-in the *same* session timezone, so they agree with each other while both are
+integration suite proves the aggregate equals the raw oracle, and both run in
+the *same* session timezone, so they agree with each other while both are
 wrong. Only a fixed expected value catches this — hence a row seeded at a known
 UTC instant near a day boundary and a literal expected ``(dow, hour)``.
 
-Both arms are exercised, in that order and for a reason: ``_entity_aggregate_covers``
-answers from the aggregate once it reaches back past the oldest raw row, so the
-test seeds and refreshes entity A first (aggregate arm), then seeds entity B
-*older* than the aggregate's earliest bucket, which forces the raw arm globally.
+Two instants are checked, one recent and one 60 days back, both materialised
+by a full refresh the way ``flask backfill-aggregate`` would.
 
 This module takes a database of its own (``pg_migrated_isolated``) because it
 issues an unbounded ``refresh_continuous_aggregate``, which would move the
@@ -50,10 +48,10 @@ VIEW = "request_counts_hourly_by_entity"
 
 # Both instants are minutes from a UTC day boundary, in opposite directions, so a
 # westward session timezone moves them into the previous UTC day (changing DOW)
-# as well as into a different hour. AGG_HOUR=2 reads as 20/21 on CST6CDT;
-# RAW_HOUR=0 reads as 18/19 on the previous day.
-AGG_DAYS_AGO, AGG_HOUR = 2, 2
-RAW_DAYS_AGO, RAW_HOUR = 60, 0
+# as well as into a different hour. RECENT_HOUR=2 reads as 20/21 on CST6CDT;
+# OLD_HOUR=0 reads as 18/19 on the previous day.
+RECENT_DAYS_AGO, RECENT_HOUR = 2, 2
+OLD_DAYS_AGO, OLD_HOUR = 60, 0
 
 _INSERT = f"""
     INSERT INTO request_logs
@@ -152,20 +150,6 @@ def _client(pg_app, eid):
     return client
 
 
-def _covers(pg_app, period):
-    # The coverage lookups are cached per process, and the test below seeds
-    # older history between two reads; clear the cache so each read sees the
-    # database as it is now, the way a request did when they were cached on g.
-    with pg_app.test_request_context():
-        from lumen.blueprints.profile.routes import (
-            _entity_aggregate_covers,
-            _reset_usage_source_cache,
-            _usage_period_start,
-        )
-        _reset_usage_source_cache()
-        return _entity_aggregate_covers(_usage_period_start(period))
-
-
 def _seed(engine, name, when):
     """One entity with exactly one request, at the absolute instant ``when``."""
     with engine.begin() as conn:
@@ -182,8 +166,6 @@ def _seed(engine, name, when):
 
 
 def _heatmap(pg_app, eid, period):
-    from lumen.blueprints.profile.routes import _reset_usage_source_cache
-    _reset_usage_source_cache()  # see _covers
     response = _client(pg_app, eid).get(f"/api/usage/heatmap?period={period}")
     assert response.status_code == HTTPStatus.OK
     return response.get_json()
@@ -204,27 +186,17 @@ def test_heatmap_reports_the_utc_hour_and_day_not_the_servers_local_ones(
     """
     engine = pg_migrated_isolated[1]
 
-    # --- aggregate arm: seeded, then materialised, so the view reaches back
-    # past the oldest raw row and _entity_aggregate_covers answers True.
-    agg_when = _instant(AGG_DAYS_AGO, AGG_HOUR)
-    agg_eid = _seed(engine, "agg", agg_when)
+    recent_when = _instant(RECENT_DAYS_AGO, RECENT_HOUR)
+    recent_eid = _seed(engine, "recent", recent_when)
+    old_when = _instant(OLD_DAYS_AGO, OLD_HOUR)
+    old_eid = _seed(engine, "old", old_when)
     _refresh(engine)
-    assert _covers(pg_app, "week") is True, (
-        "the aggregate arm is the one under test here; it was not taken"
-    )
-    assert _heatmap(pg_app, agg_eid, "week") == [
-        {"dow": _expected_cell(agg_when)[0], "hour": _expected_cell(agg_when)[1], "count": 1}
-    ]
 
-    # --- raw arm: this row predates the aggregate's earliest bucket, which is
-    # exactly the condition that sends every entity's query back to request_logs.
-    raw_when = _instant(RAW_DAYS_AGO, RAW_HOUR)
-    raw_eid = _seed(engine, "raw", raw_when)
-    assert _covers(pg_app, "year") is False, (
-        "the raw arm is the one under test here; it was not taken"
-    )
-    assert _heatmap(pg_app, raw_eid, "year") == [
-        {"dow": _expected_cell(raw_when)[0], "hour": _expected_cell(raw_when)[1], "count": 1}
+    assert _heatmap(pg_app, recent_eid, "week") == [
+        {"dow": _expected_cell(recent_when)[0], "hour": _expected_cell(recent_when)[1], "count": 1}
+    ]
+    assert _heatmap(pg_app, old_eid, "year") == [
+        {"dow": _expected_cell(old_when)[0], "hour": _expected_cell(old_when)[1], "count": 1}
     ]
 
 
