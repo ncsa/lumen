@@ -807,6 +807,65 @@ models:
         app.config["CONFIG_YAML"] = original
 
 
+def test_config_post_saves_api_key_ttl_and_keeps_other_api_keys(app, admin_client, tmp_path):
+    """Saving api.keys.ttl from the editor keeps the Prometheus and Monitoring settings."""
+    original, cfg = _use_config(app, tmp_path, _FULL_SECRET_CONFIG)
+    try:
+        data = admin_client.get("/admin/api/config").get_json()
+        data["api"]["keys"] = {"ttl": "30d"}
+        resp = admin_client.post("/admin/api/config", json=data)
+        assert resp.status_code == HTTPStatus.OK
+        saved = yaml.safe_load(cfg.read_text())["api"]
+        assert saved["keys"] == {"ttl": "30d"}
+        assert saved["prometheus"] == {"enabled": True, "token": "real-prom-token"}
+        assert saved["monitoring"] == {"token": "real-mon-token"}
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
+def test_config_post_rejects_bad_api_key_ttl(app, admin_client, tmp_path):
+    """The editor cannot save an api.keys.ttl the server cannot parse."""
+    original, cfg = _use_config(app, tmp_path, _FULL_SECRET_CONFIG)
+    try:
+        data = admin_client.get("/admin/api/config").get_json()
+        data["api"]["keys"] = {"ttl": "abc"}
+        resp = admin_client.post("/admin/api/config", json=data)
+        assert resp.status_code == HTTPStatus.BAD_REQUEST
+        assert "api.keys.ttl" in resp.get_json()["error"]
+        assert cfg.read_text() == _FULL_SECRET_CONFIG
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
+def test_config_page_renders_api_key_ttl_card(admin_client):
+    """The API section has a labelled key TTL field with help and alert text, and
+    collectApi keeps api.keys (and any other api.* key) instead of rebuilding api
+    from the Prometheus and Monitoring cards alone."""
+    html = admin_client.get("/admin/config").get_data(as_text=True)
+    assert "card('API Keys'" in html
+    # field() pairs the input with <label for="keys-ttl">.
+    assert "field('keys-ttl', 'Max / default key TTL'" in html
+    assert 'id="keys-ttl"' in html
+    assert '<div id="keys-ttl-help" class="form-text">0 = never; e.g. 12h, 30d, 8w</div>' in html
+    assert '<div id="keys-ttl-err" class="invalid-feedback" role="alert"></div>' in html
+    assert 'aria-describedby="keys-ttl-help keys-ttl-err"' in html
+    assert "${CONFIG_READONLY ? ' readonly' : ''}" in html
+    assert "const KEY_TTL_RE = /^(0|[0-9]+[hdw])$/;" in html
+    assert "...prev," in html
+    assert "keys: ttl ? { ttl } : undefined," in html
+
+
+def test_config_page_api_key_ttl_read_only_when_editor_disabled(app, admin_client):
+    """With app.config_editor false the page is read-only, which makes the key TTL field readonly."""
+    original = app.config.get("CONFIG_EDITOR", True)
+    app.config["CONFIG_EDITOR"] = False
+    try:
+        html = admin_client.get("/admin/config").get_data(as_text=True)
+        assert "const CONFIG_READONLY = true;" in html
+    finally:
+        app.config["CONFIG_EDITOR"] = original
+
+
 def test_config_post_re_enables_legacy_disabled_model(app, admin_client, tmp_path):
     """Clearing the editor's Disabled checkbox re-enables a model that was disabled
     via the legacy ``active: false`` key.
