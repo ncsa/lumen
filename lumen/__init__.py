@@ -147,6 +147,40 @@ def _startup_db_hint(e: Exception) -> str:
     return str(e)
 
 
+def _warn_if_request_logs_has_retention(app):
+    """Log an ERROR if a retention policy exists on request_logs. Never raises.
+
+    ``request_logs`` is never pruned (#167) and nothing in Lumen adds a retention
+    policy to it, but one added by hand in SQL would silently drop raw history.
+    This is the tripwire: one catalog query per serving process start, on
+    PostgreSQL only. A database without TimescaleDB has no such catalog and so no
+    policy; any other failure is logged at WARNING, because startup must not
+    depend on it.
+    """
+    from lumen.commands import _retention_job
+    from lumen.extensions import db
+
+    if db.engine.dialect.name != "postgresql":
+        return
+    try:
+        job = _retention_job(db.session)
+    except Exception as e:  # noqa: BLE001 - a tripwire must never block startup
+        db.session.rollback()
+        orig = getattr(e, "orig", None)
+        # 42P01 undefined_table: no TimescaleDB, so no timescaledb_information.jobs.
+        if (getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)) == "42P01":
+            return
+        app.logger.warning("Could not check request_logs for a retention policy: %s", e)
+        return
+    if job is not None:
+        app.logger.error(
+            "request_logs has a retention policy (job %s, config %s), but request_logs "
+            "must never be pruned. Remove it with "
+            "SELECT remove_retention_policy('request_logs'); then run 'flask check-aggregate'.",
+            job[0], job[1],
+        )
+
+
 def compact_number(n) -> str:
     """Format a count for display: full number below a million, else "3.2 million" / "16.1 billion"."""
     n = n or 0
@@ -701,6 +735,7 @@ def create_app():
             print(f"WARNING: Could not sync models from yaml: {_startup_db_hint(e)}",
                   file=sys.stderr)
         if not non_serving_cli:
+            _warn_if_request_logs_has_retention(app)
             try:
                 # Prime the metrics snapshot synchronously: without it every rolling
                 # restart serves an empty snapshot for a whole refresh interval, and
