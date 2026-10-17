@@ -3,11 +3,13 @@
 The key tables are rendered client-side, so the Expires column and the
 expired/revoked badges only exist after the page's JavaScript runs. These tests
 load /profile and /projects/<sid> in headless Chromium, with every same-origin
-request answered by the Flask test client (no live server) except Bootstrap,
-which base.html loads from its CDN. They check the rendered tables with the
-accessibility checks and drive the New API Key save path.
+request answered by the Flask test client (no live server). Bootstrap's JS,
+which base.html loads from its CDN, is served from a pinned copy in
+tests/fixtures/vendor, so the tests need no network. They check the rendered
+tables with the accessibility checks and drive the New API Key save path.
 """
 from datetime import timedelta
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
@@ -20,7 +22,9 @@ from tests.conftest import make_project
 from tests.ui.test_accessibility import _run_all_checks
 
 ORIGIN = "http://lumen.test"
-BOOTSTRAP_CDN = "https://cdn.jsdelivr.net/npm/bootstrap@"
+# Must match the bundle base.html loads; the copy is that file, byte for byte.
+BOOTSTRAP_JS_URL = "https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"
+BOOTSTRAP_JS = Path(__file__).parent.parent / "fixtures" / "vendor" / "bootstrap-5.3.0.bundle.min.js"
 DAY = 86400
 
 
@@ -32,11 +36,12 @@ def open_page(auth_client, browser):
 
     def handle(route, request):
         url = urlsplit(request.url)
-        if request.url.startswith(BOOTSTRAP_CDN):
-            route.continue_()  # the tables and modals need Bootstrap's JS
+        if request.url == BOOTSTRAP_JS_URL:
+            # The tables and modals need Bootstrap's JS; serve the pinned copy.
+            route.fulfill(status=200, content_type="application/javascript", body=BOOTSTRAP_JS.read_bytes())
             return
         if f"{url.scheme}://{url.netloc}" != ORIGIN:
-            route.abort()  # other CDN assets: not needed
+            route.abort()  # other CDN assets: keep the test hermetic
             return
         path = url.path + (f"?{url.query}" if url.query else "")
         if request.method == "POST":
@@ -58,6 +63,11 @@ def open_page(auth_client, browser):
     yield _open
     for page in pages:
         page.close()
+
+
+def test_base_template_loads_the_pinned_bootstrap():
+    base = (Path(__file__).parent.parent.parent / "lumen" / "templates" / "base.html").read_text()
+    assert f'src="{BOOTSTRAP_JS_URL}"' in base, "update BOOTSTRAP_JS_URL and the copy in tests/fixtures/vendor"
 
 
 def _seed_keys(app, entity_id, creator_id):
@@ -114,6 +124,11 @@ def test_key_table_expires_column_and_badges(open_page, key_page):
     assert _row_cells(page, "forever-key")[expires_idx] == "Never"
     live_expires = _row_cells(page, "live-key")[expires_idx]
     assert live_expires not in ("", "Never", "—")
+
+    # Expires sorts like Last Used: descending on first click, no value last.
+    page.click("#key-table th[data-col='expires_at']")
+    names = page.locator("#key-tbody tr td:first-child").all_inner_texts()
+    assert [n.strip() for n in names] == ["live-key", "forever-key"]
 
     page.check("#show-revoked-cb")
     assert page.locator("#key-tbody tr").count() == 4
