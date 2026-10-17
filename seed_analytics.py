@@ -43,7 +43,7 @@ def refresh_hourly_aggregate(engine, start: datetime, end: datetime) -> None:
         # polymorphic window arguments, so cast to the aggregate's timestamptz.
         conn.execute(db.text(
             "CALL refresh_continuous_aggregate('request_counts_hourly', "
-            "CAST(:start AS timestamptz), CAST(:end AS timestamptz))"
+            ":start, :end)"
         ), {"start": start, "end": end})
 
 

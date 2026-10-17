@@ -504,7 +504,7 @@ def _refresh_window(conn, name, start, end):
             # datetime would arrive as timestamp, not the timestamptz every aggregate
             # here buckets on. The casts pin the types in the SQL instead.
             conn.execute(text("CALL refresh_continuous_aggregate("
-                              "CAST(:n AS regclass), CAST(:s AS timestamptz), CAST(:e AS timestamptz))"),
+                              ":n, :s, :e)"),
                          {"n": name, "s": start, "e": end})
             return retries
         except DBAPIError as exc:
