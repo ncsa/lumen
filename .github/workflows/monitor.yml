@@ -9,13 +9,15 @@ on:
   pull_request:
 
 jobs:
-  test:
+  monitor-test:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: scripts/monitor
 
     # Tests marked `postgres` skip when MONITOR_TEST_POSTGRES_URL is absent.
+    # Throwaway database that lives only for this job; never point these
+    # credentials or MONITOR_TEST_POSTGRES_URL at a real instance.
     services:
       postgres:
         image: postgres:17
@@ -24,7 +26,7 @@ jobs:
           POSTGRES_PASSWORD: monitor
           POSTGRES_DB: monitor_ci
         ports:
-          - 5432:5432
+          - 54302:5432
         options: >-
           --health-cmd "pg_isready -U monitor"
           --health-interval 10s
@@ -48,9 +50,9 @@ jobs:
       - name: Run tests
         run: uv run pytest -rs
         env:
-          MONITOR_TEST_POSTGRES_URL: postgresql://monitor:monitor@localhost:5432/monitor_ci
+          MONITOR_TEST_POSTGRES_URL: postgresql://monitor:monitor@localhost:54302/monitor_ci
 
-  docker:
+  monitor-docker:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

@@ -9,10 +9,11 @@ ENV UV_NO_CACHE=1 \
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project --no-editable
 
 COPY . .
-RUN uv sync --frozen --no-dev
+# Non-editable: the image runs the installed package, as a wheel would.
+RUN uv sync --frozen --no-dev --no-editable
 
 FROM python:3.11-slim
 

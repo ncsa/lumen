@@ -11,6 +11,7 @@ a reload that fails keeps the previous config.
 """
 
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -23,6 +24,8 @@ log = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = "config.yaml"
 
+# An empty MONITOR_DATABASE_URL or MONITOR_LUMEN_API_KEY counts as unset. An empty
+# MONITOR_BASE_PATH still overrides the file on purpose: "" means "served at the root".
 ENV_DATABASE_URL = "MONITOR_DATABASE_URL"
 ENV_BASE_PATH = "MONITOR_BASE_PATH"
 ENV_LUMEN_API_KEY = "MONITOR_LUMEN_API_KEY"
@@ -31,6 +34,9 @@ DEFAULT_REFRESH = {"web": "1m", "models": "5m", "price": "1h", "page": "5m", "ti
 DEFAULT_RETENTION = "31d"
 MIN_RETENTION = timedelta(days=30)
 MAX_MODELS_REFRESH = timedelta(hours=1)
+# Upper bound for any duration; also keeps timedelta() from overflowing.
+MAX_DURATION = timedelta(days=3650)
+TOP_LEVEL_KEYS = {"database_url", "base_path", "timezone", "retention", "refresh", "lumen", "price", "models"}
 
 _DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([smhd]?)\s*$")
 _UNITS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -88,13 +94,18 @@ def parse_duration(value, name: str) -> timedelta:
     """Parse `15s`, `5m`, `1h`, `31d` or a bare number of seconds."""
     if isinstance(value, bool):
         raise ConfigError(f"{name}: expected a duration like 5m, got {value!r}")
-    if isinstance(value, (int, float)):
-        seconds = float(value)
-    else:
-        match = _DURATION_RE.match(str(value))
-        if not match:
-            raise ConfigError(f"{name}: expected a duration like 5m, got {value!r}")
-        seconds = float(match.group(1)) * _UNITS[match.group(2)]
+    try:
+        if isinstance(value, (int, float)):
+            seconds = float(value)
+        else:
+            match = _DURATION_RE.match(str(value))
+            if not match:
+                raise ConfigError(f"{name}: expected a duration like 5m, got {value!r}")
+            seconds = float(match.group(1)) * _UNITS[match.group(2)]
+    except OverflowError:
+        seconds = math.inf
+    if not math.isfinite(seconds) or seconds > MAX_DURATION.total_seconds():
+        raise ConfigError(f"{name}: must be a finite duration of at most {MAX_DURATION.days}d, got {value!r}")
     if seconds <= 0:
         raise ConfigError(f"{name}: must be greater than zero")
     return timedelta(seconds=seconds)
@@ -116,14 +127,19 @@ def _section(raw: dict, name: str) -> dict:
 
 
 def _number(value, name: str, warnings: list[str]) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
-        warnings.append(f"{name}: expected a non-negative number, got {value!r}")
+    try:
+        number = None if isinstance(value, bool) or not isinstance(value, (int, float)) else float(value)
+    except OverflowError:
+        number = None
+    if number is None or not math.isfinite(number) or number < 0:
+        warnings.append(f"{name}: expected a finite non-negative number, got {value!r}")
         return None
-    return float(value)
+    return number
 
 
 def _parse_refresh(raw: dict) -> Refresh:
-    section = {**DEFAULT_REFRESH, **_section(raw, "refresh")}
+    # An empty value (YAML null) means "use the default", as for every other key.
+    section = {**DEFAULT_REFRESH, **{k: v for k, v in _section(raw, "refresh").items() if v is not None}}
     unknown = sorted(set(section) - set(DEFAULT_REFRESH))
     if unknown:
         raise ConfigError(f"refresh: unknown keys {', '.join(unknown)}")
@@ -191,6 +207,9 @@ def parse_config(raw: dict | None, env: dict | None = None) -> Config:
     if not isinstance(raw, dict):
         raise ConfigError("config: expected a mapping at the top level")
     warnings: list[str] = []
+    unknown = sorted(str(key) for key in set(raw) - TOP_LEVEL_KEYS)
+    if unknown:
+        warnings.append(f"unknown top-level keys ignored: {', '.join(unknown)}")
 
     tz_name = str(raw.get("timezone") or "UTC")
     try:
@@ -198,7 +217,7 @@ def parse_config(raw: dict | None, env: dict | None = None) -> Config:
     except (ZoneInfoNotFoundError, ValueError) as exc:
         raise ConfigError(f"timezone: unknown timezone {tz_name!r}") from exc
 
-    retention = parse_duration(raw.get("retention", DEFAULT_RETENTION), "retention")
+    retention = parse_duration(DEFAULT_RETENTION if raw.get("retention") is None else raw["retention"], "retention")
     if retention < MIN_RETENTION:
         warnings.append("retention is shorter than 30d: the 30d view will be cut short")
 

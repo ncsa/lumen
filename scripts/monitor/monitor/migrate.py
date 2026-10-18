@@ -5,7 +5,8 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config as AlembicConfig
 
-ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
+# alembic.ini and migrations/ live inside the package so they ship in the wheel.
+ALEMBIC_INI = Path(__file__).resolve().parent / "alembic.ini"
 
 
 def alembic_config(database_url: str) -> AlembicConfig:

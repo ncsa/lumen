@@ -196,3 +196,74 @@ def test_reload_keeps_previous_config_on_error(tmp_path, caplog):
         assert store.reload() is False
     assert store.current is before
     assert "reload failed" in caplog.text
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan"), 10**400, "99999999999999d", "3651d"])
+def test_parse_duration_rejects_non_finite_and_out_of_range(value):
+    with pytest.raises(ConfigError, match="finite duration"):
+        parse_duration(value, "x")
+
+
+def test_parse_duration_accepts_upper_bound():
+    assert parse_duration("3650d", "x") == timedelta(days=3650)
+
+
+@pytest.mark.parametrize("value", [".inf", ".nan", "-.inf", "1e999", "99999999999999d"])
+def test_non_finite_refresh_rejected_from_yaml(tmp_path, value):
+    path = tmp_path / "config.yaml"
+    path.write_text(f"refresh: {{price: {value}}}\n")
+    with pytest.raises(ConfigError):
+        load_config(path, env={})
+
+
+@pytest.mark.parametrize("text", [
+    "refresh: {price: .inf}\n",
+    "refresh: {price: .nan}\n",
+    "retention: 99999999999999d\n",
+    "retention: .inf\n",
+])
+def test_reload_rejects_non_finite_and_keeps_previous(tmp_path, caplog, text):
+    path = tmp_path / "config.yaml"
+    path.write_text("refresh: {price: 1h}\n")
+    store = ConfigStore(path, env={})
+    before = store.current
+    path.write_text(text)
+    with caplog.at_level(logging.ERROR, logger="monitor.config"):
+        assert store.reload() is False
+    assert store.current is before
+    assert "reload failed" in caplog.text
+
+
+@pytest.mark.parametrize("value", [".inf", ".nan", "-.inf", "1e999"])
+def test_non_finite_kwh_reported_and_skipped(tmp_path, value):
+    path = tmp_path / "config.yaml"
+    path.write_text(f"price: {{kwh: {value}, rtx6000: {{energy: 600, price: 625}}}}\nmodels: {{m: {{gpu: rtx6000, gpus: 1}}}}\n")
+    config = load_config(path, env={})
+    assert config.kwh is None
+    assert any("price.kwh" in w for w in config.warnings)
+    assert config.hardware_for("m") is None
+
+
+@pytest.mark.parametrize("field", ["energy", "price"])
+@pytest.mark.parametrize("value", [float("inf"), float("nan"), 10**400])
+def test_non_finite_gpu_inputs_reported_and_skipped(field, value):
+    entry = {"energy": 600, "price": 625, field: value}
+    config = parse_config({"price": {"kwh": 0.24, "rtx6000": entry}, "models": {"m": {"gpu": "rtx6000", "gpus": 1}}}, env={})
+    assert any(f"price.rtx6000.{field}" in w for w in config.warnings)
+    assert "rtx6000" not in config.gpus
+    assert config.hardware_for("m") is None
+
+
+def test_null_values_use_defaults():
+    config = parse_config({"retention": None, "timezone": None, "refresh": {"web": None, "price": None}}, env={})
+    assert config == parse_config({}, env={})
+
+
+def test_zero_retention_still_rejected():
+    with pytest.raises(ConfigError, match="retention"):
+        parse_config({"retention": 0}, env={})
+
+
+def test_unknown_top_level_key_warns():
+    config = parse_config({"refreshh": {"web": "1m"}}, env={})
+    assert any("refreshh" in w for w in config.warnings)

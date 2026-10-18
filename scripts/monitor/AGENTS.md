@@ -10,7 +10,7 @@ The root `AGENTS.md` applies here too. Rules specific to the monitor:
   the same PR, and the other way round.
 - All timestamps are naive UTC; get "now" from `monitor.db.utcnow()`. Only `daily_stats.day`
   is a local date, in the configured `timezone`.
-- Schema changes need a new Alembic revision in `migrations/versions/` that works on SQLite
+- Schema changes need a new Alembic revision in `monitor/migrations/versions/` that works on SQLite
   and PostgreSQL; `tests/test_migrations.py` checks the models and migrations agree. Give
   every table and column a comment.
 - New `config.yaml` keys go in `monitor/config.py` with validation and tests, and in
