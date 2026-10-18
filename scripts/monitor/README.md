@@ -37,14 +37,19 @@ There is no HTTP server yet: port 5000 in the image is for the dashboard, which 
 
 The models run makes no HTTP call: it reads the request and token windows from the last
 successful probe (skipping the run when that probe is older than 2 × `refresh.web`) and adds
-the traffic since `covered_until` to today's lumen row. A gap up to 1h is counted from
-`last_hour`; up to 24h from `last_day`, marked `estimated`; a longer one from `last_month`
-(at most 30 days back), filling the missed days with `estimated` rows, or without `last_month`
-from the last 24h only, leaving the missed days empty. A gap across local midnight is split
-between the days by duration. A snapshot without any usable window leaves `covered_until`
-where it was, so its gap is counted by the next snapshot that has one. `covered_until` is stored, so a restart never counts the same
-time twice. The first run after local midnight marks the earlier days `final`; a day's totals
-are exact only when it is `final` and not `estimated`.
+the traffic since each metric's watermark (`covered_until` for requests, `tokens_covered_until`
+for tokens) to today's lumen row. A gap up to 1h is counted from `last_hour`; up to 24h from
+`last_day`, marked `estimated`; a longer one from `last_month` (at most 30 days back), filling
+the missed days with `estimated` rows, or without `last_month` from the last 24h only, leaving
+the missed days empty. A gap across local midnight is split between the days by duration. A
+snapshot without a usable window for a metric leaves that metric's watermark where it was, so
+its gap is counted by the next snapshot that has one. The watermarks are stored, so a restart
+never counts the same time twice.
+
+Earlier days are marked `final` once every metric is counted past their end, normally on the
+first run after local midnight. A day whose traffic is still deferred stays open until a window
+covers it, or until it is 30 days old and no window can reach it. A day's totals are exact
+only when it is `final` and not `estimated`.
 
 `--config PATH` (or `MONITOR_CONFIG`) picks another config file. These environment variables
 override the file: `MONITOR_DATABASE_URL`, `MONITOR_BASE_PATH`, `MONITOR_LUMEN_API_KEY`.

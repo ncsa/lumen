@@ -231,6 +231,72 @@ def test_a_snapshot_without_windows_defers_its_gap(env):
     assert row.covered_until == MIDNIGHT + timedelta(minutes=15)
 
 
+def test_deferred_windows_survive_midnight(env):
+    store, factory = env
+    sf = factory()
+    bare = {"id": "qwen", "status": "ok", "requests": None, "tokens": None}
+    run(store, sf, MIDNIGHT + timedelta(hours=23, minutes=55))
+    before = rows(sf)[DAY]
+    result = run(store, sf, MIDNIGHT + timedelta(days=1), [bare])
+    assert result.finalized == 0 and not rows(sf)[DAY].final  # 23:55-24:00 is still to be counted
+    run(store, sf, MIDNIGHT + timedelta(days=1, minutes=5))
+    got = rows(sf)
+    assert got[DAY].requests - before.requests == pytest.approx(HOUR * 5 / 60)
+    assert got[DAY].tokens - before.tokens == pytest.approx(HOUR * 1000 * 5 / 60)
+    assert got[DAY + timedelta(days=1)].requests == pytest.approx(HOUR * 5 / 60)
+    assert got[DAY].final and not got[DAY + timedelta(days=1)].final
+
+
+def test_a_deferred_day_closes_when_no_window_can_reach_it(env):
+    store, factory = env
+    sf = factory()
+    run(store, sf, MIDNIGHT + timedelta(hours=23, minutes=55))
+    bare = {"id": "qwen", "status": "ok", "requests": None, "tokens": None}
+    assert run(store, sf, MIDNIGHT + timedelta(days=30), [bare]).finalized == 0
+    assert run(store, sf, MIDNIGHT + timedelta(days=31), [bare]).finalized == 1
+    assert rows(sf)[DAY].final
+
+
+@pytest.mark.parametrize("missing", ["requests", "tokens"])
+def test_a_missing_metric_keeps_its_own_interval(env, missing):
+    store, factory = env
+    sf = factory()
+    partial = model()
+    partial[missing] = None
+    run(store, sf, MIDNIGHT + timedelta(minutes=5))
+    run(store, sf, MIDNIGHT + timedelta(minutes=10), [partial])
+    row = rows(sf)[DAY]
+    assert (row.covered_until, row.tokens_covered_until)[missing == "tokens"] == MIDNIGHT + timedelta(minutes=5)
+    run(store, sf, MIDNIGHT + timedelta(minutes=15))
+    row = rows(sf)[DAY]
+    assert row.requests == pytest.approx(HOUR * 15 / 60)  # 30, neither lost nor counted twice
+    assert row.tokens == pytest.approx(HOUR * 1000 * 15 / 60)  # 30,000
+    assert not row.estimated
+    assert row.covered_until == row.tokens_covered_until == MIDNIGHT + timedelta(minutes=15)
+
+
+def test_a_missing_metric_recovers_across_a_restart(env):
+    store, factory = env
+    run(store, factory(), MIDNIGHT + timedelta(minutes=5))
+    run(store, factory(), MIDNIGHT + timedelta(minutes=10), [model(tokens=False)])
+    # A new process with an empty snapshot; its first probe has both metrics again.
+    run(store, factory(), MIDNIGHT + timedelta(minutes=15))
+    run(store, factory(), MIDNIGHT + timedelta(minutes=15))
+    row = rows(factory())[DAY]
+    assert row.requests == pytest.approx(HOUR * 15 / 60)
+    assert row.tokens == pytest.approx(HOUR * 1000 * 15 / 60)
+
+
+def test_a_metric_reported_later_starts_at_local_midnight(env):
+    store, factory = env
+    sf = factory()
+    run(store, sf, MIDNIGHT + timedelta(minutes=5), [model(tokens=False)])
+    run(store, sf, MIDNIGHT + timedelta(minutes=30))
+    row = rows(sf)[DAY]
+    assert row.requests == pytest.approx(HOUR * 30 / 60)
+    assert row.tokens == pytest.approx(HOUR * 1000 * 30 / 60)
+
+
 @pytest.mark.parametrize("gap, windows, expected", [
     (timedelta(minutes=30), {"last_day": 2400}, Span(MIDNIGHT, 2400 / 86400, True)),  # no last_hour
     (timedelta(hours=5), {"last_hour": 120, "last_month": 72000}, Span(MIDNIGHT, 72000 / (30 * 86400), True)),  # no last_day
