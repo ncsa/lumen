@@ -1,0 +1,43 @@
+# Lumen monitor config. Copy to config.yaml and edit.
+# The file is re-read on every price run; a broken edit keeps the previous config.
+
+# SQLite or PostgreSQL. Env MONITOR_DATABASE_URL overrides.
+database_url: sqlite:///monitor.db
+# database_url: postgresql://monitor:monitor@localhost/monitor
+
+# URL prefix when served behind a reverse proxy, e.g. /monitor. Env MONITOR_BASE_PATH overrides.
+base_path: ""
+
+# Where a day starts (local midnight) for the daily rows. Default UTC.
+timezone: America/Chicago
+
+# How long raw probes and samples are kept; daily rows are kept forever.
+# Shorter than 30d cuts the 30d view short.
+retention: 31d
+
+# Durations: s, m, h or d. Required order: timeout < web <= models <= 1h, web <= price.
+refresh:
+  web: 1m        # probe GET /v1/models: UP/DOWN, response time, per-model samples
+  models: 5m     # daily request/token totals
+  price: 1h      # models.dev + Lumen prices + hardware cost
+  page: 5m       # how often the dashboard in the browser reloads its data
+  timeout: 15s   # shared by every outbound request
+
+lumen:
+  url: https://lumen.example.edu
+  api_key: ""    # a monitoring token is enough. Env MONITOR_LUMEN_API_KEY overrides.
+
+# Hardware cost: kwh in $ per kWh, then per GPU type the power draw in watts
+# per GPU and the price in $ per GPU per month.
+price:
+  kwh: 0.24
+  rtx6000:
+    energy: 600
+    price: 625
+
+# GPU type and count per Lumen model. There are no defaults: a model that is
+# not listed gets no hardware cost. modelsdev_id optionally pins the models.dev match.
+models:
+  qwen3-coder-next-fp8: {gpu: rtx6000, gpus: 1}
+  nemotron-3-super-120b-a12b-fp8: {gpu: rtx6000, gpus: 2}
+  # some-model: {gpu: rtx6000, gpus: 1, modelsdev_id: provider/model}

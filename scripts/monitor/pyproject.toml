@@ -1,0 +1,48 @@
+[project]
+name = "lumen-monitor"
+version = "0.1.0"
+description = "Standalone monitoring service for a Lumen instance"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+dependencies = [
+    "flask>=3.0",
+    "sqlalchemy>=2.0,<2.1",
+    "alembic>=1.16",
+    "psycopg2-binary>=2.9",
+    "requests>=2.31",
+    "pyyaml>=6.0",
+    # zoneinfo needs the IANA database, which slim images do not ship.
+    "tzdata>=2024.1",
+]
+
+[project.scripts]
+monitor = "monitor.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9",
+    "pytest-timeout>=2.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["monitor"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+timeout = 120
+markers = [
+    "postgres: needs a real PostgreSQL (set MONITOR_TEST_POSTGRES_URL; skipped otherwise)",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 160
+
+[tool.ruff.lint]
+# Same rule set as the root project.
+select = ["E4", "E7", "E9", "F", "I", "W"]
