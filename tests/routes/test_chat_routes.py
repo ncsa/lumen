@@ -1,5 +1,5 @@
 """Tests for chat routes (conversations, stream validation, access control)."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 
 
@@ -32,6 +32,132 @@ def test_list_conversations_with_data(app, auth_client, test_user):
     assert len(data["conversations"]) == 1
     assert data["conversations"][0]["title"] == "Test Chat"
     assert data["conversations"][0]["model"] == "test-model"
+
+
+# Sidebar previews. The scenarios below take (app, client, entity_id) so the
+# PostgreSQL integration tests can run them unchanged against a real database.
+
+SIDEBAR_T0 = datetime(2026, 1, 1, 12, 0, 0)
+
+
+def _seed_conversation(app, entity_id, updated_at, messages):
+    """A conversation with ``messages`` as (content, created_at), inserted in order."""
+    from lumen.extensions import db
+    from lumen.models.conversation import Conversation
+    from lumen.models.message import Message
+    with app.app_context():
+        conv = Conversation(entity_id=entity_id, title="Sidebar", model="test-model",
+                            updated_at=updated_at)
+        db.session.add(conv)
+        db.session.flush()
+        for content, created_at in messages:
+            db.session.add(Message(conversation_id=conv.id, role="user",
+                                   content=content, created_at=created_at))
+            db.session.flush()
+        db.session.commit()
+        return conv.id
+
+
+def _previews(client, query=""):
+    resp = client.get(f"/chat/conversations{query}")
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.get_json()
+    return {c["id"]: c["last_message_preview"] for c in data["conversations"]}, data["has_more"]
+
+
+def sidebar_newest_message(app, client, entity_id):
+    t = [SIDEBAR_T0 + timedelta(minutes=i) for i in range(4)]
+    a = _seed_conversation(app, entity_id, t[3], [("a0", t[0]), ("a2", t[2]), ("a1", t[1])])
+    b = _seed_conversation(app, entity_id, t[3], [("b0", t[0]), ("b3", t[3]), ("b1", t[1])])
+    previews, _ = _previews(client)
+    assert previews == {a: "a2", b: "b3"}
+
+
+def sidebar_truncates_to_60_characters(app, client, entity_id):
+    content = "naïve café ✓ " * 10
+    conv = _seed_conversation(app, entity_id, SIDEBAR_T0, [(content, SIDEBAR_T0)])
+    previews, _ = _previews(client)
+    assert previews[conv] == content[:60]
+    assert len(previews[conv]) == 60
+
+
+def sidebar_empty_conversation(app, client, entity_id):
+    conv = _seed_conversation(app, entity_id, SIDEBAR_T0, [])
+    previews, _ = _previews(client)
+    assert previews == {conv: ""}
+
+
+def sidebar_created_at_tie_takes_highest_id(app, client, entity_id):
+    conv = _seed_conversation(app, entity_id, SIDEBAR_T0, [
+        ("lower id", SIDEBAR_T0), ("higher id", SIDEBAR_T0), ("older", SIDEBAR_T0 - timedelta(minutes=1)),
+    ])
+    previews, _ = _previews(client)
+    assert previews == {conv: "higher id"}
+
+
+def sidebar_ignores_conversations_outside_the_page(app, client, entity_id):
+    t = [SIDEBAR_T0 + timedelta(minutes=i) for i in range(4)]
+    old = _seed_conversation(app, entity_id, t[1], [("old newest", t[3]), ("old older", t[0])])
+    new = _seed_conversation(app, entity_id, t[2], [("new newest", t[2]), ("new older", t[0])])
+
+    previews, has_more = _previews(client, "?limit=1")
+    assert previews == {new: "new newest"}
+    assert has_more is True
+
+    previews, has_more = _previews(client, f"?limit=1&before={new}")
+    assert previews == {old: "old newest"}
+    assert has_more is False
+
+
+def test_sidebar_preview_is_the_newest_message(app, auth_client, test_user):
+    sidebar_newest_message(app, auth_client, test_user["id"])
+
+
+def test_sidebar_preview_truncates_multibyte_to_60_characters(app, auth_client, test_user):
+    sidebar_truncates_to_60_characters(app, auth_client, test_user["id"])
+
+
+def test_sidebar_preview_of_empty_conversation_is_blank(app, auth_client, test_user):
+    sidebar_empty_conversation(app, auth_client, test_user["id"])
+
+
+def test_sidebar_preview_tie_on_created_at_takes_highest_id(app, auth_client, test_user):
+    sidebar_created_at_tie_takes_highest_id(app, auth_client, test_user["id"])
+
+
+def test_sidebar_preview_ignores_conversations_outside_the_page(app, auth_client, test_user):
+    sidebar_ignores_conversations_outside_the_page(app, auth_client, test_user["id"])
+
+
+def test_sidebar_preview_query_is_bounded_to_the_page(app, auth_client, test_user):
+    """The preview query filters its aggregate by the page and never loads full rows."""
+    from sqlalchemy import event
+
+    from lumen.extensions import db
+    conv = _seed_conversation(app, test_user["id"], SIDEBAR_T0, [("hello", SIDEBAR_T0)])
+    statements = []
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    with app.app_context():
+        engine = db.engine
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        previews, _ = _previews(auth_client)
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    assert previews == {conv: "hello"}
+    message_sql = [s for s in statements if "FROM messages" in s]
+    assert len(message_sql) == 1
+    select_list = message_sql[0].split("FROM messages")[0]
+    assert "messages.thinking" not in select_list
+    assert "messages.role" not in select_list
+    # Filtered by the page both inside the GROUP BY subquery, before the
+    # aggregate, and on the outer select, so neither side scans all messages.
+    inner, outer = message_sql[0].split("GROUP BY")
+    assert " IN " in inner.split("FROM messages")[-1]
+    assert " IN " in outer
 
 
 def test_get_conversation_messages_not_found(auth_client):

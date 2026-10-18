@@ -417,31 +417,32 @@ def list_conversations():
     has_more = len(convs) > limit
     convs = convs[:limit]
     conv_ids = [c.id for c in convs]
-    last_msgs: dict[int, Message] = {}
+    last_previews: dict[int, str] = {}
     if conv_ids:
         subq = (
             select(Message.conversation_id, func.max(Message.created_at).label("max_at"))
+            .where(Message.conversation_id.in_(conv_ids))
             .group_by(Message.conversation_id)
             .subquery()
         )
-        for msg in db.session.execute(
-            select(Message).join(
+        # Ordered by id so that on a created_at tie the highest id wins.
+        for conversation_id, preview in db.session.execute(
+            select(Message.conversation_id, func.substr(Message.content, 1, 60)).join(
                 subq,
                 (Message.conversation_id == subq.c.conversation_id)
                 & (Message.created_at == subq.c.max_at)
-            ).where(Message.conversation_id.in_(conv_ids))
-        ).scalars():
-            last_msgs[msg.conversation_id] = msg
+            ).where(Message.conversation_id.in_(conv_ids)).order_by(Message.id)
+        ):
+            last_previews[conversation_id] = preview
 
     result = []
     for conv in convs:
-        last_msg = last_msgs.get(conv.id)
         result.append({
             "id": conv.id,
             "title": conv.title,
             "model": conv.model,
             "updated_at": conv.updated_at.strftime('%Y-%m-%dT%H:%M:%SZ') if conv.updated_at else None,
-            "last_message_preview": last_msg.content[:60] if last_msg else "",
+            "last_message_preview": last_previews.get(conv.id, ""),
         })
     return jsonify({"conversations": result, "has_more": has_more})
 
