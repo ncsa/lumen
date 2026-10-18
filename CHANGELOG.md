@@ -13,6 +13,10 @@ All notable changes to Lumen will be documented in this file.
 - Add a standalone monitoring service in `scripts/monitor` that tracks Lumen health, uptime and response time, and records daily models.dev, Lumen and hardware/energy costs plus requests and tokens, with a status dashboard and per-model graphs.
 - Publish the monitor image as `ncsa/lumen-monitor` and `ghcr.io/ncsa/lumen-monitor`, versioned with Lumen; lint and Docker CI run as a matrix over Lumen and the monitor.
 
+### Changed
+
+- `lumen.sh` no longer adds models without text input (e.g. audio-only) to the opencode config.
+
 ### Fixed
 
 - The models.dev match for model sync no longer crosses major versions (a `-v2` model no longer takes a `-v1` listing's metadata or price).

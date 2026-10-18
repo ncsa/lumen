@@ -29,6 +29,12 @@ MODELS = {
             "parent": "gpt-demo",
             "output_modalities": ["text"],
         },
+        {
+            "id": "whisper-demo", "max_model_len": 4000,
+            "input_cost_per_million": 1.0, "output_cost_per_million": 2.0,
+            "input_modalities": ["audio"],
+            "output_modalities": ["text"],
+        },
     ],
 }
 
@@ -482,6 +488,37 @@ def test_sync_reports_added_and_removed(home, lumen_server):
     assert r.returncode == 0, r.stderr
     assert b"+ gpt-demo" in r.stdout
     assert b"- gone-model" in r.stdout
+
+
+def test_sync_skips_models_without_text_input(home, lumen_server, monkeypatch):
+    """Models whose input_modalities lack text (e.g. audio-only) are not
+    written; text+audio and unknown modalities are kept, a previously synced
+    model that is now skipped is reported as removed, and if nothing is left
+    the config stays untouched."""
+    port = lumen_server.server_address[1]
+    keys = home / ".config" / "lumen" / "keys.json"
+    keys.parent.mkdir(parents=True)
+    keys.write_text(json.dumps({host_key(port): "sk_stored_key_000"}))
+    cfg_path = home / ".config" / "opencode" / "opencode.json"
+    cfg_path.write_text(json.dumps({"provider": {"lumen": {"models": {"whisper-demo": {}}}}}))
+    monkeypatch.setitem(MODELS, "data", MODELS["data"] + [
+        {"id": "omni-demo", "max_model_len": 4000,
+         "input_cost_per_million": 1.0, "output_cost_per_million": 2.0,
+         "input_modalities": ["text", "audio"]},
+    ])
+    r = run_script(home, port)
+    assert r.returncode == 0, r.stderr
+    models = json.loads(cfg_path.read_text())["provider"]["lumen"]["models"]
+    assert set(models) == {"gpt-demo", "gpt-alias", "omni-demo"}
+    assert b"- whisper-demo" in r.stdout
+    assert b"Updated 3 models" in r.stdout
+
+    before = cfg_path.read_text()
+    monkeypatch.setitem(MODELS, "data", [m for m in MODELS["data"] if m["id"] == "whisper-demo"])
+    r = run_script(home, port)
+    assert r.returncode != 0
+    assert b"no models" in r.stderr
+    assert cfg_path.read_text() == before
 
 
 # --- hostile server values ----------------------------------------------------

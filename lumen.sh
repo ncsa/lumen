@@ -339,6 +339,8 @@ sync_models() {
   new_models=$(printf '%s' "$models_json" | jq --argjson skip_aliases "$skip_aliases_json" '
     [.data[]
      | select(($skip_aliases | not) or (.parent == null))
+     # OpenCode chats in text, so skip models that take no text input (e.g. audio-only); unknown modalities are kept.
+     | select(((.input_modalities // []) | length) == 0 or ((.input_modalities | index("text")) != null))
      | {
        key: .id,
        value: (
