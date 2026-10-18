@@ -87,8 +87,15 @@ def pg_app(pg_migrated_isolated):
     previous_uri = Config.SQLALCHEMY_DATABASE_URI
     Config.SQLALCHEMY_DATABASE_URI = url
     from lumen import create_app
+    from lumen.services import metrics_snapshot
 
+    started = len(metrics_snapshot._refreshers)
     application = create_app()
+    # create_app starts a metrics-snapshot refresher even with
+    # BACKGROUND_WORKER=false. Left running, it keeps opening sessions against
+    # this module's database after it is dropped, for the rest of the session,
+    # and skews tests that count the process-wide session registry.
+    own_refreshers = metrics_snapshot._refreshers[started:]
     Config.SQLALCHEMY_DATABASE_URI = previous_uri
     application.config["TESTING"] = True
     application.config["WTF_CSRF_ENABLED"] = False
@@ -97,6 +104,10 @@ def pg_app(pg_migrated_isolated):
 
         assert db.engine.dialect.name == "postgresql", "the test app is not on PostgreSQL"
     yield application
+    for stop, thread in own_refreshers:
+        stop.set()
+        thread.join(5)
+        metrics_snapshot._refreshers.remove((stop, thread))
     for key, value in previous_env.items():
         if value is None:
             os.environ.pop(key, None)
