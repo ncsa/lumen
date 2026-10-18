@@ -49,6 +49,12 @@ def test_hash_matches_hmac_of_encryption_key(app, monkeypatch):
         assert hash_api_key("sk_x") == expected
 
 
+def test_hash_is_not_plain_sha256(app, monkeypatch):
+    with app.app_context():
+        monkeypatch.setitem(app.config, "ENCRYPTION_KEY", "fixed-test-key")
+        assert hash_api_key("sk_x") != hashlib.sha256(b"sk_x").hexdigest()
+
+
 def test_encrypt_decrypt_roundtrip(app):
     with app.app_context():
         ct = encrypt_secret("sk-upstream-secret")
