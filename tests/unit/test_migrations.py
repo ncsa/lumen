@@ -265,3 +265,34 @@ def test_auth_request_unique_index_names_match_migration():
     assert unique["uq_auth_requests_device_code_hash"] == ["device_code_hash"]
     assert unique["uq_auth_requests_auth_code_hash"] == ["auth_code_hash"]
     assert not [c for c in AuthRequest.__table__.constraints if isinstance(c, sa.UniqueConstraint)]
+
+
+# ---------------------------------------------------------------------------
+# c93d4de8245c: messages (conversation_id, created_at) index
+# ---------------------------------------------------------------------------
+
+_MESSAGES_INDEX_REVISION_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "migrations" / "versions" / "c93d4de8245c_messages_conversation_created_index.py"
+)
+
+
+def test_message_index_names_match_migration(tmp_path):
+    """create_all must leave messages with the same indexes as c93d4de8245c."""
+    from lumen.models.message import Message
+
+    spec = importlib.util.spec_from_file_location("messages_index_revision", _MESSAGES_INDEX_REVISION_PATH)
+    revision = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(revision)
+
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'messages.db'}")
+    with engine.begin() as conn:
+        conn.exec_driver_sql(
+            "CREATE TABLE messages (id INTEGER PRIMARY KEY, conversation_id INTEGER, created_at DATETIME)"
+        )
+        conn.exec_driver_sql("CREATE INDEX ix_messages_conversation_id ON messages (conversation_id)")
+    _run_revision(engine, revision.upgrade)
+
+    migrated = {i["name"]: i["column_names"] for i in sa.inspect(engine).get_indexes("messages")}
+    model = {i.name: [c.name for c in i.columns] for i in Message.__table__.indexes}
+    assert migrated == model == {"ix_messages_conversation_id_created_at": ["conversation_id", "created_at"]}

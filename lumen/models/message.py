@@ -17,7 +17,7 @@ class Message(db.Model):
 
     __tablename__ = "messages"
     __table_args__ = (
-        db.Index("ix_messages_conversation_id", "conversation_id"),
+        db.Index("ix_messages_conversation_id_created_at", "conversation_id", "created_at"),
         {"comment": "Individual turns within a conversation; performance metadata columns are assistant-only"},
     )
 

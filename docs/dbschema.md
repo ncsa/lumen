@@ -650,6 +650,8 @@ Individual turns within a conversation. Both user and assistant messages are sto
 | `thinking` | Text | YES | Reasoning/thinking content from the model; assistant messages only |
 | `thinking_tokens` | Integer | YES | Thinking/reasoning token count reported by the model; assistant messages only |
 
+**Constraints:** index `ix_messages_conversation_id_created_at` on (`conversation_id`, `created_at`)
+
 ---
 
 ## request_logs

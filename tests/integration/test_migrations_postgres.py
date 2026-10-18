@@ -186,3 +186,34 @@ def test_model_group_access_dropped_and_downgrade_recreates_it(pg_migrated_isola
     flask_db(url, "upgrade")
     table, index, *_ = state()
     assert table is None and index is None
+
+
+def test_messages_composite_index_and_downgrade_restores_single_column(pg_migrated_isolated):
+    """c93d4de8245c replaces ix_messages_conversation_id with (conversation_id, created_at).
+
+    Uses a private database so a failed downgrade/upgrade cannot leave the
+    shared session database off head.
+    """
+    url, engine = pg_migrated_isolated
+
+    def indexes():
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT i.relname, array_agg(a.attname ORDER BY k.ord) "
+                "FROM pg_index x "
+                "JOIN pg_class i ON i.oid = x.indexrelid "
+                "JOIN unnest(x.indkey) WITH ORDINALITY AS k(attnum, ord) ON true "
+                "JOIN pg_attribute a ON a.attrelid = x.indrelid AND a.attnum = k.attnum "
+                "WHERE x.indrelid = 'messages'::regclass AND NOT x.indisprimary "
+                "GROUP BY i.relname"
+            )).all()
+        return {name: list(cols) for name, cols in rows}
+
+    assert indexes() == {"ix_messages_conversation_id_created_at": ["conversation_id", "created_at"]}
+
+    # An explicit revision: click would parse "-1" as an option.
+    flask_db(url, "downgrade", "a827b0223638")
+    assert indexes() == {"ix_messages_conversation_id": ["conversation_id"]}
+
+    flask_db(url, "upgrade")
+    assert indexes() == {"ix_messages_conversation_id_created_at": ["conversation_id", "created_at"]}
