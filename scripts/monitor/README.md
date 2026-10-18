@@ -17,6 +17,7 @@ cd scripts/monitor
 cp config.yaml.example config.yaml   # then edit
 uv sync
 uv run monitor migrate               # create or upgrade the schema
+uv run monitor collect --price       # record today's Lumen, models.dev and hardware prices once
 ```
 
 `--config PATH` (or `MONITOR_CONFIG`) picks another config file. These environment variables
