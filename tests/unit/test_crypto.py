@@ -1,3 +1,6 @@
+import hashlib
+import hmac
+
 from sqlalchemy import text
 
 from lumen.services.crypto import _ENC_PREFIX, decrypt_secret, encrypt_secret, hash_api_key
@@ -28,6 +31,22 @@ def test_hash_length(app):
     with app.app_context():
         result = hash_api_key("test")
         assert len(result) == 64  # sha256 = 32 bytes = 64 hex chars
+
+
+def test_hash_is_keyed_on_encryption_key(app, monkeypatch):
+    with app.app_context():
+        monkeypatch.setitem(app.config, "ENCRYPTION_KEY", "key-alpha")
+        h1 = hash_api_key("sk_x")
+        monkeypatch.setitem(app.config, "ENCRYPTION_KEY", "key-beta")
+        h2 = hash_api_key("sk_x")
+        assert h1 != h2
+
+
+def test_hash_matches_hmac_of_encryption_key(app, monkeypatch):
+    with app.app_context():
+        monkeypatch.setitem(app.config, "ENCRYPTION_KEY", "fixed-test-key")
+        expected = hmac.new(b"fixed-test-key", b"sk_x", hashlib.sha256).hexdigest()
+        assert hash_api_key("sk_x") == expected
 
 
 def test_encrypt_decrypt_roundtrip(app):
