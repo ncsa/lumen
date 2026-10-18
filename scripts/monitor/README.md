@@ -33,6 +33,7 @@ deletes probes and samples older than `retention`.
 models run every `refresh.models` and the price run every `refresh.price` (which also re-reads
 `config.yaml`). A loop that fails is logged and tried again on its next turn without
 affecting the others. SIGTERM or SIGINT lets the running loop finish, then the service exits.
+There is no HTTP server yet: port 5000 in the image is for the dashboard, which follows.
 
 The models run makes no HTTP call: it reads the request and token windows from the last
 successful probe (skipping the run when that probe is older than 2 × `refresh.web`) and adds
@@ -40,7 +41,8 @@ the traffic since `covered_until` to today's lumen row. A gap up to 1h is counte
 `last_hour`; up to 24h from `last_day`, marked `estimated`; a longer one from `last_month`
 (at most 30 days back), filling the missed days with `estimated` rows, or without `last_month`
 from the last 24h only, leaving the missed days empty. A gap across local midnight is split
-between the days by duration. `covered_until` is stored, so a restart never counts the same
+between the days by duration. A snapshot without any usable window leaves `covered_until`
+where it was, so its gap is counted by the next snapshot that has one. `covered_until` is stored, so a restart never counts the same
 time twice. The first run after local midnight marks the earlier days `final`; a day's totals
 are exact only when it is `final` and not `estimated`.
 

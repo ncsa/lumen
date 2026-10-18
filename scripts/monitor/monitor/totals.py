@@ -12,6 +12,8 @@ the snapshot time. With `gap = snapshot time − covered_until`:
   back at most 24h with `last_day` and leave the missed days empty.
 
 A span that crosses local midnight is split by duration between the days.
+`covered_until` only moves when a window was counted: a snapshot without any
+usable window defers its gap to the next snapshot that has one.
 `covered_until` lives in the database, so a restart picks up where the last
 run stopped and never counts the same time twice. A model seen for the first
 time is counted from local midnight. Requests and tokens are planned
@@ -19,6 +21,8 @@ separately, since Lumen may report a window for one and not the other.
 
 After the totals, every lumen row of an earlier day is marked `final`; final
 rows never change again, so the first run after midnight closes yesterday.
+Days backfilled by this run are closed in the same run on purpose: Lumen's
+windows never describe them more precisely later, so they stay `estimated`.
 """
 
 import logging
@@ -145,9 +149,6 @@ def _add_model(session: Session, model: dict, end: datetime, tz) -> None:
             row.estimated = bool(row.estimated) or span.estimated
             row.covered_until = max(row.covered_until or piece_end, piece_end)
             row.last_updated = utcnow()
-    today = rows.get(local_day(end, tz))
-    if today is not None:
-        today.covered_until = end
 
 
 def _finalize(session: Session, today: date) -> int:

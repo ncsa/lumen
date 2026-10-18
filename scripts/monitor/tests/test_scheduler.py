@@ -7,6 +7,8 @@ import threading
 import time
 from datetime import timedelta
 
+import pytest
+
 from sqlalchemy import func, select
 
 from monitor import migrate
@@ -107,9 +109,19 @@ def test_serve_stops_on_sigterm():
     scheduler = Scheduler([Job("probe", lambda: timedelta(seconds=0.05), run)])
     threading.Thread(target=lambda: ran.wait(5) and os.kill(os.getpid(), signal.SIGTERM)).start()
     before = signal.getsignal(signal.SIGTERM)
-    serve(scheduler)
+    assert serve(scheduler) is True
     assert len(calls) >= 2 and scheduler.stop.is_set()
     assert signal.getsignal(signal.SIGTERM) is before
+
+
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_serve_reports_a_dead_scheduler_thread(caplog):
+    def broken():
+        raise TimeoutError("no cadence")
+
+    scheduler = Scheduler([Job("probe", broken, lambda: None)])
+    assert serve(scheduler) is False
+    assert "scheduler thread exited unexpectedly" in caplog.text
 
 
 def _closed_port():

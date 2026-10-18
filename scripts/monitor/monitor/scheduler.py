@@ -90,10 +90,16 @@ def make_jobs(store: ConfigStore, session_factory: sessionmaker, snapshot: LiveS
     ]
 
 
-def serve(scheduler: Scheduler) -> None:
-    """Run `scheduler` on its own thread until SIGTERM or SIGINT, then wait for it to finish."""
+def serve(scheduler: Scheduler) -> bool:
+    """Run `scheduler` on its own thread until SIGTERM or SIGINT, then wait for it to finish.
+
+    Returns False when the thread died on its own, so the caller can exit non-zero.
+    """
+    signalled = threading.Event()
+
     def on_signal(signum, _frame):
         log.info("received %s, shutting down", signal.Signals(signum).name)
+        signalled.set()
         scheduler.stop.set()
 
     previous = {sig: signal.signal(sig, on_signal) for sig in (signal.SIGTERM, signal.SIGINT)}
@@ -107,3 +113,6 @@ def serve(scheduler: Scheduler) -> None:
         thread.join()
         for sig, handler in previous.items():
             signal.signal(sig, handler)
+    if not signalled.is_set():
+        log.error("scheduler thread exited unexpectedly")
+    return signalled.is_set()

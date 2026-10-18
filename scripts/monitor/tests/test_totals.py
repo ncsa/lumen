@@ -9,7 +9,7 @@ from monitor.config import ConfigStore
 from monitor.db import make_engine, make_session_factory
 from monitor.models import DailyStat
 from monitor.probe import LiveSnapshot, Snapshot
-from monitor.totals import run_models, split_by_day
+from monitor.totals import Span, plan_span, run_models, split_by_day
 
 CONFIG = """
 lumen: {url: "https://lumen.test"}
@@ -216,6 +216,29 @@ def test_missing_windows_leave_totals_empty(env):
     row = rows(sf)[DAY]
     assert row.tokens is None
     assert row.requests == pytest.approx(HOUR * 5 / 60)
+
+
+def test_a_snapshot_without_windows_defers_its_gap(env):
+    store, factory = env
+    sf = factory()
+    bare = {"id": "qwen", "status": "ok", "requests": None, "tokens": None}
+    run(store, sf, MIDNIGHT + timedelta(minutes=5))
+    run(store, sf, MIDNIGHT + timedelta(minutes=10), [bare])
+    assert rows(sf)[DAY].covered_until == MIDNIGHT + timedelta(minutes=5)
+    run(store, sf, MIDNIGHT + timedelta(minutes=15))
+    row = rows(sf)[DAY]
+    assert row.requests == pytest.approx(HOUR * 15 / 60)  # the 5 minutes without windows are not lost
+    assert row.covered_until == MIDNIGHT + timedelta(minutes=15)
+
+
+@pytest.mark.parametrize("gap, windows, expected", [
+    (timedelta(minutes=30), {"last_day": 2400}, Span(MIDNIGHT, 2400 / 86400, True)),  # no last_hour
+    (timedelta(hours=5), {"last_hour": 120, "last_month": 72000}, Span(MIDNIGHT, 72000 / (30 * 86400), True)),  # no last_day
+    (timedelta(days=40), {"last_month": 72000}, Span(MIDNIGHT + timedelta(days=10), 72000 / (30 * 86400), True)),  # 30 days back
+    (timedelta(hours=5), {"last_hour": 120}, None),
+])
+def test_plan_span_fallbacks(gap, windows, expected):
+    assert plan_span(windows, MIDNIGHT, MIDNIGHT + gap) == expected
 
 
 def test_totals_keep_the_other_columns(env):
