@@ -11,7 +11,8 @@ from monitor import migrate
 from monitor.collect import collect_prices
 from monitor.config import DEFAULT_CONFIG_PATH, ConfigError, ConfigStore
 from monitor.db import make_engine, make_session_factory
-from monitor.probe import lumen_state, run_probe
+from monitor.probe import LiveSnapshot, lumen_state, run_probe
+from monitor.scheduler import Scheduler, make_jobs, serve
 
 log = logging.getLogger("monitor")
 
@@ -62,8 +63,12 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             engine.dispose()
         return status
-    log.error("serve is not implemented yet")
-    return 1
+    engine = make_engine(config.database_url)
+    try:
+        serve(Scheduler(make_jobs(store, make_session_factory(engine), LiveSnapshot())))
+    finally:
+        engine.dispose()
+    return 0
 
 
 if __name__ == "__main__":
