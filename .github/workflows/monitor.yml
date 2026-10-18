@@ -1,0 +1,59 @@
+name: Monitor
+
+# Tests and image build for the standalone service in scripts/monitor. It has
+# its own pyproject.toml and uv.lock, so it runs separately from the root suite.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: scripts/monitor
+
+    # Tests marked `postgres` skip when MONITOR_TEST_POSTGRES_URL is absent.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: monitor
+          POSTGRES_PASSWORD: monitor
+          POSTGRES_DB: monitor_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U monitor"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: scripts/monitor/pyproject.toml
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run tests
+        run: uv run pytest -rs
+        env:
+          MONITOR_TEST_POSTGRES_URL: postgresql://monitor:monitor@localhost:5432/monitor_ci
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build image
+        run: docker build scripts/monitor
