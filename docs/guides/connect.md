@@ -11,7 +11,7 @@ Lumen exposes an **OpenAI-compatible API**, so most tools that speak to OpenAI c
 1. It uses `$LUMEN_API_KEY` only when it belongs to the target server — that is, when `$LUMEN_BASE_URL` names the same server (or is unset and the default is meant), so a key issued by one Lumen is never sent to another. Otherwise it reuses a key saved for this server in `~/.config/lumen/keys.json`.
 2. Otherwise it starts a **device login**: it prints a one-time code (like `QKRT-M2BX`) and opens Lumen's approval page. Sign in, check what is being requested, and approve — the CLI then receives a fresh API key exactly once.
 3. The key is saved to `~/.config/lumen/keys.json` (mode `600`, keyed by server host) and written into a managed `# >>> lumen >>>` block in your shell's rc file (`~/.zshrc`, `~/.bashrc`, `setenv` for csh), which exports both `LUMEN_API_KEY` and `LUMEN_BASE_URL`. A plain `lumen.sh` therefore targets the server you last logged in to.
-4. Unless you pass `--no-opencode`, the Lumen provider block in `~/.config/opencode/opencode.json` is refreshed with every active model.
+4. Unless you pass `--no-opencode`, the Lumen provider block in `~/.config/opencode/opencode.json` is refreshed with every active model that accepts text input. Models without text input (for example audio-only models) are skipped; models whose input modalities are unknown are still added.
 
 | Flag | Purpose |
 |------|---------|
