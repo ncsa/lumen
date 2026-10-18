@@ -8,7 +8,6 @@ import time
 from datetime import timedelta
 
 import pytest
-
 from sqlalchemy import func, select
 
 from monitor import migrate
