@@ -7,8 +7,9 @@ prices in its own database (SQLite or PostgreSQL), and serves a dashboard.
 It imports nothing from the main `lumen` package and has its own dependencies, migrations,
 tests and Docker image.
 
-> Work in progress: this step adds the config, the schema, the migrations and CI. The
-> collectors, the scheduler (`monitor serve`) and the dashboard follow.
+> Work in progress: the config, schema, migrations, CI, the price collectors and the health
+> probe are in. The daily request/token totals, the scheduler (`monitor serve`) and the
+> dashboard follow.
 
 ## Setup
 
@@ -17,8 +18,15 @@ cd scripts/monitor
 cp config.yaml.example config.yaml   # then edit
 uv sync
 uv run monitor migrate               # create or upgrade the schema
+uv run monitor collect --probe       # probe GET /v1/models once: health, response time, samples
 uv run monitor collect --price       # record today's Lumen, models.dev and hardware prices once
 ```
+
+A probe writes one `probes` row (success, response time, models listed and up) and, when it
+succeeds, one `samples` row per model plus today's availability counters. The Lumen state
+comes from the last 3 probes: DOWN when all failed, DEGRADED when the latest one lists a model
+that is down, UP otherwise, UNKNOWN before the first probe. The first probe of each local day
+deletes probes and samples older than `retention`.
 
 `--config PATH` (or `MONITOR_CONFIG`) picks another config file. These environment variables
 override the file: `MONITOR_DATABASE_URL`, `MONITOR_BASE_PATH`, `MONITOR_LUMEN_API_KEY`.
