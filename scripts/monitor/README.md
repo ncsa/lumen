@@ -48,7 +48,10 @@ never counts the same time twice.
 
 Earlier days are marked `final` once every metric is counted past their end, normally on the
 first run after local midnight. A day whose traffic is still deferred stays open until a window
-covers it, or until it is 30 days old and no window can reach it. A day's totals are exact
+covers it, or until it is 30 days old and no window can reach it; it then closes as
+`estimated`, since part of its traffic was never counted. A metric that stops being reported
+for good keeps every later day of that model open for those 30 days, not only the day of the
+gap. A day's totals are exact
 only when it is `final` and not `estimated`.
 
 `--config PATH` (or `MONITOR_CONFIG`) picks another config file. These environment variables

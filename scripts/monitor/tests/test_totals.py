@@ -257,6 +257,21 @@ def test_a_deferred_day_closes_when_no_window_can_reach_it(env):
     assert rows(sf)[DAY].final
 
 
+def test_a_day_closed_with_uncounted_traffic_is_estimated(env):
+    store, factory = env
+    sf = factory()
+    run(store, sf, MIDNIGHT)
+    run(store, sf, MIDNIGHT + timedelta(minutes=5))
+    row = rows(sf)[DAY]
+    assert not row.estimated and row.requests == pytest.approx(HOUR * 5 / 60)
+    bare = {"id": "qwen", "status": "ok", "requests": None, "tokens": None}
+    assert run(store, sf, MIDNIGHT + timedelta(days=31), [bare]).finalized == 1
+    row = rows(sf)[DAY]
+    assert row.final and row.estimated  # never reported as an exact day
+    assert row.requests == pytest.approx(HOUR * 5 / 60)
+    assert row.covered_until == row.tokens_covered_until == MIDNIGHT + timedelta(minutes=5)
+
+
 @pytest.mark.parametrize("missing", ["requests", "tokens"])
 def test_a_missing_metric_keeps_its_own_interval(env, missing):
     store, factory = env

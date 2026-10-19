@@ -26,7 +26,8 @@ rows never change again. A day closes once every metric that has a watermark
 for the model is counted past its end, so the first run after midnight
 normally closes yesterday. A day whose traffic is still deferred stays open
 until a window covers it, or until it is 30 days old and no Lumen window can
-reach it any more. Days backfilled by this run are closed in the same run:
+reach it any more; such a day is closed as `estimated`, since part of its
+traffic was never counted. Days backfilled by this run are closed in the same run:
 Lumen's windows never describe them more precisely later, so they stay
 `estimated`.
 """
@@ -167,8 +168,12 @@ def _finalize(session: Session, end: datetime, tz) -> int:
             found = (_watermark(session, row.model, column) for column in METRICS.values())
             watermarks[row.model] = [w for w in found if w is not None]
         day_end = local_midnight(row.day + timedelta(days=1), tz)
-        if any(w < day_end for w in watermarks[row.model]) and end - day_end < MONTH:
+        uncounted = any(w < day_end for w in watermarks[row.model])
+        if uncounted and end - day_end < MONTH:
             continue
+        if uncounted:
+            # Closed with traffic missing: the totals are incomplete, never exact.
+            row.estimated = True
         row.final = True
         row.last_updated = utcnow()
         closed += 1
