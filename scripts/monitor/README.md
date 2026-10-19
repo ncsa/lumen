@@ -7,9 +7,11 @@ prices in its own database (SQLite or PostgreSQL), and serves a dashboard.
 It imports nothing from the main `lumen` package and has its own dependencies, migrations,
 tests and Docker image.
 
-> Work in progress: the config, schema, migrations, CI, the price collectors, the health
-> probe, the daily request/token totals, the scheduler and the overview dashboard are in. The
-> model detail page follows.
+It replaces the single-file `monitor/app.py`; see [Migrating from monitor/app.py](#migrating-from-monitorapppy).
+
+> **No login.** Anyone who can reach the dashboard sees every model, its traffic and its
+> costs. Serve it on an internal network or behind the reverse proxy (with its own access
+> control), never directly on the internet.
 
 ## Setup
 
@@ -68,7 +70,8 @@ under `base_path` (restart after changing it). The overview has:
 - the model table (canonical models only): a status strip, uptime (the share of buckets that
   are ok), instances, our price, the models.dev median (p5–p95), hardware $/day and $/M tokens
   (or $/request without token counts), peak req/min and Lumen's 24h requests and tokens.
-  Columns sort on click; a row opens the model's detail page.
+  Columns sort on click; a row opens the model's detail page. HW $/day is the latest
+  day's cost; HW $/M tok covers the selected range.
 
 Ranges are 1h, 12h, 24h, 7d and 30d from the raw probes and samples, bucketed at 1m, 3m, 5m,
 30m and 2h (never below `refresh.web`); a bucket shows its worst status and is "no data" when
@@ -77,6 +80,23 @@ down otherwise. `*` marks values that include days which are not yet `final` or 
 `estimated`; `†` marks a model without a `models:` GPU entry. The page reloads its data every
 `refresh.page` without a full reload. The JSON behind it is `/api/overview?range=&sort=&dir=`
 and `/api/lumen?range=`.
+
+![Model detail](docs/detail.png)
+
+The model detail page, `/model/<id>?range=` (ids may contain `/`), shows for one model:
+
+- the status, healthy / configured instances, uptime, peak req/min, the description and the
+  status strip over the range;
+- input and output price charts: the models.dev p5–p95 band, the models.dev median and our
+  price, one point per local day;
+- requests and tokens: below 7d the average req/min and tok/min per bucket from the samples,
+  from 7d up the daily totals, with estimated or not yet final days drawn lighter; a dashed
+  line marks the range average;
+- hardware cost per day ($/day) and per million tokens, or per request while Lumen reports
+  no token counts, with the total over the range;
+- healthy and configured instances per bucket (1y: the daily average).
+
+Its data is `/api/series?model=&range=`, which returns every series for all six ranges.
 
 `--config PATH` (or `MONITOR_CONFIG`) picks another config file. These environment variables
 override the file: `MONITOR_DATABASE_URL`, `MONITOR_BASE_PATH`, `MONITOR_LUMEN_API_KEY`.
@@ -90,6 +110,43 @@ docker run -p 5000:5000 -v $PWD/config.yaml:/app/config.yaml lumen-monitor
 ```
 
 The container runs `monitor migrate && monitor serve`.
+
+`compose.yaml` is an example with the service and its own PostgreSQL:
+
+```bash
+cp scripts/monitor/config.yaml.example scripts/monitor/config.yaml   # then edit
+MONITOR_LUMEN_API_KEY=... MONITOR_DB_PASSWORD=... docker compose -f scripts/monitor/compose.yaml up -d --build
+```
+
+It publishes the dashboard on `127.0.0.1:5000` only; put the reverse proxy in front of it and
+set `MONITOR_BASE_PATH` (or `base_path`) when it is served under a prefix such as `/monitor`.
+
+**Run a single replica.** The loops run inside the web process, so two replicas would both
+probe, write two rows per probe and count every request and token twice.
+
+## Migrating from monitor/app.py
+
+The settings move from environment variables to `config.yaml`:
+
+| `monitor/app.py` | `config.yaml` |
+|---|---|
+| `LUMEN_URL` | `lumen.url`, without `/v1/models` (`https://lumen.example.edu`) |
+| `LUMEN_TOKEN` | `lumen.api_key` (or `MONITOR_LUMEN_API_KEY`) |
+| `BASE_PATH` | `base_path` (or `MONITOR_BASE_PATH`) |
+
+The poll interval is now `refresh.web` (1m by default, was 30s), and history is kept for
+`retention` (31d). Old history in `monitor.db` is not imported: the new service starts empty.
+Aliases are no longer listed as separate models.
+
+## Risks and limits
+
+- The models.dev matcher is a copy of Lumen's and can drift from it (see `AGENTS.md`).
+- Traffic missed while the service was down is backfilled from Lumen's longer windows, evenly
+  spread over the gap; those days are always marked `estimated`.
+- Energy cost uses the configured (rated) power per GPU, so it overstates the actual draw.
+- An open page can show a DOWN state up to `refresh.page` (5m) late; lower it if that matters.
+- Run a single replica (see above).
+- History from the old `monitor.db` is not migrated.
 
 ## Tests
 

@@ -8,6 +8,10 @@ All notable changes to Lumen will be documented in this file.
 
 - Chat sidebar no longer scans the whole `messages` table when listing conversations; adds a `(conversation_id, created_at)` index on `messages`. (#168)
 
+### Added
+
+- Add a standalone monitoring service in `scripts/monitor` that tracks Lumen health, uptime and response time, and records daily models.dev, Lumen and hardware/energy costs plus requests and tokens, with a status dashboard and per-model graphs.
+
 ### Fixed
 
 - The models.dev match for model sync no longer crosses major versions (a `-v2` model no longer takes a `-v1` listing's metadata or price).

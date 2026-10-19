@@ -2,30 +2,9 @@
 // by hand, to check that only the newest load renders, updates state or reports an error.
 // Run with `node --test tests/js/` (tests/test_overview_js.py does this under pytest).
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import vm from 'node:vm';
 
-const SCRIPT = readFileSync(new URL('../../monitor/static/overview.js', import.meta.url), 'utf8');
-
-function fakeElement(props = {}) {
-  const classes = new Set();
-  const handlers = {};
-  return {
-    dataset: {}, textContent: '', className: '', children: [], attributes: {},
-    classList: { add: c => classes.add(c), remove: c => classes.delete(c), contains: c => classes.has(c) },
-    setAttribute(k, v) { this.attributes[k] = String(v); },
-    removeAttribute(k) { delete this.attributes[k]; },
-    append(...c) { this.children.push(...c); },
-    replaceChildren(...c) { this.children = c; this.textContent = c.map(x => (typeof x === 'string' ? x : x.textContent)).join(''); },
-    addEventListener(name, fn) { handlers[name] = fn; },
-    click() { return handlers.click(); },
-    closest() { return null; },
-    focus() {},
-    getContext() { return {}; },
-    ...props,
-  };
-}
+import { answer, fakeElement, flush, runPage } from './fake_dom.mjs';
 
 function page() {
   const ids = {};
@@ -36,29 +15,14 @@ function page() {
   const rangeButtons = ['24h', '1h'].map(range => fakeElement({ dataset: { range } }));
   const sortButtons = [fakeElement({ closest: () => ({ dataset: { sort: 'uptime' } }) })];
 
-  const requests = [];
-  const timers = [];
   const document = {
     getElementById: byId,
     createElement: () => fakeElement(),
     querySelectorAll: sel => (sel === '.range-btn' ? rangeButtons : sel.includes('.sort-btn') ? sortButtons : []),
   };
-  class Chart {
-    constructor(_ctx, config) { this.data = config.data; this.options = config.options; }
-    update() {}
-  }
-  const context = {
-    document, Chart, URL, URLSearchParams, Promise, Error, Number, String, Date, Math, Object, Array, isFinite,
-    window: { location: { href: 'http://monitor.test/' }, history: { replaceState() {} } },
-    setInterval: fn => timers.push(fn),
-    // Each fetch stays pending until the test settles it.
-    fetch: url => new Promise((resolve, reject) => requests.push({ url, resolve, reject })),
-  };
-  vm.runInNewContext(SCRIPT, context);
+  const { requests, timers } = runPage('overview.js', document);
   return { byId, requests, timers, rangeButtons, sortButtons };
 }
-
-const flush = () => new Promise(r => setImmediate(r));
 
 function overviewBody(range, extra = {}) {
   return {
@@ -70,11 +34,6 @@ function overviewBody(range, extra = {}) {
 
 function lumenBody(range) {
   return { range, state: 'UP', uptime: range === '1h' ? 11 : 99, buckets: [], last_ms: 1, min_ms: 1, avg_ms: 1, max_ms: 1 };
-}
-
-async function answer(request, body) {
-  request.resolve({ ok: true, json: async () => body });
-  await flush();
 }
 
 function requestsFor(requests, range) {

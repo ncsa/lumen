@@ -115,12 +115,15 @@ def range_days(rng: Range, now: datetime, tz) -> list[date]:
 def worst(statuses) -> str:
     """The worst of `statuses` by `STATUS_PRIORITY`; `unknown` when there are none.
 
-    A status Lumen reports that is not in `STATUS_PRIORITY` ranks below ok.
+    A status Lumen reports that is not in `STATUS_PRIORITY` (e.g. `starting`)
+    ranks below ok; a bucket with only such statuses is degraded, so the strip
+    draws what uptime counts: the model reported, but was not ok.
     """
     found = list(statuses)
     if not found:
         return UNKNOWN
-    return max(found, key=lambda s: STATUS_PRIORITY.get(s, 0))
+    result = max(found, key=lambda s: STATUS_PRIORITY.get(s, 0))
+    return result if result in STATUS_PRIORITY else DEGRADED
 
 
 def bucket_statuses(points, grid: Grid | DayGrid) -> list[str]:

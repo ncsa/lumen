@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ model_id }} · Lumen Monitor</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.toolkit.illinois.edu/3/toolkit.css">
+  <script type="module" src="https://cdn.toolkit.illinois.edu/3/toolkit.js"></script>
+  <script src="https://skipto-landmarks-headings.github.io/page-script-5/dist/skipto.min.js"
+          data-skipto="colorTheme:illinois; displayOption:popup"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <link rel="stylesheet" href="{{ url_for('monitor.static', filename='monitor.css') }}">
+</head>
+<body>
+<ilw-page class="ilw-margin ilw-font" style="display:flex;flex-direction:column;min-height:100vh">
+  <ilw-header slot="header">
+    <a slot="site-name" href="{{ url_for('monitor.index') }}">Lumen Monitor</a>
+  </ilw-header>
+
+  <main id="main-content">
+    <div class="container-fluid mt-3 px-2 px-md-4"
+         id="detail"
+         data-series-url="{{ url_for('monitor.api_series') }}"
+         data-overview-url="{{ url_for('monitor.index') }}"
+         data-model="{{ model_id }}"
+         data-refresh-ms="{{ refresh_page_ms }}"
+         data-range="{{ current_range }}">
+
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+        <div>
+          <a id="back-link" href="{{ url_for('monitor.index', range=current_range) }}">← Overview</a>
+          <h1 class="mb-0 h2 model-title">{{ model_id }}</h1>
+        </div>
+        <p class="mb-0 text-muted" id="updated" aria-live="polite">loading…</p>
+        <div class="btn-group btn-group-sm" role="group" aria-label="Time range">
+          {% for r in ranges %}
+          <button type="button" class="btn btn-outline-primary range-btn" data-range="{{ r.key }}"
+                  aria-pressed="{{ 'true' if r.key == current_range else 'false' }}" title="{{ r.label }}">{{ r.key }}</button>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div id="load-error" class="alert alert-danger d-none" role="alert" aria-live="assertive"></div>
+
+      <section class="card mb-3" aria-labelledby="status-heading">
+        <div class="card-body">
+          <h2 class="h5 card-title" id="status-heading">
+            Status <span id="model-status" class="state-badge state-unknown">unknown</span>
+            <span class="fs-6 fw-normal ms-2"><span id="model-instances">—</span> healthy</span>
+            <span class="fs-6 fw-normal ms-2">uptime <span id="model-uptime">—</span></span>
+            <span class="fs-6 fw-normal ms-2">peak <span id="model-peak">—</span> req/min</span>
+          </h2>
+          <p class="mb-2 small text-muted" id="model-desc"></p>
+          <div id="model-strip" class="detail-strip" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <div class="row g-3" aria-live="polite">
+        {% for id, title in [("input-price", "Input price, $/M tokens"), ("output-price", "Output price, $/M tokens"),
+                             ("requests", "Requests"), ("tokens", "Tokens"),
+                             ("hardware", "Hardware cost"), ("instances", "Healthy / configured instances")] %}
+        <div class="col-lg-6">
+          <section class="card h-100" aria-labelledby="{{ id }}-heading">
+            <div class="card-body">
+              <h2 class="h6 card-title" id="{{ id }}-heading">{{ title }} <span class="fw-normal text-muted small" id="{{ id }}-note"></span></h2>
+              <div class="detail-chart">
+                <canvas id="chart-{{ id }}" role="img" aria-label="{{ title }} over the selected range"></canvas>
+              </div>
+            </div>
+          </section>
+        </div>
+        {% endfor %}
+      </div>
+
+      <p class="small text-muted legend mt-3">
+        <span class="strip-cell s-ok" aria-hidden="true"></span> ok
+        <span class="strip-cell s-degraded" aria-hidden="true"></span> degraded
+        <span class="strip-cell s-down" aria-hidden="true"></span> down
+        <span class="strip-cell s-unknown" aria-hidden="true"></span> no data
+        · lighter bars are estimated or non-final days · raw samples are kept for the retention period (31 days by
+        default) · a day closes at local midnight · gaps mean no data
+      </p>
+    </div>
+  </main>
+</ilw-page>
+<script src="{{ url_for('monitor.static', filename='common.js') }}"></script>
+<script src="{{ url_for('monitor.static', filename='detail.js') }}"></script>
+</body>
+</html>

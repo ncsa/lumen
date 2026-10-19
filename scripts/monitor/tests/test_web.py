@@ -73,7 +73,7 @@ def test_every_route_and_asset_works_under_base_path(make_client, base_path, pre
     assert root["data-model-url"] == f"{prefix}/model/"
     assert root["data-refresh-ms"] == "120000"
     assets = [a["href"] for a in markup.find("link") if a["href"].startswith("/")] + [a["src"] for a in markup.find("script") if a.get("src", "").startswith("/")]
-    assert sorted(assets) == [f"{prefix}/static/monitor.css", f"{prefix}/static/overview.js"]
+    assert sorted(assets) == [f"{prefix}/static/common.js", f"{prefix}/static/monitor.css", f"{prefix}/static/overview.js"]
     for asset in assets:
         assert client.get(asset).status_code == HTTPStatus.OK
     assert client.get(f"{prefix}/api/overview").status_code == HTTPStatus.OK
@@ -82,6 +82,54 @@ def test_every_route_and_asset_works_under_base_path(make_client, base_path, pre
         assert client.get("/").status_code == HTTPStatus.NOT_FOUND
         assert client.get("/api/overview").status_code == HTTPStatus.NOT_FOUND
         assert client.get("/static/overview.js").status_code == HTTPStatus.NOT_FOUND
+
+
+@pytest.mark.parametrize("base_path, prefix", [("", ""), ("/monitor", "/monitor")])
+def test_detail_page_and_series_work_under_base_path(make_client, base_path, prefix):
+    client = make_client(base_path)
+    # Model ids can contain "/": the overview links them unencoded, and an encoded slash works too.
+    for path in (f"{prefix}/model/org/qwen?range=7d", f"{prefix}/model/org%2Fqwen?range=7d"):
+        page = client.get(path)
+        assert page.status_code == HTTPStatus.OK
+        markup = parse(page.get_data(as_text=True))
+        (root,) = markup.find("div", id="detail")
+        assert root["data-model"] == "org/qwen" and root["data-range"] == "7d"
+        assert root["data-series-url"] == f"{prefix}/api/series"
+        assert root["data-overview-url"] == f"{prefix}/"
+        assert root["data-refresh-ms"] == "120000"
+    assert markup.find("a", id="back-link")[0]["href"] == f"{prefix}/?range=7d"
+    assets = [a["href"] for a in markup.find("link") if a["href"].startswith("/")] + [a["src"] for a in markup.find("script") if a.get("src", "").startswith("/")]
+    assert sorted(assets) == [f"{prefix}/static/common.js", f"{prefix}/static/detail.js", f"{prefix}/static/monitor.css"]
+    for asset in assets:
+        assert client.get(asset).status_code == HTTPStatus.OK
+    data = client.get(f"{prefix}/api/series?model=org/qwen&range=7d").get_json()
+    assert data["model"] == "org/qwen" and data["daily"] is True and len(data["traffic"]["points"]) == 7
+    if prefix:
+        assert client.get("/model/org/qwen").status_code == HTTPStatus.NOT_FOUND
+        assert client.get("/api/series?model=org/qwen").status_code == HTTPStatus.NOT_FOUND
+
+
+def test_series_rejects_missing_and_unknown_models(make_client):
+    client = make_client()
+    assert client.get("/api/series?range=1h").status_code == HTTPStatus.BAD_REQUEST
+    assert client.get("/api/series?model=nope&range=1h").status_code == HTTPStatus.NOT_FOUND
+
+
+def test_detail_page_accessibility_markup(make_client):
+    html = make_client().get("/model/org/qwen").get_data(as_text=True)
+    markup = parse(html)
+    assert markup.find("html", lang="en")
+    assert len(markup.find("h1")) == 1
+    assert markup.find("main", id="main-content")
+    assert markup.find("p", id="updated")[0]["aria-live"] == "polite"
+    assert markup.find("div", id="load-error")[0]["role"] == "alert"
+    assert markup.find("div", role="group")[0]["aria-label"] == "Time range"
+    canvases = markup.find("canvas")
+    assert len(canvases) == 6 and all(c["role"] == "img" and c["aria-label"] for c in canvases)
+    # Every chart card is a section named by its heading.
+    for section in markup.find("section"):
+        assert markup.find("h2", id=section["aria-labelledby"])
+    assert "skipto" in html
 
 
 def test_page_marks_the_selected_range(make_client):

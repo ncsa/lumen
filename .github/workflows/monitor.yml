@@ -59,3 +59,6 @@ jobs:
 
       - name: Build image
         run: docker build scripts/monitor
+
+      - name: Validate compose example
+        run: docker compose -f scripts/monitor/compose.yaml config --quiet

@@ -39,3 +39,9 @@ th[aria-sort="ascending"] .sort-btn::after { content: " ▲"; }
 th[aria-sort="descending"] .sort-btn::after { content: " ▼"; }
 .range-btn[aria-pressed="true"] { font-weight: 700; color: #fff; background: var(--theme-primary); border-color: var(--theme-primary); }
 .marker { color: #b5300c; font-weight: 700; text-decoration: none; cursor: help; }
+
+/* Model detail page */
+.state-ok { background: var(--status-ok); }
+.model-title { overflow-wrap: anywhere; }
+.detail-strip .strip { width: 100%; height: 24px; }
+.detail-chart { position: relative; height: 240px; }

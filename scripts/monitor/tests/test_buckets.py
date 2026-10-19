@@ -105,6 +105,9 @@ def test_worst_ranks_unknown_statuses_below_ok():
     assert STATUS_PRIORITY == {"ok": 1, "degraded": 2, "down": 3}
     assert worst([]) == "unknown"
     assert worst(["starting", "ok"]) == "ok"
+    # A bucket with only statuses outside STATUS_PRIORITY is drawn as degraded and counts against uptime.
+    assert worst(["starting"]) == worst(["starting", "loading"]) == "degraded"
+    assert model_uptime([worst(["starting"]), worst(["ok"])]) == 50
     assert worst(["ok", "degraded"]) == "degraded"
 
 

@@ -85,8 +85,8 @@
               <th scope="col" data-sort="instances"><button type="button" class="sort-btn">Inst h/c</button></th>
               <th scope="col" data-sort="price"><button type="button" class="sort-btn">Our $/M</button></th>
               <th scope="col" data-sort="modelsdev"><button type="button" class="sort-btn">models.dev $/M<br><span class="fw-normal small">median (p5–p95)</span></button></th>
-              <th scope="col" data-sort="hw_day"><button type="button" class="sort-btn">HW $/day</button></th>
-              <th scope="col" data-sort="hw_mtok"><button type="button" class="sort-btn">HW $/M tok</button></th>
+              <th scope="col" data-sort="hw_day"><button type="button" class="sort-btn">HW $/day<br><span class="fw-normal small">latest day</span></button></th>
+              <th scope="col" data-sort="hw_mtok"><button type="button" class="sort-btn">HW $/M tok<br><span class="fw-normal small">over <span class="range-label">{{ current_range }}</span></span></button></th>
               <th scope="col" data-sort="peak"><button type="button" class="sort-btn">Peak req/min</button></th>
               <th scope="col" data-sort="requests"><button type="button" class="sort-btn">Req 24h</button></th>
               <th scope="col" data-sort="tokens"><button type="button" class="sort-btn">Tok 24h</button></th>
@@ -108,6 +108,7 @@
     </div>
   </main>
 </ilw-page>
+<script src="{{ url_for('monitor.static', filename='common.js') }}"></script>
 <script src="{{ url_for('monitor.static', filename='overview.js') }}"></script>
 </body>
 </html>

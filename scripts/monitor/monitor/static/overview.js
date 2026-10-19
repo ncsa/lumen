@@ -7,46 +7,8 @@
   const urls = { overview: root.dataset.overviewUrl, lumen: root.dataset.lumenUrl, model: root.dataset.modelUrl };
   const refreshMs = Number(root.dataset.refreshMs) || 300000;
   const state = { range: root.dataset.range, sort: null, dir: null };
-  const STATUS_TEXT = { ok: 'ok', degraded: 'degraded', down: 'down', unknown: 'no data' };
-  const STATUS_COLOR = { ok: '#1d7a3e', degraded: '#b5300c', down: '#6b0f0f', unknown: '#c8c8c8' };
+  const { STATUS_TEXT, STATUS_COLOR, dash, isNum, fmtInt, fmtFix, fmtPct, fmtMs, fmtTime, fmtCount, el, marker, strip, getJson } = window.MonitorCommon;
   let rtChart = null;
-
-  const dash = '—';
-  const isNum = v => typeof v === 'number' && isFinite(v);
-  const fmtInt = v => isNum(v) ? Math.round(v).toLocaleString() : dash;
-  const fmtFix = (v, d) => isNum(v) ? v.toFixed(d) : dash;
-  const fmtPct = v => isNum(v) ? (v >= 99.95 && v < 100 ? '99.9' : v.toFixed(1).replace(/\.0$/, '')) + '%' : dash;
-  const fmtMs = v => !isNum(v) ? dash : v >= 1000 ? (v / 1000).toFixed(1) + 's' : Math.round(v) + 'ms';
-  const fmtTime = iso => iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-  function fmtCount(v) {
-    if (!isNum(v)) return dash;
-    if (v >= 1e9) return (v / 1e9).toFixed(1) + ' B';
-    if (v >= 1e6) return (v / 1e6).toFixed(1) + ' M';
-    if (v >= 1e4) return (v / 1e3).toFixed(1) + ' K';
-    return Math.round(v).toLocaleString();
-  }
-
-  function el(tag, attrs, children) {
-    const node = document.createElement(tag);
-    Object.entries(attrs || {}).forEach(([k, v]) => {
-      if (k === 'text') node.textContent = v; else node.setAttribute(k, v);
-    });
-    (children || []).forEach(c => node.append(c));
-    return node;
-  }
-
-  function marker(symbol, label) {
-    return el('abbr', { class: 'marker', title: label, 'aria-label': label, text: symbol });
-  }
-
-  function strip(statuses) {
-    const counts = {};
-    statuses.forEach(s => { counts[s] = (counts[s] || 0) + 1; });
-    const summary = Object.entries(counts).map(([s, n]) => `${n} ${STATUS_TEXT[s] || s}`).join(', ');
-    const node = el('div', { class: 'strip', role: 'img', 'aria-label': `Status buckets: ${summary}`, title: summary });
-    statuses.forEach(s => node.append(el('span', { class: `strip-cell s-${STATUS_COLOR[s] ? s : 'unknown'}` })));
-    return node;
-  }
 
   function priceRange(median, p5, p95) {
     if (!isNum(median)) return dash;
@@ -80,7 +42,8 @@
       return;
     }
     models.forEach(m => {
-      const href = urls.model + encodeURIComponent(m.id);
+      // Model ids can contain '/': encode each part and keep the slashes, which the route accepts.
+      const href = urls.model + m.id.split('/').map(encodeURIComponent).join('/');
       const name = el('td', {}, [el('a', { href, text: m.id })]);
       if (m.description) name.append(el('div', { class: 'model-desc', text: m.description }));
       const tr = el('tr', {}, [
@@ -153,12 +116,6 @@
     rtChart.data.datasets[0].backgroundColor = colors;
     rtChart.options.plugins.tooltip.callbacks.afterLabel = ctx => STATUS_TEXT[l.buckets[ctx.dataIndex]?.status] || '';
     rtChart.update();
-  }
-
-  async function getJson(url, params) {
-    const r = await fetch(`${url}?${new URLSearchParams(params)}`, { headers: { Accept: 'application/json' } });
-    if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
-    return r.json();
   }
 
   // Every load gets a generation; only the newest one may touch state, render or report an

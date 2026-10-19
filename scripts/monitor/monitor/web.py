@@ -6,9 +6,11 @@ with `url_for`, and the page hands the API URLs to its JS. `base_path` is read
 when the app is created; changing it needs a restart.
 """
 
-from flask import Blueprint, Flask, current_app, jsonify, render_template, request
+from http import HTTPStatus
 
-from monitor import overview
+from flask import Blueprint, Flask, abort, current_app, jsonify, render_template, request
+
+from monitor import detail, overview
 from monitor.buckets import RANGES, get_range
 from monitor.config import ConfigStore
 from monitor.db import utcnow
@@ -49,6 +51,33 @@ def api_lumen():
     with session_factory() as session:
         data = overview.lumen_card(session, store.current, rng, utcnow())
     return jsonify({"range": rng.key, **data})
+
+
+@bp.route("/model/<path:model_id>")
+def model(model_id):
+    store, _, _ = _deps()
+    rng = get_range(request.args.get("range"))
+    return render_template(
+        "detail.html",
+        model_id=model_id,
+        ranges=RANGES.values(),
+        current_range=rng.key,
+        refresh_page_ms=int(store.current.refresh.page.total_seconds() * 1000),
+    )
+
+
+@bp.route("/api/series")
+def api_series():
+    store, session_factory, snapshot = _deps()
+    model_id = request.args.get("model")
+    if not model_id:
+        abort(HTTPStatus.BAD_REQUEST, "model is required")
+    rng = get_range(request.args.get("range"))
+    with session_factory() as session:
+        data = detail.series(session, store.current, snapshot, model_id, rng, utcnow())
+    if data is None:
+        abort(HTTPStatus.NOT_FOUND, f"unknown model {model_id}")
+    return jsonify(data)
 
 
 def create_app(store: ConfigStore, session_factory, snapshot: LiveSnapshot | None = None) -> Flask:

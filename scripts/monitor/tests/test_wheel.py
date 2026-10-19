@@ -37,7 +37,8 @@ def test_wheel_contains_migrations(wheel):
 
 def test_wheel_contains_the_dashboard(wheel):
     names = set(zipfile.ZipFile(wheel).namelist())
-    assert {"monitor/templates/overview.html", "monitor/static/overview.js", "monitor/static/monitor.css"} <= names
+    assert {"monitor/templates/overview.html", "monitor/templates/detail.html", "monitor/static/overview.js", "monitor/static/detail.js",
+            "monitor/static/common.js", "monitor/static/monitor.css"} <= names
 
 
 @pytest.mark.timeout(300)
