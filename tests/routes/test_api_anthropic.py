@@ -445,6 +445,32 @@ def test_upstream_4xx_passes_through_as_an_invalid_request(api):
     assert "maximum context length" in body["error"]["message"]
 
 
+@pytest.mark.parametrize("error_cls, status", [
+    ("AuthenticationError", 401), ("PermissionDeniedError", 403)])
+def test_upstream_auth_failure_is_an_api_error(api, error_cls, status):
+    # A 401/403 from the backend is about Lumen's backend credential, not the
+    # caller's key: it must not reach the caller as an authentication error.
+    import openai
+
+    exc = _make_openai_error(getattr(openai, error_cls), status, {
+        "error": {"message": "invalid backend token sk-backend", "type": "authentication_error"}})
+
+    def boom(**kwargs):
+        raise exc
+
+    api.upstream(boom)
+    resp = api.post()
+    assert resp.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    body = resp.get_json()
+    assert body["error"]["type"] == "api_error"
+    assert "sk-backend" not in json.dumps(body)
+
+    events = _sse(api.post(_body(stream=True)))
+    assert events[-1][0] == "error"
+    assert events[-1][1]["error"]["type"] == "api_error"
+    assert "sk-backend" not in json.dumps(events[-1][1])
+
+
 # ---------------------------------------------------------------------------
 # Non-streaming responses and billing
 # ---------------------------------------------------------------------------

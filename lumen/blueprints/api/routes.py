@@ -296,10 +296,13 @@ def _classify_upstream_error(exc, context: str):
 
     A 4xx from the upstream is the caller's mistake (e.g. context length
     exceeded): pass the real status and message through so the caller can fix
-    the request, and log it as a warning rather than an error. Everything else
-    is a genuine upstream/transport failure and becomes a generic 500.
+    the request, and log it as a warning rather than an error. The exception is
+    401/403: those answer Lumen's own backend credential, which the caller has
+    already got past with their key and cannot fix. They, and everything else,
+    are upstream failures and become a generic 500.
     """
-    if isinstance(exc, openai.APIStatusError) and 400 <= exc.status_code < 500:
+    if (isinstance(exc, openai.APIStatusError) and 400 <= exc.status_code < 500
+            and exc.status_code not in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN)):
         msg, err_type = _upstream_error_detail(exc)
         logger.warning("%s (upstream %s): %s", context, exc.status_code, msg)
         return msg, err_type or "invalid_request_error", HTTPStatus(exc.status_code)
