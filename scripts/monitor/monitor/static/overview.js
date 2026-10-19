@@ -161,13 +161,19 @@
     return r.json();
   }
 
+  // Every load gets a generation; only the newest one may touch state, render or report an
+  // error, so a slow response for an earlier range or sort never overwrites a newer selection.
+  let generation = 0;
+
   async function load() {
+    const mine = ++generation;
     const params = { range: state.range };
     if (state.sort) params.sort = state.sort;
     if (state.dir) params.dir = state.dir;
     const error = document.getElementById('load-error');
     try {
-      const [ov, lumen] = await Promise.all([getJson(urls.overview, params), getJson(urls.lumen, { range: state.range })]);
+      const [ov, lumen] = await Promise.all([getJson(urls.overview, params), getJson(urls.lumen, { range: params.range })]);
+      if (mine !== generation) return;
       state.sort = ov.sort;
       state.dir = ov.direction;
       renderLumen(lumen);
@@ -177,6 +183,7 @@
       document.getElementById('updated').textContent = `updated ${fmtTime(ov.generated_at)}`;
       error.classList.add('d-none');
     } catch (e) {
+      if (mine !== generation) return;
       error.textContent = `Could not load the dashboard data: ${e.message}`;
       error.classList.remove('d-none');
     }
