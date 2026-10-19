@@ -6,9 +6,13 @@ import sys
 import threading
 import time
 from datetime import timedelta
+from http import HTTPStatus
 
 import pytest
+import requests
+from flask import Flask
 from sqlalchemy import func, select
+from werkzeug.serving import make_server
 
 from monitor import migrate
 from monitor.config import ConfigStore
@@ -140,8 +144,9 @@ def test_monitor_serve_runs_the_loops_and_exits_on_sigterm(tmp_path):
         "refresh: {web: 1s, models: 1s, price: 2s, timeout: 0.5s}\n"
     )
     env = {k: v for k, v in os.environ.items() if not k.startswith("MONITOR_")}
+    port = _closed_port()
     proc = subprocess.Popen(
-        [sys.executable, "-m", "monitor.cli", "--config", str(config), "serve"],
+        [sys.executable, "-m", "monitor.cli", "--config", str(config), "serve", "--host", "127.0.0.1", "--port", str(port)],
         env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )
     engine = make_engine(url)
@@ -152,6 +157,9 @@ def test_monitor_serve_runs_the_loops_and_exits_on_sigterm(tmp_path):
                 if session.execute(select(func.count()).select_from(Probe)).scalar_one() >= 3:
                     break
             time.sleep(0.2)
+        # The dashboard runs in the same process and reads the same database.
+        page = requests.get(f"http://127.0.0.1:{port}/", timeout=5)
+        lumen = requests.get(f"http://127.0.0.1:{port}/api/lumen?range=1h", timeout=5).json()
         proc.send_signal(signal.SIGTERM)
         output, _ = proc.communicate(timeout=15)
     finally:
@@ -163,3 +171,17 @@ def test_monitor_serve_runs_the_loops_and_exits_on_sigterm(tmp_path):
     assert output.count("models run skipped") >= 2
     assert output.count("price run failed") >= 2
     assert "received SIGTERM, shutting down" in output and "scheduler stopped" in output
+    assert page.status_code == HTTPStatus.OK and "Lumen Monitor" in page.text
+    assert lumen["state"] == "DOWN"
+    assert f"dashboard listening on http://127.0.0.1:{port}" in output
+
+
+def test_serve_shuts_the_http_server_down_with_the_scheduler():
+    calls = []
+    scheduler = Scheduler([Job("probe", lambda: timedelta(seconds=0.05), lambda: calls.append(1))])
+    server = make_server("127.0.0.1", 0, Flask(__name__))
+    threading.Thread(target=lambda: time.sleep(0.3) or os.kill(os.getpid(), signal.SIGTERM)).start()
+    assert serve(scheduler, server) is True
+    assert calls
+    with pytest.raises(ConnectionRefusedError):
+        socket.create_connection(("127.0.0.1", server.port), timeout=1)

@@ -1,4 +1,4 @@
-"""`monitor` command line: `monitor migrate`, `monitor collect`, `monitor serve`."""
+"""`monitor` command line: `monitor migrate`, `monitor collect`, `monitor serve` (loops + dashboard)."""
 
 import argparse
 import logging
@@ -6,6 +6,7 @@ import os
 import sys
 
 import requests
+from werkzeug.serving import make_server
 
 from monitor import migrate
 from monitor.collect import collect_prices
@@ -13,6 +14,7 @@ from monitor.config import DEFAULT_CONFIG_PATH, ConfigError, ConfigStore
 from monitor.db import make_engine, make_session_factory
 from monitor.probe import LiveSnapshot, lumen_state, run_probe
 from monitor.scheduler import Scheduler, make_jobs, serve
+from monitor.web import create_app
 
 log = logging.getLogger("monitor")
 
@@ -26,7 +28,9 @@ def main(argv: list[str] | None = None) -> int:
     col = sub.add_parser("collect", help="run a collector once")
     col.add_argument("--probe", action="store_true", help="probe GET /v1/models once and record the result")
     col.add_argument("--price", action="store_true", help="record today's Lumen, models.dev and hardware prices")
-    sub.add_parser("serve", help="run the probe, models and price loops")
+    srv = sub.add_parser("serve", help="run the probe, models and price loops and the dashboard")
+    srv.add_argument("--host", default="0.0.0.0", help="dashboard address (default: 0.0.0.0)")
+    srv.add_argument("--port", type=int, default=5000, help="dashboard port (default: 5000)")
     args = parser.parse_args(argv)
     if args.command == "collect" and not (args.probe or args.price):
         parser.error("collect: choose a collector, --probe and/or --price")
@@ -65,7 +69,10 @@ def main(argv: list[str] | None = None) -> int:
         return status
     engine = make_engine(config.database_url)
     try:
-        stopped = serve(Scheduler(make_jobs(store, make_session_factory(engine), LiveSnapshot())))
+        session_factory = make_session_factory(engine)
+        snapshot = LiveSnapshot()
+        server = make_server(args.host, args.port, create_app(store, session_factory, snapshot), threaded=True)
+        stopped = serve(Scheduler(make_jobs(store, session_factory, snapshot)), server)
     finally:
         engine.dispose()
     return 0 if stopped else 1

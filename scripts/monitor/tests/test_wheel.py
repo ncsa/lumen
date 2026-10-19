@@ -35,6 +35,11 @@ def test_wheel_contains_migrations(wheel):
     assert any(n.startswith("monitor/migrations/versions/") and n.endswith(".py") for n in names)
 
 
+def test_wheel_contains_the_dashboard(wheel):
+    names = set(zipfile.ZipFile(wheel).namelist())
+    assert {"monitor/templates/overview.html", "monitor/static/overview.js", "monitor/static/monitor.css"} <= names
+
+
 @pytest.mark.timeout(300)
 def test_installed_wheel_migrates_outside_checkout(wheel, tmp_path):
     venv = tmp_path / "venv"

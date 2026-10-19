@@ -8,7 +8,9 @@ also changes the cadences. An exception in a loop is logged and the loop runs
 again on its next turn; the other loops are not affected.
 
 SIGTERM and SIGINT set a stop event: the loop that is running finishes (every
-outbound request is bounded by `refresh.timeout`), then the thread exits.
+outbound request is bounded by `refresh.timeout`), then the thread exits. The
+dashboard's HTTP server, when given, runs on a thread of its own in the same
+process, so it reads the scheduler's live snapshot, and shuts down with it.
 """
 
 import logging
@@ -21,6 +23,7 @@ from typing import Callable
 
 import requests
 from sqlalchemy.orm import sessionmaker
+from werkzeug.serving import BaseWSGIServer
 
 from monitor.collect import collect_prices
 from monitor.config import ConfigStore
@@ -90,10 +93,10 @@ def make_jobs(store: ConfigStore, session_factory: sessionmaker, snapshot: LiveS
     ]
 
 
-def serve(scheduler: Scheduler) -> bool:
-    """Run `scheduler` on its own thread until SIGTERM or SIGINT, then wait for it to finish.
+def serve(scheduler: Scheduler, server: BaseWSGIServer | None = None) -> bool:
+    """Run `scheduler` (and `server`) on their own threads until SIGTERM or SIGINT, then wait for them.
 
-    Returns False when the thread died on its own, so the caller can exit non-zero.
+    Returns False when a thread died on its own, so the caller can exit non-zero.
     """
     signalled = threading.Event()
 
@@ -105,14 +108,22 @@ def serve(scheduler: Scheduler) -> bool:
     previous = {sig: signal.signal(sig, on_signal) for sig in (signal.SIGTERM, signal.SIGINT)}
     thread = threading.Thread(target=scheduler.run, name="scheduler")
     thread.start()
+    http = None
+    if server is not None:
+        http = threading.Thread(target=server.serve_forever, name="http", daemon=True)
+        http.start()
+        log.info("dashboard listening on http://%s:%d", server.host, server.port)
     try:
-        while thread.is_alive():
+        while thread.is_alive() and (http is None or http.is_alive()):
             thread.join(0.5)
     finally:
         scheduler.stop.set()
+        if server is not None:
+            server.shutdown()
+            server.server_close()
         thread.join()
         for sig, handler in previous.items():
             signal.signal(sig, handler)
     if not signalled.is_set():
-        log.error("scheduler thread exited unexpectedly")
+        log.error("%s thread exited unexpectedly", "scheduler" if not thread.is_alive() else "http")
     return signalled.is_set()

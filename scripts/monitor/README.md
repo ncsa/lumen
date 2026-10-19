@@ -8,8 +8,8 @@ It imports nothing from the main `lumen` package and has its own dependencies, m
 tests and Docker image.
 
 > Work in progress: the config, schema, migrations, CI, the price collectors, the health
-> probe, the daily request/token totals and the scheduler (`monitor serve`) are in. The
-> dashboard follows.
+> probe, the daily request/token totals, the scheduler and the overview dashboard are in. The
+> model detail page follows.
 
 ## Setup
 
@@ -20,7 +20,7 @@ uv sync
 uv run monitor migrate               # create or upgrade the schema
 uv run monitor collect --probe       # probe GET /v1/models once: health, response time, samples
 uv run monitor collect --price       # record today's Lumen, models.dev and hardware prices once
-uv run monitor serve                 # run the probe, models and price loops until SIGTERM/SIGINT
+uv run monitor serve                 # the loops plus the dashboard on :5000 until SIGTERM/SIGINT
 ```
 
 A probe writes one `probes` row (success, response time, models listed and up) and, when it
@@ -33,7 +33,6 @@ deletes probes and samples older than `retention`.
 models run every `refresh.models` and the price run every `refresh.price` (which also re-reads
 `config.yaml`). A loop that fails is logged and tried again on its next turn without
 affecting the others. SIGTERM or SIGINT lets the running loop finish, then the service exits.
-There is no HTTP server yet: port 5000 in the image is for the dashboard, which follows.
 
 The models run makes no HTTP call: it reads the request and token windows from the last
 successful probe (skipping the run when that probe is older than 2 × `refresh.web`) and adds
@@ -54,6 +53,31 @@ for good keeps every later day of that model open for those 30 days, not only th
 gap. A day's totals are exact
 only when it is `final` and not `estimated`.
 
+## Dashboard
+
+![Overview](docs/overview.png)
+
+`monitor serve` also serves the dashboard (no login) on port 5000 (`--host`, `--port`), in
+the same process as the loops so it sees the last probe. Every page, API and static file sits
+under `base_path` (restart after changing it). The overview has:
+
+- the Lumen card: UP / DEGRADED / DOWN, last / min / avg / max response time, uptime (a
+  degraded Lumen counts as up) and a response-time strip;
+- status cards: active models, healthy / configured instances, requests and tokens in the last
+  hour and today (tokens show "—" until Lumen reports them);
+- the model table (canonical models only): a status strip, uptime (the share of buckets that
+  are ok), instances, our price, the models.dev median (p5–p95), hardware $/day and $/M tokens
+  (or $/request without token counts), peak req/min and Lumen's 24h requests and tokens.
+  Columns sort on click; a row opens the model's detail page.
+
+Ranges are 1h, 12h, 24h, 7d and 30d from the raw probes and samples, bucketed at 1m, 3m, 5m,
+30m and 2h (never below `refresh.web`); a bucket shows its worst status and is "no data" when
+empty. 1y uses one bucket per local day: ok at 99% availability or more, degraded above 0%,
+down otherwise. `*` marks values that include days which are not yet `final` or are
+`estimated`; `†` marks a model without a `models:` GPU entry. The page reloads its data every
+`refresh.page` without a full reload. The JSON behind it is `/api/overview?range=&sort=&dir=`
+and `/api/lumen?range=`.
+
 `--config PATH` (or `MONITOR_CONFIG`) picks another config file. These environment variables
 override the file: `MONITOR_DATABASE_URL`, `MONITOR_BASE_PATH`, `MONITOR_LUMEN_API_KEY`.
 `config.yaml.example` documents every key.
@@ -62,7 +86,7 @@ override the file: `MONITOR_DATABASE_URL`, `MONITOR_BASE_PATH`, `MONITOR_LUMEN_A
 
 ```bash
 docker build -t lumen-monitor scripts/monitor
-docker run -v $PWD/config.yaml:/app/config.yaml lumen-monitor
+docker run -p 5000:5000 -v $PWD/config.yaml:/app/config.yaml lumen-monitor
 ```
 
 The container runs `monitor migrate && monitor serve`.

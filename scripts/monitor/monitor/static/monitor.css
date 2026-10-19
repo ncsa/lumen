@@ -1,0 +1,41 @@
+:root {
+  --theme-primary: #13294B;
+  --status-ok: #1d7a3e;
+  --status-degraded: #b5300c;
+  --status-down: #6b0f0f;
+  --status-unknown: #c8c8c8;
+}
+
+/* A dashboard uses the full width instead of the toolkit's 75rem column. */
+ilw-page { --ilw-margin--side: 1.875rem; }
+
+/* ilw-page sizes its grid column to the content's min-content width; keep the wide table inside the viewport. */
+#main-content { contain: inline-size; }
+
+.state-badge { display: inline-block; padding: 0 .5em; border-radius: .25rem; color: #fff; font-size: .9rem; }
+.state-up { background: var(--status-ok); }
+.state-degraded { background: var(--status-degraded); }
+.state-down { background: var(--status-down); }
+.state-unknown { background: #595959; }
+
+.rt-chart { position: relative; height: 80px; }
+
+/* Status strips: colour plus height and pattern, so the state is not shown by colour alone. */
+.strip { display: flex; align-items: flex-end; gap: 0; height: 18px; width: 200px; }
+.strip-cell { flex: 1 1 0; min-width: 0; height: 100%; display: inline-block; }
+.legend .strip-cell { width: .8em; height: .8em; vertical-align: middle; }
+.s-ok { background: var(--status-ok); }
+.s-degraded { background: repeating-linear-gradient(45deg, var(--status-degraded) 0 2px, #fff 2px 3px); height: 70%; }
+.s-down { background: var(--status-down); height: 40%; }
+.s-unknown { background: var(--status-unknown); height: 15%; }
+
+.model-table td, .model-table th { white-space: nowrap; }
+.model-table tbody tr { cursor: pointer; }
+.model-table .io { font-size: .85rem; }
+.model-table .model-desc { white-space: normal; max-width: 20rem; font-size: .8rem; color: #555; }
+.sort-btn { background: none; border: 0; padding: 0; font-weight: 600; color: inherit; text-align: left; }
+.sort-btn:focus-visible { outline: 2px solid var(--theme-primary); outline-offset: 2px; }
+th[aria-sort="ascending"] .sort-btn::after { content: " ▲"; }
+th[aria-sort="descending"] .sort-btn::after { content: " ▼"; }
+.range-btn[aria-pressed="true"] { font-weight: 700; color: #fff; background: var(--theme-primary); border-color: var(--theme-primary); }
+.marker { color: #b5300c; font-weight: 700; text-decoration: none; cursor: help; }

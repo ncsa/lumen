@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lumen Monitor</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.toolkit.illinois.edu/3/toolkit.css">
+  <script type="module" src="https://cdn.toolkit.illinois.edu/3/toolkit.js"></script>
+  <script src="https://skipto-landmarks-headings.github.io/page-script-5/dist/skipto.min.js"
+          data-skipto="colorTheme:illinois; displayOption:popup"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <link rel="stylesheet" href="{{ url_for('monitor.static', filename='monitor.css') }}">
+</head>
+<body>
+<ilw-page class="ilw-margin ilw-font" style="display:flex;flex-direction:column;min-height:100vh">
+  <ilw-header slot="header">
+    <a slot="site-name" href="{{ url_for('monitor.index') }}">Lumen Monitor</a>
+  </ilw-header>
+
+  <main id="main-content">
+    <div class="container-fluid mt-3 px-2 px-md-4"
+         id="overview"
+         data-overview-url="{{ url_for('monitor.api_overview') }}"
+         data-lumen-url="{{ url_for('monitor.api_lumen') }}"
+         data-model-url="{{ url_for('monitor.index') }}model/"
+         data-refresh-ms="{{ refresh_page_ms }}"
+         data-range="{{ current_range }}">
+
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+        <h1 class="mb-0">Lumen Monitor</h1>
+        <p class="mb-0 text-muted" id="updated" aria-live="polite">loading…</p>
+        <div class="btn-group btn-group-sm" role="group" aria-label="Time range">
+          {% for r in ranges %}
+          <button type="button" class="btn btn-outline-primary range-btn" data-range="{{ r.key }}"
+                  aria-pressed="{{ 'true' if r.key == current_range else 'false' }}" title="{{ r.label }}">{{ r.key }}</button>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div id="load-error" class="alert alert-danger d-none" role="alert" aria-live="assertive"></div>
+
+      <div class="row g-3 mb-4" role="region" aria-label="Lumen status">
+        <div class="col-lg-4">
+          <div class="card h-100">
+            <div class="card-body">
+              <h2 class="h5 card-title d-flex justify-content-between align-items-center">
+                <span>Lumen <span id="lumen-state" class="state-badge state-unknown">UNKNOWN</span></span>
+                <span class="fs-6 fw-normal">uptime <span id="lumen-uptime">—</span></span>
+              </h2>
+              <p class="mb-1">last <span id="lumen-last">—</span> <span class="text-muted" id="lumen-last-at"></span></p>
+              <p class="mb-2 small">min <span id="lumen-min">—</span> · avg <span id="lumen-avg">—</span> · max <span id="lumen-max">—</span></p>
+              <div class="rt-chart">
+                <canvas id="lumen-rt" role="img" aria-label="Lumen response time per bucket"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-8">
+          <div class="row g-3 row-cols-2 row-cols-md-3 h-100">
+            {% for id, label in [("active", "Active models"), ("instances", "Healthy instances"),
+                                 ("req-hour", "Requests last hour"), ("req-today", "Requests today"),
+                                 ("tok-hour", "Tokens last hour"), ("tok-today", "Tokens today")] %}
+            <div class="col">
+              <div class="card text-center h-100">
+                <div class="card-body">
+                  <div class="fs-3 fw-bold" id="card-{{ id }}">—</div>
+                  <div class="text-muted small">{{ label }}</div>
+                </div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-hover align-middle model-table" id="model-table">
+          <caption class="visually-hidden">Models: status over the selected range, uptime, prices, hardware cost and traffic</caption>
+          <thead>
+            <tr>
+              <th scope="col" data-sort="model"><button type="button" class="sort-btn">Model</button></th>
+              <th scope="col">Status (<span class="range-label">{{ current_range }}</span>)</th>
+              <th scope="col" data-sort="uptime"><button type="button" class="sort-btn">Uptime</button></th>
+              <th scope="col" data-sort="instances"><button type="button" class="sort-btn">Inst h/c</button></th>
+              <th scope="col" data-sort="price"><button type="button" class="sort-btn">Our $/M</button></th>
+              <th scope="col" data-sort="modelsdev"><button type="button" class="sort-btn">models.dev $/M<br><span class="fw-normal small">median (p5–p95)</span></button></th>
+              <th scope="col" data-sort="hw_day"><button type="button" class="sort-btn">HW $/day</button></th>
+              <th scope="col" data-sort="hw_mtok"><button type="button" class="sort-btn">HW $/M tok</button></th>
+              <th scope="col" data-sort="peak"><button type="button" class="sort-btn">Peak req/min</button></th>
+              <th scope="col" data-sort="requests"><button type="button" class="sort-btn">Req 24h</button></th>
+              <th scope="col" data-sort="tokens"><button type="button" class="sort-btn">Tok 24h</button></th>
+            </tr>
+          </thead>
+          <tbody id="model-rows" aria-live="polite">
+            <tr><td colspan="11" class="text-muted">loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="small text-muted legend">
+        <span class="strip-cell s-ok" aria-hidden="true"></span> ok
+        <span class="strip-cell s-degraded" aria-hidden="true"></span> degraded
+        <span class="strip-cell s-down" aria-hidden="true"></span> down
+        <span class="strip-cell s-unknown" aria-hidden="true"></span> no data
+        · * includes estimated or non-final days · † no GPU config · select a model for its details
+      </p>
+    </div>
+  </main>
+</ilw-page>
+<script src="{{ url_for('monitor.static', filename='overview.js') }}"></script>
+</body>
+</html>

@@ -6,3 +6,4 @@ tests/
 *.db
 *.db-*
 config.yaml
+docs/
