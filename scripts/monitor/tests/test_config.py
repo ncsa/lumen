@@ -303,7 +303,14 @@ def test_colliding_lumen_ids_get_no_entry(caplog):
     config = parse_config({"price": PRICE, "models": {"a-1": {"gpu": "rtx6000", "gpus": 1}}}, env={})
     with caplog.at_level(logging.WARNING):
         assert config.match_models(["a.1", "A.1", "b"]) == {}
-    assert "share the key" in caplog.text
+    assert [r.getMessage() for r in caplog.records if "share the key" in r.getMessage()] == [
+        "models: Lumen ids A.1, a.1 share the key 'a-1'; no hardware cost for A.1, a.1"
+    ]
+
+
+def test_repeated_lumen_id_is_not_a_collision():
+    config = parse_config({"price": PRICE, "models": {"a-1": {"gpu": "rtx6000", "gpus": 1}}}, env={})
+    assert list(config.match_models(["a.1", "a.1"])) == ["a.1"]
 
 
 def test_exact_lumen_id_keeps_its_entry_in_a_collision():

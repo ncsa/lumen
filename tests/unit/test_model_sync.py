@@ -79,6 +79,35 @@ def test_find_rejects_version_digit_only_overlap():
         config_name="ornith-1.0-35b") is None
 
 
+@pytest.mark.parametrize(("model_id", "listing"), [
+    ("deepseek-ai/DeepSeek-Coder-V2-Instruct", "deepseek-coder-v1"),
+    ("deepseek-ai/DeepSeek-V5-Flash", "deepseek-v4-flash"),
+    ("Qwen/Qwen4-Coder-30B-A3B-Instruct", "qwen3-coder-30b-a3b-instruct"),
+])
+def test_find_rejects_version_mismatch(model_id, listing):
+    """A different major version never matches (v2 vs v1, qwen4 vs qwen3), even though the
+    names share enough tokens; digits are read for the guard though they never score."""
+    assert model_sync.find_in_modelsdev(model_id, [{"id": listing, "name": ""}]) is None
+
+
+def test_find_matches_minor_version_and_ignores_sizes():
+    """v4.1 is generation 4, and sizes/precisions (30B, A3B, 8x7B, FP8) are not versions."""
+    models = [{"id": "deepseek-v4-flash", "name": ""}, {"id": "mixtral-8x7b-instruct", "name": ""}]
+    assert model_sync.find_in_modelsdev("deepseek-ai/DeepSeek-V4.1-Flash-FP8", models)["id"] == "deepseek-v4-flash"
+    assert model_sync.find_in_modelsdev("mistralai/Mixtral-8x7B-Instruct-v0.1", models)["id"] == "mixtral-8x7b-instruct"
+
+
+@pytest.mark.parametrize(("value", "versions"), [
+    ("deepseek-coder-v2", {"2"}),
+    ("DeepSeek-V4.1-Flash-FP8", {"4"}),
+    ("Qwen3-Coder-30B-A3B-Instruct-FP8", {"3"}),
+    ("mixtral-8x7b-bf16-int4-q5_k_m", set()),
+    ("gpt-4o-2024-08-06", {"4", "2024", "8", "6"}),
+])
+def test_versions(value, versions):
+    assert model_sync._versions(value) == versions
+
+
 def test_description_filled_from_dev_when_blank(monkeypatch):
     """A blank operator description is filled from models.dev on a trusted match."""
     _patch(monkeypatch,

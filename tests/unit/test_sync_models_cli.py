@@ -323,3 +323,13 @@ def test_cli_and_web_agree_on_reasoning(monkeypatch, ep_model, flags, current):
     cli_changes, _ = sync_models.compute_changes(model_def, ep_model, dev_models[0], index)
     cli = cli_changes.get("supports_reasoning", (None, None))[1]
     assert cli == web
+
+
+def test_cli_versions_match_model_sync():
+    """The CLI copy of the version guard reads the same versions as model_sync."""
+    for value in ("deepseek-coder-v2", "DeepSeek-V4.1-Flash-FP8", "Qwen3-Coder-30B-A3B-Instruct-FP8", "mixtral-8x7b-v0.1"):
+        assert sync_models._versions(value) == model_sync._versions(value)
+
+
+def test_cli_rejects_version_mismatch():
+    assert sync_models.find_in_modelsdev("deepseek-ai/DeepSeek-Coder-V2-Instruct", [{"id": "deepseek-coder-v1", "name": ""}]) is None

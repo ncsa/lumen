@@ -8,6 +8,10 @@ All notable changes to Lumen will be documented in this file.
 
 - Chat sidebar no longer scans the whole `messages` table when listing conversations; adds a `(conversation_id, created_at)` index on `messages`. (#168)
 
+### Fixed
+
+- The models.dev match for model sync no longer crosses major versions (a `-v2` model no longer takes a `-v1` listing's metadata or price).
+
 ## [2.2.1] - 2026-10-16
 
 ### Fixed

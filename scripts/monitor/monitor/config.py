@@ -93,21 +93,26 @@ class Config:
         """The `models:` entry of each Lumen id that has one.
 
         An id without an exact key that shares its `model_key` with another id in
-        `models` gets no entry (with a warning): guessing could charge the wrong GPUs.
+        `models` gets no entry (one warning per clash): guessing could charge the wrong
+        GPUs. Its `modelsdev_id` pin is dropped with the entry, so its models.dev match
+        falls back to the fuzzy matcher.
         """
-        keys: dict[str, list[str]] = {}
+        keys: dict[str, set[str]] = {}
         for model in models:
-            keys.setdefault(model_key(model), []).append(model)
+            keys.setdefault(model_key(model), set()).add(model)
         matched = {}
-        for model in models:
-            entry = self.model_entry(model)
-            if entry is None:
-                continue
-            clashes = keys[model_key(model)]
-            if model not in self.models and len(clashes) > 1:
-                log.warning("models: Lumen ids %s share the key %r; no hardware cost for %s", ", ".join(clashes), model_key(model), model)
-                continue
-            matched[model] = entry
+        for key, ids in keys.items():
+            skipped = []
+            for model in sorted(ids):
+                entry = self.model_entry(model)
+                if entry is None:
+                    continue
+                if model not in self.models and len(ids) > 1:
+                    skipped.append(model)
+                    continue
+                matched[model] = entry
+            if skipped:
+                log.warning("models: Lumen ids %s share the key %r; no hardware cost for %s", ", ".join(sorted(ids)), key, ", ".join(skipped))
         return matched
 
     def entry_hardware(self, entry: ModelHardware | None) -> tuple[Gpu, int] | None:

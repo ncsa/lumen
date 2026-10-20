@@ -188,6 +188,25 @@ def _tokens(s: str) -> set[str]:
         expanded.extend(re.split(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])", p))
     return {t for t in expanded if t and not _NOISE.match(t)}
 
+# A number that is a model size (70b, a3b, 125m, 8x7b), a precision (fp8, bf16, int4) or a
+# quantization (q5_k_m) is not a version.
+_NOT_VERSION_BEFORE = re.compile(r"(?:fp|bf|int|q)$")
+_NOT_VERSION_AFTER = re.compile(r"[bmk](?![a-z])|x\d")
+
+
+def _versions(s: str) -> set[str]:
+    """The major version numbers in an id: "2" in coder-v2, "4" in v4.1, "3" in qwen3.
+
+    _tokens drops digits so they never count towards a match; the version guard reads
+    the generations from here instead."""
+    s = s.split(":")[0].lower()
+    found = set()
+    for m in re.finditer(r"(\d+)(?:\.\d+)*", s):
+        if _NOT_VERSION_BEFORE.search(s, 0, m.start()) or _NOT_VERSION_AFTER.match(s, m.end()):
+            continue
+        found.add(m.group(1).lstrip("0") or "0")
+    return found
+
 
 def _normalize_id(s: str) -> str:
     """Normalize for exact comparison: drop provider prefix, variant suffix, and separators."""
@@ -211,13 +230,13 @@ def find_in_modelsdev(model_id: str, models: list[dict], config_name: str | None
     if not needle:
         return None
 
-    # Single-digit tokens are generation numbers — both sides must agree if present
-    needle_versions = {t for t in needle if t.isdigit()}
+    # Version numbers (generations) must agree when both sides have them
+    needle_versions = _versions(base)
 
     best, best_score = None, 0
     for m in models:
         hay = _tokens(m.get("id", "") + " " + m.get("name", ""))
-        hay_versions = {t for t in hay if t.isdigit()}
+        hay_versions = _versions(m.get("id", "") + " " + m.get("name", ""))
         if needle_versions and hay_versions and not (needle_versions & hay_versions):
             continue  # generation mismatch (e.g. gemma-4 vs gemma-3)
         score = len(needle & hay)
