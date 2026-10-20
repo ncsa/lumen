@@ -3,7 +3,6 @@ import json
 import logging
 import threading
 import time as _time
-from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from functools import wraps
 from http import HTTPStatus
@@ -11,7 +10,7 @@ from urllib.parse import quote
 
 import openai
 from flask import Blueprint, Response, current_app, g, jsonify, request
-from sqlalchemy import case, func, select
+from sqlalchemy import select
 from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -25,7 +24,7 @@ from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
-from lumen.models.request_log import RequestLog
+from lumen.services import request_rates
 from lumen.services.cost import calculate_audio_cost, calculate_cost
 from lumen.services.crypto import cache_salt_for_entity, hash_api_key
 from lumen.services.live_state import get_live_state
@@ -182,30 +181,7 @@ def _get_request_rates() -> dict:
         if now < _rates_cache["expires_at"]:
             return _rates_cache["data"]
 
-        n = datetime.now(timezone.utc)
-        minute_ago = n - timedelta(minutes=1)
-        hour_ago = n - timedelta(hours=1)
-        day_ago = n - timedelta(days=1)
-
-        stmt = (
-            select(
-                RequestLog.model_config_id,
-                func.count(case((RequestLog.time > minute_ago, 1))).label("last_minute"),
-                func.count(case((RequestLog.time > hour_ago, 1))).label("last_hour"),
-                func.count(case((RequestLog.time > day_ago, 1))).label("last_day"),
-            )
-            .where(RequestLog.time > day_ago)
-            .where(RequestLog.model_config_id.isnot(None))
-            .group_by(RequestLog.model_config_id)
-        )
-        result = {
-            row.model_config_id: {
-                "last_minute": row.last_minute,
-                "last_hour": row.last_hour,
-                "last_day": row.last_day,
-            }
-            for row in db.session.execute(stmt).all()
-        }
+        result = request_rates.rates()
         _rates_cache["data"] = result
         _rates_cache["expires_at"] = now + 30.0
     return result

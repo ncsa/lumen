@@ -1,17 +1,16 @@
-from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from urllib.parse import urlparse
 
 import requests as http_requests
 from flask import Blueprint, abort, render_template, session
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from lumen.decorators import login_required
 from lumen.extensions import db
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
-from lumen.models.request_log import RequestLog
+from lumen.services import request_rates
 from lumen.services.llm import _consent_satisfied, bulk_model_access_info, get_model_access_status, model_notices
 from lumen.services.model_resolver import resolve_model_config
 
@@ -73,19 +72,9 @@ def detail(model_name):
     else:
         status = "ok"
 
-    now = datetime.now(timezone.utc)
-    requests_last_hour = db.session.scalar(
-        select(func.count()).select_from(RequestLog).where(
-            RequestLog.model_config_id == config.id,
-            RequestLog.time >= now - timedelta(hours=1),
-        )
-    )
-    requests_last_day = db.session.scalar(
-        select(func.count()).select_from(RequestLog).where(
-            RequestLog.model_config_id == config.id,
-            RequestLog.time >= now - timedelta(days=1),
-        )
-    )
+    counts = request_rates.rates(config.id).get(config.id, {})
+    requests_last_hour = counts.get("last_hour", 0)
+    requests_last_day = counts.get("last_day", 0)
 
     entity_id = session["entity_id"]
     consent = (
