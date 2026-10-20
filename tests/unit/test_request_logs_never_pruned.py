@@ -27,10 +27,11 @@ SCANNED = ["lumen", "migrations", "scripts", "entrypoint.sh", "chart"]
 # in any combination: DELETE FROM ONLY "public"."request_logs" is caught too.
 _TARGET = r"(ONLY\s+)?(\"?public\"?\s*\.\s*)?\"?request_logs\b"
 # One retention policy is allowed: request_metrics_1m keeps 30 days (#169). Only
-# the literal name is exempt; a variable or f-string target stays banned, because
-# the guard cannot prove what it points at.
+# the literal name, as the whole first argument, is exempt; a variable, f-string
+# or expression target stays banned, because the guard cannot prove what it
+# points at.
 _BANNED = re.compile(
-    r"add_retention_policy(?!\(\s*'request_metrics_1m')"
+    r"add_retention_policy(?!\(\s*'request_metrics_1m'\s*[,)])"
     r"|drop_chunks"
     rf"|DELETE\s+FROM\s+{_TARGET}"
     rf"|TRUNCATE\s+(TABLE\s+)?{_TARGET}",
@@ -103,6 +104,10 @@ def test_nothing_prunes_request_logs():
     "SELECT add_retention_policy(VIEW, drop_after => INTERVAL '30 days')",
     "SELECT add_retention_policy('request_counts_hourly_by_entity', INTERVAL '30 days')",
     "SELECT add_retention_policy('request_metrics_1m_old', INTERVAL '30 days')",
+    "SELECT add_retention_policy('request_metrics_1m' || '_suffix', INTERVAL '30 days')",
+    "SELECT add_retention_policy('request_metrics_1m'||'x', INTERVAL '30 days')",
+    "SELECT add_retention_policy('request_metrics_1m'::regclass, INTERVAL '30 days')",
+    "SELECT add_retention_policy('request_metrics_1m'; DROP--",
 ])
 def test_banned_pattern_catches(sql):
     assert _BANNED.search(sql)
@@ -113,7 +118,7 @@ def test_banned_pattern_catches(sql):
     "DELETE FROM request_logs_archive",
     "SELECT COUNT(*) FROM request_logs",
     "SELECT add_retention_policy('request_metrics_1m', drop_after => INTERVAL '30 days')",
-    "SELECT add_retention_policy( 'request_metrics_1m', INTERVAL '30 days')",
+    "SELECT add_retention_policy( 'request_metrics_1m' , INTERVAL '30 days')",
 ])
 def test_banned_pattern_ignores(sql):
     assert not _BANNED.search(sql)

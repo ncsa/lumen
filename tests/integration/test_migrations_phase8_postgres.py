@@ -138,7 +138,8 @@ def seeded(pg_migrated):
     with pg_migrated.begin() as conn:
         # request_metrics_1m keeps 30 days (#169) and the oldest history row is
         # 40 days old. Pause that policy so its job cannot drop the row's bucket
-        # partway through the module, depending on when it happens to fire.
+        # partway through the module, depending on when it happens to fire. The
+        # pause is never undone: this database is private to the module.
         conn.execute(text(
             "SELECT alter_job(job_id, scheduled => false) FROM timescaledb_information.jobs "
             "WHERE proc_name = 'policy_retention'"

@@ -80,7 +80,7 @@ def test_retention_policy_on_request_logs_logs_an_error(pg_engine, create_pg_app
     assert "flask check-aggregate" in msg
 
 
-def test_no_retention_policy_logs_nothing_with_one_query(pg_engine, create_pg_app, caplog):
+def test_no_request_logs_retention_policy_logs_nothing_with_one_query(pg_engine, create_pg_app, caplog):
     statements = []
 
     def record(conn, cursor, statement, parameters, context, executemany):
