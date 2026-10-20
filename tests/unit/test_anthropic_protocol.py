@@ -792,12 +792,14 @@ def test_stream_error_keeps_a_caller_error_type():
     assert server[1]["error"]["type"] == "api_error"
 
 
-def test_streamed_malformed_tool_arguments_are_wrapped():
-    """Same as the non-streaming path: the SDKs raise on an invalid input_json_delta."""
-    events = _run(_tool(id="t1", name="Bash", arguments="{not json"), _chunk(finish="tool_calls"))
+@pytest.mark.parametrize("arguments", ["{not json", "[]", "null", "42", '"text"'])
+def test_streamed_malformed_or_non_object_tool_arguments_are_wrapped(arguments):
+    """Same as the non-streaming path: the SDKs raise on an input_json_delta
+    that is invalid JSON or not an object."""
+    events = _run(_tool(id="t1", name="Bash", arguments=arguments), _chunk(finish="tool_calls"))
     [delta] = [data["delta"] for name, data in events
                if name == "content_block_delta" and data["delta"]["type"] == "input_json_delta"]
-    assert json.loads(delta["partial_json"]) == {"__raw_arguments": "{not json"}
+    assert json.loads(delta["partial_json"]) == {"__raw_arguments": arguments}
 
 
 def test_system_turn_after_structured_user_content_is_appended_as_text():
