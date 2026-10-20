@@ -274,3 +274,30 @@ def test_model_endpoint(app, test_model):
         db.session.commit()
         db.session.refresh(ep)
         return {"id": ep.id, "model_config_id": ep.model_config_id, "healthy": ep.healthy}
+
+
+# TEMPORARY (verification only, reverted before review): report every
+# metrics-snapshot refresher start and the test that triggered it.
+_refresher_starts = []
+_current_test = [None]
+_real_start_snapshot_refresher = metrics_snapshot.start_snapshot_refresher
+
+
+def _recording_start_snapshot_refresher(app):
+    _refresher_starts.append(_current_test[0])
+    return _real_start_snapshot_refresher(app)
+
+
+metrics_snapshot.start_snapshot_refresher = _recording_start_snapshot_refresher
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_protocol(item, nextitem):
+    _current_test[0] = item.nodeid
+    return (yield)
+
+
+def pytest_terminal_summary(terminalreporter):
+    terminalreporter.write_line(f"REFRESHER-CHECK: {len(_refresher_starts)} start(s)")
+    for nodeid in _refresher_starts:
+        terminalreporter.write_line(f"REFRESHER-CHECK start: {nodeid}")
