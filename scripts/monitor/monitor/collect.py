@@ -10,7 +10,7 @@ from datetime import datetime
 from sqlalchemy.orm import sessionmaker
 
 from monitor import hardware, lumen_api, modelsdev
-from monitor.config import Config, ConfigStore
+from monitor.config import Config, ConfigStore, ModelHardware
 from monitor.daily import get_daily, local_day, upsert_daily
 from monitor.db import utcnow
 
@@ -25,14 +25,14 @@ def _avg_healthy(session, day, model: dict) -> float:
     return float(model["healthy"] or 0)
 
 
-def _hardware_values(config: Config, model_id: str, avg_healthy: float) -> dict | None:
-    hw = config.hardware_for(model_id)
+def _hardware_values(config: Config, entry: ModelHardware | None, avg_healthy: float) -> dict | None:
+    hw = config.entry_hardware(entry)
     if hw is None:
         return None
     gpu, gpus = hw
     return {
         "daily_cost": hardware.daily_cost(gpu, gpus, config.kwh, avg_healthy),
-        "gpu": config.models[model_id].gpu,
+        "gpu": entry.gpu,
         "gpus": gpus,
         "gpu_price": gpu.price,
         "energy": gpu.energy,
@@ -57,6 +57,7 @@ def collect_prices(store: ConfigStore, session_factory: sessionmaker, now: datet
     if not dev_models:
         log.warning("models.dev returned no models; skipping the models.dev rows")
     price_index = modelsdev.build_price_index(dev_models)
+    entries = config.match_models([model["id"] for model in models])
 
     written = {"lumen": 0, "models.dev": 0, "hardware": 0}
     with session_factory() as session:
@@ -65,14 +66,14 @@ def collect_prices(store: ConfigStore, session_factory: sessionmaker, now: datet
             upsert_daily(session, day, model_id, "lumen", input_price=model["input_price"], output_price=model["output_price"])
             written["lumen"] += 1
 
-            entry = config.models.get(model_id)
+            entry = entries.get(model_id)
             dev_match = modelsdev.match(model_id, model["root"], dev_models, pin=entry.modelsdev_id if entry else None)
             stats = modelsdev.provider_stats(dev_match, price_index) if dev_match else None
             if stats:
                 upsert_daily(session, day, model_id, "models.dev", **stats)
                 written["models.dev"] += 1
 
-            values = _hardware_values(config, model_id, _avg_healthy(session, day, model))
+            values = _hardware_values(config, entry, _avg_healthy(session, day, model))
             if values:
                 upsert_daily(session, day, model_id, "hardware", **values)
                 written["hardware"] += 1

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from monitor.config import ConfigError, ConfigStore, Gpu, load_config, normalize_base_path, parse_config, parse_duration
+from monitor.config import ConfigError, ConfigStore, Gpu, load_config, model_key, normalize_base_path, parse_config, parse_duration
 
 EXAMPLE = Path(__file__).resolve().parent.parent / "config.yaml.example"
 
@@ -39,6 +39,7 @@ def test_example_loads_without_warnings():
     assert config.lumen_url == "https://lumen.example.edu"
     assert config.kwh == 0.24
     assert config.hardware_for("nemotron-3-super-120b-a12b-fp8") == (Gpu(energy=600, price=625), 2)
+    assert config.hardware_for("deepseek-v4.1-flash") == (Gpu(energy=600, price=625), 4)
 
 
 @pytest.mark.parametrize(("value", "expected"), [
@@ -267,3 +268,44 @@ def test_zero_retention_still_rejected():
 def test_unknown_top_level_key_warns():
     config = parse_config({"refreshh": {"web": "1m"}}, env={})
     assert any("refreshh" in w for w in config.warnings)
+
+
+PRICE = {"kwh": 0.24, "rtx6000": {"energy": 600, "price": 625}}
+
+
+def test_model_key():
+    assert model_key(" DeepSeek-V4.1-Flash ") == "deepseek-v4-1-flash"
+
+
+def test_keys_with_the_same_model_key_are_rejected():
+    models = {"a.1": {"gpu": "rtx6000", "gpus": 1}, "a-1": {"gpu": "rtx6000", "gpus": 2}}
+    with pytest.raises(ConfigError, match="same model"):
+        parse_config({"price": PRICE, "models": models}, env={})
+
+
+@pytest.mark.parametrize("yaml_key", ["deepseek-v4-1-flash", '"deepseek-v4.1-flash"'])
+def test_dashed_and_quoted_dotted_keys_load(tmp_path, yaml_key):
+    path = tmp_path / "config.yaml"
+    path.write_text(f"price: {{kwh: 0.24, rtx6000: {{energy: 600, price: 625}}}}\nmodels:\n  {yaml_key}: {{gpu: rtx6000, gpus: 2}}\n")
+    config = load_config(path, env={})
+    assert config.warnings == []
+    assert config.hardware_for("deepseek-v4.1-flash") == (Gpu(energy=600, price=625), 2)
+
+
+def test_exact_key_wins():
+    models = {"m.1": {"gpu": "rtx6000", "gpus": 1}, "m-1-x": {"gpu": "rtx6000", "gpus": 3}}
+    config = parse_config({"price": PRICE, "models": models}, env={})
+    assert config.model_entry("m.1").gpus == 1
+    assert config.model_entry("M.1-X").gpus == 3
+
+
+def test_colliding_lumen_ids_get_no_entry(caplog):
+    config = parse_config({"price": PRICE, "models": {"a-1": {"gpu": "rtx6000", "gpus": 1}}}, env={})
+    with caplog.at_level(logging.WARNING):
+        assert config.match_models(["a.1", "A.1", "b"]) == {}
+    assert "share the key" in caplog.text
+
+
+def test_exact_lumen_id_keeps_its_entry_in_a_collision():
+    config = parse_config({"price": PRICE, "models": {"a-1": {"gpu": "rtx6000", "gpus": 1}}}, env={})
+    assert list(config.match_models(["a-1", "a.1"])) == ["a-1"]

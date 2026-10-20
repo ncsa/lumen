@@ -82,12 +82,49 @@ class Config:
     models: dict[str, ModelHardware]
     warnings: list[str] = field(default_factory=list, compare=False)
 
-    def hardware_for(self, model: str) -> tuple[Gpu, int] | None:
-        """The GPU type and count for `model`, or None when its cost cannot be computed."""
-        entry = self.models.get(model)
+    def model_entry(self, model: str) -> ModelHardware | None:
+        """The `models:` entry for Lumen id `model`: the exact key, else the key with the same `model_key`."""
+        if model in self.models:
+            return self.models[model]
+        key = model_key(model)
+        return next((entry for name, entry in self.models.items() if model_key(name) == key), None)
+
+    def match_models(self, models: list[str]) -> dict[str, ModelHardware]:
+        """The `models:` entry of each Lumen id that has one.
+
+        An id without an exact key that shares its `model_key` with another id in
+        `models` gets no entry (with a warning): guessing could charge the wrong GPUs.
+        """
+        keys: dict[str, list[str]] = {}
+        for model in models:
+            keys.setdefault(model_key(model), []).append(model)
+        matched = {}
+        for model in models:
+            entry = self.model_entry(model)
+            if entry is None:
+                continue
+            clashes = keys[model_key(model)]
+            if model not in self.models and len(clashes) > 1:
+                log.warning("models: Lumen ids %s share the key %r; no hardware cost for %s", ", ".join(clashes), model_key(model), model)
+                continue
+            matched[model] = entry
+        return matched
+
+    def entry_hardware(self, entry: ModelHardware | None) -> tuple[Gpu, int] | None:
+        """The GPU type and count of a `models:` entry, or None when its cost cannot be computed."""
         if self.kwh is None or entry is None or entry.gpus is None or entry.gpu not in self.gpus:
             return None
         return self.gpus[entry.gpu], entry.gpus
+
+    def hardware_for(self, model: str) -> tuple[Gpu, int] | None:
+        """The GPU type and count for Lumen id `model`, or None when its cost cannot be computed."""
+        return self.entry_hardware(self.model_entry(model))
+
+
+def model_key(name: str) -> str:
+    """How a `models:` key meets a Lumen id: `deepseek-v4-1-flash` configures `deepseek-v4.1-flash`,
+    since dotted YAML keys need quoting."""
+    return name.strip().lower().replace(".", "-")
 
 
 def parse_duration(value, name: str) -> timedelta:
@@ -176,7 +213,12 @@ def _parse_price(raw: dict, warnings: list[str]) -> tuple[float | None, dict[str
 
 def _parse_models(raw: dict, gpus: dict[str, Gpu], warnings: list[str]) -> dict[str, ModelHardware]:
     models = {}
+    seen: dict[str, str] = {}
     for name, entry in _section(raw, "models").items():
+        key = model_key(str(name))
+        if key in seen:
+            raise ConfigError(f"models: {seen[key]!r} and {name!r} configure the same model (dots and dashes are the same)")
+        seen[key] = str(name)
         if not isinstance(entry, dict):
             warnings.append(f"models.{name}: expected a mapping with gpu and gpus")
             continue

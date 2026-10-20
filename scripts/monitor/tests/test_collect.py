@@ -1,4 +1,5 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 import requests
@@ -8,6 +9,7 @@ from monitor import migrate, modelsdev
 from monitor.cli import main
 from monitor.collect import collect_prices
 from monitor.config import ConfigStore
+from monitor.daily import local_day
 from monitor.db import make_engine, make_session_factory
 from monitor.models import DailyStat
 
@@ -201,3 +203,36 @@ def test_cli_collect_needs_a_collector(env):
     config_path, _ = env
     with pytest.raises(SystemExit):
         main(["--config", str(config_path), "collect"])
+
+
+def test_dotted_lumen_id_uses_the_dashed_key(env, http):
+    config_path, session_factory = env
+    config_path.write_text(CONFIG + "  deepseek-v4-1-flash: {gpu: rtx6000, gpus: 4}\n")
+    http.lumen["data"].append(lumen_model("deepseek-v4.1-flash"))
+    assert main(["--config", str(config_path), "collect", "--price"]) == 0
+    hw = rows(session_factory, "hardware")["deepseek-v4.1-flash", "hardware"]
+    assert (hw.gpus, hw.daily_cost) == (4, pytest.approx(4 * RTX6000_DAY))
+
+
+def test_quoted_dotted_key_still_works(env, http):
+    config_path, session_factory = env
+    config_path.write_text(CONFIG + '  "deepseek-v4.1-flash": {gpu: rtx6000, gpus: 4}\n')
+    http.lumen["data"].append(lumen_model("deepseek-v4.1-flash"))
+    collect_prices(ConfigStore(config_path), session_factory, now=NOON)
+    assert ("deepseek-v4.1-flash", "hardware") in rows(session_factory)
+
+
+def test_colliding_lumen_ids_get_no_hardware_rows(env, http, caplog):
+    config_path, session_factory = env
+    config_path.write_text(CONFIG + "  deepseek-v4-1-flash: {gpu: rtx6000, gpus: 4}\n")
+    http.lumen["data"] += [lumen_model("deepseek-v4.1-flash"), lumen_model("DeepSeek-V4.1-Flash")]
+    collect_prices(ConfigStore(config_path), session_factory, now=NOON)
+    stored = rows(session_factory, "hardware")
+    assert not any(model.lower() == "deepseek-v4.1-flash" for model, _ in stored)
+    assert ("qwen", "hardware") in stored
+    assert "share the key" in caplog.text
+
+
+def test_local_day_rejects_aware_datetimes():
+    with pytest.raises(ValueError):
+        local_day(datetime(2026, 10, 17, tzinfo=timezone.utc), ZoneInfo("America/Chicago"))

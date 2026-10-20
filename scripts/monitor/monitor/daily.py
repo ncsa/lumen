@@ -12,6 +12,8 @@ from monitor.models import DailyStat
 
 def local_day(now: datetime, tz: ZoneInfo) -> date:
     """The local date in `tz` of the naive UTC time `now`."""
+    if now.tzinfo is not None:
+        raise ValueError("local_day expects a naive UTC datetime")
     return now.replace(tzinfo=timezone.utc).astimezone(tz).date()
 
 
