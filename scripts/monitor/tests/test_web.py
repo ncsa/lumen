@@ -113,6 +113,7 @@ def test_series_rejects_missing_and_unknown_models(make_client):
     client = make_client()
     assert client.get("/api/series?range=1h").status_code == HTTPStatus.BAD_REQUEST
     assert client.get("/api/series?model=nope&range=1h").status_code == HTTPStatus.NOT_FOUND
+    assert client.get("/model/nope").status_code == HTTPStatus.NOT_FOUND
 
 
 def test_detail_page_accessibility_markup(make_client):

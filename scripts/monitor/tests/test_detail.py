@@ -76,8 +76,9 @@ def test_every_series_for_every_range(env, range_key):
     assert data["daily"] is (range_key in ("7d", "30d", "1y"))
     assert data["traffic"]["unit"] == ("day" if data["daily"] else "minute")
     assert len(data["traffic"]["points"]) == TRAFFIC_POINTS[range_key]
-    assert len(data["strip"]) == len(data["header"]["strip"]) == STRIP_BUCKETS[range_key]
-    assert len(data["instances"]) == STRIP_BUCKETS[range_key]
+    assert len(data["header"]["strip"]) == STRIP_BUCKETS[range_key]
+    assert data["instances"]["unit"] == ("day" if range_key == "1y" else "bucket")
+    assert len(data["instances"]["points"]) == STRIP_BUCKETS[range_key]
     assert len(data["prices"]) == len(data["hardware"]["points"]) == DAYS[range_key]
     assert data["prices"][-1]["day"] == data["hardware"]["points"][-1]["day"] == "2026-10-17"
     assert set(data["prices"][0]) == {"day", "input_price", "output_price", "input_median", "input_p5", "input_p95",
@@ -96,8 +97,8 @@ def test_short_ranges_use_per_bucket_rates(env):
     assert points[-10]["requests"] == 2 and points[-10]["tokens"] == 200
     assert points[0]["requests"] is None
     assert data["traffic"]["average"] == {"requests": pytest.approx((5 + 2) / 2), "tokens": pytest.approx(300)}
-    assert data["instances"][-1] == {"t": "2026-10-17T16:59:00Z", "healthy": 1, "configured": 2}
-    assert data["instances"][-10]["healthy"] == 2
+    assert data["instances"]["points"][-1] == {"t": "2026-10-17T16:59:00Z", "healthy": 1, "configured": 2}
+    assert data["instances"]["points"][-10]["healthy"] == 2
 
 
 def test_daily_series_from_7d_mark_inexact_days(env):
@@ -161,8 +162,8 @@ def test_1y_instances_from_the_daily_counters(env):
     _, sf, _ = env
     add(sf, daily(TODAY - timedelta(days=1), "lumen", polls=4, polls_ok=4, healthy_sum=6, configured=2))
     data = get(env, "1y")
-    assert data["instances"][-2] == {"t": "2026-10-16", "healthy": 1.5, "configured": 2}
-    assert data["instances"][-1] == {"t": "2026-10-17", "healthy": None, "configured": None}
+    assert data["instances"]["points"][-2] == {"t": "2026-10-16", "healthy": 1.5, "configured": 2}
+    assert data["instances"]["points"][-1] == {"t": "2026-10-17", "healthy": None, "configured": None}
     assert data["header"]["strip"][-2] == "ok"
 
 

@@ -55,8 +55,11 @@ def api_lumen():
 
 @bp.route("/model/<path:model_id>")
 def model(model_id):
-    store, _, _ = _deps()
+    store, session_factory, snapshot = _deps()
     rng = get_range(request.args.get("range"))
+    with session_factory() as session:
+        if detail.find_model(session, snapshot, model_id) is None:
+            abort(HTTPStatus.NOT_FOUND, f"unknown model {model_id}")
     return render_template(
         "detail.html",
         model_id=model_id,

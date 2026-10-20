@@ -44,6 +44,12 @@ jobs:
         with:
           python-version-file: scripts/monitor/pyproject.toml
 
+      # The dashboard's page JS tests (tests/js) run with Node under pytest.
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
       - name: Install dependencies
         run: uv sync --frozen
 

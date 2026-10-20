@@ -144,6 +144,8 @@ Aliases are no longer listed as separate models.
 - Traffic missed while the service was down is backfilled from Lumen's longer windows, evenly
   spread over the gap; those days are always marked `estimated`.
 - Energy cost uses the configured (rated) power per GPU, so it overstates the actual draw.
+- On a range where only some days have token counts, the hardware chart plots $/M tokens and
+  leaves the days without tokens empty instead of switching them to $/request.
 - An open page can show a DOWN state up to `refresh.page` (5m) late; lower it if that matters.
 - Run a single replica (see above).
 - History from the old `monitor.db` is not migrated.

@@ -3,7 +3,6 @@
 Every range returns the same series, so the page draws the same charts:
 
 - `header`: the model's overview row (status, strip, uptime, instances, prices, cost)
-- `strip`: the status buckets with their start times
 - `prices`: one point per local day with our input/output price and the models.dev
   median and p5/p95
 - `traffic`: below 7d one point per bucket with the average req/min and tok/min of
@@ -12,7 +11,7 @@ Every range returns the same series, so the page draws the same charts:
 - `hardware`: one point per local day with the hardware $/day and its $/M tokens,
   or $/request on a day without token counts, plus the same over the whole range
 - `instances`: average healthy and configured instances per bucket from the samples
-  (1y: per day from the daily counters)
+  (`unit: bucket`), or on 1y per local day from the daily counters (`unit: day`)
 """
 
 from datetime import date, datetime, timedelta
@@ -79,10 +78,13 @@ def _hardware_points(rows: dict, model_id: str, days: list[date], tz) -> tuple[l
     return points, hardware_unit_cost(keyed, model_id, days, tz)
 
 
-def _bucket_samples(session: Session, model_id: str, grid, start: datetime, now: datetime) -> list[list[Sample]]:
-    stmt = select(Sample).where(Sample.model == model_id, Sample.sampled_at > start, Sample.sampled_at <= now)
-    buckets: list[list[Sample]] = [[] for _ in range(grid.count)]
-    for s in session.execute(stmt).scalars().all():
+def _bucket_samples(session: Session, model_id: str, grid, start: datetime, now: datetime) -> list[list]:
+    """The model's samples per bucket, as plain rows with only the columns the charts use."""
+    stmt = select(
+        Sample.sampled_at, Sample.healthy, Sample.configured, Sample.requests_last_minute, Sample.tokens_last_minute,
+    ).where(Sample.model == model_id, Sample.sampled_at > start, Sample.sampled_at <= now)
+    buckets: list[list] = [[] for _ in range(grid.count)]
+    for s in session.execute(stmt).all():
         i = grid.index(s.sampled_at)
         if i is not None:
             buckets[i].append(s)
@@ -104,16 +106,16 @@ def series(session: Session, config: Config, snapshot: LiveSnapshot | None, mode
 
     if rng.daily:
         lumen = [rows.get(("lumen", d)) for d in days]
-        instances = [
+        instances = {"unit": "day", "points": [
             {"t": d.isoformat(), "healthy": r.healthy_sum / r.polls if r and r.polls else None, "configured": r.configured if r else None}
             for d, r in zip(days, lumen)
-        ]
+        ]}
     else:
         buckets = _bucket_samples(session, model_id, grid, now - rng.span, now)
-        instances = [
+        instances = {"unit": "bucket", "points": [
             {"t": t, "healthy": _mean(s.healthy for s in b), "configured": _mean(s.configured for s in b)}
             for t, b in zip(times, buckets)
-        ]
+        ]}
 
     if is_daily(rng):
         points = []
@@ -141,7 +143,6 @@ def series(session: Session, config: Config, snapshot: LiveSnapshot | None, mode
         "generated_at": _iso(now),
         "daily": is_daily(rng),
         "header": header,
-        "strip": [{"t": t, "status": s} for t, s in zip(times, header["strip"])],
         "prices": _price_points(rows, days),
         "traffic": traffic,
         "hardware": {"points": hardware, "range": hardware_range},

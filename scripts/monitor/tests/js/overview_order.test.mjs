@@ -1,6 +1,6 @@
 // Runs the real overview.js against a fake DOM and a fetch whose responses the test resolves
 // by hand, to check that only the newest load renders, updates state or reports an error.
-// Run with `node --test tests/js/` (tests/test_overview_js.py does this under pytest).
+// Run with `node --test tests/js/*.test.mjs` (tests/test_overview_js.py does this under pytest).
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 

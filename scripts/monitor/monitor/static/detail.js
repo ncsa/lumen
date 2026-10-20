@@ -94,14 +94,16 @@
     document.getElementById('hardware-note').textContent = note;
   }
 
-  function instancesChart(instances, daily) {
+  function instancesChart(instances) {
+    const daily = instances.unit === 'day';
+    const points = instances.points;
     draw('instances', {
       type: 'line',
       data: {
-        labels: instances.map(p => daily ? dayLabel(p.t) : timeLabel(p.t)),
+        labels: points.map(p => daily ? dayLabel(p.t) : timeLabel(p.t)),
         datasets: [
-          { label: 'healthy', data: instances.map(p => p.healthy), borderColor: COLOR.line, stepped: true, pointRadius: 0 },
-          { label: 'configured', data: instances.map(p => p.configured), borderColor: COLOR.ours, borderDash: [6, 4], stepped: true, pointRadius: 0 },
+          { label: 'healthy', data: points.map(p => p.healthy), borderColor: COLOR.line, stepped: true, pointRadius: 0 },
+          { label: 'configured', data: points.map(p => p.configured), borderColor: COLOR.ours, borderDash: [6, 4], stepped: true, pointRadius: 0 },
         ],
       },
       options: { scales: { x: { ticks: { maxTicksLimit: 8, maxRotation: 0 } }, y: { beginAtZero: true, ticks: { precision: 0 } } } },
@@ -127,7 +129,7 @@
     trafficChart('requests', 'requests', s.traffic, fmtInt);
     trafficChart('tokens', 'tokens', s.traffic, fmtCount);
     hardwareChart(s.hardware);
-    instancesChart(s.instances, s.range === '1y');
+    instancesChart(s.instances);
   }
 
   // Every load gets a generation; only the newest one may render or report an error,
