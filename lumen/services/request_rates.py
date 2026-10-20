@@ -75,8 +75,9 @@ def rates(model_config_id: int | None = None) -> dict:
             count(t >= params["hour_start"]),
             count(),
         )
-        # The upper bound keeps rows stamped in the future (clock skew) out
-        # of every window until real time reaches them.
+        # The upper bound is the end of the current minute bucket: a row
+        # stamped in a later minute (clock skew) is not counted until that
+        # minute arrives, while one later in the current minute already is.
         .where(t >= params["day_start"], t < params["next_minute"], mid.isnot(None))
         .group_by(mid)
     )

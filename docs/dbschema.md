@@ -784,6 +784,11 @@ Same measures as `request_counts_hourly_by_entity` (`requests`, `input_tokens`, 
 **Refresh policy:** `start_offset` 3 hours, `end_offset` 1 minute, `schedule_interval` 1 minute.
 Created `WITH NO DATA`; it needs no historical backfill.
 
+**Retention:** buckets older than **30 days** are dropped (`add_retention_policy(..., drop_after =>
+INTERVAL '30 days')`, #169). The refresh window never reaches back past 3 hours and no reader asks
+for more than 24 hours, so nothing ever needs a dropped bucket. The policy drops only the view's own
+materialised chunks; `request_logs` keeps every raw row.
+
 **Notes:**
 - **Deliberately no `entity_id`.** This view describes the shape of the load, not who caused it —
   `request_counts_hourly_by_entity` answers the per-user question. Adding `entity_id` here would
@@ -809,7 +814,8 @@ across the whole window.
 
 **`request_logs` is never pruned.** No migration, command or background job adds a retention
 policy, calls `drop_chunks`, or deletes from it (#167); `tests/unit/test_request_logs_never_pruned.py`
-enforces this. `flask check-aggregate` exits 1 if a retention policy was added by hand.
+enforces this. The one retention policy Lumen adds is on `request_metrics_1m`, the only target that
+test allows. `flask check-aggregate` exits 1 if a retention policy was added to `request_logs` by hand.
 
 ---
 

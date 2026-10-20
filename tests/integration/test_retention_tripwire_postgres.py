@@ -97,6 +97,22 @@ def test_no_retention_policy_logs_nothing_with_one_query(pg_engine, create_pg_ap
     assert sum("policy_retention" in s for s in statements) == 1, statements
 
 
+def test_retention_policy_on_request_metrics_1m_logs_nothing(pg_engine, create_pg_app, caplog):
+    """The migration chain keeps 30 days of request_metrics_1m (#169); that is not request_logs."""
+    with pg_engine.connect() as conn:
+        assert conn.execute(text(
+            "SELECT COUNT(*) FROM timescaledb_information.jobs j "
+            "JOIN timescaledb_information.continuous_aggregates c "
+            "  ON c.materialization_hypertable_name = j.hypertable_name "
+            "WHERE j.proc_name = 'policy_retention' AND c.view_name = 'request_metrics_1m'"
+        )).scalar() == 1, "the policy must exist or this test proves nothing"
+
+    with caplog.at_level(logging.WARNING):
+        create_pg_app()
+
+    assert _logged(caplog) == [], [r.getMessage() for r in _logged(caplog)]
+
+
 def test_aborted_lookup_transaction_is_rolled_back(pg_engine, create_pg_app, monkeypatch, caplog):
     """A failed lookup aborts the PostgreSQL transaction; the tripwire must roll it back.
 
