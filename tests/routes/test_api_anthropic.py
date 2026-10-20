@@ -360,6 +360,7 @@ def test_consent_required_is_a_permission_error(app, client, test_user, test_mod
     resp = _post(client, token)
     assert resp.status_code == HTTPStatus.FORBIDDEN
     assert resp.get_json()["error"]["type"] == "permission_error"
+    assert "/acknowledge" in resp.get_json()["error"]["message"]
 
 
 def test_exhausted_budget_is_a_rate_limit_error(app, client, test_user, test_model,
@@ -623,6 +624,24 @@ def test_count_tokens_checks_model_access(app, client, test_model, api_key, fres
                                  "messages": [{"role": "user", "content": "hi"}]},
                  path="/v1/messages/count_tokens")
     assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+def test_count_tokens_counts_a_model_awaiting_acknowledgement(app, client, test_user, test_model,
+                                                             api_key, fresh_rate_limit):
+    # Matches GET /v1/models/<id>, which lists such a model; /v1/messages still
+    # refuses it until it is acknowledged.
+    token, _ = api_key
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        _grant_unlimited_pool(app, test_user["id"])
+        db.session.get(ModelConfig, test_model["id"]).needs_ack = True
+        db.session.commit()
+    resp = _post(client, token, {"model": test_model["model_name"],
+                                 "messages": [{"role": "user", "content": "hi"}]},
+                 path="/v1/messages/count_tokens")
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.get_json() == {"input_tokens": 1}
 
 
 # ---------------------------------------------------------------------------

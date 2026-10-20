@@ -35,7 +35,7 @@ from lumen.services.anthropic_protocol import (
     translate_response,
 )
 from lumen.services.crypto import cache_salt_for_entity
-from lumen.services.llm import get_effective_limit
+from lumen.services.llm import get_model_access_status, get_pool_limit
 from lumen.services.model_resolver import resolve_model_config
 
 logger = logging.getLogger(__name__)
@@ -236,9 +236,11 @@ def count_tokens_view():
         return _anthropic_err(str(exc))
 
     # Same rule as GET /v1/models/<id>: a model the caller may not use answers
-    # as a missing one, so an owned model's existence is not discoverable.
+    # as a missing one, so an owned model's existence is not discoverable. A
+    # model that only awaits acknowledgement is counted; nothing is generated.
     config = resolve_model_config(model_name)
-    if not config or get_effective_limit(g.entity.id, config.id) is None:
+    if (not config or get_model_access_status(g.entity.id, config.id) == "blocked"
+            or get_pool_limit(g.entity.id) is None):
         return _anthropic_err(f"Model '{model_name}' not found", "not_found_error")
 
     return jsonify({"input_tokens": count_tokens(msgs, kwargs.get("tools"))})

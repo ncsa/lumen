@@ -56,7 +56,7 @@ Auto mode asks the model, through Lumen, to approve each action that your permis
 | Claude Code fails after several retries with a 400 that names an `anthropic-beta` | The `CLAUDE_CODE_*` / `MAX_THINKING_TOKENS` settings above are missing, or Claude Code was upgraded and now asks for a beta Lumen refuses |
 | 404 on every request | `ANTHROPIC_BASE_URL` ends in `/v1` |
 | 404 `not_found_error` for the model | Not a Lumen model id (`count_tokens` also answers 404 for a model your key cannot use) |
-| 403 `permission_error` | The model needs its terms accepted in Lumen, or your account has no access |
+| 403 `permission_error` | The model needs its terms accepted in Lumen, or your account has no access. To accept them, call the `POST /v1/models/<id>/acknowledge` endpoint named in the message, with the key as `Authorization: Bearer` (it does not read `x-api-key`) |
 | 429 `rate_limit_error` | Rate limit or exhausted budget; `Retry-After` says when to try again |
 | 503 `overloaded_error` | No healthy backend for the model right now |
 
@@ -68,6 +68,7 @@ Lumen's server log records every request it rejects with a 400 as `anthropic req
 - Content blocks: `text`, `image`, `tool_use`, `tool_result`. A reasoning model's thinking comes back as a `thinking` block.
 - If the model's tool arguments are not a JSON object (invalid JSON, or a value such as `[]` or `42`), the `tool_use` block's `input` is `{"__raw_arguments": "<the text the model produced>"}`.
 - `POST /v1/messages/count_tokens` returns an estimate that assumes about four characters per token, and is never billed.
+- Browsers cannot call `/v1/messages` directly: the CORS preflight does not allow the Anthropic SDK's headers. Call it from a server or a local client.
 
 ## Refused
 
