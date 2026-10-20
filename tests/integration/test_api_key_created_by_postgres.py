@@ -9,6 +9,8 @@ import os
 import pytest
 from sqlalchemy import delete, select, text
 
+from tests.conftest import no_snapshot_refresher
+
 from .conftest import TEST_CONFIG
 
 pytestmark = pytest.mark.postgres
@@ -30,7 +32,9 @@ def pg_app(pg_migrated_isolated):
     Config.SQLALCHEMY_DATABASE_URI = url
     from lumen import create_app
 
-    application = create_app()
+    with pytest.MonkeyPatch.context() as mp:
+        no_snapshot_refresher(mp)
+        application = create_app()
     Config.SQLALCHEMY_DATABASE_URI = previous_uri
     application.config["TESTING"] = True
     with application.app_context():

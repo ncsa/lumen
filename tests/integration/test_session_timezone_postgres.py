@@ -41,6 +41,8 @@ import pytest
 from sqlalchemy import create_engine, exc, text
 from sqlalchemy.pool import NullPool
 
+from tests.conftest import no_snapshot_refresher
+
 from .conftest import TEST_CONFIG
 
 SOURCE = "tzq"  # request_logs.source is VARCHAR(8)
@@ -126,7 +128,9 @@ def pg_app(pg_migrated_isolated):
     previous_uri = Config.SQLALCHEMY_DATABASE_URI
     Config.SQLALCHEMY_DATABASE_URI = url
     from lumen import create_app
-    application = create_app()
+    with pytest.MonkeyPatch.context() as mp:
+        no_snapshot_refresher(mp)
+        application = create_app()
     Config.SQLALCHEMY_DATABASE_URI = previous_uri
     application.config["TESTING"] = True
     application.config["WTF_CSRF_ENABLED"] = False

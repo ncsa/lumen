@@ -29,27 +29,6 @@ def restore_snapshot():
     metrics_snapshot._snapshot = original
 
 
-@pytest.fixture
-def stopped_refresher():
-    """Leave the test's refresher the only one in the process, and stop it after.
-
-    Stopping first matters: ``create_app`` starts a refresher for the session
-    fixture's app, and ``pool.checkedout()`` is process-global, so a pass on that
-    thread makes the assertion below read a checkout the refresher under test
-    does not own (observed as a 1-in-3 flake).
-
-    Stopping after matters because the thread has to end deterministically.
-    Throwing into it from a patched ``_sleep`` (``raise SystemExit``) also ends
-    it, but pytest replaces ``threading.excepthook`` — which normally swallows
-    ``SystemExit`` — so every such test reports a
-    PytestUnhandledThreadExceptionWarning, and real thread failures then hide
-    among the noise.
-    """
-    metrics_snapshot.stop_snapshot_refresher()
-    yield
-    metrics_snapshot.stop_snapshot_refresher()
-
-
 def test_refresh_populates_every_snapshot_field(app, restore_snapshot):
     from lumen.models.entity import Entity
     from lumen.models.model_config import ModelConfig

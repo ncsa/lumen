@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from lumen.services import metrics_snapshot
+
 TEST_CONFIG = str(Path(__file__).parent / "fixtures" / "test_config.yaml")
 # Flask-SQLAlchemy resolves relative sqlite paths against the instance dir.
 DB_PATH = Path(__file__).parent.parent / "instance" / "test_lumen.db"
@@ -58,6 +60,40 @@ def app(tmp_path_factory):
         backend = db.engine.url.get_backend_name()
     if backend == "sqlite":
         Path(db_file).unlink(missing_ok=True)
+
+
+def no_snapshot_refresher(monkeypatch):
+    """Make ``create_app`` skip the background metrics-snapshot refresher.
+
+    Every ``create_app`` starts a ``metrics-snapshot`` daemon thread that wakes
+    on its own schedule and checks out a pooled connection. A throwaway app's
+    thread outlives the test that made it, and its passes land on whatever test
+    happens to be running, as phantom sessions and checkouts. Call this before
+    ``create_app`` with ``monkeypatch``, or, from a module-scoped fixture, with
+    the object from ``pytest.MonkeyPatch.context()``.
+    """
+    monkeypatch.setattr(metrics_snapshot, "start_snapshot_refresher", lambda app: None)
+
+
+@pytest.fixture
+def stopped_refresher():
+    """Leave the test's refresher the only one in the process, and stop it after.
+
+    Stopping first matters: ``create_app`` starts a refresher for the session
+    fixture's app, and ``pool.checkedout()`` is process-global, so a pass on that
+    thread makes a test's pool assertion read a checkout the refresher under
+    test does not own (observed as a 1-in-3 flake).
+
+    Stopping after matters because the thread has to end deterministically.
+    Throwing into it from a patched ``_sleep`` (``raise SystemExit``) also ends
+    it, but pytest replaces ``threading.excepthook`` — which normally swallows
+    ``SystemExit`` — so every such test reports a
+    PytestUnhandledThreadExceptionWarning, and real thread failures then hide
+    among the noise.
+    """
+    metrics_snapshot.stop_snapshot_refresher()
+    yield
+    metrics_snapshot.stop_snapshot_refresher()
 
 
 @pytest.fixture(autouse=True)
