@@ -397,11 +397,7 @@ def test_the_only_retention_policy_is_on_request_metrics_1m(pg_migrated):
             "SELECT hypertable_name FROM timescaledb_information.jobs "
             "WHERE proc_name = 'policy_retention'"
         )).scalars().all()
-        minute = conn.execute(text(
-            "SELECT materialization_hypertable_name FROM timescaledb_information.continuous_aggregates "
-            "WHERE view_name = 'request_metrics_1m'"
-        )).scalar()
-    assert jobs == [minute], f"unexpected retention policies: {jobs}"
+    assert jobs == ["request_metrics_1m"], f"unexpected retention policies: {jobs}"
 
 
 def test_downgrade_and_upgrade_round_trip(pg_url, pg_migrated, seeded):

@@ -101,10 +101,8 @@ def test_retention_policy_on_request_metrics_1m_logs_nothing(pg_engine, create_p
     """The migration chain keeps 30 days of request_metrics_1m (#169); that is not request_logs."""
     with pg_engine.connect() as conn:
         assert conn.execute(text(
-            "SELECT COUNT(*) FROM timescaledb_information.jobs j "
-            "JOIN timescaledb_information.continuous_aggregates c "
-            "  ON c.materialization_hypertable_name = j.hypertable_name "
-            "WHERE j.proc_name = 'policy_retention' AND c.view_name = 'request_metrics_1m'"
+            "SELECT COUNT(*) FROM timescaledb_information.jobs "
+            "WHERE proc_name = 'policy_retention' AND hypertable_name = 'request_metrics_1m'"
         )).scalar() == 1, "the policy must exist or this test proves nothing"
 
     with caplog.at_level(logging.WARNING):

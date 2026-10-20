@@ -21,15 +21,11 @@ VIEW = "request_metrics_1m"
 # The revision just below the one that adds the policy.
 BEFORE_RETENTION = "c93d4de8245c"
 
-# A policy on a continuous aggregate is registered against its materialisation
-# hypertable, so the jobs catalog names that, not the view.
+# The jobs catalog names a continuous aggregate's policy by the view, as
+# hypertable_name, not by its materialisation hypertable.
 _VIEW_RETENTION = """
-    SELECT j.job_id, j.config->>'drop_after'
-    FROM timescaledb_information.jobs j
-    JOIN timescaledb_information.continuous_aggregates c
-      ON c.materialization_hypertable_schema = j.hypertable_schema
-     AND c.materialization_hypertable_name = j.hypertable_name
-    WHERE j.proc_name = 'policy_retention' AND c.view_name = :v
+    SELECT job_id, config->>'drop_after' FROM timescaledb_information.jobs
+    WHERE proc_name = 'policy_retention' AND hypertable_name = :v
 """
 
 
