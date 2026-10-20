@@ -92,6 +92,18 @@ def test_last_minute_is_the_previous_whole_minute(app, test_model):
     assert result == {"last_minute": 2, "last_hour": 4, "last_day": 4}
 
 
+def test_rows_after_the_current_minute_are_not_counted(app, test_model):
+    """A row stamped in the future (clock skew) is in no window."""
+    with app.app_context():
+        from lumen.extensions import db
+        _log(test_model["id"], timedelta(seconds=-40))   # 12:00:55, current minute
+        _log(test_model["id"], timedelta(seconds=-45))   # 12:01:00, next minute
+        _log(test_model["id"], timedelta(minutes=-30))
+        db.session.commit()
+        result = request_rates.rates(test_model["id"])[test_model["id"]]
+    assert result == {"last_minute": 0, "last_hour": 1, "last_day": 1}
+
+
 def test_v1_models_reports_rates(client, monitor_token, seeded, test_model):
     resp = client.get("/v1/models", headers={"Authorization": f"Bearer {monitor_token}"})
     assert resp.status_code == HTTPStatus.OK

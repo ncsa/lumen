@@ -7,7 +7,7 @@ All notable changes to Lumen will be documented in this file.
 **Upgrade:** `flask enable-retention` is removed — `request_logs` is never pruned; use the read-only `flask check-aggregate` and run `flask backfill-aggregate` before upgrading; startup logs an ERROR if a retention policy is found on `request_logs`; per-user `/usage` charts now read only `request_counts_hourly_by_entity` and no longer scan `request_logs`. (#167)
 
 - Chat sidebar no longer scans the whole `messages` table when listing conversations; adds a `(conversation_id, created_at)` index on `messages`. (#168)
-- `/v1/models` and the model detail page read request rates from `request_metrics_1m` instead of scanning `request_logs`, and `request_metrics_1m` now keeps 30 days (`request_logs` is still never pruned). (#169)
+- `/v1/models` and the model detail page read request rates from `request_metrics_1m` instead of scanning `request_logs`. (#169)
 
 ## [2.2.1] - 2026-10-16
 
