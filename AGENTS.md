@@ -74,6 +74,7 @@ Following rules are here to help the AI avoid the same mistakes again:
 - Keep CHANGELOG entries short: one terse bullet per logical change, present tense, user-facing language. Do not write long narrative paragraphs explaining the "why" at length. Where a change has an obvious PR, link it (e.g. `(#123)`), or an issue in GitHub.
 - When bumping the version in pyproject.toml, also run `uv lock` to update uv.lock.
 - When bumping the version for a release, also update `version` and `appVersion` in chart/Chart.yaml to match.
+- The monitor in `scripts/monitor` is versioned in lockstep with Lumen: when bumping the version for a release, set the same version in `scripts/monitor/pyproject.toml` and run `uv lock` in `scripts/monitor` too.
 - When cutting a release, first pull the latest dependencies (`uv lock --upgrade`) and then run the full test suite before tagging — upgraded dependencies can introduce breaking changes, so the release must not go out unless the tests pass.
 - "The full test suite" always includes the PostgreSQL and Redis tests; a plain `uv run pytest` silently skips them. Start throwaway services and point the suite at them:
   ```bash

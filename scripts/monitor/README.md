@@ -114,6 +114,8 @@ override the file: `MONITOR_DATABASE_URL`, `MONITOR_BASE_PATH`, `MONITOR_LUMEN_A
 
 ## Docker
 
+CI publishes the image as `ncsa/lumen-monitor` and `ghcr.io/ncsa/lumen-monitor` (`latest` from main, plus version tags on releases). To build it locally:
+
 ```bash
 docker build -t lumen-monitor scripts/monitor
 docker run -p 5000:5000 -v $PWD/config.yaml:/app/config.yaml lumen-monitor

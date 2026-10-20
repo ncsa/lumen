@@ -10,8 +10,21 @@ on:
 # red linter never stops the test workflow from reporting.
 jobs:
   python:
-    name: Python (ruff)
+    name: Python (ruff, ${{ matrix.project.name }})
     runs-on: ubuntu-latest
+    # scripts/monitor has its own pyproject.toml and uv.lock, so each project
+    # lints with its own ruff config; the root config excludes scripts/monitor.
+    strategy:
+      fail-fast: false
+      matrix:
+        project:
+          - name: lumen
+            path: .
+          - name: monitor
+            path: scripts/monitor
+    defaults:
+      run:
+        working-directory: ${{ matrix.project.path }}
     steps:
       - uses: actions/checkout@v6
 
@@ -21,7 +34,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version-file: pyproject.toml
+          python-version-file: ${{ matrix.project.path }}/pyproject.toml
 
       - name: Install dependencies
         run: uv sync --frozen

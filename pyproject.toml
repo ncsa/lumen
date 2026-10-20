@@ -63,7 +63,8 @@ markers = [
 target-version = "py311"
 # Alembic revisions are generated from a template that imports sa/op whether or
 # not the revision uses them, and they are never edited after review.
-extend-exclude = ["migrations/versions"]
+# scripts/monitor is its own project with its own ruff config and lint job.
+extend-exclude = ["migrations/versions", "scripts/monitor"]
 # scripts/ files import their siblings (e.g. `from screenshots import ...`);
 # list scripts/ as a source root so isort treats those imports as first-party.
 src = [".", "scripts"]

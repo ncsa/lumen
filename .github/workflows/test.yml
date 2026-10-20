@@ -10,35 +10,55 @@ jobs:
   # Linting lives in .github/workflows/lint.yml so a lint failure never stops
   # the tests from reporting.
   test:
+    name: Tests (${{ matrix.project.name }})
     runs-on: ubuntu-latest
     permissions:
       checks: write
       pull-requests: write
 
-    # The suite is otherwise SQLite-only, which never runs Alembic and so never
-    # exercises the request_logs hypertable, its continuous aggregate, or any of
-    # the /api/usage/* SQL. Tests marked `postgres` skip when this is absent.
+    # scripts/monitor has its own pyproject.toml and uv.lock, so each project
+    # runs its own suite against its own database image.
+    strategy:
+      fail-fast: false
+      matrix:
+        project:
+          # Pinned to the production version, not `latest-pg17`. A floating tag
+          # adopts semantic changes silently, and this schema is sensitive to
+          # exactly that class of change: 2.13 flipped the default of
+          # `timescaledb.materialized_only` to true, which decides whether a
+          # continuous aggregate returns the current bucket at all. Bump this
+          # deliberately, in step with the deployment.
+          - name: lumen
+            path: .
+            postgres: timescale/timescaledb:2.27.2-pg17
+          - name: monitor
+            path: scripts/monitor
+            postgres: postgres:17
+    defaults:
+      run:
+        working-directory: ${{ matrix.project.path }}
+
+    # Lumen's suite is otherwise SQLite-only, which never runs Alembic and so
+    # never exercises the request_logs hypertable, its continuous aggregate, or
+    # any of the /api/usage/* SQL. Tests marked `postgres` skip when
+    # LUMEN_TEST_POSTGRES_URL / MONITOR_TEST_POSTGRES_URL is absent.
+    # Throwaway database that lives only for this job; never point these
+    # credentials at a real instance.
     services:
-      timescaledb:
-        # Pinned to the production version, not `latest-pg17`. A floating tag
-        # adopts semantic changes silently, and this schema is sensitive to
-        # exactly that class of change: 2.13 flipped the default of
-        # `timescaledb.materialized_only` to true, which decides whether a
-        # continuous aggregate returns the current bucket at all. Bump this
-        # deliberately, in step with the deployment.
-        image: timescale/timescaledb:2.27.2-pg17
+      postgres:
+        image: ${{ matrix.project.postgres }}
         env:
-          POSTGRES_USER: lumen
-          POSTGRES_PASSWORD: lumen
-          POSTGRES_DB: lumen_ci
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U lumen"
+          --health-cmd "pg_isready -U ci"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
-      # The Redis live-state tests skip when this is absent.
+      # Lumen's Redis live-state tests skip when this is absent.
       redis:
         image: redis:7
         ports:
@@ -58,21 +78,29 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version-file: pyproject.toml
+          python-version-file: ${{ matrix.project.path }}/pyproject.toml
+
+      # The monitor dashboard's page JS tests (tests/js) run with Node under pytest.
+      - name: Set up Node
+        if: matrix.project.name == 'monitor'
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
 
       - name: Install dependencies
         run: uv sync --frozen
 
       - name: Run tests
-        run: uv run pytest --junitxml=junit.xml
+        run: uv run pytest -rs --junitxml=junit.xml
         env:
-          LUMEN_TEST_POSTGRES_URL: postgresql://lumen:lumen@localhost:5432/lumen_ci
+          LUMEN_TEST_POSTGRES_URL: postgresql://ci:ci@localhost:5432/ci
           LUMEN_TEST_REDIS_URL: redis://localhost:6379/0
+          MONITOR_TEST_POSTGRES_URL: postgresql://ci:ci@localhost:5432/ci
 
       - name: Publish test results
         uses: dorny/test-reporter@v3
         if: always()
         with:
-          name: pytest
-          path: junit.xml
+          name: pytest (${{ matrix.project.name }})
+          path: ${{ matrix.project.path }}/junit.xml
           reporter: java-junit
