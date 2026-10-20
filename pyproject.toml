@@ -1,7 +1,7 @@
 [project]
 name = "lumen"
 version = "2.2.1"
-requires-python = ">=3.11"
+requires-python = ">=3.14,<3.15"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 dependencies = [
