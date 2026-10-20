@@ -236,3 +236,25 @@ def test_colliding_lumen_ids_get_no_hardware_rows(env, http, caplog):
 def test_local_day_rejects_aware_datetimes():
     with pytest.raises(ValueError):
         local_day(datetime(2026, 10, 17, tzinfo=timezone.utc), ZoneInfo("America/Chicago"))
+
+
+def test_model_reached_through_lumen_id_gets_hardware_and_modelsdev_pin(env, http):
+    config_path, session_factory = env
+    config_path.write_text(CONFIG + "  deepseek-v4-flash-0731: {gpu: rtx6000, gpus: 4, lumen_id: deepseek-v4-flash, modelsdev_id: glm-4.5-air}\n")
+    http.lumen["data"].append(lumen_model("deepseek-v4-flash"))
+    collect_prices(ConfigStore(config_path), session_factory, now=NOON)
+    stored = rows(session_factory)
+    hw = stored["deepseek-v4-flash", "hardware"]
+    assert (hw.gpus, hw.daily_cost) == (4, pytest.approx(4 * RTX6000_DAY))
+    assert stored["deepseek-v4-flash", "models.dev"].modelsdev_id == "glm-4.5-air"
+    assert not any(model == "deepseek-v4-flash-0731" for model, _ in stored)
+
+
+@pytest.mark.parametrize("pin", ["missing-model", "qwen-alias"])
+def test_unmatched_lumen_id_warns_and_writes_no_hardware_row(env, http, caplog, pin):
+    config_path, session_factory = env
+    config_path.write_text(CONFIG + f"  deploy: {{gpu: rtx6000, gpus: 4, lumen_id: {pin}}}\n")
+    collect_prices(ConfigStore(config_path), session_factory, now=NOON)
+    stored = rows(session_factory, "hardware")
+    assert set(stored) == {("qwen", "hardware"), ("big", "hardware")}
+    assert f"lumen_id '{pin}' matches no Lumen model" in caplog.text

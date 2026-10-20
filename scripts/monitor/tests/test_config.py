@@ -316,3 +316,77 @@ def test_repeated_lumen_id_is_not_a_collision():
 def test_exact_lumen_id_keeps_its_entry_in_a_collision():
     config = parse_config({"price": PRICE, "models": {"a-1": {"gpu": "rtx6000", "gpus": 1}}}, env={})
     assert list(config.match_models(["a-1", "a.1"])) == ["a-1"]
+
+
+PINNED = {"deepseek-v4-flash-0731": {"gpu": "rtx6000", "gpus": 4, "lumen_id": "deepseek-v4-flash"}}
+
+
+def test_lumen_id_kept():
+    config = parse_config({"price": PRICE, "models": PINNED}, env={})
+    assert config.models["deepseek-v4-flash-0731"].lumen_id == "deepseek-v4-flash"
+    assert config.warnings == []
+
+
+@pytest.mark.parametrize("value", ["", "  ", 5, True, ["a"]])
+def test_bad_lumen_id_warns_and_is_ignored(value):
+    config = parse_config({"price": PRICE, "models": {"m": {"gpu": "rtx6000", "gpus": 1, "lumen_id": value}}}, env={})
+    assert any("models.m: lumen_id" in w for w in config.warnings)
+    assert config.models["m"].lumen_id is None
+    assert config.model_entry("m").gpus == 1
+
+
+def test_duplicate_lumen_id_rejected():
+    models = {"a": {"gpu": "rtx6000", "gpus": 1, "lumen_id": "x"}, "b": {"gpu": "rtx6000", "gpus": 2, "lumen_id": "x"}}
+    with pytest.raises(ConfigError, match="same lumen_id"):
+        parse_config({"price": PRICE, "models": models}, env={})
+
+
+@pytest.mark.parametrize("other_key", ["deepseek-v4.1-flash", "deepseek-v4-1-flash", "DeepSeek-V4.1-Flash"])
+def test_lumen_id_colliding_with_another_key_rejected(other_key):
+    models = {"deploy": {"gpu": "rtx6000", "gpus": 4, "lumen_id": "deepseek-v4.1-flash"}, other_key: {"gpu": "rtx6000", "gpus": 1}}
+    with pytest.raises(ConfigError, match="same model"):
+        parse_config({"price": PRICE, "models": models}, env={})
+
+
+def test_lumen_id_equal_to_its_own_key_is_fine():
+    config = parse_config({"price": PRICE, "models": {"m": {"gpu": "rtx6000", "gpus": 1, "lumen_id": "m"}}}, env={})
+    assert config.model_entry("m").gpus == 1
+
+
+def test_pinned_entry_matches_only_its_lumen_id():
+    config = parse_config({"price": PRICE, "models": PINNED}, env={})
+    assert config.model_entry("deepseek-v4-flash").gpus == 4
+    assert config.model_entry("deepseek-v4-flash-0731") is None
+    assert config.model_entry("DeepSeek-V4-Flash") is None  # exact, no model_key folding
+    assert config.hardware_for("deepseek-v4-flash") == (Gpu(energy=600, price=625), 4)
+
+
+def test_pin_is_exact_without_dot_dash_folding():
+    models = {"deploy": {"gpu": "rtx6000", "gpus": 4, "lumen_id": "deepseek-v4.1-flash"}}
+    config = parse_config({"price": PRICE, "models": models}, env={})
+    assert config.model_entry("deepseek-v4.1-flash").gpus == 4
+    assert config.model_entry("deepseek-v4-1-flash") is None
+
+
+def test_unpinned_entries_match_as_before_next_to_a_pin():
+    models = {**PINNED, "qwen-3": {"gpu": "rtx6000", "gpus": 1}}
+    config = parse_config({"price": PRICE, "models": models}, env={})
+    assert config.model_entry("qwen.3").gpus == 1
+    assert config.match_models(["deepseek-v4-flash", "qwen.3", "other"]) == {
+        "deepseek-v4-flash": config.models["deepseek-v4-flash-0731"],
+        "qwen.3": config.models["qwen-3"],
+    }
+
+
+def test_unmatched_pin_warns(caplog):
+    config = parse_config({"price": PRICE, "models": PINNED}, env={})
+    with caplog.at_level(logging.WARNING, logger="monitor.config"):
+        assert config.match_models(["deepseek-v4-flash-0731", "other"]) == {}
+    assert "lumen_id 'deepseek-v4-flash' matches no Lumen model" in caplog.text
+
+
+def test_matched_pin_does_not_warn(caplog):
+    config = parse_config({"price": PRICE, "models": PINNED}, env={})
+    with caplog.at_level(logging.WARNING, logger="monitor.config"):
+        config.match_models(["deepseek-v4-flash"])
+    assert caplog.text == ""

@@ -197,6 +197,17 @@ def test_no_gpu_config_is_flagged(env):
     assert by_id["other"]["hw_daily_cost"] is None and by_id["other"]["hw_per_mtok"] is None
 
 
+def test_model_pinned_with_lumen_id_is_configured(env):
+    store, sf = env
+    store.path.write_text(CONFIG + "  deepseek-v4-flash-0731: {gpu: rtx6000, gpus: 4, lumen_id: deepseek-v4-flash}\n")
+    store.reload()
+    with sf() as session:
+        rows = model_rows(session, store.current, RANGES["24h"], NOW, [snap_model("deepseek-v4-flash"), snap_model("deepseek-v4-flash-0731")])
+    by_id = {r["id"]: r for r in rows}
+    assert by_id["deepseek-v4-flash"]["hw_configured"] is True
+    assert by_id["deepseek-v4-flash-0731"]["hw_configured"] is False
+
+
 def test_hardware_cost_per_million_tokens_over_the_range(env):
     store, sf = env
     yesterday = TODAY - timedelta(days=1)

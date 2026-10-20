@@ -66,6 +66,7 @@ class ModelHardware:
     gpu: str | None
     gpus: int | None
     modelsdev_id: str | None = None
+    lumen_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -83,20 +84,31 @@ class Config:
     warnings: list[str] = field(default_factory=list, compare=False)
 
     def model_entry(self, model: str) -> ModelHardware | None:
-        """The `models:` entry for Lumen id `model`: the exact key, else the key with the same `model_key`."""
-        if model in self.models:
-            return self.models[model]
+        """The `models:` entry for Lumen id `model`: the entry pinned to it with `lumen_id`, else
+        the exact key, else the key with the same `model_key`. Keys of pinned entries never match."""
+        pinned = next((entry for entry in self.models.values() if entry.lumen_id == model), None)
+        if pinned is not None:
+            return pinned
+        unpinned = {name: entry for name, entry in self.models.items() if entry.lumen_id is None}
+        if model in unpinned:
+            return unpinned[model]
         key = model_key(model)
-        return next((entry for name, entry in self.models.items() if model_key(name) == key), None)
+        return next((entry for name, entry in unpinned.items() if model_key(name) == key), None)
 
     def match_models(self, models: list[str]) -> dict[str, ModelHardware]:
         """The `models:` entry of each Lumen id that has one.
 
-        An id without an exact key that shares its `model_key` with another id in
+        An id without a pin or an exact key that shares its `model_key` with another id in
         `models` gets no entry (one warning per clash): guessing could charge the wrong
         GPUs. Its `modelsdev_id` pin is dropped with the entry, so its models.dev match
-        falls back to the fuzzy matcher.
+        falls back to the fuzzy matcher. A `lumen_id` that names none of `models` is
+        warned about; its entry is unused.
         """
+        for name, entry in self.models.items():
+            if entry.lumen_id is not None and entry.lumen_id not in models:
+                log.warning("models.%s: lumen_id %r matches no Lumen model; entry unused", name, entry.lumen_id)
+        exact = {entry.lumen_id for entry in self.models.values() if entry.lumen_id is not None}
+        exact.update(name for name, entry in self.models.items() if entry.lumen_id is None)
         keys: dict[str, set[str]] = {}
         for model in models:
             keys.setdefault(model_key(model), set()).add(model)
@@ -107,7 +119,7 @@ class Config:
                 entry = self.model_entry(model)
                 if entry is None:
                     continue
-                if model not in self.models and len(ids) > 1:
+                if model not in exact and len(ids) > 1:
                     skipped.append(model)
                     continue
                 matched[model] = entry
@@ -239,11 +251,26 @@ def _parse_models(raw: dict, gpus: dict[str, Gpu], warnings: list[str]) -> dict[
             warnings.append(f"models.{name}: gpus must be a positive integer, got {count!r}")
             count = None
         modelsdev_id = entry.get("modelsdev_id")
+        lumen_id = entry.get("lumen_id")
+        if lumen_id is not None and not (isinstance(lumen_id, str) and lumen_id.strip()):
+            warnings.append(f"models.{name}: lumen_id must be a non-empty string, got {lumen_id!r}; ignored")
+            lumen_id = None
         models[str(name)] = ModelHardware(
             gpu=None if gpu is None else str(gpu),
             gpus=count,
             modelsdev_id=None if modelsdev_id is None else str(modelsdev_id),
+            lumen_id=None if lumen_id is None else lumen_id.strip(),
         )
+    pins: dict[str, str] = {}
+    for name, entry in models.items():
+        if entry.lumen_id is None:
+            continue
+        if entry.lumen_id in pins:
+            raise ConfigError(f"models: {pins[entry.lumen_id]!r} and {name!r} have the same lumen_id {entry.lumen_id!r}")
+        pins[entry.lumen_id] = name
+        other = next((key for key in seen.values() if key != name and model_key(key) == model_key(entry.lumen_id)), None)
+        if other is not None:
+            raise ConfigError(f"models: lumen_id {entry.lumen_id!r} of {name!r} configures the same model as {other!r}")
     return models
 
 

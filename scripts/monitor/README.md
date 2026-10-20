@@ -36,6 +36,16 @@ models run every `refresh.models` and the price run every `refresh.price` (which
 `config.yaml`). A loop that fails is logged and tried again on its next turn without
 affecting the others. SIGTERM or SIGINT lets the running loop finish, then the service exits.
 
+Each `models:` entry gives the GPU type and count of one Lumen model. The key is the Lumen id,
+with dots written as dashes (`deepseek-v4-1-flash` configures `deepseek-v4.1-flash`).
+`modelsdev_id` pins the models.dev match, and `lumen_id` pins the Lumen model, so the key can
+be any label such as a deployment name:
+`deepseek-v4-flash-0731: {gpu: rtx6000, gpus: 4, lumen_id: deepseek-v4-flash}`. A pinned entry
+matches only that exact Lumen id (no dot/dash folding, aliases match nothing) and its key is
+never compared with Lumen ids. Two entries with the same `lumen_id`, or a `lumen_id` that is
+another entry's key, are a config error; a `lumen_id` that matches no Lumen model is logged
+on each price run and the entry is unused.
+
 The models run makes no HTTP call: it reads the request and token windows from the last
 successful probe (skipping the run when that probe is older than 2 × `refresh.web`) and adds
 the traffic since each metric's watermark (`covered_until` for requests, `tokens_covered_until`

@@ -36,11 +36,14 @@ price:
     price: 625
 
 # GPU type and count per Lumen model. There are no defaults: a model that is
-# not listed gets no hardware cost. modelsdev_id optionally pins the models.dev match.
-# Write a dot in the Lumen id as a dash (dotted keys need quoting): deepseek-v4-1-flash
+# not listed gets no hardware cost. modelsdev_id optionally pins the models.dev match;
+# lumen_id optionally pins the Lumen model, so the key can be any label (a deployment name).
+# A pinned entry matches only that exact Lumen id (aliases match nothing); without a pin,
+# write a dot in the Lumen id as a dash (dotted keys need quoting): deepseek-v4-1-flash
 # configures deepseek-v4.1-flash. A quoted "deepseek-v4.1-flash" key works too.
 models:
   qwen3-coder-next-fp8: {gpu: rtx6000, gpus: 1}
   nemotron-3-super-120b-a12b-fp8: {gpu: rtx6000, gpus: 2}
   deepseek-v4-1-flash: {gpu: rtx6000, gpus: 4}
+  deepseek-v4-flash-0731: {gpu: rtx6000, gpus: 4, lumen_id: deepseek-v4-flash, modelsdev_id: deepseek-v4-flash}
   # some-model: {gpu: rtx6000, gpus: 1, modelsdev_id: provider/model}
