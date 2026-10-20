@@ -76,13 +76,17 @@ def error_body(message: str, err_type: str = "invalid_request_error") -> dict:
 
 def error_type_for(openai_type: str, status: HTTPStatus) -> str:
     """Map shared errors, distinguishing access and lookup failures by status."""
-    # Status first for the two Anthropic names that are a status: a 403 is a
+    # Status first for the Anthropic names that are a status: a 403 is a
     # permission_error whatever Lumen called it (a disabled account and a model
-    # the caller may not use both arrive as "authentication_error").
+    # the caller may not use both arrive as "authentication_error"), and an
+    # upstream 429 passed through by _classify_upstream_error has no type Lumen
+    # knows.
     if status == HTTPStatus.FORBIDDEN:
         return "permission_error"
     if status == HTTPStatus.NOT_FOUND:
         return "not_found_error"
+    if status == HTTPStatus.TOO_MANY_REQUESTS:
+        return "rate_limit_error"
     if openai_type in _FROM_OPENAI:
         return _FROM_OPENAI[openai_type]
     return "api_error" if status >= HTTPStatus.INTERNAL_SERVER_ERROR else "invalid_request_error"

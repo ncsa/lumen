@@ -188,6 +188,9 @@ def claude_code_tool_use():
             stdin=subprocess.DEVNULL, cwd=home)
     assert out.returncode == 0, out.stderr[-500:]
     assert "hello-from-lumen" in out.stdout, out.stdout[-500:]
+    # The prompt contains the marker, so a reply that only repeats it would pass
+    # the check above; a tool call and its result take at least two turns.
+    assert json.loads(out.stdout)["num_turns"] >= 2, out.stdout[-500:]
     return "Claude Code ran a tool through Lumen and read its result"
 
 

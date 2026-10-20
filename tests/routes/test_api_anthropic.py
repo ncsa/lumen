@@ -428,6 +428,20 @@ def test_upstream_failure_is_an_api_error(api):
     assert "upstream is down" not in json.dumps(body)
 
 
+def test_upstream_429_is_a_rate_limit_error(api):
+    import openai
+
+    exc = _make_openai_error(openai.RateLimitError, 429, {"error": {"message": "Rate limit reached"}})
+
+    def boom(**kwargs):
+        raise exc
+
+    api.upstream(boom)
+    resp = api.post()
+    assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert resp.get_json()["error"]["type"] == "rate_limit_error"
+
+
 def test_upstream_4xx_passes_through_as_an_invalid_request(api):
     import openai
 
