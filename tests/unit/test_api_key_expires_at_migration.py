@@ -18,7 +18,7 @@ _REVISION_PATH = (
     / "migrations" / "versions" / "b1c2d3e4f5a6_api_key_expires_at.py"
 )
 
-# api_keys exactly as the previous head (a827b0223638) left it.
+# api_keys exactly as the previous head (c93d4de8245c) left it; that revision only touched messages.
 _OLD_API_KEYS = """
     CREATE TABLE api_keys (
         id INTEGER PRIMARY KEY,

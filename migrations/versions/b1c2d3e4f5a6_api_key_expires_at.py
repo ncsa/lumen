@@ -1,7 +1,7 @@
 """Add api_keys.expires_at and its index
 
 Revision ID: b1c2d3e4f5a6
-Revises: a827b0223638
+Revises: c93d4de8245c
 Create Date: 2026-10-16 00:00:00.000000
 
 Adds a nullable ``expires_at`` (naive UTC) to ``api_keys``; NULL means the key
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "b1c2d3e4f5a6"
-down_revision = "a827b0223638"
+down_revision = "c93d4de8245c"
 branch_labels = None
 depends_on = None
 

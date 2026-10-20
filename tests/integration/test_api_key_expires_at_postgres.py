@@ -13,7 +13,7 @@ from .conftest import flask_db
 
 pytestmark = pytest.mark.postgres
 
-_BEFORE = "a827b0223638"
+_BEFORE = "c93d4de8245c"
 _REVISION = "b1c2d3e4f5a6"
 _CREATED = datetime(2026, 1, 1, 12, 0, 0)
 _EXPIRES_AT_COMMENT = (
