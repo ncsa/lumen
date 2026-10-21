@@ -203,10 +203,12 @@ def test_get_model_unknown_returns_404(client, api_key):
 RATES_NOW = datetime(2026, 10, 20, 12, 0, 15, tzinfo=timezone.utc)
 
 
-def _clear_rates_cache():
-    from lumen.blueprints.api.routes import _rates_cache
-    _rates_cache["data"] = {}
-    _rates_cache["expires_at"] = 0.0
+def _clear_rates_cache(month=True):
+    from lumen.blueprints.api.routes import _month_rates_cache, _rates_cache
+    caches = (_rates_cache, _month_rates_cache) if month else (_rates_cache,)
+    for cache in caches:
+        cache["data"] = {}
+        cache["expires_at"] = 0.0
 
 
 def _add_log(model_id, ago, input_tokens, output_tokens, **extra):
@@ -219,8 +221,8 @@ def _add_log(model_id, ago, input_tokens, output_tokens, **extra):
     db.session.commit()
 
 
-def _windows(minute, hour, day):
-    return {"last_minute": minute, "last_hour": hour, "last_day": day}
+def _windows(minute, hour, day, month):
+    return {"last_minute": minute, "last_hour": hour, "last_day": day, "last_month": month}
 
 
 @pytest.fixture
@@ -239,10 +241,13 @@ def seeded_rates(app, test_user, test_model, monkeypatch):
         _add_log(test_model["id"], timedelta(minutes=30), 10, 20, aborted=True)
         _add_log(test_model["id"], timedelta(hours=12), 100, 200)
         _add_log(test_model["id"], timedelta(hours=40), 1000, 2000)
+        _add_log(test_model["id"], timedelta(days=10), 10000, 20000)
+        # Outside every window, the month included.
+        _add_log(test_model["id"], timedelta(days=40), 100000, 200000)
     yield {
-        "requests": _windows(2, 4, 5),
-        "input_tokens": _windows(1, 16, 116),
-        "output_tokens": _windows(2, 29, 229),
+        "requests": _windows(2, 4, 5, 7),
+        "input_tokens": _windows(1, 16, 116, 11116),
+        "output_tokens": _windows(2, 29, 229, 22229),
     }
     _clear_rates_cache()
 
@@ -269,7 +274,7 @@ def test_model_without_traffic_reports_zero_counts(app, client, api_key, seeded_
     token, _ = api_key
     with app.app_context():
         _add_model("idle-model")
-    zeros = {k: _windows(0, 0, 0) for k in ("requests", "input_tokens", "output_tokens")}
+    zeros = {k: _windows(0, 0, 0, 0) for k in ("requests", "input_tokens", "output_tokens")}
     resp = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"})
     assert _rate_fields(_find(resp.get_json()["data"], "idle-model")) == zeros
     resp = client.get("/v1/models/idle-model", headers={"Authorization": f"Bearer {token}"})
@@ -298,11 +303,37 @@ def test_model_counts_are_cached(app, client, test_model, api_key, seeded_rates)
     with app.app_context():
         _add_log(test_model["id"], timedelta(minutes=5), 3, 4)
     assert _rate_fields(client.get(url, headers=headers).get_json()) == seeded_rates
+    # The short windows refresh after their 30s cache; the month keeps its own.
+    _clear_rates_cache(month=False)
+    body = client.get(url, headers=headers).get_json()
+    assert body["requests"] == _windows(2, 5, 6, 7)
+    assert body["input_tokens"] == _windows(1, 19, 119, 11116)
+    assert body["output_tokens"] == _windows(2, 33, 233, 22229)
     _clear_rates_cache()
     body = client.get(url, headers=headers).get_json()
-    assert body["requests"]["last_hour"] == 5
-    assert body["input_tokens"]["last_hour"] == 19
-    assert body["output_tokens"]["last_hour"] == 33
+    assert body["requests"]["last_month"] == 8
+    assert body["input_tokens"]["last_month"] == 11119
+    assert body["output_tokens"]["last_month"] == 22233
+
+
+def test_model_with_only_month_traffic_reports_month_counts(app, client, api_key, seeded_rates):
+    token, _ = api_key
+    with app.app_context():
+        from sqlalchemy import select
+
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        _add_model("monthly-model")
+        model_id = db.session.execute(
+            select(ModelConfig.id).where(ModelConfig.model_name == "monthly-model")
+        ).scalar_one()
+        _add_log(model_id, timedelta(days=3), 7, 8)
+    body = client.get("/v1/models/monthly-model", headers={"Authorization": f"Bearer {token}"}).get_json()
+    assert _rate_fields(body) == {
+        "requests": _windows(0, 0, 0, 1),
+        "input_tokens": _windows(0, 0, 0, 7),
+        "output_tokens": _windows(0, 0, 0, 8),
+    }
 
 
 # ---------------------------------------------------------------------------

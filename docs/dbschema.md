@@ -721,6 +721,8 @@ reports whether it has run far enough back.
 per-entity charts needed the aggregate below. `materialized_only = false`, `start_offset` 3 hours,
 `end_offset` 1 hour, refreshed hourly.
 
+It also backs the 30-day (`last_month`) counts on `/v1/models`: whole hours come from this view, and only the partial first hour of the window is read from raw `request_logs`.
+
 It was created before TimescaleDB 2.13 flipped the `materialized_only` default to `true`, and was
 left unset — so from that version on it silently became materialised-only and the org-wide `/usage`
 charts, which read this view and have no raw-`request_logs` fallback, lost the last one to two hours

@@ -97,6 +97,9 @@ def _cors(resp):
 # copy; effective cache lifetime is correct per-worker but not shared across workers.
 _rates_cache: dict = {"data": {}, "expires_at": 0.0}
 _rates_lock = threading.Lock()
+# The 30-day window is a heavier query, so it is cached longer and separately.
+_month_rates_cache: dict = {"data": {}, "expires_at": 0.0}
+_month_rates_lock = threading.Lock()
 
 # Client request params forwarded to the upstream chat completion, by transport.
 # This is an allowlist: anything a client sends that is not named here is dropped
@@ -172,23 +175,40 @@ def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int
 
 
 def _get_model_rates() -> dict:
-    """Return per-model request and token counts for the last minute, hour and day.
+    """Return per-model request and token counts for the last minute, hour, day and month.
 
     Shape: {model_config_id: {"requests": {...}, "input_tokens": {...},
-    "output_tokens": {...}}}, each holding last_minute, last_hour and last_day.
-    Cached 30s per worker.
+    "output_tokens": {...}}}, each holding last_minute, last_hour, last_day and
+    last_month (rolling 30 days). The short windows are cached 30s per worker,
+    the month window 5 minutes.
     """
+    short = _cached(_rates_cache, _rates_lock, 30.0, request_rates.rates)
+    month = _cached(_month_rates_cache, _month_rates_lock, 300.0, request_rates.month_rates)
+    zero = {"last_minute": 0, "last_hour": 0, "last_day": 0}
+    result = {}
+    for model_id in short.keys() | month.keys():
+        short_rates = short.get(model_id, {})
+        month_rates = month.get(model_id, {})
+        result[model_id] = {
+            metric: {**short_rates.get(metric, zero), "last_month": month_rates.get(metric, 0)}
+            for metric in request_rates.METRICS
+        }
+    return result
+
+
+def _cached(cache: dict, lock: threading.Lock, ttl: float, load) -> dict:
+    """Return ``load()``, cached ``ttl`` seconds per worker in ``cache``."""
     now = _time.monotonic()
-    if now < _rates_cache["expires_at"]:
-        return _rates_cache["data"]
+    if now < cache["expires_at"]:
+        return cache["data"]
 
-    with _rates_lock:
-        if now < _rates_cache["expires_at"]:
-            return _rates_cache["data"]
+    with lock:
+        if now < cache["expires_at"]:
+            return cache["data"]
 
-        result = request_rates.rates()
-        _rates_cache["data"] = result
-        _rates_cache["expires_at"] = now + 30.0
+        result = load()
+        cache["data"] = result
+        cache["expires_at"] = now + ttl
     return result
 
 
@@ -213,7 +233,7 @@ def _model_dict(c, rates: dict, eps: list, ack_fields=None) -> dict:
     ``ack_fields`` ((tags, acknowledged_at, notice)) is None for the monitor
     token, which has no entity and sees no consent state.
     """
-    zero = {"last_minute": 0, "last_hour": 0, "last_day": 0}
+    zero = {"last_minute": 0, "last_hour": 0, "last_day": 0, "last_month": 0}
     model_rates = rates.get(c.id, {})
     healthy_count = sum(1 for e in eps if e.healthy)
     if not eps or healthy_count == 0:

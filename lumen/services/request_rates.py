@@ -15,11 +15,16 @@ buckets and both backends use the same edges:
 - ``last_hour`` and ``last_day`` start at the minute bucket holding
   ``now - window`` and run up to and including the current partial minute.
   Rows stamped after the current minute are in no window.
+
+``month_rates()`` returns the same counts over the last 30 days. It reads
+neither the one-minute aggregate nor its edges: on PostgreSQL it sums whole
+hours from ``request_counts_hourly`` plus the raw rows of the partial first
+hour; on SQLite it counts ``request_logs`` rows.
 """
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import column, func, select, table
+from sqlalchemy import column, func, select, table, text
 
 from lumen.extensions import db
 from lumen.models.request_log import RequestLog
@@ -34,6 +39,25 @@ _METRICS_1M = table(
     column("input_tokens"),
     column("output_tokens"),
 )
+
+# 30-day counts on PostgreSQL: whole hours from the real-time request_counts_hourly
+# aggregate, plus the raw rows of the partial hour at the start of the window.
+_MONTH_RATES_PG_SQL = text("""
+    SELECT model_config_id,
+           COALESCE(SUM(requests), 0) AS requests,
+           COALESCE(SUM(input_tokens), 0) AS input_tokens,
+           COALESCE(SUM(output_tokens), 0) AS output_tokens
+    FROM (
+        SELECT model_config_id, requests, input_tokens, output_tokens
+        FROM request_counts_hourly
+        WHERE bucket >= :edge AND model_config_id IS NOT NULL
+        UNION ALL
+        SELECT model_config_id, 1, input_tokens, output_tokens
+        FROM request_logs
+        WHERE time > :since AND time < :edge AND model_config_id IS NOT NULL
+    ) counts
+    GROUP BY model_config_id
+""")
 
 
 def _now() -> datetime:
@@ -108,3 +132,31 @@ def rates(model_config_id: int | None = None) -> dict:
             for metric in METRICS
         }
     return result
+
+
+def month_rates() -> dict:
+    """Return ``{model_config_id: {metric: n}}`` for the last 30 days.
+
+    ``metric`` is each of ``METRICS``. Models with no request in the last 30
+    days are absent.
+    """
+    since = _now() - timedelta(days=30)
+    if db.engine.dialect.name == "postgresql":
+        edge = since.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        rows = db.session.execute(_MONTH_RATES_PG_SQL, {"since": since, "edge": edge}).all()
+    else:
+        rows = db.session.execute(
+            select(
+                RequestLog.model_config_id,
+                func.count().label("requests"),
+                func.coalesce(func.sum(RequestLog.input_tokens), 0).label("input_tokens"),
+                func.coalesce(func.sum(RequestLog.output_tokens), 0).label("output_tokens"),
+            )
+            .where(RequestLog.time > since)
+            .where(RequestLog.model_config_id.isnot(None))
+            .group_by(RequestLog.model_config_id)
+        ).all()
+    return {
+        row.model_config_id: {metric: int(getattr(row, metric)) for metric in METRICS}
+        for row in rows
+    }

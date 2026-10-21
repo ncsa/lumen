@@ -12,7 +12,10 @@ here:
    and not in ``last_minute``, which is the previous whole minute only.
 3. Materialising everything with ``refresh_continuous_aggregate`` changes no
    count.
-4. Neither call site selects from ``request_logs``.
+4. Neither call site reads ``request_logs`` for the short windows; only the
+   30-day query reads it, for the partial first hour of its window.
+5. ``month_rates()`` sums whole hours from ``request_counts_hourly`` plus the
+   raw rows of the partial first hour, on either side of the 30-day edge.
 
 The clock is pinned to the database's ``now()`` (``request_rates._now``) so the
 row ages below are exact. This module runs against ``pg_migrated_isolated`` —
@@ -100,8 +103,9 @@ def pinned_clock(monkeypatch, now):
     from lumen.blueprints.api import routes as api_routes
     from lumen.services import request_rates
     monkeypatch.setattr(request_rates, "_now", lambda: now)
-    monkeypatch.setitem(api_routes._rates_cache, "data", {})
-    monkeypatch.setitem(api_routes._rates_cache, "expires_at", 0.0)
+    for cache in (api_routes._rates_cache, api_routes._month_rates_cache):
+        monkeypatch.setitem(cache, "data", {})
+        monkeypatch.setitem(cache, "expires_at", 0.0)
 
 
 def _log(model_id, when, source, input_tokens=0, output_tokens=0):
@@ -203,7 +207,7 @@ def test_current_minute_counts_without_a_refresh_and_survives_one(pg_app, pg_mig
 
 
 @pytest.mark.postgres
-def test_call_sites_never_select_from_request_logs(pg_app, seeded):
+def test_call_sites_read_short_windows_from_the_aggregate(pg_app, seeded):
     from lumen.extensions import db
 
     client = pg_app.test_client()
@@ -234,7 +238,58 @@ def test_call_sites_never_select_from_request_logs(pg_app, seeded):
     models = {m["id"]: m["requests"] for m in listed.get_json()["data"]}
     assert models["rates-a"]["last_hour"] >= 5
     assert one.get_json()["requests"] == models["rates-a"]
-    # /v1/models fills the per-worker cache and get_model reuses it, so the
-    # aggregate is read twice: once for the list and once for the detail page.
+    # /v1/models fills the per-worker caches and get_model reuses them, so the
+    # aggregate is read twice: once for the list and once for the detail page,
+    # and the 30-day query once.
     assert sum(VIEW in st for st in statements) == 2, statements
-    assert not [st for st in statements if "request_logs" in st], statements
+    month = [st for st in statements if "request_counts_hourly" in st]
+    assert len(month) == 1, statements
+    assert not [st for st in statements if "request_logs" in st and st not in month], statements
+
+
+def _refresh_hourly(engine, deadline=90.0):
+    """Materialise request_counts_hourly up to the current hour, retrying while a policy job holds it."""
+    import time as _time
+    end = _time.monotonic() + deadline
+    while True:
+        try:
+            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+                conn.execute(text(
+                    "CALL refresh_continuous_aggregate('request_counts_hourly', NULL, date_trunc('hour', now()))"
+                ))
+            return
+        except exc.OperationalError as err:
+            if "concurrent refresh" not in str(err) or _time.monotonic() > end:
+                raise
+            _time.sleep(1)
+
+
+@pytest.mark.postgres
+def test_month_rates_sum_hours_and_the_partial_first_hour(pg_app, pg_migrated, now):
+    from lumen.services import request_rates
+
+    with pg_app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        model = ModelConfig(model_name="rates-month", input_cost_per_million=1, output_cost_per_million=2)
+        db.session.add(model)
+        db.session.flush()
+        # Older than a day, so the other tests' rates() results stay as they are.
+        for ago, input_tokens, output_tokens in (
+            (timedelta(days=3), 1, 2),
+            (timedelta(days=10), 10, 20),
+            # Either side of the 30-day edge, inside its partial first hour.
+            (timedelta(days=30) - timedelta(minutes=1), 100, 200),
+            (timedelta(days=30) + timedelta(minutes=1), 50000, 60000),
+            (timedelta(days=40), 10000, 20000),
+        ):
+            _log(model.id, now - ago, "api", input_tokens, output_tokens)
+        db.session.commit()
+        model_id = model.id
+    _refresh_hourly(pg_migrated)
+
+    with pg_app.app_context():
+        result = request_rates.month_rates()[model_id]
+    assert result == {"requests": 3, "input_tokens": 111, "output_tokens": 222}
+    # The sums are numeric; the reader hands back plain ints.
+    assert all(type(v) is int for v in result.values())

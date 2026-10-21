@@ -81,6 +81,28 @@ Each model may carry consent-state fields for the calling account:
 
 Models you are blocked from (owned by someone else without a grant, disabled, or expired) are omitted entirely.
 
+Each model also reports how much it has been used, across all users:
+
+```json
+"requests":      {"last_minute": 3,    "last_hour": 120,    "last_day": 2400,    "last_month": 61000},
+"input_tokens":  {"last_minute": 9100, "last_hour": 410000, "last_day": 8100000, "last_month": 205000000},
+"output_tokens": {"last_minute": 2200, "last_hour": 95000,  "last_day": 1900000, "last_month": 48000000}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `requests` | Number of requests to the model. |
+| `input_tokens` | Input (prompt) tokens sent to the model. |
+| `output_tokens` | Output (completion) tokens the model returned. |
+
+- All three are totals across every source: web chat and the API.
+- `last_minute` is the last complete minute. Requests in the current, partial minute are not in it yet.
+- `last_hour` and `last_day` are rolling windows of the last 60 minutes and 24 hours, counted in whole minutes and including the current minute.
+- `last_month` is the last 30 days, rolling, not the calendar month.
+- The numbers are cached per server worker: `last_minute`, `last_hour` and `last_day` can be up to 30 seconds stale, `last_month` up to 5 minutes. Different workers may return slightly different numbers.
+- Aborted requests (the client disconnected mid-stream) count, with estimated token counts. Requests that use no tokens, such as audio transcriptions, count in `requests` with 0 tokens.
+- An alias reports its canonical model's numbers. A model with no traffic reports `0` in every window.
+
 By default the list also omits models you cannot use until you acknowledge them (any `needs_ack` or `early_access` requirement still open), so OpenAI-compatible clients only see models they can call. Every listed model then has `tags: []`.
 
 Add `?include_unacknowledged=true` to also list those models, each with its open `tags` and its `notice`. The parameter also accepts `1` or `yes` (case-insensitive); any other value, including an empty one, keeps them hidden.

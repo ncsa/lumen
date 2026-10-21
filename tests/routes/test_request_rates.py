@@ -21,10 +21,11 @@ MONITOR = "monitor-rates-token"
 @pytest.fixture(autouse=True)
 def pinned_clock(monkeypatch):
     monkeypatch.setattr(request_rates, "_now", lambda: NOW)
-    # /v1/models caches rates for 30s per worker; a cache another test filled
-    # would hide the rows seeded here.
-    monkeypatch.setitem(api_routes._rates_cache, "data", {})
-    monkeypatch.setitem(api_routes._rates_cache, "expires_at", 0.0)
+    # /v1/models caches rates per worker (30s, and 5 minutes for the month);
+    # a cache another test filled would hide the rows seeded here.
+    for cache in (api_routes._rates_cache, api_routes._month_rates_cache):
+        monkeypatch.setitem(cache, "data", {})
+        monkeypatch.setitem(cache, "expires_at", 0.0)
 
 
 @pytest.fixture
@@ -66,6 +67,11 @@ def seeded(app, test_model, test_model_endpoint):
         "expected_a": {"last_minute": 1, "last_hour": 2, "last_day": 3},
         "expected_b": {"last_minute": 0, "last_hour": 2, "last_day": 3},
     }
+
+
+def _with_month(windows, month):
+    """``windows`` as /v1/models reports them, with the 30-day count added."""
+    return {**windows, "last_month": month}
 
 
 def _requests(result):
@@ -135,11 +141,11 @@ def test_v1_models_reports_rates(client, monitor_token, seeded, test_model):
     assert resp.status_code == HTTPStatus.OK
     models = {m["id"]: m for m in resp.get_json()["data"]}
     a = models[test_model["model_name"]]
-    assert a["requests"] == seeded["expected_a"]
+    assert a["requests"] == _with_month(seeded["expected_a"], 4)
     assert a["status"] == "ok"
     assert a["instances"] == {"configured": 1, "healthy": 1}
     b = models["other-model"]
-    assert b["requests"] == seeded["expected_b"]
+    assert b["requests"] == _with_month(seeded["expected_b"], 4)
     assert b["status"] == "down"
     assert b["instances"] == {"configured": 0, "healthy": 0}
 
@@ -149,7 +155,7 @@ def test_v1_get_model_reports_rates(client, monitor_token, seeded, test_model):
                       headers={"Authorization": f"Bearer {monitor_token}"})
     assert resp.status_code == HTTPStatus.OK
     body = resp.get_json()
-    assert body["requests"] == seeded["expected_a"]
+    assert body["requests"] == _with_month(seeded["expected_a"], 4)
     assert body["status"] == "ok"
     assert body["instances"] == {"configured": 1, "healthy": 1}
 
@@ -157,7 +163,7 @@ def test_v1_get_model_reports_rates(client, monitor_token, seeded, test_model):
 def test_v1_models_zero_for_a_model_without_requests(client, monitor_token, test_model):
     resp = client.get(f"/v1/models/{test_model['model_name']}",
                       headers={"Authorization": f"Bearer {monitor_token}"})
-    assert resp.get_json()["requests"] == {"last_minute": 0, "last_hour": 0, "last_day": 0}
+    assert resp.get_json()["requests"] == {"last_minute": 0, "last_hour": 0, "last_day": 0, "last_month": 0}
 
 
 def _detail_count(html, label):
@@ -172,3 +178,18 @@ def test_model_detail_renders_hour_and_day_counts(auth_client, seeded, test_mode
     html = resp.get_data(as_text=True)
     assert _detail_count(html, "Requests / hr") == 2
     assert _detail_count(html, "Requests / 24h") == 3
+
+
+def test_month_rates_count_the_last_30_days(app, test_model):
+    """On SQLite the 30-day window counts request_logs rows newer than NOW - 30 days."""
+    with app.app_context():
+        from lumen.extensions import db
+        _log(test_model["id"], timedelta(seconds=30), input_tokens=1, output_tokens=2)
+        _log(test_model["id"], timedelta(days=10), input_tokens=10, output_tokens=20)
+        _log(test_model["id"], timedelta(days=30) - timedelta(minutes=1), input_tokens=100, output_tokens=200)
+        _log(test_model["id"], timedelta(days=30) + timedelta(minutes=1), input_tokens=1000, output_tokens=2000)
+        _log(None, timedelta(days=1))
+        db.session.commit()
+        result = request_rates.month_rates()
+    assert result == {test_model["id"]: {"requests": 3, "input_tokens": 111, "output_tokens": 222}}
+    assert all(type(v) is int for v in result[test_model["id"]].values())

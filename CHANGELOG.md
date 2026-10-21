@@ -11,6 +11,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Added
 
+- /v1/models reports per-model input/output tokens for the last minute/hour/24h/30 days, and requests gain a 30-day window.
 - Add a standalone monitoring service in `scripts/monitor` that tracks Lumen health, uptime and response time, and records daily models.dev, Lumen and hardware/energy costs plus requests and tokens, with a status dashboard and per-model graphs.
 - Publish the monitor image as `ncsa/lumen-monitor` and `ghcr.io/ncsa/lumen-monitor`, versioned with Lumen; lint and Docker CI run as a matrix over Lumen and the monitor.
 
