@@ -43,7 +43,7 @@ export CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1
 claude
 ```
 
-The `CLAUDE_CODE_*` and `MAX_THINKING_TOKENS` lines are required. Without them, Claude Code asks for thinking and beta features that Lumen refuses with a 400, retries a few times, and then fails. The Claude Agent SDK needs the same settings. Pick a model with reliable tool calling and a large context. Verified with Claude Code 2.1.284; pin the version you roll out, because a newer version may ask for something Lumen refuses.
+The `CLAUDE_CODE_*` and `MAX_THINKING_TOKENS` lines are required. Without them, Claude Code asks for thinking and beta features that Lumen refuses with a 400, retries a few times, and then fails. The Claude Agent SDK needs the same settings. Pick a model with reliable tool calling and a large context. Verified with Claude Code 2.1.284 and 2.1.304; pin the version you roll out, because a newer version may ask for something Lumen refuses.
 
 ## Auto mode may fail
 
