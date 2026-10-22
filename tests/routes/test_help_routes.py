@@ -1,4 +1,5 @@
 """Tests for the help blueprint (/help/*)."""
+import re
 from http import HTTPStatus
 
 
@@ -63,6 +64,8 @@ def test_help_connect_substitutes_host_for_app_links(client):
     assert "http://localhost/models" in body
     assert "http://localhost/usage" in body
     assert "http://localhost/connect" in body
+    # Code blocks are syntax-highlighted, so match the text without the spans.
+    assert "bash -s -- --server http://localhost" in re.sub(r"<[^>]+>", "", body)
 
 
 def test_help_connect_opencode_explains_enabled_providers(client):

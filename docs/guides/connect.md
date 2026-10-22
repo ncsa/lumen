@@ -9,10 +9,10 @@ Lumen exposes an **OpenAI-compatible API**, so most tools that speak to OpenAI c
 `lumen.sh` (from the Lumen repository) logs you in from the terminal and keeps your OpenCode model list current. You don't need to clone the repository: download and run it straight from GitHub, passing any flags from the table below after `bash -s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ncsa/lumen/main/lumen.sh | bash -s --
+curl -fsSL https://raw.githubusercontent.com/ncsa/lumen/main/lumen.sh | bash -s -- --server https://lumen.example.com
 
 # for example, to request a new key even if one is stored
-curl -fsSL https://raw.githubusercontent.com/ncsa/lumen/main/lumen.sh | bash -s -- --relogin
+curl -fsSL https://raw.githubusercontent.com/ncsa/lumen/main/lumen.sh | bash -s -- --server https://lumen.example.com --relogin
 ```
 
 Each run works like this:
