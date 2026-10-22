@@ -139,7 +139,7 @@ To have OpenCode only use Lumen's models — and ignore every other installed pr
 
 OpenCode will then list only Lumen's models when you select a model.
 
-Instead of downloading the config by hand, run `./lumen.sh` from a checkout of the Lumen repository: it logs you in (see [CLI login](#cli-login-lumensh)), stores the key, and updates the `lumen` provider block in your `opencode.json` in place, listing added and removed models.
+Instead of downloading the config by hand, run `lumen.sh` (straight from GitHub with the `curl` command under [CLI login](#cli-login-lumensh), or as `./lumen.sh` from a checkout): it logs you in, stores the key, and updates the `lumen` provider block in your `opencode.json` in place, listing added and removed models.
 
 ## curl
 
