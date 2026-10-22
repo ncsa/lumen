@@ -6,7 +6,16 @@ Lumen exposes an **OpenAI-compatible API**, so most tools that speak to OpenAI c
 
 ## CLI login (lumen.sh)
 
-`lumen.sh` (from the Lumen repository) logs you in from the terminal and keeps your OpenCode model list current:
+`lumen.sh` (from the Lumen repository) logs you in from the terminal and keeps your OpenCode model list current. You don't need to clone the repository: download and run it straight from GitHub, passing any flags from the table below after `bash -s --`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ncsa/lumen/main/lumen.sh | bash -s --
+
+# for example, to request a new key even if one is stored
+curl -fsSL https://raw.githubusercontent.com/ncsa/lumen/main/lumen.sh | bash -s -- --relogin
+```
+
+Each run works like this:
 
 1. It uses `$LUMEN_API_KEY` only when it belongs to the target server — that is, when `$LUMEN_BASE_URL` names the same server (or is unset and the default is meant), so a key issued by one Lumen is never sent to another. Otherwise it reuses a key saved for this server in `~/.config/lumen/keys.json`.
 2. Otherwise it starts a **device login**: it prints a one-time code (like `QKRT-M2BX`) and opens Lumen's approval page. Sign in, check what is being requested, and approve — the CLI then receives a fresh API key exactly once.
