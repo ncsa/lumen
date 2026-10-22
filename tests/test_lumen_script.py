@@ -177,15 +177,17 @@ def test_bad_server_url_echoed_without_control_characters():
 
 # --- device flow ------------------------------------------------------------
 
-def test_device_flow_stores_key_and_rc_block(home, lumen_server):
+def test_device_flow_stores_key_and_rc_block(home, lumen_server, tmp_path):
     port = lumen_server.server_address[1]
+    env, sleeps = fake_bin(tmp_path)
     lumen_server.token_queue = [
         (400, {"error": "authorization_pending"}),
         (200, {"access_token": TEST_KEY, "token_type": "Bearer",
                "approved_by": "alice@example.edu"}),
     ]
-    r = run_script(home, port, args=["--no-opencode"], timeout=25)
+    r = run_script(home, port, args=["--no-opencode"], env_extra=env)
     assert r.returncode == 0, r.stderr
+    assert logged_sleeps(sleeps) == [1, 0, 1]
     assert b"QQQQ-QQQQ" in r.stdout
     assert b"alice@example.edu" in r.stdout
     keys = json.loads((home / ".config" / "lumen" / "keys.json").read_text())
@@ -289,9 +291,12 @@ def test_non_numeric_timing_values_are_not_evaluated(home, lumen_server, tmp_pat
     ] if field == "expires_in" else [
         (200, {"access_token": TEST_KEY, "token_type": "Bearer", "approved_by": "a@b"}),
     ]
-    r = run_script(home, port, args=["--no-opencode"], timeout=40)
+    env, sleeps = fake_bin(tmp_path)
+    r = run_script(home, port, args=["--no-opencode"], env_extra=env)
     assert r.returncode == 0, r.stderr
     assert not marker.exists()
+    # interval falls back to the default of 5; slow_down raises 1 to 6.
+    assert logged_sleeps(sleeps) == ([5] if field == "interval" else [1, 6, 6])
 
 
 @pytest.mark.parametrize("token", ['sk_x"; touch INJECTED; "', "sk_$(id)", "not_sk_token"])
