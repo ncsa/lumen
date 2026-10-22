@@ -64,8 +64,9 @@ _CHUNK_DELAY = 0.15
 _TOTAL_CHUNKS = 40
 # Chunks the client reads before pulling the plug.
 _CHUNKS_BEFORE_DISCONNECT = 3
-# How long we watch the stub after the disconnect. ~20 chunks' worth: on a server
-# that ignores the disconnect the counter climbs by roughly that much.
+# How long we wait for the server to close the stub upstream after the disconnect.
+# A server that notices returns at once; one that ignores it keeps streaming for
+# ~20 chunks' worth of this window and never closes the upstream inside it.
 _OBSERVE_AFTER_DISCONNECT = 3.0
 # Slack for chunks already in flight when the client vanished, plus the one poll
 # interval a disconnect check can lag by.
@@ -383,13 +384,21 @@ def _leftover_context_count():
 
 
 def _assert_stopped_generating(upstream, at_disconnect, label):
-    # A fixed wait, not a poll: we are measuring the *absence* of further work,
-    # so there is nothing to poll for — only time in which it must not happen.
-    time.sleep(_OBSERVE_AFTER_DISCONNECT)
+    # Wait for the server to close the upstream client: that is the moment the
+    # counter freezes (see _SlowUpstream.__exit__), so there is nothing left to
+    # watch once it has happened. A server that ignores the disconnect keeps
+    # pulling chunks and does not close it inside the window.
+    assert upstream.closed.wait(timeout=_OBSERVE_AFTER_DISCONNECT), (
+        f"{label}: the client disconnected after {at_disconnect} upstream chunks, but "
+        f"{_OBSERVE_AFTER_DISCONNECT}s later the server had not closed the stub upstream "
+        f"(it had produced {upstream.produced} of {_TOTAL_CHUNKS}). The server kept "
+        f"pulling the upstream stream for a client that is gone — the disconnect never "
+        f"reached the WSGI app."
+    )
     after = upstream.produced
     assert after <= at_disconnect + _INFLIGHT_TOLERANCE, (
         f"{label}: the client disconnected after {at_disconnect} upstream chunks, but "
-        f"{_OBSERVE_AFTER_DISCONNECT}s later the stub upstream had produced {after} "
+        f"by the time the server closed the stub upstream it had produced {after} "
         f"(of {_TOTAL_CHUNKS}). The server kept pulling the upstream stream for a "
         f"client that is gone — the disconnect never reached the WSGI app."
     )
