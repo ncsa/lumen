@@ -7,7 +7,9 @@ Every range returns the same series, so the page draws the same charts:
   median and p5/p95
 - `traffic`: below 7d one point per bucket with the average req/min and tok/min of
   the samples; from 7d up one point per local day with the day's requests and tokens,
-  flagged `estimated` when the day is not exact (`estimated` or not yet `final`)
+  flagged `estimated` when the day is not exact (`estimated` or not yet `final`).
+  Tokens come combined (`tokens`) and split (`input_tokens` / `output_tokens`); the
+  split is None for data from before the monitor collected it
 - `hardware`: one point per local day with the benefit (the day's input and output
   tokens at our own prices) and the hardware cost, plus both summed over the range
 - `instances`: average healthy and configured instances per bucket from the samples
@@ -116,6 +118,7 @@ def _bucket_samples(session: Session, model_id: str, grid, start: datetime, now:
     """The model's samples per bucket, as plain rows with only the columns the charts use."""
     stmt = select(
         Sample.sampled_at, Sample.healthy, Sample.configured, Sample.requests_last_minute, Sample.tokens_last_minute,
+        Sample.input_tokens_last_minute, Sample.output_tokens_last_minute,
     ).where(Sample.model == model_id, Sample.sampled_at > start, Sample.sampled_at <= now)
     buckets: list[list] = [[] for _ in range(grid.count)]
     for s in session.execute(stmt).all():
@@ -159,16 +162,20 @@ def series(session: Session, config: Config, snapshot: LiveSnapshot | None, mode
                 "t": day.isoformat(),
                 "requests": r.requests if r else None,
                 "tokens": r.tokens if r else None,
+                "input_tokens": r.input_tokens if r else None,
+                "output_tokens": r.output_tokens if r else None,
                 "estimated": r is not None and not exact(r),
             })
         traffic = {"unit": "day", "points": points}
     else:
         traffic = {"unit": "minute", "points": [
-            {"t": t, "requests": _mean(s.requests_last_minute for s in b), "tokens": _mean(s.tokens_last_minute for s in b), "estimated": False}
+            {"t": t, "requests": _mean(s.requests_last_minute for s in b), "tokens": _mean(s.tokens_last_minute for s in b),
+             "input_tokens": _mean(s.input_tokens_last_minute for s in b),
+             "output_tokens": _mean(s.output_tokens_last_minute for s in b), "estimated": False}
             for t, b in zip(times, buckets)
         ]}
     traffic["average"] = {
-        key: _mean(p[key] for p in traffic["points"]) for key in ("requests", "tokens")
+        key: _mean(p[key] for p in traffic["points"]) for key in ("requests", "tokens", "input_tokens", "output_tokens")
     }
 
     return {

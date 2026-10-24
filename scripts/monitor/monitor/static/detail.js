@@ -9,7 +9,10 @@
   const refreshMs = Number(root.dataset.refreshMs) || 300000;
   const state = { range: root.dataset.range };
   const { STATUS_COLOR, dash, isNum, fmtInt, fmtFix, fmtPct, fmtTime, fmtCount, strip, getJson } = window.MonitorCommon;
-  const COLOR = { ours: '#13294B', median: '#b5300c', band: 'rgba(181, 48, 12, 0.15)', bar: '#13294B', estimated: 'rgba(19, 41, 75, 0.35)', line: '#1d7a3e', cost: '#c8102e' };
+  const COLOR = {
+    ours: '#13294B', median: '#b5300c', band: 'rgba(181, 48, 12, 0.15)', bar: '#13294B', estimated: 'rgba(19, 41, 75, 0.35)', line: '#1d7a3e', cost: '#c8102e',
+    input: '#4b8bbe', inputEstimated: 'rgba(75, 139, 190, 0.35)', combined: '#9aa0a6', combinedEstimated: 'rgba(154, 160, 166, 0.4)', inputAverage: '#1d7a3e',
+  };
   const charts = {};
 
   // A day is 'YYYY-MM-DD' (a local date already); a bucket is a UTC time shown in local time.
@@ -65,6 +68,65 @@
     });
     const estimated = points.some(p => p.estimated) ? ' · lighter bars are estimated or not final' : '';
     document.getElementById(`${id}-note`).textContent = `${daily ? 'per day' : 'per minute, averaged per bucket'} · average ${fmt(avg)}${estimated}`;
+  }
+
+  // Output tokens above the axis, input tokens below it (as negative values); the axis and the
+  // tooltip show absolute counts. A point without the split (older data or an older Lumen)
+  // keeps its combined count above the axis in grey.
+  function tokensChart(traffic) {
+    const daily = traffic.unit === 'day';
+    const points = traffic.points;
+    const split = p => isNum(p.input_tokens) || isNum(p.output_tokens);
+    const neg = v => (isNum(v) ? -v : null);
+    const { input_tokens: avgIn, output_tokens: avgOut } = traffic.average;
+    const shade = (base, light) => points.map(p => (p.estimated ? light : base));
+    const bar = { stack: 'tokens', barPercentage: 1, categoryPercentage: daily ? 0.8 : 1, order: 1 };
+    const unit = daily ? ' per day' : '/min';
+    draw('tokens', {
+      type: 'bar',
+      data: {
+        labels: points.map(p => daily ? dayLabel(p.t) : timeLabel(p.t)),
+        datasets: [
+          { label: `output${unit}`, data: points.map(p => p.output_tokens ?? null), backgroundColor: shade(COLOR.bar, COLOR.estimated), ...bar },
+          { label: `input${unit}`, data: points.map(p => neg(p.input_tokens)), backgroundColor: shade(COLOR.input, COLOR.inputEstimated), ...bar },
+          { label: 'tokens (no split)', data: points.map(p => (split(p) ? null : p.tokens ?? null)),
+            backgroundColor: shade(COLOR.combined, COLOR.combinedEstimated), ...bar },
+          { type: 'line', label: 'output average', data: points.map(() => avgOut ?? null), stack: 'output average',
+            borderColor: COLOR.median, borderDash: [4, 4], pointRadius: 0, order: 0 },
+          { type: 'line', label: 'input average', data: points.map(() => neg(avgIn)), stack: 'input average',
+            borderColor: COLOR.inputAverage, borderDash: [4, 4], pointRadius: 0, order: 0 },
+        ],
+      },
+      options: {
+        plugins: {
+          legend: { labels: {
+            filter: item => item.text !== 'tokens (no split)' || points.some(p => !split(p) && isNum(p.tokens)),
+            sort: (a, b) => a.datasetIndex - b.datasetIndex,
+          } },
+          tooltip: {
+            filter: item => isNum(item.parsed.y),
+            itemSort: (a, b) => a.datasetIndex - b.datasetIndex,
+            callbacks: {
+              label: ctx => `${ctx.dataset.label}: ${fmtCount(Math.abs(ctx.parsed.y))}`,
+              afterBody: items => (points[items[0]?.dataIndex]?.estimated ? 'estimated or not final' : ''),
+            },
+          },
+        },
+        scales: {
+          x: { stacked: true, ticks: { maxTicksLimit: 12 } },
+          y: { stacked: true, ticks: { callback: v => fmtCount(Math.abs(v)) } },
+        },
+      },
+    });
+    document.getElementById('tokens-note').textContent = tokensNote(traffic);
+  }
+
+  function tokensNote(traffic) {
+    const { input_tokens: avgIn, output_tokens: avgOut, tokens: avg } = traffic.average;
+    const per = traffic.unit === 'day' ? 'per day' : 'per minute, averaged per bucket';
+    const average = isNum(avgIn) || isNum(avgOut) ? `average out ${fmtCount(avgOut)} / in ${fmtCount(avgIn)}` : `average ${fmtCount(avg)}`;
+    const estimated = traffic.points.some(p => p.estimated) ? ' · lighter bars are estimated or not final' : '';
+    return `${per} · ${average}${estimated}`;
   }
 
   function hardwareChart(hardware) {
@@ -131,7 +193,7 @@
     priceChart('input-price', 'input', s.prices);
     priceChart('output-price', 'output', s.prices);
     trafficChart('requests', 'requests', s.traffic, fmtInt);
-    trafficChart('tokens', 'tokens', s.traffic, fmtCount);
+    tokensChart(s.traffic);
     hardwareChart(s.hardware);
     instancesChart(s.instances);
   }
