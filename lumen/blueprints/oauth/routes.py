@@ -33,7 +33,7 @@ from lumen.models.auth_request import AuthRequest
 from lumen.models.entity import Entity
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
-from lumen.services.llm import _consent_satisfied, bulk_model_access_info, model_notices
+from lumen.services.llm import _consent_satisfied, bulk_model_access_statuses, model_notices
 from lumen.timeutils import utcnow
 
 logger = logging.getLogger(__name__)
@@ -553,7 +553,7 @@ def _consent_model_rows(entity_id: int):
     ).scalars().all()
     if not configs:
         return []
-    statuses, _ = bulk_model_access_info(entity_id, [c.id for c in configs])
+    statuses = bulk_model_access_statuses(entity_id, [c.id for c in configs])
     consent_rows = {
         r.model_config_id: r
         for r in db.session.execute(
