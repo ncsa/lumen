@@ -388,6 +388,22 @@ def test_consent_page_model_ack_flow(client, auth_client, app, test_user):
     assert not [b for b in soup.select(".ack-btn") if b.get("data-name") == "ack-model"]
 
 
+def test_consent_page_reads_consent_rows_once(client, auth_client, app, test_user, test_model):
+    """One consent-row read per page, even with a model that needs an acknowledgement."""
+    from tests.routes.test_preflight_queries import CONSENT, _recording
+    with app.app_context():
+        db.session.add(ModelConfig(
+            model_name="ack-model", input_cost_per_million=1.0, output_cost_per_million=1.0,
+            needs_ack=True, ack_message="Be good.",
+        ))
+        db.session.commit()
+    body = _issue(client)
+    with _recording(app) as log:
+        page = auth_client.get(f"/device?code={body['user_code']}").get_data()
+    assert b"ack-model" in page and test_model["model_name"].encode() in page
+    assert log.count(CONSENT) == 1
+
+
 def test_consent_ack_button_carries_notice_verbatim(client, auth_client, app):
     """data-notice must be plain (autoescaped) text: previously it was
     |tojson, which put literal quotes and \\n into the dialog."""

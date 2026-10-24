@@ -363,12 +363,15 @@ def api_key_required(f):
             return f(*args, **kwargs)
 
         g.monitor = False
-        api_key = db.session.execute(select(APIKey).filter_by(key_hash=hash_api_key(token))).scalar_one_or_none()
-        if not api_key or api_key.revoked_at is not None or revoke_if_expired(api_key):
+        row = db.session.execute(
+            select(APIKey, Entity).join(Entity, Entity.id == APIKey.entity_id)
+            .where(APIKey.key_hash == hash_api_key(token))
+        ).one_or_none()
+        if not row or row.APIKey.revoked_at is not None or revoke_if_expired(row.APIKey):
             return _err("Invalid or revoked API key", "authentication_error", HTTPStatus.UNAUTHORIZED)
 
-        entity = db.session.get(Entity, api_key.entity_id)
-        if not entity or not entity.active:
+        api_key, entity = row
+        if not entity.active:
             return _err("Account disabled", "authentication_error", HTTPStatus.FORBIDDEN)
 
         g.api_key = api_key

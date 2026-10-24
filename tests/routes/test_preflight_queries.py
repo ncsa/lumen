@@ -32,7 +32,7 @@ __all__ = ["api_key", "fresh_rate_limit"]
 UPSTREAM = "UPSTREAM"
 _TABLE = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+(\w+)", re.IGNORECASE)
 
-API_KEY = ("api_keys",)
+API_KEY = ("api_keys", "entities")
 ENTITY = ("entities",)
 MODEL = ("model_configs",)
 CONSENT = ("entity_model_consents",)
@@ -116,7 +116,7 @@ def test_streaming_api_preflight_group_pool_user(
     token, _ = api_key
     _group_pool(app, test_user["id"])
     assert _streaming_api_statements(app, client, monkeypatch, token, test_model["model_name"]) == [
-        API_KEY, ENTITY, MODEL, POOL, ENDPOINTS,
+        API_KEY, MODEL, POOL, ENDPOINTS,
     ]
 
 
@@ -126,7 +126,7 @@ def test_streaming_api_preflight_own_limit_user(
     token, _ = api_key
     _own_limit(app, test_user["id"])
     assert _streaming_api_statements(app, client, monkeypatch, token, test_model["model_name"]) == [
-        API_KEY, ENTITY, MODEL, POOL, ENDPOINTS,
+        API_KEY, MODEL, POOL, ENDPOINTS,
     ]
 
 
@@ -145,15 +145,16 @@ def test_streaming_api_preflight_acknowledged_model_reads_consent_once(
                                           consented_at=utcnow()))
         db.session.commit()
     assert _streaming_api_statements(app, client, monkeypatch, token, test_model["model_name"]) == [
-        API_KEY, ENTITY, MODEL, CONSENT, POOL, ENDPOINTS,
+        API_KEY, MODEL, CONSENT, POOL, ENDPOINTS,
     ]
 
 
 def test_chat_stream_preflight(app, auth_client, test_user, test_model, test_model_endpoint):
     """/chat/stream: the session's entity, the model, then one pool statement.
 
-    The generator's own model and endpoint reads, and the store_conversations
-    read, are later steps' business; they are listed so a change shows here.
+    store_conversations comes from the entity login_required already loaded.
+    The generator's own model and endpoint reads are a later step's business;
+    they are listed so a change shows here.
     """
     _group_pool(app, test_user["id"])
     fake = _fake_openai([_Chunk(content="hi"), _Chunk(usage=_Usage())])
@@ -171,7 +172,7 @@ def test_chat_stream_preflight(app, auth_client, test_user, test_model, test_mod
             })
             assert resp.status_code == HTTPStatus.OK
             resp.get_data()
-    assert _before_upstream(log) == [ENTITY, MODEL, POOL, ENTITY, MODEL, ENDPOINTS]
+    assert _before_upstream(log) == [ENTITY, MODEL, POOL, MODEL, ENDPOINTS]
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +190,7 @@ def test_api_403_runs_no_queries_after_the_budget_check(
         resp = _chat_post(client, token, test_model["model_name"], True)
     assert resp.status_code == HTTPStatus.FORBIDDEN
     assert resp.get_json()["error"]["code"] == "consent_required"
-    assert log == [API_KEY, ENTITY, MODEL, CONSENT, POOL]
+    assert log == [API_KEY, MODEL, CONSENT, POOL]
 
 
 def test_api_429_runs_no_queries_after_the_budget_check(
@@ -201,7 +202,7 @@ def test_api_429_runs_no_queries_after_the_budget_check(
         resp = _chat_post(client, token, test_model["model_name"], True)
     assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS
     assert 1 <= int(resp.headers["Retry-After"]) <= 60 * 60
-    assert log == [API_KEY, ENTITY, MODEL, POOL]
+    assert log == [API_KEY, MODEL, POOL]
 
 
 def test_chat_429_runs_no_queries_after_the_budget_check(app, auth_client, test_user, test_model):
