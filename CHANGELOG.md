@@ -9,6 +9,7 @@ All notable changes to Lumen will be documented in this file.
 - Chat sidebar no longer scans the whole `messages` table when listing conversations; adds a `(conversation_id, created_at)` index on `messages`. (#168)
 - `/v1/models` and the model detail page read request rates from `request_metrics_1m` instead of scanning `request_logs`, and `request_metrics_1m` now keeps 30 days (`request_logs` is still never pruned). (#169)
 - Speed up slow `lumen.sh` device-flow and stream-disconnect tests.
+- Speed up the test suite: skip real sleeps in all `lumen.sh` tests, clone per-module PostgreSQL test databases from one migrated template, and drop the per-migration upgrade/downgrade tests for already-released migrations.
 
 ### Added
 

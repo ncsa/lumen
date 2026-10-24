@@ -3,8 +3,7 @@
 The migration chain adds exactly one retention policy, on the minute aggregate,
 and never one on ``request_logs`` (#167). ``check-aggregate`` and the startup
 tripwire look only for a policy on ``request_logs``, so this one must not trip
-them. A retention policy is global to the database and the downgrade test drops
-it, so this module runs against ``pg_migrated_isolated``.
+them. A retention policy is global to the database, so this module runs against ``pg_migrated_isolated``.
 """
 import os
 import subprocess
@@ -13,14 +12,11 @@ import pytest
 from sqlalchemy import text
 
 from lumen.commands import _retention_job
-from tests.integration.conftest import TEST_CONFIG, flask_db
+from tests.integration.conftest import TEST_CONFIG
 
 pytestmark = pytest.mark.postgres
 
 VIEW = "request_metrics_1m"
-# The revision just below the one that adds the policy.
-BEFORE_RETENTION = "c93d4de8245c"
-
 # The jobs catalog names a continuous aggregate's policy by the view, as
 # hypertable_name, not by its materialisation hypertable.
 _VIEW_RETENTION = """
@@ -74,14 +70,3 @@ def test_check_aggregate_passes_with_the_view_policy_in_place(pg_url, pg_engine)
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
     assert "retention policy" not in result.stdout, output
-
-
-def test_downgrade_removes_the_policy_and_upgrade_restores_it(pg_url, pg_engine):
-    pg_engine.dispose()
-    flask_db(pg_url, "downgrade", BEFORE_RETENTION)
-    try:
-        assert _retention_jobs(pg_engine) == [], "downgrade left a retention policy behind"
-    finally:
-        pg_engine.dispose()
-        flask_db(pg_url, "upgrade")
-    assert [d for _, d in _view_retention(pg_engine)] == ["30 days"]

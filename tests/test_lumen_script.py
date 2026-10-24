@@ -99,9 +99,23 @@ def home(tmp_path, monkeypatch):
     return home
 
 
+# Directory holding a no-op `sleep`, first on run_script's default PATH so the
+# device flow's poll interval costs nothing. Tests that check the sleeps pass
+# their own PATH via fake_bin.
+NO_SLEEP_BIN = None
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _no_sleep_bin(tmp_path_factory):
+    global NO_SLEEP_BIN
+    NO_SLEEP_BIN = tmp_path_factory.mktemp("no_sleep")
+    (NO_SLEEP_BIN / "sleep").write_text("#!/bin/sh\n")
+    (NO_SLEEP_BIN / "sleep").chmod(0o755)
+
+
 def run_script(home, server_port_or_url=None, args=(), env_extra=None, input=b"", timeout=30):
     env = {
-        "PATH": "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin",
+        "PATH": f"{NO_SLEEP_BIN}:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin",
         "SHELL": "/bin/bash",
     }
     if home is not None:
@@ -377,7 +391,7 @@ def test_verification_uri_complete_opened_only_on_server(home, lumen_server, tmp
         (200, {"access_token": TEST_KEY, "token_type": "Bearer", "approved_by": "a@b"}),
     ]
     r = run_script(home, port, args=["--no-opencode"],
-                   env_extra={"PATH": f"{bindir}:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"})
+                   env_extra={"PATH": f"{bindir}:{NO_SLEEP_BIN}:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"})
     assert r.returncode == 0, r.stderr
     assert log.exists() == opened
 
