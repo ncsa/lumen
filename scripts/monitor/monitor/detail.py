@@ -12,7 +12,8 @@ Every range returns the same series, so the page draws the same charts:
   split is None for data from before the monitor collected it
 - `hardware`: one point per local day with the benefit (the day's input and output
   tokens at our own prices) and the hardware cost, both for a whole day (a day still
-  being counted has its benefit projected), plus both summed over the counted range
+  being counted has its benefit projected), plus both summed over the days that have both,
+  for a day still being counted only over its counted part
 - `instances`: average healthy and configured instances per bucket from the samples
   (`unit: bucket`), or on 1y per local day from the daily counters (`unit: day`)
 """
@@ -81,40 +82,46 @@ def daily_benefit(lumen: DailyStat | None) -> float | None:
     return lumen.input_tokens / 1e6 * lumen.input_price + lumen.output_tokens / 1e6 * lumen.output_price
 
 
-def _cost_fraction(lumen: DailyStat, has_benefit: bool, tz) -> float:
-    """How much of a day still being counted is counted: the shorter input/output watermark with a benefit,
-    else the requests watermark, as `hardware_unit_cost` does."""
-    if has_benefit:
-        return min(counted_fraction(lumen, "input_tokens_covered_until", tz), counted_fraction(lumen, "output_tokens_covered_until", tz))
-    return counted_fraction(lumen, "covered_until", tz)
+def _whole_day_benefit(lumen: DailyStat, tz) -> float | None:
+    """The day's benefit projected to the whole day: input and output each divided by the part of the day
+    its own watermark covers, since the two are counted separately. None while either side covers nothing."""
+    total = 0.0
+    for side in ("input", "output"):
+        fraction = counted_fraction(lumen, f"{side}_tokens_covered_until", tz)
+        if fraction <= 0:
+            return None
+        total += getattr(lumen, f"{side}_tokens") / 1e6 * getattr(lumen, f"{side}_price") / fraction
+    return total
 
 
 def _hardware_points(rows: dict, days: list[date], tz) -> tuple[list[dict], dict]:
     """Benefit and cost per day, both for a whole day, so a day still being counted (`partial`) compares
     like the others: its cost is the full day's and its benefit is projected from the counted part.
 
-    The range totals only add up days that have both a benefit and a cost, and for a partial day only
-    its counted part: the benefit so far against the cost scaled to the same part.
+    The range totals add up the days that have both a benefit and a cost (`days` of them). A partial day
+    adds only the part of the day both input and output are counted for (the shorter watermark): its
+    projected benefit and its cost, each scaled to that part.
     """
     points = []
-    total = {"benefit": 0.0, "cost": 0.0, "partial": False}
-    counted = False
+    total = {"benefit": 0.0, "cost": 0.0, "partial": False, "days": 0}
     for day in days:
         hw, lumen = rows.get(("hardware", day)), rows.get(("lumen", day))
         benefit = daily_benefit(lumen)
         cost = hw.daily_cost if hw else None
         partial = lumen is not None and not lumen.final
-        fraction = _cost_fraction(lumen, benefit is not None, tz) if partial else 1.0
-        projected = benefit / fraction if benefit is not None and fraction > 0 else None
+        fraction = 1.0
+        if partial and benefit is not None:
+            benefit = _whole_day_benefit(lumen, tz)
+            fraction = min(counted_fraction(lumen, f"{side}_tokens_covered_until", tz) for side in ("input", "output"))
         estimated = lumen is not None and bool(lumen.estimated)
-        points.append({"day": day.isoformat(), "benefit": projected, "cost": cost, "partial": partial, "estimated": estimated})
+        points.append({"day": day.isoformat(), "benefit": benefit, "cost": cost, "partial": partial, "estimated": estimated})
         if benefit is not None and cost is not None:
-            counted = True
-            total["benefit"] += benefit
+            total["days"] += 1
+            total["benefit"] += benefit * fraction
             total["cost"] += cost * fraction
             total["partial"] = total["partial"] or partial or estimated
-    if not counted:
-        total = {"benefit": None, "cost": None, "partial": False}
+    if not total["days"]:
+        total = {"benefit": None, "cost": None, "partial": False, "days": 0}
     return points, total
 
 
