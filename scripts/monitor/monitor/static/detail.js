@@ -9,7 +9,7 @@
   const refreshMs = Number(root.dataset.refreshMs) || 300000;
   const state = { range: root.dataset.range };
   const { STATUS_COLOR, dash, isNum, fmtInt, fmtFix, fmtPct, fmtTime, fmtCount, strip, getJson } = window.MonitorCommon;
-  const COLOR = { ours: '#13294B', median: '#b5300c', band: 'rgba(181, 48, 12, 0.15)', bar: '#13294B', estimated: 'rgba(19, 41, 75, 0.35)', line: '#1d7a3e' };
+  const COLOR = { ours: '#13294B', median: '#b5300c', band: 'rgba(181, 48, 12, 0.15)', bar: '#13294B', estimated: 'rgba(19, 41, 75, 0.35)', line: '#1d7a3e', cost: '#c8102e' };
   const charts = {};
 
   // A day is 'YYYY-MM-DD' (a local date already); a bucket is a UTC time shown in local time.
@@ -69,28 +69,32 @@
 
   function hardwareChart(hardware) {
     const points = hardware.points;
-    // $/M tokens where tokens are counted, else $/request (Lumen does not report tokens yet).
-    const perToken = points.some(p => isNum(p.hw_per_mtok)) || isNum(hardware.range.hw_per_mtok);
-    const unitKey = perToken ? 'hw_per_mtok' : 'hw_per_request';
-    const unitLabel = perToken ? '$/M tokens' : '$/request';
+    const fmtUsd = v => `$${fmtFix(v, 2)}`;
     draw('hardware', {
       type: 'bar',
       data: {
         labels: points.map(p => dayLabel(p.day)),
         datasets: [
-          { label: '$/day', data: points.map(p => p.daily_cost), backgroundColor: COLOR.bar, yAxisID: 'y', order: 1 },
-          { type: 'line', label: unitLabel, data: points.map(p => p[unitKey]), borderColor: COLOR.median, borderWidth: 3, pointRadius: 2, yAxisID: 'unit', order: 0 },
+          { label: 'benefit', data: points.map(p => p.benefit),
+            backgroundColor: points.map(p => p.partial || p.estimated ? COLOR.estimated : COLOR.bar), order: 1 },
+          { type: 'line', label: 'hardware cost', data: points.map(p => p.cost), borderColor: COLOR.cost, borderDash: [6, 4], borderWidth: 2, pointRadius: 2, order: 0 },
         ],
       },
       options: {
-        scales: {
-          y: { beginAtZero: true, title: { display: true, text: '$/day' } },
-          unit: { beginAtZero: true, position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: unitLabel } },
-        },
+        plugins: { tooltip: { callbacks: {
+          label: ctx => `${ctx.dataset.label}: ${isNum(ctx.parsed.y) ? fmtUsd(ctx.parsed.y) : dash}`,
+          afterBody: items => {
+            const p = points[items[0]?.dataIndex];
+            return p && (p.partial || p.estimated) ? 'estimated or not final' : '';
+          },
+        } } },
+        scales: { y: { beginAtZero: true, title: { display: true, text: '$/day' } } },
       },
     });
-    const total = hardware.range[unitKey];
-    const note = isNum(total) ? `over the range ${fmtFix(total, perToken ? 3 : 4)} ${unitLabel}${hardware.range.hw_partial ? ' (includes estimated or non-final days)' : ''}` : 'no cost or traffic yet';
+    const { benefit, cost, partial } = hardware.range;
+    const note = isNum(benefit)
+      ? `benefit ${fmtUsd(benefit)} / cost ${fmtUsd(cost)} over the range${partial ? ' · lighter bars are estimated or not final' : ''}`
+      : 'no input/output token counts yet';
     document.getElementById('hardware-note').textContent = note;
   }
 

@@ -22,7 +22,7 @@ function page() {
   return { byId, requests, timers, rangeButtons };
 }
 
-function seriesBody(range, uptime) {
+function seriesBody(range, uptime, hardwareRange = { benefit: null, cost: null, partial: false }) {
   const t = '2026-10-17T16:59:00Z';
   return {
     range, model: 'org/qwen', generated_at: '2026-10-17T17:00:00Z', daily: false,
@@ -30,7 +30,7 @@ function seriesBody(range, uptime) {
     strip: [{ t, status: 'ok' }],
     prices: [{ day: '2026-10-17', input_price: 0.2, output_price: 0.8, input_median: 0.25, input_p5: 0.1, input_p95: 0.4, output_median: 1, output_p5: 0.5, output_p95: 2 }],
     traffic: { unit: 'minute', points: [{ t, requests: 2, tokens: null, estimated: false }], average: { requests: 2, tokens: null } },
-    hardware: { points: [{ day: '2026-10-17', daily_cost: 24, hw_per_mtok: null, hw_per_request: 0.01, hw_partial: true }], range: { hw_per_mtok: null, hw_per_request: 0.01, hw_partial: true } },
+    hardware: { points: [{ day: '2026-10-17', benefit: hardwareRange.benefit, cost: 24, partial: true, estimated: false }], range: hardwareRange },
     instances: { unit: 'bucket', points: [{ t, healthy: 1, configured: 1 }] },
   };
 }
@@ -50,7 +50,7 @@ test('a late response for an earlier range does not replace the selected range',
 
   await answer(latest, seriesBody('1h', 11));
   assert.equal(p.byId('model-uptime').textContent, '11%');
-  assert.match(p.byId('hardware-note').textContent, /\$\/request/);
+  assert.equal(p.byId('hardware-note').textContent, 'no input/output token counts yet');
 
   await answer(old, seriesBody('24h', 99));
   assert.equal(p.byId('model-uptime').textContent, '11%', 'the stale 24h series must not render');
@@ -76,4 +76,16 @@ test('a failure of the newest load is still reported', async () => {
   await flush();
   assert.equal(p.byId('load-error').classList.contains('d-none'), false);
   assert.match(p.byId('load-error').textContent, /boom/);
+});
+
+test('the cost / benefit note shows both totals over the range', async () => {
+  const p = page();
+  await answer(p.requests[0], seriesBody('24h', 50, { benefit: 30.5, cost: 24, partial: false }));
+  assert.equal(p.byId('hardware-note').textContent, 'benefit $30.50 / cost $24.00 over the range');
+});
+
+test('the cost / benefit note flags estimated or partial days', async () => {
+  const p = page();
+  await answer(p.requests[0], seriesBody('24h', 50, { benefit: 3, cost: 12.25, partial: true }));
+  assert.equal(p.byId('hardware-note').textContent, 'benefit $3.00 / cost $12.25 over the range · lighter bars are estimated or not final');
 });

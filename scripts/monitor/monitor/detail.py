@@ -8,8 +8,8 @@ Every range returns the same series, so the page draws the same charts:
 - `traffic`: below 7d one point per bucket with the average req/min and tok/min of
   the samples; from 7d up one point per local day with the day's requests and tokens,
   flagged `estimated` when the day is not exact (`estimated` or not yet `final`)
-- `hardware`: one point per local day with the hardware $/day and its $/M tokens,
-  or $/request on a day without token counts, plus the same over the whole range
+- `hardware`: one point per local day with the benefit (the day's input and output
+  tokens at our own prices) and the hardware cost, plus both summed over the range
 - `instances`: average healthy and configured instances per bucket from the samples
   (`unit: bucket`), or on 1y per local day from the daily counters (`unit: day`)
 """
@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from monitor.buckets import Range, make_grid, range_days
 from monitor.config import Config
 from monitor.models import DailyStat, Sample
-from monitor.overview import _iso, current_models, exact, hardware_unit_cost, model_rows
+from monitor.overview import _iso, counted_fraction, current_models, exact, model_rows
 from monitor.probe import LiveSnapshot
 
 # From this span up, traffic is shown per local day instead of per bucket.
@@ -68,14 +68,48 @@ def _price_points(rows: dict, days: list[date]) -> list[dict]:
     return points
 
 
-def _hardware_points(rows: dict, model_id: str, days: list[date], tz) -> tuple[list[dict], dict]:
-    # hardware_unit_cost keys its rows by (source, model, day), as the overview does.
-    keyed = {(source, model_id, day): row for (source, day), row in rows.items()}
+def daily_benefit(lumen: DailyStat | None) -> float | None:
+    """The day's input and output tokens at our own prices, or None without the split counts or a price."""
+    if lumen is None:
+        return None
+    values = (lumen.input_tokens, lumen.input_price, lumen.output_tokens, lumen.output_price)
+    if any(v is None for v in values):
+        return None
+    return lumen.input_tokens / 1e6 * lumen.input_price + lumen.output_tokens / 1e6 * lumen.output_price
+
+
+def _cost_fraction(lumen: DailyStat, has_benefit: bool, tz) -> float:
+    """How much of the day's hardware cost to set against its counted traffic, as `hardware_unit_cost` does."""
+    if has_benefit:
+        return min(counted_fraction(lumen, "input_tokens_covered_until", tz), counted_fraction(lumen, "output_tokens_covered_until", tz))
+    return counted_fraction(lumen, "covered_until", tz)
+
+
+def _hardware_points(rows: dict, days: list[date], tz) -> tuple[list[dict], dict]:
+    """Benefit and cost per day; a day still being counted gets its cost scaled to the counted part and `partial`.
+
+    The range totals only add up days that have both a benefit and a cost.
+    """
     points = []
+    total = {"benefit": 0.0, "cost": 0.0, "partial": False}
+    counted = False
     for day in days:
-        hw = rows.get(("hardware", day))
-        points.append({"day": day.isoformat(), "daily_cost": hw.daily_cost if hw else None, **hardware_unit_cost(keyed, model_id, [day], tz)})
-    return points, hardware_unit_cost(keyed, model_id, days, tz)
+        hw, lumen = rows.get(("hardware", day)), rows.get(("lumen", day))
+        benefit = daily_benefit(lumen)
+        cost = hw.daily_cost if hw else None
+        partial = lumen is not None and not lumen.final
+        if cost is not None and partial:
+            cost *= _cost_fraction(lumen, benefit is not None, tz)
+        estimated = lumen is not None and bool(lumen.estimated)
+        points.append({"day": day.isoformat(), "benefit": benefit, "cost": cost, "partial": partial, "estimated": estimated})
+        if benefit is not None and cost is not None:
+            counted = True
+            total["benefit"] += benefit
+            total["cost"] += cost
+            total["partial"] = total["partial"] or partial or estimated
+    if not counted:
+        total = {"benefit": None, "cost": None, "partial": False}
+    return points, total
 
 
 def _bucket_samples(session: Session, model_id: str, grid, start: datetime, now: datetime) -> list[list]:
@@ -102,7 +136,7 @@ def series(session: Session, config: Config, snapshot: LiveSnapshot | None, mode
     times = [_iso(t) for t in grid.times()]
     (header,) = model_rows(session, config, rng, now, [model])
     rows = _rows_by_source(session, model_id, days)
-    hardware, hardware_range = _hardware_points(rows, model_id, days, tz)
+    hardware, hardware_range = _hardware_points(rows, days, tz)
 
     if rng.daily:
         lumen = [rows.get(("lumen", d)) for d in days]

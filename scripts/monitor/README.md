@@ -104,8 +104,9 @@ The model detail page, `/model/<id>?range=` (ids may contain `/`), shows for one
 - requests and tokens: below 7d the average req/min and tok/min per bucket from the samples,
   from 7d up the daily totals, with estimated or not yet final days drawn lighter; a dashed
   line marks the range average;
-- hardware cost per day ($/day) and per million tokens, or per request while Lumen reports
-  no token counts, with the total over the range;
+- cost / benefit: per day the benefit (the day's input and output tokens at our own prices)
+  as bars and the hardware cost as a red dashed line, with both totals over the range; a day
+  still being counted is drawn lighter and its cost covers only the counted part;
 - healthy and configured instances per bucket (1y: the daily average).
 
 Its data is `/api/series?model=&range=`, which returns every series for all six ranges.
@@ -158,8 +159,8 @@ Aliases are no longer listed as separate models.
 - Traffic missed while the service was down is backfilled from Lumen's longer windows, evenly
   spread over the gap; those days are always marked `estimated`.
 - Energy cost uses the configured (rated) power per GPU, so it overstates the actual draw.
-- On a range where only some days have token counts, the hardware chart plots $/M tokens and
-  leaves the days without tokens empty instead of switching them to $/request.
+- The cost / benefit chart shows a benefit only for days with input/output token counts;
+  days from before the monitor collected them show the cost line alone.
 - An open page can show a DOWN state up to `refresh.page` (5m) late; lower it if that matters.
 - Run a single replica (see above).
 - History from the old `monitor.db` is not migrated.
