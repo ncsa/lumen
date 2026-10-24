@@ -90,6 +90,23 @@ curl "https://lumen.example.com/v1/models?include_unacknowledged=true" \
   -H "Authorization: Bearer sk_your_api_key_here"
 ```
 
+### Token counts (monitoring token only)
+
+With the [monitoring token](../admin/config-application.md#apimonitoring), `?tokens=true` (also `1` or `yes`) adds per-model token counts to `GET /v1/models` and `GET /v1/models/<id>`:
+
+| Field | Meaning |
+|-------|---------|
+| `input_tokens` | Input tokens of the model's requests, per window. |
+| `output_tokens` | Output tokens of the model's requests, per window. |
+| `tokens` | The sum of the two, per window. |
+
+Each field holds `last_minute` (the last complete minute), `last_hour`, `last_day` and `last_month` (30 days). Alias rows repeat their model's counts. Any other API key, or the monitoring token without the parameter, gets the normal response: the parameter is ignored.
+
+```bash
+curl "https://lumen.example.com/v1/models?tokens=true" \
+  -H "Authorization: Bearer $MONITORING_TOKEN"
+```
+
 ---
 
 ## Retrieve a Model

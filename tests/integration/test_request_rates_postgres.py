@@ -12,6 +12,8 @@ here:
 3. Materialising everything with ``refresh_continuous_aggregate`` changes no
    count.
 4. Neither call site selects from ``request_logs``.
+5. ``?tokens=true`` with the monitoring token sums input/output tokens from
+   the aggregate over the same windows, plus ``last_month``.
 
 The clock is pinned to the database's ``now()`` (``request_rates._now``) so the
 row ages below are exact. This module runs against ``pg_migrated_isolated`` —
@@ -103,10 +105,11 @@ def pinned_clock(monkeypatch, now):
     monkeypatch.setitem(api_routes._rates_cache, "expires_at", 0.0)
 
 
-def _log(model_id, when, source):
+def _log(model_id, when, source, input_tokens=0, output_tokens=0):
     from lumen.extensions import db
     from lumen.models.request_log import RequestLog
-    db.session.add(RequestLog(time=when, model_config_id=model_id, source=source))
+    db.session.add(RequestLog(time=when, model_config_id=model_id, source=source,
+                              input_tokens=input_tokens, output_tokens=output_tokens))
 
 
 @pytest.fixture(scope="module")
@@ -115,7 +118,8 @@ def seeded(pg_app, now):
 
     Model ``a`` has rows in both ``api`` and ``chat`` in the previous whole
     minute, 30 minutes ago and 5 hours ago, plus one 2 days ago; model ``b``
-    has one row 30 minutes ago; one row has no model.
+    has one row 30 minutes ago; one row has no model. Model ``t`` carries
+    token counts in both sources, from the previous whole minute to 40 days ago.
     """
     previous_minute = now.replace(second=0, microsecond=0) - timedelta(seconds=30)
     with pg_app.app_context():
@@ -124,8 +128,9 @@ def seeded(pg_app, now):
         from lumen.models.model_config import ModelConfig
         a = ModelConfig(model_name="rates-a", input_cost_per_million=1, output_cost_per_million=2)
         b = ModelConfig(model_name="rates-b", input_cost_per_million=1, output_cost_per_million=2)
+        t = ModelConfig(model_name="rates-t", input_cost_per_million=1, output_cost_per_million=2)
         user = Entity(entity_type="user", email="rates@example.com", name="Rates", initials="RA", active=True)
-        db.session.add_all([a, b, user])
+        db.session.add_all([a, b, t, user])
         db.session.flush()
         for when, source in [
             (previous_minute, "api"),
@@ -139,8 +144,17 @@ def seeded(pg_app, now):
             _log(a.id, when, source)
         _log(b.id, now - timedelta(minutes=30), "api")
         _log(None, previous_minute, "api")
+        for when, source, inputs, outputs in [
+            (previous_minute, "api", 1, 10),
+            (previous_minute, "chat", 2, 20),
+            (now - timedelta(minutes=30), "chat", 4, 40),
+            (now - timedelta(hours=5), "api", 8, 80),
+            (now - timedelta(days=2), "chat", 16, 160),
+            (now - timedelta(days=40), "api", 32, 320),
+        ]:
+            _log(t.id, when, source, inputs, outputs)
         db.session.commit()
-        return {"a": a.id, "b": b.id, "user": user.id}
+        return {"a": a.id, "b": b.id, "t": t.id, "user": user.id}
 
 
 def _rates(pg_app, model_config_id=None):
@@ -154,6 +168,7 @@ def test_rates_sum_sources_and_honour_the_windows(pg_app, seeded):
     assert _rates(pg_app) == {
         seeded["a"]: {"last_minute": 2, "last_hour": 5, "last_day": 6},
         seeded["b"]: {"last_minute": 0, "last_hour": 1, "last_day": 1},
+        seeded["t"]: {"last_minute": 2, "last_hour": 3, "last_day": 4},
     }
     assert _rates(pg_app, seeded["b"]) == {seeded["b"]: {"last_minute": 0, "last_hour": 1, "last_day": 1}}
 
@@ -213,4 +228,44 @@ def test_call_sites_never_select_from_request_logs(pg_app, seeded):
     # /v1/models fills the per-worker cache and get_model reuses it, so the
     # aggregate is read twice: once for the list and once for the detail page.
     assert sum(VIEW in st for st in statements) == 2, statements
+    assert not [st for st in statements if "request_logs" in st], statements
+
+
+@pytest.mark.postgres
+def test_monitor_token_counts_from_the_aggregate(pg_app, seeded):
+    from lumen.blueprints.api import routes as api_routes
+    from lumen.extensions import db
+    from lumen.services import request_rates
+
+    inputs = {"last_minute": 3, "last_hour": 7, "last_day": 15, "last_month": 31}
+    outputs = {k: v * 10 for k, v in inputs.items()}
+    with pg_app.app_context():
+        assert request_rates.token_windows(seeded["t"]) == {
+            seeded["t"]: {"input_tokens": inputs, "output_tokens": outputs},
+        }
+        engine = db.engine
+
+    statements = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    client = pg_app.test_client()
+    auth = {"Authorization": f"Bearer {MONITOR}"}
+    api_routes._tokens_cache.update(data={}, expires_at=0.0)
+    event.listen(engine, "before_cursor_execute", _record)
+    try:
+        listed = client.get("/v1/models?tokens=true", headers=auth)
+        one = client.get("/v1/models/rates-t?tokens=true", headers=auth)
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+        api_routes._tokens_cache.update(data={}, expires_at=0.0)
+
+    row = {m["id"]: m for m in listed.get_json()["data"]}["rates-t"]
+    assert row["input_tokens"] == inputs
+    assert row["output_tokens"] == outputs
+    assert row["tokens"] == {k: inputs[k] + outputs[k] for k in inputs}
+    assert {k: one.get_json()[k] for k in ("tokens", "input_tokens", "output_tokens")} == {
+        k: row[k] for k in ("tokens", "input_tokens", "output_tokens")
+    }
     assert not [st for st in statements if "request_logs" in st], statements

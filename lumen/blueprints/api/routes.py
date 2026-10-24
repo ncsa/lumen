@@ -97,6 +97,8 @@ def _cors(resp):
 # copy; effective cache lifetime is correct per-worker but not shared across workers.
 _rates_cache: dict = {"data": {}, "expires_at": 0.0}
 _rates_lock = threading.Lock()
+_tokens_cache: dict = {"data": {}, "expires_at": 0.0}
+_tokens_lock = threading.Lock()
 
 # Client request params forwarded to the upstream chat completion, by transport.
 # This is an allowlist: anything a client sends that is not named here is dropped
@@ -171,20 +173,41 @@ def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int
     )
 
 
+def _cached(cache: dict, lock, compute) -> dict:
+    """Return ``compute()``, cached 30s per worker in ``cache``."""
+    now = _time.monotonic()
+    if now < cache["expires_at"]:
+        return cache["data"]
+
+    with lock:
+        if now < cache["expires_at"]:
+            return cache["data"]
+
+        result = compute()
+        cache["data"] = result
+        cache["expires_at"] = now + 30.0
+    return result
+
+
 def _get_request_rates() -> dict:
     """Return {model_config_id: {last_minute, last_hour, last_day}}, cached 30s per worker."""
-    now = _time.monotonic()
-    if now < _rates_cache["expires_at"]:
-        return _rates_cache["data"]
+    return _cached(_rates_cache, _rates_lock, request_rates.rates)
 
-    with _rates_lock:
-        if now < _rates_cache["expires_at"]:
-            return _rates_cache["data"]
 
-        result = request_rates.rates()
-        _rates_cache["data"] = result
-        _rates_cache["expires_at"] = now + 30.0
-    return result
+def _get_token_windows() -> dict:
+    """Return {model_config_id: {input_tokens, output_tokens}} windows, cached 30s per worker."""
+    return _cached(_tokens_cache, _tokens_lock, request_rates.token_windows)
+
+
+def _monitor_tokens() -> dict | None:
+    """Token windows for a monitor-token ``?tokens=true`` request, else None.
+
+    Any other caller, or the monitor token without the parameter, gets None and
+    so the normal response.
+    """
+    if not g.monitor or request.args.get("tokens", "").lower() not in ("1", "true", "yes"):
+        return None
+    return _get_token_windows()
 
 
 def _ack_fields(config, row):
@@ -202,11 +225,16 @@ def _ack_fields(config, row):
     return tags, acknowledged_at, ack_notice_text(config)
 
 
-def _model_dict(c, rates: dict, eps: list, ack_fields=None) -> dict:
+def _model_dict(c, rates: dict, eps: list, ack_fields=None, tokens=None) -> dict:
     """Serialize a ModelConfig to an OpenAI/vLLM-compatible response dict.
 
     ``ack_fields`` ((tags, acknowledged_at, notice)) is None for the monitor
     token, which has no entity and sees no consent state.
+
+    ``tokens`` ({model_config_id: {input_tokens, output_tokens}} windows, from
+    ``request_rates.token_windows``) adds ``input_tokens``, ``output_tokens``
+    and their sum ``tokens``; it is None except for the monitor token asking
+    for ``?tokens=true``.
     """
     zero = {"last_minute": 0, "last_hour": 0, "last_day": 0}
     healthy_count = sum(1 for e in eps if e.healthy)
@@ -263,6 +291,15 @@ def _model_dict(c, rates: dict, eps: list, ack_fields=None) -> dict:
         # the caller has not yet acknowledged); once acked it need not be echoed.
         if tags and notice:
             d["notice"] = notice
+
+    if tokens is not None:
+        no_tokens = dict.fromkeys(request_rates.TOKEN_WINDOWS, 0)
+        counts = tokens.get(c.id, {})
+        inputs = counts.get("input_tokens", no_tokens)
+        outputs = counts.get("output_tokens", no_tokens)
+        d["tokens"] = {w: inputs[w] + outputs[w] for w in request_rates.TOKEN_WINDOWS}
+        d["input_tokens"] = inputs
+        d["output_tokens"] = outputs
 
     return d
 
@@ -382,6 +419,7 @@ def list_models():
     ).scalars().all():
         eps_by_model.setdefault(ep.model_config_id, []).append(ep)
     rates = _get_request_rates()
+    tokens = _monitor_tokens()
     if g.monitor:
         # The monitor token has no entity: it sees every active model, with no
         # consent state attached.
@@ -406,7 +444,7 @@ def list_models():
         open_tags = ack[0] if ack is not None else []
         if open_tags and not include_unacked:
             continue
-        entry = _model_dict(c, rates, eps_by_model.get(c.id, []), ack)
+        entry = _model_dict(c, rates, eps_by_model.get(c.id, []), ack, tokens)
         data.append(entry)
         # Expose each alias as a discoverable ID so clients that validate their
         # configured model against discovery keep working. Aliases inherit the
@@ -446,7 +484,7 @@ def get_model(model_id):
     if not g.monitor:
         row = db.session.execute(select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=config.id)).scalar_one_or_none()
         ack = _ack_fields(config, row)
-    d = _model_dict(config, rates, list(eps), ack)
+    d = _model_dict(config, rates, list(eps), ack, _monitor_tokens())
     # Requested via an alias? Return metadata under the requested ID so clients
     # that validate their configured model against discovery keep working.
     if model_id != config.model_name:
