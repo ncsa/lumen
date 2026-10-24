@@ -70,8 +70,19 @@ def sample(model, minutes_ago, status="ok", rpm=1):
     return Sample(model=model, sampled_at=NOW - timedelta(minutes=minutes_ago), status=status, configured=2, healthy=1, requests_last_minute=rpm)
 
 
+def split_tokens(values):
+    """Stores a combined `tokens` / `tokens_covered_until` as 3/4 input and 1/4 output tokens."""
+    if "tokens" in values:
+        tokens = values.pop("tokens")
+        values["input_tokens"] = None if tokens is None else tokens * 3 / 4
+        values["output_tokens"] = None if tokens is None else tokens / 4
+    if "tokens_covered_until" in values:
+        values["input_tokens_covered_until"] = values["output_tokens_covered_until"] = values.pop("tokens_covered_until")
+    return values
+
+
 def lumen_row(day, model="qwen", **values):
-    return DailyStat(day=day, model=model, source="lumen", **values)
+    return DailyStat(day=day, model=model, source="lumen", **split_tokens(values))
 
 
 # --- Lumen card ------------------------------------------------------------------

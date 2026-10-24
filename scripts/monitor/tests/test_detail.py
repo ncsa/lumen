@@ -56,11 +56,24 @@ def add(session_factory, *rows):
 
 def sample(minutes_ago, status="ok", rpm=None, tpm=None, healthy=1, configured=2):
     return Sample(model=MODEL, sampled_at=NOW - timedelta(minutes=minutes_ago), status=status,
-                  configured=configured, healthy=healthy, requests_last_minute=rpm, tokens_last_minute=tpm)
+                  configured=configured, healthy=healthy, requests_last_minute=rpm,
+                  input_tokens_last_minute=None if tpm is None else tpm * 3 // 4,
+                  output_tokens_last_minute=None if tpm is None else tpm // 4)
+
+
+def split_tokens(values):
+    """Stores a combined `tokens` / `tokens_covered_until` as 3/4 input and 1/4 output tokens."""
+    if "tokens" in values:
+        tokens = values.pop("tokens")
+        values["input_tokens"] = None if tokens is None else tokens * 3 / 4
+        values["output_tokens"] = None if tokens is None else tokens / 4
+    if "tokens_covered_until" in values:
+        values["input_tokens_covered_until"] = values["output_tokens_covered_until"] = values.pop("tokens_covered_until")
+    return values
 
 
 def daily(day, source, **values):
-    return DailyStat(day=day, model=MODEL, source=source, **values)
+    return DailyStat(day=day, model=MODEL, source=source, **split_tokens(values))
 
 
 def get(env, range_key, model=MODEL):

@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from monitor.buckets import Range, make_grid, range_days
 from monitor.config import Config
-from monitor.models import DailyStat, Sample
+from monitor.models import DailyStat, Sample, token_sum
 from monitor.overview import _iso, current_models, exact, hardware_unit_cost, model_rows
 from monitor.probe import LiveSnapshot
 
@@ -81,7 +81,8 @@ def _hardware_points(rows: dict, model_id: str, days: list[date], tz) -> tuple[l
 def _bucket_samples(session: Session, model_id: str, grid, start: datetime, now: datetime) -> list[list]:
     """The model's samples per bucket, as plain rows with only the columns the charts use."""
     stmt = select(
-        Sample.sampled_at, Sample.healthy, Sample.configured, Sample.requests_last_minute, Sample.tokens_last_minute,
+        Sample.sampled_at, Sample.healthy, Sample.configured, Sample.requests_last_minute,
+        Sample.input_tokens_last_minute, Sample.output_tokens_last_minute,
     ).where(Sample.model == model_id, Sample.sampled_at > start, Sample.sampled_at <= now)
     buckets: list[list] = [[] for _ in range(grid.count)]
     for s in session.execute(stmt).all():
@@ -130,7 +131,7 @@ def series(session: Session, config: Config, snapshot: LiveSnapshot | None, mode
         traffic = {"unit": "day", "points": points}
     else:
         traffic = {"unit": "minute", "points": [
-            {"t": t, "requests": _mean(s.requests_last_minute for s in b), "tokens": _mean(s.tokens_last_minute for s in b), "estimated": False}
+            {"t": t, "requests": _mean(s.requests_last_minute for s in b), "tokens": _mean(token_sum(s.input_tokens_last_minute, s.output_tokens_last_minute) for s in b), "estimated": False}
             for t, b in zip(times, buckets)
         ]}
     traffic["average"] = {
