@@ -189,8 +189,12 @@ def _reset_wsgi_warn_once(monkeypatch):
     monkeypatch.setattr(db_pool, "_warned_invalid_wsgi_workers", False)
 
 
-def test_wsgi_workers_unset_means_auto(monkeypatch):
-    monkeypatch.delenv("LUMEN_WSGI_WORKERS", raising=False)
+@pytest.mark.parametrize("setting", [None, "", "  "])
+def test_wsgi_workers_unset_means_auto(monkeypatch, setting):
+    if setting is None:
+        monkeypatch.delenv("LUMEN_WSGI_WORKERS", raising=False)
+    else:
+        monkeypatch.setenv("LUMEN_WSGI_WORKERS", setting)
     assert db_pool.resolve_wsgi_workers({"pool_size": 60, "max_overflow": 20}) == 160
 
 

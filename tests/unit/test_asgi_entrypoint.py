@@ -20,8 +20,18 @@ never revisited when the bridge landed, so a 500-user load test measured a 40-sl
 ceiling (4 processes x uvicorn's 10 threads) and recorded NULL for every queue
 column. See lumen/services/wsgi_disconnect.py.
 """
+import importlib
+import logging
 import re
+import sys
 from pathlib import Path
+
+import dotenv
+import pytest
+from flask import Flask
+
+import lumen
+from lumen.services import db_pool, wsgi_disconnect
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -166,3 +176,50 @@ def test_asgi_module_installs_the_bridge():
     assert "DisconnectAwareWSGIMiddleware" in source
     # The thread-pool size must stay operator-controllable rather than hard-coded.
     assert "resolve_wsgi_workers" in source
+
+
+@pytest.fixture
+def import_asgi(monkeypatch):
+    """Import asgi.py against a stub app, returning (module, workers the bridge got)."""
+    flask_app = Flask("asgi")
+    flask_app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_size": 60, "max_overflow": 20}
+    flask_app.logger.setLevel(logging.INFO)
+    bridge_workers = []
+
+    def fake_bridge(app, *, workers, **kwargs):
+        bridge_workers.append(workers)
+        return app
+
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr(lumen, "create_app", lambda: flask_app)
+    monkeypatch.setattr(wsgi_disconnect, "DisconnectAwareWSGIMiddleware", fake_bridge)
+    monkeypatch.setattr(db_pool, "_warned_invalid_wsgi_workers", False)
+    monkeypatch.delitem(sys.modules, "asgi", raising=False)
+
+    def _import():
+        module = importlib.import_module("asgi")
+        return module, bridge_workers
+
+    yield _import
+    sys.modules.pop("asgi", None)
+
+
+@pytest.mark.parametrize(
+    ("setting", "workers", "shown"),
+    [(None, 160, "unset"), ("auto", 160, "auto"), ("32", 32, "32")],
+)
+def test_asgi_logs_resolved_thread_pool_once(import_asgi, monkeypatch, caplog, setting, workers, shown):
+    """asgi.py logs the resolved count once at startup, and hands the bridge that count."""
+    if setting is None:
+        monkeypatch.delenv("LUMEN_WSGI_WORKERS", raising=False)
+    else:
+        monkeypatch.setenv("LUMEN_WSGI_WORKERS", setting)
+
+    with caplog.at_level(logging.INFO):
+        module, bridge_workers = import_asgi()
+
+    records = [r for r in caplog.records if "WSGI thread pool" in r.getMessage()]
+    assert len(records) == 1
+    assert records[0].getMessage() == f"WSGI thread pool: workers={workers} (LUMEN_WSGI_WORKERS={shown})"
+    assert bridge_workers == [workers]
+    assert module.wsgi_workers == workers
