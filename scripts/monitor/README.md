@@ -48,8 +48,10 @@ on each price run and the entry is unused.
 
 The models run makes no HTTP call: it reads the request and token windows from the last
 successful probe (skipping the run when that probe is older than 2 × `refresh.web`) and adds
-the traffic since each metric's watermark (`covered_until` for requests, `tokens_covered_until`
-for tokens) to today's lumen row. A gap up to 1h is counted from `last_hour`; up to 24h from
+the traffic since each metric's watermark (`covered_until` for requests, `tokens_covered_until`,
+`input_tokens_covered_until` and `output_tokens_covered_until` for tokens and their input/output
+split) to today's lumen row. The probe asks for `/v1/models?tokens=true`; Lumen adds the
+input/output split only for its monitoring token, and an older Lumen ignores the parameter. A gap up to 1h is counted from `last_hour`; up to 24h from
 `last_day`, marked `estimated`; a longer one from `last_month` (at most 30 days back), filling
 the missed days with `estimated` rows, or without `last_month` from the last 24h only, leaving
 the missed days empty. A gap across local midnight is split between the days by duration. A

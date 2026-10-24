@@ -3,9 +3,10 @@
 The run makes no HTTP call. It reads the latest successful probe snapshot
 (skipped when it is older than 2 × `refresh.web`) and adds the traffic since
 the metric's watermark to each model's lumen daily row, then moves the
-watermark to the snapshot time. Requests and tokens are independently
-optional in Lumen's response, so each has its own watermark (`covered_until`
-for requests, `tokens_covered_until` for tokens) and is planned on its own.
+watermark to the snapshot time. Requests, tokens and the input/output token
+split are independently optional in Lumen's response, so each metric has its
+own watermark (`covered_until` for requests, `<metric>_covered_until` for
+`tokens`, `input_tokens` and `output_tokens`) and is planned on its own.
 With `gap = snapshot time − watermark`:
 
 - `gap ≤ 1h`: add `last_hour × gap/1h`.
@@ -52,7 +53,12 @@ HOUR = timedelta(hours=1)
 DAY = timedelta(days=1)
 MONTH = timedelta(days=30)
 # Each metric and the column holding how far it is counted.
-METRICS = {"requests": "covered_until", "tokens": "tokens_covered_until"}
+METRICS = {
+    "requests": "covered_until",
+    "tokens": "tokens_covered_until",
+    "input_tokens": "input_tokens_covered_until",
+    "output_tokens": "output_tokens_covered_until",
+}
 
 
 @dataclass(frozen=True)
@@ -144,7 +150,7 @@ def _add_model(session: Session, model: dict, end: datetime, tz) -> None:
         covered = _watermark(session, model_id, column) or local_midnight(local_day(end, tz), tz)
         if end <= covered:
             continue
-        span = plan_span(model[metric], covered, end)
+        span = plan_span(model.get(metric), covered, end)
         if span is None:
             continue
         for day, piece_start, piece_end in split_by_day(span.start, end, tz):

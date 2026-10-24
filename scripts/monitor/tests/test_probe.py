@@ -56,7 +56,12 @@ class FakeLumen:
         self.status = 200
         self.error = None
         self.data = [
-            lumen_model("qwen", tokens={"last_minute": 1200}),
+            lumen_model(
+                "qwen",
+                tokens={"last_minute": 1200},
+                input_tokens={"last_minute": 1000},
+                output_tokens={"last_minute": 200},
+            ),
             lumen_model("qwen-alias", parent="qwen"),
             lumen_model("big", status="degraded", configured=2, healthy=1),
             lumen_model("gone", status="down", healthy=0),
@@ -65,8 +70,9 @@ class FakeLumen:
     def clock(self):
         return self.now
 
-    def get(self, url, headers=None, timeout=None):
+    def get(self, url, params=None, headers=None, timeout=None):
         assert url == "https://lumen.test/v1/models"
+        assert params == {"tokens": "true"}
         assert headers == {"Authorization": "Bearer secret"}
         assert timeout == 15
         self.now += self.delay
@@ -166,7 +172,9 @@ def test_samples_per_canonical_model(env, lumen):
     qwen = samples["qwen"]
     assert (qwen.sampled_at, qwen.status, qwen.configured, qwen.healthy) == (NOON, "ok", 1, 1)
     assert (qwen.requests_last_minute, qwen.tokens_last_minute) == (3, 1200)
+    assert (qwen.input_tokens_last_minute, qwen.output_tokens_last_minute) == (1000, 200)
     assert samples["big"].tokens_last_minute is None  # Lumen without token counts
+    assert (samples["big"].input_tokens_last_minute, samples["big"].output_tokens_last_minute) == (None, None)
     assert (samples["big"].status, samples["big"].configured, samples["big"].healthy) == ("degraded", 2, 1)
 
 
