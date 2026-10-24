@@ -283,6 +283,28 @@ def test_minted_key_expires_at_from_cap(client, auth_client, app, restore_config
         assert expires_at is None
 
 
+@pytest.mark.parametrize("cap", [0, 86400])
+def test_overwrite_refresh_resets_expires_at_from_cap(client, auth_client, app, test_user, restore_config, cap):
+    _make_manual_key(app, test_user["id"], "opencode")
+    with app.app_context():
+        old = db.session.execute(select(APIKey)).scalar_one()
+        old.expires_at = utcnow() + timedelta(days=365)
+        db.session.commit()
+        old_id = old.id
+
+    app.config["KEY_TTL"] = cap
+    body = _approve_overwrite(client, auth_client, app)
+    assert _poll(client, body).status_code == HTTPStatus.OK
+    with app.app_context():
+        key = db.session.get(APIKey, old_id)
+    # Refreshed in place, with a new expiry counted from the claim like a newly minted key.
+    assert key.revoked_at is None
+    if cap:
+        assert abs(key.expires_at - (utcnow() + timedelta(seconds=cap))) < timedelta(minutes=1)
+    else:
+        assert key.expires_at is None
+
+
 def test_name_conflict_between_approval_and_mint(client, auth_client, app, test_user):
     body = _issue(client, name="opencode")
     auth_client.get(f"/device?code={body['user_code']}")
