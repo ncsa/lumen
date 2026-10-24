@@ -70,37 +70,47 @@
     document.getElementById(`${id}-note`).textContent = `${daily ? 'per day' : 'per minute, averaged per bucket'} · average ${fmt(avg)}${estimated}`;
   }
 
-  // Output tokens above the axis, input tokens below it (as negative values); the axis and the
-  // tooltip show absolute counts. A point without the split (older data or an older Lumen)
-  // keeps its combined count above the axis in grey.
+  // ±the largest magnitude drawn on one side of the tokens chart, so zero sits in the vertical
+  // centre; ±1 when nothing on that side is non-zero.
+  function mirroredBounds(values) {
+    const max = Math.max(0, ...values.filter(isNum).map(Math.abs));
+    return max > 0 ? { min: -max, max } : { min: -1, max: 1 };
+  }
+
+  // Output above the centre line on the left axis, input below it (as negative values) on the
+  // right axis; each axis is symmetric around zero, so each side fills its own half on its own
+  // scale. A point without the split (older data or an older Lumen) shows its combined count
+  // in grey on the input side. Axes and the tooltip show absolute counts.
   function tokensChart(traffic) {
     const daily = traffic.unit === 'day';
     const points = traffic.points;
     const split = p => isNum(p.input_tokens) || isNum(p.output_tokens);
     const neg = v => (isNum(v) ? -v : null);
     const { input_tokens: avgIn, output_tokens: avgOut } = traffic.average;
+    const output = points.map(p => p.output_tokens ?? null);
+    const input = points.map(p => neg(p.input_tokens));
+    const combined = points.map(p => (split(p) ? null : neg(p.tokens)));
+    const out = mirroredBounds([...output, avgOut]);
+    const inn = mirroredBounds([...input, avgIn, ...combined]);
     const shade = (base, light) => points.map(p => (p.estimated ? light : base));
-    const bar = { stack: 'tokens', barPercentage: 1, categoryPercentage: daily ? 0.8 : 1, order: 1 };
-    const unit = daily ? ' per day' : '/min';
+    const bar = { grouped: false, barPercentage: 1, categoryPercentage: daily ? 0.8 : 1, order: 1 };
+    const average = { type: 'line', borderDash: [4, 4], pointRadius: 0, order: 0 };
     draw('tokens', {
       type: 'bar',
       data: {
         labels: points.map(p => daily ? dayLabel(p.t) : timeLabel(p.t)),
         datasets: [
-          { label: `output${unit}`, data: points.map(p => p.output_tokens ?? null), backgroundColor: shade(COLOR.bar, COLOR.estimated), ...bar },
-          { label: `input${unit}`, data: points.map(p => neg(p.input_tokens)), backgroundColor: shade(COLOR.input, COLOR.inputEstimated), ...bar },
-          { label: 'tokens (no split)', data: points.map(p => (split(p) ? null : p.tokens ?? null)),
-            backgroundColor: shade(COLOR.combined, COLOR.combinedEstimated), ...bar },
-          { type: 'line', label: 'output average', data: points.map(() => avgOut ?? null), stack: 'output average',
-            borderColor: COLOR.median, borderDash: [4, 4], pointRadius: 0, order: 0 },
-          { type: 'line', label: 'input average', data: points.map(() => neg(avgIn)), stack: 'input average',
-            borderColor: COLOR.inputAverage, borderDash: [4, 4], pointRadius: 0, order: 0 },
+          { label: 'output (left axis)', data: output, yAxisID: 'out', backgroundColor: shade(COLOR.bar, COLOR.estimated), ...bar },
+          { label: 'input (right axis)', data: input, yAxisID: 'in', backgroundColor: shade(COLOR.input, COLOR.inputEstimated), ...bar },
+          { label: 'tokens (no split)', data: combined, yAxisID: 'in', backgroundColor: shade(COLOR.combined, COLOR.combinedEstimated), ...bar },
+          { label: 'output average', data: points.map(() => avgOut ?? null), yAxisID: 'out', borderColor: COLOR.median, ...average },
+          { label: 'input average', data: points.map(() => neg(avgIn)), yAxisID: 'in', borderColor: COLOR.inputAverage, ...average },
         ],
       },
       options: {
         plugins: {
           legend: { labels: {
-            filter: item => item.text !== 'tokens (no split)' || points.some(p => !split(p) && isNum(p.tokens)),
+            filter: item => item.text !== 'tokens (no split)' || combined.some(isNum),
             sort: (a, b) => a.datasetIndex - b.datasetIndex,
           } },
           tooltip: {
@@ -113,8 +123,12 @@
           },
         },
         scales: {
-          x: { stacked: true, ticks: { maxTicksLimit: 12 } },
-          y: { stacked: true, ticks: { callback: v => fmtCount(Math.abs(v)) } },
+          x: { ticks: { maxTicksLimit: 12 } },
+          // The left axis labels the upper half and draws the grid with a stronger centre line;
+          // the right axis labels the lower half only.
+          out: { position: 'left', ...out, ticks: { precision: 0, callback: v => (v >= 0 ? fmtCount(v) : '') },
+            grid: { color: ctx => (ctx.tick?.value === 0 ? 'rgba(0, 0, 0, 0.5)' : 'rgba(0, 0, 0, 0.1)') } },
+          in: { position: 'right', ...inn, ticks: { precision: 0, callback: v => (v < 0 ? fmtCount(-v) : '') }, grid: { drawOnChartArea: false } },
         },
       },
     });
@@ -122,11 +136,10 @@
   }
 
   function tokensNote(traffic) {
-    const { input_tokens: avgIn, output_tokens: avgOut, tokens: avg } = traffic.average;
+    const { input_tokens: avgIn, output_tokens: avgOut } = traffic.average;
     const per = traffic.unit === 'day' ? 'per day' : 'per minute, averaged per bucket';
-    const average = isNum(avgIn) || isNum(avgOut) ? `average out ${fmtCount(avgOut)} / in ${fmtCount(avgIn)}` : `average ${fmtCount(avg)}`;
     const estimated = traffic.points.some(p => p.estimated) ? ' · lighter bars are estimated or not final' : '';
-    return `${per} · ${average}${estimated}`;
+    return `${per} · average out ${fmtCount(avgOut)} / in ${fmtCount(avgIn)}${estimated}`;
   }
 
   function hardwareChart(hardware) {
@@ -227,6 +240,9 @@
     document.getElementById('back-link').setAttribute('href', `${urls.overview}?range=${encodeURIComponent(state.range)}`);
     load();
   }));
+
+  // Exposed for the node tests.
+  window.MonitorDetail = { mirroredBounds };
 
   load();
   setInterval(load, refreshMs);

@@ -18,8 +18,8 @@ function page() {
     createElement: () => fakeElement(),
     querySelectorAll: sel => (sel === '.range-btn' ? rangeButtons : []),
   };
-  const { requests, timers, charts } = runPage('detail.js', document);
-  return { byId, requests, timers, charts, rangeButtons };
+  const { requests, timers, charts, window } = runPage('detail.js', document);
+  return { byId, requests, timers, charts, window, rangeButtons };
 }
 
 function seriesBody(range, uptime, hardwareRange = { benefit: null, cost: null, partial: false }, traffic = undefined) {
@@ -115,29 +115,73 @@ test('the tokens note per day flags estimated days', async () => {
   assert.equal(p.byId('tokens-note').textContent, 'per day · average out 52.5 K / in 20.5 K · lighter bars are estimated or not final');
 });
 
-test('the tokens note falls back to the combined average without any split', async () => {
+test('the tokens note shows a dash for a side without counts', async () => {
   const p = page();
   const traffic = { unit: 'minute', points: [{ t: '2026-10-17T16:59:00Z', requests: 1, tokens: 70000, input_tokens: null, output_tokens: null, estimated: false }],
     average: { requests: 1, tokens: 70000, input_tokens: null, output_tokens: null } };
   await answer(p.requests[0], seriesBody('1h', 50, undefined, traffic));
-  assert.equal(p.byId('tokens-note').textContent, 'per minute, averaged per bucket · average 70.0 K');
+  assert.equal(p.byId('tokens-note').textContent, 'per minute, averaged per bucket · average out — / in —');
 });
 
-test('the tokens chart puts output above the axis, input below and unsplit points in grey', async () => {
+test('the tokens chart puts output on the left axis, input and unsplit points below zero on the right', async () => {
   const p = page();
   await answer(p.requests[0], seriesBody('24h', 50, undefined, splitTraffic()));
   const chart = tokensChart(p);
   const [output, input, combined, avgOut, avgIn] = chart.data.datasets;
+  assert.deepEqual([output.label, input.label], ['output (left axis)', 'input (right axis)']);
   assert.deepEqual([...output.data], [null, 100000, 5000]);
   assert.deepEqual([...input.data], [null, -40000, -1000]);
-  assert.deepEqual([...combined.data], [7000, null, null]);
-  assert.deepEqual([output.stack, input.stack, combined.stack], ['tokens', 'tokens', 'tokens']);
+  assert.deepEqual([...combined.data], [-7000, null, null]);
+  assert.deepEqual([output.yAxisID, input.yAxisID, combined.yAxisID, avgOut.yAxisID, avgIn.yAxisID], ['out', 'in', 'in', 'out', 'in']);
+  assert.deepEqual([output.grouped, input.grouped, combined.grouped], [false, false, false]);
+  assert.ok([output, input, combined].every(d => d.stack === undefined), 'no stacking');
   assert.equal(avgOut.data[0], 52500);
   assert.equal(avgIn.data[0], -20500);
-  assert.notEqual(avgOut.stack, avgIn.stack, 'the average lines must not stack on each other');
-  assert.equal(chart.options.scales.y.stacked, true);
-  assert.equal(chart.options.scales.y.ticks.callback(-20000), '20.0 K');
+  const { x, out, in: inn } = chart.options.scales;
+  assert.ok(!x.stacked && !out.stacked && !inn.stacked);
+  assert.deepEqual([out.position, out.min, out.max], ['left', -100000, 100000]);
+  assert.deepEqual([inn.position, inn.min, inn.max], ['right', -40000, 40000]);
+  // the left axis labels its upper half, the right axis its lower half, both as absolute counts
+  assert.deepEqual([out.ticks.callback(20000), out.ticks.callback(-20000)], ['20.0 K', '']);
+  assert.deepEqual([inn.ticks.callback(-20000), inn.ticks.callback(20000)], ['20.0 K', '']);
+  assert.equal(inn.grid.drawOnChartArea, false, 'grid lines from one axis only');
   const label = chart.options.plugins.tooltip.callbacks.label;
-  assert.equal(label({ dataset: input, parsed: { y: -40000 } }), 'input/min: 40.0 K');
+  assert.equal(label({ dataset: input, parsed: { y: -40000 } }), 'input (right axis): 40.0 K');
+  assert.equal(label({ dataset: combined, parsed: { y: -70000 } }), 'tokens (no split): 70.0 K');
   assert.equal(chart.options.plugins.tooltip.filter({ parsed: { y: null } }), false);
+});
+
+test('mirroredBounds is symmetric on each side, whatever the magnitudes', () => {
+  const { mirroredBounds } = page().window.MonitorDetail;
+  const out = mirroredBounds([7e6, 3e6, null, 5e6]);
+  const inn = mirroredBounds([-200e6, -150e6, null, -170e6]);
+  assert.deepEqual({ ...out }, { min: -7e6, max: 7e6 });
+  assert.deepEqual({ ...inn }, { min: -200e6, max: 200e6 });
+});
+
+test('mirroredBounds on a range with only unsplit points', async () => {
+  const p = page();
+  const t = day => ({ t: day, requests: 1, tokens: null, input_tokens: null, output_tokens: null, estimated: false });
+  const traffic = { unit: 'day', points: [{ ...t('2026-10-16'), tokens: 3e7 }, { ...t('2026-10-17'), tokens: 9e7 }],
+    average: { requests: 1, tokens: 6e7, input_tokens: null, output_tokens: null } };
+  await answer(p.requests[0], seriesBody('30d', 50, undefined, traffic));
+  const { out, in: inn } = tokensChart(p).options.scales;
+  assert.deepEqual([inn.min, inn.max], [-9e7, 9e7], 'the input side scales to the largest combined total');
+  assert.deepEqual([out.min, out.max], [-1, 1]);
+});
+
+test('mirroredBounds takes an unsplit total larger than every split input', async () => {
+  const p = page();
+  const traffic = splitTraffic();
+  traffic.points[0].tokens = 250000; // the unsplit bucket
+  await answer(p.requests[0], seriesBody('24h', 50, undefined, traffic));
+  const { in: inn } = tokensChart(p).options.scales;
+  assert.deepEqual([inn.min, inn.max], [-250000, 250000]);
+});
+
+test('mirroredBounds gives ±1 for a side with nothing drawn', () => {
+  const { mirroredBounds } = page().window.MonitorDetail;
+  assert.deepEqual({ ...mirroredBounds([]) }, { min: -1, max: 1 });
+  assert.deepEqual({ ...mirroredBounds([null, null]) }, { min: -1, max: 1 });
+  assert.deepEqual({ ...mirroredBounds([0, null, -0]) }, { min: -1, max: 1 });
 });

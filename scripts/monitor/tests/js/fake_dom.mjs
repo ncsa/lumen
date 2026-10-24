@@ -48,7 +48,7 @@ export function runPage(script, document) {
   vm.createContext(context);
   vm.runInContext(readStatic('common.js'), context);
   vm.runInContext(readStatic(script), context);
-  return { requests, timers, charts };
+  return { requests, timers, charts, window: context.window };
 }
 
 export const flush = () => new Promise(r => setImmediate(r));
