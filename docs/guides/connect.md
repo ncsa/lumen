@@ -1,6 +1,6 @@
 # Connect Your Tools
 
-Lumen exposes an **OpenAI-compatible API**, so most tools that speak to OpenAI can talk to Lumen by changing two things: the **base URL** and the **API key**.
+Lumen exposes an **OpenAI-compatible API**, so most tools that speak to OpenAI can talk to Lumen by changing two things: the **base URL** and the **API key**. Clients that speak Anthropic's Messages API, such as the Anthropic SDK and Claude Code, can use the same key; see [Anthropic SDK and Claude Code](#anthropic-sdk-and-claude-code).
 
 > **Tip:** The [Connect page](https://lumen.example.com/connect) generates these snippets for you — including a ready-to-download OpenCode config listing every model your account can use, and curl/Python examples for a specific model. Log in first so it can fill in your models.
 
@@ -190,6 +190,17 @@ chat$chat(
   content_image_url("https://example.com/photo.jpg")
 )
 ```
+
+## Anthropic SDK and Claude Code
+
+Lumen also serves `POST /v1/messages`, translated to and from the chat completions endpoint. Point the client at the base URL **without** `/v1` and use your Lumen key:
+
+```bash
+export ANTHROPIC_BASE_URL=https://lumen.example.com
+export ANTHROPIC_API_KEY=$LUMEN_API_KEY
+```
+
+Only a subset of the Anthropic API is available, and Claude Code needs a few more settings. See [Anthropic API](./anthropic.md) for both.
 
 ## Images and audio
 

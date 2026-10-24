@@ -50,6 +50,7 @@ nav:
       - OAuth for Client Developers: guides/oauth-clients.md
       - Usage: guides/usage.md
       - API Reference: guides/api-reference.md
+      - Anthropic API: guides/anthropic.md
   - Models:
       - Model Dashboard: models/models.md
       - Model Detail: models/model-detail.md
