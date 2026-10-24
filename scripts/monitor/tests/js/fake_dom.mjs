@@ -31,11 +31,16 @@ export class FakeChart {
 }
 
 // Runs common.js and then `script` in one context. Each fetch stays pending until the test settles it.
+// `charts` collects every chart the page draws, in order.
 export function runPage(script, document) {
   const requests = [];
   const timers = [];
+  const charts = [];
+  const Chart = class extends FakeChart {
+    constructor(ctx, config) { super(ctx, config); charts.push(this); }
+  };
   const context = {
-    document, Chart: FakeChart, URL, URLSearchParams, Promise, Error, Number, String, Date, Math, Object, Array, isFinite,
+    document, Chart, URL, URLSearchParams, Promise, Error, Number, String, Date, Math, Object, Array, isFinite,
     window: { location: { href: 'http://monitor.test/' }, history: { replaceState() {} } },
     setInterval: fn => timers.push(fn),
     fetch: url => new Promise((resolve, reject) => requests.push({ url, resolve, reject })),
@@ -43,7 +48,7 @@ export function runPage(script, document) {
   vm.createContext(context);
   vm.runInContext(readStatic('common.js'), context);
   vm.runInContext(readStatic(script), context);
-  return { requests, timers };
+  return { requests, timers, charts, window: context.window };
 }
 
 export const flush = () => new Promise(r => setImmediate(r));
