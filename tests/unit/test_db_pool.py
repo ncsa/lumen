@@ -1,6 +1,7 @@
 import logging
 
 import psutil
+import pytest
 
 from lumen.services import db_pool
 
@@ -183,9 +184,14 @@ def test_detect_replicas(monkeypatch):
     assert db_pool.detect_replicas() == 1
 
 
-def test_wsgi_workers_defaults_when_unset(monkeypatch):
+@pytest.fixture(autouse=True)
+def _reset_wsgi_warn_once(monkeypatch):
+    monkeypatch.setattr(db_pool, "_warned_invalid_wsgi_workers", False)
+
+
+def test_wsgi_workers_unset_means_auto(monkeypatch):
     monkeypatch.delenv("LUMEN_WSGI_WORKERS", raising=False)
-    assert db_pool.resolve_wsgi_workers({"pool_size": 60, "max_overflow": 20}) == 10
+    assert db_pool.resolve_wsgi_workers({"pool_size": 60, "max_overflow": 20}) == 160
 
 
 def test_wsgi_workers_explicit_value(monkeypatch):
@@ -193,9 +199,9 @@ def test_wsgi_workers_explicit_value(monkeypatch):
     assert db_pool.resolve_wsgi_workers({"pool_size": 60, "max_overflow": 20}) == 32
 
 
-def test_wsgi_workers_auto_sums_pool_and_overflow(monkeypatch):
+def test_wsgi_workers_auto_doubles_pool_capacity(monkeypatch):
     monkeypatch.setenv("LUMEN_WSGI_WORKERS", "auto")
-    assert db_pool.resolve_wsgi_workers({"pool_size": 30, "max_overflow": 10}) == 40
+    assert db_pool.resolve_wsgi_workers({"pool_size": 30, "max_overflow": 10}) == 80
 
 
 def test_wsgi_workers_auto_floors_at_default(monkeypatch):
@@ -204,19 +210,45 @@ def test_wsgi_workers_auto_floors_at_default(monkeypatch):
 
 
 def test_wsgi_workers_auto_caps_at_ceiling(monkeypatch):
-    """An oversized explicit pool (cheap in connections) must not become 550 threads."""
+    """An oversized explicit pool (cheap in connections) must not become 1100 threads."""
     monkeypatch.setenv("LUMEN_WSGI_WORKERS", "auto")
-    assert db_pool.resolve_wsgi_workers({"pool_size": 500, "max_overflow": 50}) == 64
+    assert db_pool.resolve_wsgi_workers({"pool_size": 500, "max_overflow": 50}) == 256
 
 
-def test_wsgi_workers_auto_without_sized_pool(monkeypatch):
-    """SQLite returns {} and the max_connections fallback omits pool_size."""
-    monkeypatch.setenv("LUMEN_WSGI_WORKERS", "auto")
+@pytest.mark.parametrize("setting", [None, "auto"])
+def test_wsgi_workers_auto_without_sized_pool(monkeypatch, setting):
+    """SQLite returns {}, and the max_connections fallback without a configured
+    pool_size omits it."""
+    if setting is None:
+        monkeypatch.delenv("LUMEN_WSGI_WORKERS", raising=False)
+    else:
+        monkeypatch.setenv("LUMEN_WSGI_WORKERS", setting)
     assert db_pool.resolve_wsgi_workers({}) == 10
-    assert db_pool.resolve_wsgi_workers({"pool_pre_ping": True}) == 10
+    assert db_pool.resolve_wsgi_workers(db_pool._passthrough_options({})) == 10
 
 
-def test_wsgi_workers_ignores_garbage(monkeypatch):
-    for value in ("0", "-4", "many", ""):
-        monkeypatch.setenv("LUMEN_WSGI_WORKERS", value)
-        assert db_pool.resolve_wsgi_workers({"pool_size": 60, "max_overflow": 20}) == 10
+def test_wsgi_workers_auto_from_passthrough_pool(monkeypatch):
+    """The max_connections fallback keeps a configured pool, and auto sizes from it."""
+    monkeypatch.delenv("LUMEN_WSGI_WORKERS", raising=False)
+    opts = db_pool._passthrough_options({"pool_size": 20, "max_overflow": 5})
+    assert db_pool.resolve_wsgi_workers(opts) == 50
+
+
+@pytest.mark.parametrize("value", ["0", "-4", "many"])
+def test_wsgi_workers_invalid_falls_back_to_auto_and_warns_once(monkeypatch, caplog, value):
+    monkeypatch.setenv("LUMEN_WSGI_WORKERS", value)
+    with caplog.at_level(logging.INFO, logger=db_pool.logger.name):
+        for _ in range(3):
+            assert db_pool.resolve_wsgi_workers({"pool_size": 60, "max_overflow": 20}) == 160
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "LUMEN_WSGI_WORKERS" in warnings[0].getMessage()
+
+
+def test_wsgi_workers_does_not_log_per_call(monkeypatch, caplog):
+    """/metrics/debug calls this per request; asgi.py logs the count once at startup."""
+    with caplog.at_level(logging.DEBUG, logger=db_pool.logger.name):
+        for setting in ("", "auto", "32"):
+            monkeypatch.setenv("LUMEN_WSGI_WORKERS", setting)
+            db_pool.resolve_wsgi_workers({"pool_size": 500, "max_overflow": 50})
+    assert caplog.records == []
