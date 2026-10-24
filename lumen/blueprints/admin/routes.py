@@ -25,6 +25,7 @@ from lumen.models.group import Group
 from lumen.models.group_limit import GroupLimit
 from lumen.models.group_member import GroupMember
 from lumen.models.model_config import ModelConfig
+from lumen.services import model_cache
 from lumen.services.config_watcher import (
     RESTART_REQUIRED,
     _find_unrestorable_masks,
@@ -625,6 +626,7 @@ def model_access_api_patch(mid):
     if error:
         return jsonify({"error": error}), HTTPStatus.BAD_REQUEST
     db.session.commit()
+    model_cache.refresh(current_app._get_current_object())
     return jsonify(_model_access_payload(mc))
 
 

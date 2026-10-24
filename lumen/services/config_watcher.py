@@ -8,6 +8,7 @@ import yaml
 from markupsafe import Markup
 
 from lumen.commands import model_alias_config_errors, sync_models_from_yaml
+from lumen.services import model_cache
 
 _ANNOUNCEMENT_ALLOWED_TAGS = {"a", "b", "br", "em", "i", "li", "ol", "p", "strong", "ul"}
 _ANNOUNCEMENT_ALLOWED_ATTRS = {"a": ["href", "title", "target"]}
@@ -590,6 +591,7 @@ def _watcher(app, config_path):
                     retry_wait * _POLL_INTERVAL, e,
                 )
                 continue
+            model_cache.refresh(app)
             if retry_wait:
                 logger.info("config_watcher: model sync succeeded after retry")
             retry_wait = 0

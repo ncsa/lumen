@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from lumen.services import metrics_snapshot
+from lumen.services import metrics_snapshot, model_cache
 
 TEST_CONFIG = str(Path(__file__).parent / "fixtures" / "test_config.yaml")
 # Flask-SQLAlchemy resolves relative sqlite paths against the instance dir.
@@ -94,6 +94,13 @@ def stopped_refresher():
     metrics_snapshot.stop_snapshot_refresher()
     yield
     metrics_snapshot.stop_snapshot_refresher()
+
+
+@pytest.fixture(autouse=True)
+def clear_model_cache():
+    """Start every test with no model snapshot, so none survives from a test
+    whose models and endpoints the next test's ``clean_db`` has deleted."""
+    model_cache.clear()
 
 
 @pytest.fixture(autouse=True)
