@@ -123,12 +123,12 @@ test('the tokens note shows a dash for a side without counts', async () => {
   assert.equal(p.byId('tokens-note').textContent, 'per minute, averaged per bucket · average out — / in —');
 });
 
-test('the tokens chart puts output on the left axis, input and unsplit points below zero on the right', async () => {
+test('the tokens chart puts output above zero, input and unsplit points below, labelled on the left', async () => {
   const p = page();
   await answer(p.requests[0], seriesBody('24h', 50, undefined, splitTraffic()));
   const chart = tokensChart(p);
   const [output, input, combined, avgOut, avgIn] = chart.data.datasets;
-  assert.deepEqual([output.label, input.label], ['output (left axis)', 'input (right axis)']);
+  assert.deepEqual([output.label, input.label], ['output (above zero)', 'input (below zero)']);
   assert.deepEqual([...output.data], [null, 100000, 5000]);
   assert.deepEqual([...input.data], [null, -40000, -1000]);
   assert.deepEqual([...combined.data], [-7000, null, null]);
@@ -140,15 +140,26 @@ test('the tokens chart puts output on the left axis, input and unsplit points be
   const { x, out, in: inn } = chart.options.scales;
   assert.ok(!x.stacked && !out.stacked && !inn.stacked);
   assert.deepEqual([out.position, out.min, out.max], ['left', -100000, 100000]);
-  assert.deepEqual([inn.position, inn.min, inn.max], ['right', -40000, 40000]);
-  // the left axis labels its upper half, the right axis its lower half, both as absolute counts
-  assert.deepEqual([out.ticks.callback(20000), out.ticks.callback(-20000)], ['20.0 K', '']);
-  assert.deepEqual([inn.ticks.callback(-20000), inn.ticks.callback(20000)], ['20.0 K', '']);
-  assert.equal(inn.grid.drawOnChartArea, false, 'grid lines from one axis only');
+  assert.deepEqual([inn.min, inn.max, inn.display], [-40000, 40000, false], 'the input axis only scales, its labels are on the left');
+  // upper half: output counts; lower half: input counts at the same pixel (left value × 40 K / 100 K)
+  assert.equal(out.ticks.callback(20000), '20.0 K');
+  assert.equal(out.ticks.callback(-50000), '20.0 K');
+  // the left axis keeps its own upper ticks and gets round input values below zero
+  const axis = { ticks: [-100000, -50000, 0, 50000, 100000].map(value => ({ value })) };
+  out.afterBuildTicks(axis);
+  assert.deepEqual([...axis.ticks.map(t => t.value)], [0, 50000, 100000, -25000, -50000, -75000, -100000]);
+  assert.deepEqual([...axis.ticks.filter(t => t.value < 0).map(t => out.ticks.callback(t.value))], ['10.0 K', '20.0 K', '30.0 K', '40.0 K']);
   const label = chart.options.plugins.tooltip.callbacks.label;
-  assert.equal(label({ dataset: input, parsed: { y: -40000 } }), 'input (right axis): 40.0 K');
+  assert.equal(label({ dataset: input, parsed: { y: -40000 } }), 'input (below zero): 40.0 K');
   assert.equal(label({ dataset: combined, parsed: { y: -70000 } }), 'tokens (no split): 70.0 K');
   assert.equal(chart.options.plugins.tooltip.filter({ parsed: { y: null } }), false);
+});
+
+test('mirroredTicks puts round input values below zero, whatever the two scales', () => {
+  const { mirroredTicks } = page().window.MonitorDetail;
+  // out 7 M, in 200 M: input labels every 50 M, placed at -v × 7 M / 200 M
+  const ticks = mirroredTicks([{ value: 0 }, { value: 7e6 }, { value: -7e6 }], 7e6, 200e6);
+  assert.deepEqual([...ticks.map(t => t.value)], [0, 7e6, -1.75e6, -3.5e6, -5.25e6, -7e6]);
 });
 
 test('mirroredBounds is symmetric on each side, whatever the magnitudes', () => {

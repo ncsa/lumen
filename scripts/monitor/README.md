@@ -104,9 +104,9 @@ The model detail page, `/model/<id>?range=` (ids may contain `/`), shows for one
   price, one point per local day;
 - requests and tokens: below 7d the average req/min and tok/min per bucket from the samples,
   from 7d up the daily totals, with estimated or not yet final days drawn lighter; a dashed
-  line marks the range average. Tokens show output above a centred zero line (left axis) and
-  input below it (right axis), each on its own symmetric scale with its own average line; a
-  point with only a combined count is drawn in grey on the input side;
+  line marks the range average. Tokens show output above a centred zero line and input below
+  it, each on its own symmetric scale with its own average line and both labelled on the left
+  axis; a point with only a combined count is drawn in grey on the input side;
 - cost / benefit: per day the benefit (the day's input and output tokens at our own prices)
   as bars and the hardware cost as a red dashed line, with both totals over the range; a day
   still being counted is drawn lighter, with the full day's cost and its benefit so far

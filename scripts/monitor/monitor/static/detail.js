@@ -77,9 +77,25 @@
     return max > 0 ? { min: -max, max } : { min: -1, max: 1 };
   }
 
-  // Output above the centre line on the left axis, input below it (as negative values) on the
-  // right axis; each axis is symmetric around zero, so each side fills its own half on its own
-  // scale. A point without the split (older data or an older Lumen) shows its combined count
+  // A round step of about `span / 4`: 1, 2 or 5 × a power of ten.
+  function niceStep(span) {
+    const power = 10 ** Math.floor(Math.log10(span / 4));
+    return [1, 2, 5, 10].map(m => m * power).find(step => step >= span / 4);
+  }
+
+  // The left axis's own ticks on the upper half, plus round input values on the lower half,
+  // placed where the input axis draws them (`-v × outMax / inMax` in left-axis units).
+  function mirroredTicks(ticks, outMax, inMax) {
+    const upper = ticks.filter(t => t.value >= 0);
+    const step = Math.max(1, niceStep(inMax));
+    const lower = [];
+    for (let v = step; v <= inMax * (1 + 1e-9); v += step) lower.push({ value: -v * outMax / inMax });
+    return [...upper, ...lower];
+  }
+
+  // Output above the centre line, input below it (as negative values), each on its own axis
+  // symmetric around zero, so each side fills its own half on its own scale; both are labelled
+  // on the left. A point without the split (older data or an older Lumen) shows its combined count
   // in grey on the input side. Axes and the tooltip show absolute counts.
   function tokensChart(traffic) {
     const daily = traffic.unit === 'day';
@@ -100,8 +116,8 @@
       data: {
         labels: points.map(p => daily ? dayLabel(p.t) : timeLabel(p.t)),
         datasets: [
-          { label: 'output (left axis)', data: output, yAxisID: 'out', backgroundColor: shade(COLOR.bar, COLOR.estimated), ...bar },
-          { label: 'input (right axis)', data: input, yAxisID: 'in', backgroundColor: shade(COLOR.input, COLOR.inputEstimated), ...bar },
+          { label: 'output (above zero)', data: output, yAxisID: 'out', backgroundColor: shade(COLOR.bar, COLOR.estimated), ...bar },
+          { label: 'input (below zero)', data: input, yAxisID: 'in', backgroundColor: shade(COLOR.input, COLOR.inputEstimated), ...bar },
           { label: 'tokens (no split)', data: combined, yAxisID: 'in', backgroundColor: shade(COLOR.combined, COLOR.combinedEstimated), ...bar },
           { label: 'output average', data: points.map(() => avgOut ?? null), yAxisID: 'out', borderColor: COLOR.median, ...average },
           { label: 'input average', data: points.map(() => neg(avgIn)), yAxisID: 'in', borderColor: COLOR.inputAverage, ...average },
@@ -124,11 +140,14 @@
         },
         scales: {
           x: { ticks: { maxTicksLimit: 12 } },
-          // The left axis labels the upper half and draws the grid with a stronger centre line;
-          // the right axis labels the lower half only.
-          out: { position: 'left', ...out, ticks: { precision: 0, callback: v => (v >= 0 ? fmtCount(v) : '') },
+          // All labels sit on the left: output counts on the upper half, input counts on the
+          // lower half at round input values, mapped onto the left axis. The right axis only
+          // scales the input datasets. One grid with a stronger centre line.
+          out: { position: 'left', ...out,
+            afterBuildTicks: axis => { axis.ticks = mirroredTicks(axis.ticks, out.max, inn.max); },
+            ticks: { precision: 0, callback: v => fmtCount(v >= 0 ? v : -v * inn.max / out.max) },
             grid: { color: ctx => (ctx.tick?.value === 0 ? 'rgba(0, 0, 0, 0.5)' : 'rgba(0, 0, 0, 0.1)') } },
-          in: { position: 'right', ...inn, ticks: { precision: 0, callback: v => (v < 0 ? fmtCount(-v) : '') }, grid: { drawOnChartArea: false } },
+          in: { position: 'left', ...inn, display: false },
         },
       },
     });
@@ -243,7 +262,7 @@
   }));
 
   // Exposed for the node tests.
-  window.MonitorDetail = { mirroredBounds };
+  window.MonitorDetail = { mirroredBounds, mirroredTicks };
 
   load();
   setInterval(load, refreshMs);
