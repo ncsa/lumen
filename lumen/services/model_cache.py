@@ -50,6 +50,10 @@ logger = logging.getLogger(__name__)
 MAX_AGE = 120
 
 
+class SnapshotUnavailable(Exception):
+    """No snapshot fresh enough to serve, and loading one failed."""
+
+
 @dataclass(frozen=True)
 class ModelSnapshot:
     """The columns of an active ModelConfig that request handling reads.
@@ -199,9 +203,10 @@ def _is_fresh(snap: Optional[_Snapshot]) -> bool:
 def _current() -> _Snapshot:
     """The snapshot, loading it on first use or when older than MAX_AGE.
 
-    Caller owns the app context. A failed load raises: there is nothing older
-    to serve on the first load, and a request should not silently run on a
-    snapshot the safety valve has already judged too old.
+    Caller owns the app context. A failed load raises SnapshotUnavailable:
+    there is nothing older to serve on the first load, and a request should
+    not silently run on a snapshot the safety valve has already judged too
+    old. Request handlers answer it with a 503.
     """
     snap = _snapshot
     if _is_fresh(snap):
@@ -210,14 +215,18 @@ def _current() -> _Snapshot:
         snap = _snapshot  # another reader may have loaded it while we waited
         if _is_fresh(snap):
             return snap
-        with current_app.app_context():
-            return _load()
+        try:
+            with current_app.app_context():
+                return _load()
+        except Exception as exc:
+            raise SnapshotUnavailable("model snapshot could not be loaded") from exc
 
 
 def resolve(name: str) -> Optional[ModelSnapshot]:
     """The active model for a canonical name or alias, or None.
 
-    Snapshot counterpart of ``resolve_model_config``.
+    Snapshot counterpart of ``resolve_model_config``. Raises
+    SnapshotUnavailable when no usable snapshot can be loaded.
     """
     if not name:
         return None

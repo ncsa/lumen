@@ -249,8 +249,8 @@ def _health_tick(app) -> None:
     """One iteration of the health loop: the pass if elected, then a refresh.
 
     The refresh runs in every process, elected or not, and even when the pass
-    failed: it is how health another process wrote reaches this process's
-    model snapshot.
+    failed: that is how health written by another process reaches this
+    process's model snapshot.
     """
     try:
         with app.app_context():
