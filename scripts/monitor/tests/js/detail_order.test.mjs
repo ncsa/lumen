@@ -28,7 +28,7 @@ function seriesBody(range, uptime) {
     range, model: 'org/qwen', generated_at: '2026-10-17T17:00:00Z', daily: false,
     header: { status: 'ok', healthy: 1, configured: 1, uptime, peak_rpm: 3, description: 'Qwen', strip: ['ok'] },
     strip: [{ t, status: 'ok' }],
-    prices: [{ day: '2026-10-17', input_price: 0.2, output_price: 0.8, input_median: 0.25, input_p5: 0.1, input_p95: 0.4, output_median: 1, output_p5: 0.5, output_p95: 2 }],
+    prices: [{ t, input_price: 0.2, output_price: 0.8, input_median: 0.25, input_p5: 0.1, input_p95: 0.4, output_median: 1, output_p5: 0.5, output_p95: 2 }],
     traffic: { unit: 'minute', points: [{ t, requests: 2, tokens: null, estimated: false }], average: { requests: 2, tokens: null } },
     hardware: { points: [{ day: '2026-10-17', daily_cost: 24, hw_per_mtok: null, hw_per_request: 0.01, hw_partial: true }], range: { hw_per_mtok: null, hw_per_request: 0.01, hw_partial: true } },
     instances: { unit: 'bucket', points: [{ t, healthy: 1, configured: 1 }] },
