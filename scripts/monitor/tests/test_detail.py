@@ -56,11 +56,24 @@ def add(session_factory, *rows):
 
 def sample(minutes_ago, status="ok", rpm=None, tpm=None, healthy=1, configured=2):
     return Sample(model=MODEL, sampled_at=NOW - timedelta(minutes=minutes_ago), status=status,
-                  configured=configured, healthy=healthy, requests_last_minute=rpm, tokens_last_minute=tpm)
+                  configured=configured, healthy=healthy, requests_last_minute=rpm,
+                  input_tokens_last_minute=None if tpm is None else tpm * 3 // 4,
+                  output_tokens_last_minute=None if tpm is None else tpm // 4)
+
+
+def split_tokens(values):
+    """Stores a combined `tokens` / `tokens_covered_until` as 3/4 input and 1/4 output tokens."""
+    if "tokens" in values:
+        tokens = values.pop("tokens")
+        values["input_tokens"] = None if tokens is None else tokens * 3 / 4
+        values["output_tokens"] = None if tokens is None else tokens / 4
+    if "tokens_covered_until" in values:
+        values["input_tokens_covered_until"] = values["output_tokens_covered_until"] = values.pop("tokens_covered_until")
+    return values
 
 
 def daily(day, source, **values):
-    return DailyStat(day=day, model=MODEL, source=source, **values)
+    return DailyStat(day=day, model=MODEL, source=source, **split_tokens(values))
 
 
 def get(env, range_key, model=MODEL):
@@ -151,7 +164,7 @@ def test_benefit_on_an_exact_final_day(env):
 def test_no_benefit_without_split_counts(env):
     _, sf, _ = env
     day = TODAY - timedelta(days=1)
-    add(sf, daily(day, "hardware", daily_cost=24.0), split(day, tokens=15e6, final=True))
+    add(sf, daily(day, "hardware", daily_cost=24.0), split(day, requests=100.0, final=True))
     hardware = get(env, "7d")["hardware"]
     assert hardware["points"][-2]["benefit"] is None and hardware["points"][-2]["cost"] == 24.0
     assert hardware["range"] == {"benefit": None, "cost": None, "partial": False}
@@ -192,7 +205,7 @@ def test_range_totals_add_days_with_both(env):
         daily(d1, "hardware", daily_cost=24.0), split(d1, input_tokens=10e6, output_tokens=5e6, final=True),
         daily(d2, "hardware", daily_cost=24.0), split(d2, input_tokens=20e6, output_tokens=10e6, final=True, estimated=True),
         # no counts: its cost stays out of the totals
-        daily(d3, "hardware", daily_cost=24.0), split(d3, tokens=1e6, final=True),
+        daily(d3, "hardware", daily_cost=24.0), split(d3, requests=100.0, final=True),
         daily(TODAY, "hardware", daily_cost=48.0),
         split(TODAY, input_tokens=1e6, output_tokens=1e6, input_tokens_covered_until=MIDNIGHT + timedelta(hours=6),
               output_tokens_covered_until=MIDNIGHT + timedelta(hours=6)))

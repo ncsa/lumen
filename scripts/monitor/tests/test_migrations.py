@@ -49,25 +49,31 @@ def _columns(url, table):
 
 SPLIT_DAILY = {"input_tokens", "output_tokens", "input_tokens_covered_until", "output_tokens_covered_until"}
 SPLIT_SAMPLES = {"input_tokens_last_minute", "output_tokens_last_minute"}
+COMBINED_DAILY = {"tokens", "tokens_covered_until"}
 
 
-def test_split_tokens_revision_adds_and_drops_its_columns(tmp_path):
+def test_split_tokens_revision_swaps_the_combined_columns_for_the_split(tmp_path):
     url = f"sqlite:///{tmp_path / 'monitor.db'}"
     upgrade(url, "0002")
     engine = make_engine(url)
     with engine.begin() as conn:
         conn.execute(text(
-            "INSERT INTO daily_stats (day, model, source, last_updated, tokens, estimated, final, polls, polls_ok, healthy_sum) "
-            "VALUES ('2026-10-17', 'qwen', 'lumen', '2026-10-17 05:00:00', 1000, 0, 0, 0, 0, 0)"
+            "INSERT INTO daily_stats (day, model, source, last_updated, requests, tokens, estimated, final, polls, polls_ok, healthy_sum) "
+            "VALUES ('2026-10-17', 'qwen', 'lumen', '2026-10-17 05:00:00', 10, 1000, 0, 0, 0, 0, 0)"
         ))
     engine.dispose()
     upgrade(url, "0003")
     assert SPLIT_DAILY <= _columns(url, "daily_stats")
     assert SPLIT_SAMPLES <= _columns(url, "samples")
+    assert not COMBINED_DAILY & _columns(url, "daily_stats")
+    assert "tokens_last_minute" not in _columns(url, "samples")
     downgrade(url, "0002")
     assert not SPLIT_DAILY & _columns(url, "daily_stats")
     assert not SPLIT_SAMPLES & _columns(url, "samples")
+    assert COMBINED_DAILY <= _columns(url, "daily_stats")
+    assert "tokens_last_minute" in _columns(url, "samples")
     engine = make_engine(url)
     with engine.connect() as conn:
-        assert conn.execute(text("SELECT tokens FROM daily_stats WHERE model = 'qwen'")).scalar_one() == 1000
+        # The other columns survive; the combined tokens come back empty.
+        assert conn.execute(text("SELECT requests, tokens FROM daily_stats WHERE model = 'qwen'")).one() == (10, None)
     engine.dispose()

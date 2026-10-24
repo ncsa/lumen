@@ -232,9 +232,9 @@ def _model_dict(c, rates: dict, eps: list, ack_fields=None, tokens=None) -> dict
     token, which has no entity and sees no consent state.
 
     ``tokens`` ({model_config_id: {input_tokens, output_tokens}} windows, from
-    ``request_rates.token_windows``) adds ``input_tokens``, ``output_tokens``
-    and their sum ``tokens``; it is None except for the monitor token asking
-    for ``?tokens=true``.
+    ``request_rates.token_windows``) adds ``input_tokens`` and
+    ``output_tokens``; it is None except for the monitor token asking for
+    ``?tokens=true``.
     """
     zero = {"last_minute": 0, "last_hour": 0, "last_day": 0}
     healthy_count = sum(1 for e in eps if e.healthy)
@@ -295,11 +295,8 @@ def _model_dict(c, rates: dict, eps: list, ack_fields=None, tokens=None) -> dict
     if tokens is not None:
         no_tokens = dict.fromkeys(request_rates.TOKEN_WINDOWS, 0)
         counts = tokens.get(c.id, {})
-        inputs = counts.get("input_tokens", no_tokens)
-        outputs = counts.get("output_tokens", no_tokens)
-        d["tokens"] = {w: inputs[w] + outputs[w] for w in request_rates.TOKEN_WINDOWS}
-        d["input_tokens"] = inputs
-        d["output_tokens"] = outputs
+        d["input_tokens"] = counts.get("input_tokens", no_tokens)
+        d["output_tokens"] = counts.get("output_tokens", no_tokens)
 
     return d
 

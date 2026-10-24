@@ -58,7 +58,6 @@ class FakeLumen:
         self.data = [
             lumen_model(
                 "qwen",
-                tokens={"last_minute": 1200},
                 input_tokens={"last_minute": 1000},
                 output_tokens={"last_minute": 200},
             ),
@@ -171,8 +170,8 @@ def test_samples_per_canonical_model(env, lumen):
     assert set(samples) == {"qwen", "big", "gone"}
     qwen = samples["qwen"]
     assert (qwen.sampled_at, qwen.status, qwen.configured, qwen.healthy) == (NOON, "ok", 1, 1)
-    assert (qwen.requests_last_minute, qwen.tokens_last_minute) == (3, 1200)
-    assert (qwen.input_tokens_last_minute, qwen.output_tokens_last_minute) == (1000, 200)
+    assert qwen.requests_last_minute == 3
+    assert (qwen.input_tokens_last_minute, qwen.output_tokens_last_minute, qwen.tokens_last_minute) == (1000, 200, 1200)
     assert samples["big"].tokens_last_minute is None  # Lumen without token counts
     assert (samples["big"].input_tokens_last_minute, samples["big"].output_tokens_last_minute) == (None, None)
     assert (samples["big"].status, samples["big"].configured, samples["big"].healthy) == ("degraded", 2, 1)

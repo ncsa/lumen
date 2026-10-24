@@ -264,8 +264,8 @@ def test_monitor_token_counts_from_the_aggregate(pg_app, seeded):
     row = {m["id"]: m for m in listed.get_json()["data"]}["rates-t"]
     assert row["input_tokens"] == inputs
     assert row["output_tokens"] == outputs
-    assert row["tokens"] == {k: inputs[k] + outputs[k] for k in inputs}
-    assert {k: one.get_json()[k] for k in ("tokens", "input_tokens", "output_tokens")} == {
-        k: row[k] for k in ("tokens", "input_tokens", "output_tokens")
+    assert "tokens" not in row
+    assert {k: one.get_json()[k] for k in ("input_tokens", "output_tokens")} == {
+        k: row[k] for k in ("input_tokens", "output_tokens")
     }
     assert not [st for st in statements if "request_logs" in st], statements
