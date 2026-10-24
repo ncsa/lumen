@@ -322,6 +322,38 @@ def get_next_endpoint(model_config_id: int):
     return endpoints[idx]
 
 
+class StreamTarget(NamedTuple):
+    """Plain scalars a streaming call needs from its model config and endpoint.
+
+    Built while a session is current, so the generator that consumes it never
+    touches an ORM object after the session that loaded it is gone.
+    """
+    remote_model: str
+    url: str
+    api_key: str
+    endpoint_id: int
+    model_config_id: int
+    input_cost: float
+    output_cost: float
+
+
+def stream_target(config, endpoint) -> StreamTarget:
+    """StreamTarget for ``config`` served by ``endpoint``.
+
+    Forwards the endpoint's override name, else the CANONICAL model name —
+    never an alias a client may have requested.
+    """
+    return StreamTarget(
+        remote_model=endpoint.model_name or config.model_name,
+        url=endpoint.url,
+        api_key=endpoint.api_key,
+        endpoint_id=endpoint.id,
+        model_config_id=config.id,
+        input_cost=float(config.input_cost_per_million),
+        output_cost=float(config.output_cost_per_million),
+    )
+
+
 def get_model_access_status(entity_id: int, model_config_id: int) -> str:
     """
     Return 'allowed', 'blocked', or 'needs_ack' for the given entity + model.
@@ -1021,6 +1053,7 @@ def send_message_stream(
     source: str = "chat",
     effective=_UNSET,
     model_config_id: int = None,
+    resolved: StreamTarget = None,
 ):
     """Stream messages to LLM. Yields (chunk_text, None) for each token, then (None, result_dict).
 
@@ -1032,6 +1065,12 @@ def send_message_stream(
     re-resolving ``model``, so a config reload that retargets an alias after the
     view's access check can never route or bill this request against a different
     (possibly private) model. ``model`` is still used for display/error strings.
+
+    ``resolved`` is the model and endpoint the view already picked, as a
+    StreamTarget. When set, the generator does no model or endpoint lookup at
+    all, so it checks out no DB connection before the first token. Without it,
+    the generator resolves them itself (by ``model_config_id``, else by name)
+    and re-checks there that the model is still active.
 
     Must be *called* inside an application context (view code); the returned
     generator runs without one. Each DB phase pushes its own short-lived app
@@ -1051,37 +1090,32 @@ def send_message_stream(
     # Same reason as the disconnect Event: the arrival marks live in the WSGI
     # environ and only the view can reach them.
     timing = capture_request_timing()
-    return _send_message_stream(app, messages, model, entity_id, source, effective, disconnected, timing, model_config_id)
+    return _send_message_stream(app, messages, model, entity_id, source, effective, disconnected, timing, model_config_id, resolved)
 
 
-def _send_message_stream(app, messages, model, entity_id, source, effective, disconnected, timing, model_config_id):
+def _send_message_stream(app, messages, model, entity_id, source, effective, disconnected, timing, model_config_id,
+                         resolved):
     with app.app_context():
-        if model_config_id is not None:
-            config = db.session.get(ModelConfig, model_config_id)
-            if config is None or not config.active:
-                raise ValueError(f"Unknown or inactive model: {model}")
-        else:
-            config = resolve_model_config(model)
-            if config is None:
-                raise ValueError(f"Unknown or inactive model: {model}")
+        if resolved is None:
+            if model_config_id is not None:
+                config = db.session.get(ModelConfig, model_config_id)
+                if config is None or not config.active:
+                    raise ValueError(f"Unknown or inactive model: {model}")
+            else:
+                config = resolve_model_config(model)
+                if config is None:
+                    raise ValueError(f"Unknown or inactive model: {model}")
 
-        endpoint = get_next_endpoint(config.id)
-        if endpoint is None:
-            observe_rejection_quietly("no_healthy_endpoint", source, model)
-            raise RuntimeError(f"No healthy endpoints for model '{model}'")
+            endpoint = get_next_endpoint(config.id)
+            if endpoint is None:
+                observe_rejection_quietly("no_healthy_endpoint", source, model)
+                raise RuntimeError(f"No healthy endpoints for model '{model}'")
 
-        # Extract all scalars from ORM objects before the context exits. The
-        # streaming LLM call can take minutes; the context teardown releases the
-        # session (and its pool connection) before the first token is awaited.
-        # Forward the endpoint's override name, else the CANONICAL model name —
-        # never an alias a client may have requested.
-        remote_model = endpoint.model_name or config.model_name
-        ep_api_key   = endpoint.api_key
-        ep_url       = endpoint.url
-        ep_id        = endpoint.id
-        mc_id        = config.id
-        mc_in_cost   = float(config.input_cost_per_million)
-        mc_out_cost  = float(config.output_cost_per_million)
+            # Extract all scalars from ORM objects before the context exits. The
+            # streaming LLM call can take minutes; the context teardown releases the
+            # session (and its pool connection) before the first token is awaited.
+            resolved = stream_target(config, endpoint)
+        remote_model, ep_url, ep_api_key, ep_id, mc_id, mc_in_cost, mc_out_cost = resolved
         # Derive the per-entity prefix-cache salt while a context is current;
         # the create() call below runs context-free (no current_app). See #36.
         cache_salt   = cache_salt_for_entity(entity_id) if entity_id is not None else None

@@ -21,7 +21,16 @@ from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.services.live_state import get_live_state
-from lumen.services.llm import bulk_model_access_info, check_coin_budget, get_pool_limit, model_notices, send_message_stream
+from lumen.services.llm import (
+    bulk_model_access_info,
+    check_coin_budget,
+    get_next_endpoint,
+    get_pool_limit,
+    model_notices,
+    observe_rejection_quietly,
+    send_message_stream,
+    stream_target,
+)
 from lumen.services.model_resolver import resolve_model_config
 from lumen.services.wsgi_disconnect import client_disconnect_event
 from lumen.timeutils import utcnow
@@ -222,6 +231,14 @@ def chat_stream():
                 return jsonify({"error": msg}), code, {"Retry-After": str(retry_after)}
         return jsonify({"error": msg}), code
 
+    # Picked here, not in the generator, so the stream needs no DB phase of its
+    # own and a missing endpoint is a 503 before streaming, as on /v1.
+    endpoint = get_next_endpoint(model_config.id)
+    if endpoint is None:
+        observe_rejection_quietly("no_healthy_endpoint", "chat", model)
+        return jsonify({"error": f"No healthy endpoints for model '{model}'"}), HTTPStatus.SERVICE_UNAVAILABLE
+    resolved = stream_target(model_config, endpoint)
+
     # login_required already loaded this Entity; the identity map answers it.
     store_conversations = db.session.get(Entity, entity_id).store_conversations
     if not store_conversations:
@@ -247,7 +264,7 @@ def chat_stream():
     # push short-lived app contexts around the DB work — never across a yield.
     app = current_app._get_current_object()
     disconnected = client_disconnect_event()
-    llm_stream = send_message_stream(messages, model, entity_id=entity_id, source="chat", effective=effective, model_config_id=model_config.id)
+    llm_stream = send_message_stream(messages, model, entity_id=entity_id, source="chat", effective=effective, resolved=resolved)
     # Admitted last, once every rejection above has passed: a refused request
     # must never appear in flight. The ticket rides in the closure like the
     # disconnect Event, and generate()'s finally releases it. Nothing between

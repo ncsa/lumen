@@ -30,6 +30,7 @@ from tests.routes.test_chat_routes import _Chunk, _fake_openai, _Usage
 __all__ = ["api_key", "fresh_rate_limit"]
 
 UPSTREAM = "UPSTREAM"
+CHECKOUT = "CHECKOUT"
 _TABLE = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+(\w+)", re.IGNORECASE)
 
 API_KEY = ("api_keys", "entities")
@@ -49,21 +50,31 @@ def _tables(statement):
 
 
 @contextmanager
-def _recording(app):
-    """Yield the list every SQL statement (as its tables) and the UPSTREAM marker land in."""
+def _recording(app, checkouts=False):
+    """Yield the list every SQL statement (as its tables) and the UPSTREAM marker land in.
+
+    With ``checkouts``, each pool connection checkout lands there too, as CHECKOUT.
+    """
     from lumen.extensions import db
     log = []
 
     def _record(conn, cursor, statement, parameters, context, executemany):
         log.append(_tables(statement))
 
+    def _checkout(dbapi_conn, record, proxy):
+        log.append(CHECKOUT)
+
     with app.app_context():
         engine = db.engine
     event.listen(engine, "before_cursor_execute", _record)
+    if checkouts:
+        event.listen(engine.pool, "checkout", _checkout)
     try:
         yield log
     finally:
         event.remove(engine, "before_cursor_execute", _record)
+        if checkouts:
+            event.remove(engine.pool, "checkout", _checkout)
 
 
 def _before_upstream(log):
@@ -150,17 +161,19 @@ def test_streaming_api_preflight_acknowledged_model_reads_consent_once(
 
 
 def test_chat_stream_preflight(app, auth_client, test_user, test_model, test_model_endpoint):
-    """/chat/stream: the session's entity, the model, then one pool statement.
+    """/chat/stream: the session's entity, the model, one pool statement, then
+    the endpoint — all in the view.
 
     store_conversations comes from the entity login_required already loaded.
-    The generator's own model and endpoint reads are a later step's business;
-    they are listed so a change shows here.
+    The view hands the generator the endpoint it picked, so the generator reads
+    no model or endpoint and checks out no connection before the upstream call:
+    the whole prefix runs on the view's single checkout.
     """
     _group_pool(app, test_user["id"])
     fake = _fake_openai([_Chunk(content="hi"), _Chunk(usage=_Usage())])
     upstream = fake.return_value.chat.completions.create
     chunks = upstream.return_value
-    with _recording(app) as log:
+    with _recording(app, checkouts=True) as log:
         def _create(**kwargs):
             log.append(UPSTREAM)
             return chunks
@@ -172,7 +185,7 @@ def test_chat_stream_preflight(app, auth_client, test_user, test_model, test_mod
             })
             assert resp.status_code == HTTPStatus.OK
             resp.get_data()
-    assert _before_upstream(log) == [ENTITY, MODEL, POOL, MODEL, ENDPOINTS]
+    assert _before_upstream(log) == [CHECKOUT, ENTITY, MODEL, POOL, ENDPOINTS]
 
 
 # ---------------------------------------------------------------------------
