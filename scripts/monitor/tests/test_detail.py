@@ -217,24 +217,37 @@ def test_no_benefit_without_a_price(env):
     assert get(env, "7d")["hardware"]["points"][-2]["benefit"] is None
 
 
-def test_today_cost_scaled_to_the_counted_part_and_partial(env):
+def test_today_shows_a_whole_day_and_partial(env):
     _, sf, _ = env
     six = MIDNIGHT + timedelta(hours=6)
     add(sf, daily(TODAY, "hardware", daily_cost=48.0),
-        # counted until 06:00 local (output) and 12:00 (input): the cost covers the shorter quarter day
+        # counted until 06:00 local (output) and 12:00 (input): the shorter, a quarter of the day, counts
         split(TODAY, input_tokens=4e6, output_tokens=1e6, input_tokens_covered_until=six + timedelta(hours=6),
               output_tokens_covered_until=six, covered_until=six + timedelta(hours=6)))
-    point = get(env, "7d")["hardware"]["points"][-1]
-    assert point["cost"] == pytest.approx(12.0) and point["partial"] is True
-    assert point["benefit"] == pytest.approx(4 * 0.2 + 0.8)
+    hardware = get(env, "7d")["hardware"]
+    point = hardware["points"][-1]
+    # the cost line stays at the full day's cost; the benefit so far is projected to the whole day
+    assert point["cost"] == pytest.approx(48.0) and point["partial"] is True
+    assert point["benefit"] == pytest.approx((4 * 0.2 + 0.8) * 4)
+    # the totals compare the counted quarter: the benefit so far against a quarter of the cost
+    assert hardware["range"] == {"benefit": pytest.approx(4 * 0.2 + 0.8), "cost": pytest.approx(12.0), "partial": True}
 
 
-def test_today_without_split_scales_by_the_requests_watermark(env):
+def test_today_without_split_keeps_the_full_day_cost(env):
     _, sf, _ = env
     add(sf, daily(TODAY, "hardware", daily_cost=48.0),
         daily(TODAY, "lumen", requests=1000.0, covered_until=MIDNIGHT + timedelta(hours=12)))
     point = get(env, "7d")["hardware"]["points"][-1]
-    assert point["cost"] == pytest.approx(24.0) and point["benefit"] is None and point["partial"] is True
+    assert point["cost"] == pytest.approx(48.0) and point["benefit"] is None and point["partial"] is True
+
+
+def test_today_with_nothing_counted_yet_has_no_benefit(env):
+    _, sf, _ = env
+    add(sf, daily(TODAY, "hardware", daily_cost=48.0),
+        split(TODAY, input_tokens=0.0, output_tokens=0.0, input_tokens_covered_until=MIDNIGHT,
+              output_tokens_covered_until=MIDNIGHT))
+    point = get(env, "7d")["hardware"]["points"][-1]
+    assert point["benefit"] is None and point["cost"] == pytest.approx(48.0)
 
 
 def test_range_totals_add_days_with_both(env):

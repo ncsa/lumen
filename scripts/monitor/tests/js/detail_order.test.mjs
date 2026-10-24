@@ -185,3 +185,11 @@ test('mirroredBounds gives ±1 for a side with nothing drawn', () => {
   assert.deepEqual({ ...mirroredBounds([null, null]) }, { min: -1, max: 1 });
   assert.deepEqual({ ...mirroredBounds([0, null, -0]) }, { min: -1, max: 1 });
 });
+
+test('the cost / benefit tooltip says a partial day is projected', async () => {
+  const p = page();
+  await answer(p.requests[0], seriesBody('24h', 50, { benefit: 3, cost: 12.25, partial: true }));
+  const chart = p.charts.find(c => c.data.datasets.some(d => d.label === 'hardware cost'));
+  const afterBody = chart.options.plugins.tooltip.callbacks.afterBody;
+  assert.equal(afterBody([{ dataIndex: 0 }]), 'day not over: benefit projected to the whole day');
+});

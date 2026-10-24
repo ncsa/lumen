@@ -11,7 +11,8 @@ Every range returns the same series, so the page draws the same charts:
   Tokens come combined (`tokens`) and split (`input_tokens` / `output_tokens`); the
   split is None for data from before the monitor collected it
 - `hardware`: one point per local day with the benefit (the day's input and output
-  tokens at our own prices) and the hardware cost, plus both summed over the range
+  tokens at our own prices) and the hardware cost, both for a whole day (a day still
+  being counted has its benefit projected), plus both summed over the counted range
 - `instances`: average healthy and configured instances per bucket from the samples
   (`unit: bucket`), or on 1y per local day from the daily counters (`unit: day`)
 """
@@ -81,16 +82,19 @@ def daily_benefit(lumen: DailyStat | None) -> float | None:
 
 
 def _cost_fraction(lumen: DailyStat, has_benefit: bool, tz) -> float:
-    """How much of the day's hardware cost to set against its counted traffic, as `hardware_unit_cost` does."""
+    """How much of a day still being counted is counted: the shorter input/output watermark with a benefit,
+    else the requests watermark, as `hardware_unit_cost` does."""
     if has_benefit:
         return min(counted_fraction(lumen, "input_tokens_covered_until", tz), counted_fraction(lumen, "output_tokens_covered_until", tz))
     return counted_fraction(lumen, "covered_until", tz)
 
 
 def _hardware_points(rows: dict, days: list[date], tz) -> tuple[list[dict], dict]:
-    """Benefit and cost per day; a day still being counted gets its cost scaled to the counted part and `partial`.
+    """Benefit and cost per day, both for a whole day, so a day still being counted (`partial`) compares
+    like the others: its cost is the full day's and its benefit is projected from the counted part.
 
-    The range totals only add up days that have both a benefit and a cost.
+    The range totals only add up days that have both a benefit and a cost, and for a partial day only
+    its counted part: the benefit so far against the cost scaled to the same part.
     """
     points = []
     total = {"benefit": 0.0, "cost": 0.0, "partial": False}
@@ -100,14 +104,14 @@ def _hardware_points(rows: dict, days: list[date], tz) -> tuple[list[dict], dict
         benefit = daily_benefit(lumen)
         cost = hw.daily_cost if hw else None
         partial = lumen is not None and not lumen.final
-        if cost is not None and partial:
-            cost *= _cost_fraction(lumen, benefit is not None, tz)
+        fraction = _cost_fraction(lumen, benefit is not None, tz) if partial else 1.0
+        projected = benefit / fraction if benefit is not None and fraction > 0 else None
         estimated = lumen is not None and bool(lumen.estimated)
-        points.append({"day": day.isoformat(), "benefit": benefit, "cost": cost, "partial": partial, "estimated": estimated})
+        points.append({"day": day.isoformat(), "benefit": projected, "cost": cost, "partial": partial, "estimated": estimated})
         if benefit is not None and cost is not None:
             counted = True
             total["benefit"] += benefit
-            total["cost"] += cost
+            total["cost"] += cost * fraction
             total["partial"] = total["partial"] or partial or estimated
     if not counted:
         total = {"benefit": None, "cost": None, "partial": False}
