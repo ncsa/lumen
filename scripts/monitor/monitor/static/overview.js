@@ -43,7 +43,8 @@
     }
     models.forEach(m => {
       // Model ids can contain '/': encode each part and keep the slashes, which the route accepts.
-      const href = urls.model + m.id.split('/').map(encodeURIComponent).join('/');
+      // The model page opens on the range selected here.
+      const href = `${urls.model}${m.id.split('/').map(encodeURIComponent).join('/')}?range=${encodeURIComponent(state.range)}`;
       const name = el('td', {}, [el('a', { href, text: m.id })]);
       if (m.description) name.append(el('div', { class: 'model-desc', text: m.description }));
       const tr = el('tr', {}, [
