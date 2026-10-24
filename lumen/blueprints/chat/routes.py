@@ -222,9 +222,8 @@ def chat_stream():
                 return jsonify({"error": msg}), code, {"Retry-After": str(retry_after)}
         return jsonify({"error": msg}), code
 
-    store_conversations = db.session.execute(
-        select(Entity.store_conversations).where(Entity.id == entity_id)
-    ).scalar_one()
+    # login_required already loaded this Entity; the identity map answers it.
+    store_conversations = db.session.get(Entity, entity_id).store_conversations
     if not store_conversations:
         conversation_id = None
     # With storage disabled there is no conversation row to signal a new chat;
