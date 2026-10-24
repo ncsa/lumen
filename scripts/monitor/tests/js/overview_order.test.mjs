@@ -89,3 +89,14 @@ test('a failure of the newest load is still reported', async () => {
   assert.equal(p.byId('load-error').classList.contains('d-none'), false);
   assert.match(p.byId('load-error').textContent, /boom/);
 });
+
+test('the model link keeps the selected range', async () => {
+  const p = page();
+  p.rangeButtons[1].click(); // select 1h
+  const [ov, lumen] = requestsFor(p.requests, '1h');
+  await answer(ov, overviewBody('1h', { models: [{ id: 'org/model a', strip: [] }] }));
+  await answer(lumen, lumenBody('1h'));
+  const [row] = p.byId('model-rows').children;
+  const link = row.children[0].children[0];
+  assert.equal(link.attributes.href, '/model/org/model%20a?range=1h');
+});
