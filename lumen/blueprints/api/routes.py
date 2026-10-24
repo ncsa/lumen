@@ -33,7 +33,6 @@ from lumen.services.llm import (
     bulk_model_access_statuses,
     capture_request_timing,
     check_coin_budget,
-    coin_retry_after,
     consent_rows,
     consent_state,
     estimate_abort_usage,
@@ -535,8 +534,8 @@ def _preflight(model_name: str):
     model_config = resolve_model_config(model_name)
     if not model_config:
         return None, None, None, _err(f"Model '{model_name}' not found", status=HTTPStatus.NOT_FOUND)
-    ok, code, msg, effective, reason = check_coin_budget(
-        g.entity.id, model_config.id, source="api", model_name=model_name,
+    ok, code, msg, effective, reason, retry_after = check_coin_budget(
+        g.entity.id, model_config.id, source="api", model_name=model_name, model_config=model_config,
     )
     if not ok:
         if code == HTTPStatus.TOO_MANY_REQUESTS:
@@ -545,7 +544,6 @@ def _preflight(model_name: str):
             # shortly", an exhausted coin budget means "stop until it refills".
             # A bare 429 cannot say which, so use the taxonomy the rest of /v1
             # already follows — the OpenAI SDK branches on `code`.
-            retry_after = coin_retry_after(g.entity.id)
             headers = {"Retry-After": str(retry_after)} if retry_after is not None else None
             return None, None, None, _err(
                 msg, "insufficient_quota", code,
