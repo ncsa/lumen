@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Lumen CLI login (OAuth device flow) + model catalog sync into opencode.json.
+# Lumen CLI login (OAuth device flow) + model catalog sync into the opencode
+# config (opencode.json or opencode.jsonc).
 set -euo pipefail
 
 RC_BLOCK_BEGIN="# >>> lumen >>>"
@@ -20,7 +21,10 @@ usage: lumen.sh [-s SERVER] [-k|--keyname NAME] [--author LABEL]
                        or a number of hours, days or weeks, e.g. 12h, 30d,
                        8w (default: the server's maximum). Only used when a
                        new key is requested; the approver can change it
-      --opencode       Sync the model catalog into opencode.json (default)
+      --opencode       Sync the model catalog into the opencode config
+                       (default): $OPENCODE_CONFIG, else
+                       ~/.config/opencode/opencode.json, else
+                       ~/.config/opencode/opencode.jsonc, created if missing
       --no-opencode    Only authenticate and store the key
       --relogin        Request a new key even if one is stored; the newly
                        issued key always replaces the stored one
@@ -353,9 +357,62 @@ resolve_key() {
   device_login
 }
 
+# Sets OPENCODE_FILE to the opencode config to update: $OPENCODE_CONFIG,
+# else opencode.json (it wins when both exist), else opencode.jsonc. A
+# missing file is created, owner-only, with just the schema line.
+resolve_opencode_config() {
+  local dir="$HOME/.config/opencode"
+  if [[ -n "${OPENCODE_CONFIG:-}" ]]; then
+    OPENCODE_FILE="$OPENCODE_CONFIG"
+  elif [[ -f "$dir/opencode.json" ]]; then
+    OPENCODE_FILE="$dir/opencode.json"
+  else
+    OPENCODE_FILE="$dir/opencode.jsonc"
+  fi
+  if [[ ! -f "$OPENCODE_FILE" ]]; then
+    mkdir -p "$(dirname "$OPENCODE_FILE")"
+    (umask 077 && printf '{"$schema": "https://opencode.ai/config.json"}\n' > "$OPENCODE_FILE")
+    echo "Created $OPENCODE_FILE"
+  fi
+}
+
+# JSONC -> JSON for jq: drops // and /* */ comments and trailing commas
+# before } or ], but never inside strings (so "https://..." survives). With
+# check=1 it prints nothing and exits 0 only if the input has comments.
+JSONC_AWK='
+  function out(s) { if (!check) printf "%s", s }
+  {
+    line = $0 "\n"; n = length(line)
+    for (i = 1; i <= n; i++) {
+      c = substr(line, i, 1)
+      if (blk) { if (c == "*" && substr(line, i + 1, 1) == "/") { blk = 0; i++ }; continue }
+      if (str) {
+        out(c)
+        if (esc) esc = 0
+        else if (c == "\\") esc = 1
+        else if (c == "\"") str = 0
+        continue
+      }
+      if (c == "/" && substr(line, i + 1, 1) == "/") { found = 1; if (check) exit; i = n - 1; continue }
+      if (c == "/" && substr(line, i + 1, 1) == "*") { found = 1; if (check) exit; blk = 1; i++; continue }
+      if (pend != "") {
+        if (c ~ /[ \t\r\n]/) { pend = pend c; continue }
+        if (c == "}" || c == "]") pend = substr(pend, 2)
+        out(pend); pend = ""
+      }
+      if (c == ",") { pend = c; continue }
+      if (c == "\"") str = 1
+      out(c)
+    }
+  }
+  END { if (check) exit !found; out(pend) }
+'
+jsonc_to_json() { awk -v check=0 "$JSONC_AWK" "$1"; }
+jsonc_has_comments() { awk -v check=1 "$JSONC_AWK" "$1"; }
+
 sync_models() {
-  local config="${OPENCODE_CONFIG:-"$HOME/.config/opencode/opencode.json"}"
-  [[ -f "$config" ]] || die "config not found: $config"
+  resolve_opencode_config
+  local config="$OPENCODE_FILE"
 
   local models_json code
   if ! models_json=$(curl -sS -H "Authorization: Bearer $LUMEN_API_KEY" -w $'\n%{http_code}' "$SERVER/v1/models"); then
@@ -404,15 +461,25 @@ sync_models() {
     die "Lumen returned no models; leaving $config untouched"
   fi
 
-  old_models=$(jq '.provider.lumen.models // {}' "$config")
+  old_models=$(jsonc_to_json "$config" | jq '.provider.lumen.models // {}')
 
   added=$(comm -23 <(jq -r 'keys[]' <<<"$new_models") <(jq -r 'keys[]' <<<"$old_models"))
   removed=$(comm -13 <(jq -r 'keys[]' <<<"$new_models") <(jq -r 'keys[]' <<<"$old_models"))
 
+  # The rewrite is plain JSON, so comments are lost: keep the original once.
+  if jsonc_has_comments "$config"; then
+    if [[ -e "$config.bak" ]]; then
+      echo "warning: comments in $config are not kept when it is rewritten (an earlier copy is in $config.bak)" >&2
+    else
+      cp -p "$config" "$config.bak"
+      echo "warning: comments in $config are not kept when it is rewritten; the original is saved as $config.bak" >&2
+    fi
+  fi
+
   tmp=$(mktemp "$config.tmp.XXXXXX")
   trap 'rm -f "$tmp"' EXIT
 
-  jq --argjson models "$new_models" --arg base "$SERVER" '
+  jsonc_to_json "$config" | jq --argjson models "$new_models" --arg base "$SERVER" '
     (if .provider and .provider.lumen then .provider.lumen else null end) as $lumen
     | .provider = ((.provider // {}) + {lumen: (
         if $lumen then
@@ -430,7 +497,7 @@ sync_models() {
       then .enabled_providers = ((.enabled_providers // []) + ["lumen"])
       else .
       end
-  ' "$config" > "$tmp"
+  ' > "$tmp"
   mv "$tmp" "$config"
   trap 'rm -rf "$TMPDIR_LUMEN"' EXIT
 
