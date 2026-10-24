@@ -101,7 +101,8 @@ The model detail page, `/model/<id>?range=` (ids may contain `/`), shows for one
 - the status, healthy / configured instances, uptime, peak req/min, the description and the
   status strip over the range;
 - input and output price charts: the models.dev p5–p95 band, the models.dev median and our
-  price, one point per local day;
+  price, per bucket below 7d (a stepped line, stepping at local midnight when the price
+  changed), one point per local day from 7d up;
 - requests and tokens: below 7d the average req/min and tok/min per bucket from the samples,
   from 7d up the daily totals, with estimated or not yet final days drawn lighter; a dashed
   line marks the range average. Tokens show output above a centred zero line and input below
