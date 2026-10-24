@@ -3,7 +3,7 @@ import logging
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
@@ -238,3 +238,39 @@ def test_key_ttl_choices_selected(app, restore_config, cap, selected, expected):
     app.config["KEY_TTL"] = cap
     with app.app_context():
         assert key_ttl_choices(selected) == expected
+
+
+def test_revoke_if_expired_leaves_a_key_refreshed_after_it_was_loaded(app, test_user):
+    """An OAuth overwrite that refreshes the row after a request loaded it overdue must survive.
+
+    The refresh commits through a separate connection, so the request's object
+    still holds the old, overdue expiry.
+    """
+    with app.app_context():
+        key = _add_key("race", test_user["id"], expires_at=utcnow() - timedelta(minutes=1))
+        db.session.commit()
+        future = utcnow() + timedelta(days=1)
+        with db.engine.begin() as conn:
+            conn.execute(update(APIKey).where(APIKey.id == key.id)
+                         .values(expires_at=future, key_hash="new".ljust(64, "0")))
+
+        # The old request is still rejected...
+        assert revoke_if_expired(key) is True
+        # ...but the refreshed key stays live, with its new expiry.
+        db.session.refresh(key)
+        assert (key.revoked_at, key.expires_at) == (None, future)
+
+
+def test_revoke_if_expired_keeps_a_manual_revoke_committed_after_it_was_loaded(app, test_user):
+    with app.app_context():
+        uid = test_user["id"]
+        key = _add_key("raced", uid, expires_at=utcnow() - timedelta(minutes=1))
+        db.session.commit()
+        revoked_at = utcnow()
+        with db.engine.begin() as conn:
+            conn.execute(update(APIKey).where(APIKey.id == key.id)
+                         .values(revoked_at=revoked_at, revoked_by_entity_id=uid))
+
+        assert revoke_if_expired(key) is True
+        db.session.refresh(key)
+        assert (key.revoked_at, key.revoked_by_entity_id) == (revoked_at, uid)

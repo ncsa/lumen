@@ -132,14 +132,17 @@ def expire_keys() -> int:
 def revoke_if_expired(api_key: APIKey) -> bool:
     """Revoke ``api_key`` now if it is live but past its expiry. Commits if it does.
 
-    Returns True when the key was overdue (and is now revoked).
+    Returns True when the key was overdue as loaded, so the caller must reject it.
     """
-    if api_key.revoked_at is not None or api_key.expires_at is None or api_key.expires_at > utcnow():
+    now = utcnow()
+    if api_key.revoked_at is not None or api_key.expires_at is None or api_key.expires_at > now:
         return False
-    # Guarded like expire_keys, so a concurrent manual revoke is never overwritten.
+    # Guarded like expire_keys on the row as it is now, not as it was loaded: a
+    # concurrent manual revoke is never overwritten, and a key an OAuth overwrite
+    # refreshed in the meantime (new secret, new expiry) is left alone.
     db.session.execute(
         update(APIKey)
-        .where(APIKey.id == api_key.id, APIKey.revoked_at.is_(None))
+        .where(APIKey.id == api_key.id, APIKey.revoked_at.is_(None), APIKey.expires_at <= now)
         .values(revoked_at=APIKey.expires_at)
     )
     db.session.commit()
