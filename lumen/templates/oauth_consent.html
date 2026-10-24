@@ -63,10 +63,10 @@
   <div class="form-check">
     <input class="form-check-input" type="checkbox" id="overwrite-key" name="overwrite">
     <label class="form-check-label" for="overwrite-key">
-      Overwrite key &ldquo;{{ req.requested_name }}&rdquo;
+      Replace the secret of key &ldquo;{{ req.requested_name }}&rdquo;
     </label>
     <div class="form-text">
-      The old key keeps working until the application collects the new one, then it stops working.
+      Keeps the key's name and usage stats. The current secret keeps working until the application collects the new one, then it stops working.
     </div>
   </div>
   {% endif %}
