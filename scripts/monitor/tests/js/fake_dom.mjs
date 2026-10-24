@@ -24,21 +24,25 @@ export function fakeElement(props = {}) {
   };
 }
 
+// Every FakeChart built since the latest runPage call, in construction order. Each call starts a new
+// array, so the `charts` a call returned stays valid after the next call.
+export let charts = [];
+
 export class FakeChart {
-  constructor(_ctx, config) { this.data = config.data; this.options = config.options; }
+  constructor(_ctx, config) {
+    this.config = config; this.data = config.data; this.options = config.options;
+    charts.push(this);
+  }
   update() {}
   destroy() {}
 }
 
 // Runs common.js and then `script` in one context. Each fetch stays pending until the test settles it.
-// `charts` collects every chart the page draws, in order.
-export function runPage(script, document) {
+// `Chart` replaces FakeChart in the page; only FakeChart and its subclasses are recorded in `charts`.
+export function runPage(script, document, { Chart = FakeChart } = {}) {
+  charts = [];
   const requests = [];
   const timers = [];
-  const charts = [];
-  const Chart = class extends FakeChart {
-    constructor(ctx, config) { super(ctx, config); charts.push(this); }
-  };
   const context = {
     document, Chart, URL, URLSearchParams, Promise, Error, Number, String, Date, Math, Object, Array, isFinite,
     window: { location: { href: 'http://monitor.test/' }, history: { replaceState() {} } },
