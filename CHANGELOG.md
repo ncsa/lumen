@@ -16,6 +16,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Added
 
+- Monitor: opening a model keeps the overview's time range. The model page gains a cost / benefit chart, with benefit (input and output tokens at our model prices) as bars against hardware cost as a red dashed line. The tokens chart now shows output tokens above the centre line and input tokens below, each on its own scale. Lumen's `/v1/models?tokens=true` adds per-model token counts for the monitoring token only.
 - Add a standalone monitoring service in `scripts/monitor` that tracks Lumen health, uptime and response time, and records daily models.dev, Lumen and hardware/energy costs plus requests and tokens, with a status dashboard and per-model graphs.
 - Publish the monitor image as `ncsa/lumen-monitor` and `ghcr.io/ncsa/lumen-monitor`, versioned with Lumen; lint and Docker CI run as a matrix over Lumen and the monitor.
 - API keys can expire: users choose or change a key's TTL, capped by and defaulting to api.keys.ttl (admin API settings; 0 = never); expired keys are revoked (#71)

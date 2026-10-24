@@ -54,11 +54,11 @@ def add(session_factory, *rows):
         session.commit()
 
 
-def sample(minutes_ago, status="ok", rpm=None, tpm=None, healthy=1, configured=2):
+def sample(minutes_ago, status="ok", rpm=None, tpm=None, healthy=1, configured=2, itpm=None, otpm=None):
     return Sample(model=MODEL, sampled_at=NOW - timedelta(minutes=minutes_ago), status=status,
                   configured=configured, healthy=healthy, requests_last_minute=rpm,
-                  input_tokens_last_minute=None if tpm is None else tpm * 3 // 4,
-                  output_tokens_last_minute=None if tpm is None else tpm // 4)
+                  input_tokens_last_minute=itpm if tpm is None else tpm * 3 // 4,
+                  output_tokens_last_minute=otpm if tpm is None else tpm // 4)
 
 
 def split_tokens(values):
@@ -106,10 +106,12 @@ def test_short_ranges_use_per_bucket_rates(env):
         sample(120, rpm=100))  # outside 1h
     data = get(env, "1h")
     points = data["traffic"]["points"]
-    assert points[-1] == {"t": "2026-10-17T16:59:00Z", "requests": 5, "tokens": 400, "estimated": False}
+    assert points[-1] == {"t": "2026-10-17T16:59:00Z", "requests": 5, "tokens": 400,
+                          "input_tokens": 300, "output_tokens": 100, "estimated": False}
     assert points[-10]["requests"] == 2 and points[-10]["tokens"] == 200
     assert points[0]["requests"] is None
-    assert data["traffic"]["average"] == {"requests": pytest.approx((5 + 2) / 2), "tokens": pytest.approx(300)}
+    assert data["traffic"]["average"] == {"requests": pytest.approx((5 + 2) / 2), "tokens": pytest.approx(300),
+                                          "input_tokens": pytest.approx(225), "output_tokens": pytest.approx(75)}
     assert data["instances"]["points"][-1] == {"t": "2026-10-17T16:59:00Z", "healthy": 1, "configured": 2}
     assert data["instances"]["points"][-10]["healthy"] == 2
 
@@ -124,12 +126,49 @@ def test_daily_series_from_7d_mark_inexact_days(env):
     for range_key in ("7d", "30d", "1y"):
         points = get(env, range_key)["traffic"]["points"]
         assert points[-3:] == [
-            {"t": "2026-10-15", "requests": 100.0, "tokens": 1e6, "estimated": False},
-            {"t": "2026-10-16", "requests": 200.0, "tokens": 2e6, "estimated": True},
-            {"t": "2026-10-17", "requests": 50.0, "tokens": 5e5, "estimated": True},  # not final yet
+            {"t": "2026-10-15", "requests": 100.0, "tokens": 1e6, "input_tokens": 7.5e5, "output_tokens": 2.5e5, "estimated": False},
+            {"t": "2026-10-16", "requests": 200.0, "tokens": 2e6, "input_tokens": 1.5e6, "output_tokens": 5e5, "estimated": True},
+            {"t": "2026-10-17", "requests": 50.0, "tokens": 5e5, "input_tokens": 3.75e5, "output_tokens": 1.25e5,
+             "estimated": True},  # not final yet
         ]
-        assert points[-4] == {"t": "2026-10-14", "requests": None, "tokens": None, "estimated": False}
+        assert points[-4] == {"t": "2026-10-14", "requests": None, "tokens": None, "input_tokens": None, "output_tokens": None,
+                              "estimated": False}
     assert get(env, "7d")["traffic"]["average"]["requests"] == pytest.approx(350 / 3)
+
+
+def test_per_bucket_split_tokens_and_averages(env):
+    _, sf, _ = env
+    add(sf, sample(0.5, itpm=400, otpm=100), sample(0.25, itpm=600, otpm=300),
+        sample(10, itpm=40, otpm=10),
+        sample(20, rpm=1))  # no token counts
+    data = get(env, "1h")
+    points = data["traffic"]["points"]
+    assert points[-1]["input_tokens"] == 500 and points[-1]["output_tokens"] == 200 and points[-1]["tokens"] == 700
+    assert points[-10]["input_tokens"] == 40 and points[-10]["output_tokens"] == 10 and points[-10]["tokens"] == 50
+    assert points[-20] == {"t": "2026-10-17T16:40:00Z", "requests": 1, "tokens": None,
+                           "input_tokens": None, "output_tokens": None, "estimated": False}
+    average = data["traffic"]["average"]
+    # the averages only cover points that have token counts
+    assert average["input_tokens"] == pytest.approx((500 + 40) / 2)
+    assert average["output_tokens"] == pytest.approx((200 + 10) / 2)
+    assert average["tokens"] == pytest.approx((700 + 50) / 2)
+
+
+def test_per_day_split_tokens_and_averages(env):
+    _, sf, _ = env
+    d1, d2 = TODAY - timedelta(days=2), TODAY - timedelta(days=1)
+    add(sf, daily(d1, "lumen", requests=10.0, final=True),  # a day without token counts
+        daily(d2, "lumen", input_tokens=4e6, output_tokens=1e6, final=True),
+        daily(TODAY, "lumen", input_tokens=2e5, output_tokens=1e5))
+    traffic = get(env, "30d")["traffic"]
+    assert [(p["t"], p["tokens"], p["input_tokens"], p["output_tokens"]) for p in traffic["points"][-3:]] == [
+        ("2026-10-15", None, None, None),
+        ("2026-10-16", 5e6, 4e6, 1e6),
+        ("2026-10-17", 3e5, 2e5, 1e5),
+    ]
+    assert traffic["average"]["input_tokens"] == pytest.approx((4e6 + 2e5) / 2)
+    assert traffic["average"]["output_tokens"] == pytest.approx((1e6 + 1e5) / 2)
+    assert traffic["average"]["tokens"] == pytest.approx((5e6 + 3e5) / 2)
 
 
 def test_price_band_median_and_ours_per_day(env):
