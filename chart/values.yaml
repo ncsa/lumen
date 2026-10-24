@@ -12,11 +12,11 @@ replicaCount: 1
 wsgiProcesses: 1
 
 # -- Concurrent requests served per pod (a2wsgi thread pool). Requests beyond
-# this queue. Use "auto" to derive it from this pod's connection pool
-# (database.poolSize + database.maxOverflow, clamped to 10-64); a number sets it
-# directly, in which case keep it at or below that sum or the extra threads just
-# block on the pool.
-wsgiWorkers: 10
+# this queue. "auto" sets it to 2x this pod's DB pool capacity
+# (database.poolSize + database.maxOverflow), clamped to 10-256: streaming
+# requests release their connection before the upstream LLM call, so most busy
+# threads hold no connection. A number sets it directly.
+wsgiWorkers: "auto"
 
 # Seconds a worker thread may wait to hand one response chunk to the server
 # before the client is declared gone and the thread reclaimed. This is a stall

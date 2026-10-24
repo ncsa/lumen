@@ -174,6 +174,7 @@ models:
 |-----------|---------|-------------|
 | `replicaCount` | `1` | Number of Lumen pods |
 | `wsgiProcesses` | `1` | uvicorn worker processes per pod (wired to `--workers` and `WEB_CONCURRENCY`); >1 requires `api.prometheus.multiprocDir` |
+| `wsgiWorkers` | `"auto"` | Concurrent requests per pod (a2wsgi threads); `"auto"` = 2× `database.poolSize + database.maxOverflow`, clamped to 10–256; a number sets it directly |
 | `wsgiSendTimeout` | `300` | Seconds a worker may block handing one response chunk to the server before the client is treated as gone |
 | `startupProbe.periodSeconds` / `failureThreshold` | `5` / `360` | Startup probe budget (30 min by default). Must cover `flask db upgrade` **plus** uvicorn startup — see [Database Migrations](#database-migrations) |
 | `startupProbe.initialDelaySeconds` / `timeoutSeconds` | `10` / `5` | Startup probe delay and per-probe timeout |

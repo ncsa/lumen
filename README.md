@@ -340,22 +340,21 @@ rate_limiting:
   # storage_url: redis://localhost:6379/0  # optional; use Redis in multi-worker deployments
 ```
 
-By default, limits are tracked in-memory (per-process). For multi-worker deployments (e.g. gunicorn with multiple workers), set `storage_url` to a shared Redis instance so limits are enforced across all workers. Changing `storage_url` requires a restart; changing `limit` takes effect within ~5 seconds (hot-reloaded).
+By default, limits are tracked in-memory (per-process). For multi-worker deployments (e.g. uvicorn with `--workers` > 1), set `storage_url` to a shared Redis instance so limits are enforced across all workers. Changing `storage_url` requires a restart; changing `limit` takes effect within ~5 seconds (hot-reloaded).
 
 ### Request concurrency
 
-Lumen is a WSGI app served through `a2wsgi` under uvicorn, so each worker process serves requests from a thread pool. That pool holds **10 threads by default** — an 11th concurrent request waits until a thread frees up. Set `LUMEN_WSGI_WORKERS` to change it (Helm: `wsgiWorkers`):
+Lumen is a WSGI app served through `a2wsgi` under uvicorn, so each worker process serves requests from a thread pool. Requests beyond the pool size wait until a thread frees up. `LUMEN_WSGI_WORKERS` sets the pool size (Helm: `wsgiWorkers`) and defaults to `auto`, which derives it from this process's connection pool; a positive integer sets it directly:
 
 ```bash
 LUMEN_WSGI_WORKERS=32 uvicorn asgi:app --host 0.0.0.0 --port 5001
-
-# or derive it from this process's connection pool
-LUMEN_WSGI_WORKERS=auto uvicorn asgi:app --host 0.0.0.0 --port 5001
 ```
 
-A thread inside a database call holds a pooled connection, so `pool_size + max_overflow` (see below) is the point past which extra threads stop adding throughput and just wait out `pool_timeout`. `auto` sets the thread count to that sum, clamped to 10–64: a large `pool_size` costs little (connections open on demand) but the same number of OS threads does, so going above 64 has to be asked for by number. `auto` falls back to 10 when the pool is unsized (SQLite, or `max_connections` unavailable at startup), and because the pool is itself divided across workers × replicas, it scales the thread count down as you add processes or pods.
+`auto` sets the thread count to 2 × (`pool_size + max_overflow`) (see below), clamped to 10–256. Streaming requests release their database connection before the upstream LLM call, so most busy threads hold no connection and the pool can serve twice as many threads as it has connections. If non-streaming database work ever saturates the pool, the extra requests wait up to `pool_timeout` for a connection; set a number to size it yourself. Because the pool is itself divided across workers × replicas, `auto` scales the thread count down as you add processes or pods.
 
-`auto` sizes for the worst case where every thread is in a database call. Streaming paths release their connection before the LLM call, so if your traffic is mostly streaming you can safely set a number well above `pool_size + max_overflow` instead. Either way, raising threads is usually cheaper than adding worker processes (`--workers` / `WEB_CONCURRENCY`), which divide the same connection budget further and duplicate every per-process cache.
+`auto` falls back to 10 only when the pool is unsized: on SQLite, or on PostgreSQL when `max_connections` can't be queried at startup and no `pool_size` is configured. An explicit `pool_size` (and `max_overflow`) is still used in that case. Any value other than a positive integer or `auto` (for example `0` or `many`) logs a warning once and is treated as `auto`. The resolved count is logged at startup.
+
+Raising threads is usually cheaper than adding worker processes (`--workers` / `WEB_CONCURRENCY`), which divide the same connection budget further and duplicate every per-process cache.
 
 A thread handing a response chunk to the server will wait at most `LUMEN_WSGI_SEND_TIMEOUT` seconds (default 300; Helm: `wsgiSendTimeout`) before declaring the client gone, logging a warning, and releasing itself:
 

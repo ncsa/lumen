@@ -36,6 +36,15 @@ replica count comes from the `LUMEN_REPLICAS` env var (set automatically by the 
 chart from `replicaCount`). Pre-ping is always enabled to silently replace stale
 connections. SQLite has no connection limit, so pool sizing is skipped for it.
 
+The pool also sizes each process's request thread pool. With `LUMEN_WSGI_WORKERS`
+unset or `auto` (the default; Helm: `wsgiWorkers`), a process serves
+2 × (`pool_size` + `max_overflow`) concurrent requests, clamped to 10–256, since
+streaming requests release their connection before the upstream LLM call. It falls
+back to 10 only when the pool is unsized: on SQLite, or when `max_connections` can't
+be queried and no `pool_size` is configured; an explicit `pool_size` is still used
+then. A positive integer sets the thread count directly; any other value warns once
+and is treated as `auto`.
+
 Optional overrides under `app.database`:
 
 | Field | Description | Default |

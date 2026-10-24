@@ -501,7 +501,7 @@ Footer content is driven by optional `theme.yaml` keys that each theme's `templa
 
 | Component | Concern |
 |---|---|
-| Synchronous Flask workers | Each LLM streaming response holds a worker thread for the full duration (seconds to minutes). Under sustained concurrent load, thread exhaustion is the primary scaling limit. `--workers N` + `--threads M` helps but does not eliminate this. Consider migrating the streaming path to an async framework (Quart, FastAPI) for the `/v1` routes. |
+| Synchronous Flask workers | Each LLM streaming response holds a worker thread for the full duration (seconds to minutes). Under sustained concurrent load, thread exhaustion is the primary scaling limit. More uvicorn processes (`--workers N`) or more threads per process (`LUMEN_WSGI_WORKERS`) help but do not eliminate this. Consider migrating the streaming path to an async framework (Quart, FastAPI) for the `/v1` routes. |
 | Background workers per process | With N uvicorn workers only one runs background threads; if that process dies, health checks and coin refills pause until the process restarts. There is no leader-election or external scheduler. |
 | `EntityBalance` write contention | Every request writes to `entity_balances` for the coin deduction. Under high concurrency from a single entity, this row becomes a hot spot. `SELECT ... FOR UPDATE` serialises these writes; a high-QPS client will queue behind itself. |
 | `model_stats` upsert | After every request, `model_stats` is upserted for (entity, model, source). Under concurrent requests this becomes a serialised bottleneck per entity/model pair. Batching or an async write queue would help at scale. |
