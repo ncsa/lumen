@@ -108,6 +108,15 @@ def home(tmp_path, monkeypatch):
     return home
 
 
+@pytest.fixture()
+def bare_home(tmp_path):
+    """A home without any opencode config; pass opencode_env=False to
+    run_script so lumen.sh has to find (or create) the config itself."""
+    home = tmp_path / "home"
+    home.mkdir()
+    return home
+
+
 # Directory holding a no-op `sleep`, first on run_script's default PATH so the
 # device flow's poll interval costs nothing. Tests that check the sleeps pass
 # their own PATH via fake_bin.
@@ -122,13 +131,15 @@ def _no_sleep_bin(tmp_path_factory):
     (NO_SLEEP_BIN / "sleep").chmod(0o755)
 
 
-def run_script(home, server_port_or_url=None, args=(), env_extra=None, input=b"", timeout=30):
+def run_script(home, server_port_or_url=None, args=(), env_extra=None, input=b"", timeout=30,
+               opencode_env=True):
     env = {
         "PATH": f"{NO_SLEEP_BIN}:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin",
         "SHELL": "/bin/bash",
     }
     if home is not None:
         env["HOME"] = str(home)
+    if home is not None and opencode_env:
         env["OPENCODE_CONFIG"] = str(home / ".config" / "opencode" / "opencode.json")
     if server_port_or_url:
         url = server_port_or_url if "://" in str(server_port_or_url) else f"http://127.0.0.1:{server_port_or_url}"
@@ -460,6 +471,107 @@ def test_sync_writes_provider_block(home, lumen_server):
     assert "alias of gpt-demo" in lumen["models"]["gpt-alias"]["name"]
     assert cfg["enabled_providers"] == ["lumen"]
     assert b"Updated 2 models" in r.stdout
+
+
+def store_test_key(home, port):
+    keys = home / ".config" / "lumen" / "keys.json"
+    keys.parent.mkdir(parents=True)
+    keys.write_text(json.dumps({host_key(port): "sk_stored_key_000"}))
+
+
+def test_sync_creates_jsonc_when_no_config(bare_home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(bare_home, port)
+    r = run_script(bare_home, port, opencode_env=False)
+    assert r.returncode == 0, r.stderr
+    oc = bare_home / ".config" / "opencode"
+    assert not (oc / "opencode.json").exists()
+    cfg_path = oc / "opencode.jsonc"
+    assert stat.S_IMODE(cfg_path.stat().st_mode) == 0o600
+    cfg = json.loads(cfg_path.read_text())
+    assert cfg["$schema"] == "https://opencode.ai/config.json"
+    assert set(cfg["provider"]["lumen"]["models"]) == {"gpt-demo", "gpt-alias"}
+    assert b"warning" not in r.stderr
+    assert not (oc / "opencode.jsonc.bak").exists()
+
+
+JSONC_WITH_COMMENTS = """\
+{
+  // line comment with "quotes"
+  "$schema": "https://opencode.ai/config.json", /* block comment */
+  "theme": "a//b /* not a comment */",
+  "note": "say \\"//hi\\", ok",
+  /* comment
+     over two lines */
+  "provider": {
+    "other": {"options": {"baseURL": "https://example.com/v1",}, "list": [1, 2, ],},
+  },
+}
+"""
+
+
+def test_sync_reads_jsonc_with_comments(bare_home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(bare_home, port)
+    oc = bare_home / ".config" / "opencode"
+    oc.mkdir(parents=True)
+    (oc / "opencode.jsonc").write_text(JSONC_WITH_COMMENTS)
+    r = run_script(bare_home, port, opencode_env=False)
+    assert r.returncode == 0, r.stderr
+    assert not (oc / "opencode.json").exists()
+    cfg = json.loads((oc / "opencode.jsonc").read_text())
+    assert cfg["theme"] == "a//b /* not a comment */"
+    assert cfg["note"] == 'say "//hi", ok'
+    assert cfg["provider"]["other"] == {"options": {"baseURL": "https://example.com/v1"}, "list": [1, 2]}
+    assert set(cfg["provider"]["lumen"]["models"]) == {"gpt-demo", "gpt-alias"}
+    assert b"warning: comments in" in r.stderr
+    assert (oc / "opencode.jsonc.bak").read_text() == JSONC_WITH_COMMENTS
+    # The .bak is one-time: a later run keeps the first original.
+    (oc / "opencode.jsonc").write_text("// newer\n" + JSONC_WITH_COMMENTS)
+    r = run_script(bare_home, port, opencode_env=False)
+    assert r.returncode == 0, r.stderr
+    assert (oc / "opencode.jsonc.bak").read_text() == JSONC_WITH_COMMENTS
+
+
+def test_sync_jsonc_with_trailing_commas_only_has_no_warning(bare_home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(bare_home, port)
+    oc = bare_home / ".config" / "opencode"
+    oc.mkdir(parents=True)
+    (oc / "opencode.jsonc").write_text('{"theme": "x",}\n')
+    r = run_script(bare_home, port, opencode_env=False)
+    assert r.returncode == 0, r.stderr
+    assert json.loads((oc / "opencode.jsonc").read_text())["theme"] == "x"
+    assert b"warning" not in r.stderr
+    assert not (oc / "opencode.jsonc.bak").exists()
+
+
+def test_sync_prefers_json_over_jsonc(bare_home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(bare_home, port)
+    oc = bare_home / ".config" / "opencode"
+    oc.mkdir(parents=True)
+    (oc / "opencode.json").write_text("{}\n")
+    (oc / "opencode.jsonc").write_text(JSONC_WITH_COMMENTS)
+    r = run_script(bare_home, port, opencode_env=False)
+    assert r.returncode == 0, r.stderr
+    cfg = json.loads((oc / "opencode.json").read_text())
+    assert set(cfg["provider"]["lumen"]["models"]) == {"gpt-demo", "gpt-alias"}
+    assert (oc / "opencode.jsonc").read_text() == JSONC_WITH_COMMENTS
+    assert not (oc / "opencode.jsonc.bak").exists()
+
+
+def test_sync_creates_missing_opencode_config_env_path(bare_home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(bare_home, port)
+    target = bare_home / "elsewhere" / "custom.json"
+    r = run_script(bare_home, port, opencode_env=False,
+                   env_extra={"OPENCODE_CONFIG": str(target)})
+    assert r.returncode == 0, r.stderr
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    cfg = json.loads(target.read_text())
+    assert set(cfg["provider"]["lumen"]["models"]) == {"gpt-demo", "gpt-alias"}
+    assert not (bare_home / ".config" / "opencode").exists()
 
 
 def test_sync_no_aliases_flag(home, lumen_server):
