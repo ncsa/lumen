@@ -512,7 +512,12 @@ def _refresh_window(conn, name, start, end):
     retries = 0
     while True:
         try:
-            conn.execute(text("CALL refresh_continuous_aggregate(:n, :s, :e)"),
+            # psycopg 3 binds server-side and the window arguments are polymorphic
+            # ("any"), so the server takes whatever type the driver sends: a naive
+            # datetime would arrive as timestamp, not the timestamptz every aggregate
+            # here buckets on. The casts pin the types in the SQL instead.
+            conn.execute(text("CALL refresh_continuous_aggregate("
+                              "CAST(:n AS regclass), CAST(:s AS timestamptz), CAST(:e AS timestamptz))"),
                          {"n": name, "s": start, "e": end})
             return retries
         except DBAPIError as exc:
