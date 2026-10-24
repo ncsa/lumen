@@ -17,6 +17,7 @@ from sqlalchemy.sql.expression import FunctionElement
 
 from lumen.blueprints.metrics.middleware import observe_stream_abort
 from lumen.extensions import db
+from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
 from lumen.models.entity_model_consent import EntityModelConsent
@@ -267,26 +268,41 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
     {model_config_id: acknowledged_at} for models where the entity has satisfied
     ALL of the model's acknowledgement requirements (needs_ack and early_access);
     the value is the most recent acknowledgement timestamp. A model without an
-    owner is public; an owned model is allowed only for its owner.
+    owner is public; an owned model is allowed only for its owner. Models with no
+    acknowledgement requirement never appear in consent_map; callers only read it
+    for a "needs_ack" status.
 
     Issues a fixed set of queries regardless of the number of models — replaces N+1
     per-model calls to get_model_access_status / has_model_consent.
     """
     if not model_config_ids:
         return {}, {}
+    return _access_info(entity_id, _model_baseline(model_config_ids))
 
-    baseline = _model_baseline(model_config_ids)
+
+def _access_info(entity_id: int, baseline: dict) -> tuple:
+    """bulk_model_access_info for an already-loaded baseline ({id: ModelConfig-like})."""
+    # Only models with an acknowledgement requirement can need a consent row;
+    # skip the query entirely when none of them has one.
+    ack_ids = [mc_id for mc_id, mc in baseline.items() if mc.needs_ack or mc.early_access]
 
     # Only models whose acknowledgement requirements are ALL satisfied appear in
     # consent_map; a requirement added after consent leaves its timestamp NULL,
     # so the model drops out and the UI re-prompts.
     consent_map = {}
-    for mc_id, row in consent_rows(entity_id, model_config_ids).items():
+    for mc_id, row in consent_rows(entity_id, ack_ids).items():
         open_tags, acknowledged_at = consent_state(baseline[mc_id], row)
         if not open_tags and acknowledged_at is not None:
             consent_map[mc_id] = acknowledged_at
 
     return _access_statuses(entity_id, baseline), consent_map
+
+
+def _model_access_info(entity_id: int, model_config_id: int, model_config=None) -> tuple:
+    """bulk_model_access_info for one model, from the already-loaded ``model_config`` if given."""
+    if model_config is None:
+        return bulk_model_access_info(entity_id, [model_config_id])
+    return _access_info(entity_id, {model_config_id: model_config})
 
 
 _rr_counters: dict = {}
@@ -304,17 +320,6 @@ def get_next_endpoint(model_config_id: int):
         idx = _rr_counters.get(model_config_id, 0) % len(endpoints)
         _rr_counters[model_config_id] = idx + 1
     return endpoints[idx]
-
-
-def _get_active_group_ids(entity_id: int) -> list:
-    """Return list of active group IDs the entity belongs to."""
-    return [
-        m.group_id for m in db.session.execute(
-            select(GroupMember)
-            .join(Group, Group.id == GroupMember.group_id)
-            .where(GroupMember.entity_id == entity_id, Group.active == True)  # noqa: E712
-        ).scalars().all()
-    ]
 
 
 def get_model_access_status(entity_id: int, model_config_id: int) -> str:
@@ -391,15 +396,18 @@ def ack_notice_text(mc):
     return "\n\n".join(n for n in model_notices(mc) if n) or None
 
 
-def get_model_access(entity_id: int, model_config_id: int) -> bool:
+def get_model_access(entity_id: int, model_config_id: int, model_config=None) -> bool:
     """
     Return True if entity can access the given model, False otherwise.
 
     For models that require acknowledgement (needs_ack and/or early_access), requires
     prior consent (EntityModelConsent) covering every current requirement. There is
     no way to skip this gate: chat and API requests are held to the same rule.
+
+    ``model_config`` is the already-loaded ModelConfig (anything with its
+    attributes); passing it skips reloading the model's access columns.
     """
-    access_statuses, consent_map = bulk_model_access_info(entity_id, [model_config_id])
+    access_statuses, consent_map = _model_access_info(entity_id, model_config_id, model_config)
     status = access_statuses[model_config_id]
     if status == "blocked":
         return False
@@ -419,26 +427,68 @@ def get_pool_limit(entity_id: int):
     then to the global defaults.tokens pool. EntityLimit with max_coins == 0 blocks the entity
     regardless of groups.
     """
-    user_limit = db.session.execute(select(EntityLimit).filter_by(entity_id=entity_id)).scalar_one_or_none()
-    if user_limit is not None:
-        if float(user_limit.max_coins) == 0:
-            return None  # explicitly blocked
-        return PoolLimit(float(user_limit.max_coins), float(user_limit.refresh_coins), float(user_limit.starting_coins))
+    pool, _balance = _load_pool_state(entity_id)
+    return pool
+
+
+class PoolBalance(NamedTuple):
+    coins_left: float
+    last_refill_at: Optional[datetime]
+
+
+def _load_pool_state(entity_id: int) -> tuple:
+    """Return (PoolLimit | None, PoolBalance | None) for an entity in one statement.
+
+    Loads the entity's own limit, its balance and the limits of its active
+    groups together (one row per active group with a limit, or a single row
+    without one), then applies get_pool_limit's rules. The balance is None when
+    the entity has no balance row yet.
+    """
+    group_limits = (
+        select(GroupMember.entity_id, GroupLimit.max_coins, GroupLimit.refresh_coins, GroupLimit.starting_coins)
+        .join(Group, Group.id == GroupMember.group_id)
+        .join(GroupLimit, GroupLimit.group_id == GroupMember.group_id)
+        .where(GroupMember.entity_id == entity_id, Group.active == True)  # noqa: E712
+        .subquery()
+    )
+    rows = db.session.execute(
+        select(
+            EntityLimit.id.label("limit_id"), EntityLimit.max_coins, EntityLimit.refresh_coins,
+            EntityLimit.starting_coins,
+            EntityBalance.id.label("balance_id"), EntityBalance.coins_left, EntityBalance.last_refill_at,
+            group_limits.c.max_coins.label("group_max_coins"),
+            group_limits.c.refresh_coins.label("group_refresh_coins"),
+            group_limits.c.starting_coins.label("group_starting_coins"),
+        )
+        .select_from(Entity)
+        .outerjoin(EntityLimit, EntityLimit.entity_id == Entity.id)
+        .outerjoin(EntityBalance, EntityBalance.entity_id == Entity.id)
+        .outerjoin(group_limits, group_limits.c.entity_id == Entity.id)
+        .where(Entity.id == entity_id)
+    ).all()
+    first = rows[0] if rows else None
+
+    balance = None
+    if first is not None and first.balance_id is not None:
+        balance = PoolBalance(float(first.coins_left), first.last_refill_at)
+
+    if first is not None and first.limit_id is not None:
+        if float(first.max_coins) == 0:
+            return None, balance  # explicitly blocked
+        return PoolLimit(float(first.max_coins), float(first.refresh_coins), float(first.starting_coins)), balance
 
     # No user-level limit — fall back to best group limit, then the global default pool.
-    group_ids = _get_active_group_ids(entity_id)
-    if group_ids:
-        group_limits = db.session.execute(
-            select(GroupLimit).where(GroupLimit.group_id.in_(group_ids))
-        ).scalars().all()
-        best = best_group_pool_limit(group_limits)
-        if best is not None:
-            return best
+    best = best_group_pool_limit(
+        PoolLimit(r.group_max_coins, r.group_refresh_coins, r.group_starting_coins)
+        for r in rows if r.group_max_coins is not None
+    )
+    if best is not None:
+        return best, balance
 
     td = current_app.config.get("TOKEN_DEFAULTS")
     if td and float(td["max"]) != 0:
-        return PoolLimit(float(td["max"]), float(td["refresh"]), float(td["starting"]))
-    return None
+        return PoolLimit(float(td["max"]), float(td["refresh"]), float(td["starting"])), balance
+    return None, balance
 
 
 def entity_has_unlimited_pool(entity_id_column):
@@ -478,15 +528,15 @@ def entity_has_unlimited_pool(entity_id_column):
     return own_unlimited_exists | (~own_limit_exists & inherited_unlimited)
 
 
-def get_effective_limit(entity_id: int, model_config_id: int):
+def get_effective_limit(entity_id: int, model_config_id: int, model_config=None):
     """
     Return (max_coins, refresh_coins, starting_coins) or None if blocked/no access.
 
     Checks model access (including acknowledgement) first, then returns the
     entity's coin pool.
-    max_coins == -2 means unlimited.
+    max_coins == -2 means unlimited. ``model_config`` is as for get_model_access.
     """
-    if not get_model_access(entity_id, model_config_id):
+    if not get_model_access(entity_id, model_config_id, model_config):
         return None
     return get_pool_limit(entity_id)
 
@@ -536,7 +586,7 @@ def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float, effec
     db.session.flush()
 
 
-def _denial_reason(entity_id: int, model_config_id: int) -> str:
+def _denial_reason(pool, access_status: str) -> str:
     """Return the 403 reason for an entity denied access to a model.
 
     ``get_effective_limit`` collapses "blocked", "no usable coin pool" and
@@ -546,25 +596,30 @@ def _denial_reason(entity_id: int, model_config_id: int) -> str:
     entity with no usable pool is refused by the acknowledge endpoint no
     matter what it acknowledges, so labelling such a denial
     ``needs_consent`` would send the caller chasing a 404. Returns
-    "needs_consent" or "no_access". Never raises, for the same reason
-    ``observe_rejection_quietly`` does not.
+    "needs_consent" or "no_access". Pure: ``pool`` and ``access_status`` are
+    what check_coin_budget already loaded, and a denied "needs_ack" status
+    means the consent is missing.
     """
-    try:
-        if get_pool_limit(entity_id) is None:
-            return "no_access"
-        if (
-            get_model_access_status(entity_id, model_config_id) == "needs_ack"
-            and not has_model_consent(entity_id, model_config_id)
-        ):
-            return "needs_consent"
-    except Exception:  # noqa: BLE001 - instrumentation must never escalate
-        pass
+    if pool is None:
+        return "no_access"
+    if access_status == "needs_ack":
+        return "needs_consent"
     return "no_access"
 
 
+class CoinBudget(NamedTuple):
+    """Result of check_coin_budget."""
+    ok: bool
+    code: Optional[HTTPStatus]
+    msg: Optional[str]
+    effective: Optional[PoolLimit]
+    reason: Optional[str]
+    retry_after: Optional[int]
+
+
 def check_coin_budget(entity_id: int, model_config_id: int,
-                      source: str = None, model_name: str = ""):
-    """Check coin budget. Returns (ok, http_code, error_message, effective, reason).
+                      source: str = None, model_name: str = "", model_config=None) -> CoinBudget:
+    """Check coin budget. Returns a CoinBudget (ok, code, msg, effective, reason, retry_after).
 
     ``effective`` is the resolved coin pool limit (or None); pass it to subtract_coins
     afterward to avoid re-resolving model access and the pool limit per request.
@@ -573,6 +628,12 @@ def check_coin_budget(entity_id: int, model_config_id: int,
     (``"needs_consent"`` from ``"no_access"``) and a 429 (``"coin_budget"``); it
     is None on success. The web and API surfaces keep their own messages — the
     API uses the reason to emit a ``consent_required`` error code.
+
+    ``retry_after`` is set only on a 429: the seconds until the balance is next
+    credited (see coin_retry_after), or None when no refill is coming.
+
+    ``model_config`` is the already-loaded ModelConfig (anything with its
+    attributes); passing it skips reloading the model's access columns.
 
     ``source`` ("chat" or "api", matching ``request_logs.source``) and
     ``model_name`` are only used to label the rejection counter; pass them from
@@ -586,47 +647,34 @@ def check_coin_budget(entity_id: int, model_config_id: int,
     zeroed by subtract_coins afterward. This is intentional — the budget is a soft
     spending limit, not a hard reservation.
     """
-    effective = get_effective_limit(entity_id, model_config_id)
-    if effective is None:
-        reason = _denial_reason(entity_id, model_config_id)
+    access_statuses, consent_map = _model_access_info(entity_id, model_config_id, model_config)
+    status = access_statuses[model_config_id]
+    has_access = status == "allowed" or (status == "needs_ack" and model_config_id in consent_map)
+    # A blocked model is "no_access" whatever the pool, so it is not loaded.
+    pool, balance = _load_pool_state(entity_id) if status != "blocked" else (None, None)
+    if not has_access or pool is None:
+        reason = _denial_reason(pool, status)
         if source:
             observe_rejection_quietly(reason, source, model_name)
-        return False, HTTPStatus.FORBIDDEN, "No access to this model", None, reason
-    max_coins, _, _starting = effective
-    if max_coins == -2:
-        return True, None, None, effective, None
-    balance = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()
-    if balance is not None and float(balance.coins_left) <= 0:
+        return CoinBudget(False, HTTPStatus.FORBIDDEN, "No access to this model", None, reason, None)
+    if pool.max_coins == -2:
+        return CoinBudget(True, None, None, pool, None, None)
+    if balance is not None and balance.coins_left <= 0:
         if source:
             observe_rejection_quietly("coin_budget", source, model_name)
-        return False, HTTPStatus.TOO_MANY_REQUESTS, "Coin budget exhausted", None, "coin_budget"
-    return True, None, None, effective, None
+        return CoinBudget(False, HTTPStatus.TOO_MANY_REQUESTS, "Coin budget exhausted", None, "coin_budget",
+                          _retry_after(pool, balance))
+    return CoinBudget(True, None, None, pool, None, None)
 
 
-def coin_retry_after(entity_id: int) -> Optional[int]:
-    """Seconds until this entity's coin balance is next credited, or None.
-
-    ``refill_coin_balances`` credits a balance once its ``last_refill_at`` is an
-    hour old (it runs every 60s, so that instant is the earliest, not the exact
-    moment), which makes the next refill a real derivable time rather than a
-    guessed one. None means no refill is coming and the caller must send no
-    ``Retry-After`` at all: an unlimited or blocked pool, a pool whose
-    ``refresh_coins`` is 0 (it never refills — the balance only moves when an
-    admin changes it), or an entity with no balance row yet.
-
-    Never raises: a header that cannot be derived must degrade to a missing
-    header, not to a 500 on a request that was being refused cleanly.
-    """
+def _retry_after(pool, balance) -> Optional[int]:
+    """Seconds until ``balance`` is next credited under ``pool``, or None. See coin_retry_after."""
     try:
-        pool = get_pool_limit(entity_id)
         if pool is None:
             return None
         max_coins, refresh_coins, _starting = pool
         if max_coins == -2 or refresh_coins <= 0:
             return None
-        balance = db.session.execute(
-            select(EntityBalance).filter_by(entity_id=entity_id)
-        ).scalar_one_or_none()
         if balance is None or balance.last_refill_at is None:
             return None
         last_refill = balance.last_refill_at
@@ -642,6 +690,29 @@ def coin_retry_after(entity_id: int) -> Optional[int]:
     except Exception:  # noqa: BLE001 - a missing header beats a failed response
         logger.debug("could not derive Retry-After from the coin balance", exc_info=True)
         return None
+
+
+def coin_retry_after(entity_id: int) -> Optional[int]:
+    """Seconds until this entity's coin balance is next credited, or None.
+
+    ``refill_coin_balances`` credits a balance once its ``last_refill_at`` is an
+    hour old (it runs every 60s, so that instant is the earliest, not the exact
+    moment), which makes the next refill a real derivable time rather than a
+    guessed one. None means no refill is coming and the caller must send no
+    ``Retry-After`` at all: an unlimited or blocked pool, a pool whose
+    ``refresh_coins`` is 0 (it never refills — the balance only moves when an
+    admin changes it), or an entity with no balance row yet.
+
+    Never raises: a header that cannot be derived must degrade to a missing
+    header, not to a 500 on a request that was being refused cleanly.
+    check_coin_budget already returns this as ``retry_after`` on a 429.
+    """
+    try:
+        pool, balance = _load_pool_state(entity_id)
+    except Exception:  # noqa: BLE001 - a missing header beats a failed response
+        logger.debug("could not derive Retry-After from the coin balance", exc_info=True)
+        return None
+    return _retry_after(pool, balance)
 
 
 #: WSGI environ key holding the seconds the request waited for a WSGI worker.
