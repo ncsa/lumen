@@ -179,16 +179,18 @@
           label: ctx => `${ctx.dataset.label}: ${isNum(ctx.parsed.y) ? fmtUsd(ctx.parsed.y) : dash}`,
           afterBody: items => {
             const p = points[items[0]?.dataIndex];
-            if (p?.partial) return 'day not over: benefit projected to the whole day';
-            return p?.estimated ? 'estimated or not final' : '';
+            const lines = [];
+            if (p?.partial && isNum(p.benefit)) lines.push('day not over: benefit projected to the whole day');
+            if (p?.estimated) lines.push('estimated or not final');
+            return lines;
           },
         } } },
         scales: { y: { beginAtZero: true, title: { display: true, text: '$/day' } } },
       },
     });
-    const { benefit, cost, partial } = hardware.range;
+    const { benefit, cost, partial, days } = hardware.range;
     const note = isNum(benefit)
-      ? `benefit ${fmtUsd(benefit)} / cost ${fmtUsd(cost)} over the range${partial ? ' · lighter bars are estimated or not final' : ''}`
+      ? `benefit ${fmtUsd(benefit)} / cost ${fmtUsd(cost)} over the ${days} day${days === 1 ? '' : 's'} with token counts${partial ? ' · lighter bars are estimated or not final' : ''}`
       : 'no input/output token counts yet';
     document.getElementById('hardware-note').textContent = note;
   }

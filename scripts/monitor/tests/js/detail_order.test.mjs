@@ -22,7 +22,7 @@ function page() {
   return { byId, requests, timers, charts, window, rangeButtons };
 }
 
-function seriesBody(range, uptime, hardwareRange = { benefit: null, cost: null, partial: false }, traffic = undefined) {
+function seriesBody(range, uptime, hardwareRange = { benefit: null, cost: null, partial: false, days: 0 }, hardwarePoint = {}, traffic = undefined) {
   const t = '2026-10-17T16:59:00Z';
   return {
     range, model: 'org/qwen', generated_at: '2026-10-17T17:00:00Z', daily: false,
@@ -30,7 +30,7 @@ function seriesBody(range, uptime, hardwareRange = { benefit: null, cost: null, 
     strip: [{ t, status: 'ok' }],
     prices: [{ day: '2026-10-17', input_price: 0.2, output_price: 0.8, input_median: 0.25, input_p5: 0.1, input_p95: 0.4, output_median: 1, output_p5: 0.5, output_p95: 2 }],
     traffic: traffic ?? { unit: 'minute', points: [{ t, requests: 2, tokens: null, estimated: false }], average: { requests: 2, tokens: null } },
-    hardware: { points: [{ day: '2026-10-17', benefit: hardwareRange.benefit, cost: 24, partial: true, estimated: false }], range: hardwareRange },
+    hardware: { points: [{ day: '2026-10-17', benefit: hardwareRange.benefit, cost: 24, partial: true, estimated: false, ...hardwarePoint }], range: hardwareRange },
     instances: { unit: 'bucket', points: [{ t, healthy: 1, configured: 1 }] },
   };
 }
@@ -78,16 +78,16 @@ test('a failure of the newest load is still reported', async () => {
   assert.match(p.byId('load-error').textContent, /boom/);
 });
 
-test('the cost / benefit note shows both totals over the range', async () => {
+test('the cost / benefit note shows both totals over the days with token counts', async () => {
   const p = page();
-  await answer(p.requests[0], seriesBody('24h', 50, { benefit: 30.5, cost: 24, partial: false }));
-  assert.equal(p.byId('hardware-note').textContent, 'benefit $30.50 / cost $24.00 over the range');
+  await answer(p.requests[0], seriesBody('24h', 50, { benefit: 30.5, cost: 24, partial: false, days: 3 }));
+  assert.equal(p.byId('hardware-note').textContent, 'benefit $30.50 / cost $24.00 over the 3 days with token counts');
 });
 
 test('the cost / benefit note flags estimated or partial days', async () => {
   const p = page();
-  await answer(p.requests[0], seriesBody('24h', 50, { benefit: 3, cost: 12.25, partial: true }));
-  assert.equal(p.byId('hardware-note').textContent, 'benefit $3.00 / cost $12.25 over the range · lighter bars are estimated or not final');
+  await answer(p.requests[0], seriesBody('24h', 50, { benefit: 3, cost: 12.25, partial: true, days: 1 }));
+  assert.equal(p.byId('hardware-note').textContent, 'benefit $3.00 / cost $12.25 over the 1 day with token counts · lighter bars are estimated or not final');
 });
 
 // Two buckets with the split and one from before it, which only has the combined count.
@@ -105,13 +105,13 @@ const tokensChart = p => p.charts.find(c => c.data.datasets.some(d => d.label ==
 
 test('the tokens note shows the output and input averages', async () => {
   const p = page();
-  await answer(p.requests[0], seriesBody('24h', 50, undefined, splitTraffic()));
+  await answer(p.requests[0], seriesBody('24h', 50, undefined, undefined, splitTraffic()));
   assert.equal(p.byId('tokens-note').textContent, 'per minute, averaged per bucket · average out 52.5 K / in 20.5 K');
 });
 
 test('the tokens note per day flags estimated days', async () => {
   const p = page();
-  await answer(p.requests[0], seriesBody('30d', 50, undefined, splitTraffic('day', true)));
+  await answer(p.requests[0], seriesBody('30d', 50, undefined, undefined, splitTraffic('day', true)));
   assert.equal(p.byId('tokens-note').textContent, 'per day · average out 52.5 K / in 20.5 K · lighter bars are estimated or not final');
 });
 
@@ -119,13 +119,13 @@ test('the tokens note shows a dash for a side without counts', async () => {
   const p = page();
   const traffic = { unit: 'minute', points: [{ t: '2026-10-17T16:59:00Z', requests: 1, tokens: 70000, input_tokens: null, output_tokens: null, estimated: false }],
     average: { requests: 1, tokens: 70000, input_tokens: null, output_tokens: null } };
-  await answer(p.requests[0], seriesBody('1h', 50, undefined, traffic));
+  await answer(p.requests[0], seriesBody('1h', 50, undefined, undefined, traffic));
   assert.equal(p.byId('tokens-note').textContent, 'per minute, averaged per bucket · average out — / in —');
 });
 
 test('the tokens chart puts output above zero, input and unsplit points below, labelled on the left', async () => {
   const p = page();
-  await answer(p.requests[0], seriesBody('24h', 50, undefined, splitTraffic()));
+  await answer(p.requests[0], seriesBody('24h', 50, undefined, undefined, splitTraffic()));
   const chart = tokensChart(p);
   const [output, input, combined, avgOut, avgIn] = chart.data.datasets;
   assert.deepEqual([output.label, input.label], ['output (above zero)', 'input (below zero)']);
@@ -175,7 +175,7 @@ test('mirroredBounds on a range with only unsplit points', async () => {
   const t = day => ({ t: day, requests: 1, tokens: null, input_tokens: null, output_tokens: null, estimated: false });
   const traffic = { unit: 'day', points: [{ ...t('2026-10-16'), tokens: 3e7 }, { ...t('2026-10-17'), tokens: 9e7 }],
     average: { requests: 1, tokens: 6e7, input_tokens: null, output_tokens: null } };
-  await answer(p.requests[0], seriesBody('30d', 50, undefined, traffic));
+  await answer(p.requests[0], seriesBody('30d', 50, undefined, undefined, traffic));
   const { out, in: inn } = tokensChart(p).options.scales;
   assert.deepEqual([inn.min, inn.max], [-9e7, 9e7], 'the input side scales to the largest combined total');
   assert.deepEqual([out.min, out.max], [-1, 1]);
@@ -185,7 +185,7 @@ test('mirroredBounds takes an unsplit total larger than every split input', asyn
   const p = page();
   const traffic = splitTraffic();
   traffic.points[0].tokens = 250000; // the unsplit bucket
-  await answer(p.requests[0], seriesBody('24h', 50, undefined, traffic));
+  await answer(p.requests[0], seriesBody('24h', 50, undefined, undefined, traffic));
   const { in: inn } = tokensChart(p).options.scales;
   assert.deepEqual([inn.min, inn.max], [-250000, 250000]);
 });
@@ -197,10 +197,31 @@ test('mirroredBounds gives ±1 for a side with nothing drawn', () => {
   assert.deepEqual({ ...mirroredBounds([0, null, -0]) }, { min: -1, max: 1 });
 });
 
-test('the cost / benefit tooltip says a partial day is projected', async () => {
+// Arrays made inside the page's context have that context's prototype; compare them as plain data.
+const plain = v => JSON.parse(JSON.stringify(v));
+
+function hardwareChartOf(p) {
+  return p.charts.find(c => c.data.datasets.some(d => d.label === 'hardware cost'));
+}
+
+async function tooltipNote(point) {
   const p = page();
-  await answer(p.requests[0], seriesBody('24h', 50, { benefit: 3, cost: 12.25, partial: true }));
-  const chart = p.charts.find(c => c.data.datasets.some(d => d.label === 'hardware cost'));
-  const afterBody = chart.options.plugins.tooltip.callbacks.afterBody;
-  assert.equal(afterBody([{ dataIndex: 0 }]), 'day not over: benefit projected to the whole day');
+  await answer(p.requests[0], seriesBody('24h', 50, { benefit: 3, cost: 12.25, partial: true, days: 1 }, point));
+  return plain(hardwareChartOf(p).options.plugins.tooltip.callbacks.afterBody([{ dataIndex: 0 }]));
+}
+
+test('the cost / benefit tooltip says a partial day is projected only when it has a bar', async () => {
+  assert.deepEqual(await tooltipNote({ benefit: 4 }), ['day not over: benefit projected to the whole day']);
+  assert.deepEqual(await tooltipNote({ benefit: null }), []);
+  assert.deepEqual(await tooltipNote({ benefit: 4, estimated: true }), ['day not over: benefit projected to the whole day', 'estimated or not final']);
+  assert.deepEqual(await tooltipNote({ benefit: 4, partial: false }), [], 'an exact day adds no tooltip line');
+});
+
+test('the cost / benefit chart has one $/day axis with benefit bars and the cost line', async () => {
+  const p = page();
+  await answer(p.requests[0], seriesBody('24h', 50, { benefit: 3, cost: 12.25, partial: true, days: 1 }));
+  const chart = hardwareChartOf(p);
+  assert.deepEqual(plain(Object.keys(chart.options.scales)), ['y']);
+  assert.deepEqual(plain(chart.data.datasets.map(d => [d.label, d.type ?? 'bar'])), [['benefit', 'bar'], ['hardware cost', 'line']]);
+  assert.deepEqual(plain(chart.data.datasets[1].borderDash), [6, 4]);
 });
