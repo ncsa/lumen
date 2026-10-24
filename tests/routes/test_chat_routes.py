@@ -2,6 +2,22 @@
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _fresh_chat_rate_limit(app):
+    """Give each test the full /chat/stream budget, and leave it clean.
+
+    The limiter's in-memory storage outlives a test, and every test's user is
+    entity 1, so without a reset these tests share one bucket with whatever
+    chat requests ran before them and fail with 429 depending on test order.
+    """
+    from lumen.extensions import limiter
+    limiter.reset()
+    yield
+    limiter.reset()
+
 
 def _grant_unlimited_pool(app, entity_id):
     from lumen.extensions import db
