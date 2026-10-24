@@ -2,7 +2,7 @@
 
 CLAUDE.md: "All times are UTC everywhere in the app and the DB; only convert to
 the user's local timezone when displaying to them." Nothing enforced that at the
-connection level. ``date_trunc``, ``EXTRACT`` and every ``timestamptz`` psycopg2
+connection level. ``date_trunc``, ``EXTRACT`` and every ``timestamptz`` psycopg
 hands back are evaluated in the *session's* ``TimeZone``, which Postgres inherits
 from whatever ``initdb`` saw on the host, so the invariant held only because the
 ``timescale/timescaledb`` image happens to default to UTC.
