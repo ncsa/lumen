@@ -1,4 +1,5 @@
 """Tests for the per-process model snapshot and the hooks that refresh it."""
+import dataclasses
 import os
 import threading
 import time
@@ -82,6 +83,16 @@ def test_snapshot_holds_plain_values(app, test_model, test_model_endpoint):
     assert "test-api-key-123" not in repr(ep)
     with pytest.raises(AttributeError):
         mc.disabled = True  # frozen
+
+
+@pytest.mark.parametrize("snapshot_cls, model", [
+    (model_cache.ModelSnapshot, ModelConfig),
+    (model_cache.EndpointSnapshot, ModelEndpoint),
+])
+def test_snapshot_fields_are_columns(snapshot_cls, model):
+    """A renamed or dropped column fails here, not only in a refresh log line."""
+    columns = set(model.__table__.columns.keys())
+    assert {f.name for f in dataclasses.fields(snapshot_cls)} <= columns
 
 
 def test_load_leaves_the_callers_session_alone(app, test_model):
@@ -176,6 +187,12 @@ def test_failed_refresh_keeps_the_previous_snapshot(app, test_model, caplog):
     assert "model snapshot refresh failed" in caplog.text
 
 
+def test_failed_first_load_raises_snapshot_unavailable(app, test_model):
+    with app.app_context(), patch("lumen.services.model_cache._load", side_effect=RuntimeError("db down")):
+        with pytest.raises(model_cache.SnapshotUnavailable):
+            model_cache.resolve("test-model")
+
+
 # ---------------------------------------------------------------------------
 # Safety valve
 # ---------------------------------------------------------------------------
@@ -190,6 +207,17 @@ def test_snapshot_older_than_max_age_reloads_on_next_read(app, test_model):
             assert model_cache.resolve("test-model") is not None  # at the limit: still fresh
         with patch("lumen.services.model_cache.time.monotonic", return_value=loaded + model_cache.MAX_AGE + 1):
             assert model_cache.resolve("test-model") is None
+
+
+def test_failed_reload_of_an_over_age_snapshot_is_not_served(app, test_model):
+    """Over-age authorization state never becomes an implicit fallback."""
+    with app.app_context():
+        assert model_cache.resolve("test-model") is not None
+        loaded = model_cache._snapshot.loaded_at
+        with patch("lumen.services.model_cache.time.monotonic", return_value=loaded + model_cache.MAX_AGE + 1), \
+                patch("lumen.services.model_cache._load", side_effect=RuntimeError("db down")):
+            with pytest.raises(model_cache.SnapshotUnavailable):
+                model_cache.resolve("test-model")
 
 
 # ---------------------------------------------------------------------------
