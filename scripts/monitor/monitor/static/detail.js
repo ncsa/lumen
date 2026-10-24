@@ -26,21 +26,26 @@
     charts[id] = new Chart(document.getElementById(`chart-${id}`).getContext('2d'), config);
   }
 
-  function priceChart(id, side, prices) {
-    const labels = prices.map(p => dayLabel(p.day));
+  // From 7d up one point per local day; below that one point per bucket, drawn as a stepped line.
+  function priceChart(id, side, prices, daily) {
+    const labels = prices.map(p => daily ? dayLabel(p.day) : timeLabel(p.t));
     const pick = key => prices.map(p => p[`${side}_${key}`]);
+    const line = daily ? { pointRadius: 2 } : { stepped: true, pointRadius: 0 };
+    const band = daily ? {} : { stepped: true };
+    const scales = { y: { beginAtZero: true } };
+    if (!daily) scales.x = { ticks: { maxTicksLimit: 8, maxRotation: 0 } };
     draw(id, {
       type: 'line',
       data: {
         labels,
         datasets: [
-          { label: 'models.dev p5', data: pick('p5'), borderWidth: 0, pointRadius: 0, fill: false },
-          { label: 'models.dev p5–p95', data: pick('p95'), borderWidth: 0, pointRadius: 0, backgroundColor: COLOR.band, fill: '-1' },
-          { label: 'models.dev median', data: pick('median'), borderColor: COLOR.median, borderDash: [6, 4], pointRadius: 2 },
-          { label: 'ours', data: prices.map(p => p[`${side}_price`]), borderColor: COLOR.ours, borderWidth: 3, pointRadius: 2 },
+          { label: 'models.dev p5', data: pick('p5'), borderWidth: 0, pointRadius: 0, fill: false, ...band },
+          { label: 'models.dev p5–p95', data: pick('p95'), borderWidth: 0, pointRadius: 0, backgroundColor: COLOR.band, fill: '-1', ...band },
+          { label: 'models.dev median', data: pick('median'), borderColor: COLOR.median, borderDash: [6, 4], ...line },
+          { label: 'ours', data: prices.map(p => p[`${side}_price`]), borderColor: COLOR.ours, borderWidth: 3, ...line },
         ],
       },
-      options: { plugins: { legend: { labels: { filter: item => item.text !== 'models.dev p5' } } }, scales: { y: { beginAtZero: true } } },
+      options: { plugins: { legend: { labels: { filter: item => item.text !== 'models.dev p5' } } }, scales },
     });
   }
 
@@ -124,8 +129,8 @@
 
   function render(s) {
     renderHeader(s.header);
-    priceChart('input-price', 'input', s.prices);
-    priceChart('output-price', 'output', s.prices);
+    priceChart('input-price', 'input', s.prices, s.daily);
+    priceChart('output-price', 'output', s.prices, s.daily);
     trafficChart('requests', 'requests', s.traffic, fmtInt);
     trafficChart('tokens', 'tokens', s.traffic, fmtCount);
     hardwareChart(s.hardware);

@@ -3,8 +3,10 @@
 Every range returns the same series, so the page draws the same charts:
 
 - `header`: the model's overview row (status, strip, uptime, instances, prices, cost)
-- `prices`: one point per local day with our input/output price and the models.dev
-  median and p5/p95
+- `prices`: our input/output price and the models.dev median and p5/p95; below 7d one
+  point per bucket with the prices of the bucket's local day, each source carrying its
+  latest earlier day forward when that day has no row (so the line steps at local
+  midnight); from 7d up one point per local day
 - `traffic`: below 7d one point per bucket with the average req/min and tok/min of
   the samples; from 7d up one point per local day with the day's requests and tokens,
   flagged `estimated` when the day is not exact (`estimated` or not yet `final`)
@@ -21,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from monitor.buckets import Range, make_grid, range_days
 from monitor.config import Config
+from monitor.daily import local_day
 from monitor.models import DailyStat, Sample
 from monitor.overview import _iso, current_models, exact, hardware_unit_cost, model_rows
 from monitor.probe import LiveSnapshot
@@ -56,15 +59,58 @@ def _rows_by_source(session: Session, model_id: str, days: list[date]) -> dict[t
     return {(r.source, r.day): r for r in session.execute(stmt).scalars().all()}
 
 
+# The price columns of each price source. The probe creates today's lumen row before
+# the price run fills these, so a row with none of them set has no price yet.
+PRICE_COLUMNS = {
+    "lumen": ("input_price", "output_price"),
+    "models.dev": tuple(f"{side}_{stat}" for side in ("input", "output") for stat in ("median", "p5", "p95")),
+}
+
+
+def _price_values(ours: DailyStat | None, dev: DailyStat | None) -> dict:
+    values = {"input_price": ours.input_price if ours else None, "output_price": ours.output_price if ours else None}
+    for side in ("input", "output"):
+        for stat in ("median", "p5", "p95"):
+            values[f"{side}_{stat}"] = getattr(dev, f"{side}_{stat}") if dev else None
+    return values
+
+
 def _price_points(rows: dict, days: list[date]) -> list[dict]:
+    return [{"day": day.isoformat(), **_price_values(rows.get(("lumen", day)), rows.get(("models.dev", day)))} for day in days]
+
+
+def _has_price(row: DailyStat | None, source: str) -> bool:
+    return row is not None and any(getattr(row, c) is not None for c in PRICE_COLUMNS[source])
+
+
+def _latest_before(session: Session, model_id: str, source: str, day: date) -> DailyStat | None:
+    """The source's latest row with a price before `day`, or None."""
+    priced = or_(*(getattr(DailyStat, c).is_not(None) for c in PRICE_COLUMNS[source]))
+    stmt = (select(DailyStat).where(DailyStat.model == model_id, DailyStat.source == source, DailyStat.day < day, priced)
+            .order_by(DailyStat.day.desc()).limit(1))
+    return session.execute(stmt).scalars().first()
+
+
+def _bucket_price_points(session: Session, model_id: str, rows: dict, days: list[date], grid, tz) -> list[dict]:
+    """One point per bucket with the prices of the bucket's local day.
+
+    A day without a priced row for a source carries that source's latest earlier one forward,
+    starting from the latest one before the range; with none at all its values are None.
+    """
+    seed = {source: _latest_before(session, model_id, source, days[0]) for source in PRICE_COLUMNS}
+    by_day: dict[str, dict[date, DailyStat | None]] = {}
+    for source in PRICE_COLUMNS:
+        row = seed[source]
+        by_day[source] = {}
+        for day in days:
+            if _has_price(rows.get((source, day)), source):
+                row = rows[(source, day)]
+            by_day[source][day] = row
     points = []
-    for day in days:
-        ours, dev = rows.get(("lumen", day)), rows.get(("models.dev", day))
-        point = {"day": day.isoformat(), "input_price": ours.input_price if ours else None, "output_price": ours.output_price if ours else None}
-        for side in ("input", "output"):
-            for stat in ("median", "p5", "p95"):
-                point[f"{side}_{stat}"] = getattr(dev, f"{side}_{stat}") if dev else None
-        points.append(point)
+    for t in grid.times():
+        day = local_day(t, tz)
+        ours, dev = (by_day[source].get(day, seed[source]) for source in PRICE_COLUMNS)
+        points.append({"t": _iso(t), **_price_values(ours, dev)})
     return points
 
 
@@ -143,7 +189,7 @@ def series(session: Session, config: Config, snapshot: LiveSnapshot | None, mode
         "generated_at": _iso(now),
         "daily": is_daily(rng),
         "header": header,
-        "prices": _price_points(rows, days),
+        "prices": _price_points(rows, days) if is_daily(rng) else _bucket_price_points(session, model_id, rows, days, grid, tz),
         "traffic": traffic,
         "hardware": {"points": hardware, "range": hardware_range},
         "instances": instances,

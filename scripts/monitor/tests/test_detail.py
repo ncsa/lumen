@@ -3,10 +3,10 @@ from datetime import date, datetime, timedelta
 import pytest
 
 from monitor import migrate
-from monitor.buckets import RANGES
+from monitor.buckets import RANGES, range_days
 from monitor.config import ConfigStore
 from monitor.db import make_engine, make_session_factory
-from monitor.detail import series
+from monitor.detail import _price_points, _rows_by_source, series
 from monitor.models import DailyStat, Sample
 from monitor.probe import LiveSnapshot, Snapshot
 
@@ -79,10 +79,16 @@ def test_every_series_for_every_range(env, range_key):
     assert len(data["header"]["strip"]) == STRIP_BUCKETS[range_key]
     assert data["instances"]["unit"] == ("day" if range_key == "1y" else "bucket")
     assert len(data["instances"]["points"]) == STRIP_BUCKETS[range_key]
-    assert len(data["prices"]) == len(data["hardware"]["points"]) == DAYS[range_key]
-    assert data["prices"][-1]["day"] == data["hardware"]["points"][-1]["day"] == "2026-10-17"
-    assert set(data["prices"][0]) == {"day", "input_price", "output_price", "input_median", "input_p5", "input_p95",
-                                      "output_median", "output_p5", "output_p95"}
+    assert len(data["hardware"]["points"]) == DAYS[range_key]
+    assert data["hardware"]["points"][-1]["day"] == "2026-10-17"
+    if data["daily"]:
+        assert len(data["prices"]) == DAYS[range_key]
+        assert data["prices"][-1]["day"] == "2026-10-17"
+    else:
+        assert len(data["prices"]) == TRAFFIC_POINTS[range_key]
+        assert [p["t"] for p in data["prices"]] == [p["t"] for p in data["traffic"]["points"]]
+    assert set(data["prices"][0]) == {"day" if data["daily"] else "t", "input_price", "output_price", "input_median",
+                                      "input_p5", "input_p95", "output_median", "output_p5", "output_p95"}
     assert set(data["hardware"]["range"]) == {"hw_per_mtok", "hw_per_request", "hw_partial"}
     assert data["header"]["description"] == "Qwen 80B" and data["header"]["status"] == "ok"
 
@@ -132,6 +138,58 @@ def test_price_band_median_and_ours_per_day(env):
                           "output_median": 1.0, "output_p5": 0.5, "output_p95": 2.0}
     assert prices[-1]["input_price"] == 0.3 and prices[-1]["input_median"] is None
     assert prices[0]["input_price"] is None
+    store, sf, _ = env
+    tz = store.current.timezone
+    for range_key in ("30d", "1y"):
+        days = range_days(RANGES[range_key], NOW, tz)
+        with sf() as session:
+            rows = _rows_by_source(session, MODEL, days)
+        assert get(env, range_key)["prices"] == _price_points(rows, days)
+
+
+DEV = {"input_median": 0.25, "input_p5": 0.12, "input_p95": 0.4, "output_median": 1.0, "output_p5": 0.5, "output_p95": 2.0}
+DEV_TODAY = {"input_median": 0.35, "input_p5": 0.2, "input_p95": 0.5, "output_median": 1.1, "output_p5": 0.6, "output_p95": 2.2}
+
+
+def test_short_range_prices_step_at_local_midnight(env):
+    _, sf, _ = env
+    yesterday = TODAY - timedelta(days=1)
+    add(sf, daily(yesterday, "lumen", input_price=0.2, output_price=0.8), daily(TODAY, "lumen", input_price=0.3, output_price=0.9),
+        daily(yesterday, "models.dev", providers=5, **DEV), daily(TODAY, "models.dev", providers=5, **DEV_TODAY))
+    prices = get(env, "24h")["prices"]
+    step = 144
+    assert prices[step]["t"] == "2026-10-17T05:00:00Z"  # MIDNIGHT
+    assert all(v is not None for p in prices for v in p.values())
+    assert {(p["input_price"], p["output_price"]) for p in prices[:step]} == {(0.2, 0.8)}
+    assert {(p["input_price"], p["output_price"]) for p in prices[step:]} == {(0.3, 0.9)}
+    assert all({k: p[k] for k in DEV} == DEV for p in prices[:step])
+    assert all({k: p[k] for k in DEV} == DEV_TODAY for p in prices[step:])
+
+
+def test_short_range_prices_carry_the_latest_earlier_day_forward(env):
+    _, sf, _ = env
+    yesterday = TODAY - timedelta(days=1)
+    add(sf, daily(yesterday, "lumen", input_price=0.2, output_price=0.8), daily(yesterday, "models.dev", providers=5, **DEV),
+        daily(TODAY - timedelta(days=3), "lumen", input_price=0.1, output_price=0.4))
+    prices = get(env, "1h")["prices"]
+    assert len(prices) == 60
+    assert all(p == {"t": p["t"], "input_price": 0.2, "output_price": 0.8, **DEV} for p in prices)
+
+
+def test_short_range_prices_skip_rows_without_a_price(env):
+    _, sf, _ = env
+    yesterday = TODAY - timedelta(days=1)
+    # The probe writes today's lumen row before the first price run of the day fills its prices.
+    add(sf, daily(TODAY - timedelta(days=2), "lumen", input_price=0.1, output_price=0.4),
+        daily(yesterday, "lumen", status="ok", configured=2), daily(TODAY, "lumen", status="ok", configured=2))
+    prices = get(env, "24h")["prices"]
+    assert {(p["input_price"], p["output_price"]) for p in prices} == {(0.1, 0.4)}
+
+
+def test_short_range_prices_without_rows_are_none(env):
+    for range_key in ("1h", "12h", "24h"):
+        prices = get(env, range_key)["prices"]
+        assert all(v is None for p in prices for k, v in p.items() if k != "t")
 
 
 def test_hardware_per_day_and_over_the_range(env):
