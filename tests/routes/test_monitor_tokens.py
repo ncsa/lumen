@@ -15,7 +15,7 @@ from lumen.services import request_rates
 NOW = datetime(2026, 10, 20, 12, 0, 15, tzinfo=timezone.utc)
 MONITOR = "monitor-tokens-token"
 USER_KEY = "lk_test_tokens_key"
-TOKEN_FIELDS = ("tokens", "input_tokens", "output_tokens")
+TOKEN_FIELDS = ("input_tokens", "output_tokens")
 
 
 @pytest.fixture(autouse=True)
@@ -73,7 +73,6 @@ def seeded(app, test_model, test_model_endpoint):
     return {
         "input_tokens": {"last_minute": 1, "last_hour": 3, "last_day": 7, "last_month": 15},
         "output_tokens": {"last_minute": 10, "last_hour": 30, "last_day": 70, "last_month": 150},
-        "tokens": {"last_minute": 11, "last_hour": 33, "last_day": 77, "last_month": 165},
     }
 
 
@@ -90,7 +89,7 @@ def _listed(client, token, query=""):
 def test_token_windows_reader(app, seeded, test_model):
     with app.app_context():
         assert request_rates.token_windows() == {
-            test_model["id"]: {k: seeded[k] for k in ("input_tokens", "output_tokens")},
+            test_model["id"]: seeded,
         }
 
 
@@ -98,6 +97,8 @@ def test_monitor_list_models_with_tokens(client, monitor_token, seeded, test_mod
     row = _listed(client, monitor_token, "?tokens=true")[test_model["model_name"]]
     for field in TOKEN_FIELDS:
         assert row[field] == seeded[field]
+    # No combined field: the sum is the client's to take.
+    assert "tokens" not in row
 
 
 def test_monitor_get_model_with_tokens(client, monitor_token, seeded, test_model):
