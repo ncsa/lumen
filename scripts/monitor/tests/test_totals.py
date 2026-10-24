@@ -9,7 +9,7 @@ from monitor.config import ConfigStore
 from monitor.db import make_engine, make_session_factory
 from monitor.models import DailyStat
 from monitor.probe import LiveSnapshot, Snapshot
-from monitor.totals import Span, plan_span, run_models, split_by_day
+from monitor.totals import METRICS, Span, plan_span, run_models, split_by_day
 
 CONFIG = """
 lumen: {url: "https://lumen.test"}
@@ -21,13 +21,19 @@ DAY = date(2026, 10, 17)
 HOUR, DAY_COUNT, MONTH = 120, 2400, 72000
 
 
-def model(model_id="qwen", hour=HOUR, day=DAY_COUNT, month=None, tokens=True):
+def model(model_id="qwen", hour=HOUR, day=DAY_COUNT, month=None, split=True):
+    """Each request is 1000 tokens: 800 input and 200 output."""
     requests = {"last_minute": 2, "last_hour": hour, "last_day": day, "last_month": month}
+
+    def scaled(factor):
+        return {key: None if value is None else value * factor for key, value in requests.items()}
+
     return {
         "id": model_id,
         "status": "ok",
         "requests": requests,
-        "tokens": {key: None if value is None else value * 1000 for key, value in requests.items()} if tokens else None,
+        "input_tokens": scaled(800) if split else None,
+        "output_tokens": scaled(200) if split else None,
     }
 
 
@@ -72,7 +78,10 @@ def test_five_minute_runs_accumulate_last_hour(env):
     [row] = rows(sf).values()
     assert row.requests == pytest.approx(3 * HOUR * 5 / 60)
     assert row.tokens == pytest.approx(3 * HOUR * 1000 * 5 / 60)
+    assert row.input_tokens == pytest.approx(3 * HOUR * 800 * 5 / 60)
+    assert row.output_tokens == pytest.approx(3 * HOUR * 200 * 5 / 60)
     assert row.covered_until == MIDNIGHT + timedelta(minutes=15)
+    assert row.input_tokens_covered_until == row.output_tokens_covered_until == MIDNIGHT + timedelta(minutes=15)
     assert not row.estimated and not row.final
 
 
@@ -211,8 +220,8 @@ def test_no_snapshot_is_skipped(env):
 def test_missing_windows_leave_totals_empty(env):
     store, factory = env
     sf = factory()
-    run(store, sf, MIDNIGHT, [model(tokens=False)])
-    run(store, sf, MIDNIGHT + timedelta(minutes=5), [model(tokens=False)])
+    run(store, sf, MIDNIGHT, [model(split=False)])
+    run(store, sf, MIDNIGHT + timedelta(minutes=5), [model(split=False)])
     row = rows(sf)[DAY]
     assert row.tokens is None
     assert row.requests == pytest.approx(HOUR * 5 / 60)
@@ -221,7 +230,7 @@ def test_missing_windows_leave_totals_empty(env):
 def test_a_snapshot_without_windows_defers_its_gap(env):
     store, factory = env
     sf = factory()
-    bare = {"id": "qwen", "status": "ok", "requests": None, "tokens": None}
+    bare = {"id": "qwen", "status": "ok", "requests": None}
     run(store, sf, MIDNIGHT + timedelta(minutes=5))
     run(store, sf, MIDNIGHT + timedelta(minutes=10), [bare])
     assert rows(sf)[DAY].covered_until == MIDNIGHT + timedelta(minutes=5)
@@ -234,7 +243,7 @@ def test_a_snapshot_without_windows_defers_its_gap(env):
 def test_deferred_windows_survive_midnight(env):
     store, factory = env
     sf = factory()
-    bare = {"id": "qwen", "status": "ok", "requests": None, "tokens": None}
+    bare = {"id": "qwen", "status": "ok", "requests": None}
     run(store, sf, MIDNIGHT + timedelta(hours=23, minutes=55))
     before = rows(sf)[DAY]
     result = run(store, sf, MIDNIGHT + timedelta(days=1), [bare])
@@ -251,7 +260,7 @@ def test_a_deferred_day_closes_when_no_window_can_reach_it(env):
     store, factory = env
     sf = factory()
     run(store, sf, MIDNIGHT + timedelta(hours=23, minutes=55))
-    bare = {"id": "qwen", "status": "ok", "requests": None, "tokens": None}
+    bare = {"id": "qwen", "status": "ok", "requests": None}
     assert run(store, sf, MIDNIGHT + timedelta(days=30), [bare]).finalized == 0
     assert run(store, sf, MIDNIGHT + timedelta(days=31), [bare]).finalized == 1
     assert rows(sf)[DAY].final
@@ -264,7 +273,7 @@ def test_a_day_closed_with_uncounted_traffic_is_estimated(env):
     run(store, sf, MIDNIGHT + timedelta(minutes=5))
     row = rows(sf)[DAY]
     assert not row.estimated and row.requests == pytest.approx(HOUR * 5 / 60)
-    bare = {"id": "qwen", "status": "ok", "requests": None, "tokens": None}
+    bare = {"id": "qwen", "status": "ok", "requests": None}
     assert run(store, sf, MIDNIGHT + timedelta(days=31), [bare]).finalized == 1
     row = rows(sf)[DAY]
     assert row.final and row.estimated  # never reported as an exact day
@@ -272,7 +281,7 @@ def test_a_day_closed_with_uncounted_traffic_is_estimated(env):
     assert row.covered_until == row.tokens_covered_until == MIDNIGHT + timedelta(minutes=5)
 
 
-@pytest.mark.parametrize("missing", ["requests", "tokens"])
+@pytest.mark.parametrize("missing", list(METRICS))
 def test_a_missing_metric_keeps_its_own_interval(env, missing):
     store, factory = env
     sf = factory()
@@ -281,19 +290,23 @@ def test_a_missing_metric_keeps_its_own_interval(env, missing):
     run(store, sf, MIDNIGHT + timedelta(minutes=5))
     run(store, sf, MIDNIGHT + timedelta(minutes=10), [partial])
     row = rows(sf)[DAY]
-    assert (row.covered_until, row.tokens_covered_until)[missing == "tokens"] == MIDNIGHT + timedelta(minutes=5)
+    for metric, column in METRICS.items():
+        expected = 5 if metric == missing else 10
+        assert getattr(row, column) == MIDNIGHT + timedelta(minutes=expected)
     run(store, sf, MIDNIGHT + timedelta(minutes=15))
     row = rows(sf)[DAY]
     assert row.requests == pytest.approx(HOUR * 15 / 60)  # 30, neither lost nor counted twice
     assert row.tokens == pytest.approx(HOUR * 1000 * 15 / 60)  # 30,000
+    assert row.input_tokens == pytest.approx(HOUR * 800 * 15 / 60)
+    assert row.output_tokens == pytest.approx(HOUR * 200 * 15 / 60)
     assert not row.estimated
-    assert row.covered_until == row.tokens_covered_until == MIDNIGHT + timedelta(minutes=15)
+    assert all(getattr(row, column) == MIDNIGHT + timedelta(minutes=15) for column in METRICS.values())
 
 
 def test_a_missing_metric_recovers_across_a_restart(env):
     store, factory = env
     run(store, factory(), MIDNIGHT + timedelta(minutes=5))
-    run(store, factory(), MIDNIGHT + timedelta(minutes=10), [model(tokens=False)])
+    run(store, factory(), MIDNIGHT + timedelta(minutes=10), [model(split=False)])
     # A new process with an empty snapshot; its first probe has both metrics again.
     run(store, factory(), MIDNIGHT + timedelta(minutes=15))
     run(store, factory(), MIDNIGHT + timedelta(minutes=15))
@@ -305,11 +318,63 @@ def test_a_missing_metric_recovers_across_a_restart(env):
 def test_a_metric_reported_later_starts_at_local_midnight(env):
     store, factory = env
     sf = factory()
-    run(store, sf, MIDNIGHT + timedelta(minutes=5), [model(tokens=False)])
+    run(store, sf, MIDNIGHT + timedelta(minutes=5), [model(split=False)])
     run(store, sf, MIDNIGHT + timedelta(minutes=30))
     row = rows(sf)[DAY]
     assert row.requests == pytest.approx(HOUR * 30 / 60)
     assert row.tokens == pytest.approx(HOUR * 1000 * 30 / 60)
+
+
+def test_split_tokens_gap_is_estimated_from_last_day(env):
+    store, factory = env
+    sf = factory()
+    run(store, sf, MIDNIGHT + timedelta(hours=1))
+    before = rows(sf)[DAY]
+    run(store, sf, MIDNIGHT + timedelta(hours=6))
+    row = rows(sf)[DAY]
+    assert row.input_tokens - before.input_tokens == pytest.approx(DAY_COUNT * 800 * 5 / 24)
+    assert row.output_tokens - before.output_tokens == pytest.approx(DAY_COUNT * 200 * 5 / 24)
+    assert row.estimated
+
+
+def test_split_tokens_long_gap_fills_estimated_rows_from_last_month(env):
+    store, factory = env
+    sf = factory()
+    run(store, sf, MIDNIGHT + timedelta(hours=23), [model(month=MONTH)])
+    run(store, sf, MIDNIGHT + timedelta(days=3, hours=23), [model(month=MONTH)])
+    got = rows(sf)
+    for offset in (1, 2):
+        row = got[DAY + timedelta(days=offset)]
+        assert row.input_tokens == pytest.approx(MONTH * 800 / 30)
+        assert row.output_tokens == pytest.approx(MONTH * 200 / 30)
+        assert row.estimated and row.final
+
+
+def test_lumen_without_the_split_leaves_it_empty_and_still_closes_days(env):
+    store, factory = env
+    sf = factory()
+    run(store, sf, MIDNIGHT + timedelta(hours=23, minutes=55), [model(split=False)])
+    result = run(store, sf, MIDNIGHT + timedelta(days=1, minutes=5), [model(split=False)])
+    row = rows(sf)[DAY]
+    assert result.finalized == 1 and row.final
+    assert row.input_tokens is None and row.output_tokens is None
+    assert row.input_tokens_covered_until is None and row.output_tokens_covered_until is None
+    assert row.tokens is None
+    assert row.requests is not None
+
+
+def test_a_deferred_split_keeps_the_day_open(env):
+    store, factory = env
+    sf = factory()
+    run(store, sf, MIDNIGHT + timedelta(hours=23, minutes=55))
+    before = rows(sf)[DAY]
+    result = run(store, sf, MIDNIGHT + timedelta(days=1), [model(split=False)])
+    assert result.finalized == 0 and not rows(sf)[DAY].final  # input/output 23:55-24:00 still to be counted
+    run(store, sf, MIDNIGHT + timedelta(days=1, minutes=5))
+    row = rows(sf)[DAY]
+    assert row.final
+    assert row.input_tokens - before.input_tokens == pytest.approx(HOUR * 800 * 5 / 60)
+    assert row.output_tokens - before.output_tokens == pytest.approx(HOUR * 200 * 5 / 60)
 
 
 @pytest.mark.parametrize("gap, windows, expected", [

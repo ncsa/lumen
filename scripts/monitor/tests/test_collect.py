@@ -68,12 +68,13 @@ class FakeHttp:
             "c": {"models": {"glm-4.5-air": {"id": "glm-4.5-air", "cost": {"input": 0.2, "output": 1.1}}}},
         }
 
-    def get(self, url, headers=None, timeout=None):
+    def get(self, url, params=None, headers=None, timeout=None):
         if url == modelsdev.MODELSDEV_URL:
             if self.modelsdev is None:
                 raise requests.ConnectionError("models.dev down")
             return Response(self.modelsdev)
         assert url == "https://lumen.test/v1/models"
+        assert params == {"tokens": "true"}
         assert headers == {"Authorization": "Bearer secret"}
         return Response(self.lumen, self.lumen_status)
 

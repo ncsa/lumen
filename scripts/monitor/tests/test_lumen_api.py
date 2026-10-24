@@ -27,21 +27,41 @@ def test_aliases_are_dropped_and_prices_captured():
 def test_tokens_and_last_month_are_none_when_missing():
     [model] = lumen_api.parse_models({"data": [model_row("qwen")]})
     assert model["tokens"] is None
+    assert model["input_tokens"] is None and model["output_tokens"] is None
     assert model["requests"]["last_month"] is None
     assert model["requests"]["last_day"] == 900
 
 
-def test_tokens_and_last_month_are_read_when_present():
+def test_last_month_is_read_when_present():
     row = model_row(
         "qwen",
         requests={"last_minute": 1, "last_hour": 60, "last_day": 900, "last_month": 27000},
-        tokens={"last_minute": 10, "last_hour": 600, "last_day": 9000, "last_month": 270000},
         description="A model",
     )
     [model] = lumen_api.parse_models({"data": [row]})
     assert model["requests"]["last_month"] == 27000
-    assert model["tokens"] == {"last_minute": 10, "last_hour": 600, "last_day": 9000, "last_month": 270000}
     assert model["description"] == "A model"
+
+
+def test_input_and_output_tokens_are_read_and_summed():
+    row = model_row(
+        "qwen",
+        input_tokens={"last_minute": 10, "last_hour": 600, "last_day": 7000, "last_month": 200000},
+        output_tokens={"last_minute": 2, "last_hour": 120, "last_day": 2000},
+    )
+    [model] = lumen_api.parse_models({"data": [row]})
+    assert model["input_tokens"] == {"last_minute": 10, "last_hour": 600, "last_day": 7000, "last_month": 200000}
+    assert model["output_tokens"] == {"last_minute": 2, "last_hour": 120, "last_day": 2000, "last_month": None}
+    assert model["tokens"] == {"last_minute": 12, "last_hour": 720, "last_day": 9000, "last_month": None}
+
+
+def test_a_combined_tokens_field_is_ignored():
+    split = model_row("qwen", input_tokens={"last_minute": 10}, output_tokens={"last_minute": 2}, tokens={"last_minute": 99})
+    plain = model_row("big", tokens={"last_minute": 5})
+    by_id = {m["id"]: m for m in lumen_api.parse_models({"data": [split, plain]})}
+    assert by_id["qwen"]["tokens"]["last_minute"] == 12
+    assert by_id["big"]["input_tokens"] is None and by_id["big"]["output_tokens"] is None
+    assert by_id["big"]["tokens"] is None
 
 
 def test_not_an_object_is_an_error():
@@ -62,16 +82,16 @@ class Response:
         return self.payload
 
 
-def test_fetch_sends_the_token(monkeypatch):
+def test_fetch_sends_the_token_and_asks_for_token_counts(monkeypatch):
     seen = {}
 
-    def fake_get(url, headers, timeout):
-        seen.update(url=url, headers=headers, timeout=timeout)
+    def fake_get(url, params, headers, timeout):
+        seen.update(url=url, params=params, headers=headers, timeout=timeout)
         return Response({"data": [model_row("qwen")]})
 
     monkeypatch.setattr(requests, "get", fake_get)
     assert [m["id"] for m in lumen_api.fetch_models("https://lumen.test", "secret", 15)] == ["qwen"]
-    assert seen == {"url": "https://lumen.test/v1/models", "headers": {"Authorization": "Bearer secret"}, "timeout": 15}
+    assert seen == {"url": "https://lumen.test/v1/models", "params": {"tokens": "true"}, "headers": {"Authorization": "Bearer secret"}, "timeout": 15}
 
 
 def test_fetch_raises_on_http_error(monkeypatch):

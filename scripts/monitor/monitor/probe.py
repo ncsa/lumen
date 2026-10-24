@@ -127,7 +127,8 @@ def _record_models(session: Session, polled_at: datetime, day, models: list[dict
             configured=configured,
             healthy=healthy,
             requests_last_minute=_last_minute(model["requests"]),
-            tokens_last_minute=_last_minute(model["tokens"]),
+            input_tokens_last_minute=_last_minute(model.get("input_tokens")),
+            output_tokens_last_minute=_last_minute(model.get("output_tokens")),
         ))
         row = upsert_daily(session, day, model["id"], "lumen", status=status, configured=configured, healthy=healthy)
         row.polls = (row.polls or 0) + 1
