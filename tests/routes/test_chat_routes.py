@@ -556,7 +556,7 @@ def test_chat_stream_counts_conversation_when_storing_disabled(app, auth_client,
 
 def test_chat_stream_no_healthy_endpoint_is_503_before_streaming(app, auth_client, test_user, test_model, monkeypatch):
     """No healthy endpoint: a plain 503 JSON error, as on /v1, before any stream
-    starts — never admitted, never handed to the generator."""
+    starts — counted, never admitted, never handed to the generator."""
     from lumen.blueprints.chat import routes as chat_routes
     from lumen.extensions import db
     from lumen.models.model_endpoint import ModelEndpoint
@@ -571,11 +571,17 @@ def test_chat_stream_no_healthy_endpoint_is_503_before_streaming(app, auth_clien
         raise AssertionError("send_message_stream called without a healthy endpoint")
 
     monkeypatch.setattr(chat_routes, "send_message_stream", _never)
+    recorded = []
+    monkeypatch.setattr(
+        "lumen.blueprints.metrics.middleware.observe_rejection",
+        lambda reason, source, model="": recorded.append((reason, source, model)),
+    )
 
     resp = _post_stream(auth_client, test_model)
     assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE
     assert resp.get_json() == {"error": f"No healthy endpoints for model '{test_model['model_name']}'"}
     assert state.admits == 0
+    assert recorded == [("no_healthy_endpoint", "chat", test_model["model_name"])]
 
 
 def test_chat_stream_expired_model_rejected(app, auth_client, test_user, test_model):
