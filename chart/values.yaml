@@ -11,11 +11,14 @@ replicaCount: 1
 # emptyDir there so Prometheus can aggregate metrics across processes.
 wsgiProcesses: 1
 
-# -- Concurrent requests served per pod (a2wsgi thread pool). Requests beyond
-# this queue. "auto" sets it to 2x this pod's DB pool capacity
-# (database.poolSize + database.maxOverflow), clamped to 10-256: streaming
-# requests release their connection before the upstream LLM call, so most busy
-# threads hold no connection. A number sets it directly.
+# -- Concurrent requests served per uvicorn worker process (a2wsgi thread
+# pool), so a pod serves wsgiWorkers × wsgiProcesses. Requests beyond this wait
+# for a thread to free up. "auto" sets it to 2× the process's DB pool capacity
+# (database.poolSize + database.maxOverflow, both per process and auto-sized
+# from max_connections when empty), clamped to 10–256: streaming requests
+# release their connection before the upstream LLM call, so most busy threads
+# hold no connection. A number sets it directly; if non-streaming DB work
+# saturates the pool, the extra threads wait up to database.poolTimeout.
 wsgiWorkers: "auto"
 
 # Seconds a worker thread may wait to hand one response chunk to the server
