@@ -106,9 +106,9 @@ The model detail page, `/model/<id>?range=` (ids may contain `/`), shows for one
   from 7d up the daily totals, with estimated or not yet final days drawn lighter; a dashed
   line marks the range average;
 - cost / benefit: per day the benefit (the day's input and output tokens at our own prices)
-  as bars and the hardware cost as a red dashed line, with both totals over the range; a day
-  still being counted is drawn lighter, with the full day's cost and its benefit so far
-  projected to the whole day, while the range totals count only its counted part;
+  as bars and the hardware cost as a red dashed line, with both totals over the days that
+  have token counts; a day still being counted is drawn lighter, with the full day's cost and
+  its benefit so far projected to the whole day, while the totals count only its counted part;
 - healthy and configured instances per bucket (1y: the daily average).
 
 Its data is `/api/series?model=&range=`, which returns every series for all six ranges.
