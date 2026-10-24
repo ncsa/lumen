@@ -18,8 +18,8 @@ function page() {
     createElement: () => fakeElement(),
     querySelectorAll: sel => (sel === '.range-btn' ? rangeButtons : []),
   };
-  const { requests, timers } = runPage('detail.js', document);
-  return { byId, requests, timers, rangeButtons };
+  const { requests, timers, charts, window } = runPage('detail.js', document);
+  return { byId, requests, timers, charts, window, rangeButtons };
 }
 
 function seriesBody(range, uptime, hardwareRange = { benefit: null, cost: null, partial: false }) {
@@ -88,4 +88,12 @@ test('the cost / benefit note flags estimated or partial days', async () => {
   const p = page();
   await answer(p.requests[0], seriesBody('24h', 50, { benefit: 3, cost: 12.25, partial: true }));
   assert.equal(p.byId('hardware-note').textContent, 'benefit $3.00 / cost $12.25 over the range · lighter bars are estimated or not final');
+});
+
+test('the cost / benefit tooltip says a partial day is projected', async () => {
+  const p = page();
+  await answer(p.requests[0], seriesBody('24h', 50, { benefit: 3, cost: 12.25, partial: true }));
+  const chart = p.charts.find(c => c.data.datasets.some(d => d.label === 'hardware cost'));
+  const afterBody = chart.options.plugins.tooltip.callbacks.afterBody;
+  assert.equal(afterBody([{ dataIndex: 0 }]), 'day not over: benefit projected to the whole day');
 });

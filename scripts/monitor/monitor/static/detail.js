@@ -85,7 +85,8 @@
           label: ctx => `${ctx.dataset.label}: ${isNum(ctx.parsed.y) ? fmtUsd(ctx.parsed.y) : dash}`,
           afterBody: items => {
             const p = points[items[0]?.dataIndex];
-            return p && (p.partial || p.estimated) ? 'estimated or not final' : '';
+            if (p?.partial) return 'day not over: benefit projected to the whole day';
+            return p?.estimated ? 'estimated or not final' : '';
           },
         } } },
         scales: { y: { beginAtZero: true, title: { display: true, text: '$/day' } } },
