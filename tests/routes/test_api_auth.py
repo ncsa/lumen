@@ -5,6 +5,7 @@ from http import HTTPStatus
 import pytest
 from sqlalchemy import func, select
 
+from lumen.services import model_cache
 from lumen.timeutils import utcnow
 
 
@@ -676,6 +677,8 @@ def test_new_requirement_reblocks_api_until_acknowledged(
 
     with app.app_context():
         _set_requirements(test_model["id"], needs_ack=True, early_access=True)
+    # Written behind the app's back: refresh the snapshot as a config sync would.
+    model_cache.refresh(app)
 
     assert _api_allows(auth_client, token, test_model["model_name"], endpoint) is False
     assert auth_client.post(f"/profile/consent/{test_model['model_name']}").status_code == HTTPStatus.OK
@@ -1433,6 +1436,8 @@ def test_chat_completions_unacked_returns_consent_required_code(
     # A genuinely blocked model keeps the generic 403 with no code.
     with app.app_context():
         _make_model_blocked(test_model["id"])
+    # Written behind the app's back: refresh the snapshot as the Access dialog would.
+    model_cache.refresh(app)
     resp = client.post(
         "/v1/chat/completions",
         headers={"Authorization": f"Bearer {token}"},

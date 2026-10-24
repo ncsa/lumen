@@ -24,7 +24,7 @@ from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
-from lumen.services import request_rates
+from lumen.services import model_cache, request_rates
 from lumen.services.cost import calculate_audio_cost, calculate_cost
 from lumen.services.crypto import cache_salt_for_entity, hash_api_key
 from lumen.services.key_expiry import revoke_if_expired
@@ -38,7 +38,6 @@ from lumen.services.llm import (
     consent_state,
     estimate_abort_usage,
     get_model_access_status,
-    get_next_endpoint,
     get_pool_limit,
     observe_rejection_quietly,
     record_stream_abort,
@@ -563,14 +562,32 @@ def acknowledge_model(model_id):
     return jsonify(resp)
 
 
+def _snapshot_unavailable():
+    """503 for a request that arrived while the model snapshot cannot be loaded.
+
+    Never served from an over-age snapshot: that would let a disabled model or
+    a revoked owner change keep authorizing requests for as long as the
+    database stays unreachable.
+    """
+    logger.exception("model snapshot unavailable")
+    return _err("Models are temporarily unavailable, try again shortly", "server_error",
+                HTTPStatus.SERVICE_UNAVAILABLE)
+
+
 def _preflight(model_name: str):
     """Look up model, check coin budget, select endpoint.
+
+    The model and endpoint come from the per-process snapshot (model_cache),
+    so neither is read from the database here.
 
     Returns (model_config, endpoint, effective, None) or (None, None, None, error_response).
     ``effective`` is the resolved coin pool limit, threaded to subtract_coins so the
     billing path does not re-resolve model access and the pool limit.
     """
-    model_config = resolve_model_config(model_name)
+    try:
+        model_config = model_cache.resolve(model_name)
+    except model_cache.SnapshotUnavailable:
+        return None, None, None, _snapshot_unavailable()
     if not model_config:
         return None, None, None, _err(f"Model '{model_name}' not found", status=HTTPStatus.NOT_FOUND)
     ok, code, msg, effective, reason, retry_after = check_coin_budget(
@@ -601,7 +618,10 @@ def _preflight(model_name: str):
                 err_code="consent_required",
             )
         return None, None, None, _err(msg, status=code)
-    endpoint = get_next_endpoint(model_config.id)
+    try:
+        endpoint = model_cache.next_endpoint(model_config.id)
+    except model_cache.SnapshotUnavailable:
+        return None, None, None, _snapshot_unavailable()
     if endpoint is None:
         observe_rejection_quietly("no_healthy_endpoint", "api", model_name)
         return None, None, None, _err(f"No healthy endpoints for model '{model_name}'", "server_error", HTTPStatus.SERVICE_UNAVAILABLE)

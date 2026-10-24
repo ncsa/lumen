@@ -20,18 +20,17 @@ from lumen.models.entity_stat import EntityStat
 from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
+from lumen.services import model_cache
 from lumen.services.live_state import get_live_state
 from lumen.services.llm import (
     bulk_model_access_info,
     check_coin_budget,
-    get_next_endpoint,
     get_pool_limit,
     model_notices,
     observe_rejection_quietly,
     send_message_stream,
     stream_target,
 )
-from lumen.services.model_resolver import resolve_model_config
 from lumen.services.wsgi_disconnect import client_disconnect_event
 from lumen.timeutils import utcnow
 
@@ -186,6 +185,13 @@ def chat_upload():
     return jsonify({"type": "doc", "filename": safe_name, "text": text})
 
 
+def _snapshot_unavailable():
+    """503 for a chat message that arrived while the model snapshot cannot be
+    loaded. Never served from an over-age snapshot (see model_cache._current)."""
+    logger.exception("model snapshot unavailable")
+    return jsonify({"error": "Models are temporarily unavailable, try again shortly"}), HTTPStatus.SERVICE_UNAVAILABLE
+
+
 @chat_bp.route("/chat/stream", methods=["POST"])
 @login_required
 @limiter.limit(_chat_limit, key_func=_chat_entity_id)
@@ -211,7 +217,10 @@ def chat_stream():
 
     entity_id = session["entity_id"]
 
-    model_config = resolve_model_config(model)
+    try:
+        model_config = model_cache.resolve(model)
+    except model_cache.SnapshotUnavailable:
+        return _snapshot_unavailable()
     if not model_config:
         return jsonify({"error": f"Unknown model: {model}"}), HTTPStatus.BAD_REQUEST
 
@@ -233,7 +242,10 @@ def chat_stream():
 
     # Picked here, not in the generator, so the stream needs no DB phase of its
     # own and a missing endpoint is a 503 before streaming, as on /v1.
-    endpoint = get_next_endpoint(model_config.id)
+    try:
+        endpoint = model_cache.next_endpoint(model_config.id)
+    except model_cache.SnapshotUnavailable:
+        return _snapshot_unavailable()
     if endpoint is None:
         observe_rejection_quietly("no_healthy_endpoint", "chat", model)
         return jsonify({"error": f"No healthy endpoints for model '{model}'"}), HTTPStatus.SERVICE_UNAVAILABLE
