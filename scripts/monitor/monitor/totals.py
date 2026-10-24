@@ -3,10 +3,10 @@
 The run makes no HTTP call. It reads the latest successful probe snapshot
 (skipped when it is older than 2 × `refresh.web`) and adds the traffic since
 the metric's watermark to each model's lumen daily row, then moves the
-watermark to the snapshot time. Requests, tokens and the input/output token
-split are independently optional in Lumen's response, so each metric has its
-own watermark (`covered_until` for requests, `<metric>_covered_until` for
-`tokens`, `input_tokens` and `output_tokens`) and is planned on its own.
+watermark to the snapshot time. Requests and input/output tokens are
+independently optional in Lumen's response, so each metric has its own
+watermark (`covered_until` for requests, `input_tokens_covered_until` and
+`output_tokens_covered_until` for tokens) and is planned on its own.
 With `gap = snapshot time − watermark`:
 
 - `gap ≤ 1h`: add `last_hour × gap/1h`.
@@ -55,7 +55,6 @@ MONTH = timedelta(days=30)
 # Each metric and the column holding how far it is counted.
 METRICS = {
     "requests": "covered_until",
-    "tokens": "tokens_covered_until",
     "input_tokens": "input_tokens_covered_until",
     "output_tokens": "output_tokens_covered_until",
 }

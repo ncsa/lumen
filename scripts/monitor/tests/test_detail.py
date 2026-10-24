@@ -56,12 +56,24 @@ def add(session_factory, *rows):
 
 def sample(minutes_ago, status="ok", rpm=None, tpm=None, healthy=1, configured=2, itpm=None, otpm=None):
     return Sample(model=MODEL, sampled_at=NOW - timedelta(minutes=minutes_ago), status=status,
-                  configured=configured, healthy=healthy, requests_last_minute=rpm, tokens_last_minute=tpm,
-                  input_tokens_last_minute=itpm, output_tokens_last_minute=otpm)
+                  configured=configured, healthy=healthy, requests_last_minute=rpm,
+                  input_tokens_last_minute=itpm if tpm is None else tpm * 3 // 4,
+                  output_tokens_last_minute=otpm if tpm is None else tpm // 4)
+
+
+def split_tokens(values):
+    """Stores a combined `tokens` / `tokens_covered_until` as 3/4 input and 1/4 output tokens."""
+    if "tokens" in values:
+        tokens = values.pop("tokens")
+        values["input_tokens"] = None if tokens is None else tokens * 3 / 4
+        values["output_tokens"] = None if tokens is None else tokens / 4
+    if "tokens_covered_until" in values:
+        values["input_tokens_covered_until"] = values["output_tokens_covered_until"] = values.pop("tokens_covered_until")
+    return values
 
 
 def daily(day, source, **values):
-    return DailyStat(day=day, model=MODEL, source=source, **values)
+    return DailyStat(day=day, model=MODEL, source=source, **split_tokens(values))
 
 
 def get(env, range_key, model=MODEL):
@@ -95,11 +107,11 @@ def test_short_ranges_use_per_bucket_rates(env):
     data = get(env, "1h")
     points = data["traffic"]["points"]
     assert points[-1] == {"t": "2026-10-17T16:59:00Z", "requests": 5, "tokens": 400,
-                          "input_tokens": None, "output_tokens": None, "estimated": False}
+                          "input_tokens": 300, "output_tokens": 100, "estimated": False}
     assert points[-10]["requests"] == 2 and points[-10]["tokens"] == 200
     assert points[0]["requests"] is None
     assert data["traffic"]["average"] == {"requests": pytest.approx((5 + 2) / 2), "tokens": pytest.approx(300),
-                                          "input_tokens": None, "output_tokens": None}
+                                          "input_tokens": pytest.approx(225), "output_tokens": pytest.approx(75)}
     assert data["instances"]["points"][-1] == {"t": "2026-10-17T16:59:00Z", "healthy": 1, "configured": 2}
     assert data["instances"]["points"][-10]["healthy"] == 2
 
@@ -113,49 +125,50 @@ def test_daily_series_from_7d_mark_inexact_days(env):
         sample(3 * 60 * 24, rpm=99))  # raw samples are not used for daily traffic
     for range_key in ("7d", "30d", "1y"):
         points = get(env, range_key)["traffic"]["points"]
-        no_split = {"input_tokens": None, "output_tokens": None}
         assert points[-3:] == [
-            {"t": "2026-10-15", "requests": 100.0, "tokens": 1e6, **no_split, "estimated": False},
-            {"t": "2026-10-16", "requests": 200.0, "tokens": 2e6, **no_split, "estimated": True},
-            {"t": "2026-10-17", "requests": 50.0, "tokens": 5e5, **no_split, "estimated": True},  # not final yet
+            {"t": "2026-10-15", "requests": 100.0, "tokens": 1e6, "input_tokens": 7.5e5, "output_tokens": 2.5e5, "estimated": False},
+            {"t": "2026-10-16", "requests": 200.0, "tokens": 2e6, "input_tokens": 1.5e6, "output_tokens": 5e5, "estimated": True},
+            {"t": "2026-10-17", "requests": 50.0, "tokens": 5e5, "input_tokens": 3.75e5, "output_tokens": 1.25e5,
+             "estimated": True},  # not final yet
         ]
-        assert points[-4] == {"t": "2026-10-14", "requests": None, "tokens": None, **no_split, "estimated": False}
+        assert points[-4] == {"t": "2026-10-14", "requests": None, "tokens": None, "input_tokens": None, "output_tokens": None,
+                              "estimated": False}
     assert get(env, "7d")["traffic"]["average"]["requests"] == pytest.approx(350 / 3)
 
 
 def test_per_bucket_split_tokens_and_averages(env):
     _, sf, _ = env
-    add(sf, sample(0.5, tpm=500, itpm=400, otpm=100), sample(0.25, tpm=900, itpm=600, otpm=300),
-        sample(10, tpm=50, itpm=40, otpm=10),
-        sample(20, tpm=700))  # before the split: combined only
+    add(sf, sample(0.5, itpm=400, otpm=100), sample(0.25, itpm=600, otpm=300),
+        sample(10, itpm=40, otpm=10),
+        sample(20, rpm=1))  # no token counts
     data = get(env, "1h")
     points = data["traffic"]["points"]
     assert points[-1]["input_tokens"] == 500 and points[-1]["output_tokens"] == 200 and points[-1]["tokens"] == 700
-    assert points[-10]["input_tokens"] == 40 and points[-10]["output_tokens"] == 10
-    assert points[-20] == {"t": "2026-10-17T16:40:00Z", "requests": None, "tokens": 700,
+    assert points[-10]["input_tokens"] == 40 and points[-10]["output_tokens"] == 10 and points[-10]["tokens"] == 50
+    assert points[-20] == {"t": "2026-10-17T16:40:00Z", "requests": 1, "tokens": None,
                            "input_tokens": None, "output_tokens": None, "estimated": False}
     average = data["traffic"]["average"]
-    # the split averages only cover points that have the split
+    # the averages only cover points that have token counts
     assert average["input_tokens"] == pytest.approx((500 + 40) / 2)
     assert average["output_tokens"] == pytest.approx((200 + 10) / 2)
-    assert average["tokens"] == pytest.approx((700 + 50 + 700) / 3)
+    assert average["tokens"] == pytest.approx((700 + 50) / 2)
 
 
 def test_per_day_split_tokens_and_averages(env):
     _, sf, _ = env
     d1, d2 = TODAY - timedelta(days=2), TODAY - timedelta(days=1)
-    add(sf, daily(d1, "lumen", tokens=3e6, final=True),  # a day from before the split
-        daily(d2, "lumen", tokens=5e6, input_tokens=4e6, output_tokens=1e6, final=True),
-        daily(TODAY, "lumen", tokens=3e5, input_tokens=2e5, output_tokens=1e5))
+    add(sf, daily(d1, "lumen", requests=10.0, final=True),  # a day without token counts
+        daily(d2, "lumen", input_tokens=4e6, output_tokens=1e6, final=True),
+        daily(TODAY, "lumen", input_tokens=2e5, output_tokens=1e5))
     traffic = get(env, "30d")["traffic"]
     assert [(p["t"], p["tokens"], p["input_tokens"], p["output_tokens"]) for p in traffic["points"][-3:]] == [
-        ("2026-10-15", 3e6, None, None),
+        ("2026-10-15", None, None, None),
         ("2026-10-16", 5e6, 4e6, 1e6),
         ("2026-10-17", 3e5, 2e5, 1e5),
     ]
     assert traffic["average"]["input_tokens"] == pytest.approx((4e6 + 2e5) / 2)
     assert traffic["average"]["output_tokens"] == pytest.approx((1e6 + 1e5) / 2)
-    assert traffic["average"]["tokens"] == pytest.approx((3e6 + 5e6 + 3e5) / 3)
+    assert traffic["average"]["tokens"] == pytest.approx((5e6 + 3e5) / 2)
 
 
 def test_price_band_median_and_ours_per_day(env):
@@ -190,7 +203,7 @@ def test_benefit_on_an_exact_final_day(env):
 def test_no_benefit_without_split_counts(env):
     _, sf, _ = env
     day = TODAY - timedelta(days=1)
-    add(sf, daily(day, "hardware", daily_cost=24.0), split(day, tokens=15e6, final=True))
+    add(sf, daily(day, "hardware", daily_cost=24.0), split(day, requests=100.0, final=True))
     hardware = get(env, "7d")["hardware"]
     assert hardware["points"][-2]["benefit"] is None and hardware["points"][-2]["cost"] == 24.0
     assert hardware["range"] == {"benefit": None, "cost": None, "partial": False}
@@ -231,7 +244,7 @@ def test_range_totals_add_days_with_both(env):
         daily(d1, "hardware", daily_cost=24.0), split(d1, input_tokens=10e6, output_tokens=5e6, final=True),
         daily(d2, "hardware", daily_cost=24.0), split(d2, input_tokens=20e6, output_tokens=10e6, final=True, estimated=True),
         # no counts: its cost stays out of the totals
-        daily(d3, "hardware", daily_cost=24.0), split(d3, tokens=1e6, final=True),
+        daily(d3, "hardware", daily_cost=24.0), split(d3, requests=100.0, final=True),
         daily(TODAY, "hardware", daily_cost=48.0),
         split(TODAY, input_tokens=1e6, output_tokens=1e6, input_tokens_covered_until=MIDNIGHT + timedelta(hours=6),
               output_tokens_covered_until=MIDNIGHT + timedelta(hours=6)))
