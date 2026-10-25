@@ -1,7 +1,6 @@
 import hmac
 import json
 import logging
-import threading
 import time as _time
 from decimal import Decimal
 from functools import wraps
@@ -13,7 +12,6 @@ from flask import Blueprint, Response, current_app, g, jsonify, request
 from sqlalchemy import select
 from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import selectinload
 
 from lumen.blueprints.metrics.middleware import observe_stream_abort
 from lumen.commands import RESERVED_MODEL_ID_SUFFIX
@@ -22,16 +20,14 @@ from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_model_consent import EntityModelConsent
-from lumen.models.model_config import ModelConfig
-from lumen.models.model_endpoint import ModelEndpoint
 from lumen.services import model_cache, request_rates
 from lumen.services.cost import calculate_audio_cost, calculate_cost
 from lumen.services.crypto import cache_salt_for_entity, hash_api_key
 from lumen.services.key_expiry import revoke_if_expired
 from lumen.services.live_state import get_live_state
 from lumen.services.llm import (
+    _access_statuses,
     ack_notice_text,
-    bulk_model_access_statuses,
     capture_request_timing,
     check_coin_budget,
     consent_rows,
@@ -91,13 +87,6 @@ def _cors(resp):
     if request.path.startswith("/v1/"):
         resp.headers.update(_CORS_HEADERS)
     return resp
-
-# Per-worker in-memory cache. Under multi-worker deployments each worker holds its own
-# copy; effective cache lifetime is correct per-worker but not shared across workers.
-_rates_cache: dict = {"data": {}, "expires_at": 0.0}
-_rates_lock = threading.Lock()
-_tokens_cache: dict = {"data": {}, "expires_at": 0.0}
-_tokens_lock = threading.Lock()
 
 # Client request params forwarded to the upstream chat completion, by transport.
 # This is an allowlist: anything a client sends that is not named here is dropped
@@ -172,32 +161,6 @@ def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int
     )
 
 
-def _cached(cache: dict, lock, compute) -> dict:
-    """Return ``compute()``, cached 30s per worker in ``cache``."""
-    now = _time.monotonic()
-    if now < cache["expires_at"]:
-        return cache["data"]
-
-    with lock:
-        if now < cache["expires_at"]:
-            return cache["data"]
-
-        result = compute()
-        cache["data"] = result
-        cache["expires_at"] = now + 30.0
-    return result
-
-
-def _get_request_rates() -> dict:
-    """Return {model_config_id: {last_minute, last_hour, last_day}}, cached 30s per worker."""
-    return _cached(_rates_cache, _rates_lock, request_rates.rates)
-
-
-def _get_token_windows() -> dict:
-    """Return {model_config_id: {input_tokens, output_tokens}} windows, cached 30s per worker."""
-    return _cached(_tokens_cache, _tokens_lock, request_rates.token_windows)
-
-
 def _monitor_tokens() -> dict | None:
     """Token windows for a monitor-token ``?tokens=true`` request, else None.
 
@@ -206,7 +169,7 @@ def _monitor_tokens() -> dict | None:
     """
     if not g.monitor or request.args.get("tokens", "").lower() not in ("1", "true", "yes"):
         return None
-    return _get_token_windows()
+    return model_cache.token_counts()
 
 
 def _ack_fields(config, row):
@@ -224,8 +187,9 @@ def _ack_fields(config, row):
     return tags, acknowledged_at, ack_notice_text(config)
 
 
-def _model_dict(c, rates: dict, eps: list, ack_fields=None, tokens=None) -> dict:
-    """Serialize a ModelConfig to an OpenAI/vLLM-compatible response dict.
+def _model_dict(c, rates: dict, eps, ack_fields=None, tokens=None) -> dict:
+    """Serialize a ModelSnapshot and its active EndpointSnapshots to an
+    OpenAI/vLLM-compatible response dict.
 
     ``ack_fields`` ((tags, acknowledged_at, notice)) is None for the monitor
     token, which has no entity and sees no consent state.
@@ -409,16 +373,14 @@ def get_usage():
 @api_bp.route("/models", methods=["GET"])
 @api_key_required
 def list_models():
-    configs = db.session.execute(
-        select(ModelConfig).where(ModelConfig.active).options(selectinload(ModelConfig.aliases))
-    ).scalars().all()
-    eps_by_model: dict = {}
-    for ep in db.session.execute(
-        select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_([c.id for c in configs]), ModelEndpoint.active.is_(True))
-    ).scalars().all():
-        eps_by_model.setdefault(ep.model_config_id, []).append(ep)
-    rates = _get_request_rates()
-    tokens = _monitor_tokens()
+    # Configs, aliases, endpoints and counts come from the per-process snapshot
+    # (model_cache); only the caller's pool and consent rows are read here.
+    try:
+        configs = model_cache.models()
+        rates = model_cache.request_counts()
+        tokens = _monitor_tokens()
+    except model_cache.SnapshotUnavailable:
+        return _snapshot_unavailable()
     if g.monitor:
         # The monitor token has no entity: it sees every active model, with no
         # consent state attached.
@@ -426,7 +388,7 @@ def list_models():
         entity_id = None
     else:
         entity_id = g.entity.id
-        access_statuses = bulk_model_access_statuses(entity_id, [c.id for c in configs])
+        access_statuses = _access_statuses(entity_id, {c.id: c for c in configs})
         pool = get_pool_limit(entity_id)
         permitted = [
             c for c in configs
@@ -443,12 +405,12 @@ def list_models():
         open_tags = ack[0] if ack is not None else []
         if open_tags and not include_unacked:
             continue
-        entry = _model_dict(c, rates, eps_by_model.get(c.id, []), ack, tokens)
+        entry = _model_dict(c, rates, model_cache.listed_endpoints(c.id), ack, tokens)
         data.append(entry)
         # Expose each alias as a discoverable ID so clients that validate their
         # configured model against discovery keep working. Aliases inherit the
         # canonical model's visibility and consent, never adding their own grants.
-        for alias in sorted(a.alias for a in c.aliases):
+        for alias in c.aliases:
             alias_entry = dict(entry)
             alias_entry["id"] = alias
             # Advertise the canonical model so clients can tell an alias apart
@@ -465,7 +427,10 @@ def get_model(model_id):
     # reserves that suffix, so it is always the POST-only acknowledge endpoint.
     if model_id.endswith(RESERVED_MODEL_ID_SUFFIX):
         return _err("Method not allowed. Use POST to acknowledge a model.", status=HTTPStatus.METHOD_NOT_ALLOWED, headers={"Allow": "POST"})
-    config = resolve_model_config(model_id)
+    try:
+        config = model_cache.resolve(model_id)
+    except model_cache.SnapshotUnavailable:
+        return _snapshot_unavailable()
     if not config:
         return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
     if not g.monitor:
@@ -473,17 +438,19 @@ def get_model(model_id):
         # Blocked, disabled, expired, deleted, and unknown models stay hidden.
         # A model that merely awaits acknowledgement is visible so the caller can
         # read its notice.
-        if get_model_access_status(entity_id, config.id) == "blocked" or get_pool_limit(entity_id) is None:
+        if _access_statuses(entity_id, {config.id: config})[config.id] == "blocked" or get_pool_limit(entity_id) is None:
             return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
-    eps = db.session.execute(
-        select(ModelEndpoint).where(ModelEndpoint.model_config_id == config.id, ModelEndpoint.active.is_(True))
-    ).scalars().all()
-    rates = _get_request_rates()
+    try:
+        eps = model_cache.listed_endpoints(config.id)
+        rates = model_cache.request_counts()
+        tokens = _monitor_tokens()
+    except model_cache.SnapshotUnavailable:
+        return _snapshot_unavailable()
     ack = None
     if not g.monitor:
         row = db.session.execute(select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=config.id)).scalar_one_or_none()
         ack = _ack_fields(config, row)
-    d = _model_dict(config, rates, list(eps), ack, _monitor_tokens())
+    d = _model_dict(config, rates, eps, ack, tokens)
     # Requested via an alias? Return metadata under the requested ID so clients
     # that validate their configured model against discovery keep working.
     if model_id != config.model_name:

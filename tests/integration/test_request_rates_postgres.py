@@ -98,11 +98,8 @@ def now(pg_migrated):
 
 @pytest.fixture(autouse=True)
 def pinned_clock(monkeypatch, now):
-    from lumen.blueprints.api import routes as api_routes
     from lumen.services import request_rates
     monkeypatch.setattr(request_rates, "_now", lambda: now)
-    monkeypatch.setitem(api_routes._rates_cache, "data", {})
-    monkeypatch.setitem(api_routes._rates_cache, "expires_at", 0.0)
 
 
 def _log(model_id, when, source, input_tokens=0, output_tokens=0):
@@ -225,7 +222,7 @@ def test_call_sites_never_select_from_request_logs(pg_app, seeded):
     models = {m["id"]: m["requests"] for m in listed.get_json()["data"]}
     assert models["rates-a"]["last_hour"] >= 5
     assert one.get_json()["requests"] == models["rates-a"]
-    # /v1/models fills the per-worker cache and get_model reuses it, so the
+    # /v1/models loads the snapshot's counts and get_model reuses them, so the
     # aggregate is read twice: once for the list and once for the detail page.
     assert sum(VIEW in st for st in statements) == 2, statements
     assert not [st for st in statements if "request_logs" in st], statements
@@ -233,7 +230,6 @@ def test_call_sites_never_select_from_request_logs(pg_app, seeded):
 
 @pytest.mark.postgres
 def test_monitor_token_counts_from_the_aggregate(pg_app, seeded):
-    from lumen.blueprints.api import routes as api_routes
     from lumen.extensions import db
     from lumen.services import request_rates
 
@@ -252,14 +248,12 @@ def test_monitor_token_counts_from_the_aggregate(pg_app, seeded):
 
     client = pg_app.test_client()
     auth = {"Authorization": f"Bearer {MONITOR}"}
-    api_routes._tokens_cache.update(data={}, expires_at=0.0)
     event.listen(engine, "before_cursor_execute", _record)
     try:
         listed = client.get("/v1/models?tokens=true", headers=auth)
         one = client.get("/v1/models/rates-t?tokens=true", headers=auth)
     finally:
         event.remove(engine, "before_cursor_execute", _record)
-        api_routes._tokens_cache.update(data={}, expires_at=0.0)
 
     row = {m["id"]: m for m in listed.get_json()["data"]}["rates-t"]
     assert row["input_tokens"] == inputs

@@ -250,7 +250,8 @@ def _health_tick(app) -> None:
 
     The refresh runs in every process, elected or not, and even when the pass
     failed: that is how health written by another process reaches this
-    process's model snapshot.
+    process's model snapshot. The request and token counts refresh after it,
+    separately, so a failed count query never holds up the snapshot.
     """
     try:
         with app.app_context():
@@ -258,6 +259,7 @@ def _health_tick(app) -> None:
     except Exception:
         logger.exception("health checker error")
     model_cache.refresh(app)
+    model_cache.refresh_counts(app)
 
 
 def start_health_checker(app):

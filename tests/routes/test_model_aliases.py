@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import select
 
 from lumen.extensions import db
+from lumen.services import model_cache
 
 
 def _grant_unlimited_pool(app, entity_id):
@@ -123,6 +124,7 @@ def test_list_models_alias_loading_does_not_scale_with_catalog(
 
     small = _statements_during_request()
     _create_models(20)
+    model_cache.refresh(app)  # as the config watcher does after a sync
     large = _statements_during_request()
 
     assert len(large) == len(small)

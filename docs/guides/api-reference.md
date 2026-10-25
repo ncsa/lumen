@@ -99,7 +99,7 @@ With the [monitoring token](../admin/config-application.md#apimonitoring), `?tok
 | `input_tokens` | Input tokens of the model's requests, per window. |
 | `output_tokens` | Output tokens of the model's requests, per window. |
 
-Each field holds `last_minute` (the last complete minute), `last_hour`, `last_day` and `last_month` (30 days). Alias rows repeat their model's counts. Any other API key, or the monitoring token without the parameter, gets the normal response: the parameter is ignored.
+Each field holds `last_minute` (the last complete minute), `last_hour`, `last_day` and `last_month` (30 days). Alias rows repeat their model's counts. Like the `requests` counts, they may be up to about a minute old. Any other API key, or the monitoring token without the parameter, gets the normal response: the parameter is ignored.
 
 ```bash
 curl "https://lumen.example.com/v1/models?tokens=true" \
