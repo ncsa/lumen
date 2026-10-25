@@ -251,9 +251,9 @@ def clear() -> None:
         _snapshot = None
     with _rr_lock:
         _rr_counters.clear()
-    with _counts_lock:
+    with _counts_lock, _read_lock:
         for c in _counts.values():
-            c.data = None
+            c.data, c.loaded_at, c.read = None, 0.0, False
 
 
 def _is_fresh(snap: Optional[_Snapshot]) -> bool:
@@ -339,13 +339,17 @@ class _Counts:
 
 
 _counts: dict[str, _Counts] = {
-    "requests": _Counts(lambda: request_rates.rates()),
-    "tokens": _Counts(lambda: request_rates.token_windows()),
+    "requests": _Counts(request_rates.rates),
+    "tokens": _Counts(request_rates.token_windows),
 }
 
 #: Serialises count loads. Separate from ``_load_lock`` so a slow count query
 #: never holds up a routing refresh.
 _counts_lock = threading.Lock()
+
+#: Guards ``data`` and ``read`` together, so a read marking a count as used and
+#: a tick deciding to drop it cannot interleave. Never held across a query.
+_read_lock = threading.Lock()
 
 
 def _read_counts(c: _Counts) -> dict:
@@ -354,10 +358,11 @@ def _read_counts(c: _Counts) -> dict:
     Caller owns the app context. A failed reload keeps the previous data; a
     failed first load raises.
     """
-    data = c.data
-    if data is not None and time.monotonic() - c.loaded_at <= MAX_AGE:
-        c.read = True
-        return data
+    with _read_lock:
+        data = c.data
+        if data is not None and time.monotonic() - c.loaded_at <= MAX_AGE:
+            c.read = True
+            return data
     with _counts_lock:
         if c.data is None or time.monotonic() - c.loaded_at > MAX_AGE:
             try:
@@ -369,8 +374,9 @@ def _read_counts(c: _Counts) -> dict:
                 if c.data is None:
                     raise
                 logger.exception("count reload failed; keeping the previous counts")
-        c.read = True
-        return c.data
+        with _read_lock:
+            c.read = True
+            return c.data
 
 
 def request_counts() -> dict:
@@ -390,15 +396,18 @@ def refresh_counts(app) -> None:
     """
     with _counts_lock:
         for name, c in _counts.items():
-            if c.data is None:
-                continue
-            if not c.read:
-                c.data = None
-                continue
+            with _read_lock:
+                if c.data is None:
+                    continue
+                if not c.read:
+                    c.data = None
+                    continue
+                c.read = False  # a read during the reload counts for the next tick
             try:
                 with app.app_context():
-                    c.data = c.compute()
-                c.loaded_at = time.monotonic()
+                    data = c.compute()
             except Exception:
                 logger.exception("%s count refresh failed; keeping the previous counts", name)
-            c.read = False
+                continue
+            with _read_lock:
+                c.data, c.loaded_at = data, time.monotonic()

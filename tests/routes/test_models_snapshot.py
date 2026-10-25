@@ -367,7 +367,7 @@ def test_failed_count_refresh_keeps_counts_and_routing_still_refreshes(app, clie
     def broken(*args, **kwargs):
         raise RuntimeError("aggregate unavailable")
 
-    monkeypatch.setattr(request_rates, "rates", broken)
+    monkeypatch.setattr(model_cache._counts["requests"], "compute", broken)
     health._health_tick(app)
 
     assert _requests(client, monitor_token) == before
@@ -378,12 +378,12 @@ def test_failed_count_refresh_keeps_counts_and_routing_still_refreshes(app, clie
 def test_failed_reload_at_the_safety_valve_keeps_the_counts(app, client, monitor_token, catalog, monkeypatch):
     before = _requests(client, monitor_token)
     model_cache._counts["requests"].loaded_at -= model_cache.MAX_AGE + 1
-    monkeypatch.setattr(request_rates, "rates", lambda *a, **k: 1 / 0)
+    monkeypatch.setattr(model_cache._counts["requests"], "compute", lambda: 1 / 0)
     assert _requests(client, monitor_token) == before
 
 
 def test_count_failure_never_fails_the_snapshot_load(app, catalog, monkeypatch):
-    monkeypatch.setattr(request_rates, "rates", lambda *a, **k: 1 / 0)
+    monkeypatch.setattr(model_cache._counts["requests"], "compute", lambda: 1 / 0)
     model_cache.refresh(app)
     with app.app_context():
         assert model_cache.resolve("plain") is not None
@@ -402,3 +402,21 @@ def test_unhealthy_endpoint_is_listed_but_never_routed(app, client, monitor_toke
         picked = {model_cache.next_endpoint(mc.id).id for _ in range(6)}
         assert unhealthy[0] not in picked
         assert model_cache.next_endpoint(model_cache.resolve("down").id) is None
+
+
+def test_a_read_during_a_tick_reload_keeps_the_counts_for_the_next_tick(app, client, monitor_token, catalog, monkeypatch):
+    _requests(client, monitor_token)
+    c = model_cache._counts["requests"]
+    real = c.compute
+
+    def compute_while_read():
+        with app.app_context():
+            model_cache.request_counts()  # served from the current counts, not blocked by the tick
+        return real()
+
+    monkeypatch.setattr(c, "compute", compute_while_read)
+    model_cache.refresh_counts(app)
+    monkeypatch.setattr(c, "compute", real)
+    assert c.read  # read since this tick, so the next tick reloads instead of dropping
+    model_cache.refresh_counts(app)
+    assert c.data is not None
