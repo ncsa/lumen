@@ -810,6 +810,37 @@ def test_config_url_adopted_without_base_url(home, lumen_server, base_url):
 
 
 @pytest.mark.parametrize("source", ["keys", "env"])
+def test_base_url_with_v1_matches_config_url(home, lumen_server, source):
+    """$LUMEN_BASE_URL in the opencode baseURL form (with /v1) names the same
+    server as the config: no abort, and the env key still counts."""
+    port = lumen_server.server_address[1]
+    server_v1 = f"http://127.0.0.1:{port}/v1"
+    env = {"LUMEN_BASE_URL": f"{server_v1}/"}
+    if source == "keys":
+        store_test_key(home, port)
+    else:
+        env["LUMEN_API_KEY"] = "sk_stored_key_000"
+    config = write_config(home, server_v1, "sk_stored_key_000")
+    r = run_script(home, None, env_extra=env)
+    assert r.returncode == 0, r.stderr
+    assert not oauth_hits(lumen_server)
+    assert lumen_server.auths == ["Bearer sk_stored_key_000"]
+    assert lumen_options(config)["baseURL"] == server_v1
+
+
+def test_explicit_server_with_v1(home, lumen_server):
+    port = lumen_server.server_address[1]
+    server_b = f"http://127.0.0.1:{port}"
+    store_test_key(home, port)
+    config = write_config(home, f"{SERVER_A}/v1", "{env:LUMEN_API_KEY}")
+    r = run_script(home, None, args=["-s", f"{server_b}/v1"])
+    assert r.returncode == 0, r.stderr
+    assert lumen_server.hits.get("/v1/models") == 1
+    assert lumen_options(config)["baseURL"] == f"{server_b}/v1"
+    assert f"export LUMEN_BASE_URL='{server_b}'" in (home / ".bashrc").read_text()
+
+
+@pytest.mark.parametrize("source", ["keys", "env"])
 def test_embedded_key_differing_from_dotfile_key_aborts(home, lumen_server, source):
     port = lumen_server.server_address[1]
     env = {}
@@ -821,8 +852,9 @@ def test_embedded_key_differing_from_dotfile_key_aborts(home, lumen_server, sour
     before = config.read_bytes()
     r = run_script(home, port, env_extra=env)
     assert r.returncode != 0
-    assert b"differs from the one in" in r.stderr
+    assert b"opencode.json differs from" in r.stderr
     assert b"--relogin" in r.stderr
+    assert f"pass -s http://127.0.0.1:{port} to keep".encode() in r.stderr
     assert config.read_bytes() == before
     assert not lumen_server.hits
     assert b"sk_" not in r.stdout + r.stderr

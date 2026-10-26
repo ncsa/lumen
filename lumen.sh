@@ -99,7 +99,15 @@ if [[ -n "$TTL" ]]; then
   esac
 fi
 
-SERVER="${SERVER%/}"
+# A server is named without the API's /v1, so that https://host and
+# https://host/v1 (the opencode baseURL form) compare equal; the script
+# appends /v1 itself.
+strip_v1() {
+  local u="${1%/}"
+  u="${u%/v1}"
+  printf '%s' "${u%/}"
+}
+SERVER=$(strip_v1 "$SERVER")
 command -v curl >/dev/null 2>&1 || die "curl is required"
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
@@ -370,12 +378,13 @@ resolve_key() {
   # An inherited key belongs to the server that issued it; keys exported by a
   # previous login set LUMEN_BASE_URL alongside the key. The :- fallback keeps
   # hand-exported keys (no LUMEN_BASE_URL) working against the default server,
-  # and the %-strip matches hand-set values that carry a trailing slash
+  # and strip_v1 matches hand-set values that carry a trailing slash or /v1
   # (SERVER was already stripped).
-  local want="${LUMEN_BASE_URL:-$DEFAULT_SERVER}"
+  local want
+  want=$(strip_v1 "${LUMEN_BASE_URL:-$DEFAULT_SERVER}")
   KEY_SOURCE=""
   if [[ $RELOGIN -eq 0 && -n "${LUMEN_API_KEY:-}" \
-        && "${want%/}" == "$SERVER" ]]; then
+        && "$want" == "$SERVER" ]]; then
     if [[ "$LUMEN_API_KEY" =~ $KEY_RE ]]; then
       KEY_SOURCE=env
     else
@@ -398,10 +407,9 @@ resolve_key() {
   [[ "$CONFIG_URL" != "$SERVER" ]] || embedded="$CONFIG_KEY"
   if [[ -n "$KEY_SOURCE" ]]; then
     if [[ $SERVER_EXPLICIT -eq 0 && -n "$embedded" && "$embedded" != "$LUMEN_API_KEY" ]]; then
-      if [[ $KEY_SOURCE == env ]]; then
-        die "the key in \$LUMEN_API_KEY differs from the one in $OPENCODE_FILE; run lumen.sh --relogin to replace both"
-      fi
-      die "the key for $HOST in $KEYS_JSON differs from the one in $OPENCODE_FILE; run lumen.sh --relogin to replace both"
+      local src="the key for $HOST in $KEYS_JSON"
+      [[ $KEY_SOURCE != env ]] || src="\$LUMEN_API_KEY"
+      die "the key in $OPENCODE_FILE differs from $src; run lumen.sh --relogin to replace both with a new key, or pass -s $(sanitize "$SERVER") to keep $src"
     fi
     return 0
   fi
@@ -420,10 +428,7 @@ read_opencode_config() {
   local json
   json=$(jsonc_to_json "$OPENCODE_FILE" | jq -c '.provider.lumen.options // {}') \
     || die "cannot parse $OPENCODE_FILE"
-  CONFIG_URL=$(jq -r '.baseURL // empty | strings' <<<"$json")
-  CONFIG_URL="${CONFIG_URL%/}"
-  CONFIG_URL="${CONFIG_URL%/v1}"
-  CONFIG_URL="${CONFIG_URL%/}"
+  CONFIG_URL=$(strip_v1 "$(jq -r '.baseURL // empty | strings' <<<"$json")")
   CONFIG_KEY=$(jq -r '.apiKey // empty | strings' <<<"$json")
   [[ "$CONFIG_KEY" =~ $KEY_RE ]] || CONFIG_KEY=""
 }
@@ -628,7 +633,8 @@ sync_models
 
 # Only now that the server accepted the key: a key taken from the config
 # joins keys.json and the rc block, and with -s the rc block follows the
-# chosen server, so it never pairs one server's URL with another's key.
+# chosen server, so it never pairs one server's URL with another's key. An
+# env or keys.json key is deliberately not (re)written to keys.json.
 case "$KEY_SOURCE" in
   config) store_key "$LUMEN_API_KEY" ;;
   env|keys) [[ $SERVER_EXPLICIT -eq 0 ]] || install_rc_key "$LUMEN_API_KEY" "$SERVER" ;;
