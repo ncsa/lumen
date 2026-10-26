@@ -37,6 +37,11 @@ An $LUMEN_API_KEY from the environment (or the rc-file block) is only used
 for the server it was issued for ($LUMEN_BASE_URL, default: the production
 server), so keys are never sent to the wrong server. Because the login writes
 both variables, a plain run targets the server you last logged in to.
+
+-s always wins: the rc block and the opencode config are switched to that
+server. Without -s, the server in the opencode config is used; if it, or a
+key embedded there, disagrees with $LUMEN_BASE_URL, $LUMEN_API_KEY or
+keys.json, the run stops (--relogin replaces a mismatching key).
 Environment: LUMEN_API_KEY, LUMEN_BASE_URL, OPENCODE_CONFIG, LUMEN_CONFIG_DIR.
 EOF
 }
@@ -60,10 +65,11 @@ OPENCODE=1
 RELOGIN=0
 NO_ALIASES=0
 EMBED_KEY=0
+SERVER_EXPLICIT=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -s|--server)   SERVER="${2:?missing value for $1}"; shift 2 ;;
+    -s|--server)   SERVER="${2:?missing value for $1}"; SERVER_EXPLICIT=1; shift 2 ;;
     -k|--keyname)  KEYNAME="${2:?missing value for $1}"; shift 2 ;;
     --author)      AUTHOR="${2:?missing value for $1}"; shift 2 ;;
     --client-id)   CLIENT_ID="${2:?missing value for $1}"; shift 2 ;;
@@ -131,10 +137,26 @@ validate_server() {
 }
 validate_server "$SERVER"
 
-HOST="${SERVER#*://}"
-HOST="${HOST%%/*}"
-LDIR="${LUMEN_CONFIG_DIR:-"$HOME/.config/lumen"}"
-KEYS_JSON="$LDIR/keys.json"
+# Without -s, the server named in the opencode config (CONFIG_URL) must agree
+# with $LUMEN_BASE_URL; if that is unset, the config's server is used. -s
+# always wins, and the config and rc block are then brought in line with it.
+check_opencode_url() {
+  [[ $SERVER_EXPLICIT -eq 0 && -n "$CONFIG_URL" ]] || return 0
+  if [[ -z "${LUMEN_BASE_URL:-}" ]]; then
+    validate_server "$CONFIG_URL"
+    SERVER="$CONFIG_URL"
+  elif [[ "$CONFIG_URL" != "$SERVER" ]]; then
+    die "\$LUMEN_BASE_URL is $(sanitize "$SERVER") but $OPENCODE_FILE uses $(sanitize "$CONFIG_URL"); pass -s URL to choose one"
+  fi
+}
+
+# Runs once SERVER is final: keys.json entries are keyed by its host.
+derive_server_vars() {
+  HOST="${SERVER#*://}"
+  HOST="${HOST%%/*}"
+  LDIR="${LUMEN_CONFIG_DIR:-"$HOME/.config/lumen"}"
+  KEYS_JSON="$LDIR/keys.json"
+}
 
 # POSTs form-encoded fields; sets RESP_BODY (body) and RESP_CODE (http code).
 http_post() {
@@ -154,7 +176,8 @@ store_key() {
   # Always store without asking: store_key only runs after a login the user
   # just completed (or a deliberate --relogin), so the freshly issued key is
   # by definition the one they want; prompting could leave a key that the
-  # server already revoked kept on disk.
+  # server already revoked kept on disk. The other caller stores a key that
+  # was embedded in the opencode config and that the server just accepted.
   mkdir -p "$LDIR"
   chmod 700 "$LDIR"
   local tmp
@@ -350,23 +373,59 @@ resolve_key() {
   # and the %-strip matches hand-set values that carry a trailing slash
   # (SERVER was already stripped).
   local want="${LUMEN_BASE_URL:-$DEFAULT_SERVER}"
+  KEY_SOURCE=""
   if [[ $RELOGIN -eq 0 && -n "${LUMEN_API_KEY:-}" \
         && "${want%/}" == "$SERVER" ]]; then
     if [[ "$LUMEN_API_KEY" =~ $KEY_RE ]]; then
-      return 0
+      KEY_SOURCE=env
+    else
+      echo "warning: ignoring malformed LUMEN_API_KEY (unset it or run lumen.sh --relogin)" >&2
     fi
-    echo "warning: ignoring malformed LUMEN_API_KEY (unset it or run lumen.sh --relogin)" >&2
   fi
-  if [[ $RELOGIN -eq 0 && -f "$KEYS_JSON" ]]; then
+  if [[ -z "$KEY_SOURCE" && $RELOGIN -eq 0 && -f "$KEYS_JSON" ]]; then
     local k
     k=$(jq -r --arg h "$HOST" '.[$h] // empty' "$KEYS_JSON" 2>/dev/null || true)
     if [[ "$k" =~ $KEY_RE ]]; then
       export LUMEN_API_KEY="$k"
-      return 0
+      KEY_SOURCE=keys
+    else
+      [[ -z "$k" ]] || echo "warning: ignoring malformed key for $HOST in $KEYS_JSON (run lumen.sh --relogin to replace it)" >&2
     fi
-    [[ -z "$k" ]] || echo "warning: ignoring malformed key for $HOST in $KEYS_JSON (run lumen.sh --relogin to replace it)" >&2
+  fi
+  # The embedded key and the config's baseURL are a pair: the key only
+  # counts for the server the config names, so it is never sent elsewhere.
+  local embedded=""
+  [[ "$CONFIG_URL" != "$SERVER" ]] || embedded="$CONFIG_KEY"
+  if [[ -n "$KEY_SOURCE" ]]; then
+    if [[ $SERVER_EXPLICIT -eq 0 && -n "$embedded" && "$embedded" != "$LUMEN_API_KEY" ]]; then
+      if [[ $KEY_SOURCE == env ]]; then
+        die "the key in \$LUMEN_API_KEY differs from the one in $OPENCODE_FILE; run lumen.sh --relogin to replace both"
+      fi
+      die "the key for $HOST in $KEYS_JSON differs from the one in $OPENCODE_FILE; run lumen.sh --relogin to replace both"
+    fi
+    return 0
+  fi
+  if [[ $RELOGIN -eq 0 && -n "$embedded" ]]; then
+    export LUMEN_API_KEY="$embedded"
+    KEY_SOURCE=config
+    return 0
   fi
   device_login
+  KEY_SOURCE=login
+}
+
+# Sets CONFIG_URL (the config's baseURL without /v1, so it compares with
+# SERVER) and CONFIG_KEY (its literal apiKey, empty for {env:...}).
+read_opencode_config() {
+  local json
+  json=$(jsonc_to_json "$OPENCODE_FILE" | jq -c '.provider.lumen.options // {}') \
+    || die "cannot parse $OPENCODE_FILE"
+  CONFIG_URL=$(jq -r '.baseURL // empty | strings' <<<"$json")
+  CONFIG_URL="${CONFIG_URL%/}"
+  CONFIG_URL="${CONFIG_URL%/v1}"
+  CONFIG_URL="${CONFIG_URL%/}"
+  CONFIG_KEY=$(jq -r '.apiKey // empty | strings' <<<"$json")
+  [[ "$CONFIG_KEY" =~ $KEY_RE ]] || CONFIG_KEY=""
 }
 
 # Sets OPENCODE_FILE to the opencode config to update: $OPENCODE_CONFIG,
@@ -423,7 +482,6 @@ jsonc_to_json() { awk -v check=0 "$JSONC_AWK" "$1"; }
 jsonc_has_comments() { awk -v check=1 "$JSONC_AWK" "$1"; }
 
 sync_models() {
-  resolve_opencode_config
   local config="$OPENCODE_FILE"
 
   local models_json code
@@ -510,6 +568,7 @@ sync_models() {
     | .provider = ((.provider // {}) + {lumen: (
         if $lumen then
           $lumen + {models: $models}
+          | .options = ((.options // {}) + {baseURL: ($base + "/v1")})
           | if $embed then .options = ((.options // {}) + {apiKey: $key}) else . end
         else
           {
@@ -546,6 +605,18 @@ sync_models() {
 TMPDIR_LUMEN=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_LUMEN"' EXIT
 
+# A --no-opencode run never reads the config, so it chooses the server and
+# key exactly as before.
+CONFIG_URL=""
+CONFIG_KEY=""
+OPENCODE_FILE=""
+if [[ $OPENCODE -eq 1 ]]; then
+  resolve_opencode_config
+  read_opencode_config
+  check_opencode_url
+fi
+derive_server_vars
+
 resolve_key
 
 if [[ $OPENCODE -eq 0 ]]; then
@@ -554,3 +625,11 @@ if [[ $OPENCODE -eq 0 ]]; then
 fi
 
 sync_models
+
+# Only now that the server accepted the key: a key taken from the config
+# joins keys.json and the rc block, and with -s the rc block follows the
+# chosen server, so it never pairs one server's URL with another's key.
+case "$KEY_SOURCE" in
+  config) store_key "$LUMEN_API_KEY" ;;
+  env|keys) [[ $SERVER_EXPLICIT -eq 0 ]] || install_rc_key "$LUMEN_API_KEY" "$SERVER" ;;
+esac
