@@ -99,11 +99,14 @@ if [[ -n "$TTL" ]]; then
   esac
 fi
 
-# A server is named without the API's /v1, so that https://host and
-# https://host/v1 (the opencode baseURL form) compare equal; the script
-# appends /v1 itself.
+# With the opencode config, a server is named without the API's /v1, so
+# that https://host and https://host/v1 (the opencode baseURL form) compare
+# equal; the script appends /v1 itself. A --no-opencode run keeps the URL
+# as given (only a trailing / is dropped), so a Lumen mounted at a path
+# ending in /v1 still logs in there.
 strip_v1() {
   local u="${1%/}"
+  [[ $OPENCODE -eq 1 ]] || { printf '%s' "$u"; return; }
   u="${u%/v1}"
   printf '%s' "${u%/}"
 }
@@ -378,8 +381,8 @@ resolve_key() {
   # An inherited key belongs to the server that issued it; keys exported by a
   # previous login set LUMEN_BASE_URL alongside the key. The :- fallback keeps
   # hand-exported keys (no LUMEN_BASE_URL) working against the default server,
-  # and strip_v1 matches hand-set values that carry a trailing slash or /v1
-  # (SERVER was already stripped).
+  # and strip_v1 matches hand-set values that carry a trailing slash (or, with
+  # the opencode config, /v1) the same way SERVER was stripped.
   local want
   want=$(strip_v1 "${LUMEN_BASE_URL:-$DEFAULT_SERVER}")
   KEY_SOURCE=""

@@ -53,11 +53,17 @@ class FakeLumen(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _route(self):
+        """The request path below the server's mount prefix, or None."""
+        prefix = self.server.prefix
+        return self.path[len(prefix):] if self.path.startswith(prefix + "/") else None
+
     def do_POST(self):
         form = parse_qs(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode())
         s = self.server
         s.hits[self.path] = s.hits.get(self.path, 0) + 1
-        if self.path == "/oauth/device_authorization":
+        path = self._route()
+        if path == "/oauth/device_authorization":
             assert form.get("client_id") and form.get("name")
             s.auth_forms.append(form)
             self._json(200, {
@@ -66,7 +72,7 @@ class FakeLumen(BaseHTTPRequestHandler):
                 "interval": 1, "expires_in": 30,
                 **s.auth_extra,
             })
-        elif self.path == "/oauth/token":
+        elif path == "/oauth/token":
             assert form["grant_type"][0] == "urn:ietf:params:oauth:grant-type:device_code"
             code, obj, *headers = s.token_queue.pop(0) if s.token_queue else (400, {"error": "expired_token"})
             self._json(code, obj, *headers)
@@ -74,7 +80,7 @@ class FakeLumen(BaseHTTPRequestHandler):
             self._json(404, {"error": "not_found"})
 
     def do_GET(self):
-        if self.path == "/v1/models":
+        if self._route() == "/v1/models":
             auth = self.headers.get("Authorization", "")
             self.server.auths.append(auth)
             if not auth.startswith("Bearer sk_") or self.server.models_status == 401:
@@ -94,6 +100,7 @@ def lumen_server():
     server.auth_extra = {}
     server.auth_forms = []
     server.auths = []
+    server.prefix = ""
     server.models_status = 200
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -807,6 +814,39 @@ def test_config_url_adopted_without_base_url(home, lumen_server, base_url):
     assert r.returncode == 0, r.stderr
     assert lumen_server.auths == ["Bearer sk_stored_key_000"]
     assert lumen_options(config)["baseURL"] == f"http://127.0.0.1:{port}/v1"
+
+
+@pytest.mark.parametrize("via", ["-s", "env"])
+def test_no_opencode_keeps_v1_mounted_server(home, lumen_server, via):
+    """--no-opencode logs in to a Lumen mounted at a path ending in /v1 as
+    before: the /v1 normalization only applies with the opencode config."""
+    port = lumen_server.server_address[1]
+    mounted = f"http://127.0.0.1:{port}/v1"
+    lumen_server.prefix = "/v1"
+    lumen_server.token_queue = [LOGIN]
+    args = ["--no-opencode", "--relogin"]
+    env = {}
+    if via == "-s":
+        args += ["-s", mounted]
+    else:
+        env["LUMEN_BASE_URL"] = f"{mounted}/"
+    r = run_script(home, None, args=args, env_extra=env)
+    assert r.returncode == 0, r.stderr
+    assert lumen_server.hits.get("/v1/oauth/device_authorization") == 1
+    assert lumen_server.hits.get("/v1/oauth/token") == 1
+    assert "/oauth/device_authorization" not in lumen_server.hits
+    assert json.loads(keys_json(home).read_text()) == {host_key(port): TEST_KEY}
+    assert f"export LUMEN_BASE_URL='{mounted}'" in (home / ".bashrc").read_text()
+
+
+def test_no_opencode_env_key_matches_v1_mounted_server(home, lumen_server):
+    port = lumen_server.server_address[1]
+    mounted = f"http://127.0.0.1:{port}/v1"
+    r = run_script(home, None, args=["--no-opencode", "-s", mounted],
+                   env_extra={"LUMEN_BASE_URL": f"{mounted}/", "LUMEN_API_KEY": "sk_mounted_key_0000"})
+    assert r.returncode == 0, r.stderr
+    assert b"LUMEN_API_KEY=sk_mounted_key_0000" in r.stdout
+    assert not lumen_server.hits
 
 
 @pytest.mark.parametrize("source", ["keys", "env"])
