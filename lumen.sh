@@ -478,24 +478,27 @@ sync_models() {
   added=$(comm -23 <(jq -r 'keys[]' <<<"$new_models") <(jq -r 'keys[]' <<<"$old_models"))
   removed=$(comm -13 <(jq -r 'keys[]' <<<"$new_models") <(jq -r 'keys[]' <<<"$old_models"))
 
-  # The rewrite is plain JSON, so comments are lost: keep the original once.
-  if jsonc_has_comments "$config"; then
-    if [[ -e "$config.bak" ]]; then
-      echo "warning: comments in $config are not kept when it is rewritten (an earlier copy is in $config.bak)" >&2
-    else
-      cp -p "$config" "$config.bak"
-      echo "warning: comments in $config are not kept when it is rewritten; the original is saved as $config.bak" >&2
-    fi
-  fi
-
   # Embedding is sticky: a config that already holds a literal key gets the
   # current one written back, so it never keeps a stale key. Only
-  # --embed-key turns {env:LUMEN_API_KEY} into a literal key.
+  # --embed-key turns {env:LUMEN_API_KEY} into a literal key. A backup of
+  # the config may hold an earlier key, so it is restricted as well.
   local embed=false old_key
   old_key=$(jsonc_to_json "$config" | jq -r '.provider.lumen.options.apiKey // empty | strings' 2>/dev/null || true)
   if [[ $EMBED_KEY -eq 1 || "$old_key" =~ $KEY_RE ]]; then
     embed=true
     restrict_to_owner "$config"
+    [[ ! -e "$config.bak" ]] || restrict_to_owner "$config.bak"
+  fi
+
+  # The rewrite is plain JSON, so comments are lost: keep the original once.
+  # The copy is created owner-only, as it may hold a key.
+  if jsonc_has_comments "$config"; then
+    if [[ -e "$config.bak" ]]; then
+      echo "warning: comments in $config are not kept when it is rewritten (an earlier copy is in $config.bak)" >&2
+    else
+      (umask 077 && cp "$config" "$config.bak")
+      echo "warning: comments in $config are not kept when it is rewritten; the original is saved as $config.bak" >&2
+    fi
   fi
 
   tmp=$(mktemp "$config.tmp.XXXXXX")

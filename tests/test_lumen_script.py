@@ -653,6 +653,60 @@ def test_malformed_embedded_key_is_not_sticky(home, lumen_server):
     assert json.loads(config.read_text())["provider"]["lumen"]["options"]["apiKey"] == "not a key"
 
 
+def commented_config(base_url, api_key):
+    return "// my opencode config\n" + json.dumps(lumen_block(base_url, api_key), indent=2) + "\n"
+
+
+@pytest.mark.parametrize("args", [[], ["--embed-key"]])
+def test_backup_of_commented_literal_key_config_is_owner_only(home, lumen_server, args):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    config = home / ".config" / "opencode" / "opencode.json"
+    original = commented_config(f"http://127.0.0.1:{port}/v1", "sk_old_embedded_000")
+    config.write_text(original)
+    config.chmod(0o644)
+    r = run_script(home, port, args=args)
+    assert r.returncode == 0, r.stderr
+    bak = config.with_name("opencode.json.bak")
+    assert bak.read_text() == original
+    assert stat.S_IMODE(bak.stat().st_mode) == 0o600
+    assert stat.S_IMODE(config.stat().st_mode) == 0o600
+    assert json.loads(config.read_text())["provider"]["lumen"]["options"]["apiKey"] == "sk_stored_key_000"
+    assert b"sk_" not in r.stdout + r.stderr
+
+
+@pytest.mark.parametrize("args", [[], ["--embed-key"]])
+def test_existing_backup_restricted_when_key_embedded(home, lumen_server, args):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    config = home / ".config" / "opencode" / "opencode.json"
+    config.write_text(commented_config(f"http://127.0.0.1:{port}/v1", "sk_old_embedded_000"))
+    bak = config.with_name("opencode.json.bak")
+    earlier = commented_config(f"http://127.0.0.1:{port}/v1", "sk_older_embedded_0")
+    bak.write_text(earlier)
+    bak.chmod(0o644)
+    r = run_script(home, port, args=args)
+    assert r.returncode == 0, r.stderr
+    assert bak.read_text() == earlier
+    assert stat.S_IMODE(bak.stat().st_mode) == 0o600
+    assert f"{bak} was readable by other users".encode() in r.stderr
+    assert b"sk_" not in r.stdout + r.stderr
+
+
+def test_backup_of_commented_env_config_is_owner_only(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    config = home / ".config" / "opencode" / "opencode.json"
+    original = commented_config(f"http://127.0.0.1:{port}/v1", "{env:LUMEN_API_KEY}")
+    config.write_text(original)
+    config.chmod(0o644)
+    r = run_script(home, port, args=["--embed-key"])
+    assert r.returncode == 0, r.stderr
+    bak = config.with_name("opencode.json.bak")
+    assert bak.read_text() == original
+    assert stat.S_IMODE(bak.stat().st_mode) == 0o600
+
+
 @pytest.mark.parametrize("args", [["--embed-key", "--no-opencode"], ["--no-opencode", "--embed-key"]])
 def test_embed_key_with_no_opencode_rejected(home, lumen_server, args):
     port = lumen_server.server_address[1]
