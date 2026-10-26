@@ -574,6 +574,95 @@ def test_sync_creates_missing_opencode_config_env_path(bare_home, lumen_server):
     assert not (bare_home / ".config" / "opencode").exists()
 
 
+def lumen_block(base_url, api_key):
+    return {"provider": {"lumen": {
+        "npm": "@ai-sdk/openai-compatible", "name": "Lumen",
+        "options": {"baseURL": base_url, "apiKey": api_key},
+        "models": {"old-model": {"name": "old-model via Lumen"}},
+    }}}
+
+
+@pytest.mark.parametrize("existing_mode", [0o644, 0o600])
+def test_embed_key_writes_literal_key_rc_and_keys(home, lumen_server, existing_mode):
+    port = lumen_server.server_address[1]
+    config = home / ".config" / "opencode" / "opencode.json"
+    config.chmod(existing_mode)
+    lumen_server.token_queue = [
+        (200, {"access_token": TEST_KEY, "token_type": "Bearer", "approved_by": "a@b"}),
+    ]
+    r = run_script(home, port, args=["--embed-key"])
+    assert r.returncode == 0, r.stderr
+    keys = json.loads((home / ".config" / "lumen" / "keys.json").read_text())
+    assert keys[host_key(port)] == TEST_KEY
+    assert f"export LUMEN_API_KEY='{TEST_KEY}'" in (home / ".bashrc").read_text()
+    cfg = json.loads(config.read_text())
+    assert cfg["provider"]["lumen"]["options"] == {
+        "baseURL": f"http://127.0.0.1:{port}/v1", "apiKey": TEST_KEY,
+    }
+    assert stat.S_IMODE(config.stat().st_mode) == 0o600
+    assert (f"{config} was readable by other users".encode() in r.stderr) == (existing_mode == 0o644)
+    assert b"The key is embedded in" in r.stdout
+
+
+def test_embed_key_creates_jsonc_with_literal_key(bare_home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(bare_home, port)
+    r = run_script(bare_home, port, args=["--embed-key"], opencode_env=False)
+    assert r.returncode == 0, r.stderr
+    config = bare_home / ".config" / "opencode" / "opencode.jsonc"
+    assert json.loads(config.read_text())["provider"]["lumen"]["options"]["apiKey"] == "sk_stored_key_000"
+    assert stat.S_IMODE(config.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize("embed", [True, False])
+def test_env_block_switched_to_literal_key_only_with_flag(home, lumen_server, embed):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    config = home / ".config" / "opencode" / "opencode.json"
+    config.write_text(json.dumps(lumen_block("https://keep.example.edu/v1", "{env:LUMEN_API_KEY}")))
+    r = run_script(home, port, args=["--embed-key"] if embed else [])
+    assert r.returncode == 0, r.stderr
+    lumen = json.loads(config.read_text())["provider"]["lumen"]
+    assert lumen["options"]["apiKey"] == ("sk_stored_key_000" if embed else "{env:LUMEN_API_KEY}")
+    # Choosing the server is out of scope here: an existing baseURL is kept.
+    assert lumen["options"]["baseURL"] == "https://keep.example.edu/v1"
+    assert set(lumen["models"]) == {"gpt-demo", "gpt-alias"}
+    assert (b"The key is embedded in" in r.stdout) == embed
+
+
+def test_embedded_key_is_sticky_without_flag(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    config = home / ".config" / "opencode" / "opencode.json"
+    config.write_text(json.dumps(lumen_block(f"http://127.0.0.1:{port}/v1", "sk_old_embedded_000")))
+    config.chmod(0o644)
+    r = run_script(home, port)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(config.read_text())["provider"]["lumen"]["options"]["apiKey"] == "sk_stored_key_000"
+    assert stat.S_IMODE(config.stat().st_mode) == 0o600
+    assert b"readable by other users" in r.stderr
+
+
+def test_malformed_embedded_key_is_not_sticky(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    config = home / ".config" / "opencode" / "opencode.json"
+    config.write_text(json.dumps(lumen_block(f"http://127.0.0.1:{port}/v1", "not a key")))
+    r = run_script(home, port)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(config.read_text())["provider"]["lumen"]["options"]["apiKey"] == "not a key"
+
+
+@pytest.mark.parametrize("args", [["--embed-key", "--no-opencode"], ["--no-opencode", "--embed-key"]])
+def test_embed_key_with_no_opencode_rejected(home, lumen_server, args):
+    port = lumen_server.server_address[1]
+    r = run_script(home, port, args=args)
+    assert r.returncode != 0
+    assert b"--embed-key" in r.stderr
+    assert not lumen_server.hits
+    assert not (home / ".bashrc").exists()
+
+
 def test_sync_no_aliases_flag(home, lumen_server):
     port = lumen_server.server_address[1]
     keys = home / ".config" / "lumen" / "keys.json"

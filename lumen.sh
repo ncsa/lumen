@@ -10,7 +10,7 @@ usage() {
   cat <<'EOF'
 usage: lumen.sh [-s SERVER] [-k|--keyname NAME] [--author LABEL]
                 [--client-id ID] [--ttl DURATION] [--opencode | --no-opencode]
-                [--relogin] [--no-aliases] [-h|--help]
+                [--embed-key] [--relogin] [--no-aliases] [-h|--help]
 
   -s, --server URL     Lumen base URL (default: $LUMEN_BASE_URL or
                        https://lumen.ncsa.illinois.edu)
@@ -26,6 +26,9 @@ usage: lumen.sh [-s SERVER] [-k|--keyname NAME] [--author LABEL]
                        ~/.config/opencode/opencode.json, else
                        ~/.config/opencode/opencode.jsonc, created if missing
       --no-opencode    Only authenticate and store the key
+      --embed-key      Also write the key itself into the opencode config
+                       (mode 600), for apps that don't read your shell rc.
+                       Once embedded, later runs keep it up to date
       --relogin        Request a new key even if one is stored; the newly
                        issued key always replaces the stored one
       --no-aliases     Skip alias entries when syncing models
@@ -56,6 +59,7 @@ TTL=""
 OPENCODE=1
 RELOGIN=0
 NO_ALIASES=0
+EMBED_KEY=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -66,12 +70,14 @@ while [[ $# -gt 0 ]]; do
     --ttl)         TTL="${2:?missing value for $1}"; shift 2 ;;
     --opencode)    OPENCODE=1; shift ;;
     --no-opencode) OPENCODE=0; shift ;;
+    --embed-key)   EMBED_KEY=1; shift ;;
     --relogin)     RELOGIN=1; shift ;;
     --no-aliases)  NO_ALIASES=1; shift ;;
     -h|--help)     usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 1 ;;
   esac
 done
+[[ $EMBED_KEY -eq 0 || $OPENCODE -eq 1 ]] || die "--embed-key needs the opencode config; drop --no-opencode"
 
 # --ttl in seconds, the unit the server takes. The digit limit keeps the
 # arithmetic far from overflow; the server enforces its own maximum.
@@ -163,6 +169,22 @@ store_key() {
   install_rc_key "$1" "$SERVER"
 }
 
+# $1 holds a key in plaintext: restrict it to the owner, as keys.json is,
+# and warn if other users could read it. A missing file is created empty.
+# ls -lL works on both GNU and BSD.
+restrict_to_owner() {
+  if [[ -e "$1" ]]; then
+    local mode
+    mode=$(ls -lLd "$1")
+    if [[ "${mode:4:1}" == r || "${mode:7:1}" == r ]]; then
+      echo "warning: $1 was readable by other users; setting it to mode 600" >&2
+    fi
+  else
+    (umask 077 && : > "$1")
+  fi
+  chmod 600 "$1"
+}
+
 # Single-quotes $1 for an rc file so the shell reading it never expands it.
 # An embedded ' becomes '\'' (sh, csh) or \' (fish); fish also needs \
 # doubled. A character loop avoids ${//} replacement quirks of bash 3.2.
@@ -222,18 +244,8 @@ install_rc_key() {
     printf '%s\n' "${lines[@]}"
     printf '%s\n' "$RC_BLOCK_END"
   } >> "$tmp"
-  # The rc file now holds the key in plaintext: restrict it to the owner
-  # before writing, as keys.json is. ls -lL works on both GNU and BSD.
-  if [[ -e "$rc" ]]; then
-    local mode
-    mode=$(ls -lLd "$rc")
-    if [[ "${mode:4:1}" == r || "${mode:7:1}" == r ]]; then
-      echo "warning: $rc was readable by other users; setting it to mode 600" >&2
-    fi
-  else
-    (umask 077 && : > "$rc")
-  fi
-  chmod 600 "$rc"
+  # Restrict before writing: the rc file now holds the key.
+  restrict_to_owner "$rc"
   cat "$tmp" > "$rc"
   rm -f "$tmp"
 }
@@ -476,19 +488,34 @@ sync_models() {
     fi
   fi
 
+  # Embedding is sticky: a config that already holds a literal key gets the
+  # current one written back, so it never keeps a stale key. Only
+  # --embed-key turns {env:LUMEN_API_KEY} into a literal key.
+  local embed=false old_key
+  old_key=$(jsonc_to_json "$config" | jq -r '.provider.lumen.options.apiKey // empty | strings' 2>/dev/null || true)
+  if [[ $EMBED_KEY -eq 1 || "$old_key" =~ $KEY_RE ]]; then
+    embed=true
+    restrict_to_owner "$config"
+  fi
+
   tmp=$(mktemp "$config.tmp.XXXXXX")
   trap 'rm -f "$tmp"' EXIT
 
-  jsonc_to_json "$config" | jq --argjson models "$new_models" --arg base "$SERVER" '
+  jsonc_to_json "$config" | jq --argjson models "$new_models" --arg base "$SERVER" \
+      --argjson embed "$embed" --arg key "$LUMEN_API_KEY" '
     (if .provider and .provider.lumen then .provider.lumen else null end) as $lumen
     | .provider = ((.provider // {}) + {lumen: (
         if $lumen then
           $lumen + {models: $models}
+          | if $embed then .options = ((.options // {}) + {apiKey: $key}) else . end
         else
           {
             npm: "@ai-sdk/openai-compatible",
             name: "Lumen",
-            options: {baseURL: ($base + "/v1"), apiKey: "{env:LUMEN_API_KEY}"},
+            options: {
+              baseURL: ($base + "/v1"),
+              apiKey: (if $embed then $key else "{env:LUMEN_API_KEY}" end)
+            },
             models: $models
           }
         end
@@ -510,6 +537,7 @@ sync_models() {
     printf '%s\n' "$added" | sed 's/^/  + /'
   fi
   echo "Updated $model_count models in $config"
+  [[ "$embed" == false ]] || echo "The key is embedded in $config"
 }
 
 TMPDIR_LUMEN=$(mktemp -d)
