@@ -584,7 +584,7 @@ def _mint(req: AuthRequest):
 def _consent_model_rows(entity_id: int):
     """All active, non-blocked models with their acknowledgement state.
 
-    Same visibility rule as the Models page (``bulk_model_access_info`` minus
+    Same visibility rule as the Models page (``bulk_model_access_statuses`` minus
     blocked) and the same accepted-state semantics as model_detail.html, so the
     ack dialog behaves identically here.
     """
