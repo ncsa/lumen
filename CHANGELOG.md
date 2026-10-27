@@ -12,6 +12,7 @@ All notable changes to Lumen will be documented in this file.
 - Speed up slow `lumen.sh` device-flow and stream-disconnect tests.
 - Speed up the test suite: skip real sleeps in all `lumen.sh` tests, clone per-module PostgreSQL test databases from one migrated template, and drop the per-migration upgrade/downgrade tests for already-released migrations. (#234)
 - Tests now verify that API-key hashes are keyed on `ENCRYPTION_KEY` (#164).
+- Tests now pin that an upstream error below 400 maps to a generic 500 instead of passing through.
 - `LUMEN_WSGI_WORKERS` now defaults to `auto`, sized at 2× DB pool capacity (10–256); Helm `wsgiWorkers` defaults to `"auto"` (#238).
 - OAuth key requests that replace an existing key now refresh its secret in place, keeping its name and usage stats, instead of revoking it. (#182)
 
