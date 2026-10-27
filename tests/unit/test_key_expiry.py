@@ -181,6 +181,18 @@ def test_expire_keys(app, test_user):
         assert _state("overdue") == (overdue_at, None)
 
 
+def test_expire_keys_revokes_a_key_expiring_exactly_now(app, test_user, monkeypatch):
+    # A key is expired the moment the clock reaches expires_at, not only after it.
+    now = utcnow()
+    monkeypatch.setattr("lumen.services.key_expiry.utcnow", lambda: now)
+    with app.app_context():
+        _add_key("boundary", test_user["id"], expires_at=now)
+        db.session.commit()
+
+        assert expire_keys() == 1
+        assert _state("boundary") == (now, None)
+
+
 def test_revoke_if_expired(app, test_user):
     now = utcnow()
     overdue_at = now - timedelta(minutes=1)
