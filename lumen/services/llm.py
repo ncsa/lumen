@@ -11,7 +11,7 @@ import openai
 from flask import current_app, has_request_context, request
 from sqlalchemy import select
 from sqlalchemy import update as sa_update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.expression import FunctionElement
 
@@ -573,6 +573,33 @@ def get_effective_limit(entity_id: int, model_config_id: int, model_config=None)
     return get_pool_limit(entity_id)
 
 
+def _bump(model, key: dict, increments: dict, insert_values: dict):
+    """Apply ``increments`` to the ``model`` row matching ``key``, creating it on first use.
+
+    The row exists on every call after an entity's first, so the atomic UPDATE
+    runs alone: one statement, no existence SELECT. Only when it matches no row
+    does the dialect ``INSERT … ON CONFLICT (key) DO UPDATE`` run, inserting
+    ``key`` plus ``insert_values``; if a concurrent first request inserted the
+    row in between, the conflict applies the same ``increments`` to it, so both
+    requests are counted and nothing raises. Not an upsert every time: Postgres
+    draws the serial ``id`` (model_stats, entity_balances) before it detects
+    the conflict, so each steady-state call would burn a sequence value.
+
+    ``increments`` reference the existing row through the model's columns,
+    which ON CONFLICT DO UPDATE resolves against the conflicting row.
+    """
+    where = [getattr(model, col) == value for col, value in key.items()]
+    result = db.session.execute(sa_update(model).where(*where).values(**increments))
+    if result.rowcount:
+        return
+    dialect = postgresql if db.engine.dialect.name == "postgresql" else sqlite
+    db.session.execute(
+        dialect.insert(model)
+        .values(**key, **insert_values)
+        .on_conflict_do_update(index_elements=list(key), set_=increments)
+    )
+
+
 def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float, effective=_UNSET):
     """Deduct coin_cost from the entity's pool balance (no-op for unlimited or blocked).
 
@@ -588,32 +615,16 @@ def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float, effec
     if max_coins == -2:
         return
 
-    # Ensure balance row exists (first API use before login creates it).
-    # Check first: the row exists for every entity after its first request, so an
-    # unconditional INSERT would fail — and log a Postgres duplicate-key ERROR —
-    # on every subsequent request. Same race-safe pattern as update_stats below:
-    # if two concurrent first-requests both see None, the loser's IntegrityError
-    # is swallowed and the atomic UPDATE succeeds for both.
-    if db.session.execute(
-        select(EntityBalance).filter_by(entity_id=entity_id)
-    ).scalar_one_or_none() is None:
-        try:
-            with db.session.begin_nested():
-                db.session.add(EntityBalance(
-                    entity_id=entity_id,
-                    coins_left=starting,
-                    last_refill_at=utcnow(),
-                ))
-        except IntegrityError:
-            pass
-
     # Single atomic deduction, floored at 0: deduct when affordable, otherwise zero
     # (the budget is a soft limit — see check_coin_budget). One statement so a
     # concurrent refill/credit can never be clobbered back to 0 by a separate zeroing.
-    db.session.execute(
-        sa_update(EntityBalance)
-        .where(EntityBalance.entity_id == entity_id)
-        .values(coins_left=_greatest(0, EntityBalance.coins_left - coin_cost))
+    # The row is created on first use (first API use before login creates it),
+    # already deducted from the starting balance.
+    _bump(
+        EntityBalance,
+        {"entity_id": entity_id},
+        {"coins_left": _greatest(0, EntityBalance.coins_left - coin_cost)},
+        {"coins_left": max(0.0, float(starting) - float(coin_cost)), "last_refill_at": utcnow()},
     )
     db.session.flush()
 
@@ -841,55 +852,37 @@ def update_stats(
     """
     now = utcnow()
 
-    # Ensure ModelStat row exists before the atomic increment.
-    # Use try/except to handle the race where two concurrent first-requests both
-    # see None and both attempt the INSERT — the loser gets IntegrityError which
-    # we swallow; the atomic UPDATE below then succeeds for both.
-    if db.session.execute(
-        select(ModelStat).filter_by(entity_id=entity_id, model_config_id=model_config_id, source=source)
-    ).scalar_one_or_none() is None:
-        try:
-            with db.session.begin_nested():
-                db.session.add(ModelStat(
-                    entity_id=entity_id, model_config_id=model_config_id, source=source,
-                    requests=0, input_tokens=0, output_tokens=0, cost=0,
-                ))
-        except IntegrityError:
-            pass
-
-    db.session.execute(
-        sa_update(ModelStat)
-        .where(ModelStat.entity_id == entity_id, ModelStat.model_config_id == model_config_id, ModelStat.source == source)
-        .values(
-            requests=ModelStat.requests + 1,
-            input_tokens=ModelStat.input_tokens + input_tokens,
-            output_tokens=ModelStat.output_tokens + output_tokens,
-            audio_seconds=ModelStat.audio_seconds + audio_seconds,
-            cost=ModelStat.cost + cost,
-            last_used_at=now,
-        )
+    _bump(
+        ModelStat,
+        {"entity_id": entity_id, "model_config_id": model_config_id, "source": source},
+        {
+            "requests": ModelStat.requests + 1,
+            "input_tokens": ModelStat.input_tokens + input_tokens,
+            "output_tokens": ModelStat.output_tokens + output_tokens,
+            "audio_seconds": ModelStat.audio_seconds + audio_seconds,
+            "cost": ModelStat.cost + cost,
+            "last_used_at": now,
+        },
+        {
+            "requests": 1, "input_tokens": input_tokens, "output_tokens": output_tokens,
+            "audio_seconds": audio_seconds, "cost": cost, "last_used_at": now,
+        },
     )
-
-    # Ensure EntityStat row exists before the atomic increment.
-    # Same race-safe pattern as ModelStat above.
-    if db.session.execute(select(EntityStat).filter_by(entity_id=entity_id)).scalar_one_or_none() is None:
-        try:
-            with db.session.begin_nested():
-                db.session.add(EntityStat(entity_id=entity_id, requests=0, input_tokens=0, output_tokens=0, cost=0))
-        except IntegrityError:
-            pass
-
-    db.session.execute(
-        sa_update(EntityStat)
-        .where(EntityStat.entity_id == entity_id)
-        .values(
-            requests=EntityStat.requests + 1,
-            input_tokens=EntityStat.input_tokens + input_tokens,
-            output_tokens=EntityStat.output_tokens + output_tokens,
-            audio_seconds=EntityStat.audio_seconds + audio_seconds,
-            cost=EntityStat.cost + cost,
-            last_used_at=now,
-        )
+    _bump(
+        EntityStat,
+        {"entity_id": entity_id},
+        {
+            "requests": EntityStat.requests + 1,
+            "input_tokens": EntityStat.input_tokens + input_tokens,
+            "output_tokens": EntityStat.output_tokens + output_tokens,
+            "audio_seconds": EntityStat.audio_seconds + audio_seconds,
+            "cost": EntityStat.cost + cost,
+            "last_used_at": now,
+        },
+        {
+            "requests": 1, "input_tokens": input_tokens, "output_tokens": output_tokens,
+            "audio_seconds": audio_seconds, "cost": cost, "last_used_at": now,
+        },
     )
 
     log = RequestLog(

@@ -8,8 +8,6 @@ import filetype
 import pypdf
 from flask import Blueprint, Response, current_app, jsonify, render_template, request, session
 from sqlalchemy import and_, func, or_, select
-from sqlalchemy import update as sa_update
-from sqlalchemy.exc import IntegrityError
 from werkzeug.utils import secure_filename
 
 from lumen.decorators import login_required
@@ -23,6 +21,7 @@ from lumen.models.model_endpoint import ModelEndpoint
 from lumen.services import model_cache
 from lumen.services.live_state import get_live_state
 from lumen.services.llm import (
+    _bump,
     bulk_model_access_info,
     check_coin_budget,
     get_pool_limit,
@@ -74,18 +73,13 @@ def _count_conversation_started(entity_id):
     """Bump the persistent conversation counter in entity_stats.
 
     The counter survives conversation deletion and disabled storage. Uses the
-    same race-safe ensure-row + atomic-increment pattern as llm.py's stats.
+    same UPDATE-first, ON CONFLICT-on-first-use helper as llm.py's stats.
     """
-    if db.session.execute(select(EntityStat).filter_by(entity_id=entity_id)).scalar_one_or_none() is None:
-        try:
-            with db.session.begin_nested():
-                db.session.add(EntityStat(entity_id=entity_id, requests=0, input_tokens=0, output_tokens=0, cost=0))
-        except IntegrityError:
-            pass
-    db.session.execute(
-        sa_update(EntityStat)
-        .where(EntityStat.entity_id == entity_id)
-        .values(conversations=EntityStat.conversations + 1)
+    _bump(
+        EntityStat,
+        {"entity_id": entity_id},
+        {"conversations": EntityStat.conversations + 1},
+        {"requests": 0, "input_tokens": 0, "output_tokens": 0, "cost": 0, "conversations": 1},
     )
 
 

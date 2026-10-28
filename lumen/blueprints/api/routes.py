@@ -495,7 +495,7 @@ def acknowledge_model(model_id):
         if row is None:
             row = EntityModelConsent(entity_id=entity_id, model_config_id=config.id)
             fill_missing(row)
-            # Race-safe first insert (same pattern as subtract_coins): two
+            # Race-safe first insert (savepoint + IntegrityError): two
             # concurrent first acks — overlapping retries, or two keys of one
             # entity — would otherwise make the loser's commit raise
             # IntegrityError and 500 instead of the promised idempotent 200.
