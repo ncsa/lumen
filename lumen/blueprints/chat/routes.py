@@ -324,6 +324,7 @@ def chat_stream():
                 # client disconnected, this generator may never be closed.
                 with app.app_context():
                     conv = None
+                    started = False
                     if conversation_id:
                         conv = db.session.execute(
                             select(Conversation).filter_by(id=conversation_id, entity_id=entity_id)
@@ -336,7 +337,7 @@ def chat_stream():
                         conv = Conversation(entity_id=entity_id, title=title, model=model)
                         db.session.add(conv)
                         db.session.flush()
-                        _count_conversation_started(entity_id)
+                        started = True
 
                     user_msg = next((m for m in reversed(messages) if m["role"] == "user"), None)
                     if user_msg:
@@ -363,6 +364,12 @@ def chat_stream():
                     # check out a fresh connection to refresh it, and that connection
                     # would still be held during the final yield below.
                     conv_id = conv.id
+                    if started:
+                        # The entity_stats row lock is the one every request of
+                        # this entity takes, so it goes last: flush everything
+                        # else first, and the lock covers only the commit.
+                        db.session.flush()
+                        _count_conversation_started(entity_id)
                     db.session.commit()
 
                 result["conversation_id"] = conv_id

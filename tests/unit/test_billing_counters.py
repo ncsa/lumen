@@ -96,8 +96,8 @@ def test_steady_state_billing_runs_no_select_and_no_savepoint(app, test_user, te
         verbs = [s.split()[0].upper() for s in log]
         assert "SELECT" not in verbs, log
         assert not [s for s in log if "SAVEPOINT" in s.upper()], log
-        assert verbs == ["UPDATE", "UPDATE", "INSERT", "UPDATE"], log
-        assert "INTO request_logs" in log[2]
+        assert verbs == ["INSERT", "UPDATE", "UPDATE", "UPDATE"], log
+        assert "INTO request_logs" in log[0]
 
 
 def test_first_use_inserts_each_counter_row_once(app, test_user, test_model):

@@ -2,7 +2,6 @@ import hmac
 import json
 import logging
 import time as _time
-from decimal import Decimal
 from functools import wraps
 from http import HTTPStatus
 from urllib.parse import quote
@@ -10,7 +9,6 @@ from urllib.parse import quote
 import openai
 from flask import Blueprint, Response, current_app, g, jsonify, request
 from sqlalchemy import select
-from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
 
 from lumen.blueprints.metrics.middleware import observe_stream_abort
@@ -28,6 +26,7 @@ from lumen.services.live_state import get_live_state
 from lumen.services.llm import (
     _access_statuses,
     ack_notice_text,
+    bill_request,
     capture_request_timing,
     check_coin_budget,
     consent_rows,
@@ -37,8 +36,6 @@ from lumen.services.llm import (
     get_pool_limit,
     observe_rejection_quietly,
     record_stream_abort,
-    subtract_coins,
-    update_stats,
     upstream_call_bounds,
 )
 from lumen.services.model_resolver import resolve_model_config
@@ -144,21 +141,6 @@ def _api_key_id():
 def _api_limit():
     cfg = current_app.config.get("YAML_DATA", {})
     return cfg.get("rate_limiting", {}).get("limit", "30 per minute")
-
-
-def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int, cost: float, audio_seconds: int = 0):
-    db.session.execute(
-        sa_update(APIKey)
-        .where(APIKey.id == api_key_id)
-        .values(
-            requests=APIKey.requests + 1,
-            input_tokens=APIKey.input_tokens + input_tokens,
-            output_tokens=APIKey.output_tokens + output_tokens,
-            audio_seconds=APIKey.audio_seconds + audio_seconds,
-            cost=APIKey.cost + Decimal(str(cost)),
-            last_used_at=utcnow(),
-        )
-    )
 
 
 def _monitor_tokens() -> dict | None:
@@ -654,15 +636,13 @@ def _complete_and_bill(model_name: str, messages: list, **kwargs):
             usage_prompt, usage_completion = usage.prompt_tokens, usage.completion_tokens
 
         cost = calculate_cost(usage_prompt, usage_completion, mc_in_cost, mc_out_cost)
-        subtract_coins(entity_id, mc_id, cost, effective=effective)
-        update_stats(entity_id, mc_id, "api", usage_prompt, usage_completion, cost,
+        bill_request(entity_id, mc_id, "api", usage_prompt, usage_completion, cost,
+                     effective=effective, api_key_id=ak_id,
                      endpoint_id=ep_id, duration=duration,
                      timing=timing, upstream_t0=t0,
                      # Non-streaming: the whole body arrives in one piece, so the
                      # first chunk is the response and both marks are the duration.
                      ttft=duration, ttft_visible=duration, outcome="ok")
-        _record_api_key_usage(ak_id, usage_prompt, usage_completion, cost)
-        db.session.commit()
         # Report the requested name (which may be an alias), not the backend's.
         response.model = model_name
         return response, None
@@ -765,9 +745,8 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                 app, billed=billed, entity_id=entity_id, model_config_id=mc_id,
                 source="api", endpoint_id=ep_id, stream_t0=t0,
                 input_tokens=input_tokens, output_tokens=output_tokens, cost=cost,
-                effective=effective,
+                effective=effective, api_key_id=ak_id,
                 timing=timing, ttft=t_first_any, ttft_visible=t_first_visible,
-                record_extra=lambda: _record_api_key_usage(ak_id, input_tokens, output_tokens, cost),
             )
 
         # The ``with`` is nested inside the ``try`` (matching llm.py) so that an
@@ -826,14 +805,12 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                         )
                         phase = "billing"
                         with app.app_context():
-                            subtract_coins(entity_id, mc_id, cost, effective=effective)
-                            update_stats(entity_id, mc_id, "api", usage.prompt_tokens, usage.completion_tokens, cost,
+                            bill_request(entity_id, mc_id, "api", usage.prompt_tokens, usage.completion_tokens,
+                                         cost, effective=effective, api_key_id=ak_id,
                                          endpoint_id=ep_id, duration=duration,
                                          timing=timing, upstream_t0=t0,
                                          ttft=t_first_any, ttft_visible=t_first_visible,
                                          outcome="ok")
-                            _record_api_key_usage(ak_id, usage.prompt_tokens, usage.completion_tokens, cost)
-                            db.session.commit()
                         billed = True
                     else:
                         logger.warning(
@@ -1000,15 +977,13 @@ def _do_audio(kind: str):
         else:
             logger.warning("Upstream did not return usage data (model=%s, entity_id=%s)", model_name, entity_id)
 
-        subtract_coins(entity_id, mc_id, cost, effective=effective)
-        update_stats(entity_id, mc_id, "api", in_tok, out_tok, cost,
-                     endpoint_id=ep_id, duration=duration, audio_seconds=seconds,
+        bill_request(entity_id, mc_id, "api", in_tok, out_tok, cost,
+                     effective=effective, api_key_id=ak_id, audio_seconds=seconds,
+                     endpoint_id=ep_id, duration=duration,
                      timing=timing, upstream_t0=t0,
                      # Non-streaming: the transcription arrives in one piece, so the
                      # first chunk is the response and both marks are the duration.
                      ttft=duration, ttft_visible=duration, outcome="ok")
-        _record_api_key_usage(ak_id, in_tok, out_tok, cost, audio_seconds=seconds)
-        db.session.commit()
 
         return jsonify(payload)
     finally:

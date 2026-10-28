@@ -4,6 +4,7 @@ import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from http import HTTPStatus
 from typing import NamedTuple, Optional
 
@@ -17,6 +18,7 @@ from sqlalchemy.sql.expression import FunctionElement
 
 from lumen.blueprints.metrics.middleware import observe_stream_abort
 from lumen.extensions import db
+from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
@@ -837,7 +839,12 @@ def update_stats(
     ttft_visible: float = None,
     outcome: str = None,
 ):
-    """Update or create ModelStat/EntityStat running totals and append a RequestLog row.
+    """Append a RequestLog row, then update or create the ModelStat/EntityStat running totals.
+
+    The RequestLog INSERT goes first and is flushed on its own: it takes no row
+    lock another request waits on, so running it ahead of the counter UPDATEs
+    keeps it out of their lock window. Billing should go through bill_request,
+    which fixes the order of every write in the transaction.
 
     ``aborted`` marks the RequestLog row as one whose stream ended before the
     client had read it; its token counts may be estimated (see
@@ -850,6 +857,31 @@ def update_stats(
     none of this adds a statement. Anything not measured stays None and is
     stored as SQL NULL — deliberately not zero.
     """
+    log = RequestLog(
+        time=datetime.now(timezone.utc),
+        entity_id=entity_id,
+        model_config_id=model_config_id,
+        model_endpoint_id=endpoint_id,
+        source=source,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        audio_seconds=audio_seconds,
+        cost=cost,
+        duration=duration,
+        aborted=aborted,
+        started_at=timing.started_at,
+        queue_wait=timing.queue_wait,
+        preflight=timing.preflight(upstream_t0),
+        ttft=ttft,
+        ttft_visible=ttft_visible,
+        # Read here rather than captured in the view: on the streaming paths
+        # nothing had been sent yet when the view ran.
+        send_blocked=timing.blocked_seconds(),
+        outcome=outcome,
+    )
+    db.session.add(log)
+    db.session.flush()
+
     now = utcnow()
 
     _bump(
@@ -885,30 +917,49 @@ def update_stats(
         },
     )
 
-    log = RequestLog(
-        time=datetime.now(timezone.utc),
-        entity_id=entity_id,
-        model_config_id=model_config_id,
-        model_endpoint_id=endpoint_id,
-        source=source,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        audio_seconds=audio_seconds,
-        cost=cost,
-        duration=duration,
-        aborted=aborted,
-        started_at=timing.started_at,
-        queue_wait=timing.queue_wait,
-        preflight=timing.preflight(upstream_t0),
-        ttft=ttft,
-        ttft_visible=ttft_visible,
-        # Read here rather than captured in the view: on the streaming paths
-        # nothing had been sent yet when the view ran.
-        send_blocked=timing.blocked_seconds(),
-        outcome=outcome,
+
+def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int, cost: float, audio_seconds: int = 0):
+    db.session.execute(
+        sa_update(APIKey)
+        .where(APIKey.id == api_key_id)
+        .values(
+            requests=APIKey.requests + 1,
+            input_tokens=APIKey.input_tokens + input_tokens,
+            output_tokens=APIKey.output_tokens + output_tokens,
+            audio_seconds=APIKey.audio_seconds + audio_seconds,
+            cost=APIKey.cost + Decimal(str(cost)),
+            last_used_at=utcnow(),
+        )
     )
-    db.session.add(log)
-    db.session.flush()
+
+
+def bill_request(entity_id: int, model_config_id: int, source: str, input_tokens: int, output_tokens: int,
+                 cost: float, *, effective, api_key_id: int = None, audio_seconds: int = 0, **log_fields):
+    """Bill one request in a single transaction, taking the hot row locks last, and commit.
+
+    The only billing write path; every caller goes through it. The order is fixed:
+
+    1. INSERT ``request_logs`` (flushed) — takes no row lock anyone waits on
+    2. UPDATE ``model_stats``
+    3. UPDATE ``entity_stats``
+    4. UPDATE ``api_keys`` (when ``api_key_id`` is given)
+    5. UPDATE ``entity_balances`` — the per-entity lock every request of the entity queues on
+    6. COMMIT
+
+    so the balance lock is held only for the commit, and because every billing
+    transaction takes its locks in the same order, two of them can never deadlock.
+    A new billing write must be added here, in this order, not beside a call.
+
+    ``effective`` is the coin pool limit resolved during preflight, passed on to
+    subtract_coins (``_UNSET`` re-resolves it there). ``log_fields`` are the
+    remaining update_stats keywords (endpoint, timing, outcome, ...).
+    """
+    update_stats(entity_id, model_config_id, source, input_tokens, output_tokens, cost,
+                 audio_seconds=audio_seconds, **log_fields)
+    if api_key_id is not None:
+        _record_api_key_usage(api_key_id, input_tokens, output_tokens, cost, audio_seconds=audio_seconds)
+    subtract_coins(entity_id, model_config_id, cost, effective=effective)
+    db.session.commit()
 
 
 # Characters per token for the prompt fallback estimate. The upstream reports the
@@ -961,7 +1012,7 @@ def estimate_abort_usage(usage, messages, content_deltas, in_cost_per_million, o
 
 def record_aborted_request(entity_id, model_config_id, source, endpoint_id=None, duration=0.0,
                            input_tokens=0, output_tokens=0, cost=0.0,
-                           effective=_UNSET, record_extra=None,
+                           effective=_UNSET, api_key_id=None,
                            timing=RequestTiming(), upstream_t0=None, ttft=None, ttft_visible=None):
     """Bill and log a request_logs row for a stream the client abandoned mid-response.
 
@@ -975,30 +1026,26 @@ def record_aborted_request(entity_id, model_config_id, source, endpoint_id=None,
     That replaces the old "cost == 0 identifies an abort" convention, which stopped
     being unique the moment aborted requests started carrying a real cost.
 
-    ``record_extra``, if given, runs inside the same session before the commit, for
-    accounting the caller owns (the API path's per-API-key totals).
+    ``api_key_id``, for an API request, also bills the key's running totals.
 
     Best-effort: never raise into the (already closing) generator.
     """
     try:
-        subtract_coins(entity_id, model_config_id, cost, effective=effective)
-        update_stats(
+        bill_request(
             entity_id, model_config_id, source,
             input_tokens, output_tokens, cost,
+            effective=effective, api_key_id=api_key_id,
             endpoint_id=endpoint_id, duration=duration, aborted=True,
             timing=timing, upstream_t0=upstream_t0,
             ttft=ttft, ttft_visible=ttft_visible, outcome="disconnect",
         )
-        if record_extra is not None:
-            record_extra()
-        db.session.commit()
     except Exception:
         logger.exception("failed to record aborted request (entity_id=%s, model=%s)", entity_id, model_config_id)
         db.session.rollback()
 
 
 def record_stream_abort(app, *, billed, entity_id, model_config_id, source, endpoint_id, stream_t0,
-                        input_tokens=0, output_tokens=0, cost=0.0, effective=_UNSET, record_extra=None,
+                        input_tokens=0, output_tokens=0, cost=0.0, effective=_UNSET, api_key_id=None,
                         reason="disconnect", timing=RequestTiming(), ttft=None, ttft_visible=None):
     """Abort accounting for a streaming generator that ends before billing.
 
@@ -1031,7 +1078,7 @@ def record_stream_abort(app, *, billed, entity_id, model_config_id, source, endp
                 entity_id, model_config_id, source,
                 endpoint_id=endpoint_id, duration=time.monotonic() - stream_t0,
                 input_tokens=input_tokens, output_tokens=output_tokens, cost=cost,
-                effective=effective, record_extra=record_extra,
+                effective=effective, api_key_id=api_key_id,
                 timing=timing, upstream_t0=stream_t0,
                 ttft=ttft, ttft_visible=ttft_visible,
             )
@@ -1218,15 +1265,14 @@ def _send_message_stream(app, messages, model, entity_id, source, effective, dis
         if entity_id is not None:
             phase = "billing"
             with app.app_context():
-                subtract_coins(entity_id, mc_id, cost, effective=effective)
-                update_stats(
+                bill_request(
                     entity_id, mc_id, source,
                     input_tokens, output_tokens, cost,
+                    effective=effective,
                     endpoint_id=ep_id, duration=duration,
                     timing=timing, upstream_t0=t0,
                     ttft=t_first_any, ttft_visible=t_first, outcome="ok",
                 )
-                db.session.commit()
             billed = True
     except GeneratorExit:
         # Client disconnected mid-stream before billing — bill what was consumed

@@ -1782,6 +1782,7 @@ def test_streaming_error_after_billing_holds_no_connection(
     the life of the process.
     """
     from lumen.blueprints.api import routes
+    from lumen.services import llm as llm_service
     token, _ = api_key
     _allow_model(app, test_user, test_model)
     with app.app_context():
@@ -1792,7 +1793,7 @@ def test_streaming_error_after_billing_holds_no_connection(
         raise RuntimeError("billing blew up")
 
     _fake_openai(monkeypatch, routes, [_UsageChunk()])
-    monkeypatch.setattr(routes, "_record_api_key_usage", boom)
+    monkeypatch.setattr(llm_service, "_record_api_key_usage", boom)
 
     resp = client.post(
         "/v1/chat/completions",
@@ -1831,6 +1832,7 @@ def test_streaming_billing_error_is_not_reported_as_an_upstream_error(
     exist.
     """
     from lumen.blueprints.api import routes
+    from lumen.services import llm as llm_service
     token, _ = api_key
     _allow_model(app, test_user, test_model)
 
@@ -1838,7 +1840,7 @@ def test_streaming_billing_error_is_not_reported_as_an_upstream_error(
         raise RuntimeError("billing blew up")
 
     _fake_openai(monkeypatch, routes, [_UsageChunk()])
-    monkeypatch.setattr(routes, "_record_api_key_usage", boom)
+    monkeypatch.setattr(llm_service, "_record_api_key_usage", boom)
 
     resp = client.post(
         "/v1/chat/completions",

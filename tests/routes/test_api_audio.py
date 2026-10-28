@@ -784,7 +784,7 @@ def test_api_non_stream_releases_when_billing_raises(
     _allow_model(app, test_user, test_model)
     state = _live_state(monkeypatch)
     _capturing_openai(monkeypatch, routes, lambda **kwargs: _NonStreamResponse())
-    monkeypatch.setattr(routes, "update_stats", boom)
+    monkeypatch.setattr(routes, "bill_request", boom)
 
     with pytest.raises(RuntimeError):
         _chat_post(client, token, test_model["model_name"], False)
