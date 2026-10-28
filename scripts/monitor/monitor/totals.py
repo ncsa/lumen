@@ -35,14 +35,13 @@ Lumen's windows never describe them more precisely later, so they stay
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
-from datetime import time as dtime
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from monitor.config import ConfigStore
-from monitor.daily import get_daily, local_day, upsert_daily
+from monitor.daily import get_daily, local_day, local_midnight, upsert_daily
 from monitor.db import utcnow
 from monitor.models import DailyStat
 from monitor.probe import LiveSnapshot
@@ -100,11 +99,6 @@ def plan_span(windows: dict | None, covered_until: datetime, end: datetime) -> S
     if day is not None:
         return Span(max(covered_until, end - DAY), day / DAY.total_seconds(), True)
     return None
-
-
-def local_midnight(day: date, tz) -> datetime:
-    """Local midnight starting `day`, as naive UTC."""
-    return datetime.combine(day, dtime(0), tzinfo=tz).astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def split_by_day(start: datetime, end: datetime, tz) -> list[tuple[date, datetime, datetime]]:

@@ -17,10 +17,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from monitor.buckets import (
+    DOWN,
+    OK,
     UNKNOWN,
     Range,
     bucket_statuses,
     daily_status,
+    lumen_daily_status,
     lumen_uptime,
     make_grid,
     model_uptime,
@@ -28,10 +31,9 @@ from monitor.buckets import (
     range_days,
 )
 from monitor.config import Config
-from monitor.daily import local_day
+from monitor.daily import local_day, local_midnight
 from monitor.models import DailyStat, Probe, Sample
 from monitor.probe import LiveSnapshot, lumen_state
-from monitor.totals import local_midnight
 
 MINUTES_PER_DAY = 24 * 60
 # Model table sort keys: the row field they sort by and whether it is numeric
@@ -96,10 +98,11 @@ def current_models(session: Session, snapshot: LiveSnapshot | None) -> tuple[dat
 def lumen_card(session: Session, config: Config, rng: Range, now: datetime) -> dict:
     """State, response-time stats, uptime and the response-time strip over `rng`.
 
-    There are no daily Lumen rows, so 1y buckets the probes that are still kept
-    (`retention`) per local day; older days are `unknown`. As for the models, a
-    1y day's status comes from its availability (successful / all probes) and
-    the uptime is `Σ successful / Σ probes`.
+    Each probe's status comes from `probe_status` with `lumen.down_above`, so a
+    probe where most models are down is down and lowers the uptime. There are no
+    daily Lumen rows, so 1y buckets the probes that are still kept (`retention`)
+    per local day; older days are `unknown`. A 1y day's status comes from
+    `lumen_daily_status` and the uptime is `Σ probes up / Σ probes`.
     """
     grid = make_grid(rng, config.refresh.web, now, config.timezone)
     probes = session.execute(
@@ -109,26 +112,30 @@ def lumen_card(session: Session, config: Config, rng: Range, now: datetime) -> d
     ).all()
 
     max_rt: list[float | None] = [None] * grid.count
-    polls, polls_ok = [0] * grid.count, [0] * grid.count
+    polls, polls_up, polls_ok = [0] * grid.count, [0] * grid.count, [0] * grid.count
+    points = []
     for p in probes:
+        status = probe_status(p.success, p.model_count, p.models_up, config.down_above)
+        points.append((p.polled_at, status))
         i = grid.index(p.polled_at)
         if i is None:
             continue
         polls[i] += 1
-        polls_ok[i] += p.success
+        polls_up[i] += status != DOWN
+        polls_ok[i] += status == OK
         if p.response_time_ms is not None:
             max_rt[i] = max(max_rt[i] or 0.0, p.response_time_ms)
     if rng.daily:
-        statuses = [daily_status(n, ok) for n, ok in zip(polls, polls_ok)]
-        uptime = 100 * sum(polls_ok) / sum(polls) if sum(polls) else None
+        statuses = [lumen_daily_status(n, up, ok) for n, up, ok in zip(polls, polls_up, polls_ok)]
+        uptime = 100 * sum(polls_up) / sum(polls) if sum(polls) else None
     else:
-        statuses = bucket_statuses(((p.polled_at, probe_status(p.success, p.model_count, p.models_up)) for p in probes), grid)
+        statuses = bucket_statuses(points, grid)
         uptime = lumen_uptime(statuses)
 
     rts = [p.response_time_ms for p in probes if p.response_time_ms is not None]
     last = probes[-1] if probes else None
     return {
-        "state": lumen_state(session),
+        "state": lumen_state(session, config.down_above),
         "last_ms": last.response_time_ms if last else None,
         "last_at": _iso(last.polled_at) if last else None,
         "min_ms": min(rts) if rts else None,

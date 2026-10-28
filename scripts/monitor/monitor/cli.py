@@ -55,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.probe:
                 result = run_probe(store, session_factory)
                 with session_factory() as session:
-                    state = lumen_state(session)
+                    state = lumen_state(session, store.current.down_above)
                 log.info("probe %s in %.0f ms, Lumen is %s", "ok" if result.success else "failed", result.response_time_ms, state)
                 status = 0 if result.success else 1
             if args.price:
