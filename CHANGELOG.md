@@ -14,6 +14,7 @@ All notable changes to Lumen will be documented in this file.
 - Tests now verify that API-key hashes are keyed on `ENCRYPTION_KEY` (#164).
 - `LUMEN_WSGI_WORKERS` now defaults to `auto`, sized at 2× DB pool capacity (10–256); Helm `wsgiWorkers` defaults to `"auto"` (#238).
 - OAuth key requests that replace an existing key now refresh its secret in place, keeping its name and usage stats, instead of revoking it. (#182)
+- Tests now pin the model `end_date` boundary: a model is blocked and hidden from the exact end instant. (#311)
 
 ### Added
 

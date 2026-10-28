@@ -5,7 +5,7 @@ import threading
 import time
 from collections import Counter
 from contextlib import contextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -143,6 +143,18 @@ def test_end_date_passing_between_refreshes_hides_the_model(app):
         assert model_cache.resolve("ending") is not None
         with patch("lumen.services.model_cache.utcnow", return_value=utcnow() + timedelta(minutes=1)):
             assert model_cache.resolve("ending") is None
+
+
+def test_end_date_boundary_hides_model_at_exact_instant(app):
+    """A snapshot model is hidden from the exact end instant, not one tick later."""
+    now = datetime(2030, 1, 1, 12, 0, 0)
+    with app.app_context():
+        _add_model("ending", end_date=now)
+        model_cache.refresh(app)
+        with patch("lumen.services.model_cache.utcnow", return_value=now):
+            assert model_cache.resolve("ending") is None
+        with patch("lumen.services.model_cache.utcnow", return_value=now - timedelta(microseconds=1)):
+            assert model_cache.resolve("ending") is not None
 
 
 # ---------------------------------------------------------------------------
