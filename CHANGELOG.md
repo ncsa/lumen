@@ -37,6 +37,7 @@ All notable changes to Lumen will be documented in this file.
 - The models.dev match for model sync no longer crosses major versions (a `-v2` model no longer takes a `-v1` listing's metadata or price).
 - Monitor: the model detail price charts now draw a stepped line across the 1h, 12h and 24h ranges instead of a single point.
 - Fixed: flaky Edit Key Expiry UI test that checked focus before the modal finished closing (#327).
+- Fixed: flaky test_snapshot_older_than_max_age_reloads_on_next_read that failed on floating-point rounding at the MAX_AGE boundary (#333)
 
 ## [2.2.1] - 2026-10-16
 

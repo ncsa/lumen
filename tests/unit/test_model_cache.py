@@ -217,7 +217,9 @@ def test_snapshot_older_than_max_age_reloads_on_next_read(app, test_model):
         assert model_cache.resolve("test-model") is not None
         db.session.get(ModelConfig, test_model["id"]).disabled = True
         db.session.commit()
-        loaded = model_cache._snapshot.loaded_at
+        # A real monotonic() value can make (t + MAX_AGE) - t round above MAX_AGE.
+        model_cache._snapshot = dataclasses.replace(model_cache._snapshot, loaded_at=1000.0)
+        loaded = 1000.0
         with patch("lumen.services.model_cache.time.monotonic", return_value=loaded + model_cache.MAX_AGE):
             assert model_cache.resolve("test-model") is not None  # at the limit: still fresh
         with patch("lumen.services.model_cache.time.monotonic", return_value=loaded + model_cache.MAX_AGE + 1):
