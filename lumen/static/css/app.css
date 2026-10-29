@@ -263,6 +263,30 @@ body.fill-viewport > :has(> #main-content) > footer {
     opacity: 1;
 }
 
+.copy-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.25rem;
+    min-height: 1.25rem;
+    background: none;
+    border: 0;
+    padding: 0;
+    color: inherit;
+    font-size: 0.8rem;
+    line-height: 1;
+}
+
+.copy-btn:hover {
+    color: #13294b;
+}
+
+.copy-btn:focus-visible {
+    outline: 2px solid #13294b;
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
 /* ── Thinking block ─────────────────────────────────────────── */
 .thinking-block {
     background: #1e2430;

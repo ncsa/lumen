@@ -59,6 +59,7 @@
     </div>
 
     <div id="chat-messages" class="chat-messages flex-fill overflow-auto p-3" role="log" aria-live="polite" aria-label="Chat messages"></div>
+    <span id="copy-status" class="visually-hidden" aria-live="polite"></span>
 
     <div class="chat-input-bar px-3 py-2 border-top flex-shrink-0">
       <form id="chat-form">
@@ -440,6 +441,34 @@
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 
+  // ── Copy to clipboard ───────────────────────────────────────────
+  // Copies the raw Markdown from getText(); the result is announced in #copy-status.
+  function makeCopyButton(getText, label) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "copy-btn";
+    btn.setAttribute("aria-label", label);
+    const icon = document.createElement("i");
+    icon.className = "bi bi-copy";
+    icon.setAttribute("aria-hidden", "true");
+    btn.appendChild(icon);
+    let resetTimer = null;
+    btn.addEventListener("click", async () => {
+      const status = document.getElementById("copy-status");
+      let ok = true;
+      try {
+        await navigator.clipboard.writeText(getText());
+      } catch (e) {
+        ok = false;
+      }
+      icon.className = ok ? "bi bi-check2" : "bi bi-exclamation-triangle";
+      status.textContent = ok ? "Copied to clipboard" : "Copy failed";
+      clearTimeout(resetTimer);
+      resetTimer = setTimeout(() => { icon.className = "bi bi-copy"; }, 2000);
+    });
+    return btn;
+  }
+
   function appendBubble(role, content, meta, timestamp, scroll = true, attachment = null) {
     const container = document.getElementById("chat-messages");
     const isUser = role === "user";
@@ -530,6 +559,7 @@
         modelLabel.textContent = meta.model;
         ts.appendChild(modelLabel);
       }
+      ts.appendChild(makeCopyButton(() => content, "Copy reply"));
     }
 
     const wrapper = document.createElement("div");
@@ -896,6 +926,8 @@
               modelLabel.textContent = meta.model;
               ts.appendChild(modelLabel);
             }
+            const replyText = event.reply || fullText;
+            ts.appendChild(makeCopyButton(() => replyText, "Copy reply"));
             if (streamWrapper) streamWrapper.appendChild(ts);
             container.scrollTop = container.scrollHeight;
             if (event.conversation_id) {
@@ -911,6 +943,11 @@
       if (!finalReceived && fullText) {
         if (streamBubble) streamBubble.innerHTML = renderMarkdownWithMath(fullText);
         chatHistory.push({ role: "assistant", content: fullText });
+        const ts = document.createElement("small");
+        ts.className = "msg-meta d-flex align-items-center gap-1";
+        ts.appendChild(document.createTextNode(formatTimestamp(null)));
+        ts.appendChild(makeCopyButton(() => fullText, "Copy reply"));
+        streamWrapper.appendChild(ts);
       }
 
     } catch (err) {
