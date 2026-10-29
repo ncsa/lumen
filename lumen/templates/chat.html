@@ -455,6 +455,7 @@
     let resetTimer = null;
     btn.addEventListener("click", async () => {
       const status = document.getElementById("copy-status");
+      status.textContent = "";  // so a repeated message is announced again
       let ok = true;
       try {
         await navigator.clipboard.writeText(getText());
