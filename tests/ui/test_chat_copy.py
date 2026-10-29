@@ -8,6 +8,8 @@ bodies, so no model is needed. The page renders replies with marked and
 DOMPurify, which are served from pinned copies in tests/fixtures/vendor.
 """
 import json
+import re
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -52,8 +54,12 @@ def _sse(*events):
 
 @pytest.fixture
 def open_chat(auth_client, browser):
-    """Return open(stream=None) -> page; stream is (status, content_type, body) for /chat/stream."""
+    """Return open(stream=None) -> page; stream is (status, content_type, body) for /chat/stream.
+
+    The JSON bodies posted to /chat/stream are collected in open.stream_bodies.
+    """
     pages = []
+    stream_bodies = []
 
     def _open(stream=None):
         def handle(route, request):
@@ -67,6 +73,7 @@ def open_chat(auth_client, browser):
                 route.abort()
                 return
             if url.path == "/chat/stream":
+                stream_bodies.append(request.post_data_json)
                 status, content_type, body = stream
                 route.fulfill(status=status, content_type=content_type, body=body)
                 return
@@ -88,6 +95,7 @@ def open_chat(auth_client, browser):
         page.wait_for_selector("#quick-chat-notice")
         return page
 
+    _open.stream_bodies = stream_bodies
     yield _open
     for page in pages:
         page.close()
@@ -100,8 +108,10 @@ def stored_conversation(app, test_user):
         db.session.add(conv)
         db.session.flush()
         db.session.add_all([
-            Message(conversation_id=conv.id, role="user", content="Show me code"),
-            Message(conversation_id=conv.id, role="assistant", content=REPLY, input_tokens=3, output_tokens=9),
+            Message(conversation_id=conv.id, role="user", content="Show me code",
+                    created_at=datetime(2026, 1, 2, 3, 4, 5)),
+            Message(conversation_id=conv.id, role="assistant", content=REPLY, input_tokens=3, output_tokens=9,
+                    created_at=datetime(2026, 1, 2, 3, 4, 6)),
         ])
         db.session.commit()
         return conv.id
@@ -129,7 +139,7 @@ def test_stored_reply_copies_raw_markdown(open_chat, stored_conversation):
     page = open_chat()
     _open_stored(page, stored_conversation)
 
-    buttons = page.locator(".copy-btn")
+    buttons = page.locator(".msg-meta .copy-btn")
     assert buttons.count() == 1  # only the assistant reply, not the user message
     assert buttons.get_attribute("aria-label") == "Copy reply"
     assert buttons.get_attribute("type") == "button"
@@ -140,8 +150,8 @@ def test_stored_reply_copies_raw_markdown(open_chat, stored_conversation):
     page.wait_for_function("window.__copied.length === 1")
     assert page.evaluate("window.__copied[0]") == REPLY
     assert page.inner_text("#copy-status") == "Copied to clipboard"
-    assert page.locator(".copy-btn i.bi-check2").count() == 1
-    page.wait_for_selector(".copy-btn i.bi-copy", state="attached", timeout=3_000)
+    assert page.locator(".msg-meta .copy-btn i.bi-check2").count() == 1
+    page.wait_for_selector(".msg-meta .copy-btn i.bi-copy", state="attached", timeout=3_000)
 
 
 def test_copy_button_is_keyboard_reachable(open_chat, stored_conversation):
@@ -161,9 +171,9 @@ def test_rejected_write_says_copy_failed(open_chat, stored_conversation):
     _open_stored(page, stored_conversation)
 
     page.evaluate("window.__clipboardFails = true")
-    page.click(".copy-btn")
+    page.click(".msg-meta .copy-btn")
     page.wait_for_function("document.getElementById('copy-status').textContent === 'Copy failed'")
-    assert page.locator(".copy-btn i.bi-exclamation-triangle").count() == 1
+    assert page.locator(".msg-meta .copy-btn i.bi-exclamation-triangle").count() == 1
     assert page.evaluate("window.__copied") == []
 
 
@@ -173,7 +183,7 @@ def test_live_reply_with_done_gets_a_button(open_chat):
     page = open_chat(stream=(200, "text/event-stream", body))
     _send(page)
 
-    page.click(".copy-btn")
+    page.click(".msg-meta .copy-btn")
     page.wait_for_function("window.__copied.length === 1")
     assert page.evaluate("window.__copied[0]") == "**Bold** reply"
 
@@ -183,8 +193,8 @@ def test_live_reply_without_done_gets_a_button(open_chat):
     page = open_chat(stream=(200, "text/event-stream", body))
     _send(page)
 
-    assert page.locator(".copy-btn").count() == 1
-    page.click(".copy-btn")
+    assert page.locator(".msg-meta .copy-btn").count() == 1
+    page.click(".msg-meta .copy-btn")
     page.wait_for_function("window.__copied.length === 1")
     assert page.evaluate("window.__copied[0]") == "partial `text`"
 
@@ -198,7 +208,7 @@ def test_error_bubbles_have_no_copy_button(open_chat, stream, error):
     _send(page)
 
     assert page.inner_text(".chat-bubble-assistant").strip() == error
-    assert page.locator(".copy-btn").count() == 0
+    assert page.locator(".msg-meta .copy-btn").count() == 0
 
 
 def test_chat_template_loads_the_pinned_renderers():
@@ -210,3 +220,150 @@ def test_chat_template_loads_the_pinned_renderers():
 
 def test_no_plain_http_clipboard_fallback():
     assert "execCommand" not in CHAT_HTML.read_text()
+
+
+# ── Copy whole conversation ─────────────────────────────────────
+
+ISO_UTC = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"
+
+
+def _copy_all(page):
+    before = page.evaluate("window.__copied.length")
+    page.click("#copy-chat-btn")
+    page.wait_for_function(f"window.__copied.length === {before + 1}")
+    return page.evaluate("window.__copied[window.__copied.length - 1]")
+
+
+@pytest.fixture
+def document_conversation(app, test_user):
+    with app.app_context():
+        conv = Conversation(entity_id=test_user["id"], title="Doc", model="test-model")
+        db.session.add(conv)
+        db.session.flush()
+        db.session.add_all([
+            Message(conversation_id=conv.id, role="user",
+                    content="[Document: notes.md]\n\nSECRET FILE TEXT\n\n---\n\nSummarise it",
+                    created_at=datetime(2026, 1, 2, 3, 4, 5)),
+            Message(conversation_id=conv.id, role="assistant", content="A summary.", input_tokens=3, output_tokens=2,
+                    created_at=datetime(2026, 1, 2, 3, 4, 6)),
+        ])
+        db.session.commit()
+        return conv.id
+
+
+def test_copy_all_button_floats_over_the_message_area(open_chat, stored_conversation):
+    page = open_chat()
+    btn = page.locator("#copy-chat-btn")
+    assert btn.get_attribute("aria-label") == "Copy conversation as Markdown"
+    assert btn.locator("i.bi-copy").count() == 1
+    assert page.locator(".chat-header #copy-chat-btn").count() == 0
+    assert page.locator("#chat-messages #copy-chat-btn").count() == 0  # outside the scrolling log
+
+    _open_stored(page, stored_conversation)
+    _run_all_checks(page.content().encode(), "/chat (stored conversation with copy-all button)")
+    # Pinned to the top-right corner of the wrapper around the scrolling log, so
+    # it stays put while the messages scroll. (Bootstrap's CSS is not served
+    # here, so the scrolling itself is checked by scripts/responsive_check.py.)
+    assert page.evaluate("document.getElementById('copy-chat-btn').parentElement.id") == "chat-messages-wrap"
+    style = page.evaluate("""() => {
+      const s = getComputedStyle(document.getElementById("copy-chat-btn"));
+      return [s.position, s.top, s.right, getComputedStyle(document.getElementById("chat-messages-wrap")).position];
+    }""")
+    assert style == ["absolute", "8px", "20px", "relative"]
+    assert btn.is_visible()
+
+
+def test_copy_all_is_disabled_on_an_empty_chat(open_chat, stored_conversation):
+    page = open_chat()
+    assert page.locator("#copy-chat-btn").is_disabled()
+
+    _open_stored(page, stored_conversation)
+    assert page.locator("#copy-chat-btn").is_enabled()
+
+    page.click("#new-chat-btn")
+    assert page.locator("#copy-chat-btn").is_disabled()
+
+    _open_stored(page, stored_conversation)
+    assert page.locator("#copy-chat-btn").is_enabled()
+    page.click(f".conv-item[data-id='{stored_conversation}'] .conv-remove-btn")
+    page.wait_for_selector("#quick-chat-notice")
+    assert page.locator("#copy-chat-btn").is_disabled()
+
+
+def test_copy_all_writes_the_conversation_as_markdown(open_chat, stored_conversation):
+    page = open_chat()
+    _open_stored(page, stored_conversation)
+
+    assert _copy_all(page) == (
+        "**User** (2026-01-02T03:04:05Z):\n\nShow me code"
+        "\n\n---\n\n"
+        f"**Assistant** (test-model, 2026-01-02T03:04:06Z):\n\n{REPLY}"
+    )
+    assert page.inner_text("#copy-status") == "Copied to clipboard"
+
+
+def test_copy_all_leaves_out_attached_document_text(open_chat, document_conversation):
+    page = open_chat()
+    _open_stored(page, document_conversation)
+
+    text = _copy_all(page)
+    assert text.startswith("**User** (2026-01-02T03:04:05Z):\n\n[Document: notes.md]\n\nSummarise it\n\n---\n\n")
+    assert "SECRET FILE TEXT" not in text
+
+
+def test_copy_all_includes_a_live_exchange(open_chat, stored_conversation):
+    body = _sse({"chunk": "Live "}, {"chunk": "answer"},
+                {"done": True, "reply": "Live answer", "thinking": "hmm", "input_tokens": 1, "output_tokens": 2})
+    page = open_chat(stream=(200, "text/event-stream", body))
+    _open_stored(page, stored_conversation)
+    _send(page, "and now?")
+
+    entries = _copy_all(page).split("\n\n---\n\n")
+    assert len(entries) == 4
+    assert re.fullmatch(rf"\*\*User\*\* \({ISO_UTC}\):\n\nand now\?", entries[2])
+    assert re.fullmatch(rf"\*\*Assistant\*\* \(test-model, {ISO_UTC}\):\n\nLive answer", entries[3])
+    assert "hmm" not in entries[3]  # thinking text is left out
+
+    messages = open_chat.stream_bodies[-1]["messages"]
+    assert [sorted(m) for m in messages] == [["content", "role"]] * 3
+
+
+def test_copy_all_includes_a_reply_without_done(open_chat):
+    page = open_chat(stream=(200, "text/event-stream", _sse({"chunk": "partial"})))
+    assert page.locator("#copy-chat-btn").is_disabled()
+    _send(page)
+
+    entries = _copy_all(page).split("\n\n---\n\n")
+    assert re.fullmatch(rf"\*\*Assistant\*\* \(test-model, {ISO_UTC}\):\n\npartial", entries[1])
+
+
+def test_copy_all_leaves_out_error_text(open_chat):
+    page = open_chat(stream=(500, "application/json", json.dumps({"error": "down"})))
+    _send(page, "hi")
+
+    text = _copy_all(page)
+    assert re.fullmatch(rf"\*\*User\*\* \({ISO_UTC}\):\n\nhi", text)
+
+
+def test_copy_all_exports_image_messages_as_text_plus_marker(open_chat):
+    page = open_chat()
+    page.evaluate("""() => {
+      const opt = document.createElement("option");
+      opt.value = opt.textContent = "test-model";
+      document.getElementById("model-picker").appendChild(opt);
+      document.getElementById("model-picker").value = "test-model";
+    }""")
+    page.route("**/chat/stream", lambda route: route.fulfill(
+        status=200, content_type="text/event-stream", body=_sse({"done": True, "reply": "A cat."})))
+    page.route("**/chat/upload", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"type": "image", "filename": "cat.png", "data_url": "data:image/png;base64,iVBORw0KGgo="})))
+    page.set_input_files("#file-input", files=[{"name": "cat.png", "mimeType": "image/png", "buffer": b"png"}])
+    page.wait_for_selector("#attachment-row:not(.d-none)")
+    page.fill("#chat-input", "What is this?")
+    page.click("#send-btn")
+    page.wait_for_function("!document.getElementById('send-btn').disabled")
+
+    entries = _copy_all(page).split("\n\n---\n\n")
+    assert re.fullmatch(rf"\*\*User\*\* \({ISO_UTC}\):\n\n\[Image\]\n\nWhat is this\?", entries[0])
+    assert "base64" not in entries[0]

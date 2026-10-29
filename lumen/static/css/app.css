@@ -287,6 +287,37 @@ body.fill-viewport > :has(> #main-content) > footer {
     border-radius: 2px;
 }
 
+/* Copy-all floats over the top-right corner of the message area. It sits
+   outside the scrolling #chat-messages so it stays put, clear of the scrollbar;
+   the extra right padding keeps message text out from under it. */
+.chat-messages-wrap {
+    position: relative;
+    min-height: 0;
+}
+
+.chat-messages-wrap .chat-messages {
+    padding-right: 3rem !important;
+}
+
+.copy-chat-btn {
+    position: absolute;
+    top: 0.5rem;
+    right: 1.25rem;
+    z-index: 2;
+    width: 2rem;
+    height: 2rem;
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    color: #13294b;
+    font-size: 1rem;
+}
+
+.copy-chat-btn:disabled {
+    color: #6c757d;
+    opacity: 0.65;
+}
+
 /* ── Thinking block ─────────────────────────────────────────── */
 .thinking-block {
     background: #1e2430;

@@ -13,6 +13,7 @@ When you start a new conversation, a notice explains that the built-in chat is i
 - **Chat area** — Displays message bubbles. Your messages appear on the right; assistant replies appear on the left.
 - **Message detail** — Each assistant message has an info icon (ⓘ). Click it to see the token counts, response duration, and output speed for that reply.
 - **Copy reply** — The copy icon under each assistant reply copies that reply as Markdown.
+- **Copy conversation** — The copy icon in the top-right corner of the chat area copies the whole conversation as Markdown: each message with its time (UTC), and the model name on each reply. Attached documents appear only as their `[Document: name]` line, and thinking text and errors are left out. The icon is greyed out while the chat is empty.
 
 ## Conversation Management
 

@@ -190,7 +190,7 @@ def main():
         db.session.commit()
 
         # Curated conversation so the chat screenshot's sidebar shows history
-        # (the chat area itself captures the empty new-chat notice state).
+        # and the chat area has a conversation with its copy buttons.
         chat_model = os.environ.get("MODEL") or models[0].model_name
         if not db.session.execute(
             select(Conversation).filter_by(entity_id=user.id)

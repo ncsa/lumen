@@ -58,7 +58,9 @@
       </div>
     </div>
 
-    <div id="chat-messages" class="chat-messages flex-fill overflow-auto p-3" role="log" aria-live="polite" aria-label="Chat messages"></div>
+    <div id="chat-messages-wrap" class="chat-messages-wrap d-flex flex-column flex-fill">
+      <div id="chat-messages" class="chat-messages flex-fill overflow-auto p-3" role="log" aria-live="polite" aria-label="Chat messages"></div>
+    </div>
     <span id="copy-status" class="visually-hidden" aria-live="polite"></span>
 
     <div class="chat-input-bar px-3 py-2 border-top flex-shrink-0">
@@ -190,6 +192,9 @@
 
   const STORAGE_MODEL_KEY = "lumen_model";
   let chatHistory = [];
+  // Parallel to chatHistory: { created_at, model } per message, for the
+  // conversation export only. Kept apart so /chat/stream gets {role, content}.
+  let historyMeta = [];
   let activeConversationId = null;
   let pendingAttachment = null; // { type:"image"|"doc", filename, base64?, mimeType?, text? }
 
@@ -299,6 +304,8 @@
   document.getElementById("new-chat-btn").addEventListener("click", () => {
     activeConversationId = null;
     chatHistory = [];
+    historyMeta = [];
+    updateCopyChatBtn();
     document.getElementById("chat-messages").innerHTML = "";
     document.querySelectorAll(".conv-item").forEach(el => el.classList.remove("active"));
     showQuickChatNotice();
@@ -403,12 +410,15 @@
       const data = await resp.json();
       activeConversationId = id;
       chatHistory = [];
+      historyMeta = [];
       const container = document.getElementById("chat-messages");
       container.innerHTML = "";
       data.messages.forEach(msg => {
         chatHistory.push({ role: msg.role, content: msg.content });
+        historyMeta.push({ created_at: msg.created_at || null, model: (msg.meta && msg.meta.model) || null });
         appendBubble(msg.role, msg.content, msg.meta || null, msg.created_at || null, false);
       });
+      updateCopyChatBtn();
       container.scrollTop = container.scrollHeight;
       document.querySelectorAll(".conv-item").forEach(el => {
         const match = parseInt(el.dataset.id) === id;
@@ -426,6 +436,8 @@
       if (id === activeConversationId) {
         activeConversationId = null;
         chatHistory = [];
+        historyMeta = [];
+        updateCopyChatBtn();
         document.getElementById("chat-messages").innerHTML = "";
         showQuickChatNotice();
       }
@@ -469,6 +481,52 @@
     });
     return btn;
   }
+
+  // ── Copy whole conversation ─────────────────────────────────────
+  // Same "YYYY-MM-DDTHH:MM:SSZ" form as the stored created_at.
+  function utcNowIso() {
+    return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  }
+
+  function exportMessageText(content) {
+    if (Array.isArray(content)) {
+      return content
+        .map(block => block.type === "image_url" ? "[Image]" : (block.type === "text" ? block.text : ""))
+        .filter(Boolean)
+        .join("\n\n");
+    }
+    if (typeof content === "string" && content.startsWith("[Document: ")) {
+      // Same split as appendBubble: keep the [Document: name] line and the question, not the file text.
+      const newline = content.indexOf("\n");
+      const header = newline > -1 ? content.slice(0, newline) : content;
+      const rest = content.indexOf("\n\n---\n\n") > -1
+        ? content.slice(content.indexOf("\n\n---\n\n") + 7)
+        : "";
+      return rest ? `${header}\n\n${rest}` : header;
+    }
+    return content;
+  }
+
+  function conversationMarkdown() {
+    return chatHistory.map((msg, i) => {
+      const { created_at, model } = historyMeta[i] || {};
+      const ts = created_at || "";
+      const heading = msg.role === "user"
+        ? `**User** (${ts}):`
+        : `**Assistant** (${model ? `${model}, ` : ""}${ts}):`;
+      return `${heading}\n\n${exportMessageText(msg.content)}`;
+    }).join("\n\n---\n\n");
+  }
+
+  const copyChatBtn = makeCopyButton(conversationMarkdown, "Copy conversation as Markdown");
+  copyChatBtn.id = "copy-chat-btn";
+  copyChatBtn.classList.add("copy-chat-btn");
+  document.getElementById("chat-messages-wrap").appendChild(copyChatBtn);
+
+  function updateCopyChatBtn() {
+    copyChatBtn.disabled = chatHistory.length === 0;
+  }
+  updateCopyChatBtn();
 
   function appendBubble(role, content, meta, timestamp, scroll = true, attachment = null) {
     const container = document.getElementById("chat-messages");
@@ -778,6 +836,8 @@
     input.value = "";
     hideQuickChatNotice();
     chatHistory.push({ role: "user", content });
+    historyMeta.push({ created_at: utcNowIso(), model: null });
+    updateCopyChatBtn();
     appendBubble("user", content, null, null, true, attachedForDisplay);
     addTypingIndicator();
 
@@ -887,6 +947,8 @@
               streamBubble.innerHTML = renderMarkdownWithMath(event.reply || fullText);
             }
             chatHistory.push({ role: "assistant", content: event.reply || fullText });
+            historyMeta.push({ created_at: utcNowIso(), model });
+            updateCopyChatBtn();
             const meta = {
               model: model,
               input_tokens: event.input_tokens,
@@ -944,6 +1006,8 @@
       if (!finalReceived && fullText) {
         if (streamBubble) streamBubble.innerHTML = renderMarkdownWithMath(fullText);
         chatHistory.push({ role: "assistant", content: fullText });
+        historyMeta.push({ created_at: utcNowIso(), model });
+        updateCopyChatBtn();
         const ts = document.createElement("small");
         ts.className = "msg-meta d-flex align-items-center gap-1";
         ts.appendChild(document.createTextNode(formatTimestamp(null)));
