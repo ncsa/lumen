@@ -230,7 +230,9 @@ def test_failed_reload_of_an_over_age_snapshot_is_not_served(app, test_model):
     """Over-age authorization state never becomes an implicit fallback."""
     with app.app_context():
         assert model_cache.resolve("test-model") is not None
-        loaded = model_cache._snapshot.loaded_at
+        # Pinned like the test above, so the clock arithmetic does not depend on monotonic().
+        model_cache._snapshot = dataclasses.replace(model_cache._snapshot, loaded_at=1000.0)
+        loaded = 1000.0
         with patch("lumen.services.model_cache.time.monotonic", return_value=loaded + model_cache.MAX_AGE + 1), \
                 patch("lumen.services.model_cache._load", side_effect=RuntimeError("db down")):
             with pytest.raises(model_cache.SnapshotUnavailable):
