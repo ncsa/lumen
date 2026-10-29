@@ -256,7 +256,9 @@ def test_edit_expiry_closed_while_saving_still_updates_row(app, restore_config, 
     page.select_option("#edit-key-ttl-select", label="1 day")
     page.click("#key-ttl-save-btn")
     page.wait_for_function("document.getElementById('key-ttl-save-btn').disabled")
-    page.keyboard.press("Escape")
+    # Disabling the focused Save button lets Chrome move focus to <body>, where Bootstrap
+    # does not see Escape; press it on the dialog itself.
+    page.locator("#keyTtlModal").press("Escape")
     _wait_for_ttl_modal_closed(page)
     errors = []
     page.on("pageerror", lambda e: errors.append(e))
@@ -305,7 +307,7 @@ def test_edit_expiry_error_after_close_alerts(app, restore_config, open_page, ke
     page.wait_for_function("document.activeElement.id === 'edit-key-ttl-select'")  # shown: Escape now closes it
     page.click("#key-ttl-save-btn")
     page.wait_for_function("document.getElementById('key-ttl-save-btn').disabled")
-    page.keyboard.press("Escape")
+    page.locator("#keyTtlModal").press("Escape")
     _wait_for_ttl_modal_closed(page)
     if failure == "http":
         with app.app_context():
