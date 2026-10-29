@@ -6,13 +6,16 @@ All notable changes to Lumen will be documented in this file.
 
 **Upgrade:** `flask enable-retention` is removed — `request_logs` is never pruned; use the read-only `flask check-aggregate` and run `flask backfill-aggregate` before upgrading; startup logs an ERROR if a retention policy is found on `request_logs`; per-user `/usage` charts now read only `request_counts_hourly_by_entity` and no longer scan `request_logs`. (#167)
 
+- **Breaking:** Upgrade to SQLAlchemy 2.1; the PostgreSQL driver is now psycopg 3 (`psycopg[binary]`) and psycopg2 is no longer installed. `postgresql://` and `postgres://` URLs need no change; a database URL that names `postgresql+psycopg2://` fails at startup and must be changed to `postgresql://`.
+- **Breaking:** Python 3.14 is required; the Docker image and CI run on 3.14. Python 3.15 is not supported yet: with SQLAlchemy 2.1 it does not return garbage-collected connections to the pool.
 - Chat sidebar no longer scans the whole `messages` table when listing conversations; adds a `(conversation_id, created_at)` index on `messages`. (#168)
 - `/v1/models` and the model detail page read request rates from `request_metrics_1m` instead of scanning `request_logs`, and `request_metrics_1m` now keeps 30 days (`request_logs` is still never pruned). (#169)
 - Proxied API and chat requests and `/v1/models` make far fewer database queries, and rejected (403/429) requests no longer re-resolve access and budget; `/v1/models` request and token counts may now be up to a minute old. (#170)
 - Speed up slow `lumen.sh` device-flow and stream-disconnect tests.
 - Speed up the test suite: skip real sleeps in all `lumen.sh` tests, clone per-module PostgreSQL test databases from one migrated template, and drop the per-migration upgrade/downgrade tests for already-released migrations. (#234)
 - Tests now verify that API-key hashes are keyed on `ENCRYPTION_KEY` (#164).
-- Tests now pin that an upstream error below 400 maps to a generic 500 instead of passing through.
+- Tests now pin that an upstream error below 400 maps to a generic 500 instead of passing through. (#315)
+- Tests now pin that a coin balance refilled exactly one hour ago is refilled on the next pass. (#312)
 - `LUMEN_WSGI_WORKERS` now defaults to `auto`, sized at 2× DB pool capacity (10–256); Helm `wsgiWorkers` defaults to `"auto"` (#238).
 - OAuth key requests that replace an existing key now refresh its secret in place, keeping its name and usage stats, instead of revoking it. (#182)
 

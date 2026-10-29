@@ -69,6 +69,23 @@ def test_refills_after_full_hour(app, test_user):
         assert bal.last_refill_at == now
 
 
+def test_refills_at_exact_one_hour_boundary(app, test_user):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.services.token_refill import refill_coin_balances
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        _add_limit(db, test_user["id"], max_coins=100, refresh_coins=10)
+        _add_balance(db, test_user["id"], coins_left=50,
+                      last_refill_at=now - timedelta(hours=1))
+        db.session.commit()
+
+        assert refill_coin_balances(now=now) == 1
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one_or_none()
+        assert float(bal.coins_left) == 60.0  # 50 + 1*10
+        assert bal.last_refill_at == now
+
+
 def test_refill_capped_at_max_coins(app, test_user):
     with app.app_context():
         from lumen.extensions import db

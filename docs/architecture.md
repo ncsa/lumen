@@ -92,7 +92,7 @@ Lumen sits between clients (browser users and API consumers) and one or more pri
 | Metrics | prometheus-client 0.20+ | Multiprocess mode supported |
 | PDF handling | pypdf 4.0+ | File upload support in chat |
 | Templating | Jinja2 with custom `_ThemeLoader` | Theme overlays without forking templates |
-| Packaging / runtime | uv / pyproject.toml | Python ≥ 3.11 required |
+| Packaging / runtime | uv / pyproject.toml | Python 3.14 required |
 | Testing | pytest · pytest-flask · Playwright · Locust | Unit, integration, E2E, and load tests |
 
 ---

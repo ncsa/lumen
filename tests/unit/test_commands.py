@@ -3,8 +3,12 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import psycopg.errors
+import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError
 
+from lumen import commands
 from lumen.commands import __file__ as commands_file
 from lumen.commands import backfill_aggregate_cmd, check_aggregate_cmd, sync_models_from_yaml
 
@@ -291,3 +295,39 @@ def test_check_aggregate_is_a_clean_noop_on_sqlite(app):
     assert result.exit_code == 0, result.output
     assert "requires PostgreSQL/TimescaleDB" in result.output
     assert "sqlite" in result.output
+
+
+class _FailingConn:
+    """Raises ``errors`` from ``execute`` in turn, then succeeds."""
+
+    def __init__(self, *errors):
+        self.errors = list(errors)
+        self.calls = 0
+
+    def execute(self, *args, **kwargs):
+        self.calls += 1
+        if self.errors:
+            orig = self.errors.pop(0)
+            raise DBAPIError.instance("CALL refresh_continuous_aggregate", {}, orig, psycopg.Error)
+
+
+def test_refresh_window_retries_lock_not_available(monkeypatch):
+    monkeypatch.setattr(commands.time, "sleep", lambda _s: None)
+    conn = _FailingConn(psycopg.errors.LockNotAvailable("refresh in progress"),
+                        psycopg.errors.LockNotAvailable("refresh in progress"))
+
+    retries = commands._refresh_window(conn, "agg", datetime(2026, 1, 1), datetime(2026, 2, 1))
+
+    assert retries == 2
+    assert conn.calls == 3
+
+
+def test_refresh_window_raises_other_errors_immediately(monkeypatch):
+    monkeypatch.setattr(commands.time, "sleep", lambda _s: pytest.fail("must not retry"))
+    conn = _FailingConn(psycopg.errors.UndefinedTable("no such aggregate"))
+
+    with pytest.raises(DBAPIError) as excinfo:
+        commands._refresh_window(conn, "agg", datetime(2026, 1, 1), datetime(2026, 2, 1))
+
+    assert isinstance(excinfo.value.orig, psycopg.errors.UndefinedTable)
+    assert conn.calls == 1

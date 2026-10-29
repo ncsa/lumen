@@ -504,19 +504,24 @@ _REFRESH_RETRY_SLEEP = 2.0
 def _refresh_window(conn, name, start, end):
     """Refresh one window, waiting out a concurrent refresh. Returns the retry count.
 
-    Matches the SQLSTATE rather than the message text: the message is not part of any
-    stability guarantee, and matching it would turn a version bump into a silent loss
-    of the retry.
+    Matches the SQLSTATE (psycopg's ``sqlstate``) rather than the message text: the
+    message is not part of any stability guarantee, and matching it would turn a version
+    bump into a silent loss of the retry.
     """
     deadline = time.monotonic() + _REFRESH_RETRY_BUDGET
     retries = 0
     while True:
         try:
-            conn.execute(text("CALL refresh_continuous_aggregate(:n, :s, :e)"),
+            # psycopg 3 binds server-side and the window arguments are polymorphic
+            # ("any"), so the server takes whatever type the driver sends: a naive
+            # datetime would arrive as timestamp, not the timestamptz every aggregate
+            # here buckets on. The casts pin the types in the SQL instead.
+            conn.execute(text("CALL refresh_continuous_aggregate("
+                              "CAST(:n AS regclass), CAST(:s AS timestamptz), CAST(:e AS timestamptz))"),
                          {"n": name, "s": start, "e": end})
             return retries
         except DBAPIError as exc:
-            if getattr(exc.orig, "pgcode", None) != _LOCK_NOT_AVAILABLE:
+            if exc.orig.sqlstate != _LOCK_NOT_AVAILABLE:
                 raise
             if time.monotonic() + _REFRESH_RETRY_SLEEP > deadline:
                 raise

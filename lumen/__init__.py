@@ -168,7 +168,7 @@ def _warn_if_request_logs_has_retention(app):
         db.session.rollback()
         orig = getattr(e, "orig", None)
         # 42P01 undefined_table: no TimescaleDB, so no timescaledb_information.jobs.
-        if (getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)) == "42P01":
+        if getattr(orig, "sqlstate", None) == "42P01":
             return
         app.logger.warning("Could not check request_logs for a retention policy: %s", e)
         return
