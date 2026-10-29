@@ -23,8 +23,8 @@ from tests.ui.test_accessibility import _run_all_checks
 
 ORIGIN = "http://lumen.test"
 # Must match the bundle base.html loads; the copy is that file, byte for byte.
-BOOTSTRAP_JS_URL = "https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"
-BOOTSTRAP_JS = Path(__file__).parent.parent / "fixtures" / "vendor" / "bootstrap-5.3.0.bundle.min.js"
+BOOTSTRAP_JS_URL = "https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
+BOOTSTRAP_JS = Path(__file__).parent.parent / "fixtures" / "vendor" / "bootstrap-5.3.8.bundle.min.js"
 DAY = 86400
 
 
@@ -38,7 +38,13 @@ def open_page(auth_client, browser):
         url = urlsplit(request.url)
         if request.url == BOOTSTRAP_JS_URL:
             # The tables and modals need Bootstrap's JS; serve the pinned copy.
-            route.fulfill(status=200, content_type="application/javascript", body=BOOTSTRAP_JS.read_bytes())
+            route.fulfill(
+                status=200,
+                content_type="application/javascript",
+                # base.html loads it with crossorigin + integrity, so it needs CORS.
+                headers={"Access-Control-Allow-Origin": "*"},
+                body=BOOTSTRAP_JS.read_bytes(),
+            )
             return
         if f"{url.scheme}://{url.netloc}" != ORIGIN:
             route.abort()  # other CDN assets: keep the test hermetic
