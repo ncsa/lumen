@@ -251,11 +251,13 @@ def test_edit_expiry_closed_while_saving_still_updates_row(app, restore_config, 
     before = _row_cells(page, "live-key")[expires_idx]
     page.locator(f".ttl-key-btn[data-id='{kid}']").click()
     page.wait_for_selector("#keyTtlModal.show")
+    # .show is set when the fade-in starts; Bootstrap ignores Escape until shown.bs.modal (which focuses the select).
+    page.wait_for_function("document.activeElement.id === 'edit-key-ttl-select'")
     page.select_option("#edit-key-ttl-select", label="1 day")
     page.click("#key-ttl-save-btn")
     page.wait_for_function("document.getElementById('key-ttl-save-btn').disabled")
     page.keyboard.press("Escape")
-    page.wait_for_selector("#keyTtlModal", state="hidden")
+    _wait_for_ttl_modal_closed(page)
     errors = []
     page.on("pageerror", lambda e: errors.append(e))
     held[0].fallback()  # the original handler answers it now
@@ -300,10 +302,11 @@ def test_edit_expiry_error_after_close_alerts(app, restore_config, open_page, ke
     before = _row_cells(page, "live-key")[expires_idx]
     page.locator(f".ttl-key-btn[data-id='{kid}']").click()
     page.wait_for_selector("#keyTtlModal.show")
+    page.wait_for_function("document.activeElement.id === 'edit-key-ttl-select'")  # shown: Escape now closes it
     page.click("#key-ttl-save-btn")
     page.wait_for_function("document.getElementById('key-ttl-save-btn').disabled")
     page.keyboard.press("Escape")
-    page.wait_for_selector("#keyTtlModal", state="hidden")
+    _wait_for_ttl_modal_closed(page)
     if failure == "http":
         with app.app_context():
             db.session.get(APIKey, kid).revoked_at = utcnow()  # revoked meanwhile: the server answers 409
