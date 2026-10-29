@@ -176,6 +176,12 @@ def _focused_ttl_button_id(page):
     return page.evaluate("document.activeElement.matches('.ttl-key-btn') ? document.activeElement.dataset.id : null")
 
 
+def _wait_for_ttl_modal_closed(page):
+    page.wait_for_selector("#keyTtlModal", state="hidden")
+    # hidden alone is not enough: Bootstrap fires hidden.bs.modal (which restores focus) after the backdrop fade.
+    page.wait_for_function("!document.body.classList.contains('modal-open')")
+
+
 def test_edit_expiry_modal(app, restore_config, open_page, key_page):
     app.config["KEY_TTL"] = 30 * DAY
     path, post_path, expires_idx = key_page
@@ -199,7 +205,7 @@ def test_edit_expiry_modal(app, restore_config, open_page, key_page):
     assert page.locator("#edit-key-ttl-select option:checked").inner_text().strip() == "30 days"
     _run_all_checks(page.content().encode(), f"{path} (Edit Key Expiry modal open)")
     page.keyboard.press("Escape")
-    page.wait_for_selector("#keyTtlModal", state="hidden")
+    _wait_for_ttl_modal_closed(page)
     assert _focused_ttl_button_id(page) == str(kid)
 
     # Saving updates the row in place and returns focus to the re-rendered button.
@@ -208,7 +214,7 @@ def test_edit_expiry_modal(app, restore_config, open_page, key_page):
     page.wait_for_selector("#keyTtlModal.show")
     page.select_option("#edit-key-ttl-select", label="7 days")
     page.click("#key-ttl-save-btn")
-    page.wait_for_selector("#keyTtlModal", state="hidden")
+    _wait_for_ttl_modal_closed(page)
     assert posted[-1] == (f"{post_path}/{kid}/ttl", {"ttl": 7 * DAY})
     assert _row_cells(page, "live-key")[expires_idx] != before
     assert _focused_ttl_button_id(page) == str(kid)
