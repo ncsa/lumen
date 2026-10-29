@@ -13,6 +13,7 @@ import hashlib
 import re
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -22,7 +23,10 @@ TEMPLATE_DIRS = [
     ROOT / "themes",
     ROOT / "scripts" / "monitor" / "monitor" / "templates",
 ]
-CDN_HOSTS = ("https://cdn.jsdelivr.net/", "https://cdnjs.cloudflare.com/")
+CDN_HOSTS = ("cdn.jsdelivr.net", "cdnjs.cloudflare.com")
+# Templates must spell a CDN URL exactly one way; anything else a browser still
+# resolves to a CDN host (//host, http:, HOST, " https:...") fails instead of being normalized.
+CANONICAL_PREFIXES = tuple(f"https://{host}/" for host in CDN_HOSTS)
 # The version must sit where each CDN resolves it, not anywhere in the path:
 # jsDelivr npm/<pkg>@1.2.3/... (pkg may be scoped, @scope/pkg), cdnjs ajax/libs/<lib>/1.2.3/...
 EXACT_VERSION = re.compile(
@@ -38,6 +42,18 @@ KEY_TABLES_TEST = ROOT / "tests" / "ui" / "test_key_tables.py"
 GOOD_SRI = "sha384-" + "A" * 64
 
 
+def _cdn_host(url):
+    # Undo what browsers forgive before resolving a URL, so every spelling that
+    # loads from a CDN is scanned: surrounding whitespace, tabs and newlines
+    # anywhere, and backslashes in place of slashes.
+    url = re.sub(r"[\t\n\r]", "", url.strip()).replace("\\", "/")
+    try:
+        host = urlsplit(url).hostname
+    except ValueError:
+        return None
+    return host if host in CDN_HOSTS else None
+
+
 class _CdnTags(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -48,14 +64,19 @@ class _CdnTags(HTMLParser):
             return
         attrs = dict(attrs)
         url = attrs.get("src") if tag == "script" else attrs.get("href")
-        if url and url.startswith(CDN_HOSTS):
+        if url and _cdn_host(url):
             self.tags.append((self.getpos()[0], url, attrs))
 
 
-def _parse(path):
+def _parse_html(html):
     parser = _CdnTags()
-    parser.feed(path.read_text())
+    parser.feed(html)
+    parser.close()
     return parser.tags
+
+
+def _parse(path):
+    return _parse_html(path.read_text())
 
 
 def _cdn_tags():
@@ -67,6 +88,8 @@ def _cdn_tags():
 
 def _tag_problems(url, attrs):
     problems = []
+    if not url.startswith(CANONICAL_PREFIXES) or re.search(r"[\s\\]", url):
+        problems.append(f"is not spelled {' or '.join(p + '...' for p in CANONICAL_PREFIXES)}")
     if not EXACT_VERSION.match(url):
         problems.append("is not pinned to an exact x.y.z package version")
     entries = (attrs.get("integrity") or "").split()
@@ -146,6 +169,65 @@ def test_integrity_format(integrity, ok):
     url = "https://cdn.jsdelivr.net/npm/marked@18.1.2/lib/marked.umd.js"
     problems = _tag_problems(url, {"integrity": integrity, "crossorigin": "anonymous"})
     assert (problems == []) is ok
+
+
+PINNED = "https://cdn.jsdelivr.net/npm/marked@18.1.2/lib/marked.umd.js"
+NOT_CANONICAL = "is not spelled https://cdn.jsdelivr.net/... or https://cdnjs.cloudflare.com/..."
+
+
+def _html_problems(html):
+    # Parser and validator together, as test_cdn_tags_are_pinned_and_hashed runs them.
+    return [p for _, url, attrs in _parse_html(html) for p in _tag_problems(url, attrs)]
+
+
+@pytest.mark.parametrize("html", [
+    f'<script src="{PINNED}" integrity="{GOOD_SRI}" crossorigin="anonymous"></script>',
+    f'<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.19.1/katex.min.css" '
+    f'integrity="{GOOD_SRI}" crossorigin="anonymous">',
+])
+def test_canonical_tag_passes(html):
+    assert len(_parse_html(html)) == 1
+    assert _html_problems(html) == []
+
+
+@pytest.mark.parametrize("url", [
+    PINNED.replace("https:", "", 1),  # protocol-relative
+    PINNED.replace("https:", "http:", 1),
+    PINNED.replace("cdn.jsdelivr.net", "CDN.JSDelivr.NET"),
+    PINNED.replace("https", "HTTPS", 1),
+    " " + PINNED,
+    "\n" + PINNED,
+    PINNED + " ",
+    PINNED.replace("cdn.jsdelivr.net/", "cdn.jsdelivr.net:443/"),
+    PINNED.replace("https://", "https://user@", 1),
+    PINNED.replace("https://", "https:\\\\", 1),
+    PINNED.replace("https", "ht\tps", 1),
+    "https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.19.1/katex.min.js".replace("https:", "", 1),
+])
+def test_non_canonical_cdn_url_fails(url):
+    html = f'<script src="{url}" integrity="{GOOD_SRI}" crossorigin="anonymous"></script>'
+    assert len(_parse_html(html)) == 1, "a URL the browser loads from the CDN must be scanned"
+    assert NOT_CANONICAL in _html_problems(html)
+
+
+@pytest.mark.parametrize("html, missing", [
+    (f'<script src="{PINNED}" crossorigin="anonymous"></script>', 'lacks a well-formed integrity="sha384-..."'),
+    (f'<script src="{PINNED}" integrity="{GOOD_SRI}"></script>', 'lacks crossorigin="anonymous"'),
+    ('<script src="//cdn.jsdelivr.net/npm/marked/marked.min.js"></script>', 'lacks a well-formed integrity="sha384-..."'),
+])
+def test_tag_missing_sri_attributes_fails(html, missing):
+    assert missing in _html_problems(html)
+
+
+@pytest.mark.parametrize("html", [
+    '<script src="https://example.com/npm/marked/marked.min.js"></script>',
+    '<script src="https://cdn.jsdelivr.net.example.com/npm/marked/marked.min.js"></script>',
+    '<link rel="stylesheet" href="/static/cdn.jsdelivr.net/style.css">',
+    '<script src="cdn.jsdelivr.net/npm/marked/marked.min.js"></script>',  # a relative path, not the CDN
+    '<a href="//cdn.jsdelivr.net/npm/marked/marked.min.js">not loaded</a>',
+])
+def test_unrelated_url_is_ignored(html):
+    assert _parse_html(html) == []
 
 
 def test_key_tables_bootstrap_matches_base_html():
