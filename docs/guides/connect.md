@@ -19,8 +19,10 @@ Each run works like this:
 
 1. It uses `$LUMEN_API_KEY` only when it belongs to the target server — that is, when `$LUMEN_BASE_URL` names the same server (or is unset and the default is meant), so a key issued by one Lumen is never sent to another. Otherwise it reuses a key saved for this server in `~/.config/lumen/keys.json`.
 2. Otherwise it starts a **device login**: it prints a one-time code (like `QKRT-M2BX`) and opens Lumen's approval page. Sign in, check what is being requested, pick how long the key stays valid, and approve — the CLI then receives a fresh API key exactly once and prints when it expires (or that it never expires).
-3. The key is saved to `~/.config/lumen/keys.json` (mode `600`, keyed by server host) and written into a managed `# >>> lumen >>>` block in your shell's rc file (`~/.zshrc`, `~/.bashrc`, `setenv` for csh), which exports both `LUMEN_API_KEY` and `LUMEN_BASE_URL`. A plain `lumen.sh` therefore targets the server you last logged in to.
-4. Unless you pass `--no-opencode`, the Lumen provider block in your opencode config is refreshed with every active model that accepts text input. Models without text input (for example audio-only models) are skipped; models whose input modalities are unknown are still added. The config is `$OPENCODE_CONFIG` if set, else `~/.config/opencode/opencode.json`, else `~/.config/opencode/opencode.jsonc`; if none exists, `opencode.jsonc` is created (mode `600`). Comments in the config are not kept when it is rewritten, so the first time the script rewrites a file with comments it saves the original as `<file>.bak`.
+3. The key is saved to `~/.config/lumen/keys.json` (mode `600`, keyed by server host) and written into a managed `# >>> lumen >>>` block in your shell's rc file (`~/.zshrc`, `~/.bashrc`, `setenv` for csh), which exports both `LUMEN_API_KEY` and `LUMEN_BASE_URL`. A plain `lumen.sh` therefore targets the server you last logged in to. With `--embed-key`, the key is also written to the opencode config, for apps that don't read your shell rc. Once a key is embedded, later runs keep it current even without the flag.
+
+   > **Note:** an embedded key is stored in plaintext, so the script sets the config to mode `600`; keep it out of shared or committed dotfiles.
+4. Unless you pass `--no-opencode`, the Lumen provider block in your opencode config is refreshed with every active model that accepts text input. Models without text input (for example audio-only models) are skipped; models whose input modalities are unknown are still added. The config is `$OPENCODE_CONFIG` if set, else `~/.config/opencode/opencode.json`, else `~/.config/opencode/opencode.jsonc`; if none exists, `opencode.jsonc` is created (mode `600`). Comments in the config are not kept when it is rewritten, so the first time the script rewrites a file with comments it saves the original as `<file>.bak` (mode `600`).
 
 | Flag | Purpose |
 |------|---------|
@@ -31,6 +33,7 @@ Each run works like this:
 | `--ttl DURATION` | Ask for a key that expires after `DURATION`: `0` (never) or hours, days or weeks such as `12h`, `30d`, `8w` (default: the server's maximum, `api.keys.ttl`). Pre-selects the approval page's **Expires after** choice, which the approver can change; the server rejects a value above its maximum, and `0` when keys must expire. Only used when a new key is requested |
 | `--opencode` | Sync the model catalog into `opencode.json` or `opencode.jsonc` (default) |
 | `--no-opencode` | Only log in and store the key |
+| `--embed-key` | Also write the key itself into the opencode config (`options.apiKey`, mode `600`) instead of `{env:LUMEN_API_KEY}`; can't be combined with `--no-opencode` |
 | `--relogin` | Request a new key even if one is stored; the new key always replaces the stored one |
 | `--no-aliases` | Skip model aliases when syncing |
 
