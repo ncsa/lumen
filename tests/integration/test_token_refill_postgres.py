@@ -121,6 +121,7 @@ def test_batch_rowcount_counts_every_credited_row(pg_app):
     from lumen.services import token_refill
     from lumen.timeutils import utcnow
 
+    # A later "now" than the other test's, so rows it bumped stay out of this pass.
     now = utcnow() + timedelta(minutes=1)
     ids = _due_entities(pg_app, 5, now)
 

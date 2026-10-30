@@ -140,7 +140,7 @@ def test_zero_refresh_coins_skipped(app, test_user):
 
 
 def test_no_pool_skipped(app, test_user):
-    """Entity with no limit at all (no EntityLimit, no group limits) is left alone."""
+    """Entity with no limit at all (no EntityLimit, no group limits) gets no credit."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_balance import EntityBalance
@@ -463,7 +463,8 @@ def test_refill_guarded_on_value_read(app, test_user, monkeypatch):
         from lumen.services import token_refill
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-        moved = now - timedelta(minutes=10)
+        # Still due after the move, so only the exact-value guard (not a due cutoff) rejects it.
+        moved = now - timedelta(minutes=90)
         _add_limit(db, test_user["id"], max_coins=100, refresh_coins=10)
         _add_balance(db, test_user["id"], coins_left=50,
                       last_refill_at=now - timedelta(hours=2))

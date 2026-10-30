@@ -20,14 +20,14 @@ logger = logging.getLogger(__name__)
 
 
 #: How many balances one refill transaction writes. Each batch commits on its own,
-#: so a billing request waits at most one batch for a balance row, not a whole pass.
+#: so a billing request waits at most for one batch's row locks, not a whole pass.
 REFILL_BATCH_SIZE = 200
 
 _balances = EntityBalance.__table__
 
 
 def _cas_update(**values):
-    """UPDATE one balance, guarded on the last_refill_at value the pass read.
+    """UPDATE balances, one per param set, each guarded on the last_refill_at value read.
 
     A row an admin or another worker changed after the read is left alone. A Core
     statement on the table, so a guarded write that matches no row leaves the
