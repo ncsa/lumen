@@ -196,6 +196,12 @@ erDiagram
         datetime last_used_at
     }
 
+    stats_fold_state {
+        int id PK
+        datetime cutover_at
+        datetime folded_until
+    }
+
     conversations {
         int id PK
         int entity_id FK
@@ -293,6 +299,7 @@ erDiagram
 - [entity\_managers](#entity_managers)
 - [model\_stats](#model_stats)
 - [entity\_stats](#entity_stats)
+- [stats\_fold\_state](#stats_fold_state)
 - [conversations](#conversations)
 - [messages](#messages)
 - [request\_logs](#request_logs)
@@ -617,6 +624,23 @@ Pre-aggregated usage totals per entity across all models and sources. One row pe
 **Notes:**
 - Populated on migration by a `GROUP BY` backfill from `model_stats`.
 - Always current — no refresh lag. Unlike `request_counts_hourly`, this is written synchronously with every request.
+
+---
+
+## stats_fold_state
+
+Single-row state of the stats fold, which adds `request_logs` rows into `model_stats` and `entity_stats` in windows instead of billing bumping them on every request. Before the cutover, billing bumps the counters and the fold does nothing; from `cutover_at` on, the fold owns every request.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `id` | Integer | NO | Primary key; always `1` |
+| `cutover_at` | DateTime | YES | UTC instant from which `request_logs` rows are folded instead of bumped by billing; null until cutover |
+| `folded_until` | DateTime | YES | UTC end (exclusive) of the last folded window; starts equal to `cutover_at`, null until cutover |
+
+**Notes:**
+- The migration inserts the row. On SQLite both columns are set to the migration time (a single process cannot have old code still bumping); on PostgreSQL both stay null.
+- A missing row (a database built with `create_all()`) means the same as a null `cutover_at`: not cut over.
+- Each fold pass covers the half-open window `[folded_until, now − lag)` and advances `folded_until` with a compare-and-set, so concurrent passes never fold a row twice.
 
 ---
 
