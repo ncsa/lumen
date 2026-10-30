@@ -529,6 +529,54 @@ def _refresh_window(conn, name, start, end):
             time.sleep(_REFRESH_RETRY_SLEEP)
 
 
+class _RefreshFailed(Exception):
+    """A month of ``_refresh_months`` failed; carries what is needed to resume."""
+
+    def __init__(self, month, refreshed, error):
+        super().__init__(f"refreshing {month:%Y-%m} failed: {error.orig}")
+        self.month = month
+        self.refreshed = refreshed
+        self.error = error
+
+
+def _refresh_months(conn, name, start, now):
+    """Refresh aggregate ``name`` month by month from ``start`` up to ``now``.
+
+    Prints one line per month and returns the months refreshed as ``YYYY-MM``
+    strings. Raises ``_RefreshFailed`` with the failing month and the months already
+    refreshed. ``conn`` must be an autocommit connection (``_autocommit_connection``).
+    """
+    bucket = _bucket_column(conn, name)
+    refreshed = []
+    month = start
+    while month <= now:
+        nxt = _next_month(month)
+        # Never refresh past "now". A window ending in the future materialises the
+        # current bucket and moves the aggregate's watermark beyond it, which turns
+        # real-time aggregation OFF for that bucket: every request logged after the
+        # backfill stays invisible on /usage until a scheduled refresh catches up.
+        # Measured on 2.27.2 — with the month end (future) the next insert was
+        # missing; with now() the watermark stayed two buckets back and it showed.
+        end = min(nxt, now)
+        raw = conn.execute(text(
+            "SELECT COUNT(*) FROM request_logs WHERE time >= :s AND time < :e"
+        ), {"s": month, "e": nxt}).scalar()
+        click.echo(f"  {month:%Y-%m}: {raw} request_logs rows ... ", nl=False)
+        try:
+            retries = _refresh_window(conn, name, month, end)
+        except DBAPIError as exc:
+            click.echo("FAILED")
+            raise _RefreshFailed(month, refreshed, exc) from exc
+        aggregated = conn.execute(text(
+            f'SELECT COUNT(*) FROM "{name}" WHERE "{bucket}" >= :s AND "{bucket}" < :e'
+        ), {"s": month, "e": nxt}).scalar()
+        click.echo(f"{aggregated} aggregate rows OK"
+                   + (f" (after {retries} lock retries)" if retries else ""))
+        refreshed.append(f"{month:%Y-%m}")
+        month = nxt
+    return refreshed
+
+
 @click.command("backfill-aggregate")
 @click.option("--name", default=ENTITY_AGGREGATE, show_default=True,
               help="Continuous aggregate to materialise.")
@@ -608,41 +656,18 @@ def backfill_aggregate_cmd(name, from_month, force):
 
         now = datetime.now(timezone.utc)
         click.echo(f"Backfilling '{name}' from {start:%Y-%m} to {now:%Y-%m}, month by month.")
-        refreshed = []
-        month = start
-        while month <= now:
-            nxt = _next_month(month)
-            # Never refresh past "now". A window ending in the future materialises the
-            # current bucket and moves the aggregate's watermark beyond it, which turns
-            # real-time aggregation OFF for that bucket: every request logged after the
-            # backfill stays invisible on /usage until a scheduled refresh catches up.
-            # Measured on 2.27.2 — with the month end (future) the next insert was
-            # missing; with now() the watermark stayed two buckets back and it showed.
-            end = min(nxt, now)
-            raw = conn.execute(text(
-                "SELECT COUNT(*) FROM request_logs WHERE time >= :s AND time < :e"
-            ), {"s": month, "e": nxt}).scalar()
-            click.echo(f"  {month:%Y-%m}: {raw} request_logs rows ... ", nl=False)
-            try:
-                retries = _refresh_window(conn, name, month, end)
-            except DBAPIError as exc:
-                click.echo("FAILED")
-                click.echo(f"Error: refreshing {month:%Y-%m} failed: {exc.orig}")
-                if refreshed:
-                    click.echo(f"  Refreshed OK: {refreshed[0]} .. {refreshed[-1]} "
-                               f"({len(refreshed)} months).")
-                else:
-                    click.echo("  No month was refreshed.")
-                click.echo(f"  Resume with: flask backfill-aggregate "
-                           f"--name {name} --from {month:%Y-%m}")
-                raise SystemExit(1)
-            aggregated = conn.execute(text(
-                f'SELECT COUNT(*) FROM "{name}" WHERE "{bucket}" >= :s AND "{bucket}" < :e'
-            ), {"s": month, "e": nxt}).scalar()
-            click.echo(f"{aggregated} aggregate rows OK"
-                       + (f" (after {retries} lock retries)" if retries else ""))
-            refreshed.append(f"{month:%Y-%m}")
-            month = nxt
+        try:
+            refreshed = _refresh_months(conn, name, start, now)
+        except _RefreshFailed as failed:
+            click.echo(f"Error: refreshing {failed.month:%Y-%m} failed: {failed.error.orig}")
+            if failed.refreshed:
+                click.echo(f"  Refreshed OK: {failed.refreshed[0]} .. {failed.refreshed[-1]} "
+                           f"({len(failed.refreshed)} months).")
+            else:
+                click.echo("  No month was refreshed.")
+            click.echo(f"  Resume with: flask backfill-aggregate "
+                       f"--name {name} --from {failed.month:%Y-%m}")
+            raise SystemExit(1)
 
     if refreshed:
         click.echo(f"Backfill complete: {len(refreshed)} months refreshed "
