@@ -11,3 +11,27 @@ def utcnow() -> datetime:
     ``datetime.now(timezone.utc).replace(tzinfo=None)``.
     """
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def as_utc_aware(dt: datetime) -> datetime:
+    """Return ``dt`` as an aware UTC datetime.
+
+    Naive input is taken to be UTC already (the app's storage convention);
+    aware input is converted to UTC. Needed where naive app timestamps meet
+    ``request_logs.time``, which is aware on PostgreSQL and comes back naive
+    from SQLite.
+    """
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def as_utc_naive(dt: datetime) -> datetime:
+    """Return ``dt`` as a naive UTC datetime, the form every app table stores.
+
+    Naive input is returned unchanged (it is UTC by convention); aware input
+    is converted to UTC and stripped of its tzinfo.
+    """
+    if dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)

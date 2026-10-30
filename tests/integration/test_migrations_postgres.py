@@ -146,3 +146,10 @@ def test_migration_is_at_a_single_head(pg_migrated):
     with pg_migrated.connect() as conn:
         heads = conn.execute(text("SELECT version_num FROM alembic_version")).scalars().all()
     assert len(heads) == 1, f"expected one alembic head, got {heads}"
+
+
+def test_stats_fold_state_is_not_cut_over_on_postgresql(pg_migrated):
+    """Old pods may still bump the counters mid-rollout, so PostgreSQL waits for the operator."""
+    with pg_migrated.connect() as conn:
+        rows = conn.execute(text("SELECT id, cutover_at, folded_until FROM stats_fold_state")).all()
+    assert [tuple(r) for r in rows] == [(1, None, None)]
