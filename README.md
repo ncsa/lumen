@@ -143,7 +143,7 @@ Visit `http://localhost:5001`, click **Login**, and you'll be auto-logged in as 
 ## Operator Commands
 
 Run with `uv run flask --app run <command>` locally, or `flask <command>` inside the container.
-Both commands below need PostgreSQL/TimescaleDB; on SQLite they print a note and exit 0.
+`backfill-aggregate` and `check-aggregate` need PostgreSQL/TimescaleDB; on SQLite they print a note and exit 0.
 
 **`request_logs` is never pruned.** Lumen ships no retention policy and no command that deletes from it.
 
@@ -225,6 +225,32 @@ At startup, and then periodically in every worker process (see "Prometheus metri
 interval), Lumen checks the extension version, the `request_logs` hypertable, the continuous
 aggregates and their background jobs. It logs a WARNING per problem (ERROR when the extension or
 the hypertable is missing, or when `request_logs` has a retention policy) and never blocks startup.
+
+### `stats-cutover`
+
+Switches the usage totals (`model_stats` / `entity_stats`) from a per-request bump in billing to the
+background stats fold over `request_logs`. Run it once on PostgreSQL after the upgrade has rolled out
+to every pod; SQLite is cut over by its migration.
+
+```bash
+flask stats-cutover
+```
+
+It sets the cutover five minutes ahead, so every running process has read it before it takes effect,
+and refuses to run a second time. Until it runs nothing changes and the app logs a warning at startup.
+
+### `check-stats`
+
+Compares the folded usage totals with `request_logs` since the cutover.
+
+```bash
+flask check-stats [--fix]
+```
+
+Every difference is printed per `model_stats` / `entity_stats` row, and the command exits 1. A
+difference means requests the fold missed, such as a billing transaction that committed more than
+`stats.fold_lag` after its timestamp. `--fix` adds each difference to the totals instead. Before the
+cutover it does nothing. It scans every `request_logs` row since the cutover.
 
 ---
 

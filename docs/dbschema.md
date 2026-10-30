@@ -183,6 +183,11 @@ erDiagram
         bigint audio_seconds
         numeric cost
         datetime last_used_at
+        int folded_requests
+        bigint folded_input_tokens
+        bigint folded_output_tokens
+        bigint folded_audio_seconds
+        numeric folded_cost
     }
 
     entity_stats {
@@ -194,6 +199,11 @@ erDiagram
         numeric cost
         int conversations
         datetime last_used_at
+        int folded_requests
+        bigint folded_input_tokens
+        bigint folded_output_tokens
+        bigint folded_audio_seconds
+        numeric folded_cost
     }
 
     stats_fold_state {
@@ -587,7 +597,7 @@ Maps users to the project entities they are members of. `role` is `'manager'` or
 
 ## model_stats
 
-Running aggregated usage counters per entity per model per source. Updated after every proxied request. Used for the usage dashboard.
+Running aggregated usage counters per entity per model per source, folded from `request_logs` by the stats fold (see [stats\_fold\_state](#stats_fold_state)); before the stats cutover, billing bumps them on every proxied request instead. Used for the usage dashboard.
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
@@ -601,6 +611,11 @@ Running aggregated usage counters per entity per model per source. Updated after
 | `audio_seconds` | BigInteger | NO | Total seconds of audio transcribed/translated |
 | `cost` | Numeric(12,6) | NO | Total cost in USD |
 | `last_used_at` | DateTime | NO | UTC timestamp of the most recent request counted in this row |
+| `folded_requests` | Integer | NO | Part of `requests` added by the stats fold since the cutover; `flask check-stats` compares it with `request_logs` |
+| `folded_input_tokens` | BigInteger | NO | Part of `input_tokens` added by the stats fold since the cutover |
+| `folded_output_tokens` | BigInteger | NO | Part of `output_tokens` added by the stats fold since the cutover |
+| `folded_audio_seconds` | BigInteger | NO | Part of `audio_seconds` added by the stats fold since the cutover |
+| `folded_cost` | Numeric(12,6) | NO | Part of `cost` added by the stats fold since the cutover |
 
 **Constraints:** `UNIQUE(entity_id, model_config_id, source)`
 
@@ -608,7 +623,7 @@ Running aggregated usage counters per entity per model per source. Updated after
 
 ## entity_stats
 
-Pre-aggregated usage totals per entity across all models and sources. One row per entity, maintained atomically alongside `model_stats` on every proxied request. Enables O(1) per-entity lookups in the admin users table and projects listing without scanning `model_stats`.
+Pre-aggregated usage totals per entity across all models and sources. One row per entity, folded from `request_logs` alongside `model_stats` (bumped by billing on every proxied request before the stats cutover). Enables O(1) per-entity lookups in the admin users table and projects listing without scanning `model_stats`.
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
@@ -620,10 +635,16 @@ Pre-aggregated usage totals per entity across all models and sources. One row pe
 | `cost` | Numeric(12,6) | NO | Total cost in USD across all models and sources |
 | `conversations` | Integer | NO | Total webchat conversations started. Retained even when conversations are deleted or storage is disabled. |
 | `last_used_at` | DateTime | YES | UTC timestamp of the most recent request by this entity; null if never used |
+| `folded_requests` | Integer | NO | Part of `requests` added by the stats fold since the cutover; `flask check-stats` compares it with `request_logs` |
+| `folded_input_tokens` | BigInteger | NO | Part of `input_tokens` added by the stats fold since the cutover |
+| `folded_output_tokens` | BigInteger | NO | Part of `output_tokens` added by the stats fold since the cutover |
+| `folded_audio_seconds` | BigInteger | NO | Part of `audio_seconds` added by the stats fold since the cutover |
+| `folded_cost` | Numeric(12,6) | NO | Part of `cost` added by the stats fold since the cutover |
 
 **Notes:**
 - Populated on migration by a `GROUP BY` backfill from `model_stats`.
-- Always current — no refresh lag. Unlike `request_counts_hourly`, this is written synchronously with every request.
+- After the stats cutover the totals lag real time by up to `stats.fold_lag + stats.fold_interval` (about 6 minutes by default); the user's own `/profile` adds their not-yet-folded `request_logs` on top and is exact. `conversations` stays synchronous: it is bumped once per new conversation, not per request.
+- The `folded_*` columns (here and in `model_stats`) hold the fold's own part of each total, which `flask check-stats` compares with `request_logs` since the cutover; the totals themselves also carry history from before `request_logs` existed.
 
 ---
 
@@ -641,6 +662,7 @@ Single-row state of the stats fold, which adds `request_logs` rows into `model_s
 - The migration inserts the row. On SQLite both columns are set to the migration time (a single process cannot have old code still bumping); on PostgreSQL both stay null.
 - A missing row (a database built with `create_all()`) means the same as a null `cutover_at`: not cut over.
 - Each fold pass covers the half-open window `[folded_until, now − lag)` and advances `folded_until` with a compare-and-set, so concurrent passes never fold a row twice.
+- On PostgreSQL, `flask stats-cutover` sets `cutover_at = folded_until` five minutes ahead, once, after the rollout has finished. `flask check-stats [--fix]` reports (and repairs) requests the fold missed, such as a billing transaction that committed more than `stats.fold_lag` after its timestamp. `flask reassign-model` and `check-stats` lock this row so no fold pass runs in the middle.
 
 ---
 

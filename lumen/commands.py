@@ -4,7 +4,9 @@ import shutil
 import tempfile
 import time
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from email.utils import parsedate_to_datetime
+from types import SimpleNamespace
 from urllib.parse import urlparse
 
 import click
@@ -14,9 +16,15 @@ from flask.cli import with_appcontext
 from sqlalchemy import select, text, update
 from sqlalchemy.exc import DBAPIError
 
+from lumen.models.entity_stat import EntityStat
 from lumen.models.model_alias import ModelAlias
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
+from lumen.models.model_stat import ModelStat
+from lumen.services.llm import _bump
+from lumen.services.stats_cutover import lock_fold_state
+from lumen.services.stats_fold import TOTALS, fold_increments, window_sums
+from lumen.timeutils import as_utc_naive
 
 from .extensions import db
 
@@ -367,7 +375,6 @@ def reassign_model_cmd(from_id, to_id):
     requests are logged against it while it runs.
     """
     from lumen.models.conversation import Conversation
-    from lumen.models.model_stat import ModelStat
     from lumen.models.request_log import RequestLog
 
     if from_id == to_id:
@@ -404,6 +411,20 @@ def reassign_model_cmd(from_id, to_id):
             start = _reassign_start(conn, from_id, boundaries)
         log_count = _move_request_logs(from_id, to_id)
 
+    # From here to the commit the fold state is held, so no fold pass runs while
+    # FROM's model_stats rows are merged: one in between could add FROM's
+    # request_logs to a FROM row this has already merged away. The chunk walk
+    # above runs without it (it can take hours); a pass during the walk folds
+    # each row under whichever model it has at that moment, and FROM's rows are
+    # merged below. Taken first in the transaction (see lock_fold_state).
+    lock_fold_state()
+    if postgres:
+        # Rows logged against FROM while the walk ran; few, and in recent chunks.
+        db.session.execute(text("SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"))
+        log_count += db.session.execute(
+            update(RequestLog).where(RequestLog.model_config_id == from_id).values(model_config_id=to_id)
+        ).rowcount
+
     result = db.session.execute(update(Conversation).where(Conversation.model == from_name).values(model=to_name))
     conv_count = result.rowcount
     click.echo(f"  conversations updated: {conv_count}")
@@ -420,10 +441,9 @@ def reassign_model_cmd(from_id, to_id):
         key = (stat.entity_id, stat.source)
         if key in existing_dst_stats:
             dst_stat = existing_dst_stats[key]
-            dst_stat.requests += stat.requests
-            dst_stat.input_tokens += stat.input_tokens
-            dst_stat.output_tokens += stat.output_tokens
-            dst_stat.cost += stat.cost
+            for name in TOTALS:
+                for column in (name, f"folded_{name}"):
+                    setattr(dst_stat, column, getattr(dst_stat, column) + getattr(stat, column))
             if stat.last_used_at and (not dst_stat.last_used_at or stat.last_used_at > dst_stat.last_used_at):
                 dst_stat.last_used_at = stat.last_used_at
             db.session.delete(stat)
@@ -582,6 +602,93 @@ def _refresh_reassigned(start, boundaries):
                 click.echo(f"Error: refreshing '{name}' for {failed.month:%Y-%m} failed: {failed.error.orig}")
                 click.echo("  request_logs is moved; re-run the same command to finish the refresh.")
                 raise SystemExit(1)
+
+
+#: The largest cost difference check-stats reads as equal: one unit of the
+#: Numeric(12, 6) columns, which SQLite sums as floats.
+_COST_TOLERANCE = Decimal("0.000001")
+
+
+def _stats_drift(model, key_columns, expected_rows):
+    """The ``model`` rows whose fold part differs from ``expected_rows``.
+
+    Returns (key, differences, last_used_at) for each, where ``differences``
+    maps every name in ``TOTALS`` to what ``request_logs`` holds beyond the
+    row's ``folded_*`` column (zero when equal), and ``last_used_at`` is the
+    latest ``request_logs`` time when the row's own is older, else None.
+    """
+    expected = {tuple(getattr(r, c) for c in key_columns): r for r in expected_rows}
+    recorded = {
+        tuple(getattr(s, c) for c in key_columns): s
+        for s in db.session.execute(select(model)).scalars()
+    }
+    drift = []
+    for key in sorted(expected.keys() | recorded.keys()):
+        want, have = expected.get(key), recorded.get(key)
+        differences = {
+            name: (getattr(want, name) if want else 0) - (getattr(have, f"folded_{name}") if have else 0)
+            for name in TOTALS
+        }
+        if abs(differences["cost"]) <= _COST_TOLERANCE:
+            differences["cost"] = 0
+        last = as_utc_naive(want.last_used_at) if want else None
+        if last is not None and have is not None and have.last_used_at is not None and have.last_used_at >= last:
+            last = None
+        if last is not None or any(differences.values()):
+            drift.append((key, differences, last))
+    return drift
+
+
+@click.command("check-stats")
+@click.option("--fix", is_flag=True, help="Add each difference to the totals.")
+@with_appcontext
+def check_stats_cmd(fix):
+    """Compare the folded usage totals with request_logs since the stats cutover.
+
+    For every model_stats / entity_stats row, the part the fold added (the
+    folded_* columns) must equal the request_logs sums of [cutover_at,
+    folded_until), and last_used_at must not be older than the latest of those
+    requests. A difference means requests the fold missed, such as a billing
+    transaction that committed more than stats.fold_lag after its timestamp.
+    Reports every difference and exits 1; with --fix adds it to the totals
+    instead. Holds the fold state meanwhile, so no fold pass runs in the
+    middle. Scans every request_logs row since the cutover. Does nothing before
+    the cutover.
+    """
+    cutover_at, folded_until = lock_fold_state()
+    if cutover_at is None:
+        db.session.rollback()
+        click.echo("No stats cutover yet: billing still updates model_stats and entity_stats; nothing to check.")
+        return
+
+    per_model, per_entity = window_sums(cutover_at, folded_until)
+    keys = {ModelStat: ("entity_id", "model_config_id", "source"), EntityStat: ("entity_id",)}
+    drift = [
+        (model, key, differences, last)
+        for model, rows in ((ModelStat, per_model), (EntityStat, per_entity))
+        for key, differences, last in _stats_drift(model, keys[model], rows)
+    ]
+    click.echo(f"Checked request_logs from {cutover_at} to {folded_until} UTC.")
+    for model, key, differences, last in drift:
+        changes = [f"{name} {value:+}" for name, value in differences.items() if value]
+        if last is not None:
+            changes.append(f"last_used_at -> {last}")
+        where = ", ".join(f"{column}={value}" for column, value in zip(keys[model], key))
+        click.echo(f"  {model.__tablename__} {where}: {', '.join(changes)}")
+        if fix:
+            _bump(model, dict(zip(keys[model], key)),
+                  *fold_increments(model, SimpleNamespace(**differences)), last_used_at=last)
+
+    if not drift:
+        db.session.rollback()
+        click.echo("model_stats and entity_stats match request_logs.")
+    elif fix:
+        db.session.commit()
+        click.echo(f"Fixed {len(drift)} row(s).")
+    else:
+        db.session.rollback()
+        click.echo(f"{len(drift)} row(s) differ from request_logs. Run 'flask check-stats --fix' to repair them.")
+        raise SystemExit(1)
 
 
 # --------------------------------------------------------------------------- #
