@@ -10,6 +10,7 @@ from markupsafe import Markup
 from lumen.commands import model_alias_config_errors, sync_models_from_yaml
 from lumen.services import model_cache
 from lumen.services.key_expiry import parse_key_ttl
+from lumen.services.stats_fold import DEFAULT_FOLD_INTERVAL, DEFAULT_FOLD_LAG
 
 _ANNOUNCEMENT_ALLOWED_TAGS = {"a", "b", "br", "em", "i", "li", "ol", "p", "strong", "ul"}
 _ANNOUNCEMENT_ALLOWED_ATTRS = {"a": ["href", "title", "target"]}
@@ -95,6 +96,17 @@ def validate_config_structure(data) -> list:
             parse_key_ttl(keys_cfg["ttl"])
         except ValueError:
             errors.append("api.keys.ttl must be 0 or a duration such as 12h, 30d or 8w")
+    stats_cfg = data.get("stats")
+    if stats_cfg is not None:
+        if not isinstance(stats_cfg, dict):
+            errors.append("stats: must be a mapping")
+        else:
+            for key in ("fold_interval", "fold_lag"):
+                value = stats_cfg.get(key)
+                if value is not None and (
+                    isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0
+                ):
+                    errors.append(f"stats.{key} must be a positive number of seconds")
     models = data.get("models") or []
     if not isinstance(models, list):
         return errors + ["models: must be a list"]
@@ -173,7 +185,7 @@ def _positive_seconds(value, default: float, key: str) -> float:
         parsed = None
     if parsed is None or parsed <= 0:
         logger.warning(
-            "config.yaml: llm.%s must be a positive number, got %r — using %s",
+            "config.yaml: %s must be a positive number, got %r — using %s",
             key, value, default,
         )
         return default
@@ -194,7 +206,7 @@ def _non_negative_int(value, default: int, key: str) -> int:
         parsed = -1
     if parsed < 0:
         logger.warning(
-            "config.yaml: llm.%s must be zero or greater, got %r — using %s",
+            "config.yaml: %s must be zero or greater, got %r — using %s",
             key, value, default,
         )
         return default
@@ -285,14 +297,23 @@ def apply_hot_config(app, yaml_data: dict):
     # restarts the whole generation while the first may still be draining.
     # A key present but blank ("read_timeout:") parses as None; treat it as absent.
     llm_cfg = yaml_data.get("llm") or {}
-    app.config["LLM_CONNECT_TIMEOUT"] = _positive_seconds(llm_cfg.get("connect_timeout"), 5.0, "connect_timeout")
-    app.config["LLM_READ_TIMEOUT"] = _positive_seconds(llm_cfg.get("read_timeout"), 300.0, "read_timeout")
+    app.config["LLM_CONNECT_TIMEOUT"] = _positive_seconds(llm_cfg.get("connect_timeout"), 5.0, "llm.connect_timeout")
+    app.config["LLM_READ_TIMEOUT"] = _positive_seconds(llm_cfg.get("read_timeout"), 300.0, "llm.read_timeout")
     # Non-streaming calls need their own, much larger bound: read_timeout is a
     # between-chunks gap for a stream, but for a single-response call the same
     # setting caps the entire generation, and a long completion or a large audio
     # transcription legitimately takes minutes.
-    app.config["LLM_REQUEST_TIMEOUT"] = _positive_seconds(llm_cfg.get("request_timeout"), 600.0, "request_timeout")
-    app.config["LLM_MAX_RETRIES"] = _non_negative_int(llm_cfg.get("max_retries"), 1, "max_retries")
+    app.config["LLM_REQUEST_TIMEOUT"] = _positive_seconds(llm_cfg.get("request_timeout"), 600.0, "llm.request_timeout")
+    app.config["LLM_MAX_RETRIES"] = _non_negative_int(llm_cfg.get("max_retries"), 1, "llm.max_retries")
+
+    # How often the stats fold runs, and how far behind now its window ends
+    # (room for billing transactions that commit after their row's time).
+    # Read by the fold thread on every pass, so a reload applies to the next one.
+    stats_cfg = yaml_data.get("stats")
+    stats_cfg = stats_cfg if isinstance(stats_cfg, dict) else {}
+    app.config["STATS_FOLD_INTERVAL"] = _positive_seconds(
+        stats_cfg.get("fold_interval"), DEFAULT_FOLD_INTERVAL, "stats.fold_interval")
+    app.config["STATS_FOLD_LAG"] = _positive_seconds(stats_cfg.get("fold_lag"), DEFAULT_FOLD_LAG, "stats.fold_lag")
 
     # Max and default API key lifetime; fixed into each key's expires_at when it is created.
     api_cfg = yaml_data.get("api")

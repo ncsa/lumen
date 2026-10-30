@@ -7,14 +7,24 @@ half-open window ``[folded_until, now - lag)``, so consecutive windows never
 overlap and never leave a gap; the lag leaves room for billing transactions
 that commit a little after their row's ``time``.
 
-Not wired into the app yet: nothing calls ``fold_once`` outside the tests.
+A daemon thread started by ``create_app`` runs one pass every
+``stats.fold_interval`` seconds. Until the cutover every pass is a no-op.
+
+The thread runs with the other shared background workers (behind the
+``BACKGROUND_WORKER`` switch), not with the per-process metrics snapshot: the
+result lands in the database, and the compare-and-set on the watermark already
+makes a second replica's pass a no-op.
 """
 
+import logging
+import random
+import threading
 from datetime import datetime, timedelta
 from typing import NamedTuple, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy import update as sa_update
+from sqlalchemy.exc import OperationalError
 
 from lumen.extensions import db
 from lumen.models.entity_stat import EntityStat
@@ -24,7 +34,22 @@ from lumen.models.stats_fold_state import StatsFoldState
 from lumen.services.llm import _bump
 from lumen.timeutils import as_utc_aware, as_utc_naive, utcnow
 
+logger = logging.getLogger(__name__)
+
+DEFAULT_FOLD_INTERVAL = 60  # seconds
 DEFAULT_FOLD_LAG = 300  # seconds
+
+#: The widest window one pass folds. After a long stall (the app stopped, or the
+#: database unreachable for a while) the thread catches up in passes of at most
+#: this size, back to back, rather than one transaction over the whole gap.
+MAX_FOLD_WINDOW = timedelta(days=1)
+
+#: How long the fold waits on a SQLite write lock held by a request before it
+#: gives up and leaves the window to the next pass.
+_SQLITE_BUSY_TIMEOUT_MS = 5000
+
+#: Fraction of the interval to jitter each sleep by, so replicas do not align.
+_JITTER = 0.1
 
 
 class FoldState(NamedTuple):
@@ -46,8 +71,13 @@ def get_fold_state() -> FoldState:
 
 
 def fold_lag(app) -> timedelta:
-    """How far behind ``now`` the fold window ends."""
+    """How far behind ``now`` the fold window ends (``stats.fold_lag``)."""
     return timedelta(seconds=app.config.get("STATS_FOLD_LAG", DEFAULT_FOLD_LAG))
+
+
+def fold_interval(app) -> float:
+    """Seconds between passes (``stats.fold_interval``)."""
+    return float(app.config.get("STATS_FOLD_INTERVAL", DEFAULT_FOLD_INTERVAL))
 
 
 def _sums():
@@ -81,7 +111,8 @@ def fold_once(app, now: datetime = None) -> Optional[datetime]:
 
     Does nothing (returns None) before the cutover, or while the window
     ``[folded_until, now - lag)`` is empty. Otherwise returns the new
-    watermark.
+    watermark. A window wider than ``MAX_FOLD_WINDOW`` is cut to that size, and
+    the rest is left to the next pass.
 
     The watermark advances first, by compare-and-set on the value just read:
     if another worker moved it in between, the UPDATE matches nothing and this
@@ -99,9 +130,14 @@ def fold_once(app, now: datetime = None) -> Optional[datetime]:
         cutover_at, lo = get_fold_state()
         if cutover_at is None or lo is None:
             return None
-        hi = as_utc_naive(now or utcnow()) - fold_lag(app)
+        hi = min(as_utc_naive(now or utcnow()) - fold_lag(app), lo + MAX_FOLD_WINDOW)
         if hi <= lo:
             return None
+
+        if db.engine.dialect.name == "sqlite":
+            # Set on this pass's connection, so a request mid-write makes the
+            # fold wait this long, then raise "database is locked".
+            db.session.execute(text(f"PRAGMA busy_timeout = {_SQLITE_BUSY_TIMEOUT_MS}"))
 
         moved = db.session.execute(
             sa_update(StatsFoldState)
@@ -146,3 +182,70 @@ def fold_once(app, now: datetime = None) -> Optional[datetime]:
             )
         db.session.commit()
         return hi
+
+
+def _is_sqlite_locked(exc: OperationalError) -> bool:
+    return "database is locked" in str(exc.orig)
+
+
+def run_fold_pass(app) -> Optional[datetime]:
+    """One pass for the thread: ``fold_once``, with a locked SQLite database as a skip.
+
+    A request holding the SQLite write lock past the busy timeout is normal
+    load, not a failure: the pass rolls back whole (its own app context ends
+    the session), the watermark has not moved, and the next pass folds the
+    same window. Any other error propagates.
+    """
+    try:
+        return fold_once(app)
+    except OperationalError as exc:
+        if not _is_sqlite_locked(exc):
+            raise
+        logger.info("stats fold: database is locked, retrying on the next pass")
+        return None
+
+
+def _sleep(seconds: float, stop: threading.Event) -> None:
+    """Park between passes, waking early when the thread is asked to stop."""
+    stop.wait(seconds)
+
+
+#: Every fold thread started in this process, as (stop event, thread).
+_folders: list[tuple[threading.Event, threading.Thread]] = []
+
+
+def start_fold_thread(app):
+    """Start the daemon thread that folds ``request_logs`` into the stats tables.
+
+    Reads ``stats.fold_interval`` and ``stats.fold_lag`` from ``app.config`` on
+    every pass, so a config reload applies to the next one.
+    """
+    stop = threading.Event()
+
+    def run():
+        while not stop.is_set():
+            interval = fold_interval(app)
+            behind = False
+            try:
+                hi = run_fold_pass(app)
+                # Still more than one interval behind (catching up after a
+                # stall, MAX_FOLD_WINDOW at a time): go again without sleeping.
+                behind = hi is not None and utcnow() - fold_lag(app) - hi > timedelta(seconds=interval)
+            except Exception:
+                logger.exception("stats fold error")
+            if not behind:
+                _sleep(interval * (1 + random.uniform(-_JITTER, _JITTER)), stop)
+
+    t = threading.Thread(target=run, daemon=True, name="stats-fold")
+    _folders.append((stop, t))
+    t.start()
+    return t
+
+
+def stop_fold_thread(timeout: float = 5.0) -> None:
+    """Stop every fold thread started in this process and wait for it to finish."""
+    folders, _folders[:] = list(_folders), []
+    for stop, _ in folders:
+        stop.set()
+    for _, thread in folders:
+        thread.join(timeout)
