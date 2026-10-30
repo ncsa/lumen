@@ -188,6 +188,16 @@ def test_null_cutover_is_a_no_op(app, ids):
     assert get_fold_state() == (None, None)
 
 
+def test_null_cutover_with_a_watermark_is_a_no_op(app, ids):
+    """The gate is the cutover itself, not only the watermark next to it."""
+    (e1, _), (m1, _) = ids
+    _state(cutover_at=None)
+    _log(LO + timedelta(minutes=1), e1, m1)
+    assert fold(app) is None
+    assert _entity_stat(e1) is None
+    assert get_fold_state() == (None, LO)
+
+
 def test_window_not_yet_past_the_lag_is_a_no_op(app, ids):
     (e1, _), (m1, _) = ids
     _state()
