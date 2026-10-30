@@ -93,8 +93,8 @@ def fold_once(app, now: datetime = None) -> Optional[datetime]:
     skipped; rows with a NULL ``model_config_id`` count for the entity only.
     """
     with app.app_context():
-        lo = get_fold_state().folded_until
-        if lo is None:
+        cutover_at, lo = get_fold_state()
+        if cutover_at is None or lo is None:
             return None
         hi = as_utc_naive(now or utcnow()) - fold_lag(app)
         if hi <= lo:

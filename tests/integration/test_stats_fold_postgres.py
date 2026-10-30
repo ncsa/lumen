@@ -106,6 +106,7 @@ def test_concurrent_folds_count_each_row_once(pg_app, pg_migrated_isolated):
                 while probe.execute(text(
                     "SELECT count(*) FROM pg_stat_activity"
                     " WHERE datname = current_database() AND wait_event_type = 'Lock'"
+                    " AND query LIKE 'UPDATE stats_fold_state %'"
                 )).scalar() < 2:
                     assert time.monotonic() < deadline, "the two fold passes never both blocked"
                     time.sleep(0.05)
