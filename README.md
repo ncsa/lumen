@@ -198,6 +198,32 @@ that history. It also exits 1 if a retention policy exists on `request_logs`, an
 prints the `SELECT remove_retention_policy('request_logs');` that removes it. Run it before
 upgrading.
 
+### Upgrading TimescaleDB
+
+TimescaleDB is required: Lumen does not run on a plain `postgres` image. Pin the image tag
+(`timescale/timescaledb:2.27.2-pg17` is the tested version) and upgrade on purpose. A new image
+only installs the new extension files; the database keeps running the old version until it is
+updated, and nothing in Lumen updates it for you.
+
+1. Bump the image tag (`postgresql.image` in the Helm chart, `image:` in `docker-compose.yml`) and
+   restart the database.
+2. Update the extension. This must be the first command in a fresh session (`-X` skips `.psqlrc`),
+   run as the owner of the extension (normally the user that ran `flask db upgrade`):
+
+   ```bash
+   psql -X -d lumen -c 'ALTER EXTENSION timescaledb UPDATE;'
+   ```
+
+3. Restart Lumen.
+4. Confirm the startup log no longer shows `TimescaleDB extension is <old> but the server has <new>`,
+   and that `lumen_timescaledb_extension_update_available` on `/metrics` is `0`
+   (`SELECT extversion FROM pg_extension WHERE extname = 'timescaledb';` shows the new version).
+5. Run `flask check-aggregate`; it must exit 0.
+
+At startup and about every 5 minutes after, Lumen checks the extension version, the `request_logs`
+hypertable, the continuous aggregates and their background jobs. It logs a WARNING per problem
+(ERROR when the extension or the hypertable is missing) and never blocks startup.
+
 ---
 
 ## Configuration Reference (`config.yaml`)
@@ -434,6 +460,46 @@ api:
     enabled: true
     token: "a-long-random-string"   # optional; Bearer token auth for /metrics
     multiproc_dir: "/tmp/prom"      # required for multi-worker aggregation (mount as shared volume)
+```
+
+On PostgreSQL, `/metrics` also reports TimescaleDB health, refreshed about every 5 minutes:
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `lumen_timescaledb_extension_update_available` | `installed`, `available` | 1 when the database runs an older extension than the image ships (see "Upgrading TimescaleDB") |
+| `lumen_timescaledb_hypertable_present` | `table` | 1 when `request_logs` is a hypertable |
+| `lumen_timescaledb_aggregate_present` | `view` | 1 when the continuous aggregate exists |
+| `lumen_timescaledb_aggregate_materialized_only` | `view` | 1 when the aggregate has `materialized_only = true` (should be 0) |
+| `lumen_timescaledb_job_present` | `job` | 1 when the expected background job exists |
+| `lumen_timescaledb_job_last_run_failed` | `job` | 1 when the job's last run failed |
+| `lumen_timescaledb_job_failures_total` | `job` | Failed runs of the job (counter) |
+| `lumen_timescaledb_job_last_success_age_seconds` | `job` | Seconds since the job last finished successfully |
+| `lumen_timescaledb_request_logs_retention_policy` | | 1 when `request_logs` has a retention policy (it must never be pruned) |
+| `lumen_timescaledb_health_age_seconds` | | Age of the check these gauges come from |
+
+`job` is one of `refresh:request_counts_hourly`, `refresh:request_counts_hourly_by_entity`,
+`refresh:request_metrics_1m`, `compression:request_logs` and `retention:request_metrics_1m`.
+
+Suggested alert expressions (the chart ships no alert rules):
+
+```promql
+# Refresh or compression jobs failing. A refresh outage longer than 3 hours leaves a permanent gap in the hourly charts.
+increase(lumen_timescaledb_job_failures_total[1h]) > 0
+lumen_timescaledb_job_last_run_failed == 1
+lumen_timescaledb_job_last_success_age_seconds{job=~"refresh:.*"} > 7200
+
+# Missing or misconfigured objects
+lumen_timescaledb_job_present == 0
+lumen_timescaledb_hypertable_present == 0
+lumen_timescaledb_aggregate_present == 0
+lumen_timescaledb_aggregate_materialized_only == 1
+lumen_timescaledb_request_logs_retention_policy == 1
+
+# Extension older than the image (warning, not paging)
+lumen_timescaledb_extension_update_available == 1
+
+# The health check itself stopped refreshing
+lumen_timescaledb_health_age_seconds > 1800
 ```
 
 ## License

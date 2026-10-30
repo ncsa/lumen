@@ -26,7 +26,7 @@ spec:
         fsGroup: 999
       containers:
         - name: postgresql
-          image: {{ .Values.postgresql.image | default "timescale/timescaledb:latest-pg17" }}
+          image: {{ .Values.postgresql.image | default "timescale/timescaledb:2.27.2-pg17" }}
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false

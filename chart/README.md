@@ -69,7 +69,7 @@ oauth2:
 
 ### PostgreSQL
 
-The bundled PostgreSQL uses `timescale/timescaledb:2.27.2-pg17` to match the production docker-compose setup. Override `postgresql.image` if you need a different version.
+The bundled PostgreSQL uses `timescale/timescaledb:2.27.2-pg17` to match the production docker-compose setup. Override `postgresql.image` if you need a different version, but keep a TimescaleDB image with a pinned tag: TimescaleDB is required, and on a plain `postgres` image the migrations fail and the pod crash-loops at `flask db upgrade`. See "Upgrading TimescaleDB" in the main README before changing the tag.
 
 **Bundled (default):**
 ```yaml
@@ -88,6 +88,8 @@ postgresql:
   enabled: false
   url: "postgresql://lumen:password@my-postgres.example.com:5432/lumen"
 ```
+
+An external database must also run TimescaleDB (2.27.2 is the tested version): the migrations create the `timescaledb` extension, so the database user needs permission to do that, or a superuser must create it first.
 
 **External via Secret:**
 ```yaml
@@ -199,7 +201,7 @@ models:
 | `existingSecret` | `""` | Name of pre-existing Secret with credentials |
 | `postgresql.enabled` | `true` | Deploy bundled PostgreSQL |
 | `postgresql.image` | `timescale/timescaledb:2.27.2-pg17` | PostgreSQL container image |
-| `postgresql.url` | `""` | External PostgreSQL URL (when enabled=false) |
+| `postgresql.url` | `""` | External PostgreSQL URL (when enabled=false); the database must run TimescaleDB |
 | `postgresql.existingSecret` | `""` | Secret containing database URL (when enabled=false) |
 | `redis.enabled` | `false` | Deploy bundled Redis |
 | `redis.url` | `""` | External Redis URL (when enabled=false) |

@@ -230,11 +230,13 @@ postgresql:
   # -- Deploy bundled PostgreSQL. Uses TimescaleDB to match production.
   enabled: true
   # -- External PostgreSQL URL when postgresql.enabled=false. e.g. postgresql://user:pass@host:5432/db
+  # The database must have the TimescaleDB extension available.
   url: ""
   # -- Existing Secret containing the database URL instead of postgresql.url
   existingSecret: ""
   existingSecretKey: "database-url"
-  # -- Container image. Defaults to timescaledb pg17; override to plain postgres:17-alpine if TimescaleDB is not needed.
+  # -- Container image. TimescaleDB is required, also for an external postgresql.url: on a
+  # plain postgres image the pod crash-loops at `flask db upgrade`. Pin a timescaledb tag.
   image: "timescale/timescaledb:2.27.2-pg17"
   auth:
     username: lumen
