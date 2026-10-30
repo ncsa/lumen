@@ -33,6 +33,7 @@ All notable changes to Lumen will be documented in this file.
 ### Changed
 
 - `lumen.sh` no longer adds models without text input (e.g. audio-only) to the opencode config.
+- Monitor: degraded is drawn yellow and red is kept for down; Lumen counts as down when more than `lumen.down_above` (default 50%) of models are down, also in uptime and the 1y view; status strips show the time of non-ok buckets on mouse-over. (#308)
 
 ### Fixed
 
@@ -40,7 +41,6 @@ All notable changes to Lumen will be documented in this file.
 - Monitor: the model detail price charts now draw a stepped line across the 1h, 12h and 24h ranges instead of a single point.
 - Fixed: flaky Edit Key Expiry UI test that checked focus before the modal finished closing (#327).
 - Fixed: flaky test_snapshot_older_than_max_age_reloads_on_next_read that failed on floating-point rounding at the MAX_AGE boundary (#333)
-- Monitor: degraded is drawn yellow and red is kept for down; Lumen counts as down when more than `lumen.down_above` (default 50%) of models are down, also in uptime and the 1y view; status strips show the time of non-ok buckets on mouse-over. (#308)
 
 ## [2.2.1] - 2026-10-16
 
