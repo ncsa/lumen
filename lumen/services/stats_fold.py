@@ -91,6 +91,9 @@ def fold_once(app, now: datetime = None) -> Optional[datetime]:
 
     Rows with a NULL ``entity_id`` have no stats row to land in and are
     skipped; rows with a NULL ``model_config_id`` count for the entity only.
+
+    Runs in its own app context, so on its own session and connection: a
+    caller's session is neither committed nor rolled back by it.
     """
     with app.app_context():
         cutover_at, lo = get_fold_state()

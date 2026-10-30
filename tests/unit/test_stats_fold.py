@@ -272,3 +272,25 @@ def test_bump_conflict_branch_keeps_the_later_last_used_at(ids, monkeypatch):
     db.session.commit()
     es = _entity_stat(e1)
     assert (es.requests, es.last_used_at) == (2, later)
+
+
+def test_fold_leaves_the_callers_session_alone(app, ids):
+    """fold_once pushes its own app context: the caller's pending work is neither committed nor dropped."""
+    (e1, _), (m1, _) = ids
+    _state()
+    _log(LO, e1, m1)
+    pending = Entity(entity_type="user", email="pending@example.com", name="Pending", initials="PE", active=True)
+    db.session.add(pending)
+
+    assert _fold_to(app, HI) == HI
+    assert pending in db.session.new
+    db.session.rollback()
+    assert db.session.execute(select(Entity).filter_by(email="pending@example.com")).scalar_one_or_none() is None
+    assert _entity_stat(e1).requests == 1
+
+
+def test_bump_rejects_last_used_at_given_twice(ids):
+    from lumen.services.llm import _bump
+    (e1, _), _ = ids
+    with pytest.raises(AssertionError):
+        _bump(EntityStat, {"entity_id": e1}, {"last_used_at": LO}, {}, last_used_at=LO)

@@ -593,9 +593,10 @@ def _bump(model, key: dict, increments: dict, insert_values: dict, last_used_at:
     ``last_used_at``, when given, moves the row's ``last_used_at`` forward to
     it but never back: the stats fold applies windows of past requests, so the
     time it carries can be older than the one already stored. A new row takes
-    it as is.
+    it as is, and ``increments`` must then not set ``last_used_at`` itself.
     """
     if last_used_at is not None:
+        assert "last_used_at" not in increments, "pass last_used_at either way, not both"
         column = model.last_used_at
         increments = {**increments, "last_used_at": case(
             (or_(column.is_(None), column < last_used_at), literal(last_used_at, db.DateTime)),
