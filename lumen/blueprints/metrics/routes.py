@@ -3,6 +3,7 @@ import os
 import socket
 import threading
 import time
+from datetime import timezone
 from functools import wraps
 from http import HTTPStatus
 
@@ -21,6 +22,8 @@ from lumen.services.pool_tracker import (
     thread_dump,
     watchdog,
 )
+from lumen.services.timescale_health import AGGREGATES, EXPECTED_JOBS, HYPERTABLE
+from lumen.timeutils import utcnow
 
 logger = logging.getLogger(__name__)
 metrics_bp = Blueprint("metrics", __name__)
@@ -65,7 +68,7 @@ class LumenDBCollector:
     """
 
     def collect(self):
-        from lumen.services.metrics_snapshot import get_snapshot
+        from lumen.services.metrics_snapshot import get_snapshot, get_timescale_health
 
         snapshot = get_snapshot()
 
@@ -143,6 +146,11 @@ class LumenDBCollector:
             value=time.monotonic() - snapshot.captured_at,
         )
 
+        # Nothing before the first TimescaleDB check, and nothing on SQLite.
+        timescale = get_timescale_health()
+        if timescale is not None:
+            yield from _timescale_families(timescale)
+
         # Connection-pool gauges. A slow leak (connections checked out and never
         # returned) shows up here as checked_out climbing and never falling back;
         # correlate the climb with the access log to find the leaking endpoint.
@@ -176,6 +184,100 @@ class LumenDBCollector:
             # Pools without queue semantics (SQLite StaticPool/NullPool) lack these.
             pass
         yield pool_m
+
+
+def _timescale_families(timescale):
+    """TimescaleDB health gauges (#173), from the cached check. Pure in-memory reads."""
+    health = timescale.health
+
+    update = GaugeMetricFamily(
+        "lumen_timescaledb_extension_update_available",
+        "1 when the server has a newer timescaledb than the database runs "
+        "(run ALTER EXTENSION timescaledb UPDATE)",
+        labels=["installed", "available"],
+    )
+    outdated = health.extension_installed and bool(health.available_version) \
+        and health.installed_version != health.available_version
+    update.add_metric(
+        [health.installed_version or "", health.available_version or ""], 1.0 if outdated else 0.0,
+    )
+    yield update
+
+    hypertable = GaugeMetricFamily(
+        "lumen_timescaledb_hypertable_present",
+        "1 when the table is a TimescaleDB hypertable",
+        labels=["table"],
+    )
+    hypertable.add_metric([HYPERTABLE], 1.0 if health.request_logs_hypertable else 0.0)
+    yield hypertable
+
+    aggregate = GaugeMetricFamily(
+        "lumen_timescaledb_aggregate_present",
+        "1 when the continuous aggregate exists",
+        labels=["view"],
+    )
+    materialized_only = GaugeMetricFamily(
+        "lumen_timescaledb_aggregate_materialized_only",
+        "1 when the continuous aggregate has materialized_only = true (should be 0)",
+        labels=["view"],
+    )
+    for view in AGGREGATES:
+        agg = health.aggregate(view)
+        aggregate.add_metric([view], 0.0 if agg is None else 1.0)
+        if agg is not None:
+            materialized_only.add_metric([view], 1.0 if agg.materialized_only else 0.0)
+    yield aggregate
+    yield materialized_only
+
+    present = GaugeMetricFamily(
+        "lumen_timescaledb_job_present",
+        "1 when the expected TimescaleDB background job exists",
+        labels=["job"],
+    )
+    last_run_failed = GaugeMetricFamily(
+        "lumen_timescaledb_job_last_run_failed",
+        "1 when the background job's last run failed",
+        labels=["job"],
+    )
+    # CounterMetricFamily appends "_total": lumen_timescaledb_job_failures_total.
+    failures = CounterMetricFamily(
+        "lumen_timescaledb_job_failures",
+        "Failed runs of the background job, from timescaledb_information.job_stats",
+        labels=["job"],
+    )
+    success_age = GaugeMetricFamily(
+        "lumen_timescaledb_job_last_success_age_seconds",
+        "Seconds since the background job last finished successfully",
+        labels=["job"],
+    )
+    now = utcnow()
+    for name in EXPECTED_JOBS:
+        job = health.job(name)
+        present.add_metric([name], 0.0 if job is None else 1.0)
+        if job is None:
+            continue
+        last_run_failed.add_metric([name], 1.0 if job.last_run_status == "Failed" else 0.0)
+        failures.add_metric([name], float(job.total_failures or 0))
+        if job.last_successful_finish is not None:
+            finish = job.last_successful_finish
+            if finish.tzinfo is not None:
+                finish = finish.astimezone(timezone.utc).replace(tzinfo=None)
+            success_age.add_metric([name], (now - finish).total_seconds())
+    yield present
+    yield last_run_failed
+    yield failures
+    yield success_age
+
+    yield GaugeMetricFamily(
+        "lumen_timescaledb_request_logs_retention_policy",
+        "1 when request_logs has a retention policy (it must never be pruned)",
+        value=1.0 if health.request_logs_retention else 0.0,
+    )
+    yield GaugeMetricFamily(
+        "lumen_timescaledb_health_age_seconds",
+        "Age of the TimescaleDB health check these gauges were built from",
+        value=time.monotonic() - timescale.captured_at,
+    )
 
 
 @metrics_bp.route("/metrics")

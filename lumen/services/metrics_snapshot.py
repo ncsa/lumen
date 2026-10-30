@@ -18,13 +18,18 @@ refreshing process can see does not. Never elect in-memory state.
 For the same reason the refresher starts outside the ``BACKGROUND_WORKER``
 guard in ``create_app`` — that switch keeps extra workers from duplicating
 *shared* work, and turning it on must not leave a worker with an empty snapshot.
+
+The same thread also keeps the TimescaleDB health (#173) on its own, slower
+cadence; see :class:`MetricsSnapshot` for why it is not part of the snapshot.
 """
 import logging
+import math
 import random
 import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import func, select
 
@@ -33,6 +38,8 @@ from lumen.models.entity import Entity
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
+from lumen.services import timescale_health
+from lumen.services.timescale_health import TimescaleHealth
 from lumen.timeutils import utcnow
 
 logger = logging.getLogger(__name__)
@@ -75,6 +82,14 @@ _ASSUMED_SCRAPE_INTERVAL = 30.0
 #: do not align their passes into one burst against the pool.
 _JITTER = 0.1
 
+#: Seconds between TimescaleDB health checks, rounded up to whole passes. Well
+#: inside the 3-hour ``start_offset`` of ``request_counts_hourly``, so a failing
+#: refresh job shows on /metrics long before it can leave a gap.
+_TIMESCALE_HEALTH_INTERVAL = 300.0
+
+#: Problems that mean the usage charts cannot work at all; logged as ERROR, as at startup.
+_FATAL_PROBLEMS = frozenset({"extension", "hypertable"})
+
 _PROCESS_START = time.monotonic()
 
 
@@ -96,6 +111,13 @@ class MetricsSnapshot:
     the exact statement it adds, whether that statement is index-backed, and
     that it rides *this* pass — never a per-model loop. A pass is capped at
     five statements.
+
+    The TimescaleDB health is deliberately not a field here. Its check costs up
+    to four catalog statements, which would take a pass past the cap, and it
+    only needs refreshing every few minutes. It is kept beside the snapshot
+    (:func:`get_timescale_health`), checked every ``_TIMESCALE_HEALTH_INTERVAL``
+    seconds on the same thread, after the snapshot pass and in its own
+    ``try``, so a failing check can neither delay nor stale the snapshot.
     """
 
     primed: bool
@@ -183,6 +205,108 @@ def refresh_snapshot() -> MetricsSnapshot:
     return _snapshot
 
 
+@dataclass(frozen=True)
+class TimescaleHealthSnapshot:
+    """The latest TimescaleDB health check in this process."""
+
+    health: TimescaleHealth
+    captured_at: float  # time.monotonic(), the only input to the age gauge
+
+
+#: ``None`` until the first check, and forever on SQLite.
+_timescale: Optional[TimescaleHealthSnapshot] = None
+
+#: The last health-check failure logged, so a persistent one is logged once.
+_timescale_error: Optional[str] = None
+
+
+def get_timescale_health() -> Optional[TimescaleHealthSnapshot]:
+    """The latest TimescaleDB health check, or ``None`` before the first. Never queries."""
+    return _timescale
+
+
+def publish_timescale_health(health: TimescaleHealth) -> TimescaleHealthSnapshot:
+    """Make *health* the current check, without logging it.
+
+    The startup check publishes through here: it has just logged its own
+    summary, so the refresher's first check only logs what changed since.
+    """
+    global _timescale
+    _timescale = TimescaleHealthSnapshot(health=health, captured_at=time.monotonic())
+    return _timescale
+
+
+def refresh_timescale_health() -> Optional[TimescaleHealthSnapshot]:
+    """Check TimescaleDB, log what changed and publish the result. Caller owns the app context.
+
+    PostgreSQL only; on SQLite nothing is checked or published.
+    """
+    global _timescale_error
+    if db.engine.dialect.name != "postgresql":
+        return None
+    health = timescale_health.check(db.session)
+    _timescale_error = None
+    _log_health_changes(_timescale.health if _timescale else None, health)
+    return publish_timescale_health(health)
+
+
+def _log_health_changes(previous: Optional[TimescaleHealth], current: TimescaleHealth) -> None:
+    """Log a new problem, a cleared problem, or a job's ``total_failures`` rising.
+
+    Every replica checks every few minutes, so a problem that persists is logged
+    once per process, not on every check. Without a previous check (the startup
+    check failed) every current problem is new.
+    """
+    now = timescale_health.keyed_problems(current)
+    before = timescale_health.keyed_problems(previous) if previous else {}
+    for key, message in now.items():
+        if before.get(key) != message:
+            level = logging.ERROR if key in _FATAL_PROBLEMS else logging.WARNING
+            logger.log(level, "TimescaleDB: %s", message)
+    for key, message in before.items():
+        if key not in now:
+            logger.info("TimescaleDB problem cleared: %s", message)
+    if previous is None:
+        return
+    for name, job in current.jobs:
+        old = previous.job(name)
+        # A job that is failing now has just been logged with its new count.
+        if old is None or f"job:{name}" in now:
+            continue
+        failures, old_failures = job.total_failures or 0, old.total_failures or 0
+        if failures > old_failures:
+            logger.warning(
+                "TimescaleDB: background job %s (job %d) failed %d time(s) since the last "
+                "check; %d failures in total.",
+                name, job.job_id, failures - old_failures, failures,
+            )
+
+
+def _run_pass(check_timescale: bool) -> None:
+    """One pass inside the caller's app context: the snapshot, then the health check if due.
+
+    Each half has its own ``try``. The health check runs second, so it cannot
+    delay the snapshot, and a raising check leaves the snapshot just published.
+    """
+    global _timescale_error
+    try:
+        refresh_snapshot()
+    except Exception:
+        # Without this the thread dies and the snapshot ages forever
+        # with nothing logged after the first traceback.
+        logger.exception("metrics snapshot refresh error")
+        db.session.rollback()
+    if not check_timescale:
+        return
+    try:
+        refresh_timescale_health()
+    except Exception as e:  # noqa: BLE001 - a health check must never stop the refresher
+        db.session.rollback()
+        if str(e) != _timescale_error:
+            logger.warning("Could not check TimescaleDB health: %s", e)
+        _timescale_error = str(e)
+
+
 def refresh_interval(app) -> float:
     """Seconds between passes: ``processes x scrape_interval``, floor 30s.
 
@@ -201,7 +325,11 @@ def start_snapshot_refresher(app):
     stop = threading.Event()
 
     def run():
+        passes = 0
         while not stop.is_set():
+            health_every = math.ceil(_TIMESCALE_HEALTH_INTERVAL / refresh_interval(app))
+            check_timescale = passes % health_every == 0
+            passes += 1
             try:
                 # The app context is entered here and exited before the sleep
                 # below, deliberately: hoisting it out of the loop ("why push it
@@ -211,10 +339,9 @@ def start_snapshot_refresher(app):
                 # matters — no session and no Flask context may outlive the work
                 # that needs it.
                 with app.app_context():
-                    refresh_snapshot()
+                    _run_pass(check_timescale)
             except Exception:
-                # Without this the thread dies and the snapshot ages forever
-                # with nothing logged after the first traceback.
+                # Entering or leaving the context failed; the loop must survive it.
                 logger.exception("metrics snapshot refresh error")
             interval = refresh_interval(app)
             _sleep(interval * (1 + random.uniform(-_JITTER, _JITTER)), stop)
