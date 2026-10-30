@@ -5,11 +5,18 @@ equal slots ending now; a bucket is never shorter than `refresh.web`, so it
 always has room for a probe. The 1y range uses one bucket per local day from
 the daily rows. A bucket takes the worst status of what fell into it
 (`STATUS_PRIORITY`); a bucket with nothing in it is `unknown`.
+
+`bucket_index()` and `status_rank()` do the same bucketing in SQL, so a query
+can `GROUP BY` bucket and return one row per bucket instead of every row.
 """
 
 import math
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+
+from sqlalchemy import BigInteger, case
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.expression import ColumnElement, FunctionElement, literal
 
 from monitor.config import DEFAULT_DOWN_ABOVE
 from monitor.daily import local_day, local_midnight
@@ -134,6 +141,66 @@ def bucket_statuses(points, grid: Grid | DayGrid) -> list[str]:
         if i is not None:
             buckets[i].append(status)
     return [worst(b) for b in buckets]
+
+
+EPOCH = datetime(1970, 1, 1)
+MICROSECOND = timedelta(microseconds=1)
+
+
+class epoch_us(FunctionElement):
+    """Microseconds since the Unix epoch of a naive UTC timestamp column, as an exact integer.
+
+    PostgreSQL: `extract(epoch …)`, which is exact (numeric) from PostgreSQL 14 on and
+    rounds back to the microsecond before that. SQLite: `julianday()` only keeps
+    milliseconds, and as a float, so whole seconds come from `strftime('%s')` and the
+    microseconds from the stored text (`YYYY-MM-DD HH:MM:SS.ffffff`, as SQLAlchemy writes it).
+    """
+
+    type = BigInteger()
+    inherit_cache = True
+
+
+@compiles(epoch_us)
+def _epoch_us_default(element, compiler, **kw):
+    column = compiler.process(element.clauses, **kw)
+    return f"CAST(round(extract(epoch FROM {column}) * 1000000) AS BIGINT)"
+
+
+@compiles(epoch_us, "sqlite")
+def _epoch_us_sqlite(element, compiler, **kw):
+    column = compiler.process(element.clauses, **kw)
+    return (f"(CAST(strftime('%s', {column}) AS INTEGER) * 1000000"
+            f" + CAST(substr({column}, 21, 6) AS INTEGER))")
+
+
+def bucket_index(column, grid: Grid) -> ColumnElement:
+    """SQL for `grid.index(column)`: `floor((column - grid.start) / grid.size)`, in whole microseconds.
+
+    Integer arithmetic, so a row exactly on a bucket edge lands where `Grid.index`
+    puts it. Only valid for rows at or after `grid.start` (filter on the column
+    first), and the result is not bounded: callers drop indexes ≥ `grid.count`.
+    """
+    start = (grid.start - EPOCH) // MICROSECOND
+    size = grid.size // MICROSECOND
+    return (epoch_us(column) - literal(start, BigInteger)) // literal(size, BigInteger)
+
+
+def status_rank(column) -> ColumnElement:
+    """SQL for a status's `STATUS_PRIORITY`, 0 for any other status; `MAX()` of it is a bucket's worst."""
+    return case(*((column == s, p) for s, p in STATUS_PRIORITY.items()), else_=0)
+
+
+RANK_STATUS = {p: s for s, p in STATUS_PRIORITY.items()}
+
+
+def rank_status(rank: int | None) -> str:
+    """The status for a bucket's `MAX(status_rank())`, the same as `worst()` of its statuses.
+
+    None (no rows) is unknown; 0 (only statuses outside `STATUS_PRIORITY`) is degraded.
+    """
+    if rank is None:
+        return UNKNOWN
+    return RANK_STATUS.get(rank, DEGRADED)
 
 
 def probe_status(success: bool, model_count: int | None, models_up: int | None, down_above: float = DEFAULT_DOWN_ABOVE) -> str:
