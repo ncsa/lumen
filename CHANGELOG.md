@@ -16,6 +16,7 @@ All notable changes to Lumen will be documented in this file.
 - Tests now verify that API-key hashes are keyed on `ENCRYPTION_KEY` (#164).
 - Tests now pin that an upstream error below 400 maps to a generic 500 instead of passing through. (#315)
 - Tests now pin that a coin balance refilled exactly one hour ago is refilled on the next pass. (#312)
+- Tests pin API-key expiry at the exact expires_at instant (#310).
 - `LUMEN_WSGI_WORKERS` now defaults to `auto`, sized at 2× DB pool capacity (10–256); Helm `wsgiWorkers` defaults to `"auto"` (#238).
 - Upgrade front-end libraries (Bootstrap 5.3.8, Bootstrap Icons 1.13.2, KaTeX 0.19.1, marked 18.1.2, DOMPurify 3.4.17, Chart.js 4.6.1); CDN assets are now version-pinned and loaded with Subresource Integrity. (#328)
 - OAuth key requests that replace an existing key now refresh its secret in place, keeping its name and usage stats, instead of revoking it. (#182)
