@@ -21,6 +21,7 @@ All notable changes to Lumen will be documented in this file.
 - OAuth key requests that replace an existing key now refresh its secret in place, keeping its name and usage stats, instead of revoking it. (#182)
 - Tests now pin the model `end_date` boundary: a model is blocked and hidden from the exact end instant. (#311)
 - Billing takes the per-entity balance lock last and no longer runs existence SELECTs, so concurrent requests from one entity or project key queue far less. (#171)
+- The coin refiller commits in small batches, runs on one replica at a time, and no longer re-reads balances that get no refill, so billing no longer waits on a refill pass. (#172)
 
 ### Added
 

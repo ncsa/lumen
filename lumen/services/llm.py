@@ -83,7 +83,7 @@ def _least_sqlite(element, compiler, **kw):
 
 #: How old ``entity_balances.last_refill_at`` must be before the refiller
 #: credits that balance again — the cutoff in ``token_refill.refill_coin_balances``,
-#: which is what makes the next refill instant derivable here. Keep the two in step.
+#: which is what makes the next refill instant derivable here.
 REFILL_INTERVAL = timedelta(hours=1)
 
 
