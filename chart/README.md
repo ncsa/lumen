@@ -202,7 +202,7 @@ models:
 | `postgresql.enabled` | `true` | Deploy bundled PostgreSQL |
 | `postgresql.image` | `timescale/timescaledb:2.27.2-pg17` | PostgreSQL container image |
 | `postgresql.url` | `""` | External PostgreSQL URL (when enabled=false); the database must run TimescaleDB |
-| `postgresql.existingSecret` | `""` | Secret containing database URL (when enabled=false) |
+| `postgresql.existingSecret` | `""` | Secret containing database URL (when enabled=false); the database must run TimescaleDB |
 | `redis.enabled` | `false` | Deploy bundled Redis |
 | `redis.url` | `""` | External Redis URL (when enabled=false) |
 | `redis.existingSecret` | `""` | Secret containing redis URL (when enabled=false) |

@@ -208,7 +208,8 @@ updated, and nothing in Lumen updates it for you.
 1. Bump the image tag (`postgresql.image` in the Helm chart, `image:` in `docker-compose.yml`) and
    restart the database.
 2. Update the extension. This must be the first command in a fresh session (`-X` skips `.psqlrc`),
-   run as the owner of the extension (normally the user that ran `flask db upgrade`):
+   run as the owner of the extension (normally the user that ran `flask db upgrade`). `lumen` is
+   the example database name; use the one in your database URL:
 
    ```bash
    psql -X -d lumen -c 'ALTER EXTENSION timescaledb UPDATE;'
@@ -220,9 +221,10 @@ updated, and nothing in Lumen updates it for you.
    (`SELECT extversion FROM pg_extension WHERE extname = 'timescaledb';` shows the new version).
 5. Run `flask check-aggregate`; it must exit 0.
 
-At startup and about every 5 minutes after, Lumen checks the extension version, the `request_logs`
-hypertable, the continuous aggregates and their background jobs. It logs a WARNING per problem
-(ERROR when the extension or the hypertable is missing) and never blocks startup.
+At startup, and then periodically in every worker process (see "Prometheus metrics" for the
+interval), Lumen checks the extension version, the `request_logs` hypertable, the continuous
+aggregates and their background jobs. It logs a WARNING per problem (ERROR when the extension or
+the hypertable is missing, or when `request_logs` has a retention policy) and never blocks startup.
 
 ---
 
@@ -462,7 +464,23 @@ api:
     multiproc_dir: "/tmp/prom"      # required for multi-worker aggregation (mount as shared volume)
 ```
 
-On PostgreSQL, `/metrics` also reports TimescaleDB health, refreshed about every 5 minutes:
+On PostgreSQL, `/metrics` also reports TimescaleDB health. Each worker process caches its own
+check and refreshes it on the metrics snapshot thread every `ceil(300 / I) × I` seconds, where
+`I = max(60, 30 × P)` is the snapshot interval and `P` is the number of worker processes per pod
+(`WEB_CONCURRENCY`, or `wsgiProcesses` in the chart; `wsgiWorkers` sets threads and does not count).
+Each sleep is jittered by ±10%, so the gap between checks can reach 1.1 × that interval plus the
+query time:
+
+| Worker processes `P` | Check interval | Longest gap (with jitter) |
+|---|---|---|
+| 1–2 | 300 s | 330 s |
+| 4 | 360 s | 396 s |
+| 8 | 480 s | 528 s |
+| 9 | 540 s | 594 s |
+| 10–20 | `30 × P` (300–600 s) | 660 s at 20 |
+| 64 | 1920 s | 2112 s |
+| 256 | 7680 s | 8448 s |
+
 
 | Metric | Labels | Meaning |
 |---|---|---|
@@ -480,13 +498,20 @@ On PostgreSQL, `/metrics` also reports TimescaleDB health, refreshed about every
 `job` is one of `refresh:request_counts_hourly`, `refresh:request_counts_hourly_by_entity`,
 `refresh:request_metrics_1m`, `compression:request_logs` and `retention:request_metrics_1m`.
 
-Suggested alert expressions (the chart ships no alert rules):
+Suggested alert expressions (the chart ships no alert rules). The two age thresholds below are
+sized for **up to 20 worker processes** per pod (longest check gap 660 s), with a margin of
+about 1.8×. For more processes, set them from `T = 2 × max(600, 30 × P)` seconds:
+`health_age_seconds > T` and `job_last_success_age_seconds{job=~"refresh:.*"} > 7200 + T`.
+The job age is computed at scrape time from the cached last success. A stale check can therefore
+make it read too high, by up to one check gap, but never too low. The `+ T` keeps a healthy hourly
+refresh from firing.
 
 ```promql
 # Refresh or compression jobs failing. A refresh outage longer than 3 hours leaves a permanent gap in the hourly charts.
 increase(lumen_timescaledb_job_failures_total[1h]) > 0
 lumen_timescaledb_job_last_run_failed == 1
-lumen_timescaledb_job_last_success_age_seconds{job=~"refresh:.*"} > 7200
+# Two missed hourly refreshes plus T = 1200 s (up to 20 processes): 7200 + 1200
+lumen_timescaledb_job_last_success_age_seconds{job=~"refresh:.*"} > 8400
 
 # Missing or misconfigured objects
 lumen_timescaledb_job_present == 0
@@ -498,9 +523,13 @@ lumen_timescaledb_request_logs_retention_policy == 1
 # Extension older than the image (warning, not paging)
 lumen_timescaledb_extension_update_available == 1
 
-# The health check itself stopped refreshing
-lumen_timescaledb_health_age_seconds > 1800
+# The health check itself stopped refreshing. T = 1200 s (up to 20 processes)
+lumen_timescaledb_health_age_seconds > 1200
 ```
+
+The failure alerts show a failing job within one check gap. A job that stops running without
+failing shows up only through the age alert. Above 60 worker processes, `7200 + T` passes
+the 3-hour window in which a refresh outage can still be recovered.
 
 ## License
 
