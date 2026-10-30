@@ -55,6 +55,22 @@ def test_subtract_coins_noop_when_unlimited(app, test_user, test_model):
         assert bal is None
 
 
+def test_subtract_coins_unlimited_leaves_existing_balance_untouched(app, test_user, test_model):
+    entity_id, model_id = test_user["id"], test_model["id"]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.services.llm import subtract_coins
+        db.session.add(EntityLimit(entity_id=entity_id, max_coins=-2, refresh_coins=0, starting_coins=0))
+        db.session.add(EntityBalance(entity_id=entity_id, coins_left=50))
+        db.session.commit()
+        subtract_coins(entity_id, model_id, 10.0)
+        db.session.commit()
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()
+        assert float(bal.coins_left) == 50.0
+
+
 def test_subtract_coins_deducts_correct_amount(app, test_user, test_model):
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
