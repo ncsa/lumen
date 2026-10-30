@@ -134,16 +134,23 @@ def fold_once(app, now: datetime = None) -> Optional[datetime]:
         if hi <= lo:
             return None
 
+        # On SQLite the compare-and-set is the statement that waits for a
+        # request's write lock: it waits this long, then raises "database is
+        # locked". The previous value is put back on the same connection
+        # straight after, so the setting never returns to the pool with it.
+        previous_busy_timeout = None
         if db.engine.dialect.name == "sqlite":
-            # Set on this pass's connection, so a request mid-write makes the
-            # fold wait this long, then raise "database is locked".
+            previous_busy_timeout = db.session.execute(text("PRAGMA busy_timeout")).scalar_one()
             db.session.execute(text(f"PRAGMA busy_timeout = {_SQLITE_BUSY_TIMEOUT_MS}"))
-
-        moved = db.session.execute(
-            sa_update(StatsFoldState)
-            .where(StatsFoldState.id == 1, StatsFoldState.folded_until == lo)
-            .values(folded_until=hi)
-        )
+        try:
+            moved = db.session.execute(
+                sa_update(StatsFoldState)
+                .where(StatsFoldState.id == 1, StatsFoldState.folded_until == lo)
+                .values(folded_until=hi)
+            )
+        finally:
+            if previous_busy_timeout is not None:
+                db.session.execute(text(f"PRAGMA busy_timeout = {int(previous_busy_timeout)}"))
         if not moved.rowcount:
             db.session.rollback()
             return None

@@ -854,6 +854,7 @@ def test_watcher_reloads_stats_fold_settings(app, tmp_path, restore_config):
         try:
             _watcher(app, str(config_file))
         except SystemExit:
+            # fake_sleep raises SystemExit to end the watcher's loop after the reload.
             pass
 
     assert fold_interval(app) == 20.0
