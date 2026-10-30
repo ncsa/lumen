@@ -21,7 +21,7 @@ import math
 import random
 import threading
 from datetime import datetime, timedelta
-from typing import NamedTuple, Optional
+from typing import Optional
 
 from sqlalchemy import func, select, text
 from sqlalchemy import update as sa_update
@@ -33,6 +33,7 @@ from lumen.models.model_stat import ModelStat
 from lumen.models.request_log import RequestLog
 from lumen.models.stats_fold_state import StatsFoldState
 from lumen.services.llm import _bump
+from lumen.services.stats_cutover import get_fold_state
 from lumen.timeutils import as_utc_aware, as_utc_naive, utcnow
 
 logger = logging.getLogger(__name__)
@@ -51,24 +52,6 @@ _SQLITE_BUSY_TIMEOUT_MS = 5000
 
 #: Fraction of the interval to jitter each sleep by, so replicas do not align.
 _JITTER = 0.1
-
-
-class FoldState(NamedTuple):
-    cutover_at: Optional[datetime]
-    folded_until: Optional[datetime]
-
-
-def get_fold_state() -> FoldState:
-    """Return the cutover instant and the watermark, both naive UTC.
-
-    The single reader of ``stats_fold_state``. A missing row (a database built
-    with ``create_all()``) reads as ``FoldState(None, None)``: not cut over.
-    Call inside an app context.
-    """
-    row = db.session.execute(
-        select(StatsFoldState.cutover_at, StatsFoldState.folded_until).where(StatsFoldState.id == 1)
-    ).one_or_none()
-    return FoldState(*row) if row else FoldState(None, None)
 
 
 def _seconds(app, key: str, default: float) -> float:

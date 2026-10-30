@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from lumen.services import metrics_snapshot, model_cache, stats_fold
+from lumen.services import metrics_snapshot, model_cache, stats_cutover, stats_fold
 
 TEST_CONFIG = str(Path(__file__).parent / "fixtures" / "test_config.yaml")
 # Flask-SQLAlchemy resolves relative sqlite paths against the instance dir.
@@ -121,6 +121,13 @@ def clear_model_cache():
 
 
 @pytest.fixture(autouse=True)
+def clear_cutover_cache():
+    """Start every test with no cached ``cutover_at``, so billing reads this
+    test's ``stats_fold_state`` rather than one an earlier test left behind."""
+    stats_cutover.clear_cutover_cache()
+
+
+@pytest.fixture(autouse=True)
 def clean_db(app):
     yield
     with app.app_context():
@@ -145,6 +152,7 @@ def post_cutover(app):
         at = utcnow() - timedelta(hours=1)
         db.session.add(StatsFoldState(id=1, cutover_at=at, folded_until=at))
         db.session.commit()
+    stats_cutover.clear_cutover_cache()
 
 
 def fold(app):

@@ -34,6 +34,7 @@ from lumen.models.request_log import RequestLog
 from lumen.services.cost import calculate_cost
 from lumen.services.crypto import cache_salt_for_entity
 from lumen.services.model_resolver import resolve_model_config
+from lumen.services.stats_cutover import cached_cutover_at
 from lumen.services.wsgi_disconnect import (
     SEND_BLOCKED_ENVIRON_KEY,
     STARTED_AT_ENVIRON_KEY,
@@ -41,7 +42,7 @@ from lumen.services.wsgi_disconnect import (
     SendBlocked,
     client_disconnect_event,
 )
-from lumen.timeutils import utcnow
+from lumen.timeutils import as_utc_naive, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -854,6 +855,11 @@ def update_stats(
 ):
     """Append a RequestLog row, then update or create the ModelStat/EntityStat running totals.
 
+    The running totals are bumped here only for a request from before the stats
+    cutover (none recorded yet, or ``log.time < cutover_at``). From the cutover
+    on, the stats fold adds the request's RequestLog row into them instead, so
+    every request is counted exactly once, on one side or the other.
+
     The RequestLog INSERT goes first and is flushed on its own: it takes no row
     lock another request waits on, so running it ahead of the counter UPDATEs
     keeps it out of their lock window. Billing should go through bill_request,
@@ -894,6 +900,10 @@ def update_stats(
     )
     db.session.add(log)
     db.session.flush()
+
+    cutover_at = cached_cutover_at()
+    if cutover_at is not None and as_utc_naive(log.time) >= cutover_at:
+        return
 
     now = utcnow()
 
@@ -953,14 +963,17 @@ def bill_request(entity_id: int, model_config_id: int, source: str, input_tokens
     The only billing write path; every caller goes through it. The order is fixed:
 
     1. INSERT ``request_logs`` (flushed) — takes no row lock anyone waits on
-    2. UPDATE ``model_stats``
-    3. UPDATE ``entity_stats``
+    2. UPDATE ``model_stats`` (before the stats cutover only)
+    3. UPDATE ``entity_stats`` (before the stats cutover only)
     4. UPDATE ``api_keys`` (when ``api_key_id`` is given)
     5. UPDATE ``entity_balances`` — the per-entity lock every request of the entity queues on
     6. COMMIT
 
     so the balance lock is held only for the commit, and because every billing
     transaction takes its locks in the same order, two of them can never deadlock.
+    After the stats cutover steps 2 and 3 are skipped: the stats fold adds the
+    ``request_logs`` row into those totals later, so the transaction writes only
+    ``request_logs``, ``api_keys`` and ``entity_balances``.
     A new billing write must be added here, in this order, not beside a call.
 
     ``effective`` is the coin pool limit resolved during preflight, passed on to
