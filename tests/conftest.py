@@ -97,6 +97,18 @@ def stopped_refresher():
 
 
 @pytest.fixture(autouse=True)
+def reset_timescale_health():
+    """Forget any published TimescaleDB health check after each test.
+
+    The startup log publishes its check as the refresher's baseline, and the
+    gauges on /metrics appear as soon as one is published, so a test that runs
+    the startup check with a mocked PostgreSQL must not leak it into the next.
+    """
+    yield
+    metrics_snapshot._timescale = None
+
+
+@pytest.fixture(autouse=True)
 def clear_model_cache():
     """Start every test with no model snapshot, so none survives from a test
     whose models and endpoints the next test's ``clean_db`` has deleted."""

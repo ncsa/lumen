@@ -291,3 +291,122 @@ def test_snapshot_age_comes_from_the_collector_not_a_prometheus_gauge(app):
 
     assert "lumen_metrics_snapshot_age_seconds " in collector_output
     assert "lumen_metrics_snapshot_age_seconds" not in default_output
+
+
+# --- TimescaleDB health gauges (#173) ----------------------------------------------
+
+
+def _scrape(app, client):
+    original = _set_prometheus(app, {"enabled": True, "token": "secret"})
+    try:
+        return client.get("/metrics", headers={"Authorization": "Bearer secret"}).get_data(as_text=True)
+    finally:
+        app.config["YAML_DATA"] = original
+
+
+def _samples(body, prefix="lumen_timescaledb_"):
+    """``{sample line without value: value}`` for every sample starting with *prefix*."""
+    return {
+        line.rsplit(" ", 1)[0]: float(line.rsplit(" ", 1)[1])
+        for line in body.splitlines()
+        if line.startswith(prefix)
+    }
+
+
+def test_no_timescale_series_before_the_first_check_or_on_sqlite(app, client):
+    """The test app runs on SQLite: the refresher never publishes a check there."""
+    from lumen.services import metrics_snapshot
+
+    with app.app_context():
+        assert metrics_snapshot.refresh_timescale_health() is None
+    assert "lumen_timescaledb_" not in _scrape(app, client)
+
+
+def test_timescale_gauges_after_a_check(app, client):
+    from datetime import datetime, timedelta, timezone
+
+    from lumen.services import metrics_snapshot
+    from lumen.services.timescale_health import Aggregate, Job, TimescaleHealth
+
+    finished = datetime.now(timezone.utc) - timedelta(minutes=10)
+    health = TimescaleHealth(
+        installed_version="2.26.0",
+        available_version="2.27.2",
+        request_logs_hypertable=True,
+        aggregates=(
+            Aggregate("request_counts_hourly", False, "_materialized_hypertable_3"),
+            Aggregate("request_metrics_1m", True, "_materialized_hypertable_7"),
+        ),
+        jobs=(
+            ("refresh:request_counts_hourly",
+             Job(1000, "policy_refresh_continuous_aggregate", "request_counts_hourly", "Failed", 3, finished)),
+            ("compression:request_logs",
+             Job(1001, "policy_compression", "request_logs", "Success", 0, finished)),
+            ("retention:request_metrics_1m",
+             Job(1004, "policy_retention", "request_metrics_1m", None, None, None)),
+        ),
+        request_logs_retention=True,
+    )
+    metrics_snapshot.publish_timescale_health(health)
+    body = _scrape(app, client)
+    samples = _samples(body)
+
+    assert samples['lumen_timescaledb_extension_update_available{available="2.27.2",installed="2.26.0"}'] == 1
+    assert samples['lumen_timescaledb_hypertable_present{table="request_logs"}'] == 1
+    assert samples['lumen_timescaledb_aggregate_present{view="request_counts_hourly"}'] == 1
+    assert samples['lumen_timescaledb_aggregate_present{view="request_counts_hourly_by_entity"}'] == 0
+    assert samples['lumen_timescaledb_aggregate_materialized_only{view="request_counts_hourly"}'] == 0
+    assert samples['lumen_timescaledb_aggregate_materialized_only{view="request_metrics_1m"}'] == 1
+    # A missing aggregate has no materialized_only value to report.
+    assert 'lumen_timescaledb_aggregate_materialized_only{view="request_counts_hourly_by_entity"}' not in samples
+
+    assert samples['lumen_timescaledb_job_present{job="refresh:request_counts_hourly"}'] == 1
+    assert samples['lumen_timescaledb_job_present{job="refresh:request_counts_hourly_by_entity"}'] == 0
+    assert samples['lumen_timescaledb_job_present{job="compression:request_logs"}'] == 1
+    assert samples['lumen_timescaledb_job_last_run_failed{job="refresh:request_counts_hourly"}'] == 1
+    assert samples['lumen_timescaledb_job_last_run_failed{job="compression:request_logs"}'] == 0
+    assert samples['lumen_timescaledb_job_failures_total{job="refresh:request_counts_hourly"}'] == 3
+    # A job that never ran yet has no stats: zero failures, no success age.
+    assert samples['lumen_timescaledb_job_failures_total{job="retention:request_metrics_1m"}'] == 0
+    # A missing job keeps its counter series at 0, so it never disappears and reappears.
+    assert samples['lumen_timescaledb_job_failures_total{job="refresh:request_counts_hourly_by_entity"}'] == 0
+    assert 'lumen_timescaledb_job_last_run_failed{job="refresh:request_counts_hourly_by_entity"}' not in samples
+    assert 'lumen_timescaledb_job_last_success_age_seconds{job="retention:request_metrics_1m"}' not in samples
+    age = samples['lumen_timescaledb_job_last_success_age_seconds{job="compression:request_logs"}']
+    assert 590 < age < 700
+    assert "# TYPE lumen_timescaledb_job_failures_total counter" in body
+
+    assert samples["lumen_timescaledb_request_logs_retention_policy"] == 1
+    assert 0 <= samples["lumen_timescaledb_health_age_seconds"] < 60
+
+
+def test_missing_extension_reports_everything_absent(app, client):
+    from lumen.services import metrics_snapshot
+    from lumen.services.timescale_health import EXPECTED_JOBS, TimescaleHealth
+
+    metrics_snapshot.publish_timescale_health(
+        TimescaleHealth(installed_version=None, available_version="2.27.2"),
+    )
+    samples = _samples(_scrape(app, client))
+
+    # Not an update: ALTER EXTENSION cannot help an extension that is not installed.
+    assert samples['lumen_timescaledb_extension_update_available{available="2.27.2",installed=""}'] == 0
+    assert samples['lumen_timescaledb_hypertable_present{table="request_logs"}'] == 0
+    for name in EXPECTED_JOBS:
+        assert samples[f'lumen_timescaledb_job_present{{job="{name}"}}'] == 0
+    assert samples["lumen_timescaledb_request_logs_retention_policy"] == 0
+
+
+def test_timescale_gauges_execute_no_sql(app, client):
+    from lumen.services import metrics_snapshot
+    from lumen.services.timescale_health import TimescaleHealth
+
+    metrics_snapshot.publish_timescale_health(TimescaleHealth("2.27.2", "2.27.2", True))
+    with app.app_context():
+        engine = db.engine
+    statements, unsubscribe = _count_statements_on_this_thread(engine)
+    try:
+        assert "lumen_timescaledb_health_age_seconds" in _scrape(app, client)
+    finally:
+        unsubscribe()
+    assert statements == []

@@ -192,7 +192,7 @@ def _log_timescale_health(app):
     handling as that tripwire.
     """
     from lumen.extensions import db
-    from lumen.services import timescale_health
+    from lumen.services import metrics_snapshot, timescale_health
 
     if db.engine.dialect.name != "postgresql":
         return
@@ -206,9 +206,12 @@ def _log_timescale_health(app):
             return
         app.logger.warning("Could not check TimescaleDB health: %s", e)
         return
-    found = timescale_health.problems(health, include_request_logs_retention=False)
-    for problem in found:
-        fatal = problem in (timescale_health.EXTENSION_MISSING, timescale_health.HYPERTABLE_MISSING)
+    # The baseline the metrics refresher compares its checks against.
+    metrics_snapshot.publish_timescale_health(health)
+    found = timescale_health.keyed_problems(health)
+    found.pop("retention:request_logs", None)
+    for key, problem in found.items():
+        fatal = key in timescale_health.FATAL_PROBLEMS
         app.logger.log(logging.ERROR if fatal else logging.WARNING, "TimescaleDB: %s", problem)
     if not found and not health.request_logs_retention:
         app.logger.info(

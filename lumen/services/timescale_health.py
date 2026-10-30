@@ -37,6 +37,9 @@ HYPERTABLE_MISSING = (
     "request_logs is not a TimescaleDB hypertable; the usage charts and their "
     "continuous aggregates depend on it."
 )
+#: :func:`keyed_problems` keys that mean the usage charts cannot work at all; logged as ERROR.
+FATAL_PROBLEMS = frozenset({"extension", "hypertable"})
+
 REQUEST_LOGS_RETENTION = (
     "request_logs has a retention policy, but request_logs must never be pruned. "
     "Remove it with SELECT remove_retention_policy('request_logs');"
@@ -151,23 +154,36 @@ def problems(health: TimescaleHealth, *, include_request_logs_retention: bool = 
     ``include_request_logs_retention=False`` leaves out the ``request_logs``
     retention problem, for callers that report it through the tripwire instead.
     """
+    found = keyed_problems(health)
+    if not include_request_logs_retention:
+        found.pop("retention:request_logs", None)
+    return list(found.values())
+
+
+def keyed_problems(health: TimescaleHealth) -> dict[str, str]:
+    """:func:`problems`, keyed by the object at fault.
+
+    The key stays the same while a message changes (a failed job's message
+    carries its failure count), so a caller comparing two checks can tell a new
+    problem from an old one that got worse.
+    """
     if not health.extension_installed:
-        return [EXTENSION_MISSING]
-    found = []
+        return {"extension": EXTENSION_MISSING}
+    found = {}
     if health.available_version and health.installed_version != health.available_version:
-        found.append(
+        found["extension_update"] = (
             f"TimescaleDB extension is {health.installed_version} but the server has "
             f"{health.available_version}. Run ALTER EXTENSION timescaledb UPDATE; as the "
             "first command of a new psql -X session."
         )
     if not health.request_logs_hypertable:
-        found.append(HYPERTABLE_MISSING)
+        found["hypertable"] = HYPERTABLE_MISSING
     for view in AGGREGATES:
         agg = health.aggregate(view)
         if agg is None:
-            found.append(f"Continuous aggregate {view} is missing.")
+            found[f"aggregate:{view}"] = f"Continuous aggregate {view} is missing."
         elif agg.materialized_only:
-            found.append(
+            found[f"aggregate:{view}"] = (
                 f"Continuous aggregate {view} has materialized_only = true, so it does not "
                 "return the buckets after its last refresh."
             )
@@ -175,14 +191,14 @@ def problems(health: TimescaleHealth, *, include_request_logs_retention: bool = 
         job = health.job(name)
         if job is None:
             proc, target = EXPECTED_JOBS[name]
-            found.append(f"Background job {name} ({proc} on {target}) is missing.")
+            found[f"job:{name}"] = f"Background job {name} ({proc} on {target}) is missing."
         # job_stats.last_run_status is only 'Success' or 'Failed'; a crashed worker
         # leaves last_run_success false, so it reads 'Failed' too.
         elif job.last_run_status == "Failed":
-            found.append(
+            found[f"job:{name}"] = (
                 f"Background job {name} (job {job.job_id}) failed its last run; "
                 f"{job.total_failures or 0} failures in total."
             )
-    if include_request_logs_retention and health.request_logs_retention:
-        found.append(REQUEST_LOGS_RETENTION)
+    if health.request_logs_retention:
+        found["retention:request_logs"] = REQUEST_LOGS_RETENTION
     return found
