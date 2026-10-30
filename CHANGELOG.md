@@ -28,6 +28,7 @@ All notable changes to Lumen will be documented in this file.
 ### Added
 
 - Chat: copy a single reply, or the whole conversation as Markdown, to the clipboard. (#326)
+- `lumen.sh` creates `~/.config/opencode/opencode.jsonc` when no opencode config exists, reads `opencode.jsonc`, and adds `--embed-key`, which also writes the key into the opencode config for apps that don't read the shell rc. `-s` now also updates the opencode config and shell rc to the given server. Without `-s`, the script uses the server from the opencode config and stops with an error when that config and your shell setup disagree on the server or key.
 - Monitor: opening a model keeps the overview's time range. The model page gains a cost / benefit chart, with benefit (input and output tokens at our model prices) as bars against hardware cost as a red dashed line. The tokens chart now shows output tokens above the centre line and input tokens below, each on its own scale. Lumen's `/v1/models?tokens=true` adds per-model token counts for the monitoring token only.
 - Add a standalone monitoring service in `scripts/monitor` that tracks Lumen health, uptime and response time, and records daily models.dev, Lumen and hardware/energy costs plus requests and tokens, with a status dashboard and per-model graphs.
 - Publish the monitor image as `ncsa/lumen-monitor` and `ghcr.io/ncsa/lumen-monitor`, versioned with Lumen; lint and Docker CI run as a matrix over Lumen and the monitor.
