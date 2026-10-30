@@ -802,7 +802,7 @@ def test_apply_hot_config_stats_fold_settings(app, restore_config):
         assert app.config["STATS_FOLD_LAG"] == 45.0
 
 
-@pytest.mark.parametrize("bad", [0, -5, "soon"])
+@pytest.mark.parametrize("bad", [0, -5, "soon", float("inf"), float("nan"), ".inf"])
 def test_apply_hot_config_invalid_stats_fold_settings_fall_back(app, restore_config, caplog, bad):
     from lumen.services.config_watcher import apply_hot_config
     with app.app_context():
@@ -1256,7 +1256,7 @@ def test_validate_config_structure_accepts_stats(stats):
 
 
 @pytest.mark.parametrize("key", ["fold_interval", "fold_lag"])
-@pytest.mark.parametrize("bad", [0, -1, "60", True])
+@pytest.mark.parametrize("bad", [0, -1, "60", True, float("inf"), float("-inf"), float("nan")])
 def test_validate_config_structure_rejects_bad_stats(key, bad):
     from lumen.services.config_watcher import validate_config_structure
     cfg = _valid_config()
@@ -1269,3 +1269,14 @@ def test_validate_config_structure_rejects_non_mapping_stats():
     cfg = _valid_config()
     cfg["stats"] = [60]
     assert "stats: must be a mapping" in validate_config_structure(cfg)
+
+
+def test_validate_config_structure_rejects_yaml_infinity_and_nan():
+    """The editor validates parsed yaml, where `.inf` / `.nan` are floats."""
+    import yaml as _yaml
+
+    from lumen.services.config_watcher import validate_config_structure
+    for text in ("stats: {fold_interval: .inf}", "stats: {fold_lag: .nan}"):
+        cfg = _valid_config()
+        cfg.update(_yaml.safe_load(text))
+        assert any(e.startswith("stats.") for e in validate_config_structure(cfg)), text

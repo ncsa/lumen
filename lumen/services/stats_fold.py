@@ -17,6 +17,7 @@ makes a second replica's pass a no-op.
 """
 
 import logging
+import math
 import random
 import threading
 from datetime import datetime, timedelta
@@ -70,14 +71,28 @@ def get_fold_state() -> FoldState:
     return FoldState(*row) if row else FoldState(None, None)
 
 
+def _seconds(app, key: str, default: float) -> float:
+    """A positive, finite number of seconds from ``app.config``, else ``default``.
+
+    ``apply_hot_config`` already filters the yaml; this keeps the thread alive
+    whatever ends up in ``app.config``: an infinite interval would make
+    ``Event.wait`` raise outside the thread's error handler and end it.
+    """
+    try:
+        value = float(app.config.get(key, default))
+    except (TypeError, ValueError):
+        return default
+    return value if math.isfinite(value) and value > 0 else default
+
+
 def fold_lag(app) -> timedelta:
     """How far behind ``now`` the fold window ends (``stats.fold_lag``)."""
-    return timedelta(seconds=app.config.get("STATS_FOLD_LAG", DEFAULT_FOLD_LAG))
+    return timedelta(seconds=_seconds(app, "STATS_FOLD_LAG", DEFAULT_FOLD_LAG))
 
 
 def fold_interval(app) -> float:
     """Seconds between passes (``stats.fold_interval``)."""
-    return float(app.config.get("STATS_FOLD_INTERVAL", DEFAULT_FOLD_INTERVAL))
+    return _seconds(app, "STATS_FOLD_INTERVAL", DEFAULT_FOLD_INTERVAL)
 
 
 def _sums():
