@@ -244,6 +244,8 @@ The Job uses the same image, environment, config Secret and `wait-for-db` initCo
 
 The app container never migrates. Its entrypoint runs the same gate once more before uvicorn starts, which passes immediately after the initContainer. Because migrations happen before the container starts, the `startupProbe` only has to cover uvicorn startup (5 minutes by default).
 
+**Upgrading to the stats fold:** after the upgrade that adds `stats_fold_state` has fully rolled out on PostgreSQL, run `flask stats-cutover` once (for example with `kubectl exec` into a Lumen pod). Until then billing keeps updating `model_stats` / `entity_stats` on every request and the fold does nothing; the app logs a warning at startup. `flask check-stats` reports any difference between the folded totals and `request_logs`, and `--fix` repairs it.
+
 ## Notes
 
 - **Redis and multi-replica**: With `replicaCount > 1`, configure Redis so rate-limit state is shared across pods.

@@ -26,10 +26,12 @@ from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
+from lumen.models.request_log import RequestLog
 from lumen.services.crypto import hash_api_key
 from lumen.services.key_expiry import key_expires_at, key_ttl_choices, resolve_key_ttl, revoke_if_expired
 from lumen.services.llm import bulk_model_access_info, get_model_access_status, get_pool_limit, model_notices
-from lumen.timeutils import utcnow
+from lumen.services.stats_cutover import get_fold_state
+from lumen.timeutils import as_utc_aware, as_utc_naive, utcnow
 
 profile_bp = Blueprint("profile", __name__)
 
@@ -149,11 +151,8 @@ def _fetch_chat_stats(eid: int):
     return chat_agg, conversation_count
 
 
-def _build_model_usage(eid: int, all_models, eps_by_model, access_statuses):
-    active_ids = {mc.id for mc in all_models if mc.active}
-    accessible_model_ids = {mid for mid in active_ids if access_statuses.get(mid) != "blocked"}
-
-    usage_rows = db.session.execute(
+def _fetch_model_usage_rows(eid: int):
+    return db.session.execute(
         select(
             ModelStat.model_config_id,
             func.sum(ModelStat.requests),
@@ -165,6 +164,81 @@ def _build_model_usage(eid: int, all_models, eps_by_model, access_statuses):
         .where(ModelStat.entity_id == eid)
         .group_by(ModelStat.model_config_id)
     ).all()
+
+
+def _fetch_live_tail(eid: int, since):
+    """The entity's request_logs from ``since`` on, per (model, source).
+
+    Each row is (model_config_id, source, requests, input_tokens,
+    output_tokens, cost, last time as naive UTC).
+    """
+    rows = db.session.execute(
+        select(
+            RequestLog.model_config_id,
+            RequestLog.source,
+            func.count(),
+            func.coalesce(func.sum(RequestLog.input_tokens), 0),
+            func.coalesce(func.sum(RequestLog.output_tokens), 0),
+            func.coalesce(func.sum(RequestLog.cost), 0),
+            func.max(RequestLog.time),
+        )
+        .where(RequestLog.entity_id == eid, RequestLog.time >= as_utc_aware(since))
+        .group_by(RequestLog.model_config_id, RequestLog.source)
+    ).all()
+    return [(*row[:6], as_utc_naive(row[6])) for row in rows]
+
+
+def _add_usage(row, tail_rows):
+    """``row`` (requests, input tokens, output tokens, cost, last used) plus ``tail_rows``."""
+    requests, input_tokens, output_tokens, cost, last = (
+        (row[0] or 0), (row[1] or 0), (row[2] or 0), (row[3] or 0), row[4],
+    )
+    for t in tail_rows:
+        requests += t[2]
+        input_tokens += t[3]
+        output_tokens += t[4]
+        cost += t[5]
+        last = t[6] if last is None or t[6] > last else last
+    return requests, input_tokens, output_tokens, cost, last
+
+
+#: How often ``_fetch_usage`` re-reads when a fold pass commits in the middle.
+_LIVE_TAIL_ATTEMPTS = 3
+
+
+def _fetch_usage(eid: int, live_tail: bool):
+    """Chat stats, conversation count and per-model usage rows for ``eid``.
+
+    With ``live_tail``, after the stats cutover, the entity's own request_logs
+    since ``folded_until`` (not folded yet) are added on top of the folded
+    tables, so the totals are exact rather than a few minutes behind. The
+    watermark is read before and after: a fold pass committing in between
+    would have moved rows from the tail into the tables mid-read, counting
+    them twice or not at all, so the reads are repeated.
+    """
+    for _ in range(_LIVE_TAIL_ATTEMPTS):
+        since = get_fold_state().folded_until if live_tail else None
+        chat_agg, conversation_count = _fetch_chat_stats(eid)
+        usage_rows = _fetch_model_usage_rows(eid)
+        if since is None:
+            return chat_agg, conversation_count, usage_rows
+        tail = _fetch_live_tail(eid, since)
+        if get_fold_state().folded_until == since:
+            break
+    if not tail:
+        return chat_agg, conversation_count, usage_rows
+    chat_agg = _add_usage(chat_agg, [t for t in tail if t[1] == "chat"])
+    by_model = {r[0]: r[1:] for r in usage_rows}
+    for mid in {t[0] for t in tail if t[0] is not None}:
+        by_model[mid] = _add_usage(by_model.get(mid, (0, 0, 0, 0, None)), [t for t in tail if t[0] == mid])
+    usage_rows = [(mid, *u) for mid, u in by_model.items()]
+    return chat_agg, conversation_count, usage_rows
+
+
+def _build_model_usage(usage_rows, all_models, eps_by_model, access_statuses):
+    active_ids = {mc.id for mc in all_models if mc.active}
+    accessible_model_ids = {mid for mid in active_ids if access_statuses.get(mid) != "blocked"}
+
     usage_by_id = {r[0]: r for r in usage_rows}
 
     # all_models is already ordered by name; keep accessible-active models and any
@@ -244,8 +318,13 @@ def _build_project_list(eid: int) -> list:
     ]
 
 
-def _get_profile_data(eid: int) -> dict:
-    chat_agg, conversation_count = _fetch_chat_stats(eid)
+def _get_profile_data(eid: int, live_tail: bool = False) -> dict:
+    """Everything the profile page shows for ``eid``.
+
+    ``live_tail`` adds the requests the stats fold has not reached yet to the
+    chat stats and per-model usage; only the user's own /profile asks for it.
+    """
+    chat_agg, conversation_count, usage_rows = _fetch_usage(eid, live_tail)
     # One query per page view: the creator's and revoker's name/email ride along
     # via outer joins instead of per-key lookups when rendering the key table.
     revoker = aliased(Entity)
@@ -270,7 +349,7 @@ def _get_profile_data(eid: int) -> dict:
     }
     # Fetch model context once and build both the usage list and the access list from it.
     all_models, eps_by_model, access_statuses, consent_map = _fetch_model_context(eid)
-    model_usage, total_tokens_used, total_cost = _build_model_usage(eid, all_models, eps_by_model, access_statuses)
+    model_usage, total_tokens_used, total_cost = _build_model_usage(usage_rows, all_models, eps_by_model, access_statuses)
     usage_by_model = {u["model_name"]: u for u in model_usage}
     model_access_list = _build_model_access_list(usage_by_model, all_models, eps_by_model, access_statuses, consent_map)
     coin_pool = _build_coin_pool(eid)
@@ -293,7 +372,7 @@ def _get_profile_data(eid: int) -> dict:
 @login_required
 def index():
     entity_id = session["entity_id"]
-    data = _get_profile_data(entity_id)
+    data = _get_profile_data(entity_id, live_tail=True)
 
     profile_entity = db.session.get(Entity, entity_id)
     # The user's own limit row (not an inherited group/default pool), used to
@@ -716,9 +795,17 @@ def usage_summary():
         stat = db.session.execute(
             select(EntityStat).filter_by(entity_id=eid)
         ).scalar_one_or_none()
-        last_active = (
-            stat.last_used_at.isoformat() + "Z" if stat and stat.last_used_at else None
-        )
+        last_used_at = stat.last_used_at if stat else None
+        # The user's own page adds the requests the stats fold has not reached yet.
+        since = get_fold_state().folded_until if eid == session["entity_id"] else None
+        if since is not None:
+            tail_last = db.session.scalar(
+                select(func.max(RequestLog.time))
+                .where(RequestLog.entity_id == eid, RequestLog.time >= as_utc_aware(since))
+            )
+            if tail_last is not None and (last_used_at is None or as_utc_naive(tail_last) > last_used_at):
+                last_used_at = as_utc_naive(tail_last)
+        last_active = last_used_at.isoformat() + "Z" if last_used_at else None
         new_users = 0
     elif start is not None:
         row = db.session.execute(text("""

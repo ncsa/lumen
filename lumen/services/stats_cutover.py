@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 from typing import NamedTuple, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from lumen.extensions import db
 from lumen.models.stats_fold_state import StatsFoldState
@@ -36,6 +36,29 @@ def get_fold_state() -> FoldState:
     """
     row = db.session.execute(
         select(StatsFoldState.cutover_at, StatsFoldState.folded_until).where(StatsFoldState.id == 1)
+    ).one_or_none()
+    return FoldState(*row) if row else FoldState(None, None)
+
+
+def lock_fold_state() -> FoldState:
+    """``get_fold_state()``, holding the row until the transaction ends.
+
+    For commands that must not interleave with a fold pass (``reassign-model``,
+    ``check-stats``): the pass's compare-and-set on ``folded_until`` waits
+    until the caller commits or rolls back. On PostgreSQL this is
+    ``SELECT … FOR UPDATE``. SQLite has no row locks and ignores FOR UPDATE, so
+    there a no-op UPDATE of the row takes the database write lock up front;
+    call this before any other statement of the transaction, so the
+    transaction never has to upgrade a read to a write behind a fold.
+    """
+    if db.engine.dialect.name == "sqlite":
+        db.session.execute(
+            update(StatsFoldState).where(StatsFoldState.id == 1)
+            .values(folded_until=StatsFoldState.folded_until)
+        )
+    row = db.session.execute(
+        select(StatsFoldState.cutover_at, StatsFoldState.folded_until)
+        .where(StatsFoldState.id == 1).with_for_update()
     ).one_or_none()
     return FoldState(*row) if row else FoldState(None, None)
 

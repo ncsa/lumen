@@ -91,18 +91,53 @@ def _sums():
     )
 
 
-def _increments(model, row) -> tuple[dict, dict]:
-    increments = {
-        "requests": model.requests + row.requests,
-        "input_tokens": model.input_tokens + row.input_tokens,
-        "output_tokens": model.output_tokens + row.output_tokens,
-        "audio_seconds": model.audio_seconds + row.audio_seconds,
-        "cost": model.cost + row.cost,
-    }
-    insert_values = {
-        "requests": row.requests, "input_tokens": row.input_tokens, "output_tokens": row.output_tokens,
-        "audio_seconds": row.audio_seconds, "cost": row.cost,
-    }
+#: The totals the fold adds to. Each also goes into its ``folded_*`` column,
+#: the fold's own part of the total, which ``flask check-stats`` compares with
+#: ``request_logs`` since the cutover.
+TOTALS = ("requests", "input_tokens", "output_tokens", "audio_seconds", "cost")
+
+
+def window_sums(lo: datetime, hi: datetime) -> tuple[list, list]:
+    """The ``request_logs`` sums of the half-open window ``[lo, hi)`` (naive UTC).
+
+    Only rows billing marked ``stats_deferred`` count. Returns the rows per
+    (entity, model, source), which land in ``model_stats``, and the rows per
+    entity, which land in ``entity_stats``. Rows with a NULL ``entity_id`` are
+    left out of both, rows with a NULL ``model_config_id`` out of the first.
+    """
+    in_window = (
+        RequestLog.time >= as_utc_aware(lo),
+        RequestLog.time < as_utc_aware(hi),
+        RequestLog.entity_id.is_not(None),
+        # Only the rows billing left to the fold: a NULL row was bumped
+        # already (before the cutover, by an older pod, or on a stale
+        # cached cutover_at).
+        RequestLog.stats_deferred.is_(True),
+    )
+    per_model = db.session.execute(
+        select(RequestLog.entity_id, RequestLog.model_config_id, RequestLog.source, *_sums())
+        .where(*in_window, RequestLog.model_config_id.is_not(None))
+        .group_by(RequestLog.entity_id, RequestLog.model_config_id, RequestLog.source)
+        .order_by(RequestLog.entity_id, RequestLog.model_config_id, RequestLog.source)
+    ).all()
+    per_entity = db.session.execute(
+        select(RequestLog.entity_id, *_sums())
+        .where(*in_window)
+        .group_by(RequestLog.entity_id)
+        .order_by(RequestLog.entity_id)
+    ).all()
+    return per_model, per_entity
+
+
+def fold_increments(model, amounts) -> tuple[dict, dict]:
+    """The ``_bump`` arguments that add ``amounts`` (attributes named as ``TOTALS``)
+    to ``model``'s totals and to their ``folded_*`` part."""
+    increments, insert_values = {}, {}
+    for name in TOTALS:
+        amount = getattr(amounts, name)
+        for column in (name, f"folded_{name}"):
+            increments[column] = getattr(model, column) + amount
+            insert_values[column] = amount
     return increments, insert_values
 
 
@@ -157,41 +192,19 @@ def fold_once(app, now: datetime = None) -> Optional[datetime]:
             db.session.rollback()
             return None
 
-        in_window = (
-            RequestLog.time >= as_utc_aware(lo),
-            RequestLog.time < as_utc_aware(hi),
-            RequestLog.entity_id.is_not(None),
-            # Only the rows billing left to the fold: a NULL row was bumped
-            # already (before the cutover, by an older pod, or on a stale
-            # cached cutover_at).
-            RequestLog.stats_deferred.is_(True),
-        )
-        per_model = db.session.execute(
-            select(RequestLog.entity_id, RequestLog.model_config_id, RequestLog.source, *_sums())
-            .where(*in_window, RequestLog.model_config_id.is_not(None))
-            .group_by(RequestLog.entity_id, RequestLog.model_config_id, RequestLog.source)
-            .order_by(RequestLog.entity_id, RequestLog.model_config_id, RequestLog.source)
-        ).all()
-        per_entity = db.session.execute(
-            select(RequestLog.entity_id, *_sums())
-            .where(*in_window)
-            .group_by(RequestLog.entity_id)
-            .order_by(RequestLog.entity_id)
-        ).all()
+        per_model, per_entity = window_sums(lo, hi)
 
         # Same table order as billing (model_stats, then entity_stats).
         for row in per_model:
-            increments, insert_values = _increments(ModelStat, row)
             _bump(
                 ModelStat,
                 {"entity_id": row.entity_id, "model_config_id": row.model_config_id, "source": row.source},
-                increments, insert_values, last_used_at=as_utc_naive(row.last_used_at),
+                *fold_increments(ModelStat, row), last_used_at=as_utc_naive(row.last_used_at),
             )
         for row in per_entity:
-            increments, insert_values = _increments(EntityStat, row)
             _bump(
                 EntityStat, {"entity_id": row.entity_id},
-                increments, insert_values, last_used_at=as_utc_naive(row.last_used_at),
+                *fold_increments(EntityStat, row), last_used_at=as_utc_naive(row.last_used_at),
             )
         db.session.commit()
         return hi
