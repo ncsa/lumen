@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from lumen.services import metrics_snapshot, model_cache
+from lumen.services import metrics_snapshot, model_cache, stats_fold
 
 TEST_CONFIG = str(Path(__file__).parent / "fixtures" / "test_config.yaml")
 # Flask-SQLAlchemy resolves relative sqlite paths against the instance dir.
@@ -64,7 +64,7 @@ def app(tmp_path_factory):
 
 
 def no_snapshot_refresher(monkeypatch):
-    """Make ``create_app`` skip the background metrics-snapshot refresher.
+    """Make ``create_app`` skip the background metrics-snapshot refresher and stats fold.
 
     Every ``create_app`` starts a ``metrics-snapshot`` daemon thread that wakes
     on its own schedule and checks out a pooled connection. A throwaway app's
@@ -72,8 +72,12 @@ def no_snapshot_refresher(monkeypatch):
     happens to be running, as phantom sessions and checkouts. Call this before
     ``create_app`` with ``monkeypatch``, or, from a module-scoped fixture, with
     the object from ``pytest.MonkeyPatch.context()``.
+
+    The stats fold thread is skipped for the same reason, and because a pass
+    landing mid-test would fold rows the test means to fold itself.
     """
     monkeypatch.setattr(metrics_snapshot, "start_snapshot_refresher", lambda app, **kwargs: None)
+    monkeypatch.setattr(stats_fold, "start_fold_thread", lambda app: None)
 
 
 @pytest.fixture

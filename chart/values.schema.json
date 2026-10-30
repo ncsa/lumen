@@ -139,6 +139,14 @@
             "maxRetries": { "type": "integer", "minimum": 0 }
           }
         },
+        "stats": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "foldInterval": { "type": "number", "exclusiveMinimum": 0 },
+            "foldLag": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
         "api": {
           "type": "object",
           "additionalProperties": false,

@@ -166,6 +166,15 @@ config:
     # retried: a retry restarts the whole generation while the first attempt may
     # still be draining upstream.
     maxRetries: 1
+  # -- Usage totals (entity_stats / model_stats) are folded from request_logs by
+  # a background job after the stats cutover.
+  stats:
+    # -- Seconds between fold passes
+    foldInterval: 60
+    # -- Seconds the fold window ends behind now. Leaves room for billing
+    # transactions that commit after their request's timestamp; totals lag real
+    # time by about foldLag + foldInterval.
+    foldLag: 300
   api:
     keys:
       # -- Maximum and default API key lifetime: "0" (keys never expire) or a
