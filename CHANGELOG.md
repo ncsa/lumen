@@ -22,6 +22,7 @@ All notable changes to Lumen will be documented in this file.
 - OAuth key requests that replace an existing key now refresh its secret in place, keeping its name and usage stats, instead of revoking it. (#182)
 - Tests now pin the model `end_date` boundary: a model is blocked and hidden from the exact end instant. (#311)
 - Lumen now checks TimescaleDB health at startup and on `/metrics`: extension version drift, a missing `request_logs` hypertable or aggregate, missing or failing background jobs. The chart and compose example pin `timescaledb:2.27.2-pg17` and state that TimescaleDB is required. Added a TimescaleDB upgrade runbook (`ALTER EXTENSION timescaledb UPDATE`). (#173)
+- Tests now pin that `subtract_coins` never creates or deducts a balance for an unlimited (-2) coin pool. (#365)
 - Billing takes the per-entity balance lock last and no longer runs existence SELECTs, so concurrent requests from one entity or project key queue far less. (#171)
 - Cut redundant DB queries: one entity count per metrics pass, no duplicate metrics/TimescaleDB check at startup, usage page skips hidden user-growth charts (#178).
 
