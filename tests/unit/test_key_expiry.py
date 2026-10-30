@@ -187,10 +187,12 @@ def test_expire_keys_revokes_a_key_expiring_exactly_now(app, test_user, monkeypa
     monkeypatch.setattr("lumen.services.key_expiry.utcnow", lambda: now)
     with app.app_context():
         _add_key("boundary", test_user["id"], expires_at=now)
+        _add_key("just_future", test_user["id"], expires_at=now + timedelta(seconds=1))
         db.session.commit()
 
         assert expire_keys() == 1
         assert _state("boundary") == (now, None)
+        assert _state("just_future") == (None, None)
 
 
 def test_revoke_if_expired(app, test_user):
