@@ -223,6 +223,10 @@ def test_lock_released_after_pass_raises(pg_app, pg_migrated_isolated, monkeypat
 
     assert len(calls) == 2
     assert _lock_is_free(engine)
+    # The next pass takes the lock and credits the row the failed pass never reached.
+    monkeypatch.setattr(token_refill, "_apply_batch", real_apply)
+    with pg_app.app_context():
+        assert token_refill.refill_coin_balances(now=now) == 1
 
 
 def test_lock_connection_is_idle_during_batches(pg_app, pg_migrated_isolated, monkeypatch):
