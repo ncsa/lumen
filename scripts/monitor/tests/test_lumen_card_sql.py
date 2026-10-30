@@ -5,11 +5,12 @@ Each test runs on SQLite, and on PostgreSQL when `MONITOR_TEST_POSTGRES_URL` is 
 
 import dataclasses
 import random
+import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from monitor import migrate
 from monitor.buckets import (
@@ -235,6 +236,60 @@ def test_empty_card_matches_the_python_path(session_factory, make_config, key):
     new, old = cards(session_factory, make_config(), RANGES[key])
     assert new == old
     assert new["last_ms"] is None and new["min_ms"] is None and new["uptime"] is None
+
+
+# --- Reads ---------------------------------------------------------------------------
+
+
+def probe_reads(session_factory, config, rng):
+    """The card, and every statement (with its parameters) that read `probes` while it was built."""
+    reads = []
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        if re.search(r"\bFROM probes\b", statement):
+            reads.append((statement, parameters))
+
+    with session_factory() as session:
+        engine = session.get_bind()
+        event.listen(engine, "before_cursor_execute", capture)
+        try:
+            card = lumen_card(session, config, rng, NOW)
+        finally:
+            event.remove(engine, "before_cursor_execute", capture)
+    return card, reads
+
+
+def clustered_probes(starts, per_group=100):
+    """`per_group` probes a second apart from each of `starts`: many probes, few groups."""
+    return [probe(start + i * SECOND, response_time_ms=float(i)) for start in starts for i in range(per_group)]
+
+
+@pytest.mark.parametrize("key", ["24h", "1y"])
+def test_the_database_groups_the_probes(session_factory, make_config, key):
+    """No statement reads the probes one row each: the card gets one row per group, one aggregate
+    row and the latest probe, whatever the number of probes in the range."""
+    config, rng = make_config(), RANGES[key]
+    if rng.daily:  # three UTC quarter hours
+        starts = [slot_start((NOW - timedelta(hours=h) - EPOCH) // SLOT) for h in (2, 30, 200)]
+    else:  # three 5-minute buckets
+        grid = make_grid(rng, config.refresh.web, NOW, None)
+        starts = [grid.start + k * grid.size + SECOND for k in (10, 100, 200)]
+    add(session_factory, clustered_probes(starts))
+    card, reads = probe_reads(session_factory, config, rng)
+    assert card["min_ms"] == 0 and card["max_ms"] == 99 and card["avg_ms"] == pytest.approx(49.5)
+
+    grouped = [r for r in reads if "GROUP BY" in r[0]]
+    aggregates = [r for r in reads if "GROUP BY" not in r[0] and all(f in r[0] for f in ("min(", "avg(", "max("))]
+    bounded = [r for r in reads if "GROUP BY" not in r[0] and re.search(r"\bLIMIT\b", r[0])]
+    assert len(grouped) == 1 and len(aggregates) == 1
+    assert len(bounded) == 2  # the latest probe in the range, and lumen_state's window
+    assert len(grouped) + len(aggregates) + len(bounded) == len(reads), reads
+
+    with session_factory() as session:
+        statement, parameters = grouped[0]
+        rows = session.connection().exec_driver_sql(statement, parameters).all()
+    assert len(rows) == len(starts)  # 300 probes come back as 3 rows
+    assert sorted(row[1] for row in rows) == [100] * len(starts)  # each row counts its 100 probes
 
 
 # --- Tied probes -------------------------------------------------------------------
