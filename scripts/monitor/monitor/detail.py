@@ -3,6 +3,7 @@
 Every range returns the same series, so the page draws the same charts:
 
 - `header`: the model's overview row (status, strip, uptime, instances, prices, cost)
+- `strip_times`: when each strip cell starts (ISO times, or ISO dates for 1y)
 - `prices`: our input/output price and the models.dev median and p5/p95; below 7d one
   point per bucket with the prices of the bucket's local day, each source carrying its
   latest earlier day forward when that day has no row (so the line steps at local
@@ -29,7 +30,7 @@ from monitor.buckets import Range, make_grid, range_days
 from monitor.config import Config
 from monitor.daily import local_day
 from monitor.models import DailyStat, Sample, token_sum
-from monitor.overview import _iso, counted_fraction, current_models, exact, model_rows
+from monitor.overview import _iso, counted_fraction, current_models, exact, model_rows, strip_times
 from monitor.probe import LiveSnapshot
 
 # From this span up, traffic is shown per local day instead of per bucket.
@@ -242,6 +243,7 @@ def series(session: Session, config: Config, snapshot: LiveSnapshot | None, mode
         "generated_at": _iso(now),
         "daily": is_daily(rng),
         "header": header,
+        "strip_times": strip_times(grid),
         "prices": _price_points(rows, days) if is_daily(rng) else _bucket_price_points(session, model_id, rows, days, grid, tz),
         "traffic": traffic,
         "hardware": {"points": hardware, "range": hardware_range},

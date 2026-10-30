@@ -1,8 +1,8 @@
 :root {
   --theme-primary: #13294B;
   --status-ok: #1d7a3e;
-  --status-degraded: #b5300c;
-  --status-down: #6b0f0f;
+  --status-degraded: #e0a800;
+  --status-down: #c62828;
   --status-unknown: #c8c8c8;
 }
 
@@ -14,7 +14,7 @@ ilw-page { --ilw-margin--side: 1.875rem; }
 
 .state-badge { display: inline-block; padding: 0 .5em; border-radius: .25rem; color: #fff; font-size: .9rem; }
 .state-up { background: var(--status-ok); }
-.state-degraded { background: var(--status-degraded); }
+.state-degraded { background: var(--status-degraded); color: #212529; }
 .state-down { background: var(--status-down); }
 .state-unknown { background: #595959; }
 

@@ -5,7 +5,8 @@ request/token windows come from the live snapshot of the last successful
 probe. Before the first probe after a restart they come from the samples of
 the last successful probe in the database, without descriptions or windows.
 Strips, uptime and peak req/min come from `probes`/`samples` (1y: the daily
-rows); prices and hardware cost from the latest daily rows.
+rows), with `strip_times` giving when each strip cell starts; prices and
+hardware cost from the latest daily rows.
 
 A day's totals are exact only when its lumen row is `final` and not
 `estimated`. A value built from any other day is flagged `partial`.
@@ -20,6 +21,7 @@ from monitor.buckets import (
     DOWN,
     OK,
     UNKNOWN,
+    DayGrid,
     Range,
     bucket_statuses,
     daily_status,
@@ -56,6 +58,13 @@ DEFAULT_SORT = "model"
 def _iso(at: datetime | None) -> str | None:
     """Naive UTC as ISO 8601 with a `Z`, for the browser to show in local time."""
     return None if at is None else at.isoformat(timespec="seconds") + "Z"
+
+
+def strip_times(grid) -> list[str]:
+    """When each status strip cell starts: ISO dates for 1y, ISO times (UTC) for the short ranges."""
+    if isinstance(grid, DayGrid):
+        return [d.isoformat() for d in grid.days]
+    return [_iso(t) for t in grid.times()]
 
 
 def _window(windows: dict | None, key: str) -> float | None:
@@ -355,6 +364,7 @@ def overview(session: Session, config: Config, snapshot: LiveSnapshot | None, rn
         "probed_at": _iso(probed_at),
         "cards": status_cards(session, config, now, models),
         "models": rows,
+        "strip_times": strip_times(make_grid(rng, config.refresh.web, now, config.timezone)),
         "sort": sort,
         "direction": direction,
     }

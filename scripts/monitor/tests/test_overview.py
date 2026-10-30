@@ -393,3 +393,26 @@ def test_overview_payload(env):
     assert [m["id"] for m in data["models"]] == ["a", "b"]  # equal values keep the id order
     assert data["cards"]["active_models"] == 2
     assert all(len(m["strip"]) == 240 for m in data["models"])
+    # 12h buckets are 3 minutes, the last one starting 3 minutes before now.
+    assert len(data["strip_times"]) == 240
+    assert data["strip_times"][0] == "2026-10-17T05:00:00Z" and data["strip_times"][-1] == "2026-10-17T16:57:00Z"
+
+
+@pytest.mark.parametrize("range_key", list(RANGES))
+def test_strip_times_match_the_strips(env, range_key):
+    store, sf = env
+    snapshot = LiveSnapshot()
+    snapshot.set(Snapshot(NOW, [snap_model()]))
+    with sf() as session:
+        data = overview(session, store.current, snapshot, RANGES[range_key], NOW)
+    assert len(data["strip_times"]) == len(data["models"][0]["strip"])
+
+
+def test_1y_strip_times_are_local_dates(env):
+    store, sf = env
+    snapshot = LiveSnapshot()
+    snapshot.set(Snapshot(NOW, [snap_model()]))
+    with sf() as session:
+        data = overview(session, store.current, snapshot, RANGES["1y"], NOW)
+    assert len(data["strip_times"]) == 365
+    assert data["strip_times"][-2:] == ["2026-10-16", "2026-10-17"]

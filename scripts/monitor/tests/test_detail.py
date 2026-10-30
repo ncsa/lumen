@@ -90,6 +90,7 @@ def test_every_series_for_every_range(env, range_key):
     assert data["traffic"]["unit"] == ("day" if data["daily"] else "minute")
     assert len(data["traffic"]["points"]) == TRAFFIC_POINTS[range_key]
     assert len(data["header"]["strip"]) == STRIP_BUCKETS[range_key]
+    assert len(data["strip_times"]) == STRIP_BUCKETS[range_key]
     assert data["instances"]["unit"] == ("day" if range_key == "1y" else "bucket")
     assert len(data["instances"]["points"]) == STRIP_BUCKETS[range_key]
     assert len(data["hardware"]["points"]) == DAYS[range_key]
@@ -344,6 +345,13 @@ def test_1y_instances_from_the_daily_counters(env):
     assert data["instances"]["points"][-2] == {"t": "2026-10-16", "healthy": 1.5, "configured": 2}
     assert data["instances"]["points"][-1] == {"t": "2026-10-17", "healthy": None, "configured": None}
     assert data["header"]["strip"][-2] == "ok"
+    assert data["strip_times"][-2:] == ["2026-10-16", "2026-10-17"]
+
+
+def test_short_range_strip_times_match_the_buckets(env):
+    data = get(env, "1h")
+    assert data["strip_times"] == [p["t"] for p in data["instances"]["points"]]
+    assert data["strip_times"][-1] == "2026-10-17T16:59:00Z"
 
 
 def test_model_with_history_only_and_unknown_model(env):

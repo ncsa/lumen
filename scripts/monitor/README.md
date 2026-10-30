@@ -95,7 +95,10 @@ under `base_path` (restart after changing it). The overview has:
 
 Ranges are 1h, 12h, 24h, 7d and 30d from the raw probes and samples, bucketed at 1m, 3m, 5m,
 30m and 2h (never below `refresh.web`); a bucket shows its worst status and is "no data" when
-empty. 1y uses one bucket per local day. For a model: ok at 99% availability or more, degraded
+empty. Strips, badges and the Lumen chart draw ok green, degraded yellow and down red; strip
+cells also get shorter (degraded hatched), so the state does not rely on colour. Hovering a
+degraded or down cell shows when its bucket starts, in local time (the day on 1y); a screen
+reader hears the first 5 such periods. 1y uses one bucket per local day. For a model: ok at 99% availability or more, degraded
 above 0%, down otherwise. For Lumen, from the probes still kept: ok when 99% or more of the
 day's probes were ok, down when none was up (failed, or more than `lumen.down_above` percent of
 models down), degraded otherwise; its uptime is the share of probes that were up. `*` marks
