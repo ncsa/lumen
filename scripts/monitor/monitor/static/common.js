@@ -47,11 +47,10 @@
     const t = new Date(iso);
     return `${t.getDate()} ${MONTHS[t.getMonth()]} ${pad(t.getHours())}:${pad(t.getMinutes())}`;
   }
-  const NOT_OK = ['degraded', 'down'];
   const MAX_LISTED = 5;
 
-  // `times` (one per cell, optional) gives each degraded or down cell a title with its time and
-  // status; the strip's aria-label lists those periods, at most MAX_LISTED of them.
+  // `times` (one per cell, optional) gives each cell that is not ok (degraded, down or no data) a
+  // title with its time and status; the strip's aria-label lists those periods, at most MAX_LISTED.
   function strip(statuses, times) {
     const counts = {};
     statuses.forEach(s => { counts[drawn(s)] = (counts[drawn(s)] || 0) + 1; });
@@ -59,7 +58,7 @@
     const periods = [];
     const cells = statuses.map((s, i) => {
       const attrs = { class: `strip-cell s-${drawn(s)}` };
-      if (times && times[i] && NOT_OK.includes(drawn(s))) {
+      if (times && times[i] && drawn(s) !== 'ok') {
         attrs.title = `${fmtCellTime(times[i])} – ${STATUS_TEXT[drawn(s)]}`;
         periods.push(attrs.title);
       }
