@@ -308,8 +308,9 @@ async function refresh(period, showAll) {
 
   const [summary, usersNew, usersCumul, reqs, tokens, models, heatmap] = await Promise.all([
     fetchJSON('summary', period, showAll),
-    fetchJSON('users/new', period, showAll),
-    fetchJSON('users/cumulative', period, showAll),
+    // The user-growth row is hidden when filtered, so skip its two queries.
+    isFiltered ? Promise.resolve(null) : fetchJSON('users/new', period, showAll),
+    isFiltered ? Promise.resolve(null) : fetchJSON('users/cumulative', period, showAll),
     fetchJSON('requests', period, showAll),
     fetchJSON('tokens', period, showAll),
     fetchJSON('models', period, showAll),
@@ -328,8 +329,10 @@ async function refresh(period, showAll) {
       d && !isNaN(d) ? d.toLocaleDateString([], {month: 'short', day: 'numeric', year: 'numeric'}) : '—';
   }
 
-  updateLineChart(charts.usersNew, usersNew, 'count');
-  updateLineChart(charts.usersCumul, usersCumul, 'count');
+  if (!isFiltered) {
+    updateLineChart(charts.usersNew, usersNew, 'count');
+    updateLineChart(charts.usersCumul, usersCumul, 'count');
+  }
   updateLineChart(charts.requests, reqs, 'count');
   updateLineChart(charts.tokens, tokens, 'count');
 

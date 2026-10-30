@@ -60,7 +60,7 @@ def test_startup_recovers_failed_sync_flush_before_metrics_priming(tmp_path, mon
     monkeypatch.setattr("lumen.commands.sync_models_from_yaml", failing_sync)
     monkeypatch.setattr(metrics_snapshot, "refresh_snapshot", recording_refresh)
     # This throwaway app must not start a second background refresher thread.
-    monkeypatch.setattr(metrics_snapshot, "start_snapshot_refresher", lambda app: None)
+    monkeypatch.setattr(metrics_snapshot, "start_snapshot_refresher", lambda app, **kwargs: None)
 
     create_app()
 
