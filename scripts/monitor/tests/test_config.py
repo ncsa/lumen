@@ -25,6 +25,7 @@ def test_defaults():
     assert config.kwh is None
     assert config.gpus == {}
     assert config.models == {}
+    assert config.down_above == 50
     assert config.warnings == []
 
 
@@ -390,3 +391,26 @@ def test_matched_pin_does_not_warn(caplog):
     with caplog.at_level(logging.WARNING, logger="monitor.config"):
         config.match_models(["deepseek-v4-flash"])
     assert caplog.text == ""
+
+
+def test_down_above_parsed():
+    config = parse_config({"lumen": {"down_above": 30}}, env={})
+    assert config.down_above == 30
+    assert config.warnings == []
+
+
+@pytest.mark.parametrize("value", [-1, 101, "abc", True, float("nan")])
+def test_bad_down_above_warns_and_uses_default(value):
+    config = parse_config({"lumen": {"down_above": value}}, env={})
+    assert config.down_above == 50
+    assert any("lumen.down_above" in w for w in config.warnings)
+
+
+def test_reload_picks_up_down_above(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("lumen: {url: https://lumen.test}\n")
+    store = ConfigStore(path, env={})
+    assert store.current.down_above == 50
+    path.write_text("lumen: {url: https://lumen.test, down_above: 30}\n")
+    assert store.reload() is True
+    assert store.current.down_above == 30

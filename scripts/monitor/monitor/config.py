@@ -36,6 +36,8 @@ MIN_RETENTION = timedelta(days=30)
 MAX_MODELS_REFRESH = timedelta(hours=1)
 # Upper bound for any duration; also keeps timedelta() from overflowing.
 MAX_DURATION = timedelta(days=3650)
+# Lumen counts as down when more than this percent of its models are down.
+DEFAULT_DOWN_ABOVE = 50.0
 TOP_LEVEL_KEYS = {"database_url", "base_path", "timezone", "retention", "refresh", "lumen", "price", "models"}
 
 _DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([smhd]?)\s*$")
@@ -82,6 +84,7 @@ class Config:
     gpus: dict[str, Gpu]
     models: dict[str, ModelHardware]
     warnings: list[str] = field(default_factory=list, compare=False)
+    down_above: float = DEFAULT_DOWN_ABOVE  # lumen.down_above, percent of models
 
     def model_entry(self, model: str) -> ModelHardware | None:
         """The `models:` entry for Lumen id `model`: the entry pinned to it with `lumen_id`, else
@@ -191,6 +194,21 @@ def _number(value, name: str, warnings: list[str]) -> float | None:
     return number
 
 
+def _parse_down_above(lumen: dict, warnings: list[str]) -> float:
+    """`lumen.down_above`: a percent from 0 to 100; anything else warns and falls back to the default."""
+    value = lumen.get("down_above")
+    if value is None:
+        return DEFAULT_DOWN_ABOVE
+    try:
+        number = None if isinstance(value, bool) or not isinstance(value, (int, float)) else float(value)
+    except OverflowError:
+        number = None
+    if number is None or not 0 <= number <= 100:
+        warnings.append(f"lumen.down_above: expected a number from 0 to 100, got {value!r}; using {DEFAULT_DOWN_ABOVE:g}")
+        return DEFAULT_DOWN_ABOVE
+    return number
+
+
 def _parse_refresh(raw: dict) -> Refresh:
     # An empty value (YAML null) means "use the default", as for every other key.
     section = {**DEFAULT_REFRESH, **{k: v for k, v in _section(raw, "refresh").items() if v is not None}}
@@ -296,6 +314,7 @@ def parse_config(raw: dict | None, env: dict | None = None) -> Config:
         warnings.append("retention is shorter than 30d: the 30d view will be cut short")
 
     lumen = _section(raw, "lumen")
+    down_above = _parse_down_above(lumen, warnings)
     kwh, gpus = _parse_price(raw, warnings)
     models = _parse_models(raw, gpus, warnings)
 
@@ -311,6 +330,7 @@ def parse_config(raw: dict | None, env: dict | None = None) -> Config:
         gpus=gpus,
         models=models,
         warnings=warnings,
+        down_above=down_above,
     )
 
 

@@ -1,6 +1,7 @@
 """Daily rows: the local day and the latest-of-day upsert into `daily_stats`."""
 
 from datetime import date, datetime, timezone
+from datetime import time as dtime
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -15,6 +16,11 @@ def local_day(now: datetime, tz: ZoneInfo) -> date:
     if now.tzinfo is not None:
         raise ValueError("local_day expects a naive UTC datetime")
     return now.replace(tzinfo=timezone.utc).astimezone(tz).date()
+
+
+def local_midnight(day: date, tz) -> datetime:
+    """Local midnight starting `day`, as naive UTC."""
+    return datetime.combine(day, dtime(0), tzinfo=tz).astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def get_daily(session: Session, day: date, model: str, source: str) -> DailyStat | None:

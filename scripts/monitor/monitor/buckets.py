@@ -11,8 +11,8 @@ import math
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
-from monitor.daily import local_day
-from monitor.totals import local_midnight
+from monitor.config import DEFAULT_DOWN_ABOVE
+from monitor.daily import local_day, local_midnight
 
 OK = "ok"
 DEGRADED = "degraded"
@@ -136,13 +136,32 @@ def bucket_statuses(points, grid: Grid | DayGrid) -> list[str]:
     return [worst(b) for b in buckets]
 
 
-def probe_status(success: bool, model_count: int | None, models_up: int | None) -> str:
-    """A probe's status for the Lumen strip: down when it failed, degraded when a model was down."""
+def probe_status(success: bool, model_count: int | None, models_up: int | None, down_above: float = DEFAULT_DOWN_ABOVE) -> str:
+    """A probe's Lumen status: down when it failed or more than `down_above` percent of the
+    models it listed were down, degraded when at least one was, ok otherwise.
+
+    `models_up` counts the models Lumen did not report `down`; a model with only some
+    servers down is degraded and counts as up. Per-model statuses never go through here.
+    """
     if not success:
         return DOWN
-    if model_count is not None and models_up is not None and models_up < model_count:
-        return DEGRADED
-    return OK
+    if model_count is None or models_up is None or models_up >= model_count:
+        return OK
+    if (model_count - models_up) * 100 > down_above * model_count:
+        return DOWN
+    return DEGRADED
+
+
+def lumen_daily_status(polls: int, polls_up: int, polls_ok: int) -> str:
+    """1y Lumen status from a day's probes counted by `probe_status`: unknown without probes,
+    down when none was up, ok when ≥ 99% were ok, degraded otherwise."""
+    if not polls:
+        return UNKNOWN
+    if not polls_up:
+        return DOWN
+    if polls_ok / polls >= DAILY_OK:
+        return OK
+    return DEGRADED
 
 
 def daily_status(polls: int | None, polls_ok: int | None) -> str:
@@ -166,7 +185,7 @@ def model_uptime(statuses: list[str]) -> float | None:
 
 
 def lumen_uptime(statuses: list[str]) -> float | None:
-    """Percent of buckets with data that had no failed probe: degraded counts as up."""
+    """Percent of buckets with data whose status is not down (see `probe_status`): degraded counts as up."""
     known = [s for s in statuses if s != UNKNOWN]
     if not known:
         return None
