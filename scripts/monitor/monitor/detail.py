@@ -23,14 +23,14 @@ Every range returns the same series, so the page draws the same charts:
 
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import exists, or_, select
+from sqlalchemy import BigInteger, cast, exists, func, or_, select
 from sqlalchemy.orm import Session
 
-from monitor.buckets import Range, make_grid, range_days
+from monitor.buckets import Range, bucket_index, make_grid, range_days, status_rank
 from monitor.config import Config
 from monitor.daily import local_day
-from monitor.models import DailyStat, Sample, token_sum
-from monitor.overview import _iso, counted_fraction, current_models, exact, model_rows, strip_times
+from monitor.models import DailyStat, Sample
+from monitor.overview import _iso, counted_fraction, current_models, exact, model_rows, short_range_row, strip_times
 from monitor.probe import LiveSnapshot
 
 # From this span up, traffic is shown per local day instead of per bucket.
@@ -172,18 +172,48 @@ def _hardware_points(rows: dict, days: list[date], tz) -> tuple[list[dict], dict
     return points, total
 
 
-def _bucket_samples(session: Session, model_id: str, grid, start: datetime, now: datetime) -> list[list]:
-    """The model's samples per bucket, as plain rows with only the columns the charts use."""
+# The sample columns the charts average per bucket; `tokens` is input + output, None when either is.
+MEANS = ("healthy", "configured", "requests", "tokens", "input_tokens", "output_tokens")
+
+
+def _bucket_stats(session: Session, model_id: str, grid, start: datetime, now: datetime) -> tuple[list[dict], dict]:
+    """The model's sample means per bucket, and its strip, uptime and peak, from one grouped query.
+
+    The database returns one row per bucket with the worst status, the busiest minute,
+    and the sum and count of the known values of each averaged column; Python divides,
+    so a mean is exactly what averaging the samples in Python gave. As in the model
+    table, the peak also covers a sample at `now`, which ends the grid and so is in no bucket.
+    """
+    columns = {
+        "healthy": Sample.healthy,
+        "configured": Sample.configured,
+        "requests": Sample.requests_last_minute,
+        "tokens": cast(Sample.input_tokens_last_minute, BigInteger) + Sample.output_tokens_last_minute,
+        "input_tokens": Sample.input_tokens_last_minute,
+        "output_tokens": Sample.output_tokens_last_minute,
+    }
+    rows = select(
+        bucket_index(Sample.sampled_at, grid).label("i"),
+        status_rank(Sample.status).label("rank"),
+        *(c.label(key) for key, c in columns.items()),
+    ).where(Sample.model == model_id, Sample.sampled_at > start, Sample.sampled_at <= now).subquery()
     stmt = select(
-        Sample.sampled_at, Sample.healthy, Sample.configured, Sample.requests_last_minute,
-        Sample.input_tokens_last_minute, Sample.output_tokens_last_minute,
-    ).where(Sample.model == model_id, Sample.sampled_at > start, Sample.sampled_at <= now)
-    buckets: list[list] = [[] for _ in range(grid.count)]
-    for s in session.execute(stmt).all():
-        i = grid.index(s.sampled_at)
-        if i is not None:
-            buckets[i].append(s)
-    return buckets
+        rows.c.i, func.max(rows.c.rank), func.max(rows.c.requests),
+        *(f(rows.c[key]) for key in MEANS for f in (func.sum, func.count)),
+    ).group_by(rows.c.i)
+    means: list[dict] = [dict.fromkeys(MEANS) for _ in range(grid.count)]
+    ranks: list[int | None] = [None] * grid.count
+    peak = None
+    for i, rank, busiest, *sums in session.execute(stmt).all():
+        if busiest is not None:
+            peak = max(peak or 0, busiest)
+        if i >= grid.count:
+            continue
+        ranks[i] = rank
+        for k, key in enumerate(MEANS):
+            total, count = sums[2 * k], sums[2 * k + 1]
+            means[i][key] = int(total) / count if count else None
+    return means, short_range_row(ranks, peak)
 
 
 def series(session: Session, config: Config, snapshot: LiveSnapshot | None, model_id: str, rng: Range, now: datetime) -> dict | None:
@@ -195,7 +225,11 @@ def series(session: Session, config: Config, snapshot: LiveSnapshot | None, mode
     days = range_days(rng, now, tz)
     grid = make_grid(rng, config.refresh.web, now, tz)
     times = [_iso(t) for t in grid.times()]
-    (header,) = model_rows(session, config, rng, now, [model])
+    if rng.daily:
+        (header,) = model_rows(session, config, rng, now, [model])
+    else:
+        buckets, stats = _bucket_stats(session, model_id, grid, now - rng.span, now)
+        (header,) = model_rows(session, config, rng, now, [model], {model_id: stats})
     rows = _rows_by_source(session, model_id, days)
     hardware, hardware_range = _hardware_points(rows, days, tz)
 
@@ -206,10 +240,8 @@ def series(session: Session, config: Config, snapshot: LiveSnapshot | None, mode
             for d, r in zip(days, lumen)
         ]}
     else:
-        buckets = _bucket_samples(session, model_id, grid, now - rng.span, now)
         instances = {"unit": "bucket", "points": [
-            {"t": t, "healthy": _mean(s.healthy for s in b), "configured": _mean(s.configured for s in b)}
-            for t, b in zip(times, buckets)
+            {"t": t, "healthy": b["healthy"], "configured": b["configured"]} for t, b in zip(times, buckets)
         ]}
 
     if is_daily(rng):
@@ -227,10 +259,8 @@ def series(session: Session, config: Config, snapshot: LiveSnapshot | None, mode
         traffic = {"unit": "day", "points": points}
     else:
         traffic = {"unit": "minute", "points": [
-            {"t": t, "requests": _mean(s.requests_last_minute for s in b),
-             "tokens": _mean(token_sum(s.input_tokens_last_minute, s.output_tokens_last_minute) for s in b),
-             "input_tokens": _mean(s.input_tokens_last_minute for s in b),
-             "output_tokens": _mean(s.output_tokens_last_minute for s in b), "estimated": False}
+            {"t": t, "requests": b["requests"], "tokens": b["tokens"], "input_tokens": b["input_tokens"],
+             "output_tokens": b["output_tokens"], "estimated": False}
             for t, b in zip(times, buckets)
         ]}
     traffic["average"] = {
