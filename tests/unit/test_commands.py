@@ -1,6 +1,7 @@
 """Tests for YAML sync functions in lumen/commands.py."""
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
 import psycopg.errors
@@ -10,7 +11,7 @@ from sqlalchemy.exc import DBAPIError
 
 from lumen import commands
 from lumen.commands import __file__ as commands_file
-from lumen.commands import backfill_aggregate_cmd, check_aggregate_cmd, sync_models_from_yaml
+from lumen.commands import backfill_aggregate_cmd, check_aggregate_cmd, reassign_model_cmd, sync_models_from_yaml
 
 
 def test_sync_models_creates_model_config(app):
@@ -331,3 +332,115 @@ def test_refresh_window_raises_other_errors_immediately(monkeypatch):
 
     assert isinstance(excinfo.value.orig, psycopg.errors.UndefinedTable)
     assert conn.calls == 1
+
+
+@pytest.fixture
+def reassign_data(app):
+    """Two models, one user, and history under the first: a conversation, a stat that
+    collides with one TO already has, a stat that does not, and two request_logs rows."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.conversation import Conversation
+        from lumen.models.entity import Entity
+        from lumen.models.model_config import ModelConfig
+        from lumen.models.model_stat import ModelStat
+        from lumen.models.request_log import RequestLog
+
+        user = Entity(entity_type="user", email="reassign@example.com", name="Reassign", active=True)
+        src = ModelConfig(model_name="old-model", input_cost_per_million=1, output_cost_per_million=1)
+        dst = ModelConfig(model_name="new-model", input_cost_per_million=1, output_cost_per_million=1)
+        db.session.add_all([user, src, dst])
+        db.session.flush()
+        db.session.add_all([
+            Conversation(entity_id=user.id, model="old-model"),
+            ModelStat(entity_id=user.id, model_config_id=src.id, source="chat",
+                      requests=3, input_tokens=30, output_tokens=60, cost=Decimal("0.3")),
+            ModelStat(entity_id=user.id, model_config_id=src.id, source="api",
+                      requests=2, input_tokens=20, output_tokens=40, cost=Decimal("0.2")),
+            ModelStat(entity_id=user.id, model_config_id=dst.id, source="chat",
+                      requests=1, input_tokens=10, output_tokens=20, cost=Decimal("0.1")),
+        ])
+        for _ in range(2):
+            db.session.add(RequestLog(time=datetime.now(timezone.utc), model_config_id=src.id, source="chat"))
+        db.session.commit()
+        return {"src": src.id, "dst": dst.id, "user": user.id}
+
+
+def _stats(db, model_config_id):
+    from lumen.models.model_stat import ModelStat
+    return {
+        s.source: (s.requests, s.input_tokens, s.output_tokens, s.cost)
+        for s in db.session.execute(select(ModelStat).filter_by(model_config_id=model_config_id)).scalars()
+    }
+
+
+def test_reassign_model_moves_everything_on_sqlite(app, reassign_data):
+    src, dst = reassign_data["src"], reassign_data["dst"]
+    result = app.test_cli_runner().invoke(reassign_model_cmd, [str(src), str(dst)])
+    assert result.exit_code == 0, result.output
+    assert "conversations updated: 1" in result.output
+    assert "model_stats moved: 1, merged: 1" in result.output
+    assert "request_logs updated: 2" in result.output
+
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.conversation import Conversation
+        from lumen.models.model_config import ModelConfig
+        from lumen.models.request_log import RequestLog
+
+        models = db.session.execute(select(Conversation.model)).scalars().all()
+        assert models == ["new-model"]
+        assert _stats(db, src) == {}
+        assert _stats(db, dst) == {
+            "chat": (4, 40, 80, Decimal("0.4")),
+            "api": (2, 20, 40, Decimal("0.2")),
+        }
+        owners = db.session.execute(select(RequestLog.model_config_id)).scalars().all()
+        assert owners == [dst, dst]
+        # The FROM row is left alone: still there, unchanged.
+        old = db.session.get(ModelConfig, src)
+        assert old is not None and old.model_name == "old-model"
+
+
+def test_reassign_model_second_run_is_a_noop(app, reassign_data):
+    src, dst = reassign_data["src"], reassign_data["dst"]
+    runner = app.test_cli_runner()
+    assert runner.invoke(reassign_model_cmd, [str(src), str(dst)]).exit_code == 0
+    with app.app_context():
+        from lumen.extensions import db
+        after_first = _stats(db, dst)
+
+    result = runner.invoke(reassign_model_cmd, [str(src), str(dst)])
+    assert result.exit_code == 0, result.output
+    assert "conversations updated: 0" in result.output
+    assert "model_stats moved: 0, merged: 0" in result.output
+    assert "request_logs updated: 0" in result.output
+    with app.app_context():
+        from lumen.extensions import db
+        assert _stats(db, dst) == after_first
+
+
+def test_reassign_model_unknown_id_exits_1(app, reassign_data):
+    runner = app.test_cli_runner()
+    result = runner.invoke(reassign_model_cmd, ["999999", str(reassign_data["dst"])])
+    assert result.exit_code == 1
+    assert "model_config id 999999 not found" in result.output
+    result = runner.invoke(reassign_model_cmd, [str(reassign_data["src"]), "999999"])
+    assert result.exit_code == 1
+    assert "model_config id 999999 not found" in result.output
+
+
+def test_reassign_model_to_itself_exits_1_and_keeps_stats(app, reassign_data):
+    """The old merge loop matched every stat against itself, doubled it, then deleted it."""
+    src = reassign_data["src"]
+    with app.app_context():
+        from lumen.extensions import db
+        before = _stats(db, src)
+
+    result = app.test_cli_runner().invoke(reassign_model_cmd, [str(src), str(src)])
+
+    assert result.exit_code == 1
+    assert "same model_config id" in result.output
+    with app.app_context():
+        from lumen.extensions import db
+        assert _stats(db, src) == before

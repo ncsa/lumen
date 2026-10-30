@@ -355,14 +355,24 @@ def init_db_cmd():
 @click.argument("to_id", type=int)
 @with_appcontext
 def reassign_model_cmd(from_id, to_id):
-    """Move all conversations and stats from one model to another.
+    """Move all conversations, stats and request history from one model to another.
 
-    FROM_ID and TO_ID are model_configs.id values.
+    FROM_ID and TO_ID are model_configs.id values. The FROM row in model_configs is
+    left as it is.
+
+    Not atomic on PostgreSQL: request_logs moves one chunk per transaction, so a
+    failure partway leaves its history split between FROM and TO. It is safe to
+    re-run: the same command picks up where the last one stopped. Run it off-hours
+    for a model with a large history, and retire FROM in config.yaml first so no new
+    requests are logged against it while it runs.
     """
     from lumen.models.conversation import Conversation
     from lumen.models.model_stat import ModelStat
     from lumen.models.request_log import RequestLog
 
+    if from_id == to_id:
+        click.echo(f"Error: FROM and TO are the same model_config id ({from_id}).")
+        raise SystemExit(1)
     src = db.session.get(ModelConfig, from_id)
     dst = db.session.get(ModelConfig, to_id)
     if not src:
@@ -371,10 +381,30 @@ def reassign_model_cmd(from_id, to_id):
     if not dst:
         click.echo(f"Error: model_config id {to_id} not found.")
         raise SystemExit(1)
+    from_name, to_name = src.model_name, dst.model_name
+    # End the read transaction: on PostgreSQL the chunk walk below can run for hours,
+    # and a session left idle in transaction that long is reaped by the server's
+    # idle_in_transaction_session_timeout before the conversations step uses it.
+    db.session.commit()
 
-    click.echo(f"Reassigning from '{src.model_name}' (id={from_id}) to '{dst.model_name}' (id={to_id})")
+    click.echo(f"Reassigning from '{from_name}' (id={from_id}) to '{to_name}' (id={to_id})")
 
-    result = db.session.execute(update(Conversation).where(Conversation.model == src.model_name).values(model=dst.model_name))
+    postgres = db.engine.dialect.name == "postgresql"
+    if postgres:
+        with db.engine.connect() as conn:
+            retention = _retention_job(conn)
+            if retention is not None:
+                click.echo(f"Error: request_logs has a retention policy (job {retention[0]}, "
+                           f"config {retention[1]}).\n"
+                           f"  Refreshing the aggregates over windows whose raw chunks were\n"
+                           f"  dropped would erase their history. Run 'flask check-aggregate'.")
+                raise SystemExit(1)
+            boundaries = {name: _retention_boundary(conn, name) for name in _continuous_aggregates(conn)}
+            # Read before anything moves: afterwards FROM has no raw rows left to date it.
+            start = _reassign_start(conn, from_id, boundaries)
+        log_count = _move_request_logs(from_id, to_id)
+
+    result = db.session.execute(update(Conversation).where(Conversation.model == from_name).values(model=to_name))
     conv_count = result.rowcount
     click.echo(f"  conversations updated: {conv_count}")
 
@@ -403,12 +433,155 @@ def reassign_model_cmd(from_id, to_id):
             stats_moved += 1
     click.echo(f"  model_stats moved: {stats_moved}, merged: {stats_merged}")
 
-    result = db.session.execute(update(RequestLog).where(RequestLog.model_config_id == from_id).values(model_config_id=to_id))
-    log_count = result.rowcount
+    if not postgres:
+        # SQLite has no chunks and no aggregates: one UPDATE in the same transaction.
+        result = db.session.execute(update(RequestLog).where(RequestLog.model_config_id == from_id).values(model_config_id=to_id))
+        log_count = result.rowcount
     click.echo(f"  request_logs updated: {log_count}")
 
     db.session.commit()
+
+    if postgres:
+        if start is None:
+            click.echo("  no request_logs rows for FROM; aggregates unchanged")
+        else:
+            _refresh_reassigned(start, boundaries)
     click.echo("Done.")
+
+
+def _move_request_logs(from_id, to_id):
+    """Move FROM's request_logs rows to TO one chunk per transaction, oldest first.
+
+    Also recompresses every chunk that is flagged compressed but has rows in its
+    uncompressed heap, whether this run moved rows in it or not, so a re-run repairs
+    a chunk left half-done by an interrupted run. Returns the number of rows moved.
+    """
+    done = []
+    moved_total = 0
+    with db.engine.connect() as conn:
+        chunks = conn.execute(text(
+            "SELECT format('%I.%I', chunk_schema, chunk_name), range_start, range_end, is_compressed "
+            "FROM timescaledb_information.chunks WHERE hypertable_name = 'request_logs' "
+            "ORDER BY range_start"
+        )).all()
+        conn.rollback()
+        for chunk, range_start, range_end, compressed in chunks:
+            try:
+                moved = _move_chunk(conn, from_id, to_id, range_start, range_end)
+            except DBAPIError as exc:
+                click.echo(f"Error: moving request_logs rows in {chunk} failed: {exc.orig}")
+                click.echo(f"  Chunks done: {', '.join(done)}" if done else "  No chunk was done.")
+                click.echo("  History is split between FROM and TO until the same command is re-run.")
+                raise SystemExit(1)
+            if moved:
+                moved_total += moved
+                click.echo(f"  {chunk}: {moved} request_logs rows moved")
+            if compressed:
+                try:
+                    if _recompress_chunk(conn, chunk):
+                        click.echo(f"  {chunk}: recompressed")
+                except DBAPIError as exc:
+                    click.echo(f"Error: recompressing {chunk} failed: {exc.orig}")
+                    click.echo("  Re-running the same command finishes it.")
+                    raise SystemExit(1)
+            done.append(chunk)
+    return moved_total
+
+
+def _move_chunk(conn, from_id, to_id, range_start, range_end):
+    """Move FROM's rows inside one chunk's time range in one transaction. Returns the row count."""
+    params = {"f": from_id, "t": to_id, "s": range_start, "e": range_end}
+    with conn.begin():
+        if not conn.execute(text(
+            "SELECT EXISTS (SELECT 1 FROM request_logs "
+            "WHERE model_config_id = :f AND time >= :s AND time < :e)"
+        ), params).scalar():
+            return 0
+        # model_config_id is a compression segmentby column, so this UPDATE decompresses
+        # every batch of FROM in the chunk, and past the per-transaction decompression
+        # limit (100k by default) TimescaleDB aborts it. SET LOCAL lifts the limit for
+        # this one transaction only, and COMMIT puts it back. Never a plain SET: it
+        # outlives the transaction and leaks an unlimited guard to the next user of this
+        # pooled connection. Never on _autocommit_connection() either: there SET LOCAL
+        # has no transaction block to apply to and fails.
+        conn.execute(text("SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"))
+        return conn.execute(text(
+            "UPDATE request_logs SET model_config_id = :t "
+            "WHERE model_config_id = :f AND time >= :s AND time < :e"
+        ), params).rowcount
+
+
+def _recompress_chunk(conn, chunk):
+    """Recompress a compressed chunk that has rows in its uncompressed heap.
+
+    An UPDATE on a compressed chunk writes the rows it touched back uncompressed and
+    leaves the chunk flagged compressed, so the compression policy never revisits it.
+    ``recompress => true`` folds the heap back in (measured on 2.27.2: heap 0 after);
+    ``if_not_compressed => true`` alone would skip the chunk because of that flag.
+    Returns whether it recompressed.
+    """
+    with conn.begin():
+        # chunk is format('%I.%I') from the catalog, so it is already quoted.
+        if not conn.execute(text(f"SELECT EXISTS (SELECT 1 FROM ONLY {chunk})")).scalar():
+            return False
+        conn.execute(text("SELECT compress_chunk(CAST(:c AS regclass), recompress => true)"), {"c": chunk})
+    return True
+
+
+def _retention_boundary(conn, name):
+    """Start of the hour holding ``now() - drop_after`` of a retention policy on ``name``.
+
+    None without a policy. Floored to an hour, in UTC, so refresh windows starting
+    there stay aligned to every aggregate's buckets.
+    """
+    boundary = conn.execute(text(
+        "SELECT now() - CAST(config->>'drop_after' AS interval) FROM timescaledb_information.jobs "
+        "WHERE proc_name = 'policy_retention' AND hypertable_name = :n"
+    ), {"n": name}).scalar()
+    if boundary is None:
+        return None
+    return boundary.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+
+
+def _reassign_start(conn, from_id, boundaries):
+    """Earliest time FROM still shows up, or None if it shows up nowhere.
+
+    Checks raw request_logs and the materialisation hypertable of every aggregate
+    (inside that aggregate's retention), so a re-run after an interrupted refresh
+    still refreshes the months whose buckets are materialised under FROM.
+    """
+    found = [conn.execute(text(
+        "SELECT MIN(time) FROM request_logs WHERE model_config_id = :f"
+    ), {"f": from_id}).scalar()]
+    for name, boundary in boundaries.items():
+        bucket = _bucket_column(conn, name)
+        found.append(conn.execute(text(
+            f'SELECT MIN("{bucket}") FROM {_materialization_hypertable(conn, name)} '
+            f'WHERE model_config_id = :f AND (CAST(:b AS timestamptz) IS NULL OR "{bucket}" >= :b)'
+        ), {"f": from_id, "b": boundary}).scalar())
+    found = [t for t in found if t is not None]
+    return min(found) if found else None
+
+
+def _refresh_reassigned(start, boundaries):
+    """Refresh every aggregate month by month from the month of ``start`` to now.
+
+    The policies only reprocess their own short windows, so without this every older
+    bucket keeps FROM forever. An aggregate with its own retention starts at that
+    boundary instead: refreshing older windows rebuilds rows retention drops again.
+    """
+    month = start.astimezone(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    now = datetime.now(timezone.utc)
+    with _autocommit_connection() as conn:
+        for name, boundary in boundaries.items():
+            first = max(month, boundary) if boundary is not None else month
+            click.echo(f"  refreshing '{name}' from {first:%Y-%m-%d} to {now:%Y-%m-%d}, month by month")
+            try:
+                _refresh_months(conn, name, first, now)
+            except _RefreshFailed as failed:
+                click.echo(f"Error: refreshing '{name}' for {failed.month:%Y-%m} failed: {failed.error.orig}")
+                click.echo("  request_logs is moved; re-run the same command to finish the refresh.")
+                raise SystemExit(1)
 
 
 # --------------------------------------------------------------------------- #
