@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import threading
 import time
@@ -104,7 +105,8 @@ def validate_config_structure(data) -> list:
             for key in ("fold_interval", "fold_lag"):
                 value = stats_cfg.get(key)
                 if value is not None and (
-                    isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0
+                    isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not math.isfinite(value) or value <= 0
                 ):
                     errors.append(f"stats.{key} must be a positive number of seconds")
     models = data.get("models") or []
@@ -175,7 +177,9 @@ def _positive_seconds(value, default: float, key: str) -> float:
     expiry, so `read_timeout: 0` fails every upstream call instantly rather than
     disabling the bound. The Helm schema rejects those values, but editing
     config.yaml directly is the documented hot-reload path and had no such guard.
-    Mirrors ``_send_timeout`` in ``wsgi_disconnect``.
+    Mirrors ``_send_timeout`` in ``wsgi_disconnect``. ``.inf`` and ``.nan`` are
+    rejected too: an infinite interval makes ``Event.wait`` raise, and a NaN
+    compares false with everything.
     """
     if value is None:
         return default
@@ -183,7 +187,7 @@ def _positive_seconds(value, default: float, key: str) -> float:
         parsed = float(value)
     except (TypeError, ValueError):
         parsed = None
-    if parsed is None or parsed <= 0:
+    if parsed is None or not math.isfinite(parsed) or parsed <= 0:
         logger.warning(
             "config.yaml: %s must be a positive number, got %r — using %s",
             key, value, default,

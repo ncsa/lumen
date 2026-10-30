@@ -210,6 +210,28 @@ def test_thread_reads_interval_and_lag_from_config_on_every_pass(app, ids, monke
     assert 6.3 <= sleeps[1] <= 7.7
 
 
+@pytest.mark.parametrize("bad", [float("inf"), float("nan"), 0, -1, "soon", None])
+def test_thread_survives_unusable_interval_and_lag_in_app_config(app, ids, monkeypatch, restore_config, bad):
+    """Whatever lands in app.config, the thread keeps running on the defaults."""
+    at = utcnow() - timedelta(hours=1)
+    _state(at)
+    app.config["STATS_FOLD_INTERVAL"] = bad
+    app.config["STATS_FOLD_LAG"] = bad
+
+    def on_sleep(n, seconds, stop):
+        if n == 2:
+            stop.set()
+
+    before = utcnow()
+    passes, sleeps = _drive_thread(app, monkeypatch, on_sleep)
+
+    assert len(sleeps) == 2
+    assert all(54 <= s <= 66 for s in sleeps)
+    assert passes[0] is not None
+    assert passes[0] <= utcnow() - timedelta(seconds=300)
+    assert passes[0] >= before - timedelta(seconds=300)
+
+
 def test_thread_catches_up_without_sleeping_between_capped_passes(app, ids, monkeypatch):
     at = utcnow() - 3 * MAX_FOLD_WINDOW - fold_lag(app) - timedelta(hours=1)
     _state(at)
