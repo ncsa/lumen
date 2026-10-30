@@ -212,6 +212,22 @@ def test_revoke_if_expired(app, test_user):
         assert _state("never") == (None, None)
 
 
+def test_revoke_if_expired_revokes_a_key_expiring_exactly_now(app, test_user, monkeypatch):
+    # A key is expired the moment the clock reaches expires_at, not only after it.
+    now = utcnow()
+    monkeypatch.setattr("lumen.services.key_expiry.utcnow", lambda: now)
+    with app.app_context():
+        uid = test_user["id"]
+        boundary = _add_key("boundary", uid, expires_at=now)
+        later = _add_key("later", uid, expires_at=now + timedelta(microseconds=1))
+        db.session.commit()
+
+        assert revoke_if_expired(boundary) is True
+        assert (boundary.revoked_at, boundary.revoked_by_entity_id) == (now, None)
+        assert revoke_if_expired(later) is False
+        assert _state("later") == (None, None)
+
+
 @pytest.mark.parametrize("cap, expected", [
     (0, [(DAY, "1 day", False), (7 * DAY, "7 days", False), (30 * DAY, "30 days", False),
          (90 * DAY, "90 days", False), (365 * DAY, "1 year", False), (0, "Never", True)]),

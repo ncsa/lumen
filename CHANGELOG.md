@@ -20,6 +20,7 @@ All notable changes to Lumen will be documented in this file.
 - Upgrade front-end libraries (Bootstrap 5.3.8, Bootstrap Icons 1.13.2, KaTeX 0.19.1, marked 18.1.2, DOMPurify 3.4.17, Chart.js 4.6.1); CDN assets are now version-pinned and loaded with Subresource Integrity. (#328)
 - OAuth key requests that replace an existing key now refresh its secret in place, keeping its name and usage stats, instead of revoking it. (#182)
 - Tests now pin the model `end_date` boundary: a model is blocked and hidden from the exact end instant. (#311)
+- Tests now pin that an API key expiring exactly now is rejected and revoked on use. (#366)
 - Lumen now checks TimescaleDB health at startup and on `/metrics`: extension version drift, a missing `request_logs` hypertable or aggregate, missing or failing background jobs. The chart and compose example pin `timescaledb:2.27.2-pg17` and state that TimescaleDB is required. Added a TimescaleDB upgrade runbook (`ALTER EXTENSION timescaledb UPDATE`). (#173)
 - Billing takes the per-entity balance lock last and no longer runs existence SELECTs, so concurrent requests from one entity or project key queue far less. (#171)
 
