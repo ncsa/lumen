@@ -4,7 +4,8 @@ Seeds 31d of 1-minute probes and samples (the default `refresh.web` and
 `retention`) and a year of daily rows per model and source (which `1y` reads,
 and which are kept forever), then times `/api/overview`, `/api/lumen` and `/api/series` for
 each range on SQLite, and on PostgreSQL when `MONITOR_TEST_POSTGRES_URL` is set.
-The default test run skips it; run it with
+The default test run skips it. Name the file to run it: it is not a `test_*.py`
+file, so `pytest -m bench` alone collects nothing.
 
     uv run pytest tests/bench_ranges.py -m bench -s
 
@@ -25,7 +26,7 @@ from sqlalchemy import delete, insert, text
 
 from monitor import migrate, web
 from monitor.buckets import RANGES
-from monitor.config import ConfigStore
+from monitor.config import DEFAULT_RETENTION, ConfigStore, parse_duration
 from monitor.db import make_engine, make_session_factory, utcnow
 from monitor.models import DailyStat, Probe, Sample
 from monitor.probe import LiveSnapshot, Snapshot
@@ -33,9 +34,18 @@ from monitor.probe import LiveSnapshot, Snapshot
 # Seeding alone can outlast the suite-wide timeout.
 pytestmark = [pytest.mark.bench, pytest.mark.timeout(0)]
 
-MODELS = int(os.environ.get("MONITOR_BENCH_MODELS", "13"))
-REPEAT = int(os.environ.get("MONITOR_BENCH_REPEAT", "3"))
-SPAN = timedelta(days=31)
+
+
+def _count(name: str, default: int) -> int:
+    value = os.environ.get(name, str(default))
+    if not value.isdigit() or int(value) < 1:
+        raise pytest.UsageError(f"{name} must be a positive integer, got {value!r}")
+    return int(value)
+
+
+MODELS = _count("MONITOR_BENCH_MODELS", 13)
+REPEAT = _count("MONITOR_BENCH_REPEAT", 3)
+SPAN = parse_duration(DEFAULT_RETENTION, "retention")
 DAYS = 400  # More than the 1y range covers.
 STEP = timedelta(minutes=1)
 CHUNK = 50_000
@@ -166,6 +176,10 @@ def run(url: str, tmp_path, label: str) -> None:
                     response = client.get(endpoint, query_string={**params, "range": key})
                     timings.append(1000 * (time.perf_counter() - started))
                     assert response.status_code == HTTPStatus.OK, (endpoint, key, response.status_code)
+                if endpoint == "/api/overview":
+                    # Every model has an uptime only if the range read seeded rows.
+                    missing = [row["id"] for row in response.get_json()["models"] if row["uptime"] is None]
+                    assert not missing, (key, missing)
                 cells.append(f"{statistics.median(timings):.0f} / {max(timings):.0f}")
             lines.append(f"{key:<6}" + "".join(f"{cell:>24}" for cell in cells))
         print("\n".join(lines))
