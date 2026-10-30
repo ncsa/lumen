@@ -250,7 +250,8 @@ flask check-stats [--fix]
 Every difference is printed per `model_stats` / `entity_stats` row, and the command exits 1. A
 difference means requests the fold missed, such as a billing transaction that committed more than
 `stats.fold_lag` after its timestamp. `--fix` adds each difference to the totals instead. Before the
-cutover it does nothing. It scans every `request_logs` row since the cutover.
+cutover it does nothing. It scans every `request_logs` row since the cutover and holds the fold
+state while it does, so on a large install run it at a quiet time: the fold waits until it finishes.
 
 ---
 

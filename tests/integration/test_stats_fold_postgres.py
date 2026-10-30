@@ -341,3 +341,38 @@ def test_usage_summary_last_active_includes_the_tail(pg_app):
         sess["entity_id"] = entity_id
     body = client.get("/api/usage/summary?period=all").get_json()
     assert body["last_active"] == last.isoformat() + "Z"
+
+
+def test_usage_summary_last_active_survives_a_fold_mid_read(pg_app, monkeypatch):
+    """A pass committing right after the stats read folds the latest request
+    and moves the watermark past it: read in that order, the stats are old and
+    the tail empty. The summary re-reads instead and still shows that request."""
+    from lumen.blueprints.profile import routes as profile_routes
+    from lumen.extensions import db
+    from lumen.services.stats_fold import fold_lag, fold_once
+    from lumen.timeutils import utcnow
+
+    lo = utcnow() - timedelta(hours=1)
+    last = lo + timedelta(minutes=1)
+    with pg_app.app_context():
+        entity_id, model_id = _entity_and_model("midread")
+        _cut_over_at(lo)
+        _log(entity_id, model_id, last)
+        db.session.commit()
+
+    real = profile_routes._fetch_last_used_at
+    passes = []
+
+    def read_then_fold(eid):
+        value = real(eid)
+        if not passes:
+            passes.append(fold_once(pg_app, now=utcnow() + fold_lag(pg_app)))
+        return value
+
+    monkeypatch.setattr(profile_routes, "_fetch_last_used_at", read_then_fold)
+    client = pg_app.test_client()
+    with client.session_transaction() as sess:
+        sess["entity_id"] = entity_id
+    body = client.get("/api/usage/summary?period=all").get_json()
+    assert passes[0] is not None and passes[0] > last, "the fold did not move the watermark past the request"
+    assert body["last_active"] == last.isoformat() + "Z"
