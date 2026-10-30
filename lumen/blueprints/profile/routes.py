@@ -202,8 +202,30 @@ def _add_usage(row, tail_rows):
     return requests, input_tokens, output_tokens, cost, last
 
 
-#: How often ``_fetch_usage`` re-reads when a fold pass commits in the middle.
+#: How often a live-tail read is repeated when a fold pass commits in the middle.
 _LIVE_TAIL_ATTEMPTS = 3
+
+
+def _read_with_live_tail(read_folded, read_tail):
+    """``(read_folded(), read_tail(folded_until))``, read as one consistent view.
+
+    The watermark is read before and after: a fold pass committing in between
+    moves rows from the tail into the tables mid-read, so the tail would count
+    them twice or not at all. Such a read is repeated, and the tail of a read
+    that never validates is dropped: the folded tables alone (a few minutes
+    behind) never double count. The tail is None before the stats cutover too,
+    when billing keeps the tables exact.
+    """
+    folded = None
+    for _ in range(_LIVE_TAIL_ATTEMPTS):
+        since = get_fold_state().folded_until
+        folded = read_folded()
+        if since is None:
+            return folded, None
+        tail = read_tail(since)
+        if get_fold_state().folded_until == since:
+            return folded, tail
+    return folded, None
 
 
 def _fetch_usage(eid: int, live_tail: bool):
@@ -211,20 +233,16 @@ def _fetch_usage(eid: int, live_tail: bool):
 
     With ``live_tail``, after the stats cutover, the entity's own request_logs
     since ``folded_until`` (not folded yet) are added on top of the folded
-    tables, so the totals are exact rather than a few minutes behind. The
-    watermark is read before and after: a fold pass committing in between
-    would have moved rows from the tail into the tables mid-read, counting
-    them twice or not at all, so the reads are repeated.
+    tables, so the totals are exact rather than a few minutes behind.
     """
-    for _ in range(_LIVE_TAIL_ATTEMPTS):
-        since = get_fold_state().folded_until if live_tail else None
-        chat_agg, conversation_count = _fetch_chat_stats(eid)
-        usage_rows = _fetch_model_usage_rows(eid)
-        if since is None:
-            return chat_agg, conversation_count, usage_rows
-        tail = _fetch_live_tail(eid, since)
-        if get_fold_state().folded_until == since:
-            break
+    def read_folded():
+        return (*_fetch_chat_stats(eid), _fetch_model_usage_rows(eid))
+
+    if not live_tail:
+        return read_folded()
+    (chat_agg, conversation_count, usage_rows), tail = _read_with_live_tail(
+        read_folded, lambda since: _fetch_live_tail(eid, since),
+    )
     if not tail:
         return chat_agg, conversation_count, usage_rows
     chat_agg = _add_usage(chat_agg, [t for t in tail if t[1] == "chat"])
@@ -233,6 +251,20 @@ def _fetch_usage(eid: int, live_tail: bool):
         by_model[mid] = _add_usage(by_model.get(mid, (0, 0, 0, 0, None)), [t for t in tail if t[0] == mid])
     usage_rows = [(mid, *u) for mid, u in by_model.items()]
     return chat_agg, conversation_count, usage_rows
+
+
+def _fetch_last_used_at(eid: int):
+    """The entity's folded ``last_used_at`` (a column read, never a cached ORM row)."""
+    return db.session.scalar(select(EntityStat.last_used_at).where(EntityStat.entity_id == eid))
+
+
+def _fetch_live_tail_last(eid: int, since):
+    """The entity's latest request_logs time from ``since`` on, naive UTC, or None."""
+    last = db.session.scalar(
+        select(func.max(RequestLog.time))
+        .where(RequestLog.entity_id == eid, RequestLog.time >= as_utc_aware(since))
+    )
+    return as_utc_naive(last) if last is not None else None
 
 
 def _build_model_usage(usage_rows, all_models, eps_by_model, access_statuses):
@@ -792,19 +824,15 @@ def usage_summary():
             {where}
         """
         row = db.session.execute(text(agg_sql), params).one()
-        stat = db.session.execute(
-            select(EntityStat).filter_by(entity_id=eid)
-        ).scalar_one_or_none()
-        last_used_at = stat.last_used_at if stat else None
-        # The user's own page adds the requests the stats fold has not reached yet.
-        since = get_fold_state().folded_until if eid == session["entity_id"] else None
-        if since is not None:
-            tail_last = db.session.scalar(
-                select(func.max(RequestLog.time))
-                .where(RequestLog.entity_id == eid, RequestLog.time >= as_utc_aware(since))
+        if eid == session["entity_id"]:
+            # The user's own page adds the requests the stats fold has not reached yet.
+            last_used_at, tail_last = _read_with_live_tail(
+                lambda: _fetch_last_used_at(eid), lambda since: _fetch_live_tail_last(eid, since),
             )
-            if tail_last is not None and (last_used_at is None or as_utc_naive(tail_last) > last_used_at):
-                last_used_at = as_utc_naive(tail_last)
+            if tail_last is not None and (last_used_at is None or tail_last > last_used_at):
+                last_used_at = tail_last
+        else:
+            last_used_at = _fetch_last_used_at(eid)
         last_active = last_used_at.isoformat() + "Z" if last_used_at else None
         new_users = 0
     elif start is not None:

@@ -89,6 +89,24 @@ def test_profile_rereads_when_a_fold_commits_mid_read(app, auth_client, post_cut
     assert total_tokens == 15
 
 
+def test_profile_drops_the_tail_when_every_read_meets_a_fold(app, auth_client, post_cutover, test_user, test_model, model_id, monkeypatch):
+    """A fold commits during every attempt, as passes do back to back while
+    the fold catches up: no read validates, so the page falls back to the
+    folded tables alone rather than merge a tail it knows is inconsistent."""
+    real = profile_routes._fetch_chat_stats
+
+    def bill_fold_then_read(eid):
+        _bill(app, test_user["id"], model_id, "api")
+        assert fold(app) is not None
+        return real(eid)
+
+    monkeypatch.setattr(profile_routes, "_fetch_chat_stats", bill_fold_then_read)
+    _, usage, total_tokens = _profile(app, auth_client)
+    billed = profile_routes._LIVE_TAIL_ATTEMPTS
+    assert usage[test_model["model_name"]][0] == billed
+    assert total_tokens == 15 * billed
+
+
 def test_profile_has_no_tail_before_the_cutover(app, auth_client, test_user, model_id):
     """Before the cutover billing bumps the tables; a tail would count requests twice."""
     with app.app_context():
