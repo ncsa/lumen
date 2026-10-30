@@ -106,7 +106,6 @@ def reset_timescale_health():
     """
     yield
     metrics_snapshot._timescale = None
-    metrics_snapshot._timescale_error = None
 
 
 @pytest.fixture(autouse=True)

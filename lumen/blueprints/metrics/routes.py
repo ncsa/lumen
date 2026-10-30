@@ -254,10 +254,12 @@ def _timescale_families(timescale):
     for name in EXPECTED_JOBS:
         job = health.job(name)
         present.add_metric([name], 0.0 if job is None else 1.0)
+        # Emitted for a missing job too: a counter series that disappears and
+        # reappears reads as a reset, and rate() invents a spike.
+        failures.add_metric([name], float(job.total_failures or 0) if job else 0.0)
         if job is None:
             continue
         last_run_failed.add_metric([name], 1.0 if job.last_run_status == "Failed" else 0.0)
-        failures.add_metric([name], float(job.total_failures or 0))
         if job.last_successful_finish is not None:
             finish = job.last_successful_finish
             if finish.tzinfo is not None:

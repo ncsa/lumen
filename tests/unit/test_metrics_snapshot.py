@@ -489,3 +489,58 @@ def test_a_failing_job_is_logged_again_only_when_its_count_rises(caplog):
     assert len(messages) == 2
     assert messages[0].endswith("failed its last run; 1 failures in total.")
     assert messages[1].endswith("failed its last run; 2 failures in total.")
+
+
+def test_request_logs_retention_appearing_later_is_an_error(caplog):
+    """The same level the startup tripwire logs it at."""
+    with caplog.at_level("INFO"):
+        metrics_snapshot._log_health_changes(_health(), dataclasses.replace(_health(), request_logs_retention=True))
+    assert _timescale_messages(caplog) == [
+        (logging.ERROR, f"TimescaleDB: {timescale_health.REQUEST_LOGS_RETENTION}"),
+    ]
+
+
+class _PgError(Exception):
+    def __init__(self, sqlstate):
+        super().__init__(f"sqlstate {sqlstate}")
+        self.sqlstate = sqlstate
+
+
+class _DBError(Exception):
+    def __init__(self, sqlstate):
+        super().__init__("statement failed")
+        self.orig = _PgError(sqlstate)
+
+
+def _run_one_check(app, monkeypatch, exc, health_error=None):
+    def boom():
+        raise exc
+
+    monkeypatch.setattr(metrics_snapshot, "refresh_timescale_health", boom)
+    with app.app_context():
+        return metrics_snapshot._run_pass(True, health_error)
+
+
+def test_missing_catalog_view_is_skipped_quietly_as_at_startup(app, restore_snapshot, monkeypatch, caplog):
+    with caplog.at_level("WARNING"):
+        assert _run_one_check(app, monkeypatch, _DBError("42P01")) is None
+    assert "TimescaleDB" not in caplog.text
+    assert metrics_snapshot.get_timescale_health() is None
+
+
+def test_health_check_failures_are_told_apart_by_type(app, restore_snapshot, monkeypatch, caplog):
+    with caplog.at_level("WARNING"):
+        first = _run_one_check(app, monkeypatch, RuntimeError(""))
+        second = _run_one_check(app, monkeypatch, ValueError(""), first)
+        third = _run_one_check(app, monkeypatch, ValueError(""), second)
+    assert (first, second, third) == ("RuntimeError: ", "ValueError: ", "ValueError: ")
+    failures = [r for r in caplog.records if "Could not check TimescaleDB health" in r.getMessage()]
+    assert len(failures) == 2
+
+
+def test_a_successful_check_clears_the_remembered_failure(app, restore_snapshot, monkeypatch):
+    monkeypatch.setattr(metrics_snapshot, "refresh_timescale_health", lambda: None)
+    with app.app_context():
+        assert metrics_snapshot._run_pass(True, "RuntimeError: x") is None
+        # Not due this pass: the failure is carried over unchanged.
+        assert metrics_snapshot._run_pass(False, "RuntimeError: x") == "RuntimeError: x"

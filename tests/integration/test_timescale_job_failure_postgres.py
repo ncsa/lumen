@@ -79,6 +79,9 @@ def test_a_failing_job_sets_last_run_failed_and_raises_failures_total(pg_migrate
             assert time.monotonic() < deadline, f"the scheduler did not run job {job.job_id} in {_WAIT}s"
             time.sleep(0.5)
     finally:
+        # check() matches jobs on (proc_name, target), so while the job points at
+        # the failing procedure it reads as *missing*, not failed. The proc is
+        # restored before anything is checked.
         with engine.begin() as conn:
             # Unscheduled first, so no retry runs the restored policy and clears the status.
             conn.execute(text("SELECT alter_job(:id, scheduled => false)"), params)

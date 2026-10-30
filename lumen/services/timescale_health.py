@@ -37,6 +37,9 @@ HYPERTABLE_MISSING = (
     "request_logs is not a TimescaleDB hypertable; the usage charts and their "
     "continuous aggregates depend on it."
 )
+#: :func:`keyed_problems` keys that mean the usage charts cannot work at all; logged as ERROR.
+FATAL_PROBLEMS = frozenset({"extension", "hypertable"})
+
 REQUEST_LOGS_RETENTION = (
     "request_logs has a retention policy, but request_logs must never be pruned. "
     "Remove it with SELECT remove_retention_policy('request_logs');"

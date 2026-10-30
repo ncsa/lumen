@@ -87,8 +87,9 @@ _JITTER = 0.1
 #: refresh job shows on /metrics long before it can leave a gap.
 _TIMESCALE_HEALTH_INTERVAL = 300.0
 
-#: Problems that mean the usage charts cannot work at all; logged as ERROR, as at startup.
-_FATAL_PROBLEMS = frozenset({"extension", "hypertable"})
+#: Problems the refresher logs as ERROR: the fatal ones, as at startup, and a
+#: ``request_logs`` retention policy, as the startup tripwire does.
+_ERROR_PROBLEMS = timescale_health.FATAL_PROBLEMS | {"retention:request_logs"}
 
 _PROCESS_START = time.monotonic()
 
@@ -216,9 +217,6 @@ class TimescaleHealthSnapshot:
 #: ``None`` until the first check, and forever on SQLite.
 _timescale: Optional[TimescaleHealthSnapshot] = None
 
-#: The last health-check failure logged, so a persistent one is logged once.
-_timescale_error: Optional[str] = None
-
 
 def get_timescale_health() -> Optional[TimescaleHealthSnapshot]:
     """The latest TimescaleDB health check, or ``None`` before the first. Never queries."""
@@ -241,11 +239,9 @@ def refresh_timescale_health() -> Optional[TimescaleHealthSnapshot]:
 
     PostgreSQL only; on SQLite nothing is checked or published.
     """
-    global _timescale_error
     if db.engine.dialect.name != "postgresql":
         return None
     health = timescale_health.check(db.session)
-    _timescale_error = None
     _log_health_changes(_timescale.health if _timescale else None, health)
     return publish_timescale_health(health)
 
@@ -261,7 +257,7 @@ def _log_health_changes(previous: Optional[TimescaleHealth], current: TimescaleH
     before = timescale_health.keyed_problems(previous) if previous else {}
     for key, message in now.items():
         if before.get(key) != message:
-            level = logging.ERROR if key in _FATAL_PROBLEMS else logging.WARNING
+            level = logging.ERROR if key in _ERROR_PROBLEMS else logging.WARNING
             logger.log(level, "TimescaleDB: %s", message)
     for key, message in before.items():
         if key not in now:
@@ -282,13 +278,16 @@ def _log_health_changes(previous: Optional[TimescaleHealth], current: TimescaleH
             )
 
 
-def _run_pass(check_timescale: bool) -> None:
+def _run_pass(check_timescale: bool, health_error: Optional[str] = None) -> Optional[str]:
     """One pass inside the caller's app context: the snapshot, then the health check if due.
 
     Each half has its own ``try``. The health check runs second, so it cannot
     delay the snapshot, and a raising check leaves the snapshot just published.
+
+    *health_error* is what the last failed health check raised, and the return
+    value is the same after this pass (``None`` once a check succeeds), so a
+    check that keeps failing the same way is logged once.
     """
-    global _timescale_error
     try:
         refresh_snapshot()
     except Exception:
@@ -297,14 +296,20 @@ def _run_pass(check_timescale: bool) -> None:
         logger.exception("metrics snapshot refresh error")
         db.session.rollback()
     if not check_timescale:
-        return
+        return health_error
     try:
         refresh_timescale_health()
     except Exception as e:  # noqa: BLE001 - a health check must never stop the refresher
         db.session.rollback()
-        if str(e) != _timescale_error:
-            logger.warning("Could not check TimescaleDB health: %s", e)
-        _timescale_error = str(e)
+        # 42P01 undefined_table: a catalog view the check reads does not exist.
+        # Skipped quietly, as at startup.
+        if getattr(getattr(e, "orig", None), "sqlstate", None) == "42P01":
+            return health_error
+        error = f"{type(e).__name__}: {e}"
+        if error != health_error:
+            logger.warning("Could not check TimescaleDB health: %s", error)
+        return error
+    return None
 
 
 def refresh_interval(app) -> float:
@@ -326,6 +331,7 @@ def start_snapshot_refresher(app):
 
     def run():
         passes = 0
+        health_error = None
         while not stop.is_set():
             health_every = math.ceil(_TIMESCALE_HEALTH_INTERVAL / refresh_interval(app))
             check_timescale = passes % health_every == 0
@@ -339,7 +345,7 @@ def start_snapshot_refresher(app):
                 # matters — no session and no Flask context may outlive the work
                 # that needs it.
                 with app.app_context():
-                    _run_pass(check_timescale)
+                    health_error = _run_pass(check_timescale, health_error)
             except Exception:
                 # Entering or leaving the context failed; the loop must survive it.
                 logger.exception("metrics snapshot refresh error")

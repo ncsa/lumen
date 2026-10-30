@@ -368,6 +368,9 @@ def test_timescale_gauges_after_a_check(app, client):
     assert samples['lumen_timescaledb_job_failures_total{job="refresh:request_counts_hourly"}'] == 3
     # A job that never ran yet has no stats: zero failures, no success age.
     assert samples['lumen_timescaledb_job_failures_total{job="retention:request_metrics_1m"}'] == 0
+    # A missing job keeps its counter series at 0, so it never disappears and reappears.
+    assert samples['lumen_timescaledb_job_failures_total{job="refresh:request_counts_hourly_by_entity"}'] == 0
+    assert 'lumen_timescaledb_job_last_run_failed{job="refresh:request_counts_hourly_by_entity"}' not in samples
     assert 'lumen_timescaledb_job_last_success_age_seconds{job="retention:request_metrics_1m"}' not in samples
     age = samples['lumen_timescaledb_job_last_success_age_seconds{job="compression:request_logs"}']
     assert 590 < age < 700
