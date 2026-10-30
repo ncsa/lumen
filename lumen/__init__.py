@@ -181,6 +181,42 @@ def _warn_if_request_logs_has_retention(app):
         )
 
 
+def _log_timescale_health(app):
+    """Log the TimescaleDB health summary once per serving process. Never raises.
+
+    WARNING per problem; ERROR when the extension is missing or ``request_logs``
+    is not a hypertable. Startup carries on either way: this only makes a broken
+    or drifted TimescaleDB setup visible. A retention policy on ``request_logs``
+    is left out, because ``_warn_if_request_logs_has_retention`` has just logged
+    it as an ERROR. Same failure handling as that tripwire.
+    """
+    from lumen.extensions import db
+    from lumen.services import timescale_health
+
+    if db.engine.dialect.name != "postgresql":
+        return
+    try:
+        health = timescale_health.check(db.session)
+    except Exception as e:  # noqa: BLE001 - a health check must never block startup
+        db.session.rollback()
+        orig = getattr(e, "orig", None)
+        # 42P01 undefined_table: a catalog view this check reads does not exist.
+        if getattr(orig, "sqlstate", None) == "42P01":
+            return
+        app.logger.warning("Could not check TimescaleDB health: %s", e)
+        return
+    found = [p for p in timescale_health.problems(health)
+             if p != timescale_health.REQUEST_LOGS_RETENTION]
+    for problem in found:
+        fatal = problem in (timescale_health.EXTENSION_MISSING, timescale_health.HYPERTABLE_MISSING)
+        app.logger.log(logging.ERROR if fatal else logging.WARNING, "TimescaleDB: %s", problem)
+    if not found:
+        app.logger.info(
+            "TimescaleDB %s: request_logs hypertable, %d aggregates and %d expected jobs present.",
+            health.installed_version, len(health.aggregates), len(health.jobs),
+        )
+
+
 def compact_number(n) -> str:
     """Format a count for display: full number below a million, else "3.2 million" / "16.1 billion"."""
     n = n or 0
@@ -736,6 +772,7 @@ def create_app():
                   file=sys.stderr)
         if not non_serving_cli:
             _warn_if_request_logs_has_retention(app)
+            _log_timescale_health(app)
             try:
                 # Prime the metrics snapshot synchronously: without it every rolling
                 # restart serves an empty snapshot for a whole refresh interval, and
