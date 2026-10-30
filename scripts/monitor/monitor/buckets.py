@@ -8,6 +8,8 @@ the daily rows. A bucket takes the worst status of what fell into it
 
 `bucket_index()` and `status_rank()` do the same bucketing in SQL, so a query
 can `GROUP BY` bucket and return one row per bucket instead of every row.
+`utc_slot()` groups rows into slots aligned to the UTC clock instead, which
+Python can then map to local days.
 """
 
 import math
@@ -187,6 +189,23 @@ def bucket_index(column, grid: Grid) -> ColumnElement:
     return (epoch_us(column) - literal(start, BigInteger)) // literal(size, BigInteger)
 
 
+def utc_slot(column, seconds: int = 900) -> ColumnElement:
+    """SQL for the slot of `column` on the UTC clock: `floor(epoch seconds / seconds)`, in whole microseconds.
+
+    Unlike `bucket_index`, the slots do not depend on a range's start or on now:
+    with the default 15 minutes, every slot starts on a UTC quarter hour. Every
+    timezone offset and DST shift in use is a whole number of quarter hours, so
+    local midnight is a slot edge and a slot never spans two local days. Only
+    valid for times after the epoch (the division truncates).
+    """
+    return epoch_us(column) // literal(seconds * 1_000_000, BigInteger)
+
+
+def slot_start(slot: int, seconds: int = 900) -> datetime:
+    """The start (naive UTC) of a `utc_slot()`."""
+    return EPOCH + timedelta(seconds=slot * seconds)
+
+
 def status_rank(column) -> ColumnElement:
     """SQL for a status's `STATUS_PRIORITY`, 0 for any other status; `MAX()` of it is a bucket's worst."""
     return case(*((column == s, p) for s, p in STATUS_PRIORITY.items()), else_=0)
@@ -231,6 +250,16 @@ def lumen_daily_status(polls: int, polls_up: int, polls_ok: int) -> str:
     if polls_ok / polls >= DAILY_OK:
         return OK
     return DEGRADED
+
+
+def probe_rank(success, model_count, models_up, down_above: float = DEFAULT_DOWN_ABOVE) -> ColumnElement:
+    """SQL for the `STATUS_PRIORITY` of `probe_status()`; `MAX()` of it is a bucket's worst probe."""
+    return case(
+        (~success, STATUS_PRIORITY[DOWN]),
+        (model_count.is_(None) | models_up.is_(None) | (models_up >= model_count), STATUS_PRIORITY[OK]),
+        ((model_count - models_up) * 100 > literal(down_above) * model_count, STATUS_PRIORITY[DOWN]),
+        else_=STATUS_PRIORITY[DEGRADED],
+    )
 
 
 def daily_status(polls: int | None, polls_ok: int | None) -> str:
