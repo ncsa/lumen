@@ -1,7 +1,7 @@
 # Example: the monitor and its own PostgreSQL database.
 #   cp config.yaml.example config.yaml   # then edit: lumen.url, price, models
 #   MONITOR_LUMEN_API_KEY=... docker compose -f scripts/monitor/compose.yaml up -d --build
-# The dashboard has no login: keep port 5000 on an internal network or behind the reverse proxy.
+# The dashboard has no login: keep port 5002 on an internal network or behind the reverse proxy.
 # Run a single replica; two would double-write probes and double-count totals.
 services:
   monitor:
@@ -20,7 +20,7 @@ services:
     volumes:
       - ./config.yaml:/app/config.yaml:ro
     ports:
-      - "127.0.0.1:5000:5000"
+      - "127.0.0.1:5002:5002"
 
   postgres:
     image: postgres:17

@@ -28,6 +28,6 @@ ENV PATH="/app/.venv/bin:$PATH" \
 
 USER 1000
 
-EXPOSE 5000
+EXPOSE 5002
 
 CMD ["sh", "-c", "monitor migrate && exec monitor serve"]

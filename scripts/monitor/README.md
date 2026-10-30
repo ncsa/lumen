@@ -22,7 +22,7 @@ uv sync
 uv run monitor migrate               # create or upgrade the schema
 uv run monitor collect --probe       # probe GET /v1/models once: health, response time, samples
 uv run monitor collect --price       # record today's Lumen, models.dev and hardware prices once
-uv run monitor serve                 # the loops plus the dashboard on :5000 until SIGTERM/SIGINT
+uv run monitor serve                 # the loops plus the dashboard on :5002 until SIGTERM/SIGINT
 ```
 
 A probe writes one `probes` row (success, response time, models listed and up) and, when it
@@ -78,7 +78,7 @@ only when it is `final` and not `estimated`.
 
 ![Overview](docs/overview.png)
 
-`monitor serve` also serves the dashboard (no login) on port 5000 (`--host`, `--port`), in
+`monitor serve` also serves the dashboard (no login) on port 5002 (`--host`, `--port`), in
 the same process as the loops so it sees the last probe. Every page, API and static file sits
 under `base_path` (restart after changing it). The overview has:
 
@@ -139,7 +139,7 @@ CI publishes the image as `ncsa/lumen-monitor` and `ghcr.io/ncsa/lumen-monitor` 
 
 ```bash
 docker build -t lumen-monitor scripts/monitor
-docker run -p 5000:5000 -v $PWD/config.yaml:/app/config.yaml lumen-monitor
+docker run -p 5002:5002 -v $PWD/config.yaml:/app/config.yaml lumen-monitor
 ```
 
 The container runs `monitor migrate && monitor serve`.
@@ -151,7 +151,7 @@ cp scripts/monitor/config.yaml.example scripts/monitor/config.yaml   # then edit
 MONITOR_LUMEN_API_KEY=... MONITOR_DB_PASSWORD=... docker compose -f scripts/monitor/compose.yaml up -d --build
 ```
 
-It publishes the dashboard on `127.0.0.1:5000` only; put the reverse proxy in front of it and
+It publishes the dashboard on `127.0.0.1:5002` only; put the reverse proxy in front of it and
 set `MONITOR_BASE_PATH` (or `base_path`) when it is served under a prefix such as `/monitor`.
 
 **Run a single replica.** The loops run inside the web process, so two replicas would both
