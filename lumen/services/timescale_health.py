@@ -145,8 +145,12 @@ def check(conn) -> TimescaleHealth:
     )
 
 
-def problems(health: TimescaleHealth) -> list[str]:
-    """One message per problem, in a stable order; empty when everything is healthy."""
+def problems(health: TimescaleHealth, *, include_request_logs_retention: bool = True) -> list[str]:
+    """One message per problem, in a stable order; empty when everything is healthy.
+
+    ``include_request_logs_retention=False`` leaves out the ``request_logs``
+    retention problem, for callers that report it through the tripwire instead.
+    """
     if not health.extension_installed:
         return [EXTENSION_MISSING]
     found = []
@@ -172,11 +176,13 @@ def problems(health: TimescaleHealth) -> list[str]:
         if job is None:
             proc, target = EXPECTED_JOBS[name]
             found.append(f"Background job {name} ({proc} on {target}) is missing.")
+        # job_stats.last_run_status is only 'Success' or 'Failed'; a crashed worker
+        # leaves last_run_success false, so it reads 'Failed' too.
         elif job.last_run_status == "Failed":
             found.append(
                 f"Background job {name} (job {job.job_id}) failed its last run; "
                 f"{job.total_failures or 0} failures in total."
             )
-    if health.request_logs_retention:
+    if include_request_logs_retention and health.request_logs_retention:
         found.append(REQUEST_LOGS_RETENTION)
     return found

@@ -136,7 +136,7 @@ def test_missing_aggregate_also_loses_its_refresh_job():
     assert found == [
         "Continuous aggregate request_counts_hourly is missing.",
         "Background job refresh:request_counts_hourly "
-        "(policy_refresh_continuous_aggregate on request_counts_hourly) is missing.",
+        + "(policy_refresh_continuous_aggregate on request_counts_hourly) is missing.",
     ]
 
 
@@ -185,6 +185,7 @@ def test_request_logs_retention_is_its_own_flag():
     health = check(_healthy_conn(jobs=jobs))
     assert health.request_logs_retention is True
     assert problems(health) == [REQUEST_LOGS_RETENTION]
+    assert problems(health, include_request_logs_retention=False) == []
 
 
 def test_request_metrics_1m_retention_never_sets_the_request_logs_flag():
@@ -263,12 +264,13 @@ def test_missing_hypertable_is_an_error_and_other_problems_are_warnings(app, mon
 
 
 def test_request_logs_retention_is_left_to_the_tripwire(app, monkeypatch, caplog):
+    """Not logged again, and no "healthy" summary that would contradict the tripwire's ERROR."""
     jobs = _jobs((1005, "policy_retention", "request_logs", "Success", 0, _FINISHED))
     _with_health(monkeypatch, _healthy_conn(jobs=jobs))
     with app.app_context(), caplog.at_level(logging.INFO):
         _as_postgres(monkeypatch)
         _log_timescale_health(app)
-    assert [r.levelno for r in _logged(caplog)] == [logging.INFO]
+    assert _logged(caplog) == []
 
 
 def test_missing_catalog_is_skipped_quietly(app, monkeypatch, caplog):
@@ -283,7 +285,10 @@ def test_missing_catalog_is_skipped_quietly(app, monkeypatch, caplog):
 
 
 def test_query_failure_is_a_warning(app, monkeypatch, caplog):
-    """The real catalog query fails on SQLite; startup carries on with a WARNING."""
+    def raise_other_error(session):
+        raise ProgrammingError("SELECT ...", {}, _PgError("42501"))
+
+    monkeypatch.setattr(timescale_health, "check", raise_other_error)
     with app.app_context(), caplog.at_level(logging.INFO):
         _as_postgres(monkeypatch)
         _log_timescale_health(app)

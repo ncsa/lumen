@@ -188,7 +188,8 @@ def _log_timescale_health(app):
     is not a hypertable. Startup carries on either way: this only makes a broken
     or drifted TimescaleDB setup visible. A retention policy on ``request_logs``
     is left out, because ``_warn_if_request_logs_has_retention`` has just logged
-    it as an ERROR. Same failure handling as that tripwire.
+    it as an ERROR; it still suppresses the INFO "healthy" summary. Same failure
+    handling as that tripwire.
     """
     from lumen.extensions import db
     from lumen.services import timescale_health
@@ -205,12 +206,11 @@ def _log_timescale_health(app):
             return
         app.logger.warning("Could not check TimescaleDB health: %s", e)
         return
-    found = [p for p in timescale_health.problems(health)
-             if p != timescale_health.REQUEST_LOGS_RETENTION]
+    found = timescale_health.problems(health, include_request_logs_retention=False)
     for problem in found:
         fatal = problem in (timescale_health.EXTENSION_MISSING, timescale_health.HYPERTABLE_MISSING)
         app.logger.log(logging.ERROR if fatal else logging.WARNING, "TimescaleDB: %s", problem)
-    if not found:
+    if not found and not health.request_logs_retention:
         app.logger.info(
             "TimescaleDB %s: request_logs hypertable, %d aggregates and %d expected jobs present.",
             health.installed_version, len(health.aggregates), len(health.jobs),
