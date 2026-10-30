@@ -1,7 +1,8 @@
 """Timings for the dashboard endpoints on every range, over a full retention window.
 
 Seeds 31d of 1-minute probes and samples (the default `refresh.web` and
-`retention`), then times `/api/overview`, `/api/lumen` and `/api/series` for
+`retention`) and a year of daily rows per model and source (which `1y` reads,
+and which are kept forever), then times `/api/overview`, `/api/lumen` and `/api/series` for
 each range on SQLite, and on PostgreSQL when `MONITOR_TEST_POSTGRES_URL` is set.
 The default test run skips it; run it with
 
@@ -16,7 +17,7 @@ import os
 import random
 import statistics
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from http import HTTPStatus
 
 import pytest
@@ -35,6 +36,7 @@ pytestmark = [pytest.mark.bench, pytest.mark.timeout(0)]
 MODELS = int(os.environ.get("MONITOR_BENCH_MODELS", "13"))
 REPEAT = int(os.environ.get("MONITOR_BENCH_REPEAT", "3"))
 SPAN = timedelta(days=31)
+DAYS = 400  # More than the 1y range covers.
 STEP = timedelta(minutes=1)
 CHUNK = 50_000
 CONFIG = "lumen: {url: 'https://lumen.test'}\n"
@@ -54,8 +56,41 @@ def _insert(session, table, rows: list[dict]) -> None:
         session.execute(insert(table), rows[i:i + CHUNK])
 
 
+def daily_rows(rnd: random.Random, now: datetime, models: list[str]) -> list[dict]:
+    """A lumen, hardware and models.dev row per model for each of the last `DAYS` UTC days (the config's timezone).
+    Past days are final and fully counted; today is counted up to `now`."""
+    today = now.date()
+    rows = []
+    for back in range(DAYS, -1, -1):
+        day = today - timedelta(days=back)
+        start = datetime(day.year, day.month, day.day)
+        covered = min(start + timedelta(days=1), now)
+        polls = int((covered - start) / STEP)
+        for model in models:
+            polls_ok = polls - rnd.randint(0, polls // 20)
+            shared = {"day": day, "model": model, "last_updated": covered, "final": back > 0}
+            rows.append({
+                **shared, "source": "lumen", "input_price": 0.2, "output_price": 0.8,
+                "requests": rnd.uniform(0, 30) * polls, "input_tokens": rnd.uniform(0, 25_000) * polls,
+                "output_tokens": rnd.uniform(0, 10_000) * polls, "covered_until": covered,
+                "input_tokens_covered_until": covered, "output_tokens_covered_until": covered,
+                "configured": 2, "healthy": 2, "status": "ok", "polls": polls, "polls_ok": polls_ok,
+                "healthy_sum": polls_ok * 2,
+            })
+            rows.append({
+                **shared, "source": "hardware", "daily_cost": rnd.uniform(50, 500), "gpu": "H100", "gpus": 2,
+                "gpu_price": 2000.0, "energy": 700.0, "kwh": 0.1, "avg_healthy": rnd.uniform(1, 2),
+                "polls": polls, "polls_ok": polls_ok, "healthy_sum": polls_ok * 2,
+            })
+            rows.append({
+                **shared, "source": "models.dev", "modelsdev_id": model, "input_median": 0.3, "input_p5": 0.1,
+                "input_p95": 0.9, "output_median": 1.2, "output_p5": 0.4, "output_p95": 3.0, "providers": 8,
+            })
+    return rows
+
+
 def seed(session_factory, now, models: list[str]) -> None:
-    """One probe per minute over `SPAN`; a sample per model for each successful probe."""
+    """One probe per minute over `SPAN`, a sample per model for each successful probe, and `daily_rows`."""
     rnd = random.Random(344)
     probes, samples = [], []
     at = now - SPAN
@@ -80,6 +115,7 @@ def seed(session_factory, now, models: list[str]) -> None:
             session.execute(delete(table))
         _insert(session, Probe, probes)
         _insert(session, Sample, samples)
+        _insert(session, DailyStat, daily_rows(rnd, now, models))
         session.commit()
         if session.get_bind().dialect.name == "postgresql":
             # Production tables are analysed by autovacuum; fresh ones are not.
@@ -118,7 +154,7 @@ def run(url: str, tmp_path, label: str) -> None:
         }
         lines = [
             "",
-            f"{label}: {MODELS} models, 31d of 1m probes, seeded in {seeded:.1f}s; median / max of {REPEAT} requests, ms",
+            f"{label}: {MODELS} models, 31d of 1m probes, {DAYS}d of daily rows, seeded in {seeded:.1f}s; median / max of {REPEAT} requests, ms",
             f"{'range':<6}" + "".join(f"{endpoint:>24}" for endpoint in endpoints),
         ]
         for key in RANGES:
@@ -144,6 +180,7 @@ def test_bench_sqlite(tmp_path, capsys):
 
 @pytest.mark.postgres
 def test_bench_postgres(postgres_url, tmp_path, capsys):
+    # Drops every table on exit: point MONITOR_TEST_POSTGRES_URL at a throwaway database only.
     try:
         with capsys.disabled():
             run(postgres_url, tmp_path, "PostgreSQL")
