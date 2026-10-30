@@ -220,6 +220,32 @@ def _log_timescale_health(app):
         )
 
 
+def _warn_if_stats_not_cut_over(app):
+    """Log a WARNING on PostgreSQL while the stats cutover has not been run. Never raises.
+
+    Until ``flask stats-cutover`` runs, billing keeps bumping ``model_stats`` /
+    ``entity_stats`` on every request, so the row locks the fold exists to
+    remove are still taken. SQLite is cut over by its migration.
+    """
+    from lumen.extensions import db
+    from lumen.services.stats_cutover import get_fold_state
+
+    if db.engine.dialect.name != "postgresql":
+        return
+    try:
+        cutover_at = get_fold_state().cutover_at
+    except Exception as e:  # noqa: BLE001 - a reminder must never block startup
+        db.session.rollback()
+        app.logger.warning("Could not read the stats cutover: %s", e)
+        return
+    if cutover_at is None:
+        app.logger.warning(
+            "The stats cutover has not been run: billing still updates model_stats and "
+            "entity_stats on every request. Run 'flask stats-cutover' once every pod runs "
+            "this version."
+        )
+
+
 def compact_number(n) -> str:
     """Format a count for display: full number below a million, else "3.2 million" / "16.1 billion"."""
     n = n or 0
@@ -670,11 +696,18 @@ def create_app():
         return render_template("errors/500.html"), HTTPStatus.INTERNAL_SERVER_ERROR
 
     # Register CLI commands
-    from lumen.commands import backfill_aggregate_cmd, check_aggregate_cmd, init_db_cmd, reassign_model_cmd
+    from lumen.commands import (
+        backfill_aggregate_cmd,
+        check_aggregate_cmd,
+        init_db_cmd,
+        reassign_model_cmd,
+        stats_cutover_cmd,
+    )
     app.cli.add_command(init_db_cmd)
     app.cli.add_command(reassign_model_cmd)
     app.cli.add_command(backfill_aggregate_cmd)
     app.cli.add_command(check_aggregate_cmd)
+    app.cli.add_command(stats_cutover_cmd)
 
     # Context processor: inject app_name and nav_projects into all templates
     @app.context_processor
@@ -777,6 +810,7 @@ def create_app():
         if not non_serving_cli:
             _warn_if_request_logs_has_retention(app)
             _log_timescale_health(app)
+            _warn_if_stats_not_cut_over(app)
             try:
                 # Prime the metrics snapshot synchronously: without it every rolling
                 # restart serves an empty snapshot for a whole refresh interval, and

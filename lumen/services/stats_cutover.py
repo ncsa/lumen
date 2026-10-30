@@ -7,7 +7,7 @@ there.
 """
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import NamedTuple, Optional
 
 from sqlalchemy import select
@@ -19,6 +19,12 @@ from lumen.models.stats_fold_state import StatsFoldState
 #: is set this far ahead and more, so every process has read it before it takes
 #: effect.
 CUTOVER_CACHE_TTL = 60.0
+
+#: How far ahead of now ``flask stats-cutover`` sets ``cutover_at``. It must
+#: exceed ``CUTOVER_CACHE_TTL``: a process still holding a cached ``None`` keeps
+#: bumping, and a bump of a request at or after the cutover is counted again by
+#: the fold, with nothing to repair it.
+CUTOVER_LEAD = timedelta(minutes=5)
 
 
 class FoldState(NamedTuple):
