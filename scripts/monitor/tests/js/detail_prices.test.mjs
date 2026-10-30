@@ -31,6 +31,7 @@ function seriesBody(range, daily, prices) {
   return {
     range, model: 'org/qwen', generated_at: '2026-10-17T05:05:00Z', daily,
     header: { status: 'ok', healthy: 1, configured: 1, uptime: 100, peak_rpm: 3, description: 'Qwen', strip: ['ok'] },
+    strip_times: [t],
     prices,
     traffic: { unit: daily ? 'day' : 'minute', points: [{ t, requests: 2, tokens: null, estimated: false }], average: { requests: 2, tokens: null } },
     hardware: { points: [{ day: '2026-10-17', benefit: null, cost: 24, partial: true, estimated: false }], range: { benefit: null, cost: null, partial: false, days: 0 } },
