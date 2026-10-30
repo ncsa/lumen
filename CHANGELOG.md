@@ -8,6 +8,7 @@ All notable changes to Lumen will be documented in this file.
 
 - **Breaking:** Upgrade to SQLAlchemy 2.1; the PostgreSQL driver is now psycopg 3 (`psycopg[binary]`) and psycopg2 is no longer installed. `postgresql://` and `postgres://` URLs need no change; a database URL that names `postgresql+psycopg2://` fails at startup and must be changed to `postgresql://`.
 - **Breaking:** Python 3.14 is required; the Docker image and CI run on 3.14. Python 3.15 is not supported yet: with SQLAlchemy 2.1 it does not return garbage-collected connections to the pool.
+- `flask reassign-model` now moves `request_logs` one chunk at a time, so compressed history no longer hits the decompression limit, and it refreshes the continuous aggregates so /usage model breakdowns match. It also refuses to reassign a model to itself. (#174)
 - Chat sidebar no longer scans the whole `messages` table when listing conversations; adds a `(conversation_id, created_at)` index on `messages`. (#168)
 - `/v1/models` and the model detail page read request rates from `request_metrics_1m` instead of scanning `request_logs`, and `request_metrics_1m` now keeps 30 days (`request_logs` is still never pruned). (#169)
 - Proxied API and chat requests and `/v1/models` make far fewer database queries, and rejected (403/429) requests no longer re-resolve access and budget; `/v1/models` request and token counts may now be up to a minute old. (#170)
