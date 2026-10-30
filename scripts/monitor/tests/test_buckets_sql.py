@@ -129,6 +129,32 @@ def test_julianday_misses_the_bucket_edge_that_bucket_index_gets(session_factory
     assert floats >= 1  # the float path puts it in bucket 1
 
 
+# Fractions that SQLite before 3.53 rounds up to the next whole second when it
+# parses the timestamp (it keeps milliseconds), e.g. in `strftime('%s', …)`.
+ROUNDING_FRACTIONS = [999499, 999500, 999999]
+ROUNDING_GRID = Grid(datetime(2026, 10, 17, 15), timedelta(minutes=5), 2)
+
+
+@pytest.mark.parametrize("fraction", ROUNDING_FRACTIONS)
+def test_bucket_index_does_not_round_up_to_the_next_second(session_factory, fraction):
+    late = ROUNDING_GRID.start + ROUNDING_GRID.size - timedelta(seconds=1) + fraction * MICROSECOND  # 15:04:59.fraction
+    assert ROUNDING_GRID.index(late) == 0
+    assert sql_indexes(session_factory, ROUNDING_GRID, [late])[late] == 0
+
+
+@pytest.mark.parametrize("fraction", ROUNDING_FRACTIONS)
+def test_short_range_stats_keep_a_sample_before_the_edge_in_its_bucket(session_factory, fraction):
+    grid = ROUNDING_GRID
+    now = grid.start + grid.count * grid.size
+    late = grid.start + grid.size - timedelta(seconds=1) + fraction * MICROSECOND
+    add(session_factory, [Sample(model="alpha", sampled_at=late, status="down", requests_last_minute=4)])
+    with session_factory() as session:
+        new = _short_range_stats(session, grid, grid.start, now, ["alpha"])
+        old = old_short_range_stats(session, grid, grid.start, now, ["alpha"])
+    assert old["alpha"]["strip"] == ["down", UNKNOWN]
+    assert new == old
+
+
 # --- status_rank ----------------------------------------------------------------
 
 

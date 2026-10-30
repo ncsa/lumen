@@ -154,6 +154,8 @@ class epoch_us(FunctionElement):
     rounds back to the microsecond before that. SQLite: `julianday()` only keeps
     milliseconds, and as a float, so whole seconds come from `strftime('%s')` and the
     microseconds from the stored text (`YYYY-MM-DD HH:MM:SS.ffffff`, as SQLAlchemy writes it).
+    `strftime` gets the text without its fraction: SQLite before 3.53 rounds `.9995` and
+    up to the next second.
     """
 
     type = BigInteger()
@@ -169,7 +171,7 @@ def _epoch_us_default(element, compiler, **kw):
 @compiles(epoch_us, "sqlite")
 def _epoch_us_sqlite(element, compiler, **kw):
     column = compiler.process(element.clauses, **kw)
-    return (f"(CAST(strftime('%s', {column}) AS INTEGER) * 1000000"
+    return (f"(CAST(strftime('%s', substr({column}, 1, 19)) AS INTEGER) * 1000000"
             f" + CAST(substr({column}, 21, 6) AS INTEGER))")
 
 
