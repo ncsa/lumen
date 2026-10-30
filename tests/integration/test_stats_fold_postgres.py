@@ -262,6 +262,8 @@ def test_a_fold_waits_for_the_fold_state_lock(pg_app, pg_migrated_isolated):
                 " WHERE datname = current_database() AND wait_event_type = 'Lock'"
                 " AND query LIKE 'UPDATE stats_fold_state %'"
             )).scalar():
+                # pg_stat_activity is a snapshot per transaction: end it to see the next one.
+                probe.rollback()
                 assert time.monotonic() < deadline, "the fold pass never waited on the lock"
                 time.sleep(0.05)
         assert results == []
@@ -296,13 +298,18 @@ def test_check_stats_repairs_a_late_commit(pg_app):
         _log(entity_id, model_id, hi - timedelta(seconds=1))
         db.session.commit()
 
-    runner = pg_app.test_cli_runner()
-    result = runner.invoke(check_stats_cmd, [])
+    def check(*args):
+        # Under an explicit app context: with_appcontext reuses whatever app
+        # is current, and only this one is bound to PostgreSQL.
+        with pg_app.app_context():
+            return pg_app.test_cli_runner().invoke(check_stats_cmd, list(args))
+
+    result = check()
     assert result.exit_code == 1, result.output
     assert "2 row(s) differ" in result.output
-    result = runner.invoke(check_stats_cmd, ["--fix"])
+    result = check("--fix")
     assert result.exit_code == 0, result.output
-    assert runner.invoke(check_stats_cmd, []).exit_code == 0
+    assert check().exit_code == 0
     with pg_app.app_context():
         model = db.session.execute(select(ModelStat).filter_by(entity_id=entity_id)).scalar_one()
         entity = db.session.get(EntityStat, entity_id)
