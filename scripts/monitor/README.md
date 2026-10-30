@@ -98,8 +98,9 @@ Ranges are 1h, 12h, 24h, 7d and 30d from the raw probes and samples, bucketed at
 empty. 1y uses one bucket per local day. For a model: ok at 99% availability or more, degraded
 above 0%, down otherwise. For Lumen, from the probes still kept: ok when 99% or more of the
 day's probes were ok, down when none was up (failed, or more than `lumen.down_above` percent of
-models down), degraded otherwise; its uptime is the share of probes that were up. `*` marks values that include days which are not yet `final` or are
-`estimated`; `†` marks a model without a `models:` GPU entry. The page reloads its data every
+models down), degraded otherwise; its uptime is the share of probes that were up. `*` marks
+values that include days which are not yet `final` or are `estimated`; `†` marks a model
+without a `models:` GPU entry. The page reloads its data every
 `refresh.page` without a full reload. The JSON behind it is `/api/overview?range=&sort=&dir=`
 and `/api/lumen?range=`.
 
