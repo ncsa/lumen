@@ -100,7 +100,7 @@ def test_startup_logs_no_problem_on_a_fresh_database(pg_migrated_isolated, monke
     from config import Config
     monkeypatch.setattr(Config, "SQLALCHEMY_DATABASE_URI", url)
     from lumen.services import metrics_snapshot
-    monkeypatch.setattr(metrics_snapshot, "start_snapshot_refresher", lambda app: None)
+    monkeypatch.setattr(metrics_snapshot, "start_snapshot_refresher", lambda app, **kwargs: None)
 
     from lumen import create_app
     from lumen.extensions import db

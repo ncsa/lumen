@@ -72,7 +72,7 @@ def no_snapshot_refresher(monkeypatch):
     ``create_app`` with ``monkeypatch``, or, from a module-scoped fixture, with
     the object from ``pytest.MonkeyPatch.context()``.
     """
-    monkeypatch.setattr(metrics_snapshot, "start_snapshot_refresher", lambda app: None)
+    monkeypatch.setattr(metrics_snapshot, "start_snapshot_refresher", lambda app, **kwargs: None)
 
 
 @pytest.fixture

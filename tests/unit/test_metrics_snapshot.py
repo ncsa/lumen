@@ -71,6 +71,19 @@ def test_refresh_populates_every_snapshot_field(app, restore_snapshot):
     assert metrics_snapshot.get_snapshot() is snapshot
 
 
+def test_a_refresh_pass_runs_three_statements(app, restore_snapshot):
+    """Usage, endpoint health and one entity count: active and total users share a statement."""
+    from tests.routes.test_metrics_routes import _count_statements_on_this_thread
+
+    with app.app_context():
+        statements, unsubscribe = _count_statements_on_this_thread(db.engine)
+        try:
+            metrics_snapshot.refresh_snapshot()
+        finally:
+            unsubscribe()
+    assert len(statements) == 3, statements
+
+
 def test_refresher_holds_no_connection_and_no_context_while_sleeping(
     app, restore_snapshot, stopped_refresher, monkeypatch,
 ):
@@ -295,6 +308,29 @@ def test_create_app_starts_the_refresher_in_every_serving_process():
     )
 
 
+@pytest.mark.parametrize("prime_fails", [False, True])
+def test_create_app_tells_the_refresher_whether_startup_primed(
+    tmp_path, monkeypatch, restore_snapshot, prime_fails,
+):
+    """A primed startup must not be repeated by the refresher's first pass; a failed one must."""
+    import config as config_module
+    from lumen import create_app
+    from tests.unit.test_startup_sync_recovery import _write_config
+
+    monkeypatch.setattr(config_module.Config, "CONFIG_YAML", _write_config(tmp_path))
+    if prime_fails:
+        def boom():
+            raise RuntimeError("database down")
+        monkeypatch.setattr(metrics_snapshot, "refresh_snapshot", boom)
+    seen = []
+    monkeypatch.setattr(metrics_snapshot, "start_snapshot_refresher",
+                        lambda app, **kw: seen.append(kw))
+
+    create_app()
+
+    assert seen == [{"primed": not prime_fails}]
+
+
 # --- TimescaleDB health (#173) ---------------------------------------------------
 
 _FINISHED = datetime(2026, 10, 30, 5, 0)
@@ -324,19 +360,23 @@ def _timescale_messages(caplog):
             if r.name == metrics_snapshot.logger.name and "TimescaleDB" in r.getMessage()]
 
 
-def _run_passes(app, monkeypatch, count):
-    """Run the real refresher loop for *count* passes; returns the passes that checked health."""
-    checked, passes = [], []
+def _run_passes(app, monkeypatch, count, primed=False):
+    """Run the real refresher loop for *count* passes; returns the passes that checked health.
+
+    With *primed* the initial sleep is not counted as a pass.
+    """
+    skipped = 1 if primed else 0
+    checked, sleeps = [], []
     monkeypatch.setattr(metrics_snapshot, "refresh_timescale_health",
-                        lambda: checked.append(len(passes)))
+                        lambda: checked.append(len(sleeps) - skipped))
 
     def fake_sleep(seconds, stop):
-        passes.append(1)
-        if len(passes) >= count:
+        sleeps.append(1)
+        if len(sleeps) >= count + skipped:
             stop.set()
 
     monkeypatch.setattr(metrics_snapshot, "_sleep", fake_sleep)
-    thread = metrics_snapshot.start_snapshot_refresher(app)
+    thread = metrics_snapshot.start_snapshot_refresher(app, primed=primed)
     thread.join(timeout=10)
     assert not thread.is_alive()
     return checked
@@ -355,6 +395,38 @@ def test_health_is_checked_on_the_first_pass_then_every_300s_of_passes(
         assert _run_passes(app, monkeypatch, 7) == [0, 3, 6]
     finally:
         app.config["POOL_TOPOLOGY"] = original
+
+
+def test_a_primed_refresher_keeps_the_health_cadence_after_its_initial_sleep(
+    app, restore_snapshot, stopped_refresher, monkeypatch,
+):
+    original = app.config.get("POOL_TOPOLOGY")
+    try:
+        app.config["POOL_TOPOLOGY"] = {"workers": 1, "replicas": 1}
+        assert _run_passes(app, monkeypatch, 11, primed=True) == [0, 5, 10]
+    finally:
+        app.config["POOL_TOPOLOGY"] = original
+
+
+def test_a_primed_refresher_sleeps_before_its_first_pass(
+    app, restore_snapshot, stopped_refresher, monkeypatch,
+):
+    """Startup has just refreshed the snapshot and checked TimescaleDB; doing both again
+    in the same second is the duplicate work this avoids."""
+    calls = []
+    monkeypatch.setattr(metrics_snapshot, "refresh_snapshot", lambda: calls.append("snapshot"))
+    monkeypatch.setattr(metrics_snapshot, "refresh_timescale_health", lambda: calls.append("health"))
+
+    def fake_sleep(seconds, stop):
+        calls.append("sleep")
+        if calls.count("sleep") >= 2:
+            stop.set()
+
+    monkeypatch.setattr(metrics_snapshot, "_sleep", fake_sleep)
+    thread = metrics_snapshot.start_snapshot_refresher(app, primed=True)
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert calls == ["sleep", "snapshot", "health", "sleep"]
 
 
 def test_a_raising_health_check_leaves_the_snapshot_fresh(

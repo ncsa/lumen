@@ -763,6 +763,7 @@ def create_app():
     from lumen.extensions import db
 
     non_serving_cli = _loaded_by_non_serving_cli()
+    primed = False
     with app.app_context():
         try:
             sync_models_from_yaml(yaml_data)
@@ -779,9 +780,12 @@ def create_app():
             try:
                 # Prime the metrics snapshot synchronously: without it every rolling
                 # restart serves an empty snapshot for a whole refresh interval, and
-                # a fleet mid-restart mixes primed and unprimed workers.
+                # a fleet mid-restart mixes primed and unprimed workers. Once primed,
+                # the refresher waits one interval before its first pass instead of
+                # repeating this and the TimescaleDB check above straight away.
                 from lumen.services.metrics_snapshot import refresh_snapshot
                 refresh_snapshot()
+                primed = True
             except Exception as e:
                 print(f"WARNING: Could not prime the metrics snapshot: {_startup_db_hint(e)}",
                       file=sys.stderr)
@@ -831,6 +835,6 @@ def create_app():
     # the application's own cache of its own state, not a Prometheus feature.
     if not non_serving_cli:
         from lumen.services.metrics_snapshot import start_snapshot_refresher
-        start_snapshot_refresher(app)
+        start_snapshot_refresher(app, primed=primed)
 
     return app

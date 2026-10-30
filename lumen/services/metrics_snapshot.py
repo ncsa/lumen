@@ -187,12 +187,10 @@ def refresh_snapshot() -> MetricsSnapshot:
 
     # active = admin has not disabled the user (Entity.active=True, the default)
     # total  = all users ever registered
-    users_active = db.session.scalar(
-        select(func.count(Entity.id)).filter_by(entity_type="user", active=True)
-    ) or 0
-    users_total = db.session.scalar(
-        select(func.count(Entity.id)).filter_by(entity_type="user")
-    ) or 0
+    users_total, users_active = db.session.execute(
+        select(func.count(), func.count().filter(Entity.active.is_(True)))
+        .where(Entity.entity_type == "user")
+    ).one()
 
     _snapshot = MetricsSnapshot(
         primed=True,
@@ -325,11 +323,18 @@ def refresh_interval(app) -> float:
     return max(_MIN_REFRESH_INTERVAL, interval)
 
 
-def start_snapshot_refresher(app):
-    """Start the daemon thread that refreshes the snapshot. Never elected."""
+def start_snapshot_refresher(app, *, primed=False):
+    """Start the daemon thread that refreshes the snapshot. Never elected.
+
+    With *primed* the caller has just refreshed the snapshot and checked
+    TimescaleDB itself, so the thread sleeps one interval before its first pass
+    instead of repeating both at once.
+    """
     stop = threading.Event()
 
     def run():
+        if primed:
+            _sleep(refresh_interval(app) * (1 + random.uniform(-_JITTER, _JITTER)), stop)
         passes = 0
         health_error = None
         while not stop.is_set():
