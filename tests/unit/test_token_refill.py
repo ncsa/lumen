@@ -140,7 +140,7 @@ def test_zero_refresh_coins_skipped(app, test_user):
 
 
 def test_no_pool_skipped(app, test_user):
-    """Entity with no limit at all (no EntityLimit, no group limits) gets no credit."""
+    """Entity with no limit at all (no EntityLimit, no group limits) is left alone."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_balance import EntityBalance
@@ -352,14 +352,12 @@ def test_refill_does_not_clobber_concurrent_deduction(app, test_user):
         assert float(bal.coins_left) == 70.0
 
 
-def test_aware_last_refill_at_does_not_abort_pass(app, test_user):
-    """A stray aware last_refill_at must not raise and abort the whole refill pass (CODE-H2)."""
-    from unittest.mock import patch
-
+def test_refill_reads_database_value_not_identity_map(app, test_user):
+    """The credit follows last_refill_at in the database, not a stale in-memory ORM copy."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_balance import EntityBalance
-        from lumen.services import token_refill
+        from lumen.services.token_refill import refill_coin_balances
 
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         _add_limit(db, test_user["id"], max_coins=100, refresh_coins=10)
@@ -367,31 +365,128 @@ def test_aware_last_refill_at_does_not_abort_pass(app, test_user):
                       last_refill_at=now - timedelta(hours=2))
         db.session.commit()
 
-        # SQLite's naive DateTime bind strips tzinfo on persist, so an aware
-        # value can never survive a round-trip through the DB and the refiller
-        # would always read it back naive — leaving the CODE-H2 branch dead.
-        # Inject the aware value on the in-memory ORM object instead: the
-        # refiller's SELECT returns this same identity-map object un-refreshed.
-        # Writing through __dict__ (not the InstrumentedAttribute) keeps it out
-        # of the dirty state, and synchronize_session=False keeps SQLAlchemy's
-        # ORM<->Core UPDATE post-sync from evaluating the aware value against
-        # the naive cutoff; the DB row itself stays naive and still matches.
+        # An older value on the identity-map object only. Writing through __dict__
+        # keeps it out of the dirty state, so it is never flushed to the row.
         bal = db.session.execute(
             select(EntityBalance).filter_by(entity_id=test_user["id"])
         ).scalar_one()
-        vars(bal)["last_refill_at"] = bal.last_refill_at.replace(tzinfo=timezone.utc)
+        vars(bal)["last_refill_at"] = now - timedelta(hours=5)
 
-        real_update = token_refill.sa_update
-
-        def no_sync_update(*args, **kwargs):
-            return real_update(*args, **kwargs).execution_options(synchronize_session=False)
-
-        with patch.object(token_refill, "sa_update", side_effect=no_sync_update):
-            assert token_refill.refill_coin_balances(now=now) == 1
+        assert refill_coin_balances(now=now) == 1
 
         db.session.expire_all()
         bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one()
-        assert float(bal.coins_left) == 70.0  # 50 + 2*10
+        assert float(bal.coins_left) == 70.0  # 50 + 2*10 from the database value, not 5*10
+        assert bal.last_refill_at == now
+
+
+def _add_entities(db, count):
+    from lumen.models.entity import Entity
+    entities = [
+        Entity(entity_type="user", email=f"refill-{i}@example.com",
+               name=f"Refill {i}", initials="RF", active=True)
+        for i in range(count)
+    ]
+    db.session.add_all(entities)
+    db.session.flush()
+    return [e.id for e in entities]
+
+
+def test_refill_commits_per_batch(app, monkeypatch):
+    """Due rows are written in REFILL_BATCH_SIZE chunks, each committed on its own."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.services import token_refill
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        ids = _add_entities(db, 5)
+        for eid in ids:
+            _add_limit(db, eid, max_coins=100, refresh_coins=10)
+            _add_balance(db, eid, coins_left=0, last_refill_at=now - timedelta(hours=2))
+        db.session.commit()
+
+        monkeypatch.setattr(token_refill, "REFILL_BATCH_SIZE", 2)
+        commits = []
+        real_commit = db.session.commit
+        monkeypatch.setattr(db.session, "commit", lambda: (commits.append(1), real_commit())[1])
+
+        assert token_refill.refill_coin_balances(now=now) == 5
+        assert len(commits) == 3  # 2 + 2 + 1
+
+        db.session.expire_all()
+        for eid in ids:
+            bal = db.session.execute(select(EntityBalance).filter_by(entity_id=eid)).scalar_one()
+            assert float(bal.coins_left) == 20.0
+            assert bal.last_refill_at == now
+
+
+def test_failed_batch_is_rolled_back_and_pass_continues(app, monkeypatch):
+    """One failing batch does not stop the batches after it."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.services import token_refill
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        ids = _add_entities(db, 3)
+        for eid in ids:
+            _add_limit(db, eid, max_coins=100, refresh_coins=10)
+            _add_balance(db, eid, coins_left=0, last_refill_at=now - timedelta(hours=2))
+        db.session.commit()
+
+        monkeypatch.setattr(token_refill, "REFILL_BATCH_SIZE", 1)
+        real_apply = token_refill._apply_batch
+
+        def fail_first(stmt, params):
+            if params[0]["b_entity_id"] == ids[0]:
+                db.session.execute(stmt, params)  # written, then lost to the rollback
+                raise RuntimeError("batch failed")
+            return real_apply(stmt, params)
+
+        monkeypatch.setattr(token_refill, "_apply_batch", fail_first)
+        assert token_refill.refill_coin_balances(now=now) == 2
+
+        db.session.expire_all()
+        coins = {
+            eid: float(db.session.execute(select(EntityBalance).filter_by(entity_id=eid)).scalar_one().coins_left)
+            for eid in ids
+        }
+        assert coins == {ids[0]: 0.0, ids[1]: 20.0, ids[2]: 20.0}
+
+
+def test_refill_guarded_on_value_read(app, test_user, monkeypatch):
+    """A due row whose last_refill_at changed after the read is neither credited nor bumped."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.services import token_refill
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        moved = now - timedelta(minutes=10)
+        _add_limit(db, test_user["id"], max_coins=100, refresh_coins=10)
+        _add_balance(db, test_user["id"], coins_left=50,
+                      last_refill_at=now - timedelta(hours=2))
+        db.session.commit()
+
+        real_apply = token_refill._apply_batch
+
+        def move_then_apply(stmt, params):
+            # An admin reset or another worker lands between the read and the write.
+            db.session.execute(
+                token_refill.sa_update(EntityBalance.__table__)
+                .where(EntityBalance.__table__.c.entity_id == test_user["id"])
+                .values(last_refill_at=moved)
+            )
+            return real_apply(stmt, params)
+
+        monkeypatch.setattr(token_refill, "_apply_batch", move_then_apply)
+        assert token_refill.refill_coin_balances(now=now) == 0
+
+        db.session.expire_all()
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one()
+        assert float(bal.coins_left) == 50.0
+        assert bal.last_refill_at == moved
 
 
 def test_start_coin_refiller_starts_daemon_thread(app):
