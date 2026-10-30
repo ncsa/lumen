@@ -4,6 +4,8 @@ The **Models** page (`/models`) shows every AI model available to you in your Lu
 
 ![Models dashboard](../img/models.png)
 
+Want a model that’s not listed? Follow the **LLMHub** link below the table to launch your own.
+
 ## Table Columns
 
 | Column | Description |
