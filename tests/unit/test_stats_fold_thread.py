@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.exc import OperationalError
 
 from lumen.extensions import db
@@ -109,6 +109,44 @@ def test_locked_sqlite_database_is_left_for_the_next_pass(app, ids, monkeypatch)
 
     assert run_fold_pass(app) is not None
     assert _requests(entity_id) == 1
+
+
+def _busy_timeouts_at_checkin():
+    """Record the busy timeout each pooled connection carries back to the pool."""
+    seen = []
+
+    def on_checkin(dbapi_conn, record):
+        if dbapi_conn is not None:
+            seen.append(dbapi_conn.execute("PRAGMA busy_timeout").fetchone()[0])
+
+    event.listen(db.engine, "checkin", on_checkin)
+    return seen, lambda: event.remove(db.engine, "checkin", on_checkin)
+
+
+@pytest.mark.parametrize("locked", [False, True])
+def test_fold_busy_timeout_does_not_return_to_the_pool(app, ids, monkeypatch, locked):
+    entity_id, model_id = ids
+    at = utcnow() - timedelta(hours=1)
+    _state(at)
+    _log(at + timedelta(minutes=1), entity_id, model_id)
+    monkeypatch.setattr(stats_fold, "_SQLITE_BUSY_TIMEOUT_MS", 50)
+    db.session.remove()  # check this test's own connection back in first
+
+    seen, stop_listening = _busy_timeouts_at_checkin()
+    holder = sqlite3.connect(db.engine.url.database, isolation_level=None)
+    try:
+        if locked:
+            holder.execute("BEGIN IMMEDIATE")
+        hi = run_fold_pass(app)
+    finally:
+        if locked:
+            holder.execute("ROLLBACK")
+        holder.close()
+        stop_listening()
+
+    assert (hi is None) == locked
+    assert seen and 50 not in seen
+    assert set(seen) == {5000}  # the sqlite3 driver's default
 
 
 def test_other_operational_errors_propagate(app, monkeypatch):
