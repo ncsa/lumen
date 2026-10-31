@@ -41,10 +41,17 @@ shortened so the whole name, with every digit of the revision, stays within the
 
 {{/*
 app.kubernetes.io/name label of the migration Job's pod. It must differ from the
-Deployment's selector label, or the Service would send traffic to the Job.
+Deployment's selector label, or the Service would send traffic to the Job. A
+name that already ends in "-migrate" can truncate to the same value, so that
+case gets "-job" instead.
 */}}
 {{- define "lumen.migrateName" -}}
-{{- printf "%s-migrate" (include "lumen.name" . | trunc 55 | trimSuffix "-") -}}
+{{- $name := include "lumen.name" . -}}
+{{- $candidate := printf "%s-migrate" ($name | trunc 55 | trimSuffix "-") -}}
+{{- if eq $candidate $name -}}
+{{- $candidate = printf "%s-job" ($name | trunc 59 | trimSuffix "-") -}}
+{{- end -}}
+{{- $candidate -}}
 {{- end }}
 
 {{/*

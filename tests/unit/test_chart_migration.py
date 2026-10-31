@@ -150,7 +150,10 @@ _LONG = "a" * 63
     {"nameOverride": "n" * 56},
     {"nameOverride": _LONG},
     {"fullnameOverride": _LONG},
-    {"fullnameOverride": "f" * 54 + "-" + "g" * 8},
+    # A dash at the last character kept before "-migrate-1" is trimmed.
+    {"fullnameOverride": "f" * 52 + "-" + "g" * 10},
+    # Truncating to make room for "-migrate" would reproduce the name itself.
+    {"nameOverride": "a" * 55 + "-migrate"},
 ])
 def test_long_names_stay_within_kubernetes_limits(override):
     docs = _render(override)
@@ -159,7 +162,7 @@ def test_long_names_stay_within_kubernetes_limits(override):
     assert len(name) <= 63 and name.endswith("-migrate-1") and "--" not in name
     labels = job["spec"]["template"]["metadata"]["labels"]
     assert all(len(v) <= 63 for v in labels.values())
-    assert labels["app.kubernetes.io/name"].endswith("-migrate")
+    assert labels["app.kubernetes.io/name"].endswith(("-migrate", "-job"))
     selector = docs[("Service", _service_name(docs))]["spec"]["selector"]
     assert not selector.items() <= labels.items()
 
