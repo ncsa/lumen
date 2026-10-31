@@ -1,7 +1,7 @@
 """Add folded_* columns to model_stats and entity_stats
 
 Revision ID: a6b8c0d2e4f6
-Revises: e4f5a6b7c8d9
+Revises: f5b6c7d8e9f0
 Create Date: 2026-10-30 00:00:00.000000
 
 The running totals mix history from before ``request_logs`` existed, the
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "a6b8c0d2e4f6"
-down_revision = "e4f5a6b7c8d9"
+down_revision = "f5b6c7d8e9f0"
 branch_labels = None
 depends_on = None
 

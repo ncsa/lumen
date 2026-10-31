@@ -169,7 +169,9 @@ def _fetch_model_usage_rows(eid: int):
 def _fetch_live_tail(eid: int, since):
     """The entity's request_logs from ``since`` on, per (model, source).
 
-    Each row is (model_config_id, source, requests, input_tokens,
+    Only rows billing left to the fold (``stats_deferred``) count: an unmarked
+    row was bumped into the tables already, by an older pod or before the
+    cutover. Each row is (model_config_id, source, requests, input_tokens,
     output_tokens, cost, last time as naive UTC).
     """
     rows = db.session.execute(
@@ -182,7 +184,8 @@ def _fetch_live_tail(eid: int, since):
             func.coalesce(func.sum(RequestLog.cost), 0),
             func.max(RequestLog.time),
         )
-        .where(RequestLog.entity_id == eid, RequestLog.time >= as_utc_aware(since))
+        .where(RequestLog.entity_id == eid, RequestLog.time >= as_utc_aware(since),
+               RequestLog.stats_deferred.is_(True))
         .group_by(RequestLog.model_config_id, RequestLog.source)
     ).all()
     return [(*row[:6], as_utc_naive(row[6])) for row in rows]
@@ -259,10 +262,11 @@ def _fetch_last_used_at(eid: int):
 
 
 def _fetch_live_tail_last(eid: int, since):
-    """The entity's latest request_logs time from ``since`` on, naive UTC, or None."""
+    """The entity's latest deferred request_logs time from ``since`` on, naive UTC, or None."""
     last = db.session.scalar(
         select(func.max(RequestLog.time))
-        .where(RequestLog.entity_id == eid, RequestLog.time >= as_utc_aware(since))
+        .where(RequestLog.entity_id == eid, RequestLog.time >= as_utc_aware(since),
+               RequestLog.stats_deferred.is_(True))
     )
     return as_utc_naive(last) if last is not None else None
 

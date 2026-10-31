@@ -45,7 +45,7 @@ def _bill(app, entity_id, model_id, source="api", audio_seconds=0):
         db.session.add(RequestLog(
             time=at.replace(tzinfo=timezone.utc), entity_id=entity_id, model_config_id=model_id,
             source=source, input_tokens=10, output_tokens=5, audio_seconds=audio_seconds,
-            cost=Decimal("0.5"), duration=0.0,
+            cost=Decimal("0.5"), duration=0.0, stats_deferred=True,
         ))
         db.session.commit()
 

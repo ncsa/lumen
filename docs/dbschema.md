@@ -256,6 +256,7 @@ erDiagram
         float ttft_visible
         float send_blocked
         string outcome
+        bool stats_deferred
     }
 
     entities ||--o{ api_keys : "owns"
@@ -659,10 +660,10 @@ Single-row state of the stats fold, which adds `request_logs` rows into `model_s
 | `folded_until` | DateTime | YES | UTC end (exclusive) of the last folded window; starts equal to `cutover_at`, null until cutover |
 
 **Notes:**
-- The migration inserts the row. On SQLite both columns are set to the migration time (a single process cannot have old code still bumping); on PostgreSQL both stay null.
+- The migrations set the row on both dialects. On SQLite `e4f5a6b7c8d9` sets both columns to the migration time. On PostgreSQL `f5b6c7d8e9f0` sets both to the migration time minus one hour, unless a cutover is set already; no operator step is needed. Billing marks each row it leaves to the fold (`request_logs.stats_deferred`), and the fold counts only marked rows, so old pods still bumping during a rolling update are never counted twice.
 - A missing row (a database built with `create_all()`) means the same as a null `cutover_at`: not cut over.
 - Each fold pass covers the half-open window `[folded_until, now − lag)` and advances `folded_until` with a compare-and-set, so concurrent passes never fold a row twice.
-- On PostgreSQL, `flask stats-cutover` sets `cutover_at = folded_until` five minutes ahead, once, after the rollout has finished. `flask check-stats [--fix]` reports (and repairs) requests the fold missed, such as a billing transaction that committed more than `stats.fold_lag` after its timestamp. `flask reassign-model` and `check-stats` lock this row so no fold pass runs in the middle.
+- `flask check-stats [--fix]` reports (and repairs) requests the fold missed, such as a billing transaction that committed more than `stats.fold_lag` after its timestamp. `flask reassign-model` and `check-stats` lock this row so no fold pass runs in the middle.
 
 ---
 
@@ -729,6 +730,7 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 | `ttft_visible` | Float | YES | Seconds to the first visible content delta |
 | `send_blocked` | Float | YES | Seconds blocked handing response chunks to the server |
 | `outcome` | String(16) | YES | How the request ended: `'ok'` or `'disconnect'` |
+| `stats_deferred` | Boolean | YES | TRUE when billing left this request out of `model_stats` / `entity_stats` for the stats fold to add; NULL when billing counted it directly (before the stats cutover, on an older pod during a rolling update, or with a stale cached cutover). The fold, `flask check-stats` and the `/profile` live tail read only TRUE rows, so every request is counted exactly once |
 
 **Notes:**
 - Foreign keys use `SET NULL` on delete (not cascade) to preserve historical log data when entities or models are removed. Endpoints are not removed at all: the config sync retires them by clearing `model_endpoints.active`, so `model_endpoint_id` keeps pointing at the endpoint that served each request, and the `SET NULL` action on that column only fires if a row is deleted directly in SQL.
