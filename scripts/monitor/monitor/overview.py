@@ -276,11 +276,13 @@ def _short_range_stats(session: Session, grid, start: datetime, now: datetime, m
             ranks[model][i] = rank
         if peak is not None:
             peaks[model] = max(peaks[model] or 0, peak)
-    stats = {}
-    for m in models:
-        strip = [rank_status(r) for r in ranks[m]]
-        stats[m] = {"strip": strip, "uptime": model_uptime(strip), "peak_rpm": peaks[m]}
-    return stats
+    return {m: short_range_row(ranks[m], peaks[m]) for m in models}
+
+
+def short_range_row(ranks: list[int | None], peak: int | None) -> dict:
+    """A model's strip, uptime and peak req/min from its `MAX(status_rank())` per bucket and its busiest sample."""
+    strip = [rank_status(r) for r in ranks]
+    return {"strip": strip, "uptime": model_uptime(strip), "peak_rpm": peak}
 
 
 def _yearly_stats(rows: dict, days: list[date], models: list[str], tz) -> dict[str, dict]:
@@ -296,17 +298,20 @@ def _yearly_stats(rows: dict, days: list[date], models: list[str], tz) -> dict[s
     return stats
 
 
-def model_rows(session: Session, config: Config, rng: Range, now: datetime, models: list[dict]) -> list[dict]:
-    """One table row per current model; see the module docstring for where each value comes from."""
+def model_rows(session: Session, config: Config, rng: Range, now: datetime, models: list[dict],
+               stats: dict[str, dict] | None = None) -> list[dict]:
+    """One table row per current model; see the module docstring for where each value comes from.
+
+    `stats` gives each model's strip, uptime and peak when the caller has already read them.
+    """
     ids = [m["id"] for m in models]
     tz = config.timezone
     days = range_days(rng, now, tz)
     rows = _daily_rows(session, days, ids)
-    grid = make_grid(rng, config.refresh.web, now, tz)
-    if rng.daily:
+    if stats is None and rng.daily:
         stats = _yearly_stats(rows, days, ids, tz)
-    else:
-        stats = _short_range_stats(session, grid, now - rng.span, now, ids)
+    elif stats is None:
+        stats = _short_range_stats(session, make_grid(rng, config.refresh.web, now, tz), now - rng.span, now, ids)
     prices = _latest(session, "lumen", DailyStat.input_price, ids)
     modelsdev = _latest(session, "models.dev", DailyStat.input_median, ids)
     hardware = _latest(session, "hardware", DailyStat.daily_cost, ids)
