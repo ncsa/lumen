@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 
 import click
 import yaml
+from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from flask import current_app
 from flask.cli import with_appcontext
 from sqlalchemy import select, text, update
@@ -902,3 +904,68 @@ def check_aggregate_cmd():
 
     if failed:
         raise SystemExit(1)
+
+
+# --------------------------------------------------------------------------- #
+# Migration gate: the serve step waits for the upgrade step. Never migrates.   #
+# --------------------------------------------------------------------------- #
+
+WAIT_RETRY_SECONDS = 2
+WAIT_HINT_SECONDS = 30
+UPGRADE_HINT = ("Run the upgrade step first: the image with the 'upgrade' argument, the "
+                "'lumen-upgrade' Compose service, or the Helm migration Job.")
+
+
+@click.command("wait-for-migrations")
+@click.option("--timeout", type=click.FloatRange(min=0), default=None, metavar="SECONDS",
+              help="Give up after this many seconds. Default: wait forever.")
+@with_appcontext
+def wait_for_migrations_cmd(timeout):
+    """Wait until the database is at this image's migration head. Read-only.
+
+    Exits 0 at head. While the database is behind, empty or unreachable it retries
+    every 2 seconds, until --timeout runs out (exit 1) or forever without one. A
+    revision this image does not know means a newer image migrated the database:
+    that exits 1 at once, since waiting cannot fix it.
+    """
+    # Flask-Migrate's config and engine, so the script location and the database URL
+    # resolve exactly as they do for ``flask db upgrade``.
+    migrate = current_app.extensions["migrate"]
+    script = ScriptDirectory.from_config(migrate.migrate.get_config())
+    expected = tuple(sorted(script.get_heads()))
+    known = {rev.revision for rev in script.walk_revisions()}
+
+    start = time.monotonic()
+    last_hint = start
+    last_state = None
+    while True:
+        try:
+            with migrate.db.engine.connect() as conn:
+                current = tuple(sorted(MigrationContext.configure(conn).get_current_heads()))
+        except DBAPIError as e:
+            state = f"database unreachable ({e.orig.__class__.__name__}: {' '.join(str(e.orig).split())})"
+        else:
+            unknown = [rev for rev in current if rev not in known]
+            if unknown:
+                click.echo(f"Error: database is at revision {', '.join(unknown)}, which this image "
+                           f"does not know (expected {', '.join(expected)}). A newer image has "
+                           f"migrated it; run that image or a newer one.")
+                raise SystemExit(1)
+            if current == expected:
+                click.echo(f"Database is at migration head {', '.join(expected)}.")
+                return
+            state = (f"database is at revision {', '.join(current) or 'none'}, "
+                     f"expected {', '.join(expected)}")
+
+        now = time.monotonic()
+        if timeout is not None and now - start >= timeout:
+            click.echo(f"Error: timed out after {timeout:g}s waiting for migrations: {state}. "
+                       f"{UPGRADE_HINT}")
+            raise SystemExit(1)
+        if state != last_state:
+            click.echo(f"Waiting for migrations: {state}.")
+            last_state = state
+        if now - last_hint >= WAIT_HINT_SECONDS:
+            click.echo(f"Still waiting: {state}. {UPGRADE_HINT}")
+            last_hint = now
+        time.sleep(WAIT_RETRY_SECONDS)
