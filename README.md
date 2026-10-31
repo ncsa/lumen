@@ -143,7 +143,7 @@ Visit `http://localhost:5001`, click **Login**, and you'll be auto-logged in as 
 ## Operator Commands
 
 Run with `uv run flask --app run <command>` locally, or `flask <command>` inside the container.
-Both commands below need PostgreSQL/TimescaleDB; on SQLite they print a note and exit 0.
+`backfill-aggregate` and `check-aggregate` need PostgreSQL/TimescaleDB; on SQLite they print a note and exit 0.
 
 **`request_logs` is never pruned.** Lumen ships no retention policy and no command that deletes from it.
 
@@ -225,6 +225,24 @@ At startup, and then periodically in every worker process (see "Prometheus metri
 interval), Lumen checks the extension version, the `request_logs` hypertable, the continuous
 aggregates and their background jobs. It logs a WARNING per problem (ERROR when the extension or
 the hypertable is missing, or when `request_logs` has a retention policy) and never blocks startup.
+
+### `check-stats`
+
+Compares the folded usage totals with `request_logs` since the stats cutover, which the upgrade
+sets automatically. Only the rows billing left to the fold (`stats_deferred`) are compared.
+
+```bash
+flask check-stats [--fix]
+```
+
+Every difference is printed per `model_stats` / `entity_stats` row, and the command exits 1. A
+difference means requests the fold missed, such as a billing transaction that committed more than
+`stats.fold_lag` after its timestamp. `--fix` adds each difference to the totals instead. Before the
+cutover it does nothing. It scans every `request_logs` row since the cutover and holds the fold
+state while it does, so on a large install run it at a quiet time: the fold waits until it finishes.
+Do not run it while a `flask reassign-model` is in progress: until that command merges
+`model_stats` at its end, the check reports differences that are not drift, and `--fix` would
+count them twice.
 
 ---
 

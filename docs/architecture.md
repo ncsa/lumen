@@ -290,7 +290,7 @@ Core proxy logic. Key functions:
 | `check_coin_budget(entity)` | Validate balance > 0 before forwarding; respects unlimited (-2) and blocked (0) sentinels |
 | `subtract_coins(entity, cost)` | Decrement `EntityBalance.coins_left`; uses `SELECT ... FOR UPDATE` |
 | `send_message_stream()` | Wraps OpenAI SDK streaming as SSE; accumulates token counts for post-request accounting |
-| `update_stats()` | Increment `ModelStat`, `EntityStat`, `APIKey` counters; insert `RequestLog` row |
+| `update_stats()` | Insert the `RequestLog` row and increment `APIKey` counters; increment `ModelStat` / `EntityStat` only before the stats cutover (afterwards the stats fold adds them) |
 
 ### Background Workers
 
@@ -301,6 +301,7 @@ All three workers are daemon threads started inside `create_app`. A `SERVER_IS_M
 | Health checker | `services/health.py` | 60 s | Polls each active `ModelEndpoint` via OpenAI `models.list()`; sets `healthy` flag (retired endpoints are skipped) |
 | Token refiller | `services/token_refill.py` | 60 s poll, hourly effective | Increments `EntityBalance` by `refresh_coins`, capped at `max_coins` |
 | Config watcher | `services/config_watcher.py` | 5 s | Hot-reloads models from `config.yaml` (skips files whose version is not exactly 3 with a logged error; retries a failed model sync with backoff — 5 s, 10 s, 20 s, … up to 5 min — and keeps the previous config until it applies); warns on restart-required changes |
+| Stats fold | `services/stats_fold.py` | `stats.fold_interval` (60 s) | After the stats cutover, adds the `request_logs` rows of `[folded_until, now − stats.fold_lag)` into `model_stats` / `entity_stats` and advances `folded_until` by compare-and-set; a no-op before the cutover |
 
 ---
 
@@ -507,7 +508,7 @@ Footer content is driven by optional `theme.yaml` keys that each theme's `templa
 | Synchronous Flask workers | Each LLM streaming response holds a worker thread for the full duration (seconds to minutes). Under sustained concurrent load, thread exhaustion is the primary scaling limit. More uvicorn processes (`--workers N`) or more threads per process (`LUMEN_WSGI_WORKERS`) help but do not eliminate this. Consider migrating the streaming path to an async framework (Quart, FastAPI) for the `/v1` routes. |
 | Background workers per process | With N uvicorn workers only one runs background threads; if that process dies, health checks and coin refills pause until the process restarts. There is no leader-election or external scheduler. |
 | `EntityBalance` write contention | Every request writes to `entity_balances` for the coin deduction. Under high concurrency from a single entity, this row becomes a hot spot. `SELECT ... FOR UPDATE` serialises these writes; a high-QPS client will queue behind itself. |
-| `model_stats` upsert | After every request, `model_stats` is upserted for (entity, model, source). Under concurrent requests this becomes a serialised bottleneck per entity/model pair. Batching or an async write queue would help at scale. |
+| Usage totals | After the stats cutover billing no longer writes `model_stats` / `entity_stats`; the stats fold adds `request_logs` into them in the background, so the totals lag real time by about `stats.fold_lag + stats.fold_interval` (the user's own `/profile` adds the unfolded tail and is exact). The cutover is set by the upgrade's migration. Billing records its decision per row (`request_logs.stats_deferred` TRUE when it skips the bumps), and the fold counts only marked rows, so old pods that still bump during a rolling update are never counted twice. Rolling the app back without a database downgrade leaves at most `stats.fold_lag + stats.fold_interval` of marked, unfolded rows out of the totals until the new version returns and folds them; a database downgrade drops the column and loses those rows from the totals (`request_logs` itself is kept). A billing transaction that commits more than `stats.fold_lag` after its timestamp is missed until `flask check-stats --fix` runs. |
 | In-memory rate limiter | The default in-memory rate limit state is per-process and not shared across uvicorn workers. Without Redis, the effective limit is `N × configured_limit`. Operators should always configure `rate_limiting.storage_url` in production. |
 
 ### What Scales Well
@@ -566,7 +567,7 @@ Footer content is driven by optional `theme.yaml` keys that each theme's `templa
 
 10. **Store conversation model as a FK, not a string snapshot.** Change `conversations.model` to `model_config_id` (nullable FK with `SET NULL ON DELETE`) so model detail links remain valid and renames propagate automatically.
 
-11. **Batch `model_stats` and `entity_stats` writes.** Accumulate stat increments in-memory per worker and flush to the DB every N seconds (e.g., 10 s) to reduce write contention under high QPS. Accept a small window of potential loss (acceptable for analytics) in exchange for throughput.
+11. **Remove the pre-cutover stats bump.** Once every install has upgraded past the automatic cutover, drop the per-request `model_stats` / `entity_stats` bump from `update_stats`, leaving only the stats fold.
 
 ---
 

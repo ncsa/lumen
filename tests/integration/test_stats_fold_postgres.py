@@ -206,3 +206,115 @@ def test_rolling_update_counts_every_request_once(pg_app):
             assert stat.input_tokens == 4 * 10 + 4 * 20 + 2 * 1
             assert stat.output_tokens == 4 * 5 + 4 * 7 + 2 * 1
             assert stat.cost == 4 * Decimal("0.5") + 4 * Decimal("0.25") + 2 * Decimal("0.125")
+
+
+def _entity_and_model(prefix):
+    from lumen.extensions import db
+    from lumen.models.entity import Entity
+    from lumen.models.model_config import ModelConfig
+    tag = uuid.uuid4().hex[:8]
+    entity = Entity(entity_type="user", email=f"{prefix}-{tag}@example.com", name=f"{prefix} {tag}",
+                    initials="FO", active=True)
+    model = ModelConfig(model_name=f"{prefix}-{tag}", input_cost_per_million=1.0, output_cost_per_million=1.0)
+    db.session.add_all([entity, model])
+    db.session.flush()
+    return entity.id, model.id
+
+
+def _log(entity_id, model_id, at, source="api"):
+    from lumen.extensions import db
+    from lumen.models.request_log import RequestLog
+    db.session.add(RequestLog(
+        time=at.replace(tzinfo=timezone.utc), entity_id=entity_id, model_config_id=model_id, source=source,
+        input_tokens=10, output_tokens=5, audio_seconds=1, cost=Decimal("0.5"), duration=0.0,
+        stats_deferred=True,
+    ))
+
+
+def _cut_over_at(lo):
+    from lumen.extensions import db
+    db.session.execute(text("UPDATE stats_fold_state SET cutover_at = :lo, folded_until = :lo WHERE id = 1"),
+                       {"lo": lo})
+
+
+def test_a_fold_waits_for_the_fold_state_lock(pg_app, pg_migrated_isolated):
+    """reassign-model and check-stats hold the row; a pass blocks until they finish."""
+    from lumen.extensions import db
+    from lumen.services.stats_cutover import lock_fold_state
+    from lumen.services.stats_fold import fold_lag, fold_once
+    from lumen.timeutils import utcnow
+
+    _, engine = pg_migrated_isolated
+    lo = utcnow() - timedelta(hours=1)
+    hi = lo + timedelta(minutes=30)
+    with pg_app.app_context():
+        _cut_over_at(lo)
+        db.session.commit()
+
+    results = []
+    with pg_app.app_context():
+        assert lock_fold_state().folded_until == lo
+        thread = threading.Thread(target=lambda: results.append(fold_once(pg_app, now=hi + fold_lag(pg_app))))
+        thread.start()
+        with engine.connect() as probe:
+            deadline = time.monotonic() + 30
+            while not probe.execute(text(
+                "SELECT count(*) FROM pg_stat_activity"
+                " WHERE datname = current_database() AND wait_event_type = 'Lock'"
+                " AND query LIKE 'UPDATE stats_fold_state %'"
+            )).scalar():
+                # pg_stat_activity is a snapshot per transaction: end it to see the next one.
+                probe.rollback()
+                assert time.monotonic() < deadline, "the fold pass never waited on the lock"
+                time.sleep(0.05)
+        assert results == []
+        db.session.commit()
+    thread.join(timeout=60)
+    assert results == [hi]
+
+
+def test_check_stats_repairs_a_late_commit(pg_app):
+    """A row committed inside an already-folded window is found and added."""
+    from lumen.commands import check_stats_cmd
+    from lumen.extensions import db
+    from lumen.models.entity_stat import EntityStat
+    from lumen.models.model_stat import ModelStat
+    from lumen.services.stats_fold import fold_lag, fold_once
+    from lumen.timeutils import utcnow
+
+    lo = utcnow() - timedelta(hours=1)
+    hi = lo + timedelta(minutes=30)
+    with pg_app.app_context():
+        # Rows earlier tests in this module folded count as drift for this
+        # cutover, so they are cleared first.
+        db.session.execute(text("DELETE FROM request_logs"))
+        db.session.execute(text("DELETE FROM model_stats"))
+        db.session.execute(text("DELETE FROM entity_stats"))
+        entity_id, model_id = _entity_and_model("check")
+        _cut_over_at(lo)
+        _log(entity_id, model_id, lo)
+        db.session.commit()
+    fold_once(pg_app, now=hi + fold_lag(pg_app))
+    with pg_app.app_context():
+        _log(entity_id, model_id, hi - timedelta(seconds=1))
+        db.session.commit()
+
+    def check(*args):
+        # Under an explicit app context: with_appcontext reuses whatever app
+        # is current, and only this one is bound to PostgreSQL.
+        with pg_app.app_context():
+            return pg_app.test_cli_runner().invoke(check_stats_cmd, list(args))
+
+    result = check()
+    assert result.exit_code == 1, result.output
+    assert "2 row(s) differ" in result.output
+    result = check("--fix")
+    assert result.exit_code == 0, result.output
+    assert check().exit_code == 0
+    with pg_app.app_context():
+        model = db.session.execute(select(ModelStat).filter_by(entity_id=entity_id)).scalar_one()
+        entity = db.session.get(EntityStat, entity_id)
+        for stat in (model, entity):
+            assert (stat.requests, stat.folded_requests, stat.cost, stat.folded_cost) == (
+                2, 2, Decimal("1.0"), Decimal("1.0"))
+            assert stat.last_used_at == hi - timedelta(seconds=1)
