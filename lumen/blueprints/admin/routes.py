@@ -266,7 +266,10 @@ def users():
             func.coalesce(func.sum(EntityStat.cost), 0),
         )
         .join(Entity, EntityStat.entity_id == Entity.id)
-        .where(Entity.entity_type == "user")
+        # The ghost holds the merged usage of every erased user. Counting it keeps
+        # these totals from dropping on each erasure and in line with /usage and
+        # /metrics; the count above and the table below stay users-only.
+        .where(Entity.entity_type.in_(("user", "ghost")))
     ).one()
     total_requests, total_tokens, total_cost = stats
     return render_template(
