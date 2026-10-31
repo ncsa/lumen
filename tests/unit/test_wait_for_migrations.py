@@ -4,24 +4,21 @@ SQLite databases stamped by hand stand in for a migrated one; the command only r
 ``alembic_version``, so no real migration is needed. The clock is faked: ``sleep``
 advances it instead of waiting, so a test can let hours pass in a millisecond.
 """
+import socket
+import time
+
 import pytest
-from alembic.config import Config
-from alembic.script import ScriptDirectory
-from sqlalchemy import text
+from sqlalchemy import make_url, text
 from sqlalchemy.exc import OperationalError
 
 from lumen import commands
 from lumen.commands import wait_for_migrations_cmd
+from tests.unit.test_migrations import _script_dir
 
-
-def _script():
-    cfg = Config("migrations/alembic.ini")
-    cfg.set_main_option("script_location", "migrations")
-    return ScriptDirectory.from_config(cfg)
-
-
-HEAD = _script().get_current_head()
-BEFORE_HEAD = _script().get_revision(HEAD).down_revision
+HEAD = _script_dir().get_current_head()
+# A merge revision has a tuple of parents; any one of them is behind the head.
+_parent = _script_dir().get_revision(HEAD).down_revision
+BEFORE_HEAD = _parent[0] if isinstance(_parent, tuple) else _parent
 
 
 @pytest.fixture
@@ -165,6 +162,8 @@ def test_is_read_only(app, stamp, clock):
 def test_unreachable_database_keeps_waiting(app, monkeypatch, clock):
     """An unreachable database is not an error yet: the database may still be starting."""
     class Down:
+        url = make_url("sqlite://")
+
         def connect(self):
             raise OperationalError("connect", {}, ConnectionRefusedError("connection refused"))
 
@@ -174,3 +173,40 @@ def test_unreachable_database_keeps_waiting(app, monkeypatch, clock):
     assert result.exit_code == 1
     assert "database unreachable (ConnectionRefusedError: connection refused)" in result.output
     assert clock.sleeps == 2
+
+
+def test_nan_timeout_is_rejected(app, stamp, clock):
+    """NaN compares False with everything, so it would turn --timeout into "wait forever"."""
+    stamp(BEFORE_HEAD)
+    result = _run(app, "--timeout", "nan")
+    assert result.exit_code == 2
+    assert "not NaN" in result.output
+    assert clock.sleeps == 0
+
+
+def test_silent_postgres_host_does_not_outlast_the_timeout(app, monkeypatch):
+    """A host that accepts TCP and never answers must not block one check forever.
+
+    No PostgreSQL needed: a listening socket that never accepts leaves libpq waiting
+    for the server's first message, which only ``connect_timeout`` ends. Real clock:
+    the fake one patches the shared ``time`` module, which psycopg's own wait reads.
+    """
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(8)
+    port = listener.getsockname()[1]
+
+    class Silent:
+        url = make_url(f"postgresql://lumen:lumen@127.0.0.1:{port}/lumen")
+
+    migrate = app.extensions["migrate"]
+    monkeypatch.setattr(migrate, "db", type("DB", (), {"engine": Silent()})())
+    monkeypatch.setattr(commands, "WAIT_CONNECT_TIMEOUT_SECONDS", 2)  # libpq's minimum
+    started = time.time()
+    try:
+        result = _run(app, "--timeout", "1")
+    finally:
+        listener.close()
+    assert result.exit_code == 1, result.output
+    assert "database unreachable" in result.output
+    assert time.time() - started < 15

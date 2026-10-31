@@ -1,3 +1,4 @@
+import math
 import os
 import re
 import shutil
@@ -13,8 +14,9 @@ from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from flask import current_app
 from flask.cli import with_appcontext
-from sqlalchemy import select, text, update
+from sqlalchemy import create_engine, select, text, update
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.pool import NullPool
 
 from lumen.models.model_alias import ModelAlias
 from lumen.models.model_config import ModelConfig
@@ -912,13 +914,24 @@ def check_aggregate_cmd():
 
 WAIT_RETRY_SECONDS = 2
 WAIT_HINT_SECONDS = 30
+# Bounds one PostgreSQL connection attempt (libpq ``connect_timeout``, whole seconds,
+# minimum 2) and the read of alembic_version, so a database host that accepts TCP but
+# never answers cannot hold the gate past --timeout or silence the upgrade hint.
+WAIT_CONNECT_TIMEOUT_SECONDS = 10
 UPGRADE_HINT = ("Run the upgrade step first: the image with the 'upgrade' argument, the "
                 "'lumen-upgrade' Compose service, or the Helm migration Job.")
 
 
+def _reject_nan(ctx, param, value):
+    # Every comparison with NaN is False, so a NaN timeout would silently never fire.
+    if value is not None and math.isnan(value):
+        raise click.BadParameter("must be a number of seconds, not NaN.")
+    return value
+
+
 @click.command("wait-for-migrations")
 @click.option("--timeout", type=click.FloatRange(min=0), default=None, metavar="SECONDS",
-              help="Give up after this many seconds. Default: wait forever.")
+              callback=_reject_nan, help="Give up after this many seconds. Default: wait forever.")
 @with_appcontext
 def wait_for_migrations_cmd(timeout):
     """Wait until the database is at this image's migration head. Read-only.
@@ -926,7 +939,8 @@ def wait_for_migrations_cmd(timeout):
     Exits 0 at head. While the database is behind, empty or unreachable it retries
     every 2 seconds, until --timeout runs out (exit 1) or forever without one. A
     revision this image does not know means a newer image migrated the database:
-    that exits 1 at once, since waiting cannot fix it.
+    that exits 1 at once, since waiting cannot fix it. One check of an unresponsive
+    PostgreSQL server gives up after 10 seconds, so --timeout can overrun by that much.
     """
     # Flask-Migrate's config and engine, so the script location and the database URL
     # resolve exactly as they do for ``flask db upgrade``.
@@ -934,16 +948,32 @@ def wait_for_migrations_cmd(timeout):
     script = ScriptDirectory.from_config(migrate.migrate.get_config())
     expected = tuple(sorted(script.get_heads()))
     known = {rev.revision for rev in script.walk_revisions()}
+    engine = migrate.db.engine
+    if engine.url.get_backend_name() == "postgresql":
+        # Same URL, but every check opens a fresh connection that cannot block forever.
+        engine = create_engine(engine.url, poolclass=NullPool, connect_args={
+            "connect_timeout": WAIT_CONNECT_TIMEOUT_SECONDS,
+            "options": f"-c statement_timeout={WAIT_CONNECT_TIMEOUT_SECONDS * 1000}",
+        })
+    try:
+        _wait_for_heads(engine, expected, known, timeout)
+    finally:
+        if engine is not migrate.db.engine:
+            engine.dispose()
 
+
+def _wait_for_heads(engine, expected, known, timeout):
+    """The retry loop of ``wait-for-migrations``: returns at head, exits 1 otherwise."""
     start = time.monotonic()
     last_hint = start
     last_state = None
     while True:
         try:
-            with migrate.db.engine.connect() as conn:
+            with engine.connect() as conn:
                 current = tuple(sorted(MigrationContext.configure(conn).get_current_heads()))
         except DBAPIError as e:
-            state = f"database unreachable ({e.orig.__class__.__name__}: {' '.join(str(e.orig).split())})"
+            err = e.orig if e.orig is not None else e
+            state = f"database unreachable ({type(err).__name__}: {' '.join(str(err).split())})"
         else:
             unknown = [rev for rev in current if rev not in known]
             if unknown:

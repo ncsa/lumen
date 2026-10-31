@@ -217,6 +217,11 @@ about every 30 seconds it logs a reminder to run the upgrade step (the image wit
 `lumen-upgrade` Compose service, or the Helm migration Job). A revision this image does not know means a
 newer image already migrated the database, so it exits 1 at once. It never migrates anything.
 
+Each check gives up on a PostgreSQL server that accepts the connection but never answers after
+10 seconds, so `--timeout` can overrun by that much. Loading the app opens connections before the
+command starts, and those have no timeout of their own; set `PGCONNECT_TIMEOUT` (for example `10`)
+so a silent database host cannot hold the command before its first check.
+
 ### Upgrading TimescaleDB
 
 TimescaleDB is required: Lumen does not run on a plain `postgres` image. Pin the image tag
