@@ -55,7 +55,9 @@ def get_or_create_ghost() -> Entity:
 
 # Key and bookkeeping columns of the stats tables; every other column is a
 # counter that a merge adds up. Derived from the table rather than listed, so a
-# counter added later is merged too instead of silently dropped.
+# counter added later is merged too instead of silently dropped. This assumes
+# model_stats and entity_stats hold only summable counters besides these: a new
+# non-counter column (a label, a min or max) must be added to this set.
 _STAT_KEY_COLUMNS = frozenset({"id", "entity_id", "model_config_id", "source", "last_used_at"})
 
 

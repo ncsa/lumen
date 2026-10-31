@@ -684,6 +684,9 @@ def erase_entity_cmd(entity_id, yes):
             start = _reassign_start(conn, "entity_id", entity_id, boundaries)
         log_count = _move_request_logs("entity_id", entity_id, ghost_id)
         # Rows logged during the walk, by a request already in flight at deactivation.
+        # SET LOCAL lasts only for the session's current transaction, which runs from
+        # here through the entity delete and its commit below: the sweep UPDATE right
+        # after must stay in it, with no commit or rollback in between.
         db.session.execute(text("SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"))
     result = db.session.execute(update(RequestLog).where(RequestLog.entity_id == entity_id)
                                 .values(entity_id=ghost_id))
