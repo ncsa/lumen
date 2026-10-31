@@ -931,7 +931,9 @@ def _reject_nan(ctx, param, value):
 
 @click.command("wait-for-migrations")
 @click.option("--timeout", type=click.FloatRange(min=0), default=None, metavar="SECONDS",
-              callback=_reject_nan, help="Give up after this many seconds. Default: wait forever.")
+              callback=_reject_nan,
+              help="Stop retrying once this many seconds have passed (exit 1); the check in "
+                   "progress can add up to 10 seconds. Default: wait forever.")
 @with_appcontext
 def wait_for_migrations_cmd(timeout):
     """Wait until the database is at this image's migration head. Read-only.
@@ -939,8 +941,10 @@ def wait_for_migrations_cmd(timeout):
     Exits 0 at head. While the database is behind, empty or unreachable it retries
     every 2 seconds, until --timeout runs out (exit 1) or forever without one. A
     revision this image does not know means a newer image migrated the database:
-    that exits 1 at once, since waiting cannot fix it. One check of an unresponsive
-    PostgreSQL server gives up after 10 seconds, so --timeout can overrun by that much.
+    that exits 1 at once, since waiting cannot fix it. Each PostgreSQL check gives an
+    unresponsive server up to 10 seconds, so the command can exit that much after
+    --timeout. Connections made while the app loads are not covered: see
+    PGCONNECT_TIMEOUT in the README.
     """
     # Flask-Migrate's config and engine, so the script location and the database URL
     # resolve exactly as they do for ``flask db upgrade``.
@@ -951,15 +955,30 @@ def wait_for_migrations_cmd(timeout):
     engine = migrate.db.engine
     if engine.url.get_backend_name() == "postgresql":
         # Same URL, but every check opens a fresh connection that cannot block forever.
-        engine = create_engine(engine.url, poolclass=NullPool, connect_args={
-            "connect_timeout": WAIT_CONNECT_TIMEOUT_SECONDS,
-            "options": f"-c statement_timeout={WAIT_CONNECT_TIMEOUT_SECONDS * 1000}",
-        })
+        engine = create_engine(engine.url, poolclass=NullPool, connect_args=_gate_connect_args(engine.url))
     try:
         _wait_for_heads(engine, expected, known, timeout)
     finally:
         if engine is not migrate.db.engine:
             engine.dispose()
+
+
+def _gate_connect_args(url):
+    """libpq arguments that bound one check without changing what it connects to.
+
+    ``connect_args`` replaces a key of the same name from the URL's query string, and
+    an explicit ``options`` also replaces ``PGOPTIONS``. So the statement timeout is
+    appended to whatever options the URL or the environment already set: dropping a
+    ``-c search_path=...`` there would read another schema's alembic_version than the
+    one ``flask db upgrade`` writes.
+    """
+    options = url.query.get("options", os.environ.get("PGOPTIONS", ""))
+    if isinstance(options, tuple):
+        options = " ".join(options)
+    return {
+        "connect_timeout": WAIT_CONNECT_TIMEOUT_SECONDS,
+        "options": f"{options} -c statement_timeout={WAIT_CONNECT_TIMEOUT_SECONDS * 1000}".strip(),
+    }
 
 
 def _wait_for_heads(engine, expected, known, timeout):

@@ -14,6 +14,7 @@ import pytest
 from sqlalchemy import text
 
 from tests.integration.conftest import PG_URL_ENV, TEST_CONFIG, _admin_engine
+from tests.unit.test_migrations import _script_dir
 
 pytestmark = pytest.mark.postgres
 
@@ -72,3 +73,28 @@ def test_waits_on_empty_database(empty_pg_url):
     with engine.connect() as conn:
         assert conn.execute(text("SELECT to_regclass('alembic_version')")).scalar() is None
     engine.dispose()
+
+
+def test_reads_the_schema_the_url_selects(empty_pg_url):
+    """``?options=-c search_path=...`` must reach the gate's connection.
+
+    Only the ``tenant`` schema is stamped at head; ``public`` has no alembic_version.
+    A gate that dropped the URL's options for its own statement timeout would read
+    ``public`` and wait on a database that is already migrated.
+    """
+    head = _script_dir().get_current_head()
+    engine = _admin_engine(empty_pg_url)
+    with engine.connect() as conn:
+        conn.execute(text("CREATE SCHEMA tenant"))
+        conn.execute(text("CREATE TABLE tenant.alembic_version (version_num VARCHAR(32) PRIMARY KEY)"))
+        conn.execute(text("INSERT INTO tenant.alembic_version VALUES (:r)"), {"r": head})
+    engine.dispose()
+
+    result = _run(empty_pg_url + "?options=-c%20search_path%3Dtenant", "--timeout", "3")
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+    assert f"Database is at migration head {head}." in result.stdout
+
+    # Without the option the same database is unstamped: the test above is not vacuous.
+    result = _run(empty_pg_url, "--timeout", "1")
+    assert result.returncode == 1
+    assert "database is at revision none" in result.stdout

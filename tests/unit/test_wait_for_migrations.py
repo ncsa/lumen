@@ -210,3 +210,45 @@ def test_silent_postgres_host_does_not_outlast_the_timeout(app, monkeypatch):
     assert result.exit_code == 1, result.output
     assert "database unreachable" in result.output
     assert time.time() - started < 15
+
+
+def _driver_kwargs(app, monkeypatch, url):
+    """The keyword arguments the gate's PostgreSQL connection hands to psycopg."""
+    import psycopg
+
+    captured = []
+
+    def fake_connect(*args, **kwargs):
+        captured.append(kwargs)
+        raise psycopg.OperationalError("captured")
+
+    class Pg:
+        pass
+
+    Pg.url = make_url(url)
+    migrate = app.extensions["migrate"]
+    monkeypatch.setattr(migrate, "db", type("DB", (), {"engine": Pg()})())
+    monkeypatch.setattr(psycopg, "connect", fake_connect)
+    result = _run(app, "--timeout", "0")
+    assert result.exit_code == 1, result.output
+    assert "captured" in result.output
+    return captured[0]
+
+
+def test_url_connection_options_are_kept(app, monkeypatch, clock):
+    """A search_path in the URL must survive: else the gate reads another schema's head."""
+    monkeypatch.delenv("PGOPTIONS", raising=False)
+    kwargs = _driver_kwargs(
+        app, monkeypatch,
+        "postgresql+psycopg://u:p@127.0.0.1:1/db?options=-c%20search_path%3Dtenant&connect_timeout=120",
+    )
+    assert kwargs["options"] == "-c search_path=tenant -c statement_timeout=10000"
+    # The gate's own bound wins over a looser one in the URL.
+    assert kwargs["connect_timeout"] == 10
+
+
+def test_pgoptions_are_kept(app, monkeypatch, clock):
+    """An explicit options argument replaces PGOPTIONS in libpq, so it must carry it over."""
+    monkeypatch.setenv("PGOPTIONS", "-c search_path=tenant")
+    kwargs = _driver_kwargs(app, monkeypatch, "postgresql+psycopg://u:p@127.0.0.1:1/db")
+    assert kwargs["options"] == "-c search_path=tenant -c statement_timeout=10000"
