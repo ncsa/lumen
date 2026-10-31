@@ -12,14 +12,11 @@ import yaml
 from flask import current_app
 from flask.cli import with_appcontext
 from sqlalchemy import select, text, update
-from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.exc import DBAPIError
 
 from lumen.models.model_alias import ModelAlias
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
-from lumen.models.stats_fold_state import StatsFoldState
-from lumen.services.stats_cutover import CUTOVER_LEAD, get_fold_state
-from lumen.timeutils import utcnow
 
 from .extensions import db
 
@@ -585,43 +582,6 @@ def _refresh_reassigned(start, boundaries):
                 click.echo(f"Error: refreshing '{name}' for {failed.month:%Y-%m} failed: {failed.error.orig}")
                 click.echo("  request_logs is moved; re-run the same command to finish the refresh.")
                 raise SystemExit(1)
-
-
-@click.command("stats-cutover")
-@with_appcontext
-def stats_cutover_cmd():
-    """Switch the usage totals from per-request bumps to the stats fold. Run once.
-
-    Sets ``cutover_at`` (and the fold watermark) a few minutes ahead, so every
-    serving process has read it before it takes effect: from then on billing
-    leaves ``model_stats`` / ``entity_stats`` alone and the background fold adds
-    ``request_logs`` into them. On PostgreSQL run it after the rollout has
-    finished. Refuses to run once ``cutover_at`` is set.
-    """
-    at = utcnow() + CUTOVER_LEAD
-    # Only a row whose cutover_at is still NULL is claimed, so two concurrent
-    # runs cannot both move it.
-    claimed = db.session.execute(
-        update(StatsFoldState)
-        .where(StatsFoldState.id == 1, StatsFoldState.cutover_at.is_(None))
-        .values(cutover_at=at, folded_until=at)
-    ).rowcount
-    if not claimed and db.session.get(StatsFoldState, 1) is None:
-        # No row at all (a create_all() database): insert it. A concurrent run
-        # inserting first makes this a primary-key conflict.
-        db.session.add(StatsFoldState(id=1, cutover_at=at, folded_until=at))
-        try:
-            db.session.flush()
-            claimed = True
-        except IntegrityError:
-            db.session.rollback()
-    if not claimed:
-        db.session.rollback()
-        click.echo(f"Error: the stats cutover is already set, at {get_fold_state().cutover_at} UTC.")
-        raise SystemExit(1)
-    db.session.commit()
-    click.echo(f"Stats cutover set to {at} UTC: from then on the fold, not billing, "
-               f"updates model_stats and entity_stats.")
 
 
 # --------------------------------------------------------------------------- #

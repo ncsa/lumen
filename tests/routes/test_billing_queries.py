@@ -17,7 +17,8 @@ written twice in a row (an entity's first use: UPDATE, then INSERT) counts once.
 Each path is pinned on both sides of the stats cutover: before it (the suite's
 default, no ``stats_fold_state`` row) billing bumps ``model_stats`` and
 ``entity_stats``; after it (``post_cutover``) the fold does, and billing writes
-only ``request_logs``, ``api_keys`` and ``entity_balances``.
+only ``request_logs``, ``api_keys`` and ``entity_balances``, with the
+``request_logs`` row marked ``stats_deferred``.
 """
 from http import HTTPStatus
 from unittest.mock import patch
@@ -110,6 +111,20 @@ def _billing(log):
     return _collapse(after[:after.index(COMMIT)])
 
 
+def _marker(app):
+    """``stats_deferred`` of the one request_logs row the request wrote.
+
+    The same INSERT carries it: TRUE after the cutover (the fold adds the row),
+    NULL before it (billing bumped the stats tables itself).
+    """
+    from sqlalchemy import select
+
+    from lumen.extensions import db
+    from lumen.models.request_log import RequestLog
+    with app.app_context():
+        return db.session.execute(select(RequestLog.stats_deferred)).scalar_one()
+
+
 def _upstream(log, result):
     def _create(**kwargs):
         log.append(UPSTREAM)
@@ -128,6 +143,7 @@ def test_api_non_stream_bills_hot_locks_last(
         resp = _chat_post(client, token, test_model["model_name"], False)
         assert resp.status_code == HTTPStatus.OK
     assert _billing(log) == (CUTOVER_API_BILLING if cutover else API_BILLING)
+    assert _marker(app) is (True if cutover else None)
 
 
 def test_api_stream_bills_hot_locks_last(
@@ -142,6 +158,7 @@ def test_api_stream_bills_hot_locks_last(
         assert resp.status_code == HTTPStatus.OK
         resp.get_data()
     assert _billing(log) == (CUTOVER_API_BILLING if cutover else API_BILLING)
+    assert _marker(app) is (True if cutover else None)
 
 
 def test_api_aborted_stream_bills_hot_locks_last(
@@ -158,6 +175,7 @@ def test_api_aborted_stream_bills_hot_locks_last(
         next(iter(resp.response))  # one event, then walk away mid-stream
         resp.close()
     assert _billing(log) == (CUTOVER_API_BILLING if cutover else API_BILLING)
+    assert _marker(app) is (True if cutover else None)
 
     with app.app_context():
         from sqlalchemy import select
@@ -188,6 +206,7 @@ def test_audio_bills_hot_locks_last(
         )
         assert resp.status_code == HTTPStatus.OK
     assert _billing(log) == (CUTOVER_API_BILLING if cutover else API_BILLING)
+    assert _marker(app) is (True if cutover else None)
 
 
 def test_chat_stream_bills_hot_locks_last(app, auth_client, test_user, test_model, test_model_endpoint, cutover):
@@ -211,6 +230,7 @@ def test_chat_stream_bills_hot_locks_last(app, auth_client, test_user, test_mode
             assert resp.status_code == HTTPStatus.OK
             resp.get_data()
     assert _billing(log) == (CUTOVER_BILLING if cutover else BILLING)
+    assert _marker(app) is (True if cutover else None)
 
     after = log[log.index(UPSTREAM) + 1:]
     conversation = after[after.index(COMMIT) + 1:]

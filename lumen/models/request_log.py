@@ -88,6 +88,16 @@ class RequestLog(db.Model):
         nullable=False,
         comment="Client disconnected before the stream completed; token counts may be estimated",
     )
+    # What billing did with the stats totals, written in the same INSERT. TRUE
+    # means billing skipped the model_stats/entity_stats bumps and the stats fold
+    # adds this row instead; NULL means billing bumped them (before the cutover,
+    # on an older pod that does not know the column, or with a stale cached
+    # cutover). The fold reads only TRUE rows, so no request is counted twice.
+    stats_deferred: Mapped[Optional[bool]] = mapped_column(
+        db.Boolean,
+        nullable=True,
+        comment="TRUE when billing left this request out of model_stats/entity_stats for the stats fold to add; NULL when billing counted it directly",
+    )
     # --- Request timing -----------------------------------------------------
     #
     # `time` above is the COMPLETION timestamp (stamped after billing), and
