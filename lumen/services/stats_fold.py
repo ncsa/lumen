@@ -1,8 +1,10 @@
 """Fold ``request_logs`` into the ``model_stats`` / ``entity_stats`` totals.
 
 After the cutover recorded in ``stats_fold_state``, billing stops bumping the
-two stats tables on every request, and ``fold_once`` adds up the
-``request_logs`` rows written since its last pass instead. Each pass covers the
+two stats tables on every request and marks the row it writes
+``stats_deferred``; ``fold_once`` adds up the marked ``request_logs`` rows
+written since its last pass instead. The cutover is set by the
+``stats_deferred_marker`` migration on both dialects. Each pass covers the
 half-open window ``[folded_until, now - lag)``, so consecutive windows never
 overlap and never leave a gap; the lag leaves room for billing transactions
 that commit a little after their row's ``time``.
@@ -118,8 +120,10 @@ def fold_once(app, now: datetime = None) -> Optional[datetime]:
     folded twice. On PostgreSQL a second concurrent pass blocks on that row
     until the first commits, then finds it moved.
 
-    Rows with a NULL ``entity_id`` have no stats row to land in and are
-    skipped; rows with a NULL ``model_config_id`` count for the entity only.
+    Only rows billing marked ``stats_deferred`` are folded; any other row in the
+    window was bumped by billing already. Rows with a NULL ``entity_id`` have no
+    stats row to land in and are skipped; rows with a NULL ``model_config_id``
+    count for the entity only.
 
     Runs in its own app context, so on its own session and connection: a
     caller's session is neither committed nor rolled back by it.
@@ -157,6 +161,10 @@ def fold_once(app, now: datetime = None) -> Optional[datetime]:
             RequestLog.time >= as_utc_aware(lo),
             RequestLog.time < as_utc_aware(hi),
             RequestLog.entity_id.is_not(None),
+            # Only the rows billing left to the fold: a NULL row was bumped
+            # already (before the cutover, by an older pod, or on a stale
+            # cached cutover_at).
+            RequestLog.stats_deferred.is_(True),
         )
         per_model = db.session.execute(
             select(RequestLog.entity_id, RequestLog.model_config_id, RequestLog.source, *_sums())
