@@ -303,12 +303,12 @@ erDiagram
 
 ## entities
 
-Unified table for both human users (authenticated via OAuth) and programmatic projects (authenticated via API keys). The `entity_type` column distinguishes them.
+Unified table for both human users (authenticated via OAuth) and programmatic projects (authenticated via API keys). The `entity_type` column distinguishes them; a third type, `'ghost'`, is the single shared entity that erased users are merged into (see [Erasing a user](#erasing-a-user-gdpr)).
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `id` | Integer | NO | Primary key |
-| `entity_type` | String(8) | NO | `'user'` for human users, `'project'` for API projects |
+| `entity_type` | String(8) | NO | `'user'` for human users, `'project'` for API projects, `'ghost'` for the single shared erased-user entity |
 | `email` | String(256) | YES | Email address; populated for users, null for projects. Unique across users. |
 | `name` | String(256) | NO | Display name |
 | `initials` | String(4) | NO | Short initials used in UI avatars |
@@ -319,6 +319,8 @@ Unified table for both human users (authenticated via OAuth) and programmatic pr
 | `created_at` | DateTime | NO | UTC timestamp when the entity was created |
 
 **Constraints:**
+- `ck_entities_type` — `CHECK (entity_type IN ('user', 'project', 'ghost'))`. PostgreSQL only.
+- `uq_entities_single_ghost` — partial unique index `ON entities (entity_type) WHERE entity_type = 'ghost'`: at most one ghost row. Both dialects.
 - `ck_entities_project_owner` — `CHECK ((entity_type = 'project' AND owner_entity_id IS NOT NULL) OR (entity_type <> 'project' AND owner_entity_id IS NULL))`: every project has exactly one owner and users have none.
 - `fk_entities_owner_membership` — `FOREIGN KEY (owner_entity_id, id) REFERENCES entity_managers (user_entity_id, project_entity_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED`. The owner's manager row cannot be deleted while they own the project (transfer ownership first). Deferred so a project and its owner's manager row can be inserted in the same transaction. Not enforced on SQLite, which runs without foreign keys.
 
@@ -326,6 +328,7 @@ Unified table for both human users (authenticated via OAuth) and programmatic pr
 - All foreign keys that reference `entities.id` cascade on delete, except `model_configs.owner_entity_id`, `api_keys.created_by_entity_id`, `api_keys.revoked_by_entity_id`, and the `request_logs` FKs, which use `SET NULL`.
 - Acknowledgement (`needs_ack`) is a property of the model, not of the entity.
 - Deleting a user who owns a project fails on `fk_entities_owner_membership`; transfer ownership first.
+- The ghost (`entity_type = 'ghost'`, name `Erased user`) has no email, is inactive, and has no memberships, balance or limits. `flask erase-entity` creates it on first use; the migration does not seed it. Login and every user listing filter on `entity_type = 'user'`, so it never signs in and never appears next to real users.
 
 ---
 
@@ -338,7 +341,7 @@ API keys that entities (users or projects) use to authenticate against the proxy
 | `id` | Integer | NO | Primary key |
 | `entity_id` | Integer (FK → entities) | NO | The entity that owns this key. Cascades on delete. |
 | `name` | String(128) | NO | Human-readable label for the key (e.g., "Production bot") |
-| `key_hash` | String(64) | NO | HMAC-SHA256 hash of the raw key. Unique. |
+| `key_hash` | String(64) | NO | HMAC-SHA256 of the raw key, keyed on `ENCRYPTION_KEY`; finding a key from its raw value takes the server secret. Unique. Erasure replaces it with 64 random hex characters. |
 | `key_hint` | String(32) | YES | Last few characters of the raw key shown in the UI for identification |
 | `revoked_at` | DateTime | YES | UTC time the key was revoked; null while the key is usable. Approximate (`last_used_at`, else `created_at`, else the migration time) for keys revoked before this column existed. |
 | `expires_at` | DateTime | YES | UTC time the key expires; null if it never expires. Set when the key is created, from the chosen TTL (capped by and defaulting to `api.keys.ttl`; for OAuth keys, the approved `auth_requests.ttl` counted from mint, including when an OAuth overwrite refreshes the key in place), and when its expiry is edited. A background job (and the API on use) revokes an overdue key by setting `revoked_at` to this value, with `revoked_by_entity_id` left null. Indexed. |
@@ -820,6 +823,70 @@ across the whole window.
 policy, calls `drop_chunks`, or deletes from it (#167); `tests/unit/test_request_logs_never_pruned.py`
 enforces this. The one retention policy Lumen adds is on `request_metrics_1m`, the only target that
 test allows. `flask check-aggregate` exits 1 if a retention policy was added to `request_logs` by hand.
+
+---
+
+## Erasing a user (GDPR)
+
+`flask erase-entity <id> [--yes]` hard-deletes a user for GDPR erasure. It cannot be undone, and
+on PostgreSQL it is off-hours operator work. Only users can be erased; it refuses a project, the
+ghost, a user who still owns a project (transfer ownership first), and, like `reassign-model`, runs
+only while `request_logs` has no retention policy.
+
+**What is deleted:** the user's `conversations` and their `messages`, `auth_requests`,
+`entity_balances`, `entity_limits`, `entity_model_consents`, `group_members` (owner rows included)
+and `entity_managers` rows, then the `entities` row. The command deletes these explicitly, children
+first, instead of relying on `ON DELETE CASCADE`: SQLite runs without foreign keys, so the same
+statements then erase the same rows on both dialects, and the per-table counts it prints are the
+record of the erasure. The cascades and `SET NULL`s stay as the backstop on PostgreSQL. A unit test
+walks every foreign key into `entities`, `conversations` and `api_keys` so a new table cannot be
+missed silently.
+
+**What moves to the ghost:**
+- `request_logs`: on PostgreSQL one chunk per transaction, oldest first, like `reassign-model`.
+  `entity_id` is not a `segmentby` column, so each chunk's UPDATE can decompress the whole chunk;
+  every chunk touched is recompressed. Rows logged during the walk are swept up in the final
+  transaction. `request_counts_hourly_by_entity` is then refreshed month by month from the user's
+  first row.
+- `model_stats` and `entity_stats`: added into the ghost's rows (latest `last_used_at` kept); a row
+  the ghost has no counterpart for is re-pointed.
+- `model_configs` the user owned: disabled and re-owned by the ghost, so `ON DELETE SET NULL` cannot
+  turn a private model public. A model still listed in `config.yaml` is re-enabled by the next sync
+  but stays unusable (only its inactive owner may use it); the command warns about it.
+- `api_keys`: revoked (`revoked_at` kept if already set, `revoked_by_entity_id` null), renamed
+  `ghost key`, and stripped of `key_hint`, `client_id`, `requested_by` and `created_by_entity_id`.
+  `key_hash` is replaced too: the old value is an HMAC of the user's raw key, so anyone holding
+  `ENCRYPTION_KEY` could hash the old key and find the row. A random value matches no raw key under
+  any secret. The usage counters, `created_at`, `last_used_at` and `expires_at` are kept as the key's
+  share of the pooled history. Other entities' keys only lose `created_by_entity_id` /
+  `revoked_by_entity_id` where those point at the user; another user's `auth_requests.api_key_id`
+  keeps pointing at the (now ghost) key.
+
+**Groups can lose their owner.** A group the user owned survives with no owner (`get_group_owner`
+returns None) until an admin sets one; the command lists those groups.
+
+**Not covered:** a pending `auth_requests` row has no `entity_id` until it is approved, so nothing
+links it to the user; the janitor deletes it after it expires. Personal data outside the database
+(application logs, backups, an `admins:` email in `config.yaml`) is out of scope.
+
+**How the ghost counts in usage.** The ghost accumulates the usage of every erased user. System-wide
+totals keep including it, so they never drop on an erasure: the all-users `/usage` view
+(`request_counts_hourly`), per-model numbers, Prometheus `lumen_model_*_total` (a drop would read as
+a counter reset) and the admin Users page header totals, which count `entity_type IN ('user',
+'ghost')`. Everything that lists or ranks individual users filters on `entity_type = 'user'`, so the
+ghost is never listed: the admin Users table, `users_total` / `users_active`, member and owner
+pickers.
+
+**Resuming.** Every step is safe to re-run. Interrupted before the final transaction commits, the
+user still exists, inactive, and every row belongs to the user or the ghost. The final transaction
+(sweep, stats merge, models, keys, deletes, entity delete) is one commit: if the entity delete fails,
+for example on a `request_logs` row logged after the sweep, everything in it rolls back and the
+command says to re-run. Interrupted during the aggregate refresh, the user is gone; re-running with
+the same id refreshes from the buckets still materialised under it, or reports nothing to do.
+
+**Depends on #176:** the `request_logs.entity_id` foreign key is still `ON DELETE SET NULL`. Until it
+is `RESTRICT`, a row the walk and sweep both missed is nulled instead of failing the delete. The
+PostgreSQL integration tests run against the `RESTRICT` key.
 
 ---
 
