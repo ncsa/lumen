@@ -197,3 +197,13 @@ docker run -d --rm --name monitor-test-pg -e POSTGRES_USER=monitor -e POSTGRES_P
 MONITOR_TEST_POSTGRES_URL=postgresql://monitor:monitor@localhost:55434/monitor_ci uv run pytest -rs
 docker stop monitor-test-pg
 ```
+
+`tests/bench_ranges.py` times the dashboard endpoints on every range over 31d of 1-minute data
+and a year of daily rows. It is marked `bench` and is not part of the default run; name the file
+to run it (`pytest -m bench` alone collects nothing). `MONITOR_BENCH_MODELS` sets the model count
+(default 13) and `MONITOR_BENCH_REPEAT` the requests per endpoint and range (default 3). With
+`MONITOR_TEST_POSTGRES_URL` set it also runs on PostgreSQL, and drops every table there on exit:
+
+```bash
+uv run pytest tests/bench_ranges.py -m bench -s
+```

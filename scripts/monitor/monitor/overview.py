@@ -14,23 +14,28 @@ A day's totals are exact only when its lumen row is `final` and not
 
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from monitor.buckets import (
     DOWN,
     OK,
+    STATUS_PRIORITY,
     UNKNOWN,
     DayGrid,
     Range,
-    bucket_statuses,
+    bucket_index,
     daily_status,
     lumen_daily_status,
     lumen_uptime,
     make_grid,
     model_uptime,
-    probe_status,
+    probe_rank,
     range_days,
+    rank_status,
+    slot_start,
+    status_rank,
+    utc_slot,
 )
 from monitor.config import Config
 from monitor.daily import local_day, local_midnight
@@ -112,44 +117,60 @@ def lumen_card(session: Session, config: Config, rng: Range, now: datetime) -> d
     daily Lumen rows, so 1y buckets the probes that are still kept (`retention`)
     per local day; older days are `unknown`. A 1y day's status comes from
     `lumen_daily_status` and the uptime is `Σ probes up / Σ probes`.
+
+    The database groups the probes: per bucket for the short ranges, and for 1y
+    per 15-minute `utc_slot()`, which Python adds up per local day.
     """
     grid = make_grid(rng, config.refresh.web, now, config.timezone)
-    probes = session.execute(
-        select(Probe.polled_at, Probe.success, Probe.response_time_ms, Probe.model_count, Probe.models_up)
-        .where(Probe.polled_at > now - rng.span, Probe.polled_at <= now)
-        .order_by(Probe.polled_at, Probe.id)
+    in_range = (Probe.polled_at > now - rng.span, Probe.polled_at <= now)
+    key = utc_slot(Probe.polled_at) if rng.daily else bucket_index(Probe.polled_at, grid)
+    probes = select(
+        key.label("key"),
+        Probe.response_time_ms.label("rt"),
+        probe_rank(Probe.success, Probe.model_count, Probe.models_up, config.down_above).label("rank"),
+    ).where(*in_range).subquery()
+    rank = probes.c.rank
+    groups = session.execute(
+        select(
+            probes.c.key, func.count(),
+            func.sum(case((rank != STATUS_PRIORITY[DOWN], 1), else_=0)),
+            func.sum(case((rank == STATUS_PRIORITY[OK], 1), else_=0)),
+            func.max(probes.c.rt), func.max(rank),
+        ).group_by(probes.c.key)
     ).all()
 
     max_rt: list[float | None] = [None] * grid.count
     polls, polls_up, polls_ok = [0] * grid.count, [0] * grid.count, [0] * grid.count
-    points = []
-    for p in probes:
-        status = probe_status(p.success, p.model_count, p.models_up, config.down_above)
-        points.append((p.polled_at, status))
-        i = grid.index(p.polled_at)
+    ranks: list[int | None] = [None] * grid.count
+    for key, count, up, ok, rt, rank in groups:
+        i = grid.index(slot_start(key)) if rng.daily else key if key < grid.count else None
         if i is None:
             continue
-        polls[i] += 1
-        polls_up[i] += status != DOWN
-        polls_ok[i] += status == OK
-        if p.response_time_ms is not None:
-            max_rt[i] = max(max_rt[i] or 0.0, p.response_time_ms)
+        polls[i] += count
+        polls_up[i] += up
+        polls_ok[i] += ok
+        if rt is not None:
+            max_rt[i] = max(max_rt[i] or 0.0, rt)
+        ranks[i] = max(ranks[i] or 0, rank)
     if rng.daily:
         statuses = [lumen_daily_status(n, up, ok) for n, up, ok in zip(polls, polls_up, polls_ok)]
         uptime = 100 * sum(polls_up) / sum(polls) if sum(polls) else None
     else:
-        statuses = bucket_statuses(points, grid)
+        statuses = [rank_status(r) for r in ranks]
         uptime = lumen_uptime(statuses)
 
-    rts = [p.response_time_ms for p in probes if p.response_time_ms is not None]
-    last = probes[-1] if probes else None
+    ms = Probe.response_time_ms
+    min_ms, avg_ms, max_ms = session.execute(select(func.min(ms), func.avg(ms), func.max(ms)).where(*in_range)).one()
+    last = session.execute(
+        select(Probe.polled_at, ms).where(*in_range).order_by(Probe.polled_at.desc(), Probe.id.desc()).limit(1)
+    ).one_or_none()
     return {
         "state": lumen_state(session, config.down_above),
         "last_ms": last.response_time_ms if last else None,
         "last_at": _iso(last.polled_at) if last else None,
-        "min_ms": min(rts) if rts else None,
-        "avg_ms": sum(rts) / len(rts) if rts else None,
-        "max_ms": max(rts) if rts else None,
+        "min_ms": min_ms,
+        "avg_ms": avg_ms,
+        "max_ms": max_ms,
         "uptime": uptime,
         "buckets": [{"t": _iso(t), "status": s, "rt": rt} for t, s, rt in zip(grid.times(), statuses, max_rt)],
     }
@@ -232,21 +253,36 @@ def _day_minutes(row: DailyStat, tz) -> float:
 
 
 def _short_range_stats(session: Session, grid, start: datetime, now: datetime, models: list[str]) -> dict[str, dict]:
-    stmt = (
-        select(Sample.model, Sample.sampled_at, Sample.status, Sample.requests_last_minute)
+    """Strip, uptime and peak req/min per model from one query that returns a row per (model, bucket).
+
+    The peak covers every sample in `(start, now]`, also one at `now`, which ends
+    the grid and so is in no bucket.
+    """
+    rows = (
+        select(
+            Sample.model,
+            bucket_index(Sample.sampled_at, grid).label("i"),
+            status_rank(Sample.status).label("rank"),
+            Sample.requests_last_minute.label("rpm"),
+        )
         .where(Sample.sampled_at > start, Sample.sampled_at <= now, Sample.model.in_(models))
+        .subquery()
     )
-    points: dict[str, list] = {m: [] for m in models}
+    stmt = select(rows.c.model, rows.c.i, func.max(rows.c.rank), func.max(rows.c.rpm)).group_by(rows.c.model, rows.c.i)
+    ranks: dict[str, list[int | None]] = {m: [None] * grid.count for m in models}
     peaks: dict[str, int | None] = {m: None for m in models}
-    for s in session.execute(stmt).all():
-        points[s.model].append((s.sampled_at, s.status))
-        if s.requests_last_minute is not None:
-            peaks[s.model] = max(peaks[s.model] or 0, s.requests_last_minute)
-    stats = {}
-    for m in models:
-        strip = bucket_statuses(points[m], grid)
-        stats[m] = {"strip": strip, "uptime": model_uptime(strip), "peak_rpm": peaks[m]}
-    return stats
+    for model, i, rank, peak in session.execute(stmt).all():
+        if 0 <= i < grid.count:
+            ranks[model][i] = rank
+        if peak is not None:
+            peaks[model] = max(peaks[model] or 0, peak)
+    return {m: short_range_row(ranks[m], peaks[m]) for m in models}
+
+
+def short_range_row(ranks: list[int | None], peak: int | None) -> dict:
+    """A model's strip, uptime and peak req/min from its `MAX(status_rank())` per bucket and its busiest sample."""
+    strip = [rank_status(r) for r in ranks]
+    return {"strip": strip, "uptime": model_uptime(strip), "peak_rpm": peak}
 
 
 def _yearly_stats(rows: dict, days: list[date], models: list[str], tz) -> dict[str, dict]:
@@ -262,17 +298,20 @@ def _yearly_stats(rows: dict, days: list[date], models: list[str], tz) -> dict[s
     return stats
 
 
-def model_rows(session: Session, config: Config, rng: Range, now: datetime, models: list[dict]) -> list[dict]:
-    """One table row per current model; see the module docstring for where each value comes from."""
+def model_rows(session: Session, config: Config, rng: Range, now: datetime, models: list[dict],
+               stats: dict[str, dict] | None = None) -> list[dict]:
+    """One table row per current model; see the module docstring for where each value comes from.
+
+    `stats` gives each model's strip, uptime and peak when the caller has already read them.
+    """
     ids = [m["id"] for m in models]
     tz = config.timezone
     days = range_days(rng, now, tz)
     rows = _daily_rows(session, days, ids)
-    grid = make_grid(rng, config.refresh.web, now, tz)
-    if rng.daily:
+    if stats is None and rng.daily:
         stats = _yearly_stats(rows, days, ids, tz)
-    else:
-        stats = _short_range_stats(session, grid, now - rng.span, now, ids)
+    elif stats is None:
+        stats = _short_range_stats(session, make_grid(rng, config.refresh.web, now, tz), now - rng.span, now, ids)
     prices = _latest(session, "lumen", DailyStat.input_price, ids)
     modelsdev = _latest(session, "models.dev", DailyStat.input_median, ids)
     hardware = _latest(session, "hardware", DailyStat.daily_cost, ids)
