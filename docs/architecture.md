@@ -104,7 +104,7 @@ lumen/                   # Main Python package
 ├── __init__.py          # App factory: create_app()
 ├── extensions.py        # Flask extension singletons (db, migrate, oauth, limiter, csrf)
 ├── decorators.py        # @login_required, @api_key_required, @admin_required
-├── commands.py          # Flask CLI commands (init_db, reassign_model, sync_*)
+├── commands.py          # Flask CLI commands (init_db, reassign_model, erase_entity, sync_*)
 ├── blueprints/          # One subdirectory per blueprint
 │   ├── auth/
 │   ├── chat/
@@ -269,6 +269,7 @@ ModelConfig ──< RequestLog (SET NULL on delete)
 ### Notable schema decisions
 
 - **`RequestLog` FKs use `SET NULL` on delete** — preserves historical data when entities or models are removed. All other FKs cascade.
+- **Users are erased, not deleted ad hoc** — `flask erase-entity` hard-deletes a user for GDPR erasure: it deletes their personal data explicitly and moves their request history, stats, models and revoked, anonymised API keys to the single shared ghost entity (`entity_type = 'ghost'`), so usage totals stay complete without pointing at the person. See *Erasing a user* in `docs/dbschema.md`.
 - **Endpoints are retired, not deleted** — removing an endpoint from `config.yaml` (or its model) clears `model_endpoints.active`; the row stays so `request_logs.model_endpoint_id` keeps pointing at the endpoint that served each request, and inactive rows are excluded from discovery, routing, and health checks. Re-adding the URL reactivates the same row after a fresh probe.
 - **Coin values use `Numeric(12,6)`** — avoids floating-point precision errors for financial accumulation.
 - **`entity_stats` uses `entity_id` as PK (no surrogate key)** — there is exactly one row per entity; the FK doubles as the PK, which also prevents accidental duplicates.

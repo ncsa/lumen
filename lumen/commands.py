@@ -12,7 +12,7 @@ import yaml
 from flask import current_app
 from flask.cli import with_appcontext
 from sqlalchemy import delete, func, select, text, update
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
@@ -730,8 +730,17 @@ def erase_entity_cmd(entity_id, yes):
             click.echo(f"Error: rows still reference user {entity_id}: {left}. Nothing was deleted.")
             raise SystemExit(1)
 
-    db.session.execute(delete(Entity).where(Entity.id == entity_id))
-    db.session.commit()
+    try:
+        db.session.execute(delete(Entity).where(Entity.id == entity_id))
+        db.session.commit()
+    except IntegrityError as exc:
+        # On PostgreSQL the RESTRICT foreign keys from request_logs refuse the delete
+        # while a row still references the user: one logged after the sweep above.
+        db.session.rollback()
+        click.echo(f"Error: deleting user {entity_id} failed: {exc.orig}")
+        click.echo("  Nothing in this last step was kept; the user is still there, inactive.\n"
+                   "  Most likely a request_logs row was logged after the move: re-run the same command.")
+        raise SystemExit(1)
     click.echo(f"  user {entity_id} deleted")
 
     if postgres:
