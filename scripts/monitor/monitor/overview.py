@@ -23,6 +23,7 @@ from monitor.buckets import (
     UNKNOWN,
     DayGrid,
     Range,
+    bucket_index,
     bucket_statuses,
     daily_status,
     lumen_daily_status,
@@ -31,6 +32,8 @@ from monitor.buckets import (
     model_uptime,
     probe_status,
     range_days,
+    rank_status,
+    status_rank,
 )
 from monitor.config import Config
 from monitor.daily import local_day, local_midnight
@@ -232,19 +235,32 @@ def _day_minutes(row: DailyStat, tz) -> float:
 
 
 def _short_range_stats(session: Session, grid, start: datetime, now: datetime, models: list[str]) -> dict[str, dict]:
-    stmt = (
-        select(Sample.model, Sample.sampled_at, Sample.status, Sample.requests_last_minute)
+    """Strip, uptime and peak req/min per model from one query that returns a row per (model, bucket).
+
+    The peak covers every sample in `(start, now]`, also one at `now`, which ends
+    the grid and so is in no bucket.
+    """
+    rows = (
+        select(
+            Sample.model,
+            bucket_index(Sample.sampled_at, grid).label("i"),
+            status_rank(Sample.status).label("rank"),
+            Sample.requests_last_minute.label("rpm"),
+        )
         .where(Sample.sampled_at > start, Sample.sampled_at <= now, Sample.model.in_(models))
+        .subquery()
     )
-    points: dict[str, list] = {m: [] for m in models}
+    stmt = select(rows.c.model, rows.c.i, func.max(rows.c.rank), func.max(rows.c.rpm)).group_by(rows.c.model, rows.c.i)
+    ranks: dict[str, list[int | None]] = {m: [None] * grid.count for m in models}
     peaks: dict[str, int | None] = {m: None for m in models}
-    for s in session.execute(stmt).all():
-        points[s.model].append((s.sampled_at, s.status))
-        if s.requests_last_minute is not None:
-            peaks[s.model] = max(peaks[s.model] or 0, s.requests_last_minute)
+    for model, i, rank, peak in session.execute(stmt).all():
+        if 0 <= i < grid.count:
+            ranks[model][i] = rank
+        if peak is not None:
+            peaks[model] = max(peaks[model] or 0, peak)
     stats = {}
     for m in models:
-        strip = bucket_statuses(points[m], grid)
+        strip = [rank_status(r) for r in ranks[m]]
         stats[m] = {"strip": strip, "uptime": model_uptime(strip), "peak_rpm": peaks[m]}
     return stats
 
