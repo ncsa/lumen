@@ -11,12 +11,16 @@ import click
 import yaml
 from flask import current_app
 from flask.cli import with_appcontext
-from sqlalchemy import select, text, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import DBAPIError
 
+from lumen.models.api_key import APIKey
+from lumen.models.entity import Entity
 from lumen.models.model_alias import ModelAlias
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
+from lumen.models.request_log import RequestLog
+from lumen.services.erasure import _erase_dependents, _ghost_keys, get_or_create_ghost, groups_losing_owner, merge_stats_into
 
 from .extensions import db
 
@@ -599,6 +603,140 @@ def _refresh_reassigned(start, boundaries):
                 click.echo(f"Error: refreshing '{name}' for {failed.month:%Y-%m} failed: {failed.error.orig}")
                 click.echo("  request_logs is moved; re-run the same command to finish the refresh.")
                 raise SystemExit(1)
+
+
+@click.command("erase-entity")
+@click.argument("entity_id", type=int)
+@click.option("--yes", is_flag=True, help="Erase without asking for confirmation.")
+@with_appcontext
+def erase_entity_cmd(entity_id, yes):
+    """Hard-delete a user for GDPR erasure. Cannot be undone; run it off-hours.
+
+    Deletes the user's conversations, messages, auth requests, balance, limits, model
+    consents, group and project memberships. Moves the user's request history, usage
+    stats and models (disabled) to the shared ghost user, and the user's API keys too,
+    revoked and anonymised. Groups the user owned are left without an owner.
+
+    On PostgreSQL request_logs moves one chunk per transaction, and each UPDATE can
+    decompress a whole chunk, hence off-hours. Safe to re-run: an interrupted run
+    leaves every row owned by the user or the ghost, and re-running with the same id,
+    even after the user is deleted, finishes the aggregate refresh.
+    """
+    postgres = db.engine.dialect.name == "postgresql"
+    if postgres:
+        with db.engine.connect() as conn:
+            retention = _retention_job(conn)
+            if retention is not None:
+                click.echo(f"Error: request_logs has a retention policy (job {retention[0]}, "
+                           f"config {retention[1]}).\n"
+                           f"  Refreshing the aggregates over windows whose raw chunks were\n"
+                           f"  dropped would erase their history. Run 'flask check-aggregate'.")
+                raise SystemExit(1)
+            boundaries = {name: _retention_boundary(conn, name)
+                          for name in _aggregates_with_column(conn, "entity_id")}
+
+    user = db.session.get(Entity, entity_id)
+    if user is None:
+        # Either never existed, or erased by a run whose aggregate refresh did not
+        # finish: buckets materialised under the id are all that can be left.
+        start = None
+        if postgres:
+            with db.engine.connect() as conn:
+                start = _reassign_start(conn, "entity_id", entity_id, boundaries)
+        if start is None:
+            click.echo(f"Entity {entity_id} does not exist and nothing is left under it: nothing to do.")
+            return
+        click.echo(f"Entity {entity_id} is already deleted; finishing its aggregate refresh.")
+        _refresh_reassigned(start, boundaries)
+        click.echo("Done.")
+        return
+    if user.entity_type != "user":
+        click.echo(f"Error: entity {entity_id} is a {user.entity_type}, not a user; only users can be erased.")
+        raise SystemExit(1)
+    owned = db.session.execute(
+        select(Entity.name).where(Entity.entity_type == "project", Entity.owner_entity_id == entity_id)
+        .order_by(Entity.name)
+    ).scalars().all()
+    if owned:
+        click.echo(f"Error: user {entity_id} owns these projects: {', '.join(owned)}.\n"
+                   f"  Transfer their ownership first.")
+        raise SystemExit(1)
+
+    orphaned = groups_losing_owner(entity_id)
+    click.echo(f"Erasing user {entity_id}: {user.name} <{user.email}>")
+    if orphaned:
+        click.echo(f"  groups that will be left without an owner: {', '.join(orphaned)}")
+    if not yes and not click.confirm("This deletes the user and cannot be undone. Continue?"):
+        click.echo("Aborted.")
+        raise SystemExit(1)
+
+    # No new request is logged against the user from here on, and existing sessions
+    # and keys stop working (login_required and api_key_required reject inactive users).
+    user.active = False
+    db.session.commit()
+    ghost_id = get_or_create_ghost().id
+    # End the read transaction before the chunk walk, as reassign-model does.
+    db.session.commit()
+
+    if postgres:
+        with db.engine.connect() as conn:
+            # Read before anything moves: afterwards the user has no raw rows left to date it.
+            start = _reassign_start(conn, "entity_id", entity_id, boundaries)
+        log_count = _move_request_logs("entity_id", entity_id, ghost_id)
+        # Rows logged during the walk, by a request already in flight at deactivation.
+        db.session.execute(text("SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"))
+    result = db.session.execute(update(RequestLog).where(RequestLog.entity_id == entity_id)
+                                .values(entity_id=ghost_id))
+    log_count = log_count + result.rowcount if postgres else result.rowcount
+    click.echo(f"  request_logs moved to the ghost: {log_count}")
+
+    moved, merged, entity_merged = merge_stats_into(ghost_id, entity_id)
+    click.echo(f"  model_stats moved: {moved}, merged: {merged}; entity_stats merged: {entity_merged}")
+
+    models = db.session.execute(
+        select(ModelConfig).where(ModelConfig.owner_entity_id == entity_id).order_by(ModelConfig.model_name)
+    ).scalars().all()
+    in_yaml = {m.get("name") for m in current_app.config.get("YAML_DATA", {}).get("models", [])}
+    for model in models:
+        # Re-own rather than leave to ON DELETE SET NULL, which would make a private model public.
+        model.disabled = True
+        model.owner_entity_id = ghost_id
+        click.echo(f"  model disabled and moved to the ghost: {model.model_name}")
+        if model.model_name in in_yaml:
+            click.echo(f"  Warning: '{model.model_name}' is still in config.yaml; the next sync re-enables it.\n"
+                       f"    Only its owner, the inactive ghost, can use it. Remove it from config.yaml.")
+
+    click.echo(f"  api_keys revoked, anonymised and moved to the ghost: {_ghost_keys(entity_id, ghost_id)}")
+
+    counts, orphaned = _erase_dependents(entity_id)
+    for table, count in counts.items():
+        click.echo(f"  {table} deleted: {count}")
+    for name in orphaned:
+        click.echo(f"  group left without an owner: {name}")
+
+    if not postgres:
+        # SQLite enforces no foreign keys here: a leftover row would point at a deleted id.
+        left = {
+            "request_logs": db.session.scalar(select(func.count()).select_from(RequestLog)
+                                              .where(RequestLog.entity_id == entity_id)),
+            "api_keys": db.session.scalar(select(func.count()).select_from(APIKey)
+                                          .where(APIKey.entity_id == entity_id)),
+        }
+        if any(left.values()):
+            db.session.rollback()
+            click.echo(f"Error: rows still reference user {entity_id}: {left}. Nothing was deleted.")
+            raise SystemExit(1)
+
+    db.session.execute(delete(Entity).where(Entity.id == entity_id))
+    db.session.commit()
+    click.echo(f"  user {entity_id} deleted")
+
+    if postgres:
+        if start is None:
+            click.echo("  no request_logs rows for the user; aggregates unchanged")
+        else:
+            _refresh_reassigned(start, boundaries)
+    click.echo("Done.")
 
 
 # --------------------------------------------------------------------------- #
