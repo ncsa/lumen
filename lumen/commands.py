@@ -1,3 +1,4 @@
+import math
 import os
 import re
 import shutil
@@ -9,10 +10,13 @@ from urllib.parse import urlparse
 
 import click
 import yaml
+from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from flask import current_app
 from flask.cli import with_appcontext
-from sqlalchemy import select, text, update
+from sqlalchemy import create_engine, select, text, update
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.pool import NullPool
 
 from lumen.models.model_alias import ModelAlias
 from lumen.models.model_config import ModelConfig
@@ -902,3 +906,115 @@ def check_aggregate_cmd():
 
     if failed:
         raise SystemExit(1)
+
+
+# --------------------------------------------------------------------------- #
+# Migration gate: the serve step waits for the upgrade step. Never migrates.   #
+# --------------------------------------------------------------------------- #
+
+WAIT_RETRY_SECONDS = 2
+WAIT_HINT_SECONDS = 30
+# Bounds one PostgreSQL connection attempt (libpq ``connect_timeout``, whole seconds,
+# minimum 2) and the read of alembic_version, so a database host that accepts TCP but
+# never answers cannot hold the gate past --timeout or silence the upgrade hint.
+WAIT_CONNECT_TIMEOUT_SECONDS = 10
+UPGRADE_HINT = ("Run the upgrade step first: the image with the 'upgrade' argument, the "
+                "'lumen-upgrade' Compose service, or the Helm migration Job.")
+
+
+def _reject_nan(ctx, param, value):
+    # Every comparison with NaN is False, so a NaN timeout would silently never fire.
+    if value is not None and math.isnan(value):
+        raise click.BadParameter("must be a number of seconds, not NaN.")
+    return value
+
+
+@click.command("wait-for-migrations")
+@click.option("--timeout", type=click.FloatRange(min=0), default=None, metavar="SECONDS",
+              callback=_reject_nan,
+              help="Stop retrying once this many seconds have passed (exit 1); the check in "
+                   "progress can add up to 10 seconds. Default: wait forever.")
+@with_appcontext
+def wait_for_migrations_cmd(timeout):
+    """Wait until the database is at this image's migration head. Read-only.
+
+    Exits 0 at head. While the database is behind, empty or unreachable it retries
+    every 2 seconds, until --timeout runs out (exit 1) or forever without one. A
+    revision this image does not know means a newer image migrated the database:
+    that exits 1 at once, since waiting cannot fix it. Each PostgreSQL check gives an
+    unresponsive server up to 10 seconds, so the command can exit that much after
+    --timeout. Connections made while the app loads are not covered: see
+    PGCONNECT_TIMEOUT in the README.
+    """
+    # Flask-Migrate's config and engine, so the script location and the database URL
+    # resolve exactly as they do for ``flask db upgrade``.
+    migrate = current_app.extensions["migrate"]
+    script = ScriptDirectory.from_config(migrate.migrate.get_config())
+    expected = tuple(sorted(script.get_heads()))
+    known = {rev.revision for rev in script.walk_revisions()}
+    engine = migrate.db.engine
+    if engine.url.get_backend_name() == "postgresql":
+        # Same URL, but every check opens a fresh connection that cannot block forever.
+        engine = create_engine(engine.url, poolclass=NullPool, connect_args=_gate_connect_args(engine.url))
+    try:
+        _wait_for_heads(engine, expected, known, timeout)
+    finally:
+        if engine is not migrate.db.engine:
+            engine.dispose()
+
+
+def _gate_connect_args(url):
+    """libpq arguments that bound one check without changing what it connects to.
+
+    ``connect_args`` replaces a key of the same name from the URL's query string, and
+    an explicit ``options`` also replaces ``PGOPTIONS``. So the statement timeout is
+    appended to whatever options the URL or the environment already set: dropping a
+    ``-c search_path=...`` there would read another schema's alembic_version than the
+    one ``flask db upgrade`` writes.
+    """
+    options = url.query.get("options", os.environ.get("PGOPTIONS", ""))
+    if isinstance(options, tuple):
+        options = " ".join(options)
+    return {
+        "connect_timeout": WAIT_CONNECT_TIMEOUT_SECONDS,
+        "options": f"{options} -c statement_timeout={WAIT_CONNECT_TIMEOUT_SECONDS * 1000}".strip(),
+    }
+
+
+def _wait_for_heads(engine, expected, known, timeout):
+    """The retry loop of ``wait-for-migrations``: returns at head, exits 1 otherwise."""
+    start = time.monotonic()
+    last_hint = start
+    last_state = None
+    while True:
+        try:
+            with engine.connect() as conn:
+                current = tuple(sorted(MigrationContext.configure(conn).get_current_heads()))
+        except DBAPIError as e:
+            err = e.orig if e.orig is not None else e
+            state = f"database unreachable ({type(err).__name__}: {' '.join(str(err).split())})"
+        else:
+            unknown = [rev for rev in current if rev not in known]
+            if unknown:
+                click.echo(f"Error: database is at revision {', '.join(unknown)}, which this image "
+                           f"does not know (expected {', '.join(expected)}). A newer image has "
+                           f"migrated it; run that image or a newer one.")
+                raise SystemExit(1)
+            if current == expected:
+                click.echo(f"Database is at migration head {', '.join(expected)}.")
+                return
+            state = (f"database is at revision {', '.join(current) or 'none'}, "
+                     f"expected {', '.join(expected)}")
+
+        now = time.monotonic()
+        if timeout is not None and now - start >= timeout:
+            click.echo(f"Error: timed out after {timeout:g}s waiting for migrations: {state}. "
+                       f"{UPGRADE_HINT}")
+            raise SystemExit(1)
+        if state != last_state:
+            click.echo(f"Waiting for migrations: {state}.")
+            last_state = state
+        if now - last_hint >= WAIT_HINT_SECONDS:
+            click.echo(f"Still waiting: {state}. {UPGRADE_HINT}")
+            last_hint = now
+        time.sleep(WAIT_RETRY_SECONDS)
