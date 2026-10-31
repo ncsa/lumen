@@ -261,16 +261,6 @@ def _fetch_last_used_at(eid: int):
     return db.session.scalar(select(EntityStat.last_used_at).where(EntityStat.entity_id == eid))
 
 
-def _fetch_live_tail_last(eid: int, since):
-    """The entity's latest deferred request_logs time from ``since`` on, naive UTC, or None."""
-    last = db.session.scalar(
-        select(func.max(RequestLog.time))
-        .where(RequestLog.entity_id == eid, RequestLog.time >= as_utc_aware(since),
-               RequestLog.stats_deferred.is_(True))
-    )
-    return as_utc_naive(last) if last is not None else None
-
-
 def _build_model_usage(usage_rows, all_models, eps_by_model, access_statuses):
     active_ids = {mc.id for mc in all_models if mc.active}
     accessible_model_ids = {mid for mid in active_ids if access_statuses.get(mid) != "blocked"}
@@ -828,15 +818,8 @@ def usage_summary():
             {where}
         """
         row = db.session.execute(text(agg_sql), params).one()
-        if eid == session["entity_id"]:
-            # The user's own page adds the requests the stats fold has not reached yet.
-            last_used_at, tail_last = _read_with_live_tail(
-                lambda: _fetch_last_used_at(eid), lambda since: _fetch_live_tail_last(eid, since),
-            )
-            if tail_last is not None and (last_used_at is None or tail_last > last_used_at):
-                last_used_at = tail_last
-        else:
-            last_used_at = _fetch_last_used_at(eid)
+        # The folded value only: /usage reads no request_logs (see #167).
+        last_used_at = _fetch_last_used_at(eid)
         last_active = last_used_at.isoformat() + "Z" if last_used_at else None
         new_users = 0
     elif start is not None:
