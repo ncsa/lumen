@@ -19,69 +19,31 @@ spec:
       labels:
         {{- include "lumen.selectorLabels" . | nindent 8 }}
     spec:
-      {{- with .Values.imagePullSecrets }}
-      imagePullSecrets:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- if .Values.serviceAccount.create }}
-      serviceAccountName: {{ .Values.serviceAccount.name | default (include "lumen.fullname" .) }}
-      {{- end }}
-      {{- with .Values.podSecurityContext }}
-      securityContext:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.nodeSelector }}
-      nodeSelector:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.tolerations }}
-      tolerations:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.affinity }}
-      affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+      {{- include "lumen.podSpecCommon" . | trim | nindent 6 }}
       initContainers:
-        - name: wait-for-db
-          image: busybox:1.36
+        {{- include "lumen.waitForDbInitContainer" . | nindent 8 }}
+        # Holds the pod until the database is at the migration head this image
+        # expects. The migration Job (migrate-job.yaml) gets it there; this
+        # container only reads, and with no --timeout it waits as long as that
+        # takes. It runs through the image's entrypoint (no `command`), whose
+        # wait-for-migrations mode also sets a default PGCONNECT_TIMEOUT.
+        - name: wait-for-migrations
           securityContext:
-            runAsNonRoot: true
-            runAsUser: 65534
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: [ALL]
-          command:
-            - sh
-            - -c
-            - |
-              DB_HOST=$(echo $DATABASE_URL | sed 's|.*@\([^:/]*\).*|\1|')
-              DB_PORT=$(echo $DATABASE_URL | sed 's|.*:\([0-9]*\)/.*|\1|')
-              DB_PORT=${DB_PORT:-5432}
-              echo "Waiting for $DB_HOST:$DB_PORT..."
-              until nc -z "$DB_HOST" "$DB_PORT"; do
-                echo "database not ready, sleeping 2s"
-                sleep 2
-              done
-              echo "database is reachable"
+            {{- include "lumen.appSecurityContext" . | nindent 12 }}
+          image: {{ include "lumen.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - wait-for-migrations
           env:
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "lumen.databaseSecretName" . }}
-                  key: {{ include "lumen.databaseSecretKey" . }}
+            {{- include "lumen.appEnv" . | nindent 12 }}
+          resources:
+            {{- include "lumen.appResources" . | nindent 12 }}
+          volumeMounts:
+            {{- include "lumen.appVolumeMounts" . | nindent 12 }}
       containers:
         - name: lumen
           securityContext:
-            {{- if .Values.securityContext }}
-            {{- toYaml .Values.securityContext | nindent 12 }}
-            {{- else }}
-            runAsNonRoot: true
-            runAsUser: 1000
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: [ALL]
-            {{- end }}
+            {{- include "lumen.appSecurityContext" . | nindent 12 }}
           image: {{ include "lumen.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- if gt (int .Values.wsgiProcesses) 1 }}
@@ -90,47 +52,7 @@ spec:
             - {{ .Values.wsgiProcesses | quote }}
           {{- end }}
           env:
-            - name: UV_CACHE_DIR
-              value: /tmp/uv-cache
-            - name: CONFIG_YAML
-              value: /app/config/config.yaml
-            - name: LUMEN_REPLICAS
-              value: {{ .Values.replicaCount | quote }}
-            - name: WEB_CONCURRENCY
-              value: {{ .Values.wsgiProcesses | quote }}
-            - name: LUMEN_WSGI_WORKERS
-              value: {{ .Values.wsgiWorkers | quote }}
-            - name: LUMEN_WSGI_SEND_TIMEOUT
-              value: {{ .Values.wsgiSendTimeout | quote }}
-            {{- if and .Values.api.prometheus.enabled .Values.api.prometheus.multiprocDir }}
-            - name: PROMETHEUS_MULTIPROC_DIR
-              value: {{ .Values.api.prometheus.multiprocDir | quote }}
-            {{- end }}
-            - name: DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "lumen.databaseSecretName" . }}
-                  key: {{ include "lumen.databaseSecretKey" . }}
-            - name: LUMEN_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "lumen.secretName" . }}
-                  key: secret-key
-            - name: LUMEN_ENCRYPTION_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "lumen.secretName" . }}
-                  key: encryption-key
-            - name: OAUTH2_CLIENT_ID
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "lumen.secretName" . }}
-                  key: oauth2-client-id
-            - name: OAUTH2_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "lumen.secretName" . }}
-                  key: oauth2-client-secret
+            {{- include "lumen.appEnv" . | nindent 12 }}
           ports:
             - name: http
               containerPort: 5001
@@ -162,29 +84,9 @@ spec:
             failureThreshold: 3
             timeoutSeconds: 5
           resources:
-            {{- if .Values.resources }}
-            {{- toYaml .Values.resources | nindent 12 }}
-            {{- else }}
-            requests:
-              cpu: 250m
-              memory: 512Mi
-            limits:
-              cpu: 1
-              memory: 512Mi
-            {{- end }}
+            {{- include "lumen.appResources" . | nindent 12 }}
           volumeMounts:
-            - name: config
-              mountPath: /app/config
-              readOnly: true
-            {{- range $name, $theme := .Values.config.themes }}
-            - name: theme-{{ $name }}
-              mountPath: {{ printf "/app/themes/%s" $name }}
-              readOnly: true
-            {{- end }}
-            {{- if and .Values.api.prometheus.enabled .Values.api.prometheus.multiprocDir }}
-            - name: prometheus-multiproc
-              mountPath: {{ .Values.api.prometheus.multiprocDir }}
-            {{- end }}
+            {{- include "lumen.appVolumeMounts" . | nindent 12 }}
       volumes:
         - name: config
           secret:

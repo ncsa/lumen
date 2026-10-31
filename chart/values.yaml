@@ -320,6 +320,21 @@ gateway:
   # -- Request timeout for LLM responses
   timeout: "600s"
 
+## Migration Job --------------------------------------------------------------------
+## Each release runs a Job (templates/migrate-job.yaml) with the image's `upgrade`
+## mode: all migrations, then the post-migration data steps. App pods wait for it in
+## their wait-for-migrations initContainer. See "Database Migrations" in chart/README.md.
+
+migration:
+  # -- Pod retries before the Job is marked failed. A retry resumes where the last
+  # attempt stopped.
+  backoffLimit: 6
+  # -- Seconds a finished Job (and its pod logs) is kept before Kubernetes deletes it.
+  # null keeps it until the next release replaces it.
+  ttlSecondsAfterFinished: 86400
+  # -- Resources for the migration container. Empty uses the app container's resources.
+  resources: {}
+
 ## Resources for the Lumen app pod --------------------------------------------------
 
 resources: {}
