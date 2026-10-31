@@ -31,6 +31,7 @@ All notable changes to Lumen will be documented in this file.
 - Drop redundant indexes on `request_logs` and `model_stats`, so each request insert maintains fewer indexes. (#175)
 - `backfill-aggregate` / `reassign-model` no longer fail when run within the first bucket of a month. (#388)
 - Cut redundant DB queries: one entity count per metrics pass, no duplicate metrics/TimescaleDB check at startup, usage page skips hidden user-growth charts (#178).
+- Add `flask erase-entity` to hard-delete a user for GDPR erasure, moving their request history, usage totals, models and revoked, anonymised API keys to a shared anonymous ghost user (#378).
 - Monitor dashboard: long ranges (7d, 30d, and the 1y Lumen card) group probes and samples in the database instead of in Python, so the overview and model pages load much faster. (#344)
 - Usage totals (`entity_stats` / `model_stats`) are now folded from `request_logs` by a background job instead of being updated on every request, removing two per-entity row locks from billing. The switch happens automatically during the upgrade, including rolling updates, with each request counted exactly once. (#319)
 
