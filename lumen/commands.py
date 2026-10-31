@@ -648,12 +648,17 @@ def check_stats_cmd(fix):
     folded_* columns) must equal the request_logs sums of [cutover_at,
     folded_until) over the rows billing marked stats_deferred, and
     last_used_at must not be older than the latest of those requests.
-    Unmarked rows were bumped by billing directly and are not compared. A difference means requests the fold missed, such as a billing
-    transaction that committed more than stats.fold_lag after its timestamp.
-    Reports every difference and exits 1; with --fix adds it to the totals
-    instead. Holds the fold state meanwhile, so no fold pass runs in the
-    middle. Scans every request_logs row since the cutover. Does nothing before
-    the cutover.
+    Unmarked rows were bumped by billing directly and are not compared. A
+    difference means requests the fold missed, such as a billing transaction
+    that committed more than stats.fold_lag after its timestamp. Reports every
+    difference and exits 1; with --fix adds it to the totals instead. Holds the
+    fold state meanwhile, so no fold pass runs in the middle. Scans every
+    request_logs row since the cutover. Does nothing before the cutover.
+
+    Do not run it while reassign-model is moving request_logs: rows already
+    moved to TO count for TO, while FROM's folded part is merged only at the
+    end, so the check reports differences that are not drift, and --fix would
+    count them twice.
     """
     cutover_at, folded_until = lock_fold_state()
     if cutover_at is None:
