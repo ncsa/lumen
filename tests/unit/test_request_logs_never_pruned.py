@@ -4,8 +4,8 @@
 source the continuous aggregates can be rebuilt from. Nothing Lumen ships may
 delete from it — no retention policy, no ``drop_chunks``, no ``DELETE`` or
 ``TRUNCATE``. ``flask enable-retention`` was removed for this reason, and
-``entrypoint.sh`` runs ``flask db upgrade`` at container start, so a migration
-that pruned it would do so automatically on the next deploy.
+the upgrade step (``flask upgrade``) runs every migration on each deploy, so a
+migration that pruned it would do so automatically on the next deploy.
 
 Python docstrings and comments are skipped, so code may still explain why these
 are banned; SQL inside an ordinary string literal is still caught. That makes the

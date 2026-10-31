@@ -57,8 +57,8 @@ spec:
             - name: http
               containerPort: 5001
               protocol: TCP
-          # Covers `flask db upgrade` as well as uvicorn startup: entrypoint.sh
-          # migrates inline before uvicorn binds. See values.yaml.
+          # Covers uvicorn startup only: the database is already at head when the
+          # container starts (wait-for-migrations above). See values.yaml.
           startupProbe:
             httpGet:
               path: /healthz

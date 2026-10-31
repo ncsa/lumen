@@ -376,8 +376,8 @@ def test_add_column_still_works_on_a_compressed_hypertable(pg_migrated):
 
 
 def test_the_only_retention_policy_is_on_request_metrics_1m(pg_migrated):
-    """Deliberate. `entrypoint.sh` runs `flask db upgrade` at container start,
-    so a migration that added retention to `request_logs` would start deleting
+    """Deliberate. The upgrade step (`flask upgrade`) runs every migration on
+    each deploy, so a migration that added retention to `request_logs` would start deleting
     production data on the next deploy. The one policy any migration adds keeps
     30 days of the minute aggregate (#169)."""
     with pg_migrated.connect() as conn:

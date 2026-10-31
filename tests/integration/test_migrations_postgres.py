@@ -16,9 +16,9 @@ pytestmark = pytest.mark.postgres
 def test_timescaledb_extension_is_installed(pg_migrated):
     """The migration runs CREATE EXTENSION unconditionally on PostgreSQL.
 
-    This is not a nice-to-have: ``entrypoint.sh`` runs ``flask db upgrade``
-    before ``exec uvicorn``, so a database without the extension fails the
-    migration and the container never starts.
+    This is not a nice-to-have: the upgrade step runs ``flask db upgrade``
+    before the app may start, so a database without the extension fails the
+    migration and the app never starts.
     """
     with pg_migrated.connect() as conn:
         version = conn.execute(text(
