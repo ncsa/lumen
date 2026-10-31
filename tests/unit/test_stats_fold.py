@@ -48,12 +48,17 @@ def _state(folded_until=LO, cutover_at=LO):
     db.session.commit()
 
 
-def _log(t, entity_id, model_id, source="api", input_tokens=10, output_tokens=5, audio_seconds=0, cost="0.5"):
-    """Write a request_logs row stamped at naive-UTC ``t``, the way billing does (aware)."""
+def _log(t, entity_id, model_id, source="api", input_tokens=10, output_tokens=5, audio_seconds=0, cost="0.5",
+         stats_deferred=True):
+    """Write a request_logs row stamped at naive-UTC ``t``, the way billing does (aware).
+
+    Marked ``stats_deferred`` by default, as billing writes it after the cutover;
+    ``stats_deferred=None`` stands for a row billing bumped instead.
+    """
     db.session.add(RequestLog(
         time=t.replace(tzinfo=timezone.utc), entity_id=entity_id, model_config_id=model_id, source=source,
         input_tokens=input_tokens, output_tokens=output_tokens, audio_seconds=audio_seconds,
-        cost=Decimal(cost), duration=0.0,
+        cost=Decimal(cost), duration=0.0, stats_deferred=stats_deferred,
     ))
     db.session.commit()
 
@@ -294,3 +299,35 @@ def test_bump_rejects_last_used_at_given_twice(ids):
     (e1, _), _ = ids
     with pytest.raises(AssertionError):
         _bump(EntityStat, {"entity_id": e1}, {"last_used_at": LO}, {}, last_used_at=LO)
+
+
+# ---------------------------------------------------------------------------
+# The stats_deferred marker: only rows billing left to the fold are folded
+# ---------------------------------------------------------------------------
+
+def test_unmarked_row_in_the_window_is_not_folded(app, ids):
+    """A NULL row was bumped by billing already (an older pod, or a stale cached cutover)."""
+    (e1, _), (m1, _) = ids
+    _state()
+    _log(LO + timedelta(minutes=1), e1, m1, stats_deferred=None)
+    assert _fold_to(app, HI) == HI
+    assert _entity_stat(e1) is None
+    assert _model_stats() == {}
+    assert get_fold_state().folded_until == HI
+
+
+def test_mixed_window_counts_only_the_marked_rows(app, ids):
+    (e1, e2), (m1, _) = ids
+    _state()
+    _log(LO + timedelta(minutes=1), e1, m1, input_tokens=1, cost="1")
+    _log(LO + timedelta(minutes=2), e1, m1, input_tokens=2, cost="2")
+    _log(LO + timedelta(minutes=3), e1, m1, input_tokens=100, cost="100", stats_deferred=None)
+    _log(LO + timedelta(minutes=4), e2, m1, stats_deferred=None)
+    _fold_to(app, HI)
+
+    es = _entity_stat(e1)
+    assert (es.requests, es.input_tokens, es.cost) == (2, 3, Decimal("3"))
+    # last_used_at comes from the marked rows only, not the later unmarked one.
+    assert es.last_used_at == LO + timedelta(minutes=2)
+    assert _model_stats()[(e1, m1, "api")].requests == 2
+    assert _entity_stat(e2) is None

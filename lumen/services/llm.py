@@ -857,8 +857,10 @@ def update_stats(
 
     The running totals are bumped here only for a request from before the stats
     cutover (none recorded yet, or ``log.time < cutover_at``). From the cutover
-    on, the stats fold adds the request's RequestLog row into them instead, so
-    every request is counted exactly once, on one side or the other.
+    on, the bumps are skipped and the row is written with ``stats_deferred``
+    TRUE, which is what the stats fold adds. A bumped row stays NULL, as do the
+    rows of older code that never heard of the column, and the fold ignores
+    them, so every request is counted exactly once whatever the timing.
 
     The RequestLog INSERT goes first and is flushed on its own: it takes no row
     lock another request waits on, so running it ahead of the counter UPDATEs
@@ -876,8 +878,12 @@ def update_stats(
     none of this adds a statement. Anything not measured stays None and is
     stored as SQL NULL — deliberately not zero.
     """
+    # Decided before the row is built, so the row records the decision.
+    logged_at = datetime.now(timezone.utc)
+    cutover_at = cached_cutover_at()
+    deferred = cutover_at is not None and as_utc_naive(logged_at) >= cutover_at
     log = RequestLog(
-        time=datetime.now(timezone.utc),
+        time=logged_at,
         entity_id=entity_id,
         model_config_id=model_config_id,
         model_endpoint_id=endpoint_id,
@@ -897,12 +903,12 @@ def update_stats(
         # nothing had been sent yet when the view ran.
         send_blocked=timing.blocked_seconds(),
         outcome=outcome,
+        stats_deferred=True if deferred else None,
     )
     db.session.add(log)
     db.session.flush()
 
-    cutover_at = cached_cutover_at()
-    if cutover_at is not None and as_utc_naive(log.time) >= cutover_at:
+    if deferred:
         return
 
     now = utcnow()
@@ -971,9 +977,10 @@ def bill_request(entity_id: int, model_config_id: int, source: str, input_tokens
 
     so the balance lock is held only for the commit, and because every billing
     transaction takes its locks in the same order, two of them can never deadlock.
-    After the stats cutover steps 2 and 3 are skipped: the stats fold adds the
-    ``request_logs`` row into those totals later, so the transaction writes only
-    ``request_logs``, ``api_keys`` and ``entity_balances``.
+    After the stats cutover steps 2 and 3 are skipped and step 1 writes the row
+    with ``stats_deferred`` TRUE: the stats fold adds that row into those totals
+    later, so the transaction writes only ``request_logs``, ``api_keys`` and
+    ``entity_balances``.
     A new billing write must be added here, in this order, not beside a call.
 
     ``effective`` is the coin pool limit resolved during preflight, passed on to

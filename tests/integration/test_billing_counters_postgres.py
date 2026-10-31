@@ -6,6 +6,9 @@ row with their UPDATE and all reach the INSERT. Each has to be counted once,
 without an error. The steady-state check pins why the fallback is not a plain
 upsert every time: Postgres draws the serial ``id`` before it detects the
 conflict, so an upsert per request would burn a sequence value per request.
+
+This is the bump billing does before the stats cutover, so the module's
+database is put back before the cutover the migration sets.
 """
 
 import os
@@ -49,6 +52,12 @@ def pg_app(pg_migrated_isolated):
     with application.app_context():
         from lumen.extensions import db
         assert db.engine.dialect.name == "postgresql"
+        # These tests pin the per-request bump, which billing takes before the
+        # stats cutover (and on an older pod or a stale cached cutover after it).
+        # The migration cuts over automatically, so this module's own database
+        # is put back before it.
+        db.session.execute(text("UPDATE stats_fold_state SET cutover_at = NULL, folded_until = NULL WHERE id = 1"))
+        db.session.commit()
     yield application
     if previous_env is None:
         os.environ.pop("DATABASE_URL", None)

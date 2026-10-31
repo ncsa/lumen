@@ -50,6 +50,7 @@ def _log(t, entity_id, model_id):
     db.session.add(RequestLog(
         time=t.replace(tzinfo=timezone.utc), entity_id=entity_id, model_config_id=model_id, source="api",
         input_tokens=10, output_tokens=5, audio_seconds=0, cost=Decimal("0.5"), duration=0.0,
+        stats_deferred=True,
     ))
     db.session.commit()
 
