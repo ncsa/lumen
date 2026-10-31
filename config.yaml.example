@@ -96,6 +96,14 @@ llm:
                         # never retried: a retry restarts the whole generation while the
                         # first attempt may still be draining upstream.
 
+# Usage totals (entity_stats / model_stats) are folded from request_logs by a
+# background job after the stats cutover (SQLite cuts over automatically).
+stats:
+  fold_interval: 60  # seconds between fold passes
+  fold_lag: 300      # seconds the fold window ends behind now; leaves room for billing
+                     # transactions that commit after their request's timestamp. Totals
+                     # lag real time by about fold_lag + fold_interval.
+
 chat:
   upload:
     max_size_mb: 10          # maximum file size for document uploads (MB)

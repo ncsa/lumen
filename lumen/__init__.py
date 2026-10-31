@@ -829,6 +829,11 @@ def create_app():
         from lumen.services.key_expiry import start_key_expirer
         start_key_expirer(app)
 
+        # Shared work whose result lands in the database, so it belongs behind
+        # this guard; a no-op until the stats cutover.
+        from lumen.services.stats_fold import start_fold_thread
+        start_fold_thread(app)
+
     # Deliberately outside the guard above: BACKGROUND_WORKER=false keeps extra
     # workers from duplicating *shared* work, but the snapshot is per-process
     # in-memory state, so skipping it would leave that worker serving an empty

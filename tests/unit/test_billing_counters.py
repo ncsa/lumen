@@ -17,6 +17,8 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.sql.dml import Update
 
+from lumen.services.stats_cutover import cached_cutover_at
+
 STARTING = 100
 EFFECTIVE = (100.0, 0.0, float(STARTING))
 
@@ -104,6 +106,9 @@ def test_first_use_inserts_each_counter_row_once(app, test_user, test_model):
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
         _seed(entity_id)
+        # Billing reads stats_fold_state.cutover_at once per CUTOVER_CACHE_TTL
+        # (test_billing_cutover pins that); this test is about the counters.
+        cached_cutover_at()
         with _statements() as log:
             _bill(entity_id, model_id, cost=3.0)
 

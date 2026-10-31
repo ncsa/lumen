@@ -196,6 +196,8 @@ models:
 | `config.llm.readTimeout` | `300` | Streaming calls: maximum gap between chunks (not total duration) |
 | `config.llm.requestTimeout` | `600` | Non-streaming calls: bound on the whole generation |
 | `config.llm.maxRetries` | `1` | Retries for non-streaming upstream calls (streaming calls are never retried) |
+| `config.stats.foldInterval` | `60` | Seconds between passes of the job that folds `request_logs` into the usage totals |
+| `config.stats.foldLag` | `300` | Seconds the fold window ends behind now; usage totals lag real time by about `foldLag + foldInterval` |
 | `config.api.keys.ttl` | `"0"` | Maximum and default API key lifetime: `0` (never expire) or e.g. `12h`, `30d`, `8w`; expired keys are revoked |
 | `oauth2.serverMetadataUrl` | CILogon OIDC URL | OIDC provider metadata URL |
 | `existingSecret` | `""` | Name of pre-existing Secret with credentials |

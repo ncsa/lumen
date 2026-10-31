@@ -44,6 +44,10 @@ defaults:
     refresh: 0.1
     starting: 50
 
+# Fold usage totals often in development, so they show up quickly.
+stats:
+  fold_interval: 10
+  fold_lag: 30
 
 models:
 # The only model with a live backend (uv run dummy). No owner -> available to everyone.
