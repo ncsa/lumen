@@ -226,22 +226,10 @@ interval), Lumen checks the extension version, the `request_logs` hypertable, th
 aggregates and their background jobs. It logs a WARNING per problem (ERROR when the extension or
 the hypertable is missing, or when `request_logs` has a retention policy) and never blocks startup.
 
-### `stats-cutover`
-
-Switches the usage totals (`model_stats` / `entity_stats`) from a per-request bump in billing to the
-background stats fold over `request_logs`. Run it once on PostgreSQL after the upgrade has rolled out
-to every pod; SQLite is cut over by its migration.
-
-```bash
-flask stats-cutover
-```
-
-It sets the cutover five minutes ahead, so every running process has read it before it takes effect,
-and refuses to run a second time. Until it runs nothing changes and the app logs a warning at startup.
-
 ### `check-stats`
 
-Compares the folded usage totals with `request_logs` since the cutover.
+Compares the folded usage totals with `request_logs` since the stats cutover, which the upgrade
+sets automatically. Only the rows billing left to the fold (`stats_deferred`) are compared.
 
 ```bash
 flask check-stats [--fix]

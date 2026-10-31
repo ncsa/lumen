@@ -27,6 +27,7 @@ def _bill(app, entity_id, model_id, source, tokens=(10, 5), cost="0.5"):
         db.session.add(RequestLog(
             time=at.replace(tzinfo=timezone.utc), entity_id=entity_id, model_config_id=model_id, source=source,
             input_tokens=tokens[0], output_tokens=tokens[1], cost=Decimal(cost), duration=0.0,
+            stats_deferred=True,
         ))
         db.session.commit()
         return at
@@ -105,6 +106,21 @@ def test_profile_drops_the_tail_when_every_read_meets_a_fold(app, auth_client, p
     billed = profile_routes._LIVE_TAIL_ATTEMPTS
     assert usage[test_model["model_name"]][0] == billed
     assert total_tokens == 15 * billed
+
+
+def test_profile_ignores_unmarked_rows_after_the_watermark(app, auth_client, post_cutover, test_user, test_model, model_id):
+    """A row billing bumped itself (an old pod during a rolling update) is in
+    the tables already; past ``folded_until`` it is not added again."""
+    with app.app_context():
+        at = max(utcnow(), get_fold_state().folded_until)
+        db.session.add(RequestLog(time=at.replace(tzinfo=timezone.utc), entity_id=test_user["id"],
+                                  model_config_id=model_id, source="api", input_tokens=10, output_tokens=5,
+                                  cost=Decimal("0.5"), duration=0.0))
+        db.session.commit()
+    _bill(app, test_user["id"], model_id, "api")
+    _, usage, total_tokens = _profile(app, auth_client)
+    assert usage[test_model["model_name"]][0] == 1
+    assert total_tokens == 15
 
 
 def test_profile_has_no_tail_before_the_cutover(app, auth_client, test_user, model_id):

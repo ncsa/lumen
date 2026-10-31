@@ -647,8 +647,9 @@ def check_stats_cmd(fix):
 
     For every model_stats / entity_stats row, the part the fold added (the
     folded_* columns) must equal the request_logs sums of [cutover_at,
-    folded_until), and last_used_at must not be older than the latest of those
-    requests. A difference means requests the fold missed, such as a billing
+    folded_until) over the rows billing marked stats_deferred, and
+    last_used_at must not be older than the latest of those requests.
+    Unmarked rows were bumped by billing directly and are not compared. A difference means requests the fold missed, such as a billing
     transaction that committed more than stats.fold_lag after its timestamp.
     Reports every difference and exits 1; with --fix adds it to the totals
     instead. Holds the fold state meanwhile, so no fold pass runs in the

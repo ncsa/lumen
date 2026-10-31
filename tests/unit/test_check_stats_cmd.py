@@ -35,12 +35,14 @@ def ids(app):
         return entity.id, model.id
 
 
-def _log(app, t, entity_id, model_id, source="api", input_tokens=10, output_tokens=5, audio_seconds=0, cost="0.5"):
+def _log(app, t, entity_id, model_id, source="api", input_tokens=10, output_tokens=5, audio_seconds=0, cost="0.5",
+         deferred=True):
+    """A request_logs row; ``deferred=False`` is one billing bumped itself (an old pod)."""
     with app.app_context():
         db.session.add(RequestLog(
             time=t.replace(tzinfo=timezone.utc), entity_id=entity_id, model_config_id=model_id, source=source,
             input_tokens=input_tokens, output_tokens=output_tokens, audio_seconds=audio_seconds,
-            cost=Decimal(cost), duration=0.0,
+            cost=Decimal(cost), duration=0.0, stats_deferred=True if deferred else None,
         ))
         db.session.commit()
 
@@ -169,7 +171,7 @@ def test_only_the_folded_window_is_checked(app, ids):
     _cut_over_with_history(app, entity_id, model_id)
     _fold_to(app, FOLDED)
     _log(app, FOLDED, entity_id, model_id)
-    _log(app, CUTOVER - timedelta(seconds=1), entity_id, model_id)  # before the cutover: billing bumped it
+    _log(app, CUTOVER - timedelta(seconds=1), entity_id, model_id, deferred=False)  # before the cutover: billing bumped it
     result = _check(app)
     assert result.exit_code == 0, result.output
 
@@ -185,4 +187,31 @@ def test_ignores_float_noise_in_cost(app, ids):
             stat = db.session.execute(select(model).filter_by(entity_id=entity_id)).scalar_one()
             stat.folded_cost += Decimal("0.000001")
         db.session.commit()
+    assert _check(app).exit_code == 0
+
+
+def test_unmarked_rows_in_the_window_are_not_drift(app, ids):
+    """Rows billing bumped itself (an old pod during a rolling update) sit in
+    the folded window unmarked; they are in the totals already, so the check
+    leaves them out and still finds and fixes a missed marked row."""
+    entity_id, model_id = ids
+    _cut_over_with_history(app, entity_id, model_id)
+    _log(app, CUTOVER, entity_id, model_id)
+    _log(app, CUTOVER + timedelta(minutes=1), entity_id, model_id, deferred=False, input_tokens=99)
+    _fold_to(app, FOLDED)
+    folded = _totals(app, entity_id)
+    assert folded[0][6:] == (1, 10, 5, 0, Decimal("0.5")), "the fold counted the unmarked row"
+    assert _check(app).exit_code == 0
+
+    _log(app, FOLDED - timedelta(seconds=2), entity_id, model_id, deferred=False, input_tokens=99)
+    late = FOLDED - timedelta(seconds=1)
+    _log(app, late, entity_id, model_id, input_tokens=3, output_tokens=2, cost="0.125")
+    result = _check(app)
+    assert result.exit_code == 1, result.output
+    assert "requests +1, input_tokens +3, output_tokens +2, cost +0.125" in result.output
+    assert _check(app, "--fix").exit_code == 0
+    model, entity = _totals(app, entity_id)
+    assert model == entity
+    assert model[6:] == (2, 13, 7, 0, Decimal("0.625"))
+    assert model[5] == late
     assert _check(app).exit_code == 0
