@@ -799,9 +799,10 @@ def create_app():
     #   for one-off `python -c` scripts, which have no click context for
     #   _loaded_by_non_serving_cli to detect. Do not set it on a serving replica:
     #   the config watcher keeps this process's app.config in sync with config.yaml,
-    #   so that pod would stop picking up config changes. Running every replica's
-    #   workers is safe — the coin refill is an atomic guarded UPDATE that a second
-    #   replica no-ops, and health probes converge on the same result.
+    #   so that pod would stop picking up config changes. Every replica runs these
+    #   workers: on PostgreSQL the coin refill takes an advisory lock, so only one
+    #   replica refills at a time and the others skip that pass; health probes
+    #   converge on the same result.
     if os.environ.get("WERKZEUG_RUN_MAIN") is not None:
         _run_background = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
     else:

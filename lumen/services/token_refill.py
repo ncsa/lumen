@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timezone
 
 from flask import current_app
-from sqlalchemy import Float, bindparam, select
+from sqlalchemy import Float, bindparam, select, text
 from sqlalchemy import update as sa_update
 
 from lumen.extensions import db
@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 #: How many balances one refill transaction writes. Each batch commits on its own,
 #: so a billing request waits at most for one batch's row locks, not a whole pass.
 REFILL_BATCH_SIZE = 200
+
+#: PostgreSQL advisory lock key held for a whole refill pass, so one replica
+#: refills at a time. Any fixed bigint no other code in the database uses.
+_REFILL_LOCK_KEY = 7_172_093_405_172
 
 _balances = EntityBalance.__table__
 
@@ -67,7 +71,50 @@ def _apply_in_batches(stmt, params: list) -> int:
 
 
 def refill_coin_balances(now: datetime = None) -> int:
-    """Run one refill pass; return the number of balances credited. Caller owns the app context."""
+    """Run one refill pass; return the number of balances credited. Caller owns the app context.
+
+    On PostgreSQL the pass runs under a session-level advisory lock, so while
+    one replica refills, the others skip their pass and return 0.
+    """
+    if db.engine.dialect.name != "postgresql":
+        return _refill_pass(now)
+    # A connection of its own, committed right after the lock call: a
+    # session-level lock outlives the transaction, so the connection sits
+    # idle, not idle in transaction, while the batches commit on db.session.
+    conn = db.engine.connect()
+    try:
+        acquired = conn.execute(
+            text("SELECT pg_try_advisory_lock(:key)"), {"key": _REFILL_LOCK_KEY}
+        ).scalar_one()
+        conn.commit()
+    except Exception:
+        # The lock may be held without us knowing; dropping the connection frees it.
+        conn.invalidate()
+        conn.close()
+        raise
+    if not acquired:
+        conn.close()
+        return 0
+    try:
+        return _refill_pass(now)
+    finally:
+        _release_refill_lock(conn)
+
+
+def _release_refill_lock(conn) -> None:
+    """Unlock and close; if the unlock fails, drop the connection so the lock dies with it."""
+    try:
+        conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _REFILL_LOCK_KEY})
+        conn.commit()
+    except Exception:
+        logger.exception("coin refill lock release failed; discarding its connection")
+        conn.invalidate()
+    finally:
+        conn.close()
+
+
+def _refill_pass(now: datetime = None) -> int:
+    """The refill pass itself, with no lock; see refill_coin_balances."""
     if now is None:
         now = utcnow()
     elif now.tzinfo is not None:

@@ -490,6 +490,32 @@ def test_refill_guarded_on_value_read(app, test_user, monkeypatch):
         assert bal.last_refill_at == moved
 
 
+def test_sqlite_pass_takes_no_advisory_lock(app, test_user):
+    """SQLite has no advisory locks: the pass runs without trying to take one."""
+    from sqlalchemy import event
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.services import token_refill
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        _add_limit(db, test_user["id"], max_coins=100, refresh_coins=10)
+        _add_balance(db, test_user["id"], coins_left=50, last_refill_at=now - timedelta(hours=2))
+        db.session.commit()
+
+        statements = []
+
+        def record(conn, cursor, statement, *args):
+            statements.append(statement)
+
+        event.listen(db.engine, "before_cursor_execute", record)
+        try:
+            assert token_refill.refill_coin_balances(now=now) == 1
+        finally:
+            event.remove(db.engine, "before_cursor_execute", record)
+
+        assert statements
+        assert not [s for s in statements if "advisory" in s]
+
+
 def test_start_coin_refiller_starts_daemon_thread(app):
     """start_coin_refiller must start exactly one daemon thread (covers lines 41-51)."""
     import threading

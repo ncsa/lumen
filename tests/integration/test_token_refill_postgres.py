@@ -7,6 +7,7 @@ billing request for that entity waited behind every other refill in the pass.
 """
 
 import os
+import threading
 import uuid
 from datetime import timedelta
 
@@ -129,3 +130,131 @@ def test_batch_rowcount_counts_every_credited_row(pg_app):
         assert token_refill.refill_coin_balances(now=now) == 5
 
     assert _coins(pg_app, ids) == {eid: 20.0 for eid in ids}
+
+
+def test_pass_skips_while_another_session_holds_the_lock(pg_app, pg_migrated_isolated):
+    """A replica that cannot take the refill lock skips its pass; the next pass refills."""
+    from lumen.services import token_refill
+    from lumen.timeutils import utcnow
+
+    engine = pg_migrated_isolated[1]
+    now = utcnow() + timedelta(minutes=2)
+    ids = _due_entities(pg_app, 2, now)
+
+    with engine.connect() as other:
+        other.execute(text("SELECT pg_advisory_lock(:key)"), {"key": token_refill._REFILL_LOCK_KEY})
+        with pg_app.app_context():
+            assert token_refill.refill_coin_balances(now=now) == 0
+        assert _coins(pg_app, ids) == {eid: 0.0 for eid in ids}
+        other.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": token_refill._REFILL_LOCK_KEY})
+        other.rollback()
+
+    with pg_app.app_context():
+        assert token_refill.refill_coin_balances(now=now) == 2
+    assert _coins(pg_app, ids) == {eid: 20.0 for eid in ids}
+
+
+def test_concurrent_passes_credit_each_row_once(pg_app):
+    """Two passes started together, as on two replicas, credit every row exactly once."""
+    from lumen.services import token_refill
+    from lumen.timeutils import utcnow
+
+    now = utcnow() + timedelta(minutes=3)
+    ids = _due_entities(pg_app, 6, now)
+    barrier = threading.Barrier(2)
+    results, errors = [], []
+
+    def run():
+        try:
+            with pg_app.app_context():
+                barrier.wait(timeout=10)
+                results.append(token_refill.refill_coin_balances(now=now))
+        except Exception as exc:  # surfaced by the assert below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert errors == []
+    assert sorted(results) == [0, 6]
+    assert _coins(pg_app, ids) == {eid: 20.0 for eid in ids}
+
+
+def _lock_is_free(engine):
+    """True when no session holds the refill advisory lock."""
+    from lumen.services import token_refill
+    with engine.connect() as probe:
+        free = probe.execute(
+            text("SELECT pg_try_advisory_lock(:key)"), {"key": token_refill._REFILL_LOCK_KEY}
+        ).scalar_one()
+        if free:
+            probe.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": token_refill._REFILL_LOCK_KEY})
+        probe.rollback()
+    return free
+
+
+def test_lock_released_after_pass_raises(pg_app, pg_migrated_isolated, monkeypatch):
+    """A pass that raises after its first batch still frees the lock."""
+    from lumen.services import token_refill
+    from lumen.timeutils import utcnow
+
+    engine = pg_migrated_isolated[1]
+    now = utcnow() + timedelta(minutes=4)
+    _due_entities(pg_app, 2, now)
+    monkeypatch.setattr(token_refill, "REFILL_BATCH_SIZE", 1)
+    real_apply = token_refill._apply_batch
+    calls = []
+
+    def apply_then_raise(stmt, params):
+        calls.append(params)
+        if len(calls) == 1:
+            return real_apply(stmt, params)
+        raise SystemExit("worker killed mid-pass")  # not caught per batch
+
+    monkeypatch.setattr(token_refill, "_apply_batch", apply_then_raise)
+    with pg_app.app_context():
+        with pytest.raises(SystemExit):
+            token_refill.refill_coin_balances(now=now)
+        from lumen.extensions import db
+        db.session.rollback()
+
+    assert len(calls) == 2
+    assert _lock_is_free(engine)
+    # The next pass takes the lock and credits the row the failed pass never reached.
+    monkeypatch.setattr(token_refill, "_apply_batch", real_apply)
+    with pg_app.app_context():
+        assert token_refill.refill_coin_balances(now=now) == 1
+
+
+def test_lock_connection_is_idle_during_batches(pg_app, pg_migrated_isolated, monkeypatch):
+    """The lock connection holds no open transaction while the batches run."""
+    from lumen.services import token_refill
+    from lumen.timeutils import utcnow
+
+    engine = pg_migrated_isolated[1]
+    now = utcnow() + timedelta(minutes=5)
+    _due_entities(pg_app, 3, now)
+    monkeypatch.setattr(token_refill, "REFILL_BATCH_SIZE", 1)
+    real_apply = token_refill._apply_batch
+    key = token_refill._REFILL_LOCK_KEY
+    states = []
+
+    def observe_then_apply(stmt, params):
+        with engine.connect() as other:
+            # A bigint advisory key is stored as its high and low 32 bits.
+            states.extend(other.execute(text(
+                "SELECT a.state FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid"
+                " WHERE l.locktype = 'advisory' AND l.granted"
+                " AND l.classid = :hi AND l.objid = :lo AND l.objsubid = 1"
+            ), {"hi": key >> 32, "lo": key & 0xFFFFFFFF}).scalars().all())
+            other.rollback()
+        return real_apply(stmt, params)
+
+    monkeypatch.setattr(token_refill, "_apply_batch", observe_then_apply)
+    with pg_app.app_context():
+        assert token_refill.refill_coin_balances(now=now) == 3
+
+    assert states == ["idle"] * 3
