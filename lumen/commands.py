@@ -411,23 +411,27 @@ def reassign_model_cmd(from_id, to_id):
             start = _reassign_start(conn, from_id, boundaries)
         log_count = _move_request_logs(from_id, to_id)
 
-    # From here to the commit the fold state is held, so no fold pass runs while
-    # FROM's model_stats rows are merged: one in between could add FROM's
-    # request_logs to a FROM row this has already merged away. The chunk walk
-    # above runs without it (it can take hours); a pass during the walk folds
-    # each row under whichever model it has at that moment, and FROM's rows are
-    # merged below. Taken first in the transaction (see lock_fold_state).
-    lock_fold_state()
-    if postgres:
-        # Rows logged against FROM while the walk ran; few, and in recent chunks.
-        db.session.execute(text("SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"))
-        log_count += db.session.execute(
-            update(RequestLog).where(RequestLog.model_config_id == from_id).values(model_config_id=to_id)
-        ).rowcount
-
     result = db.session.execute(update(Conversation).where(Conversation.model == from_name).values(model=to_name))
     conv_count = result.rowcount
     click.echo(f"  conversations updated: {conv_count}")
+    db.session.commit()
+
+    # The fold state is held only around the model_stats merge, from here to the
+    # commit: a fold pass in between could add FROM's request_logs to a FROM row
+    # this has already merged away. The chunk walk above runs without it (it can
+    # take hours); a pass during the walk folds each row under whichever model it
+    # has at that moment, and FROM's rows are merged below. FROM's remaining
+    # request_logs move under the lock too, so no pass folds them into FROM after
+    # the merge: all of them on SQLite, which has no chunk walk, and on
+    # PostgreSQL the few logged while the walk ran. Taken first in the
+    # transaction (see lock_fold_state).
+    lock_fold_state()
+    if postgres:
+        db.session.execute(text("SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"))
+    moved = db.session.execute(
+        update(RequestLog).where(RequestLog.model_config_id == from_id).values(model_config_id=to_id)
+    ).rowcount
+    log_count = log_count + moved if postgres else moved
 
     # For model_stats, merge rows that might collide on the unique constraint
     existing_dst_stats = {
@@ -452,11 +456,6 @@ def reassign_model_cmd(from_id, to_id):
             stat.model_config_id = to_id
             stats_moved += 1
     click.echo(f"  model_stats moved: {stats_moved}, merged: {stats_merged}")
-
-    if not postgres:
-        # SQLite has no chunks and no aggregates: one UPDATE in the same transaction.
-        result = db.session.execute(update(RequestLog).where(RequestLog.model_config_id == from_id).values(model_config_id=to_id))
-        log_count = result.rowcount
     click.echo(f"  request_logs updated: {log_count}")
 
     db.session.commit()
