@@ -18,7 +18,7 @@ metadata:
 spec:
   backoffLimit: {{ .Values.migration.backoffLimit }}
   {{- $ttl := .Values.migration.ttlSecondsAfterFinished }}
-  {{- if not (or (kindIs "invalid" $ttl) (eq (toString $ttl) "")) }}
+  {{- if not (kindIs "invalid" $ttl) }}
   ttlSecondsAfterFinished: {{ $ttl }}
   {{- end }}
   template:
@@ -57,7 +57,7 @@ spec:
             {{- include "lumen.appResources" . | nindent 12 }}
             {{- end }}
           volumeMounts:
-            {{- include "lumen.appVolumeMounts" (dict "root" . "themes" false) | nindent 12 }}
+            {{- include "lumen.migrateVolumeMounts" . | nindent 12 }}
       volumes:
         - name: config
           secret:

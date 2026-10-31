@@ -269,7 +269,7 @@
         "ttlSecondsAfterFinished": {
           "oneOf": [
             { "type": "integer", "minimum": 0 },
-            { "type": "string", "enum": [""] }
+            { "type": "null" }
           ]
         },
         "resources": { "type": "object" }

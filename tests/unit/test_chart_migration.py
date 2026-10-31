@@ -44,9 +44,11 @@ _FULL = {
 }
 
 
-def _render(extra=None):
+def _render(extra=None, values_file=None):
     values = {**_REQUIRED, **(extra or {})}
     cmd = [_HELM, "template", "rel", str(CHART)]
+    if values_file:
+        cmd += ["-f", str(values_file)]
     for key, value in values.items():
         cmd += ["--set", f"{key}={value}"]
     out = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
@@ -158,14 +160,27 @@ def test_job_values_defaults(docs):
     assert migrate["resources"] == _app_container(docs)["resources"]
 
 
-def test_job_values_override():
-    docs = _render({
-        "migration.backoffLimit": "2",
-        "migration.ttlSecondsAfterFinished": "",
-        "migration.resources.limits.memory": "2Gi",
-    })
-    spec = _job(docs)["spec"]
+def test_job_values_override(tmp_path):
+    values = tmp_path / "values.yaml"
+    values.write_text(
+        "migration:\n"
+        "  backoffLimit: 2\n"
+        "  ttlSecondsAfterFinished: null\n"
+        "  resources:\n"
+        "    limits:\n"
+        "      memory: 2Gi\n"
+    )
+    spec = _job(_render(values_file=values))["spec"]
     assert spec["backoffLimit"] == 2
     assert "ttlSecondsAfterFinished" not in spec
     (migrate,) = spec["template"]["spec"]["containers"]
     assert migrate["resources"] == {"limits": {"memory": "2Gi"}}
+
+
+@pytest.mark.parametrize("ttl", ["null", "0"])
+def test_job_ttl_from_set(ttl):
+    spec = _job(_render({"migration.ttlSecondsAfterFinished": ttl}))["spec"]
+    if ttl == "null":
+        assert "ttlSecondsAfterFinished" not in spec
+    else:
+        assert spec["ttlSecondsAfterFinished"] == 0

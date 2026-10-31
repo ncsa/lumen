@@ -181,25 +181,42 @@ resolve the database URL and config exactly the same way.
 {{- end }}
 
 {{/*
-Volume mounts of the Lumen app container. Theme PVCs are mounted only when
-"themes" is true: the migration Job leaves them out (an unknown theme falls back
-to "default", and a ReadWriteOnce PVC held by the running app pod would keep the
-Job's pod from starting on another node).
+Volume mounts of the Lumen app container, also used by the wait-for-migrations
+gate initContainer.
 */}}
 {{- define "lumen.appVolumeMounts" -}}
 - name: config
   mountPath: /app/config
   readOnly: true
-{{- if .themes }}
-{{- range $name, $theme := .root.Values.config.themes }}
+{{- range $name, $theme := .Values.config.themes }}
 - name: theme-{{ $name }}
   mountPath: {{ printf "/app/themes/%s" $name }}
   readOnly: true
 {{- end }}
+{{- include "lumen.prometheusMount" . }}
 {{- end }}
-{{- if and .root.Values.api.prometheus.enabled .root.Values.api.prometheus.multiprocDir }}
+
+{{/*
+Volume mounts of the migration Job: the app's, minus the theme PVCs. The upgrade
+renders no templates (an unknown theme falls back to "default"), and a
+ReadWriteOnce PVC held by the running app pod would keep the Job's pod from
+starting on another node.
+*/}}
+{{- define "lumen.migrateVolumeMounts" -}}
+- name: config
+  mountPath: /app/config
+  readOnly: true
+{{- include "lumen.prometheusMount" . }}
+{{- end }}
+
+{{/*
+Mount for PROMETHEUS_MULTIPROC_DIR, which is in the shared env whenever it is set:
+prometheus_client raises if that directory does not exist.
+*/}}
+{{- define "lumen.prometheusMount" -}}
+{{- if and .Values.api.prometheus.enabled .Values.api.prometheus.multiprocDir }}
 - name: prometheus-multiproc
-  mountPath: {{ .root.Values.api.prometheus.multiprocDir }}
+  mountPath: {{ .Values.api.prometheus.multiprocDir }}
 {{- end }}
 {{- end }}
 

@@ -330,7 +330,7 @@ migration:
   # attempt stopped.
   backoffLimit: 6
   # -- Seconds a finished Job (and its pod logs) is kept before Kubernetes deletes it.
-  # Empty keeps it until the next release replaces it.
+  # null keeps it until the next release replaces it.
   ttlSecondsAfterFinished: 86400
   # -- Resources for the migration container. Empty uses the app container's resources.
   resources: {}

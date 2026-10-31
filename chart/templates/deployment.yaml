@@ -39,7 +39,7 @@ spec:
           resources:
             {{- include "lumen.appResources" . | nindent 12 }}
           volumeMounts:
-            {{- include "lumen.appVolumeMounts" (dict "root" . "themes" true) | nindent 12 }}
+            {{- include "lumen.appVolumeMounts" . | nindent 12 }}
       containers:
         - name: lumen
           securityContext:
@@ -86,7 +86,7 @@ spec:
           resources:
             {{- include "lumen.appResources" . | nindent 12 }}
           volumeMounts:
-            {{- include "lumen.appVolumeMounts" (dict "root" . "themes" true) | nindent 12 }}
+            {{- include "lumen.appVolumeMounts" . | nindent 12 }}
       volumes:
         - name: config
           secret:
