@@ -466,3 +466,33 @@ def test_bucket_width_warns_and_returns_none_when_the_catalog_read_fails(capsys)
     out = capsys.readouterr().out
     assert "Warning: could not read the bucket width of 'request_counts_hourly'" in out
     assert "no such catalog table" in out
+
+
+class _RecordingConn:
+    """Records every ``execute``; a helper that refuses its column must leave it empty."""
+
+    def __init__(self):
+        self.statements = []
+
+    def execute(self, statement, *args, **kwargs):
+        self.statements.append(statement)
+
+    def begin(self):
+        pytest.fail("must not open a transaction")
+
+
+@pytest.mark.parametrize("column", ["source", "model_config_id = 1 OR 1", ""])
+def test_chunk_walk_refuses_a_column_outside_the_allowlist(column):
+    conn = _RecordingConn()
+
+    with pytest.raises(ValueError, match="cannot be moved along column"):
+        commands._move_chunk(conn, column, 1, 2, datetime(2026, 1, 1), datetime(2026, 2, 1))
+    with pytest.raises(ValueError, match="cannot be moved along column"):
+        commands._reassign_start(conn, column, 1, {"agg": None})
+    with pytest.raises(ValueError, match="cannot be moved along column"):
+        commands._aggregates_with_column(conn, column)
+    # No app context here, so reaching db.engine would raise RuntimeError instead.
+    with pytest.raises(ValueError, match="cannot be moved along column"):
+        commands._move_request_logs(column, 1, 2)
+
+    assert conn.statements == []
