@@ -130,3 +130,170 @@ Image reference for the Lumen app.
 {{- $tag := .Values.image.tag | default .Chart.AppVersion -}}
 {{- printf "%s:%s" .Values.image.repository $tag -}}
 {{- end }}
+
+{{/*
+Environment of the Lumen app container. Shared by the app container, the
+wait-for-migrations gate initContainer and the migration Job, so all three
+resolve the database URL and config exactly the same way.
+*/}}
+{{- define "lumen.appEnv" -}}
+- name: UV_CACHE_DIR
+  value: /tmp/uv-cache
+- name: CONFIG_YAML
+  value: /app/config/config.yaml
+- name: LUMEN_REPLICAS
+  value: {{ .Values.replicaCount | quote }}
+- name: WEB_CONCURRENCY
+  value: {{ .Values.wsgiProcesses | quote }}
+- name: LUMEN_WSGI_WORKERS
+  value: {{ .Values.wsgiWorkers | quote }}
+- name: LUMEN_WSGI_SEND_TIMEOUT
+  value: {{ .Values.wsgiSendTimeout | quote }}
+{{- if and .Values.api.prometheus.enabled .Values.api.prometheus.multiprocDir }}
+- name: PROMETHEUS_MULTIPROC_DIR
+  value: {{ .Values.api.prometheus.multiprocDir | quote }}
+{{- end }}
+- name: DATABASE_URL
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "lumen.databaseSecretName" . }}
+      key: {{ include "lumen.databaseSecretKey" . }}
+- name: LUMEN_SECRET_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "lumen.secretName" . }}
+      key: secret-key
+- name: LUMEN_ENCRYPTION_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "lumen.secretName" . }}
+      key: encryption-key
+- name: OAUTH2_CLIENT_ID
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "lumen.secretName" . }}
+      key: oauth2-client-id
+- name: OAUTH2_CLIENT_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "lumen.secretName" . }}
+      key: oauth2-client-secret
+{{- end }}
+
+{{/*
+Volume mounts of the Lumen app container. Theme PVCs are mounted only when
+"themes" is true: the migration Job leaves them out (an unknown theme falls back
+to "default", and a ReadWriteOnce PVC held by the running app pod would keep the
+Job's pod from starting on another node).
+*/}}
+{{- define "lumen.appVolumeMounts" -}}
+- name: config
+  mountPath: /app/config
+  readOnly: true
+{{- if .themes }}
+{{- range $name, $theme := .root.Values.config.themes }}
+- name: theme-{{ $name }}
+  mountPath: {{ printf "/app/themes/%s" $name }}
+  readOnly: true
+{{- end }}
+{{- end }}
+{{- if and .root.Values.api.prometheus.enabled .root.Values.api.prometheus.multiprocDir }}
+- name: prometheus-multiproc
+  mountPath: {{ .root.Values.api.prometheus.multiprocDir }}
+{{- end }}
+{{- end }}
+
+{{/*
+Container securityContext of the Lumen app container.
+*/}}
+{{- define "lumen.appSecurityContext" -}}
+{{- if .Values.securityContext -}}
+{{- toYaml .Values.securityContext }}
+{{- else -}}
+runAsNonRoot: true
+runAsUser: 1000
+allowPrivilegeEscalation: false
+capabilities:
+  drop: [ALL]
+{{- end }}
+{{- end }}
+
+{{/*
+Resources of the Lumen app container.
+*/}}
+{{- define "lumen.appResources" -}}
+{{- if .Values.resources -}}
+{{- toYaml .Values.resources }}
+{{- else -}}
+requests:
+  cpu: 250m
+  memory: 512Mi
+limits:
+  cpu: 1
+  memory: 512Mi
+{{- end }}
+{{- end }}
+
+{{/*
+initContainer that waits until the database accepts TCP connections. Used by the
+Deployment and the migration Job.
+*/}}
+{{- define "lumen.waitForDbInitContainer" -}}
+- name: wait-for-db
+  image: busybox:1.36
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+  command:
+    - sh
+    - -c
+    - |
+      DB_HOST=$(echo $DATABASE_URL | sed 's|.*@\([^:/]*\).*|\1|')
+      DB_PORT=$(echo $DATABASE_URL | sed 's|.*:\([0-9]*\)/.*|\1|')
+      DB_PORT=${DB_PORT:-5432}
+      echo "Waiting for $DB_HOST:$DB_PORT..."
+      until nc -z "$DB_HOST" "$DB_PORT"; do
+        echo "database not ready, sleeping 2s"
+        sleep 2
+      done
+      echo "database is reachable"
+  env:
+    - name: DATABASE_URL
+      valueFrom:
+        secretKeyRef:
+          name: {{ include "lumen.databaseSecretName" . }}
+          key: {{ include "lumen.databaseSecretKey" . }}
+{{- end }}
+
+{{/*
+Pod-level scheduling and identity settings shared by the Deployment and the
+migration Job.
+*/}}
+{{- define "lumen.podSpecCommon" -}}
+{{- with .Values.imagePullSecrets }}
+imagePullSecrets:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- if .Values.serviceAccount.create }}
+serviceAccountName: {{ .Values.serviceAccount.name | default (include "lumen.fullname" .) }}
+{{- end }}
+{{- with .Values.podSecurityContext }}
+securityContext:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with .Values.nodeSelector }}
+nodeSelector:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with .Values.tolerations }}
+tolerations:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with .Values.affinity }}
+affinity:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}

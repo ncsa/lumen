@@ -1,0 +1,70 @@
+# Upgrade step: runs `flask upgrade` (all migrations, then the post-migration data
+# steps) once per release. The name carries the release revision because a Job's
+# pod template cannot be changed, so every install, upgrade and rollback gets a new
+# Job. The Deployment's wait-for-migrations initContainer holds new app pods until
+# this Job has brought the schema to their migration head.
+#
+# A plain Job rather than a pre-install/pre-upgrade hook: a hook runs before the
+# chart's Secrets and the bundled PostgreSQL exist, so a fresh install would hang.
+# A failed Job does not fail the release; it shows up as a failed Job and a rollout
+# whose new pods wait at the gate.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "lumen.fullname" . }}-migrate-{{ .Release.Revision }}
+  labels:
+    {{- include "lumen.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+spec:
+  backoffLimit: {{ .Values.migration.backoffLimit }}
+  {{- $ttl := .Values.migration.ttlSecondsAfterFinished }}
+  {{- if not (or (kindIs "invalid" $ttl) (eq (toString $ttl) "")) }}
+  ttlSecondsAfterFinished: {{ $ttl }}
+  {{- end }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Not the Deployment's selector labels: the Service would send traffic here.
+      labels:
+        app.kubernetes.io/name: {{ include "lumen.name" . }}-migrate
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      {{- include "lumen.podSpecCommon" . | trim | nindent 6 }}
+      initContainers:
+        {{- include "lumen.waitForDbInitContainer" . | nindent 8 }}
+      containers:
+        # Runs through the image's entrypoint (no `command`), whose upgrade mode
+        # also sets a default PGCONNECT_TIMEOUT. A retry resumes: migrations
+        # already applied are skipped and the backfill re-probes for missing months.
+        - name: migrate
+          securityContext:
+            {{- include "lumen.appSecurityContext" . | nindent 12 }}
+          image: {{ include "lumen.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - upgrade
+          env:
+            {{- include "lumen.appEnv" . | nindent 12 }}
+          resources:
+            {{- if .Values.migration.resources }}
+            {{- toYaml .Values.migration.resources | nindent 12 }}
+            {{- else }}
+            {{- include "lumen.appResources" . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            {{- include "lumen.appVolumeMounts" (dict "root" . "themes" false) | nindent 12 }}
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ include "lumen.fullname" . }}-config
+        {{- if and .Values.api.prometheus.enabled .Values.api.prometheus.multiprocDir }}
+        # PROMETHEUS_MULTIPROC_DIR is in the shared env; prometheus_client raises
+        # if that directory does not exist.
+        - name: prometheus-multiproc
+          emptyDir: {}
+        {{- end }}

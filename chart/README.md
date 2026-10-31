@@ -183,6 +183,9 @@ models:
 | `image.repository` | `ncsa/lumen` | Container image repository |
 | `image.tag` | `""` | Image tag (defaults to chart appVersion) |
 | `image.pullPolicy` | `IfNotPresent` | Image pull policy |
+| `migration.backoffLimit` | `6` | Pod retries of the migration Job before it is marked failed; each retry resumes — see [Database Migrations](#database-migrations) |
+| `migration.ttlSecondsAfterFinished` | `86400` | Seconds a finished migration Job and its pod logs are kept; `""` keeps it until the next release replaces it |
+| `migration.resources` | `{}` | Resources for the migration container; empty uses the app container's `resources` |
 | `config.secretKey` | `""` | Flask session signing key |
 | `config.encryptionKey` | `""` | API key hashing secret |
 | `config.debug` | `false` | Flask debug mode |
@@ -218,14 +221,26 @@ models:
 
 ## Database Migrations
 
-Migrations run automatically at container start: `entrypoint.sh` runs `flask db upgrade` inline and only then `exec`s uvicorn. There is no Helm hook Job. A `busybox` initContainer in the Deployment waits for the database to be reachable first, so the migration does not start against a database that is still coming up.
+Every install, upgrade and rollback creates a Job, `<fullname>-migrate-<revision>`, that runs the image's `upgrade` mode (`flask upgrade`) and exits:
 
-Two consequences follow from migrating inside the app container rather than in a Job:
+1. all Alembic migrations up to the image's head, including the automatic usage-stats cutover;
+2. the post-migration data steps — in 2.3.0, a backfill of every month of `request_logs` that is missing from (or only partly in) the `request_counts_hourly_by_entity` continuous aggregate. On a database where the aggregate is complete this is two indexed probes per month and refreshes nothing.
 
-- **Migrations overlap with traffic on the old version.** A Job would finish before any new pod started. Here the new pod migrates, and the Deployment uses the default rolling update — at `replicaCount: 1` that is maxSurge 1 / maxUnavailable 0, so the old pod keeps serving the previous code against the half-migrated schema until the new pod is Ready. Where there is no old pod (a fresh install, a pod restart, an eviction, a drained node) nothing serves until `flask db upgrade` returns.
-- **The startup probe budget must cover the migration**, not just uvicorn startup — `/healthz` cannot answer until `flask db upgrade` returns. If the migration outlasts `startupProbe.periodSeconds x startupProbe.failureThreshold` (default 30 minutes) the kubelet kills the container mid-migration, the interrupted revision reruns from the beginning on restart, and the pod can end up in `CrashLoopBackOff`. Raise `startupProbe.failureThreshold` before deploying a migration you expect to take longer.
+The Job uses the same image, environment, config Secret and `wait-for-db` initContainer as the app. Its name carries the release revision because a Job cannot be changed once created; Helm deletes the previous revision's Job when it creates the new one.
 
-A migration that *fails* exits non-zero and the container dies immediately (`entrypoint.sh` runs under `set -e`), so a broken migration surfaces as a crashing pod rather than a blocked rollout. For a migration that is known to be long, run `flask db upgrade` manually against the database before the deploy.
+**Retries resume.** If the Job's pod fails, Kubernetes starts another one, up to `migration.backoffLimit` times. Each attempt skips migrations already applied and probes for missing months again, so it continues where the last one stopped. A finished Job, with its pod logs, stays for `migration.ttlSecondsAfterFinished` seconds (one day by default).
+
+**App pods wait for it.** The Deployment has a second initContainer, `wait-for-migrations`, after `wait-for-db`. It runs the image's `wait-for-migrations` mode, which only reads the database and exits once it is at the migration head this image expects. It has no timeout: a new pod waits as long as the Job takes, then starts. On a `helm upgrade` the old pods keep serving while the Job runs (the default rolling update keeps them until the new pod is Ready). A pod restart with an already migrated database passes the gate immediately. The gate checks the schema only, so new pods can start while the Job is still backfilling; until it finishes, "All Time" usage charts can be incomplete.
+
+**It is a plain Job, not a Helm hook.** A pre-install hook would run before the chart's Secrets and the bundled PostgreSQL exist. As a consequence a failed Job does not fail `helm upgrade`, even with `--wait`: it shows up as a failed Job (`kubectl get jobs`, `kubectl logs job/<fullname>-migrate-<revision>`) and a rollout whose new pod stays in `Init` at the gate, which eventually exceeds the Deployment's `progressDeadlineSeconds`. Fix the cause, then run `helm upgrade` again to get a new Job.
+
+**The chart needs image 2.3.0 or later.** Older images have no `upgrade` or `wait-for-migrations` mode. Until a release sets the chart's `appVersion` to 2.3.0, install from `main` with `image.tag: latest` (or an image built from `main`). Mixed versions fail like this:
+
+- **This chart with an image older than 2.3.0:** the Job fails and the gate initContainer crash-loops, because the image does not know either mode. Nothing new starts; old pods keep serving.
+- **An older chart (no Job) with image 2.3.0 or later:** nothing runs the upgrade, so once the image stops migrating on start, pods wait at startup.
+- **`helm rollback` to an older image after the database was migrated:** that image does not know the newer revision, so its Job and its gate both fail immediately. Rolling back across a migration needs a database restore.
+
+For now the app container still runs `flask db upgrade` inline before uvicorn starts; with the Job and gate in place that is a no-op, because the database is already at head when the container starts.
 
 ## Notes
 

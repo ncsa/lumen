@@ -261,6 +261,20 @@
         }
       }
     },
+    "migration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "backoffLimit": { "type": "integer", "minimum": 0 },
+        "ttlSecondsAfterFinished": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "string", "enum": [""] }
+          ]
+        },
+        "resources": { "type": "object" }
+      }
+    },
     "resources": { "type": "object" },
     "nodeSelector": { "type": "object" },
     "tolerations": { "type": "array" },
