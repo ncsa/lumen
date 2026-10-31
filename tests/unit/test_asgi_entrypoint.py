@@ -280,10 +280,27 @@ def test_entrypoint_one_shot_modes_keep_an_operator_connect_timeout(run_entrypoi
     assert calls == ["flask --app run wait-for-migrations PGCONNECT_TIMEOUT=45"]
 
 
-def test_entrypoint_default_mode_migrates_then_serves_with_workers(run_entrypoint):
+def test_entrypoint_default_mode_gates_then_serves_with_workers(run_entrypoint):
+    """Serving never migrates: it waits at the gate, then hands --workers to uvicorn."""
     status, calls = run_entrypoint("--workers", "4")
     assert status == 0
     assert calls == [
-        "flask --app run db upgrade PGCONNECT_TIMEOUT=unset",
+        "flask --app run wait-for-migrations PGCONNECT_TIMEOUT=10",
         "uvicorn asgi:app --host 0.0.0.0 --port 5001 --workers 4 PGCONNECT_TIMEOUT=unset",
     ]
+    assert not any("db upgrade" in c or "run upgrade" in c for c in calls)
+
+
+def test_entrypoint_default_mode_keeps_an_operator_connect_timeout(run_entrypoint):
+    _, calls = run_entrypoint(PGCONNECT_TIMEOUT="45")
+    assert calls == [
+        "flask --app run wait-for-migrations PGCONNECT_TIMEOUT=45",
+        "uvicorn asgi:app --host 0.0.0.0 --port 5001 PGCONNECT_TIMEOUT=45",
+    ]
+
+
+def test_entrypoint_default_mode_does_not_serve_when_the_gate_fails(run_entrypoint):
+    """A database migrated by a newer image fails the gate; the container must exit."""
+    status, calls = run_entrypoint("--workers", "4", GATE_EXIT="1")
+    assert status == 1
+    assert calls == ["flask --app run wait-for-migrations PGCONNECT_TIMEOUT=10"]

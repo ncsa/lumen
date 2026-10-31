@@ -50,6 +50,22 @@ services:
       timeout: 5s
       retries: 5
 
+  # one-shot upgrade: applies every migration and backfills missing aggregate months,
+  # then exits. lumen does not migrate on start and waits for this to finish.
+  lumen-upgrade:
+    image: ncsa/lumen:latest
+    container_name: lumen-upgrade
+    command: upgrade
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - CONFIG_YAML=/app/instance/config.yaml
+      - DATABASE_URL=postgresql://lumen:lumen@postgres/lumen
+    volumes:
+      - ./lumen:/app/instance
+
   # frontend
   lumen:
     image: ncsa/lumen:latest
@@ -58,6 +74,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      lumen-upgrade:
+        condition: service_completed_successfully
     environment:
       - CONFIG_YAML=/app/instance/config.yaml
       - DATABASE_URL=postgresql://lumen:lumen@postgres/lumen

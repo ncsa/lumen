@@ -4,7 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
-**Upgrade:** `flask enable-retention` is removed — `request_logs` is never pruned; use the read-only `flask check-aggregate` and run `flask backfill-aggregate` before upgrading; startup logs an ERROR if a retention policy is found on `request_logs`; per-user `/usage` charts now read only `request_counts_hourly_by_entity` and no longer scan `request_logs`. (#167)
+**Upgrade:** `flask enable-retention` is removed — `request_logs` is never pruned; the upgrade step backfills `request_counts_hourly_by_entity` (`flask check-aggregate` stays a read-only check); startup logs an ERROR if a retention policy is found on `request_logs`; per-user `/usage` charts now read only `request_counts_hourly_by_entity` and no longer scan `request_logs`. (#167)
+
+**Upgrade:** Lumen no longer migrates on container start. Run the image with `upgrade` first (Compose: new `lumen-upgrade` service; Helm: new migration Job); it applies all migrations, including the usage-stats cutover, and backfills missing aggregate months. Upgrading only the image (Compose without `lumen-upgrade`, or a newer `image.tag` on an older chart) leaves Lumen waiting at startup; the chart needs image 2.3.0+. The chart's `startupProbe` budget drops from 30 to 5 minutes. (#376)
 
 - **Breaking:** Upgrade to SQLAlchemy 2.1; the PostgreSQL driver is now psycopg 3 (`psycopg[binary]`) and psycopg2 is no longer installed. `postgresql://` and `postgres://` URLs need no change; a database URL that names `postgresql+psycopg2://` fails at startup and must be changed to `postgresql://`.
 - **Breaking:** Python 3.14 is required; the Docker image and CI run on 3.14. Python 3.15 is not supported yet: with SQLAlchemy 2.1 it does not return garbage-collected connections to the pool.
