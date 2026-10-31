@@ -11,8 +11,13 @@ from ..extensions import db
 class Entity(db.Model):
     """Unified table for human users (OAuth) and programmatic projects (API key).
 
-    entity_type distinguishes the two kinds. Most columns apply to both; a few
+    entity_type distinguishes the kinds. Most columns apply to both; a few
     (email, gravatar_hash) are users-only and left null for projects.
+
+    A third type, 'ghost', is the single shared entity that GDPR erasure moves
+    erased users' history, stats, models and revoked keys to. It has no email,
+    is inactive, and is excluded from every user listing by their
+    entity_type = 'user' filters. uq_entities_single_ghost allows only one.
     """
 
     __tablename__ = "entities"
@@ -36,14 +41,23 @@ class Entity(db.Model):
             initially="DEFERRED",
             use_alter=True,
         ),
+        # At most one ghost row (see lumen.services.erasure.get_or_create_ghost).
+        db.Index(
+            "uq_entities_single_ghost",
+            "entity_type",
+            unique=True,
+            postgresql_where=db.text("entity_type = 'ghost'"),
+            sqlite_where=db.text("entity_type = 'ghost'"),
+        ),
         {"comment": "Human users (OAuth) and programmatic projects (API key); entity_type distinguishes them"},
     )
 
     # autoincrement is explicit: id is also part of fk_entities_owner_membership,
     # and SQLAlchemy does not auto-increment a primary key that is in a FK.
     id: Mapped[int] = mapped_column(db.Integer, primary_key=True, autoincrement=True, comment="Primary key")
-    # 'user' for human users authenticated via OAuth; 'project' for API projects
-    entity_type: Mapped[str] = mapped_column(db.String(8), comment="'user' for OAuth users, 'project' for API projects")
+    # 'user' for human users authenticated via OAuth; 'project' for API projects;
+    # 'ghost' for the single shared entity that erased users are merged into
+    entity_type: Mapped[str] = mapped_column(db.String(8), comment="'user' for OAuth users, 'project' for API projects, 'ghost' for the single shared erased-user entity")
     # Populated for users; null for projects. Unique across the table.
     email: Mapped[Optional[str]] = mapped_column(db.String(256), unique=True, comment="User email address; null for projects")
     name: Mapped[str] = mapped_column(db.String(256), comment="Display name")

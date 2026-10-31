@@ -296,3 +296,58 @@ def test_message_index_names_match_migration(tmp_path):
     migrated = {i["name"]: i["column_names"] for i in sa.inspect(engine).get_indexes("messages")}
     model = {i.name: [c.name for c in i.columns] for i in Message.__table__.indexes}
     assert migrated == model == {"ix_messages_conversation_id_created_at": ["conversation_id", "created_at"]}
+
+
+# ---------------------------------------------------------------------------
+# b4c6d8e0f2a4: 'ghost' entity type and uq_entities_single_ghost
+#
+# The CHECK and the comments are PostgreSQL-only and covered in
+# tests/integration/test_ghost_entity_postgres.py; on SQLite the revision only
+# creates and drops the index.
+# ---------------------------------------------------------------------------
+
+_GHOST_REVISION_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "migrations" / "versions" / "b4c6d8e0f2a4_ghost_entity_type.py"
+)
+
+
+def _ghost_revision():
+    spec = importlib.util.spec_from_file_location("ghost_entity_revision", _GHOST_REVISION_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _insert_ghost(engine):
+    with engine.begin() as conn:
+        conn.exec_driver_sql("INSERT INTO entities (entity_type) VALUES ('ghost')")
+
+
+def test_ghost_upgrade_allows_one_ghost_and_downgrade_drops_index(tmp_path):
+    from lumen.models.entity import Entity
+
+    revision = _ghost_revision()
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'ghost.db'}")
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE entities (id INTEGER PRIMARY KEY, entity_type VARCHAR(8) NOT NULL)")
+        conn.exec_driver_sql("INSERT INTO entities (entity_type) VALUES ('user'), ('user'), ('project')")
+
+    _run_revision(engine, revision.upgrade)
+    migrated = {i["name"]: i for i in sa.inspect(engine).get_indexes("entities")}
+    assert migrated["uq_entities_single_ghost"]["column_names"] == ["entity_type"]
+    assert migrated["uq_entities_single_ghost"]["unique"]
+    # create_all must build the same index from the model.
+    model = {i.name: [c.name for c in i.columns] for i in Entity.__table__.indexes if i.unique}
+    assert model["uq_entities_single_ghost"] == ["entity_type"]
+
+    _insert_ghost(engine)
+    with pytest.raises(sa.exc.IntegrityError):
+        _insert_ghost(engine)
+
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DELETE FROM entities WHERE entity_type = 'ghost'")
+    _run_revision(engine, revision.downgrade)
+    assert "uq_entities_single_ghost" not in {i["name"] for i in sa.inspect(engine).get_indexes("entities")}
+    with engine.begin() as conn:
+        assert conn.exec_driver_sql("SELECT COUNT(*) FROM entities").scalar() == 3
