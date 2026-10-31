@@ -101,7 +101,9 @@ def test_reassign_merges_audio_seconds(app, ids):
 
 
 def test_reassign_holds_the_fold_state(app, post_cutover, ids, monkeypatch):
-    """The fold state is locked first, before the command reads anything."""
+    """The fold state is locked once, as the first statement of the merge
+    transaction (after the conversations commit, and after the chunk walk on
+    PostgreSQL), not by an open transaction."""
     entity_id, src, dst = ids
     calls = []
     real = stats_cutover.lock_fold_state
