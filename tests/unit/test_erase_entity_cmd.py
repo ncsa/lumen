@@ -539,3 +539,63 @@ def test_every_foreign_key_into_erased_tables_is_handled(app):
         "a foreign key into entities, conversations or api_keys is not handled by erase-entity: "
         f"{sorted(found - set(HANDLED))}; stale entries: {sorted(set(HANDLED) - found)}"
     )
+
+
+T_OLD = datetime(2025, 1, 1)
+T_MID = datetime(2025, 6, 1)
+T_NEW = datetime(2025, 12, 1)
+
+
+@pytest.mark.parametrize(("ghost_ts", "user_ts", "expected"), [
+    (T_OLD, T_MID, T_MID),
+    (T_NEW, T_MID, T_NEW),
+    (None, T_MID, T_MID),
+    (T_NEW, None, T_NEW),
+], ids=["ghost-older", "ghost-newer", "ghost-null", "user-null"])
+def test_merge_into_an_existing_ghost_keeps_the_latest_last_used_at(app, world, ghost_ts, user_ts, expected):
+    """One erasure where the ghost already has the user's (model, chat) row but not the
+    (model, api) one: the first is merged, the second re-pointed, and last_used_at is the
+    later of the two on both stats tables."""
+    u, model = world["user"], world["model"]
+    with app.app_context():
+        ghost_id = get_or_create_ghost().id
+        db.session.add_all([
+            ModelStat(entity_id=ghost_id, model_config_id=model, source="chat", requests=5, input_tokens=50,
+                      output_tokens=25, audio_seconds=1, cost=1, last_used_at=ghost_ts),
+            EntityStat(entity_id=ghost_id, requests=5, input_tokens=50, output_tokens=25, audio_seconds=1,
+                       cost=1, conversations=2, last_used_at=ghost_ts),
+        ])
+        db.session.flush()
+        # model_stats.last_used_at defaults to now on insert, so NULL is set after it.
+        for stat in db.session.execute(select(ModelStat).filter_by(entity_id=ghost_id)).scalars():
+            stat.last_used_at = ghost_ts
+        for stat in db.session.execute(select(ModelStat).filter_by(entity_id=u)).scalars():
+            stat.last_used_at = user_ts
+        db.session.get(EntityStat, u).last_used_at = user_ts
+        db.session.commit()
+        user_rows = {s.source: (s.requests, s.input_tokens, s.output_tokens, s.audio_seconds, s.cost)
+                     for s in db.session.execute(select(ModelStat).filter_by(entity_id=u)).scalars()}
+        user_entity = db.session.get(EntityStat, u)
+        user_entity = (user_entity.requests, user_entity.cost, user_entity.conversations)
+        totals = _stat_totals()
+
+    result = _erase(app, u, "--yes")
+
+    assert result.exit_code == 0, result.output
+    assert "model_stats moved: 1, merged: 1; entity_stats merged: 1" in result.output
+    with app.app_context():
+        rows = {s.source: s for s in db.session.execute(select(ModelStat).filter_by(entity_id=ghost_id)).scalars()}
+        assert set(rows) == {"chat", "api"}
+        chat = rows["chat"]
+        r, i, o, a, c = user_rows["chat"]
+        assert (chat.requests, chat.input_tokens, chat.output_tokens, chat.audio_seconds, chat.cost) == \
+            (r + 5, i + 50, o + 25, a + 1, c + 1)
+        assert chat.last_used_at == expected
+        api = rows["api"]
+        assert (api.requests, api.input_tokens, api.output_tokens, api.audio_seconds, api.cost) == user_rows["api"]
+        assert api.last_used_at == user_ts
+        ghost = db.session.get(EntityStat, ghost_id)
+        assert (ghost.requests, ghost.cost, ghost.conversations) == \
+            (user_entity[0] + 5, user_entity[1] + 1, user_entity[2] + 2)
+        assert ghost.last_used_at == expected
+        assert _stat_totals() == totals
