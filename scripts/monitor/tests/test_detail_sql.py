@@ -27,7 +27,7 @@ from monitor.detail import (
     series,
 )
 from monitor.models import DailyStat, Sample, token_sum
-from monitor.overview import _iso, exact, model_rows
+from monitor.overview import _iso, exact, model_rows, strip_times
 
 NOW = datetime(2026, 10, 17, 17, 0, 12, 345678)  # off the second, like utcnow()
 MICROSECOND = timedelta(microseconds=1)
@@ -145,6 +145,7 @@ def old_series(session, config, snapshot, model_id, rng, now):
         "generated_at": _iso(now),
         "daily": is_daily(rng),
         "header": header,
+        "strip_times": strip_times(grid),
         "prices": _price_points(rows, days) if is_daily(rng) else _bucket_price_points(session, model_id, rows, days, grid, tz),
         "traffic": traffic,
         "hardware": {"points": hardware, "range": hardware_range},
