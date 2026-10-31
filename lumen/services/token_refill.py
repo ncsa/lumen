@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timezone
 
 from flask import current_app
-from sqlalchemy import select
+from sqlalchemy import Float, bindparam, select
 from sqlalchemy import update as sa_update
 
 from lumen.extensions import db
@@ -19,8 +19,55 @@ from lumen.timeutils import utcnow
 logger = logging.getLogger(__name__)
 
 
+#: How many balances one refill transaction writes. Each batch commits on its own,
+#: so a billing request waits at most for one batch's row locks, not a whole pass.
+REFILL_BATCH_SIZE = 200
+
+_balances = EntityBalance.__table__
+
+
+def _cas_update(**values):
+    """UPDATE balances, one per param set, each guarded on the last_refill_at value read.
+
+    A row an admin or another worker changed after the read is left alone. A Core
+    statement on the table, so a guarded write that matches no row leaves the
+    session's copy of the row untouched.
+    """
+    return (
+        sa_update(_balances)
+        .where(
+            _balances.c.entity_id == bindparam("b_entity_id"),
+            _balances.c.last_refill_at == bindparam("b_read"),
+        )
+        .values(last_refill_at=bindparam("b_now"), **values)
+    )
+
+
+def _apply_batch(stmt, params: list) -> int:
+    """Write one batch as a single executemany and commit it; return rows matched."""
+    result = db.session.execute(stmt, params)
+    db.session.commit()
+    return result.rowcount
+
+
+def _apply_in_batches(stmt, params: list) -> int:
+    """Send params through _apply_batch in chunks; a failed chunk is rolled back and skipped."""
+    applied = 0
+    for start in range(0, len(params), REFILL_BATCH_SIZE):
+        batch = params[start:start + REFILL_BATCH_SIZE]
+        try:
+            applied += _apply_batch(stmt, batch)
+        except Exception:
+            db.session.rollback()
+            logger.exception(
+                "coin refill batch failed (entities %s..%s); continuing",
+                batch[0]["b_entity_id"], batch[-1]["b_entity_id"],
+            )
+    return applied
+
+
 def refill_coin_balances(now: datetime = None) -> int:
-    """Run one refill pass; return the number of balances updated. Caller owns the app context."""
+    """Run one refill pass; return the number of balances credited. Caller owns the app context."""
     if now is None:
         now = utcnow()
     elif now.tzinfo is not None:
@@ -28,16 +75,21 @@ def refill_coin_balances(now: datetime = None) -> int:
         # offset, so a caller-passed non-UTC time cannot skew the refill window.
         now = now.astimezone(timezone.utc).replace(tzinfo=None)
     one_hour_ago = now - REFILL_INTERVAL
+    # Column read, not ORM rows: last_refill_at comes from the database (always
+    # naive), never from a stale identity-map object. Ordered so every batch
+    # locks its rows in entity_id order.
     due = db.session.execute(
-        select(EntityBalance).where(
+        select(EntityBalance.entity_id, EntityBalance.last_refill_at)
+        .where(
             EntityBalance.last_refill_at != None,  # noqa: E711
             EntityBalance.last_refill_at <= one_hour_ago,
         )
-    ).scalars().all()
+        .order_by(EntityBalance.entity_id)
+    ).all()
     if not due:
         return 0
 
-    entity_ids = [bal.entity_id for bal in due]
+    entity_ids = [eid for eid, _ in due]
 
     # Bulk-load entity limits to avoid N+1 per-entity queries
     entity_limits = {
@@ -72,16 +124,10 @@ def refill_coin_balances(now: datetime = None) -> int:
     if td and float(td["max"]) != 0:
         default_pool = PoolLimit(float(td["max"]), float(td["refresh"]), float(td["starting"]))
 
-    updated = 0
-    for bal in due:
-        eid = bal.entity_id
-        # last_refill_at is naive UTC; tolerate a stray aware value so one bad row
-        # can't abort the whole pass.
-        last_refill = bal.last_refill_at
-        if last_refill.tzinfo is not None:
-            last_refill = last_refill.astimezone(timezone.utc).replace(tzinfo=None)
-        hours_elapsed = (now - last_refill).total_seconds() / 3600
-
+    credits = []
+    bumps = []
+    for eid, last_refill in due:
+        params = {"b_entity_id": eid, "b_read": last_refill, "b_now": now}
         pool = None
         if eid in entity_limits:
             el = entity_limits[eid]
@@ -95,38 +141,25 @@ def refill_coin_balances(now: datetime = None) -> int:
                 pool = default_pool
 
         if pool is None or pool.max_coins == -2 or pool.refresh_coins <= 0:
-            # Blocked, pool-less, unlimited or non-refreshing: no credit, but bump
-            # last_refill_at so the row is not re-selected every pass. Guarded on the
-            # value read, so a row another worker or an admin changed meanwhile is left alone.
-            db.session.execute(
-                sa_update(EntityBalance)
-                .where(
-                    EntityBalance.entity_id == eid,
-                    EntityBalance.last_refill_at == bal.last_refill_at,
-                )
-                .values(last_refill_at=now)
-            )
+            bumps.append(params)
             continue
 
         max_coins, refresh_coins, _starting = pool
-        refill = hours_elapsed * float(refresh_coins)
-        # Atomic set-based credit against the live DB balance so a concurrent atomic
-        # deduction (subtract_coins) is never clobbered by a stale read-modify-write.
-        # The last_refill_at cutoff makes a second worker that already refilled a no-op.
-        result = db.session.execute(
-            sa_update(EntityBalance)
-            .where(
-                EntityBalance.entity_id == eid,
-                EntityBalance.last_refill_at <= one_hour_ago,
-            )
-            .values(
-                coins_left=_least(float(max_coins), EntityBalance.coins_left + refill),
-                last_refill_at=now,
-            )
-        )
-        if result.rowcount:
-            updated += 1
-    db.session.commit()
+        hours_elapsed = (now - last_refill).total_seconds() / 3600
+        params["b_max"] = float(max_coins)
+        params["b_refill"] = hours_elapsed * float(refresh_coins)
+        credits.append(params)
+
+    # Atomic set-based credit against the live coins_left, so a concurrent atomic
+    # deduction (subtract_coins) is never clobbered by a stale read-modify-write.
+    credit = _cas_update(coins_left=_least(
+        bindparam("b_max", type_=Float),
+        _balances.c.coins_left + bindparam("b_refill", type_=Float),
+    ))
+    updated = _apply_in_batches(credit, credits)
+    # Blocked, pool-less, unlimited or non-refreshing: no credit, but bump
+    # last_refill_at so the row is not re-selected every pass.
+    _apply_in_batches(_cas_update(), bumps)
     return updated
 
 
