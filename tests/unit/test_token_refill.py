@@ -117,6 +117,8 @@ def test_unlimited_pool_skipped(app, test_user):
         assert refill_coin_balances(now=now) == 0
         bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one_or_none()
         assert float(bal.coins_left) == 0.0
+        # Bumped so the next pass does not re-select it.
+        assert bal.last_refill_at == now
 
 
 def test_zero_refresh_coins_skipped(app, test_user):
@@ -133,10 +135,12 @@ def test_zero_refresh_coins_skipped(app, test_user):
         assert refill_coin_balances(now=now) == 0
         bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one_or_none()
         assert float(bal.coins_left) == 20.0
+        # Bumped so the next pass does not re-select it.
+        assert bal.last_refill_at == now
 
 
 def test_no_pool_skipped(app, test_user):
-    """Entity with no limit at all (no EntityLimit, no group limits) is left alone."""
+    """Entity with no limit at all (no EntityLimit, no group limits) gets no credit."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.entity_balance import EntityBalance
@@ -149,6 +153,85 @@ def test_no_pool_skipped(app, test_user):
         assert refill_coin_balances(now=now) == 0
         bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one_or_none()
         assert float(bal.coins_left) == 42.0
+        # Bumped so the next pass does not re-select it.
+        assert bal.last_refill_at == now
+
+
+def test_blocked_pool_skipped(app, test_user):
+    """A blocked entity (max_coins == 0) gets no credit, but last_refill_at is bumped."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.services.token_refill import refill_coin_balances
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        _add_limit(db, test_user["id"], max_coins=0, refresh_coins=10)
+        _add_balance(db, test_user["id"], coins_left=5,
+                      last_refill_at=now - timedelta(hours=3))
+        db.session.commit()
+
+        assert refill_coin_balances(now=now) == 0
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one_or_none()
+        assert float(bal.coins_left) == 5.0
+        assert bal.last_refill_at == now
+
+
+def test_skipped_balance_not_reselected_on_next_pass(app, test_user):
+    """Once bumped, a skipped balance is not due again a minute later."""
+    from unittest.mock import patch
+
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.services import token_refill
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        _add_balance(db, test_user["id"], coins_left=42,
+                      last_refill_at=now - timedelta(hours=5))
+        db.session.commit()
+
+        assert token_refill.refill_coin_balances(now=now) == 0
+
+        # The second pass finds nothing due, so it never reaches the limit lookups.
+        with patch.object(token_refill, "best_group_pool_limit") as resolve:
+            assert token_refill.refill_coin_balances(now=now + timedelta(minutes=1)) == 0
+        resolve.assert_not_called()
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one()
+        assert float(bal.coins_left) == 42.0
+        assert bal.last_refill_at == now
+
+
+def test_skip_bump_guarded_on_value_read(app, test_user):
+    """A skipped row whose last_refill_at changed after the read is not bumped."""
+    from unittest.mock import patch
+
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.services import token_refill
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        moved = now - timedelta(hours=2)
+        _add_balance(db, test_user["id"], coins_left=42,
+                      last_refill_at=now - timedelta(hours=5))
+        db.session.commit()
+
+        real_resolve = token_refill.best_group_pool_limit
+        stmt = select(EntityBalance).filter_by(entity_id=test_user["id"])
+
+        def move_then_resolve(*args, **kwargs):
+            # Another writer changes last_refill_at between the read and the bump.
+            db.session.execute(
+                token_refill.sa_update(EntityBalance)
+                .where(EntityBalance.entity_id == test_user["id"])
+                .values(last_refill_at=moved)
+                .execution_options(synchronize_session=False)
+            )
+            return real_resolve(*args, **kwargs)
+
+        with patch.object(token_refill, "best_group_pool_limit", side_effect=move_then_resolve):
+            assert token_refill.refill_coin_balances(now=now) == 0
+
+        db.session.expire_all()
+        bal = db.session.execute(stmt).scalar_one()
+        assert bal.last_refill_at == moved
 
 
 def test_partial_hour_uses_float(app, test_user):
