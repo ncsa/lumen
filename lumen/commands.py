@@ -14,6 +14,7 @@ from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from flask import current_app
 from flask.cli import with_appcontext
+from flask_migrate import upgrade as migrate_upgrade
 from sqlalchemy import create_engine, select, text, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.pool import NullPool
@@ -727,31 +728,93 @@ def _refresh_months(conn, name, start, now):
     refreshed = []
     month = start
     while month <= now:
-        nxt = _next_month(month)
-        # Never refresh past "now". A window ending in the future materialises the
-        # current bucket and moves the aggregate's watermark beyond it, which turns
-        # real-time aggregation OFF for that bucket: every request logged after the
-        # backfill stays invisible on /usage until a scheduled refresh catches up.
-        # Measured on 2.27.2 — with the month end (future) the next insert was
-        # missing; with now() the watermark stayed two buckets back and it showed.
-        end = min(nxt, now)
-        raw = conn.execute(text(
-            "SELECT COUNT(*) FROM request_logs WHERE time >= :s AND time < :e"
-        ), {"s": month, "e": nxt}).scalar()
-        click.echo(f"  {month:%Y-%m}: {raw} request_logs rows ... ", nl=False)
         try:
-            retries = _refresh_window(conn, name, month, end)
+            _refresh_month(conn, name, bucket, month, now)
         except DBAPIError as exc:
-            click.echo("FAILED")
             raise _RefreshFailed(month, refreshed, exc) from exc
-        aggregated = conn.execute(text(
-            f'SELECT COUNT(*) FROM "{name}" WHERE "{bucket}" >= :s AND "{bucket}" < :e'
-        ), {"s": month, "e": nxt}).scalar()
-        click.echo(f"{aggregated} aggregate rows OK"
-                   + (f" (after {retries} lock retries)" if retries else ""))
         refreshed.append(f"{month:%Y-%m}")
-        month = nxt
+        month = _next_month(month)
     return refreshed
+
+
+def _refresh_month(conn, name, bucket, month, now):
+    """Refresh ``name`` from ``month`` to the next month or ``now``, whichever is first.
+
+    Prints one line with the row counts either side. Raises ``DBAPIError`` once the
+    lock retries of ``_refresh_window`` run out. Shared by ``_refresh_months`` and the
+    missing-month backfill of ``flask upgrade``.
+    """
+    nxt = _next_month(month)
+    # Never refresh past "now". A window ending in the future materialises the
+    # current bucket and moves the aggregate's watermark beyond it, which turns
+    # real-time aggregation OFF for that bucket: every request logged after the
+    # backfill stays invisible on /usage until a scheduled refresh catches up.
+    # Measured on 2.27.2 — with the month end (future) the next insert was
+    # missing; with now() the watermark stayed two buckets back and it showed.
+    end = min(nxt, now)
+    raw = conn.execute(text(
+        "SELECT COUNT(*) FROM request_logs WHERE time >= :s AND time < :e"
+    ), {"s": month, "e": nxt}).scalar()
+    click.echo(f"  {month:%Y-%m}: {raw} request_logs rows ... ", nl=False)
+    try:
+        retries = _refresh_window(conn, name, month, end)
+    except DBAPIError:
+        click.echo("FAILED")
+        raise
+    aggregated = conn.execute(text(
+        f'SELECT COUNT(*) FROM "{name}" WHERE "{bucket}" >= :s AND "{bucket}" < :e'
+    ), {"s": month, "e": nxt}).scalar()
+    click.echo(f"{aggregated} aggregate rows OK"
+               + (f" (after {retries} lock retries)" if retries else ""))
+
+
+def _month_start(dt):
+    """First instant, in UTC, of the month holding ``dt``."""
+    return dt.astimezone(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def _missing_months(conn, name, now):
+    """Months whose earliest ``request_logs`` row ``name`` has not materialised.
+
+    Returns ``(start, first_raw, first_bucket)`` per missing month, oldest first, from
+    the month of the oldest raw row through the current one. ``start`` is the month's
+    first instant, or the aggregate's own retention boundary inside that boundary's
+    month; months before the boundary are left out, as ``reassign-model`` does.
+
+    Two indexed probes per month: the earliest raw row and the earliest materialised
+    bucket. A month is missing when it has raw rows and no bucket, or when its first
+    bucket is later than the hour of its first raw row. Whole-month refreshes plus the
+    policy's trailing window can only leave a month uncovered at its head, so this
+    finds every gap they can leave; a hole inside a month is not detected.
+    """
+    oldest = conn.execute(text("SELECT MIN(time) FROM request_logs")).scalar()
+    if oldest is None:
+        return []
+    bucket = _bucket_column(conn, name)
+    table = _materialization_hypertable(conn, name)
+    boundary = _retention_boundary(conn, name)
+    # A refresh ends at now rounded down to a whole bucket, so the hour holding now is
+    # never materialised; a month whose only rows are in it is not missing anything.
+    horizon = now.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    missing = []
+    month = _month_start(oldest)
+    while month < horizon:
+        nxt = _next_month(month)
+        start = max(month, boundary) if boundary is not None else month
+        if start < nxt:
+            first_raw, first_bucket = conn.execute(text(
+                "SELECT (SELECT time FROM request_logs "
+                "        WHERE time >= :s AND time < :e ORDER BY time LIMIT 1), "
+                f'       (SELECT "{bucket}" FROM {table} '
+                f'        WHERE "{bucket}" >= :s AND "{bucket}" < :e ORDER BY "{bucket}" LIMIT 1)'
+            ), {"s": start, "e": min(nxt, horizon)}).one()
+            # The entity aggregate buckets by the hour, aligned to UTC.
+            first_hour = None if first_raw is None else \
+                first_raw.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+            if first_raw is not None and (first_bucket is None or first_bucket > first_hour):
+                missing.append((start, first_raw, first_bucket))
+        month = nxt
+    return missing
 
 
 @click.command("backfill-aggregate")
@@ -859,9 +922,10 @@ def check_aggregate_cmd():
     """Report whether the entity aggregate covers all of request_logs. Read-only.
 
     ``request_logs`` is never pruned (#167). Exits 1 if a retention policy exists on
-    it, or if the aggregate does not reach back to its oldest row; the per-user /usage
-    charts, which read only the aggregate, then miss that history until
-    ``flask backfill-aggregate`` is run.
+    it, if the aggregate does not reach back to its oldest row, or if any month is
+    missing or only partly covered (the rule ``flask upgrade`` backfills by); the
+    per-user /usage charts, which read only the aggregate, then miss that history
+    until ``flask upgrade`` or ``flask backfill-aggregate`` is run.
     """
     if db.engine.dialect.name != "postgresql":
         click.echo(f"check-aggregate requires PostgreSQL/TimescaleDB; nothing to do on "
@@ -894,15 +958,31 @@ def check_aggregate_cmd():
         click.echo(f"earliest materialised bucket: {_fmt(earliest)}")
         click.echo(f"oldest request_logs row:      {_fmt(raw_oldest)}")
 
+        covered = True
         if raw_oldest is None:
             click.echo("request_logs is empty; nothing to cover.")
         elif earliest is None or earliest > raw_oldest:
             state = "is empty" if earliest is None else "does not cover request_logs"
             click.echo(f"Error: '{ENTITY_AGGREGATE}' {state}. Run "
                        f"'flask backfill-aggregate --from {raw_oldest.astimezone(timezone.utc):%Y-%m}'.")
-            failed = True
-        else:
+            covered = False
+
+        # The same per-month rule 'flask upgrade' backfills by, so a month the earliest
+        # bucket alone cannot see (an interior month, or one only the refresh policy's
+        # trailing window has partly materialised) is reported too.
+        missing = _missing_months(conn, ENTITY_AGGREGATE, datetime.now(timezone.utc))
+        if missing:
+            click.echo(f"Error: these months of '{ENTITY_AGGREGATE}' are missing or partly covered:")
+            for start, first_raw, first_bucket in missing:
+                state = "missing" if first_bucket is None else "partly covered"
+                click.echo(f"  {start:%Y-%m}: {state} (first request_logs row {_fmt(first_raw)}, "
+                           f"first materialised bucket {_fmt(first_bucket)})")
+            click.echo(f"  Run 'flask upgrade', or 'flask backfill-aggregate --from "
+                       f"{missing[0][0]:%Y-%m}'.")
+            covered = False
+        if raw_oldest is not None and covered:
             click.echo(f"{ENTITY_AGGREGATE} covers request_logs.")
+        failed = failed or not covered
 
     if failed:
         raise SystemExit(1)
@@ -971,6 +1051,10 @@ def _gate_connect_args(url):
     appended to whatever options the URL or the environment already set: dropping a
     ``-c search_path=...`` there would read another schema's alembic_version than the
     one ``flask db upgrade`` writes.
+
+    It goes last on purpose: libpq applies the last value of a repeated ``-c``, so an
+    operator's own ``statement_timeout`` is overridden, but only for this one
+    read-only query.
     """
     options = url.query.get("options", os.environ.get("PGOPTIONS", ""))
     if isinstance(options, tuple):
@@ -1018,3 +1102,81 @@ def _wait_for_heads(engine, expected, known, timeout):
             click.echo(f"Still waiting: {state}. {UPGRADE_HINT}")
             last_hint = now
         time.sleep(WAIT_RETRY_SECONDS)
+
+
+# --------------------------------------------------------------------------- #
+# Upgrade step: every migration, then the post-migration data steps. One-shot. #
+# --------------------------------------------------------------------------- #
+
+# Shared with the startup tripwire (``_warn_if_request_logs_has_retention``), so an
+# operator searching the logs for it finds both.
+REQUEST_LOGS_RETENTION_ERROR = (
+    "request_logs has a retention policy (job %s, config %s), but request_logs "
+    "must never be pruned. Remove it with "
+    "SELECT remove_retention_policy('request_logs'); then run 'flask check-aggregate'."
+)
+
+
+def _backfill_missing_months():
+    """Refresh every month of the entity aggregate that ``_missing_months`` reports.
+
+    Oldest first, each over its whole month up to now. Safe to re-run: it probes again
+    and resumes at the first month still missing, and re-refreshing a month recomputes
+    it from raw rows. Exits 1 when a month still fails after the lock retries.
+    """
+    if db.engine.dialect.name != "postgresql":
+        click.echo(f"Aggregate backfill: skipped, needs PostgreSQL/TimescaleDB "
+                   f"(database is {db.engine.dialect.name}).")
+        return
+    with _autocommit_connection() as conn:
+        if not conn.execute(text(
+            "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb')"
+        )).scalar():
+            click.echo("Aggregate backfill: skipped, TimescaleDB is not installed.")
+            return
+        # Defensive: Lumen never adds one. Refreshing a window whose raw chunks were
+        # dropped would erase its aggregate rows, so leave the aggregate alone, and do
+        # not fail the upgrade over a policy only an operator can remove.
+        retention = _retention_job(conn)
+        if retention is not None:
+            current_app.logger.error(REQUEST_LOGS_RETENTION_ERROR, retention[0], retention[1])
+            click.echo("Aggregate backfill: skipped, request_logs has a retention policy.")
+            return
+
+        now = datetime.now(timezone.utc)
+        missing = _missing_months(conn, ENTITY_AGGREGATE, now)
+        if not missing:
+            click.echo(f"Aggregate backfill: no missing months in '{ENTITY_AGGREGATE}'.")
+            return
+        click.echo(f"Aggregate backfill: refreshing {len(missing)} missing or partly covered "
+                   f"months of '{ENTITY_AGGREGATE}'.")
+        bucket = _bucket_column(conn, ENTITY_AGGREGATE)
+        for start, _, _ in missing:
+            try:
+                _refresh_month(conn, ENTITY_AGGREGATE, bucket, start, now)
+            except DBAPIError as exc:
+                click.echo(f"Error: refreshing {start:%Y-%m} failed: {exc.orig}")
+                click.echo("  Re-run 'flask upgrade' to resume at the first month still missing.")
+                raise SystemExit(1)
+
+
+# Run in order after the migrations, each only once the previous one succeeded. Every
+# step must be safe to re-run and finish what an earlier, failed run left undone.
+POST_MIGRATION_STEPS = (_backfill_missing_months,)
+
+
+@click.command("upgrade")
+@with_appcontext
+def upgrade_cmd():
+    """Bring the database up to date for this image, then exit.
+
+    Applies every migration (``flask db upgrade`` to head), then runs the
+    post-migration data steps: today, the backfill of the entity aggregate's missing
+    months. Stops at the first failure with exit 1; running it again resumes. This is
+    the one-shot upgrade step that runs before the app starts.
+    """
+    click.echo("Applying migrations ...")
+    migrate_upgrade()
+    for step in POST_MIGRATION_STEPS:
+        step()
+    click.echo("Upgrade complete.")
