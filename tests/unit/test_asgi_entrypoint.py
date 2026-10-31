@@ -223,3 +223,67 @@ def test_asgi_logs_resolved_thread_pool_once(import_asgi, monkeypatch, caplog, s
     assert records[0].getMessage() == f"WSGI thread pool: workers={workers} (LUMEN_WSGI_WORKERS={shown})"
     assert bridge_workers == [workers]
     assert module.wsgi_workers == workers
+
+
+# --------------------------------------------------------------------------- #
+# entrypoint.sh modes, run against stub `flask` and `uvicorn` on PATH.         #
+# --------------------------------------------------------------------------- #
+
+_STUB = """#!/bin/sh
+echo "$(basename "$0") $* PGCONNECT_TIMEOUT=${PGCONNECT_TIMEOUT:-unset}" >> "$STUB_LOG"
+if [ "$(basename "$0")" = flask ] && [ "$1 $2 $3" = "--app run wait-for-migrations" ]; then
+  exit "${GATE_EXIT:-0}"
+fi
+"""
+
+
+@pytest.fixture
+def run_entrypoint(tmp_path, monkeypatch):
+    """Run entrypoint.sh with ``args``; returns (exit status, the stubs' call log)."""
+    import subprocess
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("flask", "uvicorn"):
+        stub = bin_dir / name
+        stub.write_text(_STUB)
+        stub.chmod(0o755)
+    log = tmp_path / "calls.log"
+
+    def _run(*args, **env):
+        log.write_text("")
+        full_env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "STUB_LOG": str(log), **env}
+        result = subprocess.run(["sh", str(REPO / "entrypoint.sh"), *args],
+                                env=full_env, cwd=tmp_path, timeout=30)
+        return result.returncode, log.read_text().splitlines()
+
+    return _run
+
+
+def test_entrypoint_upgrade_runs_only_flask_upgrade(run_entrypoint):
+    status, calls = run_entrypoint("upgrade")
+    assert status == 0
+    assert calls == ["flask --app run upgrade PGCONNECT_TIMEOUT=10"]
+
+
+@pytest.mark.parametrize("gate_exit", ["0", "1"])
+def test_entrypoint_wait_for_migrations_runs_only_the_gate(run_entrypoint, gate_exit):
+    status, calls = run_entrypoint("wait-for-migrations", "--timeout", "30", GATE_EXIT=gate_exit)
+    assert status == int(gate_exit), "the gate's exit status must reach the container"
+    assert calls == ["flask --app run wait-for-migrations --timeout 30 PGCONNECT_TIMEOUT=10"]
+
+
+def test_entrypoint_one_shot_modes_keep_an_operator_connect_timeout(run_entrypoint):
+    _, calls = run_entrypoint("upgrade", PGCONNECT_TIMEOUT="45")
+    assert calls == ["flask --app run upgrade PGCONNECT_TIMEOUT=45"]
+    _, calls = run_entrypoint("wait-for-migrations", PGCONNECT_TIMEOUT="45")
+    assert calls == ["flask --app run wait-for-migrations PGCONNECT_TIMEOUT=45"]
+
+
+def test_entrypoint_default_mode_migrates_then_serves_with_workers(run_entrypoint):
+    status, calls = run_entrypoint("--workers", "4")
+    assert status == 0
+    assert calls == [
+        "flask --app run db upgrade PGCONNECT_TIMEOUT=unset",
+        "uvicorn asgi:app --host 0.0.0.0 --port 5001 --workers 4 PGCONNECT_TIMEOUT=unset",
+    ]

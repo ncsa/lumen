@@ -157,7 +157,7 @@ def _warn_if_request_logs_has_retention(app):
     policy; any other failure is logged at WARNING, because startup must not
     depend on it.
     """
-    from lumen.commands import _retention_job
+    from lumen.commands import REQUEST_LOGS_RETENTION_ERROR, _retention_job
     from lumen.extensions import db
 
     if db.engine.dialect.name != "postgresql":
@@ -173,12 +173,7 @@ def _warn_if_request_logs_has_retention(app):
         app.logger.warning("Could not check request_logs for a retention policy: %s", e)
         return
     if job is not None:
-        app.logger.error(
-            "request_logs has a retention policy (job %s, config %s), but request_logs "
-            "must never be pruned. Remove it with "
-            "SELECT remove_retention_policy('request_logs'); then run 'flask check-aggregate'.",
-            job[0], job[1],
-        )
+        app.logger.error(REQUEST_LOGS_RETENTION_ERROR, job[0], job[1])
 
 
 def _log_timescale_health(app):
@@ -675,6 +670,7 @@ def create_app():
         check_aggregate_cmd,
         init_db_cmd,
         reassign_model_cmd,
+        upgrade_cmd,
         wait_for_migrations_cmd,
     )
     app.cli.add_command(init_db_cmd)
@@ -682,6 +678,7 @@ def create_app():
     app.cli.add_command(backfill_aggregate_cmd)
     app.cli.add_command(check_aggregate_cmd)
     app.cli.add_command(wait_for_migrations_cmd)
+    app.cli.add_command(upgrade_cmd)
 
     # Context processor: inject app_name and nav_projects into all templates
     @app.context_processor
