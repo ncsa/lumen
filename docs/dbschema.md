@@ -663,7 +663,7 @@ Single-row state of the stats fold, which adds `request_logs` rows into `model_s
 - The migrations set the row on both dialects. On SQLite `e4f5a6b7c8d9` sets both columns to the migration time. On PostgreSQL `f5b6c7d8e9f0` sets both to the migration time minus one hour, unless a cutover is set already; no operator step is needed. Billing marks each row it leaves to the fold (`request_logs.stats_deferred`), and the fold counts only marked rows, so old pods still bumping during a rolling update are never counted twice.
 - A missing row (a database built with `create_all()`) means the same as a null `cutover_at`: not cut over.
 - Each fold pass covers the half-open window `[folded_until, now − lag)` and advances `folded_until` with a compare-and-set, so concurrent passes never fold a row twice.
-- `flask check-stats [--fix]` reports (and repairs) requests the fold missed, such as a billing transaction that committed more than `stats.fold_lag` after its timestamp. `flask reassign-model` and `check-stats` lock this row so no fold pass runs in the middle.
+- `flask check-stats [--fix]` reports (and repairs) requests the fold missed, such as a billing transaction that committed more than `stats.fold_lag` after its timestamp. `check-stats` locks this row for its whole run, and `flask reassign-model` around its `model_stats` merge, so no fold pass runs in the middle of either.
 
 ---
 
