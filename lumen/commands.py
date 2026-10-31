@@ -25,6 +25,10 @@ from .extensions import db
 # itself is never pruned (#167), so this is about chart speed, not about saving data.
 ENTITY_AGGREGATE = "request_counts_hourly_by_entity"
 
+# request_logs key columns the chunk walk can move rows along. The column name is
+# interpolated into SQL, so every helper that takes one checks it against this set.
+MOVABLE_COLUMNS = frozenset({"model_config_id", "entity_id"})
+
 # Deduplicate deprecation warnings; the config watcher re-runs sync every 5s.
 _warned: set = set()
 
@@ -399,10 +403,11 @@ def reassign_model_cmd(from_id, to_id):
                            f"  Refreshing the aggregates over windows whose raw chunks were\n"
                            f"  dropped would erase their history. Run 'flask check-aggregate'.")
                 raise SystemExit(1)
-            boundaries = {name: _retention_boundary(conn, name) for name in _continuous_aggregates(conn)}
+            boundaries = {name: _retention_boundary(conn, name)
+                          for name in _aggregates_with_column(conn, "model_config_id")}
             # Read before anything moves: afterwards FROM has no raw rows left to date it.
-            start = _reassign_start(conn, from_id, boundaries)
-        log_count = _move_request_logs(from_id, to_id)
+            start = _reassign_start(conn, "model_config_id", from_id, boundaries)
+        log_count = _move_request_logs("model_config_id", from_id, to_id)
 
     result = db.session.execute(update(Conversation).where(Conversation.model == from_name).values(model=to_name))
     conv_count = result.rowcount
@@ -449,13 +454,20 @@ def reassign_model_cmd(from_id, to_id):
     click.echo("Done.")
 
 
-def _move_request_logs(from_id, to_id):
-    """Move FROM's request_logs rows to TO one chunk per transaction, oldest first.
+def _check_column(column):
+    """Refuse a key column outside ``MOVABLE_COLUMNS`` before it reaches any SQL."""
+    if column not in MOVABLE_COLUMNS:
+        raise ValueError(f"request_logs rows cannot be moved along column {column!r}")
+
+
+def _move_request_logs(column, from_id, to_id):
+    """Move request_logs rows with ``column = FROM`` to TO one chunk per transaction, oldest first.
 
     Also recompresses every chunk that is flagged compressed but has rows in its
     uncompressed heap, whether this run moved rows in it or not, so a re-run repairs
     a chunk left half-done by an interrupted run. Returns the number of rows moved.
     """
+    _check_column(column)
     done = []
     moved_total = 0
     with db.engine.connect() as conn:
@@ -467,7 +479,7 @@ def _move_request_logs(from_id, to_id):
         conn.rollback()
         for chunk, range_start, range_end, compressed in chunks:
             try:
-                moved = _move_chunk(conn, from_id, to_id, range_start, range_end)
+                moved = _move_chunk(conn, column, from_id, to_id, range_start, range_end)
             except DBAPIError as exc:
                 click.echo(f"Error: moving request_logs rows in {chunk} failed: {exc.orig}")
                 click.echo(f"  Chunks done: {', '.join(done)}" if done else "  No chunk was done.")
@@ -488,17 +500,20 @@ def _move_request_logs(from_id, to_id):
     return moved_total
 
 
-def _move_chunk(conn, from_id, to_id, range_start, range_end):
+def _move_chunk(conn, column, from_id, to_id, range_start, range_end):
     """Move FROM's rows inside one chunk's time range in one transaction. Returns the row count."""
+    _check_column(column)
     params = {"f": from_id, "t": to_id, "s": range_start, "e": range_end}
     with conn.begin():
         if not conn.execute(text(
             "SELECT EXISTS (SELECT 1 FROM request_logs "
-            "WHERE model_config_id = :f AND time >= :s AND time < :e)"
+            f"WHERE {column} = :f AND time >= :s AND time < :e)"
         ), params).scalar():
             return 0
-        # model_config_id is a compression segmentby column, so this UPDATE decompresses
-        # every batch of FROM in the chunk, and past the per-transaction decompression
+        # model_config_id is a compression segmentby column, so an UPDATE on it decompresses
+        # every batch of FROM in the chunk. entity_id is not segmentby: FROM's rows are
+        # spread across every batch, so an UPDATE on it can decompress the whole chunk.
+        # Either way, past the per-transaction decompression
         # limit (100k by default) TimescaleDB aborts it. SET LOCAL lifts the limit for
         # this one transaction only, and COMMIT puts it back. Never a plain SET: it
         # outlives the transaction and leaks an unlimited guard to the next user of this
@@ -506,8 +521,8 @@ def _move_chunk(conn, from_id, to_id, range_start, range_end):
         # has no transaction block to apply to and fails.
         conn.execute(text("SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"))
         return conn.execute(text(
-            "UPDATE request_logs SET model_config_id = :t "
-            "WHERE model_config_id = :f AND time >= :s AND time < :e"
+            f"UPDATE request_logs SET {column} = :t "
+            f"WHERE {column} = :f AND time >= :s AND time < :e"
         ), params).rowcount
 
 
@@ -543,21 +558,23 @@ def _retention_boundary(conn, name):
     return boundary.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
 
 
-def _reassign_start(conn, from_id, boundaries):
-    """Earliest time FROM still shows up, or None if it shows up nowhere.
+def _reassign_start(conn, column, from_id, boundaries):
+    """Earliest time ``column = FROM`` still shows up, or None if it shows up nowhere.
 
-    Checks raw request_logs and the materialisation hypertable of every aggregate
-    (inside that aggregate's retention), so a re-run after an interrupted refresh
-    still refreshes the months whose buckets are materialised under FROM.
+    Checks raw request_logs and the materialisation hypertable of every aggregate in
+    ``boundaries`` (inside that aggregate's retention), so a re-run after an interrupted
+    refresh still refreshes the months whose buckets are materialised under FROM. Every
+    aggregate in ``boundaries`` must have ``column``: see ``_aggregates_with_column``.
     """
+    _check_column(column)
     found = [conn.execute(text(
-        "SELECT MIN(time) FROM request_logs WHERE model_config_id = :f"
+        f"SELECT MIN(time) FROM request_logs WHERE {column} = :f"
     ), {"f": from_id}).scalar()]
     for name, boundary in boundaries.items():
         bucket = _bucket_column(conn, name)
         found.append(conn.execute(text(
             f'SELECT MIN("{bucket}") FROM {_materialization_hypertable(conn, name)} '
-            f'WHERE model_config_id = :f AND (CAST(:b AS timestamptz) IS NULL OR "{bucket}" >= :b)'
+            f'WHERE {column} = :f AND (CAST(:b AS timestamptz) IS NULL OR "{bucket}" >= :b)'
         ), {"f": from_id, "b": boundary}).scalar())
     found = [t for t in found if t is not None]
     return min(found) if found else None
@@ -604,6 +621,21 @@ def _continuous_aggregates(conn):
     return conn.execute(text(
         "SELECT view_name FROM timescaledb_information.continuous_aggregates ORDER BY view_name"
     )).scalars().all()
+
+
+def _aggregates_with_column(conn, column):
+    """Names of the continuous aggregates grouped by ``column``, alphabetically.
+
+    Only these hold buckets keyed on it, so only these need checking and refreshing
+    after rows move along it.
+    """
+    _check_column(column)
+    return conn.execute(text(
+        "SELECT a.view_name FROM timescaledb_information.continuous_aggregates a "
+        "JOIN information_schema.columns c "
+        "ON c.table_schema = a.view_schema AND c.table_name = a.view_name "
+        "WHERE c.column_name = :c ORDER BY a.view_name"
+    ), {"c": column}).scalars().all()
 
 
 def _bucket_column(conn, view_name):
