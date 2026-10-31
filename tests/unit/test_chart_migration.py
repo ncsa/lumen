@@ -140,9 +140,54 @@ def test_job_waits_for_db_like_the_deployment(docs):
 
 
 def test_job_name_carries_release_revision(docs):
-    # `helm template` always renders revision 1; the template must use the revision.
     assert _job(docs)["metadata"]["name"] == "rel-lumen-migrate-1"
-    assert "-migrate-{{ .Release.Revision }}" in (CHART / "templates" / "migrate-job.yaml").read_text()
+
+
+_LONG = "a" * 63
+
+
+@pytest.mark.parametrize("override", [
+    {"nameOverride": "n" * 56},
+    {"nameOverride": _LONG},
+    {"fullnameOverride": _LONG},
+    {"fullnameOverride": "f" * 54 + "-" + "g" * 8},
+])
+def test_long_names_stay_within_kubernetes_limits(override):
+    docs = _render(override)
+    job = _job(docs)
+    name = job["metadata"]["name"]
+    assert len(name) <= 63 and name.endswith("-migrate-1") and "--" not in name
+    labels = job["spec"]["template"]["metadata"]["labels"]
+    assert all(len(v) <= 63 for v in labels.values())
+    assert labels["app.kubernetes.io/name"].endswith("-migrate")
+    selector = docs[("Service", _service_name(docs))]["spec"]["selector"]
+    assert not selector.items() <= labels.items()
+
+
+def _service_name(docs):
+    (name,) = [n for (kind, n) in docs if kind == "Service" and not n.endswith(("-postgresql", "-redis"))]
+    return name
+
+
+@pytest.mark.parametrize("revision", [1, 9, 10, 999, 123456789])
+def test_job_name_keeps_every_revision_digit(tmp_path, revision):
+    # `helm template` always renders revision 1, so call the helper with a context
+    # whose Release.Revision is overridden, from a template added to a chart copy.
+    chart = tmp_path / "chart"
+    shutil.copytree(CHART, chart)
+    (chart / "templates" / "zz-revision.yaml").write_text(
+        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: probe\ndata:\n"
+        "  job: {{ include \"lumen.migrateJobName\" (merge (dict \"Release\" (merge (dict \"Revision\" "
+        f"{revision}) .Release)) .) | quote }}}}\n"
+    )
+    values = {**_REQUIRED, "fullnameOverride": _LONG}
+    cmd = [_HELM, "template", "rel", str(chart), "--show-only", "templates/zz-revision.yaml"]
+    for key, value in values.items():
+        cmd += ["--set", f"{key}={value}"]
+    out = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout
+    name = yaml.safe_load(out)["data"]["job"]
+    assert len(name) <= 63
+    assert name.endswith(f"-migrate-{revision}")
 
 
 def test_job_pod_is_not_selected_by_the_service(docs):

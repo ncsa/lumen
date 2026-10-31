@@ -184,7 +184,7 @@ models:
 | `image.tag` | `""` | Image tag (defaults to chart appVersion) |
 | `image.pullPolicy` | `IfNotPresent` | Image pull policy |
 | `migration.backoffLimit` | `6` | Pod retries of the migration Job before it is marked failed; each retry resumes — see [Database Migrations](#database-migrations) |
-| `migration.ttlSecondsAfterFinished` | `86400` | Seconds a finished migration Job and its pod logs are kept; `null` (in a values file, or `--set migration.ttlSecondsAfterFinished=null`) keeps it until the next release replaces it |
+| `migration.ttlSecondsAfterFinished` | `86400` | Seconds a finished migration Job and its pod logs are kept; `0` deletes it as soon as it finishes; `null` (in a values file, or `--set migration.ttlSecondsAfterFinished=null`) keeps it until the next release replaces it |
 | `migration.resources` | `{}` | Resources for the migration container; empty uses the app container's `resources` (by default a 512Mi / 1 CPU limit). Raise it for a large database: an OOM-killed pod uses up a retry, and once `backoffLimit` is spent new pods wait at the gate |
 | `config.secretKey` | `""` | Flask session signing key |
 | `config.encryptionKey` | `""` | API key hashing secret |

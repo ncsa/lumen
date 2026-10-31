@@ -30,6 +30,24 @@ Create chart label.
 {{- end }}
 
 {{/*
+Name of the migration Job: <fullname>-migrate-<revision>. The fullname is
+shortened so the whole name, with every digit of the revision, stays within the
+63-character limit.
+*/}}
+{{- define "lumen.migrateJobName" -}}
+{{- $suffix := printf "-migrate-%d" (int .Release.Revision) -}}
+{{- printf "%s%s" (include "lumen.fullname" . | trunc (int (sub 63 (len $suffix))) | trimSuffix "-") $suffix -}}
+{{- end }}
+
+{{/*
+app.kubernetes.io/name label of the migration Job's pod. It must differ from the
+Deployment's selector label, or the Service would send traffic to the Job.
+*/}}
+{{- define "lumen.migrateName" -}}
+{{- printf "%s-migrate" (include "lumen.name" . | trunc 55 | trimSuffix "-") -}}
+{{- end }}
+
+{{/*
 Common labels.
 */}}
 {{- define "lumen.labels" -}}

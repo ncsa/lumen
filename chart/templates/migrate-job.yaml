@@ -11,7 +11,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "lumen.fullname" . }}-migrate-{{ .Release.Revision }}
+  name: {{ include "lumen.migrateJobName" . }}
   labels:
     {{- include "lumen.labels" . | nindent 4 }}
     app.kubernetes.io/component: migrate
@@ -29,7 +29,7 @@ spec:
       {{- end }}
       # Not the Deployment's selector labels: the Service would send traffic here.
       labels:
-        app.kubernetes.io/name: {{ include "lumen.name" . }}-migrate
+        app.kubernetes.io/name: {{ include "lumen.migrateName" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: migrate
     spec:
