@@ -10,7 +10,7 @@ from typing import NamedTuple, Optional
 
 import openai
 from flask import current_app, has_request_context, request
-from sqlalchemy import select
+from sqlalchemy import case, literal, or_, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.compiler import compiles
@@ -575,7 +575,7 @@ def get_effective_limit(entity_id: int, model_config_id: int, model_config=None)
     return get_pool_limit(entity_id)
 
 
-def _bump(model, key: dict, increments: dict, insert_values: dict):
+def _bump(model, key: dict, increments: dict, insert_values: dict, last_used_at: datetime = None):
     """Apply ``increments`` to the ``model`` row matching ``key``, creating it on first use.
 
     The row exists on every call after an entity's first, so the atomic UPDATE
@@ -589,7 +589,20 @@ def _bump(model, key: dict, increments: dict, insert_values: dict):
 
     ``increments`` reference the existing row through the model's columns,
     which ON CONFLICT DO UPDATE resolves against the conflicting row.
+
+    ``last_used_at``, when given, moves the row's ``last_used_at`` forward to
+    it but never back: the stats fold applies windows of past requests, so the
+    time it carries can be older than the one already stored. A new row takes
+    it as is, and ``increments`` must then not set ``last_used_at`` itself.
     """
+    if last_used_at is not None:
+        assert "last_used_at" not in increments, "pass last_used_at either way, not both"
+        column = model.last_used_at
+        increments = {**increments, "last_used_at": case(
+            (or_(column.is_(None), column < last_used_at), literal(last_used_at, db.DateTime)),
+            else_=column,
+        )}
+        insert_values = {**insert_values, "last_used_at": last_used_at}
     where = [getattr(model, col) == value for col, value in key.items()]
     result = db.session.execute(sa_update(model).where(*where).values(**increments))
     if result.rowcount:

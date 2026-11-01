@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -123,6 +124,30 @@ def clean_db(app):
         for table in reversed(db.metadata.sorted_tables):
             db.session.execute(table.delete())
         db.session.commit()
+
+
+@pytest.fixture
+def post_cutover(app):
+    """Put the test after the stats cutover, so the fold owns every request it makes.
+
+    The suite's ``create_all()`` database has no ``stats_fold_state`` row, which
+    reads as "not cut over"; this inserts it with the cutover an hour back.
+    ``clean_db`` deletes it again after the test.
+    """
+    from lumen.extensions import db
+    from lumen.models.stats_fold_state import StatsFoldState
+    from lumen.timeutils import utcnow
+    with app.app_context():
+        at = utcnow() - timedelta(hours=1)
+        db.session.add(StatsFoldState(id=1, cutover_at=at, folded_until=at))
+        db.session.commit()
+
+
+def fold(app):
+    """Run one fold pass whose window covers everything billed so far."""
+    from lumen.services.stats_fold import fold_lag, fold_once
+    from lumen.timeutils import utcnow
+    return fold_once(app, now=utcnow() + fold_lag(app) + timedelta(seconds=1))
 
 
 @pytest.fixture
