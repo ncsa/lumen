@@ -143,7 +143,7 @@ Visit `http://localhost:5001`, click **Login**, and you'll be auto-logged in as 
 ## Operator Commands
 
 Run with `uv run flask --app run <command>` locally, or `flask <command>` inside the container.
-Both commands below need PostgreSQL/TimescaleDB; on SQLite they print a note and exit 0.
+`backfill-aggregate` and `check-aggregate` need PostgreSQL/TimescaleDB; on SQLite they print a note and exit 0.
 
 **`request_logs` is never pruned.** Lumen ships no retention policy and no command that deletes from it.
 
@@ -197,6 +197,34 @@ row. It exits 1 when the aggregate is empty or starts after the oldest raw row, 
 that history. It also exits 1 if a retention policy exists on `request_logs`, and
 prints the `SELECT remove_retention_policy('request_logs');` that removes it. Run it before
 upgrading.
+
+### `wait-for-migrations`
+
+Read-only: waits until the database is at the migration head this image ships, then exits 0.
+
+```bash
+flask wait-for-migrations [--timeout SECONDS]
+```
+
+| Flag | Meaning |
+|---|---|
+| `--timeout` | Give up and exit 1 after this many seconds. Default: wait forever. |
+
+It compares the heads of the bundled migrations with the revision stamped in the database, connecting
+the same way `flask db upgrade` does (including `database.url` from `config.yaml`). While the database
+is behind, empty or unreachable it logs the current and expected revisions and retries every 2 seconds;
+about every 30 seconds it logs a reminder to run the upgrade step (the image with `upgrade`, the
+`lumen-upgrade` Compose service, or the Helm migration Job). A revision this image does not know means a
+newer image already migrated the database, so it exits 1 at once. It never migrates anything.
+
+Two separate time budgets apply to a PostgreSQL server that accepts connections but never answers:
+
+- **The command's own checks.** Each one gives up after 10 seconds and counts as unreachable, so
+  the command can exit up to that much after `--timeout` has passed. Connection options already in
+  the database URL (or `PGOPTIONS`), such as `-c search_path=...`, are kept.
+- **Loading the app.** Before the command starts, the app opens connections that have no timeout of
+  their own. Set `PGCONNECT_TIMEOUT` (for example `10`) so a silent host cannot hold the command
+  before its first check; it does not change the 10-second budget above.
 
 ### Upgrading TimescaleDB
 

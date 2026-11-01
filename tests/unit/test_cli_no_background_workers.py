@@ -44,7 +44,7 @@ def test_uvicorn_launch_is_a_serving_process(monkeypatch):
         assert _loaded_by_non_serving_cli() is False
 
 
-@pytest.mark.parametrize("command", ["upgrade", "db", "init-db", "reassign-model", "routes", "shell"])
+@pytest.mark.parametrize("command", ["upgrade", "db", "init-db", "reassign-model", "routes", "shell", "wait-for-migrations"])
 def test_cli_commands_are_non_serving(command, monkeypatch):
     monkeypatch.setenv("FLASK_RUN_FROM_CLI", "true")
     with click.Context(click.Command(command), info_name=command):
