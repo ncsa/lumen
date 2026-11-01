@@ -34,6 +34,7 @@ from lumen.services import metrics_snapshot, stats_cutover
 from lumen.services.crypto import hash_api_key
 from lumen.services.erasure import get_or_create_ghost
 from lumen.services.llm import bill_request
+from lumen.services.stats_fold import TOTALS
 from lumen.timeutils import utcnow
 from tests.conftest import fold, make_project
 
@@ -622,8 +623,8 @@ def _bill_unfolded(entity_id, model_id, source):
     """
     at = max(utcnow(), stats_cutover.get_fold_state().folded_until)
     db.session.add(RequestLog(time=at.replace(tzinfo=timezone.utc), entity_id=entity_id, model_config_id=model_id,
-                              source=source, input_tokens=3, output_tokens=2, cost=Decimal("0.125"),
-                              duration=0.0, stats_deferred=True))
+                              source=source, input_tokens=3, output_tokens=2, audio_seconds=1,
+                              cost=Decimal("0.125"), duration=0.0, stats_deferred=True))
     db.session.commit()
 
 
@@ -656,6 +657,75 @@ def test_erasure_between_billing_and_a_fold(app, post_cutover, world):
         assert (_folded(ModelStat, ghost_id), _folded(EntityStat, ghost_id)) == ((4, 4), (4, 4))
         assert db.session.scalar(select(func.sum(ModelStat.requests))) == \
             db.session.scalar(select(func.count()).select_from(RequestLog))
+    result = app.test_cli_runner().invoke(check_stats_cmd, [])
+    assert result.exit_code == 0, result.output
+    assert "match request_logs" in result.output
+
+
+#: Every counter a stats row carries after the cutover: the totals and the fold's part of them.
+_COUNTERS = TOTALS + tuple(f"folded_{name}" for name in TOTALS)
+_ENTITY_COUNTERS = _COUNTERS + ("conversations",)
+
+
+def _counters(row, names):
+    return tuple(getattr(row, name) for name in names)
+
+
+def _column_sums(model, names):
+    return tuple(db.session.execute(
+        select(*(func.coalesce(func.sum(getattr(model, name)), 0) for name in names))).one())
+
+
+def _model_rows(entity_id):
+    return {s.source: _counters(s, _COUNTERS)
+            for s in db.session.execute(select(ModelStat).filter_by(entity_id=entity_id)).scalars()}
+
+
+def test_erasure_merges_folded_counters_into_existing_ghost_rows(app, post_cutover, world):
+    """A second erasure after the cutover lands on ghost rows that already hold folded
+    history for the same (model, source): every total and every folded_* counter is
+    added, nothing is lost or counted twice, and a pending row folds once."""
+    erin, model = world["user"], world["model"]
+    with app.app_context():
+        sam, *_ = _seed_user("Sam", model, "sam-private", "sk-sam")
+    fold(app)
+    assert _erase(app, erin, "--yes").exit_code == 0
+
+    with app.app_context():
+        # Billed after the last pass and still pending when Sam is erased.
+        _bill_unfolded(sam, model, "api")
+        ghost_id = _ghost_id()
+        ghost_rows, sam_rows = _model_rows(ghost_id), _model_rows(sam)
+        ghost_entity = _counters(db.session.get(EntityStat, ghost_id), _ENTITY_COUNTERS)
+        sam_entity = _counters(db.session.get(EntityStat, sam), _ENTITY_COUNTERS)
+        sums = (_column_sums(ModelStat, _COUNTERS), _column_sums(EntityStat, _ENTITY_COUNTERS))
+    assert set(ghost_rows) == set(sam_rows) == {"chat", "api"}
+    # Nonzero on both sides for every counter, folded ones included, so each addition shows.
+    for rows in (ghost_rows, sam_rows):
+        assert all(rows["chat"]), rows["chat"]
+    assert all(ghost_entity[:len(_COUNTERS)]) and all(sam_entity[:len(_COUNTERS)])
+
+    result = _erase(app, sam, "--yes")
+
+    assert result.exit_code == 0, result.output
+    assert "model_stats moved: 0, merged: 2; entity_stats merged: 1" in result.output
+    with app.app_context():
+        merged = _model_rows(ghost_id)
+        assert merged == {source: tuple(g + u for g, u in zip(ghost_rows[source], sam_rows[source]))
+                          for source in ghost_rows}
+        assert _counters(db.session.get(EntityStat, ghost_id), _ENTITY_COUNTERS) == \
+            tuple(g + u for g, u in zip(ghost_entity, sam_entity))
+        assert (_column_sums(ModelStat, _COUNTERS), _column_sums(EntityStat, _ENTITY_COUNTERS)) == sums
+
+    fold(app)
+    with app.app_context():
+        api = _model_rows(ghost_id)["api"]
+        pending = (1, 3, 2, 1, Decimal("0.125"))
+        assert api == tuple(m + d for m, d in zip(merged["api"], pending + pending))
+        log_count = db.session.scalar(select(func.count()).select_from(RequestLog))
+        for model_ in (ModelStat, EntityStat):
+            assert db.session.scalar(select(func.sum(model_.requests))) == log_count
+            assert db.session.scalar(select(func.sum(model_.folded_requests))) == log_count
     result = app.test_cli_runner().invoke(check_stats_cmd, [])
     assert result.exit_code == 0, result.output
     assert "match request_logs" in result.output
