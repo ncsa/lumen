@@ -244,6 +244,8 @@ The Job uses the same image, environment, config Secret and `wait-for-db` initCo
 
 The app container never migrates. Its entrypoint runs the same gate once more before uvicorn starts, which passes immediately after the initContainer. Because migrations happen before the container starts, the `startupProbe` only has to cover uvicorn startup (5 minutes by default).
 
+**Stats consistency check:** `flask check-stats` reports any difference between the folded usage totals and `request_logs`, and `--fix` repairs it. It scans all of `request_logs` since the stats cutover and pauses the fold meanwhile, so on a large install run it at a quiet time.
+
 ## Notes
 
 - **Redis and multi-replica**: With `replicaCount > 1`, configure Redis so rate-limit state is shared across pods.
