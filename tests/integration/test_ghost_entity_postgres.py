@@ -18,7 +18,7 @@ from tests.integration.conftest import TEST_CONFIG
 
 pytestmark = pytest.mark.postgres
 
-_BEFORE = "d3e4f5a6b7c8"
+_BEFORE = "b7c9d1e3f5a8"
 _REVISION = "b4c6d8e0f2a4"
 _NEW_COMMENTS = {
     ("entities", "entity_type"):

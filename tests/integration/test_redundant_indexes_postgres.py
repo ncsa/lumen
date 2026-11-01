@@ -17,12 +17,12 @@ from sqlalchemy import text
 
 from lumen.models import RequestLog
 from tests.integration.conftest import TEST_CONFIG
+from tests.unit.test_migrations import _script_dir
 
 pytestmark = pytest.mark.postgres
 
 _BEFORE = "a6b8c0d2e4f6"
 _REVISION = "b7c9d1e3f5a8"
-_HEAD = _REVISION
 _DROPPED = {"ix_request_logs_time", "ix_request_logs_model_config_id", "ix_model_stats_entity_id"}
 _REQUEST_LOGS_INDEXES = {
     "request_logs_time_idx",
@@ -137,4 +137,4 @@ def test_round_trip_over_a_compressed_chunk(pg_migrated_isolated):
 
     _flask_db(url, "upgrade")
     with engine.connect() as conn:
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == _HEAD
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == _script_dir().get_current_head()

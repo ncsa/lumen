@@ -1,7 +1,7 @@
 """Add the 'ghost' entity type and a unique index allowing a single ghost row
 
 Revision ID: b4c6d8e0f2a4
-Revises: d3e4f5a6b7c8
+Revises: b7c9d1e3f5a8
 Create Date: 2026-10-31 00:00:00.000000
 
 GDPR erasure (#378) moves an erased user's request history, stats, models and
@@ -23,7 +23,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "b4c6d8e0f2a4"
-down_revision = "d3e4f5a6b7c8"
+down_revision = "b7c9d1e3f5a8"
 branch_labels = None
 depends_on = None
 
