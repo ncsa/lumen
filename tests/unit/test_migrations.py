@@ -296,3 +296,84 @@ def test_message_index_names_match_migration(tmp_path):
     migrated = {i["name"]: i["column_names"] for i in sa.inspect(engine).get_indexes("messages")}
     model = {i.name: [c.name for c in i.columns] for i in Message.__table__.indexes}
     assert migrated == model == {"ix_messages_conversation_id_created_at": ["conversation_id", "created_at"]}
+
+
+# ---------------------------------------------------------------------------
+# b7c9d1e3f5a8: drop redundant request_logs/model_stats indexes
+# ---------------------------------------------------------------------------
+
+_REDUNDANT_INDEXES_REVISION_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "migrations" / "versions" / "b7c9d1e3f5a8_drop_redundant_indexes.py"
+)
+
+
+def _redundant_indexes_revision():
+    spec = importlib.util.spec_from_file_location("redundant_indexes_revision", _REDUNDANT_INDEXES_REVISION_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _make_pre_redundant_indexes_db(path):
+    """model_stats/request_logs with the indexes the previous head left on SQLite."""
+    engine = sa.create_engine(f"sqlite:///{path}")
+    with engine.begin() as conn:
+        conn.exec_driver_sql(
+            "CREATE TABLE model_stats (id INTEGER PRIMARY KEY, entity_id INTEGER, model_config_id INTEGER,"
+            " source VARCHAR(8), UNIQUE (entity_id, model_config_id, source))"
+        )
+        conn.exec_driver_sql("CREATE INDEX ix_model_stats_entity_id ON model_stats (entity_id)")
+        conn.exec_driver_sql("CREATE INDEX ix_model_stats_model_config_id ON model_stats (model_config_id)")
+        conn.exec_driver_sql(
+            "CREATE TABLE request_logs (id INTEGER PRIMARY KEY, time DATETIME, entity_id INTEGER, model_config_id INTEGER)"
+        )
+        conn.exec_driver_sql("CREATE INDEX ix_request_logs_time ON request_logs (time)")
+        conn.exec_driver_sql("CREATE INDEX ix_request_logs_entity_id ON request_logs (entity_id)")
+        conn.exec_driver_sql("CREATE INDEX ix_request_logs_model_config_id ON request_logs (model_config_id)")
+    return engine
+
+
+def _index_names(engine, table):
+    return {i["name"] for i in sa.inspect(engine).get_indexes(table)}
+
+
+def test_model_stats_index_names_match_migration(tmp_path):
+    """The upgrade must leave model_stats with the same indexes as the model."""
+    from lumen.models.model_stat import ModelStat
+
+    engine = _make_pre_redundant_indexes_db(tmp_path / "stats.db")
+    _run_revision(engine, _redundant_indexes_revision().upgrade)
+
+    model = {i.name for i in ModelStat.__table__.indexes}
+    assert _index_names(engine, "model_stats") == model == {"ix_model_stats_model_config_id"}
+    engine.dispose()
+
+
+def test_request_log_model_indexes():
+    """request_logs_time_idx replaces ix_request_logs_time; the composite covers model_config_id."""
+    from lumen.models.request_log import RequestLog
+
+    def expr(e):
+        return e.name if isinstance(e, sa.Column) else str(e)
+
+    model = {i.name: [expr(e) for e in i.expressions] for i in RequestLog.__table__.indexes}
+    assert model == {
+        "request_logs_time_idx": ["time DESC"],
+        "ix_request_logs_entity_id": ["entity_id"],
+        "ix_request_logs_model_config_id_time": ["model_config_id", "time DESC"],
+    }
+
+
+def test_redundant_indexes_sqlite_round_trip(tmp_path):
+    """On SQLite the upgrade swaps in request_logs_time_idx, and the downgrade restores the old indexes."""
+    revision = _redundant_indexes_revision()
+    engine = _make_pre_redundant_indexes_db(tmp_path / "round_trip.db")
+    before = {t: _index_names(engine, t) for t in ("model_stats", "request_logs")}
+
+    _run_revision(engine, revision.upgrade)
+    assert _index_names(engine, "request_logs") == {"request_logs_time_idx", "ix_request_logs_entity_id"}
+
+    _run_revision(engine, revision.downgrade)
+    assert {t: _index_names(engine, t) for t in ("model_stats", "request_logs")} == before
+    engine.dispose()
