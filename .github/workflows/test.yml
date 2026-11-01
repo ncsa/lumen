@@ -87,6 +87,11 @@ jobs:
         with:
           node-version: 24
 
+      # tests/unit/test_chart_migration.py renders the chart and fails without helm.
+      - name: Install Helm
+        if: matrix.project.name == 'lumen'
+        uses: azure/setup-helm@v4
+
       - name: Install dependencies
         run: uv sync --frozen
 
