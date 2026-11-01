@@ -5,14 +5,15 @@ SQLite never enforces foreign keys here, so every check below is on rows the
 command itself deleted or moved, exactly as it does on PostgreSQL.
 """
 import re
-from datetime import datetime
+from datetime import datetime, timezone
+from decimal import Decimal
 from http import HTTPStatus
 
 import pytest
 from flask import template_rendered
 from sqlalchemy import func, select
 
-from lumen.commands import erase_entity_cmd
+from lumen.commands import check_stats_cmd, erase_entity_cmd
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
 from lumen.models.auth_request import AuthRequest
@@ -29,11 +30,12 @@ from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_stat import ModelStat
 from lumen.models.request_log import RequestLog
-from lumen.services import metrics_snapshot
+from lumen.services import metrics_snapshot, stats_cutover
 from lumen.services.crypto import hash_api_key
 from lumen.services.erasure import get_or_create_ghost
 from lumen.services.llm import bill_request
-from tests.conftest import make_project
+from lumen.timeutils import utcnow
+from tests.conftest import fold, make_project
 
 EXPIRES = datetime(2030, 1, 1)
 CREATED = datetime(2025, 1, 2, 3, 4, 5)
@@ -599,3 +601,76 @@ def test_merge_into_an_existing_ghost_keeps_the_latest_last_used_at(app, world, 
             (user_entity[0] + 5, user_entity[1] + 1, user_entity[2] + 2)
         assert ghost.last_used_at == expected
         assert _stat_totals() == totals
+
+
+# --------------------------------------------------------------------------- #
+# After the stats cutover: the fold owns the totals                            #
+# --------------------------------------------------------------------------- #
+
+def _folded(model, entity_id):
+    return db.session.execute(
+        select(func.coalesce(func.sum(model.requests), 0), func.coalesce(func.sum(model.folded_requests), 0))
+        .where(model.entity_id == entity_id)
+    ).one()
+
+
+def _bill_unfolded(entity_id, model_id, source):
+    """A billed request the next fold pass counts: a deferred request_logs row only.
+
+    Stamped at the watermark, as in the reassign-model tests: ``fold`` moves the
+    watermark past now, so a row stamped now would sit behind it, never folded.
+    """
+    at = max(utcnow(), stats_cutover.get_fold_state().folded_until)
+    db.session.add(RequestLog(time=at.replace(tzinfo=timezone.utc), entity_id=entity_id, model_config_id=model_id,
+                              source=source, input_tokens=3, output_tokens=2, cost=Decimal("0.125"),
+                              duration=0.0, stats_deferred=True))
+    db.session.commit()
+
+
+def test_erasure_between_billing_and_a_fold(app, post_cutover, world):
+    """Folded and not-yet-folded requests both end up counted once, under the ghost."""
+    u, model = world["user"], world["model"]
+    fold(app)
+    with app.app_context():
+        # Billed after the last pass: the next one counts these.
+        for source in ("api", "chat"):
+            _bill_unfolded(u, model, source)
+        deferred = dict(db.session.execute(
+            select(RequestLog.id, RequestLog.stats_deferred).where(RequestLog.entity_id == u)).all())
+        user_folded = (_folded(ModelStat, u), _folded(EntityStat, u))
+    assert len(deferred) == 4 and set(deferred.values()) == {True}
+    assert user_folded == ((2, 2), (2, 2))
+
+    result = _erase(app, u, "--yes")
+    assert result.exit_code == 0, result.output
+
+    with app.app_context():
+        ghost_id = _ghost_id()
+        moved = dict(db.session.execute(
+            select(RequestLog.id, RequestLog.stats_deferred).where(RequestLog.entity_id == ghost_id)).all())
+        assert moved == deferred
+        # Merged with folded_* intact, before the next pass.
+        assert (_folded(ModelStat, ghost_id), _folded(EntityStat, ghost_id)) == user_folded
+    fold(app)
+    with app.app_context():
+        assert (_folded(ModelStat, ghost_id), _folded(EntityStat, ghost_id)) == ((4, 4), (4, 4))
+        assert db.session.scalar(select(func.sum(ModelStat.requests))) == \
+            db.session.scalar(select(func.count()).select_from(RequestLog))
+    result = app.test_cli_runner().invoke(check_stats_cmd, [])
+    assert result.exit_code == 0, result.output
+    assert "match request_logs" in result.output
+
+
+def test_erasure_holds_the_fold_state(app, post_cutover, world, monkeypatch):
+    """The fold state is locked once, as the first statement of the final
+    transaction, not inside a transaction left open by an earlier step."""
+    calls = []
+    real = stats_cutover.lock_fold_state
+
+    def lock():
+        calls.append(db.session().in_transaction())
+        return real()
+
+    monkeypatch.setattr("lumen.commands.lock_fold_state", lock)
+    assert _erase(app, world["user"], "--yes").exit_code == 0
+    assert calls == [False]

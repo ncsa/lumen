@@ -800,10 +800,18 @@ def erase_entity_cmd(entity_id, yes):
             # Read before anything moves: afterwards the user has no raw rows left to date it.
             start = _reassign_start(conn, "entity_id", entity_id, boundaries)
         log_count = _move_request_logs("entity_id", entity_id, ghost_id)
+
+    # One transaction from here to the entity delete, holding the fold state
+    # throughout: a fold pass in between could add the user's request_logs to a
+    # user stats row this has already merged away, and the delete would then take
+    # those counts with it. The chunk walk above runs without it (it can take
+    # hours); a pass during the walk folds each row under whichever entity owns it
+    # at that moment. Taken first in the transaction (see lock_fold_state).
+    lock_fold_state()
+    if postgres:
         # Rows logged during the walk, by a request already in flight at deactivation.
-        # SET LOCAL lasts only for the session's current transaction, which runs from
-        # here through the entity delete and its commit below: the sweep UPDATE right
-        # after must stay in it, with no commit or rollback in between.
+        # SET LOCAL lasts only for this transaction, so the sweep UPDATE right after
+        # must stay in it, with no commit or rollback in between.
         db.session.execute(text("SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"))
     result = db.session.execute(update(RequestLog).where(RequestLog.entity_id == entity_id)
                                 .values(entity_id=ghost_id))
