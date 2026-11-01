@@ -791,6 +791,94 @@ def test_shipped_config_example_has_llm_section(app, restore_config):
         assert app.config["LLM_MAX_RETRIES"] == 1
 
 
+def test_apply_hot_config_stats_fold_settings(app, restore_config):
+    from lumen.services.config_watcher import apply_hot_config
+    with app.app_context():
+        apply_hot_config(app, {"version": 3})
+        assert app.config["STATS_FOLD_INTERVAL"] == 60.0
+        assert app.config["STATS_FOLD_LAG"] == 300.0
+        apply_hot_config(app, {"version": 3, "stats": {"fold_interval": 15, "fold_lag": "45"}})
+        assert app.config["STATS_FOLD_INTERVAL"] == 15.0
+        assert app.config["STATS_FOLD_LAG"] == 45.0
+
+
+@pytest.mark.parametrize("bad", [0, -5, "soon", float("inf"), float("nan"), ".inf"])
+def test_apply_hot_config_invalid_stats_fold_settings_fall_back(app, restore_config, caplog, bad):
+    from lumen.services.config_watcher import apply_hot_config
+    with app.app_context():
+        apply_hot_config(app, {"version": 3, "stats": {"fold_interval": bad, "fold_lag": bad}})
+        assert app.config["STATS_FOLD_INTERVAL"] == 60.0
+        assert app.config["STATS_FOLD_LAG"] == 300.0
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("stats.fold_interval must be a positive number" in m for m in messages)
+    assert any("stats.fold_lag must be a positive number" in m for m in messages)
+
+
+def test_watcher_reloads_stats_fold_settings(app, tmp_path, restore_config):
+    """A changed stats section reaches app.config, where the fold thread reads it on its next pass."""
+    from unittest.mock import patch
+
+    import yaml
+
+    from lumen.services.config_watcher import _watcher, apply_hot_config
+    from lumen.services.stats_fold import fold_interval, fold_lag
+
+    with app.app_context():
+        apply_hot_config(app, {"version": 3})
+    assert fold_interval(app) == 60.0
+    assert fold_lag(app).total_seconds() == 300.0
+
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.dump({"version": 3, "stats": {"fold_interval": 20, "fold_lag": 90}}))
+
+    sleep_count = 0
+
+    def fake_sleep(n):
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count >= 3:
+            raise SystemExit("stop")
+
+    mtime_values = [1.0, 2.0]
+    mtime_idx = 0
+
+    def fake_getmtime(path):
+        nonlocal mtime_idx
+        v = mtime_values[mtime_idx] if mtime_idx < len(mtime_values) else 2.0
+        mtime_idx += 1
+        return v
+
+    with patch("lumen.services.config_watcher.time.sleep", side_effect=fake_sleep), \
+         patch("lumen.services.config_watcher.sync_models_from_yaml"), \
+         patch("lumen.services.config_watcher.os.path.getmtime", side_effect=fake_getmtime):
+        try:
+            _watcher(app, str(config_file))
+        except SystemExit:
+            # fake_sleep raises SystemExit to end the watcher's loop after the reload.
+            pass
+
+    assert fold_interval(app) == 20.0
+    assert fold_lag(app).total_seconds() == 90.0
+
+
+def test_shipped_configs_have_stats_section(app, restore_config):
+    from pathlib import Path
+
+    import yaml as _yaml
+
+    from lumen.services.config_watcher import apply_hot_config, validate_config_structure
+    root = Path(__file__).resolve().parents[2]
+    example = _yaml.safe_load((root / "config.yaml.example").read_text())
+    assert example["stats"] == {"fold_interval": 60, "fold_lag": 300}
+    dev = _yaml.safe_load((root / "dev.config.yaml").read_text())
+    assert set(dev["stats"]) == {"fold_interval", "fold_lag"}
+    assert not [e for e in validate_config_structure(dev) if e.startswith("stats")]
+    with app.app_context():
+        apply_hot_config(app, example)
+        assert app.config["STATS_FOLD_INTERVAL"] == 60.0
+        assert app.config["STATS_FOLD_LAG"] == 300.0
+
+
 def test_shipped_config_example_has_no_removed_keys():
     """config.yaml.example must not ship a key that startup rejects."""
     from pathlib import Path
@@ -1152,3 +1240,43 @@ def test_watcher_does_not_resync_after_in_memory_apply_failure(app, tmp_path, re
     assert "config.yaml reloaded" not in messages
     with app.app_context():
         assert app.config["YAML_DATA"]["app"]["name"] == "ApplyFails"
+
+
+@pytest.mark.parametrize("stats", [
+    {"fold_interval": 30},
+    {"fold_lag": 600},
+    {"fold_interval": 0.5, "fold_lag": 120},
+    {},
+])
+def test_validate_config_structure_accepts_stats(stats):
+    from lumen.services.config_watcher import validate_config_structure
+    cfg = _valid_config()
+    cfg["stats"] = stats
+    assert validate_config_structure(cfg) == []
+
+
+@pytest.mark.parametrize("key", ["fold_interval", "fold_lag"])
+@pytest.mark.parametrize("bad", [0, -1, "60", True, float("inf"), float("-inf"), float("nan")])
+def test_validate_config_structure_rejects_bad_stats(key, bad):
+    from lumen.services.config_watcher import validate_config_structure
+    cfg = _valid_config()
+    cfg["stats"] = {key: bad}
+    assert f"stats.{key} must be a positive number of seconds" in validate_config_structure(cfg)
+
+
+def test_validate_config_structure_rejects_non_mapping_stats():
+    from lumen.services.config_watcher import validate_config_structure
+    cfg = _valid_config()
+    cfg["stats"] = [60]
+    assert "stats: must be a mapping" in validate_config_structure(cfg)
+
+
+def test_validate_config_structure_rejects_yaml_infinity_and_nan():
+    """The editor validates parsed yaml, where `.inf` / `.nan` are floats."""
+    import yaml as _yaml
+
+    from lumen.services.config_watcher import validate_config_structure
+    for text in ("stats: {fold_interval: .inf}", "stats: {fold_lag: .nan}"):
+        cfg = _valid_config()
+        cfg.update(_yaml.safe_load(text))
+        assert any(e.startswith("stats.") for e in validate_config_structure(cfg)), text
