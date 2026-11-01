@@ -458,3 +458,11 @@ MONTH_START = datetime(2026, 11, 1)
 ])
 def test_window_too_small(end, width, expected):
     assert commands._window_too_small(MONTH_START, end, width) is expected
+
+
+def test_bucket_width_warns_and_returns_none_when_the_catalog_read_fails(capsys):
+    conn = _FailingConn(psycopg.errors.UndefinedTable("no such catalog table"))
+    assert commands._bucket_width(conn, "request_counts_hourly") is None
+    out = capsys.readouterr().out
+    assert "Warning: could not read the bucket width of 'request_counts_hourly'" in out
+    assert "no such catalog table" in out
