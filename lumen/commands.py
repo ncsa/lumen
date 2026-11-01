@@ -731,6 +731,38 @@ def _bucket_column(conn, view_name):
     ), {"v": view_name}).scalar()
 
 
+def _bucket_width(conn, view_name):
+    """The aggregate's ``time_bucket`` width as a ``timedelta``, or None if unreadable.
+
+    Read from TimescaleDB's internal catalog, which ``timescaledb_information`` does not
+    expose. Being internal it can change between releases, so any failure to read it
+    gives None and the caller refreshes as it would without knowing the width. A failed
+    read prints a warning, so a catalog change is not mistaken for a view without a row,
+    and aborts an open transaction: call it on an autocommit connection.
+    """
+    try:
+        return conn.execute(text(
+            "SELECT CAST(bf.bucket_width AS interval) "
+            "FROM _timescaledb_catalog.continuous_agg ca "
+            "JOIN _timescaledb_catalog.continuous_aggs_bucket_function bf "
+            "ON bf.mat_hypertable_id = ca.mat_hypertable_id "
+            "WHERE ca.user_view_schema = 'public' AND ca.user_view_name = :v"
+        ), {"v": view_name}).scalar()
+    except DBAPIError as exc:
+        click.echo(f"  Warning: could not read the bucket width of '{view_name}' from the "
+                   f"TimescaleDB catalog ({exc.orig}); refreshing every month in full.")
+        return None
+
+
+def _window_too_small(start, end, width):
+    """True when ``[start, end)`` is shorter than one bucket of ``width``.
+
+    TimescaleDB rounds a refresh window inward to whole buckets and rejects one that
+    holds none ("refresh window too small"). An unknown width (None) is never too small.
+    """
+    return width is not None and end - start < width
+
+
 def _materialization_hypertable(conn, view_name):
     """The physical table holding an aggregate's *materialised* rows.
 
@@ -835,17 +867,30 @@ def _refresh_months(conn, name, start, now):
     Prints one line per month and returns the months refreshed as ``YYYY-MM``
     strings. Raises ``_RefreshFailed`` with the failing month and the months already
     refreshed. ``conn`` must be an autocommit connection (``_autocommit_connection``).
+
+    A month window shorter than one bucket (the current month during its first bucket)
+    holds no whole bucket, so TimescaleDB would reject it; it is skipped and still
+    listed as refreshed. Real-time aggregation serves it until the policy catches up.
     """
     bucket = _bucket_column(conn, name)
+    width = _bucket_width(conn, name)
     refreshed = []
     month = start
     while month <= now:
         try:
-            _refresh_month(conn, name, bucket, month, now)
+            nxt = _next_month(month)
+            if _window_too_small(month, min(nxt, now), width):
+                raw = conn.execute(text(
+                    "SELECT COUNT(*) FROM request_logs WHERE time >= :s AND time < :e"
+                ), {"s": month, "e": nxt}).scalar()
+                click.echo(f"  {month:%Y-%m}: {raw} request_logs rows ... skipped "
+                           f"(less than one bucket old; served live by real-time aggregation)")
+            else:
+                _refresh_month(conn, name, bucket, month, now)
         except DBAPIError as exc:
             raise _RefreshFailed(month, refreshed, exc) from exc
         refreshed.append(f"{month:%Y-%m}")
-        month = _next_month(month)
+        month = nxt
     return refreshed
 
 

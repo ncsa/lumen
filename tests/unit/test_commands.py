@@ -1,6 +1,6 @@
 """Tests for YAML sync functions in lumen/commands.py."""
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -444,3 +444,25 @@ def test_reassign_model_to_itself_exits_1_and_keeps_stats(app, reassign_data):
     with app.app_context():
         from lumen.extensions import db
         assert _stats(db, src) == before
+
+
+MONTH_START = datetime(2026, 11, 1)
+
+
+@pytest.mark.parametrize(("end", "width", "expected"), [
+    (MONTH_START + timedelta(minutes=34), timedelta(hours=1), True),
+    (MONTH_START + timedelta(hours=1), timedelta(hours=1), False),
+    (datetime(2026, 12, 1), timedelta(hours=1), False),
+    (MONTH_START + timedelta(seconds=30), timedelta(minutes=1), True),
+    (MONTH_START + timedelta(minutes=34), None, False),
+])
+def test_window_too_small(end, width, expected):
+    assert commands._window_too_small(MONTH_START, end, width) is expected
+
+
+def test_bucket_width_warns_and_returns_none_when_the_catalog_read_fails(capsys):
+    conn = _FailingConn(psycopg.errors.UndefinedTable("no such catalog table"))
+    assert commands._bucket_width(conn, "request_counts_hourly") is None
+    out = capsys.readouterr().out
+    assert "Warning: could not read the bucket width of 'request_counts_hourly'" in out
+    assert "no such catalog table" in out

@@ -28,6 +28,7 @@ All notable changes to Lumen will be documented in this file.
 - Lumen now checks TimescaleDB health at startup and on `/metrics`: extension version drift, a missing `request_logs` hypertable or aggregate, missing or failing background jobs. The chart and compose example pin `timescaledb:2.27.2-pg17` and state that TimescaleDB is required. Added a TimescaleDB upgrade runbook (`ALTER EXTENSION timescaledb UPDATE`). (#173)
 - Tests now pin that `subtract_coins` never creates or deducts a balance for an unlimited (-2) coin pool. (#365)
 - Billing takes the per-entity balance lock last and no longer runs existence SELECTs, so concurrent requests from one entity or project key queue far less. (#171)
+- `backfill-aggregate` / `reassign-model` no longer fail when run within the first bucket of a month. (#388)
 - Cut redundant DB queries: one entity count per metrics pass, no duplicate metrics/TimescaleDB check at startup, usage page skips hidden user-growth charts (#178).
 - Monitor dashboard: long ranges (7d, 30d, and the 1y Lumen card) group probes and samples in the database instead of in Python, so the overview and model pages load much faster. (#344)
 - Usage totals (`entity_stats` / `model_stats`) are now folded from `request_logs` by a background job instead of being updated on every request, removing two per-entity row locks from billing. The switch happens automatically during the upgrade, including rolling updates, with each request counted exactly once. (#319)
