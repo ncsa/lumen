@@ -663,14 +663,22 @@ def test_erasure_between_billing_and_a_fold(app, post_cutover, world):
 
 def test_erasure_holds_the_fold_state(app, post_cutover, world, monkeypatch):
     """The fold state is locked once, as the first statement of the final
-    transaction, not inside a transaction left open by an earlier step."""
-    calls = []
-    real = stats_cutover.lock_fold_state
+    transaction, not inside a transaction left open by an earlier step, and held
+    until the one commit that follows the entity delete."""
+    events = []
+    real_lock, real_commit = stats_cutover.lock_fold_state, db.session.commit
 
     def lock():
-        calls.append(db.session().in_transaction())
-        return real()
+        events.append(("lock", db.session().in_transaction()))
+        return real_lock()
+
+    def commit():
+        if events:
+            gone = db.session.get(Entity, world["user"], populate_existing=True) is None
+            events.append(("commit", gone))
+        real_commit()
 
     monkeypatch.setattr("lumen.commands.lock_fold_state", lock)
+    monkeypatch.setattr(db.session, "commit", commit)
     assert _erase(app, world["user"], "--yes").exit_code == 0
-    assert calls == [False]
+    assert events == [("lock", False), ("commit", True)]
