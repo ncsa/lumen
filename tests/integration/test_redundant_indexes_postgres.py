@@ -15,14 +15,14 @@ from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from sqlalchemy import text
 
-import lumen.models  # noqa: F401  registers every table on db.metadata
-from lumen.extensions import db
+from lumen.models import RequestLog
 from tests.integration.conftest import TEST_CONFIG
 
 pytestmark = pytest.mark.postgres
 
 _BEFORE = "a6b8c0d2e4f6"
 _REVISION = "b7c9d1e3f5a8"
+_HEAD = _REVISION
 _DROPPED = {"ix_request_logs_time", "ix_request_logs_model_config_id", "ix_model_stats_entity_id"}
 _REQUEST_LOGS_INDEXES = {
     "request_logs_time_idx",
@@ -65,7 +65,8 @@ def _unique_constraints(conn, table):
 
 def _all_index_names(conn):
     return set(conn.execute(text(
-        "SELECT indexname FROM pg_indexes WHERE tablename IN ('request_logs', 'model_stats')"
+        "SELECT indexname FROM pg_indexes "
+        "WHERE schemaname = 'public' AND tablename IN ('request_logs', 'model_stats')"
     )).scalars())
 
 
@@ -89,7 +90,7 @@ def test_head_keeps_only_the_needed_indexes(pg_migrated_isolated):
 def test_autogenerate_proposes_no_index_changes(pg_migrated_isolated):
     _, engine = pg_migrated_isolated
     with engine.connect() as conn:
-        diffs = compare_metadata(MigrationContext.configure(conn), db.metadata)
+        diffs = compare_metadata(MigrationContext.configure(conn), RequestLog.metadata)
 
     index_diffs = [
         diff for diff in diffs
@@ -135,3 +136,5 @@ def test_round_trip_over_a_compressed_chunk(pg_migrated_isolated):
     engine.dispose()
 
     _flask_db(url, "upgrade")
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == _HEAD
