@@ -147,6 +147,39 @@ Run with `uv run flask --app run <command>` locally, or `flask <command>` inside
 
 **`request_logs` is never pruned.** Lumen ships no retention policy and no command that deletes from it.
 
+### `upgrade`
+
+The one-shot upgrade step: brings the database up to date for this image, then exits.
+
+```bash
+flask upgrade
+```
+
+The image runs it with the `upgrade` argument (`docker run <image> upgrade`). It runs, in order, and
+stops at the first failure with exit 1:
+
+1. **Every migration** (`flask db upgrade` to head).
+2. **The post-migration data steps.** Each is safe to re-run and finishes what an earlier, failed
+   run left undone, so running `flask upgrade` again resumes. Today there is one: the **aggregate
+   backfill by missing month** for `request_counts_hourly_by_entity`.
+
+The backfill looks at every calendar month from the oldest `request_logs` row through the current
+one. A month is *missing* when it has raw rows but no materialised bucket, and *partly covered* when
+its first materialised bucket is later than the hour of its first raw row (the refresh policy only
+ever materialises the trailing 30 days, so it can leave the head of a month behind). Each such month
+is refreshed over the whole month, oldest first, up to now, with the same lock retries as
+`backfill-aggregate`. When every month is covered it costs two indexed reads per month and refreshes
+nothing. A month that still fails after the retries ends the run with exit 1; the next run checks
+again and starts at the first month still missing. A hole in the middle of a month is not detected:
+`flask backfill-aggregate --from YYYY-MM` fixes that by hand.
+
+The backfill is skipped on SQLite and on a database without TimescaleDB. If `request_logs` has a
+retention policy it is skipped too: it logs the same ERROR as the startup check and does not fail
+the upgrade. Months before the aggregate's own retention boundary, if it has one, are left out.
+
+In the image's `upgrade` and `wait-for-migrations` modes, `PGCONNECT_TIMEOUT` defaults to `10`
+(a value you set is kept), so a database host that never answers cannot hang them.
+
 ### `backfill-aggregate`
 
 Materialises a continuous aggregate's full history, month by month, oldest first.
@@ -194,7 +227,10 @@ It prints the aggregate's earliest *materialised* bucket (read from its material
 not the view, which answers from raw for anything never refreshed) and the oldest `request_logs`
 row. It exits 1 when the aggregate is empty or starts after the oldest raw row, printing the
 `flask backfill-aggregate --from YYYY-MM` that fixes it; until then the per-user charts are missing
-that history. It also exits 1 if a retention policy exists on `request_logs`, and
+that history. It also checks every month by the rule `flask upgrade` backfills by, and exits 1
+listing each month that is *missing* (raw rows, no materialised bucket) or *partly covered* (its
+first materialised bucket is later than the hour of its first raw row), with both timestamps;
+`flask upgrade` fixes them. It also exits 1 if a retention policy exists on `request_logs`, and
 prints the `SELECT remove_retention_policy('request_logs');` that removes it. Run it before
 upgrading.
 
@@ -224,7 +260,9 @@ Two separate time budgets apply to a PostgreSQL server that accepts connections 
   the database URL (or `PGOPTIONS`), such as `-c search_path=...`, are kept.
 - **Loading the app.** Before the command starts, the app opens connections that have no timeout of
   their own. Set `PGCONNECT_TIMEOUT` (for example `10`) so a silent host cannot hold the command
-  before its first check; it does not change the 10-second budget above.
+  before its first check; it does not change the 10-second budget above. The image's
+  `wait-for-migrations` mode (`docker run <image> wait-for-migrations [--timeout SECONDS]`) sets it
+  to `10` unless you set it yourself.
 
 ### Upgrading TimescaleDB
 
