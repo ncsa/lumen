@@ -15,9 +15,10 @@ from sqlalchemy import select
 from lumen.extensions import db
 from lumen.models.stats_fold_state import StatsFoldState
 
-#: Seconds billing trusts its cached ``cutover_at``. On PostgreSQL the cutover
-#: is set this far ahead and more, so every process has read it before it takes
-#: effect.
+#: Seconds billing trusts its cached ``cutover_at``. This only cuts read load:
+#: a process still holding a stale ``None`` bumps the stats tables and leaves its
+#: row unmarked (``request_logs.stats_deferred`` NULL), and the fold skips
+#: unmarked rows, so a stale value never counts a request twice.
 CUTOVER_CACHE_TTL = 60.0
 
 

@@ -5,6 +5,9 @@ meets a real competitor here. A third connection holds the fold-state row
 until both passes have read the same watermark and are blocked on their
 UPDATE; when it lets go, one pass advances the watermark and folds, and the
 other finds the watermark moved and rolls back.
+
+The rolling-update case runs here too: pods of the previous release bump and
+write unmarked rows next to new pods that mark theirs, on real PostgreSQL.
 """
 
 import os
@@ -79,7 +82,7 @@ def test_concurrent_folds_count_each_row_once(pg_app, pg_migrated_isolated):
             db.session.add(RequestLog(
                 time=(lo + timedelta(minutes=minute)).replace(tzinfo=timezone.utc), entity_id=entity_id,
                 model_config_id=model_id, source="api", input_tokens=10, output_tokens=5, audio_seconds=1,
-                cost=Decimal("0.5"), duration=0.0,
+                cost=Decimal("0.5"), duration=0.0, stats_deferred=True,
             ))
         db.session.execute(text("UPDATE stats_fold_state SET cutover_at = :lo, folded_until = :lo WHERE id = 1"),
                            {"lo": lo})
@@ -126,3 +129,80 @@ def test_concurrent_folds_count_each_row_once(pg_app, pg_migrated_isolated):
                 5, 50, 25, 5, Decimal("2.5"))
             assert stat.last_used_at == lo + timedelta(minutes=5)
         assert get_fold_state().folded_until == hi
+
+
+def _old_pod_bill(entity_id, model_id, input_tokens, output_tokens, cost):
+    """Bill the way the previous release does: an INSERT without ``stats_deferred``
+    (so NULL), then both bumps, whatever the cutover says."""
+    from lumen.extensions import db
+    from lumen.models.entity_stat import EntityStat
+    from lumen.models.model_stat import ModelStat
+    from lumen.models.request_log import RequestLog
+    from lumen.services.llm import _bump
+    from lumen.timeutils import utcnow
+
+    now = utcnow()
+    db.session.add(RequestLog(
+        time=now.replace(tzinfo=timezone.utc), entity_id=entity_id, model_config_id=model_id, source="api",
+        input_tokens=input_tokens, output_tokens=output_tokens, cost=cost, duration=0.0,
+    ))
+    db.session.flush()
+    for model, key in ((ModelStat, {"entity_id": entity_id, "model_config_id": model_id, "source": "api"}),
+                       (EntityStat, {"entity_id": entity_id})):
+        _bump(
+            model, key,
+            {"requests": model.requests + 1, "input_tokens": model.input_tokens + input_tokens,
+             "output_tokens": model.output_tokens + output_tokens, "cost": model.cost + cost,
+             "last_used_at": now},
+            {"requests": 1, "input_tokens": input_tokens, "output_tokens": output_tokens, "cost": cost,
+             "last_used_at": now},
+        )
+    db.session.commit()
+
+
+def test_rolling_update_counts_every_request_once(pg_app):
+    """Old and new pods bill side by side after the migration's automatic cutover.
+
+    The old pods bump and write unmarked rows; the new pods (real ``bill_request``)
+    mark theirs. After a fold the totals are every request exactly once.
+    """
+    from lumen.extensions import db
+    from lumen.models.entity import Entity
+    from lumen.models.entity_stat import EntityStat
+    from lumen.models.model_config import ModelConfig
+    from lumen.models.model_stat import ModelStat
+    from lumen.models.request_log import RequestLog
+    from lumen.services.llm import bill_request
+    from lumen.services.stats_fold import fold_lag, fold_once, get_fold_state
+    from lumen.timeutils import utcnow
+
+    with pg_app.app_context():
+        assert get_fold_state().cutover_at is not None  # set by the migration
+        tag = uuid.uuid4().hex[:8]
+        entity = Entity(entity_type="user", email=f"roll-{tag}@example.com", name=f"Roll {tag}",
+                        initials="RO", active=True)
+        model = ModelConfig(model_name=f"roll-{tag}", input_cost_per_million=1.0, output_cost_per_million=1.0)
+        db.session.add_all([entity, model])
+        db.session.commit()
+        entity_id, model_id = entity.id, model.id
+
+        for i in range(4):
+            _old_pod_bill(entity_id, model_id, 10, 5, Decimal("0.5"))
+            bill_request(entity_id, model_id, "api", 20, 7, 0.25, effective=None)
+            if i % 2:
+                _old_pod_bill(entity_id, model_id, 1, 1, Decimal("0.125"))
+        markers = db.session.execute(
+            select(RequestLog.stats_deferred).where(RequestLog.entity_id == entity_id)
+        ).scalars().all()
+        assert sorted(markers, key=lambda m: m is True) == [None] * 6 + [True] * 4
+
+    assert fold_once(pg_app, now=utcnow() + fold_lag(pg_app) + timedelta(seconds=1)) is not None
+
+    with pg_app.app_context():
+        es = db.session.get(EntityStat, entity_id)
+        ms = db.session.execute(select(ModelStat).filter_by(entity_id=entity_id, model_config_id=model_id)).scalar_one()
+        for stat in (es, ms):
+            assert stat.requests == 10
+            assert stat.input_tokens == 4 * 10 + 4 * 20 + 2 * 1
+            assert stat.output_tokens == 4 * 5 + 4 * 7 + 2 * 1
+            assert stat.cost == 4 * Decimal("0.5") + 4 * Decimal("0.25") + 2 * Decimal("0.125")

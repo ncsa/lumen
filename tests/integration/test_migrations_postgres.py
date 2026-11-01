@@ -7,6 +7,8 @@ required. If someone replaces the hypertable with a plain table, at least one
 test here must fail — otherwise this file is decoration.
 """
 
+from datetime import timedelta
+
 import pytest
 from sqlalchemy import text
 
@@ -148,8 +150,31 @@ def test_migration_is_at_a_single_head(pg_migrated):
     assert len(heads) == 1, f"expected one alembic head, got {heads}"
 
 
-def test_stats_fold_state_is_not_cut_over_on_postgresql(pg_migrated):
-    """Old pods may still bump the counters mid-rollout, so PostgreSQL waits for the operator."""
+def test_migration_cuts_the_stats_fold_over_automatically(pg_migrated):
+    """``f5b6c7d8e9f0`` sets the cutover an hour back, with no operator step.
+
+    Old pods bumping mid-rollout are safe: their rows carry no
+    ``stats_deferred`` marker, and the fold adds only marked rows. A cutover
+    already set is kept; ``test_stats_deferred_migration_postgres`` covers that.
+    """
     with pg_migrated.connect() as conn:
         rows = conn.execute(text("SELECT id, cutover_at, folded_until FROM stats_fold_state")).all()
-    assert [tuple(r) for r in rows] == [(1, None, None)]
+        now = conn.execute(text("SELECT now() AT TIME ZONE 'UTC'")).scalar()
+    [(row_id, cutover_at, folded_until)] = rows
+    assert row_id == 1
+    assert cutover_at == folded_until
+    # The session's migration ran at most a few minutes before this test.
+    assert now - timedelta(hours=1, minutes=30) <= cutover_at <= now - timedelta(minutes=59)
+
+
+def test_request_logs_has_the_stats_deferred_marker(pg_migrated):
+    with pg_migrated.connect() as conn:
+        column = conn.execute(text(
+            "SELECT data_type, is_nullable, column_default, "
+            "col_description('request_logs'::regclass, ordinal_position) "
+            "FROM information_schema.columns "
+            "WHERE table_name = 'request_logs' AND column_name = 'stats_deferred'"
+        )).one()
+    data_type, nullable, default, comment = column
+    assert (data_type, nullable, default) == ("boolean", "YES", None)
+    assert comment.startswith("TRUE when billing left this request out of model_stats/entity_stats")
