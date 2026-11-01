@@ -432,10 +432,9 @@ postgres  timescale/timescaledb:2.27.2-pg17   port 5678
 lumen     uvicorn asgi:app --reload            port 5001
 ```
 
-The lumen container runs `entrypoint.sh`:
-1. Source `.env`
-2. `flask db upgrade` (Alembic migrations — safe to run on every start)
-3. `uvicorn asgi:app --host 0.0.0.0 --port 5001`
+Starting Lumen is two steps, both through `entrypoint.sh`:
+1. **Upgrade** (`entrypoint.sh upgrade`, the `lumen-upgrade` Compose service or the Helm migration Job): `flask upgrade` runs every Alembic migration, then backfills missing months of the aggregate, and exits. Safe to re-run; a failed run resumes.
+2. **Serve** (default mode): `flask wait-for-migrations` waits until the database is at the migration head this image expects, then `uvicorn asgi:app --host 0.0.0.0 --port 5001`. The serve step never migrates.
 
 ### Production Scaling
 

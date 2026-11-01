@@ -69,7 +69,7 @@ oauth2:
 
 ### PostgreSQL
 
-The bundled PostgreSQL uses `timescale/timescaledb:2.27.2-pg17` to match the production docker-compose setup. Override `postgresql.image` if you need a different version, but keep a TimescaleDB image with a pinned tag: TimescaleDB is required, and on a plain `postgres` image the migrations fail and the pod crash-loops at `flask db upgrade`. See "Upgrading TimescaleDB" in the main README before changing the tag.
+The bundled PostgreSQL uses `timescale/timescaledb:2.27.2-pg17` to match the production docker-compose setup. Override `postgresql.image` if you need a different version, but keep a TimescaleDB image with a pinned tag: TimescaleDB is required, and on a plain `postgres` image the migrations fail and the migration Job fails at `flask db upgrade`. See "Upgrading TimescaleDB" in the main README before changing the tag.
 
 **Bundled (default):**
 ```yaml
@@ -178,7 +178,7 @@ models:
 | `wsgiProcesses` | `1` | uvicorn worker processes per pod (wired to `--workers` and `WEB_CONCURRENCY`); >1 requires `api.prometheus.multiprocDir` |
 | `wsgiWorkers` | `"auto"` | Concurrent requests per uvicorn worker process (a2wsgi threads; a pod serves `wsgiWorkers` × `wsgiProcesses`); `"auto"` = 2× the per-process `database.poolSize + database.maxOverflow` (auto-sized from `max_connections` when empty), clamped to 10–256; a number sets it directly |
 | `wsgiSendTimeout` | `300` | Seconds a worker may block handing one response chunk to the server before the client is treated as gone |
-| `startupProbe.periodSeconds` / `failureThreshold` | `5` / `360` | Startup probe budget (30 min by default). Must cover `flask db upgrade` **plus** uvicorn startup — see [Database Migrations](#database-migrations) |
+| `startupProbe.periodSeconds` / `failureThreshold` | `5` / `60` | Startup probe budget (5 min by default). Covers uvicorn startup only; migrations run in the migration Job before the probe starts — see [Database Migrations](#database-migrations) |
 | `startupProbe.initialDelaySeconds` / `timeoutSeconds` | `10` / `5` | Startup probe delay and per-probe timeout |
 | `image.repository` | `ncsa/lumen` | Container image repository |
 | `image.tag` | `""` | Image tag (defaults to chart appVersion) |
@@ -237,10 +237,10 @@ The Job uses the same image, environment, config Secret and `wait-for-db` initCo
 **The chart needs image 2.3.0 or later.** Older images have no `upgrade` or `wait-for-migrations` mode. Until a release sets the chart's `appVersion` to 2.3.0, install from `main` with `image.tag: latest` (or an image built from `main`). Mixed versions fail closed:
 
 - **This chart with an image older than 2.3.0:** the Job fails and the gate initContainer crash-loops, because the image does not know either mode. Nothing new starts; old pods keep serving.
-- **An older chart (no Job) with image 2.3.0 or later:** nothing runs the upgrade, so once the image stops migrating on start, pods wait at startup.
+- **An older chart (no Job) with image 2.3.0 or later:** nothing runs the upgrade, and the image no longer migrates on start, so pods wait at startup (and the older chart's startup probe eventually restarts them).
 - **`helm rollback` to an older image after the database was migrated:** that image does not know the newer revision, so its Job and its gate both fail immediately. Rolling back across a migration needs a database restore.
 
-For now the app container still runs `flask db upgrade` inline before uvicorn starts; with the Job and gate in place that is a no-op, because the database is already at head when the container starts.
+The app container never migrates. Its entrypoint runs the same gate once more before uvicorn starts, which passes immediately after the initContainer. Because migrations happen before the container starts, the `startupProbe` only has to cover uvicorn startup (5 minutes by default).
 
 ## Notes
 

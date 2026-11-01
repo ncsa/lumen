@@ -55,6 +55,12 @@ docker compose up -d
 
 Lumen will be available at `https://your-domain`.
 
+Lumen does not migrate its database on start. The one-shot `lumen-upgrade` service runs first
+(`flask upgrade`: every migration plus the aggregate backfill) and `lumen` starts once it has exited
+successfully. To upgrade, pull the new image and run `docker compose up -d` again; `lumen-upgrade`
+runs again before the new `lumen` starts. Started on its own (`docker compose up --no-deps lumen`),
+`lumen` waits until the database has been upgraded.
+
 ---
 
 ## Local Development
@@ -155,7 +161,9 @@ The one-shot upgrade step: brings the database up to date for this image, then e
 flask upgrade
 ```
 
-The image runs it with the `upgrade` argument (`docker run <image> upgrade`). It runs, in order, and
+The image runs it with the `upgrade` argument (`docker run <image> upgrade`; in Compose the
+`lumen-upgrade` service, in Helm the migration Job). The app container never migrates: it waits at
+`wait-for-migrations` until this has run. It runs, in order, and
 stops at the first failure with exit 1:
 
 1. **Every migration** (`flask db upgrade` to head).
@@ -196,8 +204,8 @@ flask backfill-aggregate [--name NAME] [--from YYYY-MM] [--force]
 
 Migrations create their aggregates `WITH NO DATA`, and the refresh policy only ever materialises its
 own `start_offset` window — so per-user "All Time" charts stay near-empty until this is run: they read
-only `request_counts_hourly_by_entity` and no longer fall back to raw `request_logs`. **Run it
-right after `flask db upgrade` creates a new aggregate, and check the printed row counts.** It walks
+only `request_counts_hourly_by_entity` and no longer fall back to raw `request_logs`. The upgrade
+step (`flask upgrade`) runs it for every missing month, so you rarely need it by hand. It walks
 month by month because one `CALL refresh_continuous_aggregate(NULL, NULL)` over a production
 hypertable is a single long transaction with unbounded memory, and it never refreshes past `now()`,
 which would materialise the current bucket and hide every request logged after the backfill.
@@ -263,6 +271,9 @@ Two separate time budgets apply to a PostgreSQL server that accepts connections 
   before its first check; it does not change the 10-second budget above. The image's
   `wait-for-migrations` mode (`docker run <image> wait-for-migrations [--timeout SECONDS]`) sets it
   to `10` unless you set it yourself.
+
+The image's default (serve) mode runs this command, with no `--timeout`, before it starts uvicorn,
+with the same `PGCONNECT_TIMEOUT` default (for the gate only; uvicorn gets your environment as is).
 
 ### Upgrading TimescaleDB
 
