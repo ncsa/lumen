@@ -31,7 +31,7 @@ from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
 from lumen.models.request_log import RequestLog
-from lumen.services.cost import calculate_cost
+from lumen.services.cost import cached_tokens_from_usage, calculate_cost
 from lumen.services.crypto import cache_salt_for_entity
 from lumen.services.model_resolver import resolve_model_config
 from lumen.services.stats_cutover import cached_cutover_at
@@ -338,6 +338,9 @@ class StreamTarget(NamedTuple):
     model_config_id: int
     input_cost: float
     output_cost: float
+    # None = the model has no cached-input rate, so cached input is billed at
+    # input_cost (see calculate_cost).
+    cached_input_cost: float = None
 
 
 def stream_target(config, endpoint) -> StreamTarget:
@@ -354,6 +357,10 @@ def stream_target(config, endpoint) -> StreamTarget:
         model_config_id=config.id,
         input_cost=float(config.input_cost_per_million),
         output_cost=float(config.output_cost_per_million),
+        cached_input_cost=(
+            float(config.cached_input_cost_per_million)
+            if config.cached_input_cost_per_million is not None else None
+        ),
     )
 
 
@@ -1027,7 +1034,8 @@ def estimate_prompt_tokens(messages) -> int:
     return round(chars / _CHARS_PER_TOKEN)
 
 
-def estimate_abort_usage(usage, messages, content_deltas, in_cost_per_million, out_cost_per_million):
+def estimate_abort_usage(usage, messages, content_deltas, in_cost_per_million, out_cost_per_million,
+                         cached_in_cost_per_million=None):
     """Return (input_tokens, output_tokens, cost) for a stream that ended early.
 
     Prefers the upstream's exact totals when the terminal usage chunk had already
@@ -1036,17 +1044,24 @@ def estimate_abort_usage(usage, messages, content_deltas, in_cost_per_million, o
     figures. Otherwise both counts are estimates: the prompt from its character
     count, and the output as one token per content delta received, the ratio most
     OpenAI-compatible backends emit.
+
+    A known usage chunk also brings the upstream's cache-read count, which is
+    priced at ``cached_in_cost_per_million``. The estimate carries no cached
+    count: a character count of the prompt cannot say which part of it a backend
+    had cached.
     """
     if usage is not None:
         input_tokens = usage.prompt_tokens or 0
         output_tokens = usage.completion_tokens or 0
+        cached_tokens = cached_tokens_from_usage(usage)
     else:
         input_tokens = estimate_prompt_tokens(messages)
         output_tokens = content_deltas
-    cost = round(
-        input_tokens * in_cost_per_million / 1_000_000
-        + output_tokens * out_cost_per_million / 1_000_000,
-        6,
+        cached_tokens = 0
+    cost = calculate_cost(
+        input_tokens, output_tokens, in_cost_per_million, out_cost_per_million,
+        cached_input_tokens=cached_tokens,
+        cached_input_cost_per_million=cached_in_cost_per_million,
     )
     return input_tokens, output_tokens, cost
 
@@ -1196,7 +1211,7 @@ def _send_message_stream(app, messages, model, entity_id, source, effective, dis
             # streaming LLM call can take minutes; the context teardown releases the
             # session (and its pool connection) before the first token is awaited.
             resolved = stream_target(config, endpoint)
-        remote_model, ep_url, ep_api_key, ep_id, mc_id, mc_in_cost, mc_out_cost = resolved
+        remote_model, ep_url, ep_api_key, ep_id, mc_id, mc_in_cost, mc_out_cost, mc_cached_cost = resolved
         # Derive the per-entity prefix-cache salt while a context is current;
         # the create() call below runs context-free (no current_app). See #36.
         cache_salt   = cache_salt_for_entity(entity_id) if entity_id is not None else None
@@ -1225,7 +1240,8 @@ def _send_message_stream(app, messages, model, entity_id, source, effective, dis
         the two cannot bill differently.
         """
         input_tokens, output_tokens, cost = estimate_abort_usage(
-            usage, messages, len(parts), mc_in_cost, mc_out_cost)
+            usage, messages, len(parts), mc_in_cost, mc_out_cost,
+            cached_in_cost_per_million=mc_cached_cost)
         record_stream_abort(
             app, billed=billed, entity_id=entity_id, model_config_id=mc_id,
             source=source, endpoint_id=ep_id, stream_t0=t0,
@@ -1300,7 +1316,11 @@ def _send_message_stream(app, messages, model, entity_id, source, effective, dis
             or getattr(usage, "reasoning_tokens", None)
         ) if usage else None
 
-        cost = calculate_cost(input_tokens, output_tokens, mc_in_cost, mc_out_cost)
+        cost = calculate_cost(
+            input_tokens, output_tokens, mc_in_cost, mc_out_cost,
+            cached_input_tokens=cached_tokens_from_usage(usage),
+            cached_input_cost_per_million=mc_cached_cost,
+        )
         output_speed = output_tokens / duration if duration > 0 else 0.0
 
         if entity_id is not None:

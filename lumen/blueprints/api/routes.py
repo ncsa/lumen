@@ -19,7 +19,7 @@ from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.services import model_cache, request_rates
-from lumen.services.cost import calculate_audio_cost, calculate_cost
+from lumen.services.cost import calculate_audio_cost, cached_tokens_from_usage, calculate_cost
 from lumen.services.crypto import cache_salt_for_entity, hash_api_key
 from lumen.services.key_expiry import revoke_if_expired
 from lumen.services.live_state import get_live_state
@@ -599,6 +599,8 @@ def _complete_and_bill(model_name: str, messages: list, **kwargs):
     mc_id        = model_config.id
     mc_in_cost   = float(model_config.input_cost_per_million)
     mc_out_cost  = float(model_config.output_cost_per_million)
+    mc_cached_cost = (float(model_config.cached_input_cost_per_million)
+                      if model_config.cached_input_cost_per_million is not None else None)
     timeout, max_retries = upstream_call_bounds(streaming=False)
     # The arrival marks live in the WSGI environ; read them while the request
     # context is current.
@@ -635,7 +637,11 @@ def _complete_and_bill(model_name: str, messages: list, **kwargs):
         else:
             usage_prompt, usage_completion = usage.prompt_tokens, usage.completion_tokens
 
-        cost = calculate_cost(usage_prompt, usage_completion, mc_in_cost, mc_out_cost)
+        cost = calculate_cost(
+            usage_prompt, usage_completion, mc_in_cost, mc_out_cost,
+            cached_input_tokens=cached_tokens_from_usage(usage),
+            cached_input_cost_per_million=mc_cached_cost,
+        )
         bill_request(entity_id, mc_id, "api", usage_prompt, usage_completion, cost,
                      effective=effective, api_key_id=ak_id,
                      endpoint_id=ep_id, duration=duration,
@@ -693,6 +699,8 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
     mc_id        = model_config.id
     mc_in_cost   = float(model_config.input_cost_per_million)
     mc_out_cost  = float(model_config.output_cost_per_million)
+    mc_cached_cost = (float(model_config.cached_input_cost_per_million)
+                      if model_config.cached_input_cost_per_million is not None else None)
     db.session.remove()  # return connection to pool before the LLM call
 
     # The generator body runs after this request's contexts are gone, on
@@ -740,7 +748,8 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
             GeneratorExit so the two cannot bill differently.
             """
             input_tokens, output_tokens, cost = estimate_abort_usage(
-                usage, messages, content_deltas, mc_in_cost, mc_out_cost)
+                usage, messages, content_deltas, mc_in_cost, mc_out_cost,
+                cached_in_cost_per_million=mc_cached_cost)
             record_stream_abort(
                 app, billed=billed, entity_id=entity_id, model_config_id=mc_id,
                 source="api", endpoint_id=ep_id, stream_t0=t0,
@@ -802,6 +811,8 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                         cost = calculate_cost(
                             usage.prompt_tokens, usage.completion_tokens,
                             mc_in_cost, mc_out_cost,
+                            cached_input_tokens=cached_tokens_from_usage(usage),
+                            cached_input_cost_per_million=mc_cached_cost,
                         )
                         phase = "billing"
                         with app.app_context():
@@ -930,6 +941,8 @@ def _do_audio(kind: str):
     mc_id            = model_config.id
     mc_in_cost       = float(model_config.input_cost_per_million)
     mc_out_cost      = float(model_config.output_cost_per_million)
+    mc_cached_cost   = (float(model_config.cached_input_cost_per_million)
+                        if model_config.cached_input_cost_per_million is not None else None)
     mc_audio_per_hour = float(model_config.audio_cost_per_hour or 0)
     timeout, max_retries = upstream_call_bounds(streaming=False)
     # Read while the request context is current, like the paths above.
@@ -973,7 +986,11 @@ def _do_audio(kind: str):
         elif isinstance(usage, dict) and (usage.get("type") == "tokens" or "prompt_tokens" in usage):
             in_tok = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
             out_tok = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
-            cost = round(in_tok * mc_in_cost / 1_000_000 + out_tok * mc_out_cost / 1_000_000, 6)
+            cost = calculate_cost(
+                in_tok, out_tok, mc_in_cost, mc_out_cost,
+                cached_input_tokens=cached_tokens_from_usage(usage),
+                cached_input_cost_per_million=mc_cached_cost,
+            )
         else:
             logger.warning("Upstream did not return usage data (model=%s, entity_id=%s)", model_name, entity_id)
 

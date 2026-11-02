@@ -29,6 +29,9 @@ class ModelConfig(db.Model):
     # USD cost per one million input/output tokens; used to compute coins
     input_cost_per_million: Mapped[Decimal] = mapped_column(db.Numeric(12, 6), comment="USD cost per one million input tokens")
     output_cost_per_million: Mapped[Decimal] = mapped_column(db.Numeric(12, 6), comment="USD cost per one million output tokens")
+    # USD cost per one million input tokens served from the provider's prompt cache.
+    # NULL = charge the input rate, so billing is unchanged until an admin sets it.
+    cached_input_cost_per_million: Mapped[Optional[Decimal]] = mapped_column(db.Numeric(12, 6), comment="USD cost per one million cached input tokens; NULL = same as input_cost_per_million")
     # USD cost per hour of audio; only set for speech-to-text (ASR) models
     audio_cost_per_hour: Mapped[Optional[Decimal]] = mapped_column(db.Numeric(12, 6), comment="USD cost per hour of audio; only set for speech-to-text models")
     # Owning user entity; NULL means the model is available to everyone.

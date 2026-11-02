@@ -124,6 +124,12 @@ def validate_config_structure(data) -> list:
             value = model.get(key)
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 errors.append(f"{label}: '{key}' must be a number")
+        cached_price = model.get("cached_input_cost_per_million")
+        if cached_price is not None and (
+            isinstance(cached_price, bool) or not isinstance(cached_price, (int, float))
+            or not math.isfinite(cached_price) or cached_price < 0
+        ):
+            errors.append(f"{label}: 'cached_input_cost_per_million' must be a non-negative number or null")
         if "auto_price" in model and not isinstance(model["auto_price"], bool):
             errors.append(f"{label}: 'auto_price' must be true or false")
         endpoints = model.get("endpoints")

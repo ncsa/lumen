@@ -86,7 +86,7 @@ When running, Lumen watches `config.yaml` for changes and automatically reloads 
 | `models[*].disabled` | Take a model fully offline |
 | `models[*].endpoints` | Add, remove, or move model backend servers |
 | `models[*].aliases` | Add, remove, or retarget the alternative names a model answers to |
-| `models[*].input_cost_per_million` / `output_cost_per_million` | Change pricing |
+| `models[*].input_cost_per_million` / `cached_input_cost_per_million` / `output_cost_per_million` | Change pricing |
 | `admins` | Update the list of administrator email addresses |
 | `chat.remove` | Change conversation soft-delete vs hard-delete mode |
 | `chat.upload` | Adjust upload file size limits and allowed file types |

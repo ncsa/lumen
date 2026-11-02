@@ -1027,6 +1027,19 @@ def test_estimate_abort_usage_prefers_exact_usage_over_the_delta_count():
     )
 
 
+def test_estimate_abort_usage_discounts_only_reported_cached_tokens():
+    from lumen.services.llm import estimate_abort_usage
+    usage = _Usage(prompt_tokens=1_000_000, completion_tokens=100_000)
+    usage.prompt_tokens_details = types.SimpleNamespace(cached_tokens=250_000)
+    messages = [{"role": "user", "content": "hi"}]
+    assert estimate_abort_usage(usage, messages, 3, 2.0, 4.0, 0.5) == (
+        1_000_000, 100_000, pytest.approx(2.025),
+    )
+    # With no terminal usage, a prompt estimate cannot tell what was cached.
+    estimated = estimate_abort_usage(None, messages, 3, 2.0, 4.0, 0.5)
+    assert estimated[2] == pytest.approx(round(estimated[0] * 2 / 1_000_000 + 3 * 4 / 1_000_000, 6))
+
+
 def test_estimate_abort_usage_counts_one_output_token_per_content_delta():
     """Without the terminal usage chunk, the delta count is the output estimate."""
     from lumen.services.llm import estimate_abort_usage

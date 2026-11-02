@@ -1,6 +1,7 @@
 """Tests for the /v1 API key authentication decorator (api_key_required)."""
 from datetime import timedelta
 from http import HTTPStatus
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
@@ -2120,6 +2121,45 @@ def _chat_post(client, token, model_name, stream):
         json={"model": model_name,
               "messages": [{"role": "user", "content": "hi"}], "stream": stream},
     )
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_api_chat_bills_cached_input(app, client, monkeypatch, test_user, test_model,
+                                     test_model_endpoint, api_key, fresh_rate_limit, stream):
+    from lumen.blueprints.api import routes
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    from lumen.models.request_log import RequestLog
+
+    token, _ = api_key
+    _allow_model(app, test_user, test_model)
+    with app.app_context():
+        model = db.session.get(ModelConfig, test_model["id"])
+        model.input_cost_per_million = 2
+        model.output_cost_per_million = 4
+        model.cached_input_cost_per_million = 0.5
+        db.session.commit()
+        model_cache.refresh(app)
+
+    usage = SimpleNamespace(prompt_tokens=1_000_000, completion_tokens=100_000,
+                            prompt_tokens_details=SimpleNamespace(cached_tokens=250_000))
+    if stream:
+        chunk = _UsageChunk()
+        chunk.usage = usage
+        _capturing_openai(monkeypatch, routes, lambda **kw: iter([chunk]))
+    else:
+        response = _NonStreamResponse()
+        response.usage = usage
+        _capturing_openai(monkeypatch, routes, lambda **kw: response)
+
+    result = _chat_post(client, token, test_model["model_name"], stream)
+    assert result.status_code == HTTPStatus.OK
+    if stream:
+        assert "data: [DONE]" in result.get_data(as_text=True)
+    with app.app_context():
+        log = db.session.execute(select(RequestLog).filter_by(entity_id=test_user["id"])).scalar_one()
+        assert float(log.cost) == pytest.approx(2.025)
+        assert log.input_tokens == 1_000_000
 
 
 def test_non_streaming_chat_client_is_bounded(

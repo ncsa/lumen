@@ -145,6 +145,7 @@ models:
 
   - name: gpt-4o
     input_cost_per_million: 5.0     # coins per 1M input tokens
+    # cached_input_cost_per_million: 0.0  # optional; coins per 1M cached input tokens; omit/null = input price (zero is valid)
     output_cost_per_million: 15.0   # coins per 1M output tokens
     # auto_price: true                # optional; let the model update action set prices from models.dev (default: manual)
     # max_input_tokens: 128000        # optional; context window size

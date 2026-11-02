@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+- Configure a separate cached-input token price per model; unset rates use the normal input price, while zero is free.
+
 ## [2.3.1] - 2026-11-07
 
 - Fix `/profile` crashing with "can't compare offset-naive and offset-aware datetimes" on databases with `timestamptz` usage columns
