@@ -618,7 +618,7 @@ Running aggregated usage counters per entity per model per source, folded from `
 | `folded_audio_seconds` | BigInteger | NO | Part of `audio_seconds` added by the stats fold since the cutover |
 | `folded_cost` | Numeric(12,6) | NO | Part of `cost` added by the stats fold since the cutover |
 
-**Constraints:** `UNIQUE(entity_id, model_config_id, source)`
+**Constraints:** `UNIQUE(entity_id, model_config_id, source)`; index `ix_model_stats_model_config_id` on (`model_config_id`)
 
 ---
 
@@ -732,9 +732,11 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 | `outcome` | String(16) | YES | How the request ended: `'ok'` or `'disconnect'` |
 | `stats_deferred` | Boolean | YES | TRUE when billing left this request out of `model_stats` / `entity_stats` for the stats fold to add; NULL when billing counted it directly (before the stats cutover, on an older pod during a rolling update, or with a stale cached cutover). The fold, `flask check-stats` and the `/profile` live tail read only TRUE rows, so every request is counted exactly once |
 
+**Constraints:** index `request_logs_time_idx` on (`time` DESC); index `ix_request_logs_entity_id` on (`entity_id`); index `ix_request_logs_model_config_id_time` on (`model_config_id`, `time` DESC)
+
 **Notes:**
 - Foreign keys use `SET NULL` on delete (not cascade) to preserve historical log data when entities or models are removed. Endpoints are not removed at all: the config sync retires them by clearing `model_endpoints.active`, so `model_endpoint_id` keeps pointing at the endpoint that served each request, and the `SET NULL` action on that column only fires if a row is deleted directly in SQL.
-- `time` is indexed but not unique; concurrent workers may insert rows with the same timestamp without collision.
+- `time` is indexed by `request_logs_time_idx`, the index TimescaleDB creates with the hypertable (declared on the model, and created by the migration on SQLite), but not unique; concurrent workers may insert rows with the same timestamp without collision.
 - **Timing columns measure the user's wait, which `duration` does not.** `duration` starts *after* preflight (model lookup, access checks, coin budget, endpoint selection, pool checkout) and ends before the billing commit, while `time` is stamped *after* that commit. So neither can be walked backwards to the moment the request arrived. Together the new columns partition the request: `started_at` + `queue_wait` + `preflight` + `ttft_visible` is when the user first sees anything.
 - **`started_at` is stored, not derived.** The obvious reconstruction, `time − duration − queue_wait`, silently assumes preflight and the billing commit take zero time. Both grow under load, so the error is largest during exactly the burst the column exists to explain.
 - **`started_at` is the second `TIMESTAMPTZ` in the schema** (with `time`), deliberately unlike the naive-UTC convention everywhere else. It exists to be subtracted from `time` on the same row, and mixing naive with aware in that arithmetic misbehaves on PostgreSQL. Write it with `datetime.now(timezone.utc)`, never `timeutils.utcnow()`.

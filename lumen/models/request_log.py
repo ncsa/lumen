@@ -27,9 +27,10 @@ class RequestLog(db.Model):
 
     __tablename__ = "request_logs"
     __table_args__ = (
-        db.Index("ix_request_logs_time", "time"),
+        # TimescaleDB's default hypertable index, created by create_hypertable on
+        # PostgreSQL; declared so autogenerate does not propose dropping it.
+        db.Index("request_logs_time_idx", sa.desc("time")),
         db.Index("ix_request_logs_entity_id", "entity_id"),
-        db.Index("ix_request_logs_model_config_id", "model_config_id"),
         # Composite on the analytics predicate (model + time). Created by
         # migration f7a8b9c0d1e2 on PostgreSQL only; declared here so the model
         # and a fresh create_all agree with an upgraded schema (no autogenerate
