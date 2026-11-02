@@ -29,7 +29,7 @@ from tests.unit.test_migrations import _script_dir
 
 pytestmark = pytest.mark.postgres
 
-_BEFORE = "b7c9d1e3f5a8"
+_BEFORE = "b4c6d8e0f2a4"
 _HEAD = _script_dir().get_current_head()
 _SOURCE = "fkrestr"  # request_logs.source is VARCHAR(8)
 
