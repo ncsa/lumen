@@ -226,16 +226,19 @@ def test_bill_request_advances_api_key_counters(app, test_user, test_model):
         # Only the billed key moves: the UPDATE is scoped to its id.
         b = _key(bystander_id)
         assert (b.requests, b.input_tokens, b.output_tokens, b.audio_seconds) == (0, 0, 0, 0)
-        assert b.cost == 0
+        assert b.cost == Decimal("0")
         assert b.last_used_at is None
 
-        # A request billed without an api_key_id touches no key at all.
-        bill_request(entity_id, model_id, "api", 10, 5, 0.5, effective=None, audio_seconds=3)
+        # A request billed without an api_key_id touches no key at all: no
+        # UPDATE api_keys is even issued, so the api_key_id guard is pinned too.
+        with _statements() as log:
+            bill_request(entity_id, model_id, "api", 10, 5, 0.5, effective=None, audio_seconds=3)
+        assert not [s for s in log if s.upper().startswith("UPDATE API_KEYS")], log
         k = _key(key_id)
         assert (k.requests, k.input_tokens, k.output_tokens, k.audio_seconds) == (2, 20, 10, 6)
         assert k.cost == Decimal("1.0")
         assert k.last_used_at == billed_last_used
         b = _key(bystander_id)
         assert (b.requests, b.input_tokens, b.output_tokens, b.audio_seconds) == (0, 0, 0, 0)
-        assert b.cost == 0
+        assert b.cost == Decimal("0")
         assert b.last_used_at is None
