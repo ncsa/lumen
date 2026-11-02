@@ -184,6 +184,7 @@ def _load() -> _Snapshot:
             select(
                 ModelConfig.id, ModelConfig.model_name,
                 ModelConfig.input_cost_per_million, ModelConfig.output_cost_per_million,
+                ModelConfig.cached_input_cost_per_million,
                 ModelConfig.audio_cost_per_hour, ModelConfig.owner_entity_id,
                 ModelConfig.needs_ack, ModelConfig.early_access,
                 ModelConfig.disabled, ModelConfig.end_date,
