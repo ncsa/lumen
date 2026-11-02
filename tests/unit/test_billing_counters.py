@@ -187,3 +187,36 @@ def test_conversation_counter_first_use_and_fallback(app, test_user, monkeypatch
             db.session.commit()
         db.session.expire_all()
         assert db.session.get(EntityStat, entity_id).conversations == 2
+
+
+def _key(api_key_id):
+    """Re-read an API key row from the database, not the session's identity map."""
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    db.session.expire_all()
+    return db.session.get(APIKey, api_key_id)
+
+
+def test_bill_request_advances_api_key_counters(app, test_user, test_model):
+    entity_id, model_id = test_user["id"], test_model["id"]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        from lumen.services.crypto import hash_api_key
+        from lumen.services.llm import bill_request
+        _seed(entity_id)
+        key = APIKey(entity_id=entity_id, name="billed", key_hash=hash_api_key("lk_billed_key"))
+        db.session.add(key)
+        db.session.commit()
+        key_id = key.id
+
+        bill_request(entity_id, model_id, "api", 10, 5, 0.5, effective=None, api_key_id=key_id, audio_seconds=3)
+        k = _key(key_id)
+        assert (k.requests, k.input_tokens, k.output_tokens, k.audio_seconds) == (1, 10, 5, 3)
+        assert k.cost == Decimal("0.5")
+        assert k.last_used_at is not None
+
+        bill_request(entity_id, model_id, "api", 10, 5, 0.5, effective=None, api_key_id=key_id, audio_seconds=3)
+        k = _key(key_id)
+        assert (k.requests, k.input_tokens, k.output_tokens, k.audio_seconds) == (2, 20, 10, 6)
+        assert k.cost == Decimal("1.0")
