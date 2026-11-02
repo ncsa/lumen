@@ -669,6 +669,7 @@ def create_app():
         backfill_aggregate_cmd,
         check_aggregate_cmd,
         check_stats_cmd,
+        erase_entity_cmd,
         init_db_cmd,
         reassign_model_cmd,
         upgrade_cmd,
@@ -676,6 +677,7 @@ def create_app():
     )
     app.cli.add_command(init_db_cmd)
     app.cli.add_command(reassign_model_cmd)
+    app.cli.add_command(erase_entity_cmd)
     app.cli.add_command(backfill_aggregate_cmd)
     app.cli.add_command(check_aggregate_cmd)
     app.cli.add_command(wait_for_migrations_cmd)
