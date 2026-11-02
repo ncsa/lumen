@@ -2162,6 +2162,84 @@ def test_api_chat_bills_cached_input(app, client, monkeypatch, test_user, test_m
         assert log.input_tokens == 1_000_000
 
 
+def test_api_completions_reports_and_bills_cached_input(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, fresh_rate_limit,
+):
+    """The legacy endpoint rebuilds its ``usage`` object instead of forwarding
+    the upstream's, so it must restate the cached-prompt breakdown: a
+    cache-aware client prices whatever it is told, and without the breakdown it
+    would charge the whole prompt at the input rate and disagree with the bill."""
+    from lumen.blueprints.api import routes
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    from lumen.models.request_log import RequestLog
+
+    token, _ = api_key
+    _allow_model(app, test_user, test_model)
+    with app.app_context():
+        model = db.session.get(ModelConfig, test_model["id"])
+        model.input_cost_per_million = 2
+        model.output_cost_per_million = 4
+        model.cached_input_cost_per_million = 0.5
+        db.session.commit()
+        model_cache.refresh(app)
+
+    class _CompletionResponse:
+        id = "cmpl-cached"
+        created = 0
+        model = "upstream-name"
+        usage = SimpleNamespace(prompt_tokens=1_000_000, completion_tokens=100_000,
+                                total_tokens=1_100_000,
+                                prompt_tokens_details=SimpleNamespace(cached_tokens=250_000))
+        choices = [SimpleNamespace(message=SimpleNamespace(content="hi"), finish_reason="stop")]
+
+    _capturing_openai(monkeypatch, routes, lambda **kw: _CompletionResponse())
+
+    result = client.post(
+        "/v1/completions", headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"], "prompt": "hi"},
+    )
+    assert result.status_code == HTTPStatus.OK
+    assert result.get_json()["usage"] == {
+        "prompt_tokens": 1_000_000,
+        "completion_tokens": 100_000,
+        "total_tokens": 1_100_000,
+        "prompt_tokens_details": {"cached_tokens": 250_000},
+    }
+    with app.app_context():
+        log = db.session.execute(select(RequestLog).filter_by(entity_id=test_user["id"])).scalar_one()
+        assert float(log.cost) == pytest.approx(2.025)
+
+
+def test_api_completions_omits_the_breakdown_without_cached_tokens(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, fresh_rate_limit,
+):
+    """No cached count reported: the field stays absent, like the OpenAI API,
+    rather than appearing as ``cached_tokens: 0``."""
+    from lumen.blueprints.api import routes
+
+    token, _ = api_key
+    _allow_model(app, test_user, test_model)
+
+    class _CompletionResponse:
+        id = "cmpl-plain"
+        created = 0
+        model = "upstream-name"
+        usage = SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+        choices = [SimpleNamespace(message=SimpleNamespace(content="hi"), finish_reason="stop")]
+
+    _capturing_openai(monkeypatch, routes, lambda **kw: _CompletionResponse())
+
+    result = client.post(
+        "/v1/completions", headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"], "prompt": "hi"},
+    )
+    assert result.status_code == HTTPStatus.OK
+    assert result.get_json()["usage"] == {
+        "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15,
+    }
+
+
 def test_non_streaming_chat_client_is_bounded(
     app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
     fresh_rate_limit,

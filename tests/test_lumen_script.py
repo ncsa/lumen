@@ -1061,6 +1061,35 @@ def test_sync_writes_capability_flags(home, lumen_server):
     assert "reasoning" not in alias
 
 
+def test_sync_writes_cache_cost_rates(home, lumen_server, monkeypatch):
+    """The catalog states cache-read/write rates, which OpenCode prices.
+
+    OpenCode charges nothing for a cache read when ``cost.cache.read`` is
+    absent, while Lumen bills an unset cached-input rate at the ordinary input
+    rate, so every entry must carry one (issue #66).
+    """
+    port = lumen_server.server_address[1]
+    keys = home / ".config" / "lumen" / "keys.json"
+    keys.parent.mkdir(parents=True)
+    keys.write_text(json.dumps({host_key(port): "sk_stored_key_000"}))
+    monkeypatch.setitem(MODELS, "data", MODELS["data"] + [
+        {"id": "cache-demo", "max_model_len": 4000,
+         "input_cost_per_million": 3.0, "output_cost_per_million": 9.0,
+         "cached_input_cost_per_million": 0.3,
+         "input_modalities": ["text"], "output_modalities": ["text"]},
+    ])
+    r = run_script(home, port)
+    assert r.returncode == 0, r.stderr
+    models = json.loads(
+        (home / ".config" / "opencode" / "opencode.json").read_text()
+    )["provider"]["lumen"]["models"]
+    assert models["cache-demo"]["cost"] == {
+        "input": 3.0, "output": 9.0, "cache": {"read": 0.3, "write": 3.0},
+    }
+    # No configured cached-input rate: cached reads cost the input rate.
+    assert models["gpt-demo"]["cost"]["cache"] == {"read": 1.0, "write": 1.0}
+
+
 def test_sync_reports_added_and_removed(home, lumen_server):
     port = lumen_server.server_address[1]
     keys = home / ".config" / "lumen" / "keys.json"

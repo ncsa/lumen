@@ -205,6 +205,13 @@ def _model_dict(c, rates: dict, eps, ack_fields=None, tokens=None) -> dict:
         # Lumen status / cost fields
         "status": status,
         "input_cost_per_million": float(c.input_cost_per_million),
+        # Nullable for the same reason as the config field: null means cached
+        # input is billed at input_cost_per_million, so a client that also sees
+        # cached tokens in a usage payload can price them the way Lumen did.
+        "cached_input_cost_per_million": (
+            float(c.cached_input_cost_per_million)
+            if c.cached_input_cost_per_million is not None else None
+        ),
         "output_cost_per_million": float(c.output_cost_per_million),
         "instances": {
             "configured": len(eps),
@@ -1065,6 +1072,18 @@ def completions():
         return _err("No response from model", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
 
     usage = response.usage
+    usage_payload = {
+        "prompt_tokens": usage.prompt_tokens if usage else 0,
+        "completion_tokens": usage.completion_tokens if usage else 0,
+        "total_tokens": usage.total_tokens if usage else 0,
+    }
+    # This endpoint rebuilds the usage object instead of forwarding it, so it
+    # must restate the cached-prompt breakdown the chat endpoint passes through:
+    # without it a cache-aware client prices the whole prompt at the input rate
+    # and reports a different cost from the one Lumen charged.
+    cached_tokens = cached_tokens_from_usage(usage)
+    if cached_tokens:
+        usage_payload["prompt_tokens_details"] = {"cached_tokens": cached_tokens}
     return jsonify(
         {
             "id": response.id,
@@ -1078,10 +1097,6 @@ def completions():
                     "finish_reason": response.choices[0].finish_reason,
                 }
             ],
-            "usage": {
-                "prompt_tokens": usage.prompt_tokens if usage else 0,
-                "completion_tokens": usage.completion_tokens if usage else 0,
-                "total_tokens": usage.total_tokens if usage else 0,
-            },
+            "usage": usage_payload,
         }
     )

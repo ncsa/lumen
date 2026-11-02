@@ -4,7 +4,7 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
-- Configure a separate cached-input token price per model; unset rates use the normal input price, while zero is free.
+- Configure a separate cached-input token price per model; unset rates use the normal input price, while zero is free. The rate is published on `/v1/models` and written into the generated OpenCode config (`cost.cache.read`/`write`) so cache-aware clients bill the same figure.
 
 ## [2.3.1] - 2026-11-07
 

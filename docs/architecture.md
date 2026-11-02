@@ -352,9 +352,12 @@ Keys are HMAC-SHA256 hashed (using `LUMEN_ENCRYPTION_KEY`) before storage. The `
 Coins are a virtual currency unit (not 1:1 with tokens or dollars). Cost is computed as:
 
 ```
-cost_usd = (input_tokens / 1_000_000 × input_cost_per_million)
+cost_usd = (uncached_input_tokens / 1_000_000 × input_cost_per_million)
+         + (cached_input_tokens / 1_000_000 × cached_input_cost_per_million)
          + (output_tokens / 1_000_000 × output_cost_per_million)
 ```
+
+The two input terms split the upstream's prompt total using the cached count it reports (`prompt_tokens_details.cached_tokens`, or the top-level `cached_tokens` variant); a backend that reports no cache split bills the whole prompt at the input rate, as before. When `cached_input_cost_per_million` is unset, cached input is billed at the input rate too, so the two lines collapse into the original formula and no existing price changes. The input total recorded in `request_logs` stays the full prompt (cached tokens included) — only the cost reflects the split, so no cached-token usage metric is stored.
 
 Coin values use sentinel semantics: `-2` = unlimited, `0` = blocked, positive = budget ceiling.
 

@@ -340,7 +340,7 @@ class StreamTarget(NamedTuple):
     output_cost: float
     # None = the model has no cached-input rate, so cached input is billed at
     # input_cost (see calculate_cost).
-    cached_input_cost: float = None
+    cached_input_cost: Optional[float] = None
 
 
 def stream_target(config, endpoint) -> StreamTarget:
@@ -1035,7 +1035,7 @@ def estimate_prompt_tokens(messages) -> int:
 
 
 def estimate_abort_usage(usage, messages, content_deltas, in_cost_per_million, out_cost_per_million,
-                         cached_in_cost_per_million=None):
+                         cached_in_cost_per_million: Optional[float] = None):
     """Return (input_tokens, output_tokens, cost) for a stream that ended early.
 
     Prefers the upstream's exact totals when the terminal usage chunk had already

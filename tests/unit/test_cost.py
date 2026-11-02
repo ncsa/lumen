@@ -54,6 +54,33 @@ def test_cached_tokens_from_usage(usage, expected):
     assert cached_tokens_from_usage(usage) == expected
 
 
+@pytest.mark.parametrize("usage, expected", [
+    # Whole numbers echoed as floats or strings are read like the ints the
+    # OpenAI client returns — OpenCode and the DeepSeek harness accept the same
+    # shapes, so ignoring them would bill more than the client shows.
+    ({"prompt_tokens": 100.0, "prompt_tokens_details": {"cached_tokens": 40.0}}, 40),
+    ({"prompt_tokens": "100", "prompt_tokens_details": {"cached_tokens": "40"}}, 40),
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": " 40 "}}, 40),
+    # Anything else is not a count: reject rather than guess.
+    ({"prompt_tokens": "abc", "prompt_tokens_details": {"cached_tokens": 40}}, 0),
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": "1.5"}}, 0),
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": True}}, 0),
+    ({"prompt_tokens": True, "prompt_tokens_details": {"cached_tokens": 1}}, 0),
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": float("nan")}}, 0),
+    ({"prompt_tokens": 100, "prompt_tokens_details": object()}, 0),
+])
+def test_cached_tokens_from_usage_reads_the_wire_types_providers_send(usage, expected):
+    assert cached_tokens_from_usage(usage) == expected
+
+
+def test_calculate_cost_tolerates_an_unreadable_cached_count():
+    """A count calculate_cost cannot read bills as ordinary input, never as a
+    discount — the pre-caching behaviour — and never raises."""
+    assert calculate_cost(1_000_000, 0, 2.0, 4.0, "not-a-count", 0.5) == 2.0
+    assert calculate_cost(1_000_000, 0, 2.0, 4.0, None, 0.5) == 2.0
+    assert calculate_cost(1_000_000, 0, 2.0, 4.0, "250000", 0.5) == 1.625
+
+
 def test_audio_cost_one_hour():
     assert calculate_audio_cost(3600, 0.10) == 0.10
 
