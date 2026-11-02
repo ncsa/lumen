@@ -206,9 +206,10 @@ def test_bill_request_advances_api_key_counters(app, test_user, test_model):
         from lumen.services.llm import bill_request
         _seed(entity_id)
         key = APIKey(entity_id=entity_id, name="billed", key_hash=hash_api_key("lk_billed_key"))
-        db.session.add(key)
+        bystander = APIKey(entity_id=entity_id, name="bystander", key_hash=hash_api_key("lk_bystander_key"))
+        db.session.add_all([key, bystander])
         db.session.commit()
-        key_id = key.id
+        key_id, bystander_id = key.id, bystander.id
 
         bill_request(entity_id, model_id, "api", 10, 5, 0.5, effective=None, api_key_id=key_id, audio_seconds=3)
         k = _key(key_id)
@@ -220,3 +221,21 @@ def test_bill_request_advances_api_key_counters(app, test_user, test_model):
         k = _key(key_id)
         assert (k.requests, k.input_tokens, k.output_tokens, k.audio_seconds) == (2, 20, 10, 6)
         assert k.cost == Decimal("1.0")
+        billed_last_used = k.last_used_at
+
+        # Only the billed key moves: the UPDATE is scoped to its id.
+        b = _key(bystander_id)
+        assert (b.requests, b.input_tokens, b.output_tokens, b.audio_seconds) == (0, 0, 0, 0)
+        assert b.cost == 0
+        assert b.last_used_at is None
+
+        # A request billed without an api_key_id touches no key at all.
+        bill_request(entity_id, model_id, "api", 10, 5, 0.5, effective=None, audio_seconds=3)
+        k = _key(key_id)
+        assert (k.requests, k.input_tokens, k.output_tokens, k.audio_seconds) == (2, 20, 10, 6)
+        assert k.cost == Decimal("1.0")
+        assert k.last_used_at == billed_last_used
+        b = _key(bystander_id)
+        assert (b.requests, b.input_tokens, b.output_tokens, b.audio_seconds) == (0, 0, 0, 0)
+        assert b.cost == 0
+        assert b.last_used_at is None
