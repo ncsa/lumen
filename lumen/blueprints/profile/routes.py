@@ -776,11 +776,12 @@ def _usage_entity_id():
 # ``request_logs``.
 
 
-# ``request_logs.entity_id`` is ON DELETE SET NULL, so a hard-deleted entity's
-# raw rows answer for nobody. The aggregate materialised the id at refresh time
+# ``request_logs.entity_id`` is now ON DELETE RESTRICT, so an entity with raw
+# rows can no longer be deleted. It used to be SET NULL: an entity deleted then
+# had its raw rows nulled, but the aggregate materialised the id at refresh time
 # and never re-evaluates the foreign key, so it keeps that entity's groups for
-# as long as the view lives. Every per-entity query carries this clause so a
-# deleted entity answers with nothing, the same as its raw rows would, rather
+# as long as the view lives. Every per-entity query carries this clause so such
+# a deleted entity answers with nothing, the same as its raw rows do, rather
 # than with whatever history happened to be materialised before the delete.
 # For an entity that still exists it is one primary-key probe, evaluated once.
 _ENTITY_STILL_EXISTS = " AND EXISTS (SELECT 1 FROM entities WHERE id = :eid)"

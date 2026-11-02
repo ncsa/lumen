@@ -16,10 +16,9 @@ and enforces no foreign key here. This module checks the PostgreSQL-only half:
   missed makes the final delete fail on the RESTRICT foreign key, rolling the whole
   final transaction back.
 
-``request_logs.entity_id`` is still ``ON DELETE SET NULL`` until #176 lands its
-RESTRICT foreign key. ``pg_app`` swaps it for RESTRICT in this module's private
-database, the constraint #176 adds, so the rollback test checks the command's
-behaviour against the schema it relies on; once #176 is in, the swap is a no-op.
+``request_logs.entity_id`` is ``ON DELETE RESTRICT`` from migration
+``c8d0e2f4a6b8``; ``pg_app`` asserts it, so the rollback test checks the command's
+behaviour against the schema it relies on.
 
 The ghost is a single shared row, so assertions on it are deltas or on the rows each
 test seeded. Every test uses its own users and seeds the same two ages (40 days,
@@ -56,16 +55,16 @@ REVOKED = datetime(2025, 6, 1, 12, 0, 0)
 
 @pytest.fixture(scope="module")
 def pg_app(pg_migrated_isolated):
-    """A Flask app on this module's database: decompression guard at 10, RESTRICT on entity_id.
+    """A Flask app on this module's database: decompression guard at 10, RESTRICT on entity_id checked.
 
-    Both are set before the app opens a connection, so every pooled connection starts
-    with them.
+    The guard is set before the app opens a connection, so every pooled connection
+    starts with it.
     """
     url = pg_migrated_isolated[0]
     admin = create_engine(url, isolation_level="AUTOCOMMIT")
     with admin.connect() as conn:
         conn.execute(text(f'ALTER DATABASE "{url.rsplit("/", 1)[1]}" SET timescaledb.max_tuples_decompressed_per_dml_transaction = 10'))
-        _restrict_entity_fk(conn)
+        assert _entity_fk(conn)[1] == "r", "request_logs.entity_id is not ON DELETE RESTRICT; migration c8d0e2f4a6b8 did not run"
     admin.dispose()
 
     previous_env = os.environ.get("DATABASE_URL")
@@ -103,18 +102,6 @@ def _entity_fk(conn):
         "WHERE conrelid = 'request_logs'::regclass AND contype = 'f' "
         "AND confrelid = 'entities'::regclass"
     )).one()
-
-
-def _restrict_entity_fk(conn):
-    """Make request_logs.entity_id ON DELETE RESTRICT, as #176 does, unless it already is."""
-    name, rule = _entity_fk(conn)
-    if rule != "r":
-        conn.execute(text(f'ALTER TABLE request_logs DROP CONSTRAINT "{name}"'))
-        conn.execute(text(
-            f'ALTER TABLE request_logs ADD CONSTRAINT "{name}" '
-            "FOREIGN KEY (entity_id) REFERENCES entities (id) ON DELETE RESTRICT"
-        ))
-    assert _entity_fk(conn)[1] == "r"
 
 
 @pytest.fixture

@@ -17,9 +17,12 @@ Retirement replaces the delete with ``model_endpoints.active = false``, so
 request_logs is never written at all. This module proves that against a
 genuinely compressed chunk with the guard deliberately lowered to 10, so
 any history rewrite aborts immediately instead of silently succeeding
-whenever a test seeds fewer rows than production's 114k. The control
-DELETE at the end proves the guard is armed: if a TimescaleDB upgrade ever
-stops enforcing it, this module reports that rather than passing vacuously.
+whenever a test seeds fewer rows than production's 114k. At the end, a
+control DELETE of the retired endpoint is refused by the ``ON DELETE
+RESTRICT`` foreign key without touching the compressed chunk, and a control
+UPDATE (what the old ``SET NULL`` action ran) proves the guard is armed: if a
+TimescaleDB upgrade ever stops enforcing it, this module reports that rather
+than passing vacuously.
 
 No SQLite trigger can see a compressed chunk, which is why the compressed
 half of the guarantee lives here and only the behavioural matrix (single
@@ -80,7 +83,7 @@ def pg_app(pg_migrated_isolated):
 
     Before the app opens a single connection, the per-statement decompression
     guard is lowered at database level: pooled connections inherit database
-    settings at connect time, so the sync's session — and the control DELETE —
+    settings at connect time, so the sync's session — and the control statements —
     must be able to see the lowered limit. The guard is the SQLite trigger of
     the unit tests, made real: any UPDATE that reaches into the compressed
     chunk aborts, which is exactly how production failed.
@@ -180,13 +183,25 @@ def test_retirement_preserves_compressed_history(pg_app):
             assert check_all_endpoints() == 1
             assert probe.call_args.args[0] == B_URL
 
-    # Control, in its own transaction: the old delete-based sync must abort
-    # against this chunk. If this stops raising, the guard is no longer
-    # enforced and the assertions above no longer prove anything.
+    # Control, in its own transaction: the old delete-based sync must fail
+    # against this chunk. request_logs.model_endpoint_id is ON DELETE RESTRICT,
+    # so the delete is refused by the foreign key, which has to see the rows
+    # inside the compressed chunk to do so, and it leaves the chunk compressed.
     with pg_app.app_context():
         from lumen.extensions import db
 
-        with pytest.raises(exc.DBAPIError) as aborted:
+        with pytest.raises(exc.IntegrityError, match="request_logs_model_endpoint_id_fkey"):
             with db.engine.begin() as conn:
                 conn.execute(text("DELETE FROM model_endpoints WHERE id = :i"), {"i": a_id})
-        assert "decompression limit" in str(aborted.value), f"the control DELETE failed with something else: {aborted.value}"
+        assert _compressed_chunks(db.engine) == compressed_before
+        assert db.session.get(ModelEndpoint, a_id) is not None
+        assert db.session.scalar(select(func.count()).select_from(RequestLog).where(RequestLog.model_endpoint_id == a_id)) == SEED_ROWS
+
+        # And the guard is armed: the rewrite the old ON DELETE SET NULL action
+        # performed must abort against this chunk. If this stops raising, a
+        # TimescaleDB upgrade stopped enforcing the limit and the retirement
+        # assertions above no longer prove anything.
+        with pytest.raises(exc.DBAPIError) as aborted:
+            with db.engine.begin() as conn:
+                conn.execute(text("UPDATE request_logs SET model_endpoint_id = NULL WHERE model_endpoint_id = :i"), {"i": a_id})
+        assert "decompression limit" in str(aborted.value), f"the control UPDATE failed with something else: {aborted.value}"
