@@ -31,7 +31,7 @@ from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
 from lumen.models.request_log import RequestLog
-from lumen.services.cost import cached_tokens_from_usage, calculate_cost
+from lumen.services.cost import usage_tokens, calculate_cost
 from lumen.services.crypto import cache_salt_for_entity
 from lumen.services.model_resolver import resolve_model_config
 from lumen.services.stats_cutover import cached_cutover_at
@@ -1051,9 +1051,7 @@ def estimate_abort_usage(usage, messages, content_deltas, in_cost_per_million, o
     had cached.
     """
     if usage is not None:
-        input_tokens = usage.prompt_tokens or 0
-        output_tokens = usage.completion_tokens or 0
-        cached_tokens = cached_tokens_from_usage(usage)
+        input_tokens, cached_tokens, output_tokens = usage_tokens(usage)
     else:
         input_tokens = estimate_prompt_tokens(messages)
         output_tokens = content_deltas
@@ -1309,8 +1307,7 @@ def _send_message_stream(app, messages, model, entity_id, source, effective, dis
 
         duration = time.monotonic() - t0
         reply = "".join(parts)
-        input_tokens = usage.prompt_tokens if usage else 0
-        output_tokens = usage.completion_tokens if usage else 0
+        input_tokens, cached_tokens, output_tokens = usage_tokens(usage)
         reasoning_tokens = (
             getattr(getattr(usage, "completion_tokens_details", None), "reasoning_tokens", None)
             or getattr(usage, "reasoning_tokens", None)
@@ -1318,7 +1315,7 @@ def _send_message_stream(app, messages, model, entity_id, source, effective, dis
 
         cost = calculate_cost(
             input_tokens, output_tokens, mc_in_cost, mc_out_cost,
-            cached_input_tokens=cached_tokens_from_usage(usage),
+            cached_input_tokens=cached_tokens,
             cached_input_cost_per_million=mc_cached_cost,
         )
         output_speed = output_tokens / duration if duration > 0 else 0.0

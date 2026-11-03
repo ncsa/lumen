@@ -1,3 +1,12 @@
+"""Per-request cost arithmetic.
+
+Only a cache *read* is priced separately. A prompt-cache write counts as part of
+the reported prompt total and is billed at the ordinary input rate: Lumen models
+no write premium, which matches how its operations are priced today (an
+Anthropic-style 1.25x/2x write premium is deliberately not modelled).
+"""
+
+
 def calculate_cost(
     input_tokens: int,
     output_tokens: int,
@@ -30,6 +39,31 @@ def calculate_cost(
         + output_tokens * float(output_cost_per_million) / 1_000_000,
         6,
     )
+
+
+def usage_tokens(usage) -> tuple:
+    """``(prompt_tokens, cached_prompt_tokens, completion_tokens)`` from ``usage``.
+
+    The one place an upstream's usage object becomes numbers. Every billing and
+    reporting path reads the same triple, so the streaming, non-streaming and
+    audio routes cannot drift apart, and a count Lumen cannot read is 0 — billed
+    as ordinary input, never as a discount.
+
+    ``prompt_tokens``/``completion_tokens`` are the OpenAI spellings;
+    ``input_tokens``/``output_tokens`` cover the audio upstream, which reports
+    the same figures under those names.
+    """
+    if usage is None:
+        return 0, 0, 0
+    prompt = _as_token_count(_field(usage, "prompt_tokens"))
+    if prompt is None:
+        prompt = _as_token_count(_field(usage, "input_tokens")) or 0
+    completion = _as_token_count(_field(usage, "completion_tokens"))
+    if completion is None:
+        completion = _as_token_count(_field(usage, "output_tokens")) or 0
+    # cached_tokens_from_usage re-derives the prompt total; a prompt of 0 can
+    # have no cached part, so skip it and never report a cache on no input.
+    return prompt, (cached_tokens_from_usage(usage) if prompt else 0), completion
 
 
 def cached_tokens_from_usage(usage) -> int:

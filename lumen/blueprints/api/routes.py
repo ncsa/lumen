@@ -19,7 +19,7 @@ from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.services import model_cache, request_rates
-from lumen.services.cost import calculate_audio_cost, cached_tokens_from_usage, calculate_cost
+from lumen.services.cost import calculate_audio_cost, usage_tokens, calculate_cost
 from lumen.services.crypto import cache_salt_for_entity, hash_api_key
 from lumen.services.key_expiry import revoke_if_expired
 from lumen.services.live_state import get_live_state
@@ -640,13 +640,11 @@ def _complete_and_bill(model_name: str, messages: list, **kwargs):
         usage = response.usage
         if usage is None:
             logger.warning("Upstream did not return usage data (model=%s, entity_id=%s)", model_name, entity_id)
-            usage_prompt, usage_completion = 0, 0
-        else:
-            usage_prompt, usage_completion = usage.prompt_tokens, usage.completion_tokens
+        usage_prompt, cached_prompt, usage_completion = usage_tokens(usage)
 
         cost = calculate_cost(
             usage_prompt, usage_completion, mc_in_cost, mc_out_cost,
-            cached_input_tokens=cached_tokens_from_usage(usage),
+            cached_input_tokens=cached_prompt,
             cached_input_cost_per_million=mc_cached_cost,
         )
         bill_request(entity_id, mc_id, "api", usage_prompt, usage_completion, cost,
@@ -815,15 +813,16 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                 if not aborted:
                     duration = _time.monotonic() - t0
                     if usage is not None:
+                        input_tokens, cached_tokens, output_tokens = usage_tokens(usage)
                         cost = calculate_cost(
-                            usage.prompt_tokens, usage.completion_tokens,
+                            input_tokens, output_tokens,
                             mc_in_cost, mc_out_cost,
-                            cached_input_tokens=cached_tokens_from_usage(usage),
+                            cached_input_tokens=cached_tokens,
                             cached_input_cost_per_million=mc_cached_cost,
                         )
                         phase = "billing"
                         with app.app_context():
-                            bill_request(entity_id, mc_id, "api", usage.prompt_tokens, usage.completion_tokens,
+                            bill_request(entity_id, mc_id, "api", input_tokens, output_tokens,
                                          cost, effective=effective, api_key_id=ak_id,
                                          endpoint_id=ep_id, duration=duration,
                                          timing=timing, upstream_t0=t0,
@@ -991,11 +990,10 @@ def _do_audio(kind: str):
                     model_name, entity_id,
                 )
         elif isinstance(usage, dict) and (usage.get("type") == "tokens" or "prompt_tokens" in usage):
-            in_tok = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
-            out_tok = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+            in_tok, cached_tok, out_tok = usage_tokens(usage)
             cost = calculate_cost(
                 in_tok, out_tok, mc_in_cost, mc_out_cost,
-                cached_input_tokens=cached_tokens_from_usage(usage),
+                cached_input_tokens=cached_tok,
                 cached_input_cost_per_million=mc_cached_cost,
             )
         else:
@@ -1072,16 +1070,17 @@ def completions():
         return _err("No response from model", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
 
     usage = response.usage
+    prompt_tokens, cached_tokens, completion_tokens = usage_tokens(usage)
     usage_payload = {
-        "prompt_tokens": usage.prompt_tokens if usage else 0,
-        "completion_tokens": usage.completion_tokens if usage else 0,
-        "total_tokens": usage.total_tokens if usage else 0,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        # Summed from the two counts above, not copied from the upstream: the
+        # object is rebuilt here, and a total disagreeing with its parts is the
+        # inconsistency the cached breakdown exists to prevent.
+        "total_tokens": prompt_tokens + completion_tokens,
     }
-    # This endpoint rebuilds the usage object instead of forwarding it, so it
-    # must restate the cached-prompt breakdown the chat endpoint passes through:
-    # without it a cache-aware client prices the whole prompt at the input rate
-    # and reports a different cost from the one Lumen charged.
-    cached_tokens = cached_tokens_from_usage(usage)
+    # A cache-aware client prices the cached tokens a response reports, so the
+    # rebuilt object restates the breakdown the chat endpoint forwards whole.
     if cached_tokens:
         usage_payload["prompt_tokens_details"] = {"cached_tokens": cached_tokens}
     return jsonify(

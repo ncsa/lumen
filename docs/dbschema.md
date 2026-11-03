@@ -430,7 +430,7 @@ Configuration and metadata for each AI model that Lumen can proxy. One row per l
 | `id` | Integer | NO | Primary key |
 | `model_name` | String(128) | NO | Canonical model identifier sent to clients (e.g., `gpt-4o`). Unique. |
 | `input_cost_per_million` | Numeric(12,6) | NO | USD cost per one million input tokens |
-| `cached_input_cost_per_million` | Numeric(12,6) | YES | USD cost per one million cached input tokens; NULL uses `input_cost_per_million` (zero is a valid rate). No separate cached-token usage is stored. |
+| `cached_input_cost_per_million` | Numeric(12,6) | YES | USD cost per one million cached input tokens; NULL uses `input_cost_per_million` (zero is a valid rate). Cache reads only — cache writes bill at the input rate. No separate cached-token usage is stored. |
 | `output_cost_per_million` | Numeric(12,6) | NO | USD cost per one million output tokens |
 | `audio_cost_per_hour` | Numeric(12,6) | YES | USD cost per hour of audio; only set for speech-to-text (ASR) models |
 | `owner_entity_id` | Integer (FK → entities) | YES | Owning user entity; NULL = available to everyone. When set, only the owner may use the model. `SET NULL` on delete — deleting the owner makes the model public again. |
