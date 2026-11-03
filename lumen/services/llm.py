@@ -31,7 +31,7 @@ from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
 from lumen.models.request_log import RequestLog
-from lumen.services.cost import usage_tokens, calculate_cost
+from lumen.services.cost import calculate_cost, usage_tokens
 from lumen.services.crypto import cache_salt_for_entity
 from lumen.services.model_resolver import resolve_model_config
 from lumen.services.stats_cutover import cached_cutover_at
@@ -853,6 +853,7 @@ def update_stats(
     endpoint_id: int = None,
     duration: float = 0.0,
     audio_seconds: int = 0,
+    cached_input_tokens: int = None,
     aborted: bool = False,
     timing: RequestTiming = RequestTiming(),
     upstream_t0: float = None,
@@ -879,6 +880,13 @@ def update_stats(
     client had read it; its token counts may be estimated (see
     estimate_abort_usage).
 
+    ``cached_input_tokens`` is the part of ``input_tokens`` the upstream served
+    from its prompt cache and priced at the cached rate. None — the default, and
+    what an aborted request with no terminal usage object leaves — is stored as
+    SQL NULL: "nothing to record" is not a zero it could vouch for, and the fold
+    skips NULLs so an unknown count never adds to a total. A usage object without
+    cache fields records 0, matching the price charged for it.
+
     ``timing`` carries the arrival marks captured in the view (see
     RequestTiming) and ``upstream_t0`` is the monotonic instant taken
     immediately before the upstream call, from which the preflight span is
@@ -902,6 +910,7 @@ def update_stats(
         source=source,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        cached_input_tokens=cached_input_tokens,
         audio_seconds=audio_seconds,
         cost=cost,
         duration=duration,
@@ -925,6 +934,8 @@ def update_stats(
         return
 
     now = utcnow()
+    # A NULL count (no breakdown reported) adds nothing to a running total.
+    cached = cached_input_tokens or 0
 
     _bump(
         ModelStat,
@@ -933,12 +944,14 @@ def update_stats(
             "requests": ModelStat.requests + 1,
             "input_tokens": ModelStat.input_tokens + input_tokens,
             "output_tokens": ModelStat.output_tokens + output_tokens,
+            "cached_input_tokens": ModelStat.cached_input_tokens + cached,
             "audio_seconds": ModelStat.audio_seconds + audio_seconds,
             "cost": ModelStat.cost + cost,
             "last_used_at": now,
         },
         {
             "requests": 1, "input_tokens": input_tokens, "output_tokens": output_tokens,
+            "cached_input_tokens": cached,
             "audio_seconds": audio_seconds, "cost": cost, "last_used_at": now,
         },
     )
@@ -949,12 +962,14 @@ def update_stats(
             "requests": EntityStat.requests + 1,
             "input_tokens": EntityStat.input_tokens + input_tokens,
             "output_tokens": EntityStat.output_tokens + output_tokens,
+            "cached_input_tokens": EntityStat.cached_input_tokens + cached,
             "audio_seconds": EntityStat.audio_seconds + audio_seconds,
             "cost": EntityStat.cost + cost,
             "last_used_at": now,
         },
         {
             "requests": 1, "input_tokens": input_tokens, "output_tokens": output_tokens,
+            "cached_input_tokens": cached,
             "audio_seconds": audio_seconds, "cost": cost, "last_used_at": now,
         },
     )
@@ -1000,7 +1015,7 @@ def bill_request(entity_id: int, model_config_id: int, source: str, input_tokens
     subtract_coins (``_UNSET`` re-resolves it there). ``api_key_id`` is both
     recorded on the step 1 row and used for step 4; leave it None for chat.
     ``log_fields`` are the remaining update_stats keywords (endpoint, timing,
-    outcome, ...).
+    outcome, cached_input_tokens, ...).
     """
     update_stats(entity_id, model_config_id, source, input_tokens, output_tokens, cost,
                  audio_seconds=audio_seconds, api_key_id=api_key_id, **log_fields)
@@ -1036,7 +1051,7 @@ def estimate_prompt_tokens(messages) -> int:
 
 def estimate_abort_usage(usage, messages, content_deltas, in_cost_per_million, out_cost_per_million,
                          cached_in_cost_per_million: Optional[float] = None):
-    """Return (input_tokens, output_tokens, cost) for a stream that ended early.
+    """Return (input_tokens, output_tokens, cost, cached_input_tokens) for a stream that ended early.
 
     Prefers the upstream's exact totals when the terminal usage chunk had already
     arrived — both streaming loops capture ``chunk.usage`` before they test the
@@ -1046,26 +1061,27 @@ def estimate_abort_usage(usage, messages, content_deltas, in_cost_per_million, o
     OpenAI-compatible backends emit.
 
     A known usage chunk also brings the upstream's cache-read count, which is
-    priced at ``cached_in_cost_per_million``. The estimate carries no cached
-    count: a character count of the prompt cannot say which part of it a backend
-    had cached.
+    priced at ``cached_in_cost_per_million`` and returned for the request_logs
+    row. An estimated request reports None for it, not 0: a character count of the
+    prompt cannot say which part of it a backend had cached, and the row must show
+    "unknown" rather than claim there was no cache.
     """
     if usage is not None:
         input_tokens, cached_tokens, output_tokens = usage_tokens(usage)
     else:
         input_tokens = estimate_prompt_tokens(messages)
         output_tokens = content_deltas
-        cached_tokens = 0
+        cached_tokens = None
     cost = calculate_cost(
         input_tokens, output_tokens, in_cost_per_million, out_cost_per_million,
         cached_input_tokens=cached_tokens,
         cached_input_cost_per_million=cached_in_cost_per_million,
     )
-    return input_tokens, output_tokens, cost
+    return input_tokens, output_tokens, cost, cached_tokens
 
 
 def record_aborted_request(entity_id, model_config_id, source, endpoint_id=None, duration=0.0,
-                           input_tokens=0, output_tokens=0, cost=0.0,
+                           input_tokens=0, output_tokens=0, cost=0.0, cached_input_tokens=None,
                            effective=_UNSET, api_key_id=None,
                            timing=RequestTiming(), upstream_t0=None, ttft=None, ttft_visible=None):
     """Bill and log a request_logs row for a stream the client abandoned mid-response.
@@ -1089,6 +1105,7 @@ def record_aborted_request(entity_id, model_config_id, source, endpoint_id=None,
             entity_id, model_config_id, source,
             input_tokens, output_tokens, cost,
             effective=effective, api_key_id=api_key_id,
+            cached_input_tokens=cached_input_tokens,
             endpoint_id=endpoint_id, duration=duration, aborted=True,
             timing=timing, upstream_t0=upstream_t0,
             ttft=ttft, ttft_visible=ttft_visible, outcome="disconnect",
@@ -1099,7 +1116,8 @@ def record_aborted_request(entity_id, model_config_id, source, endpoint_id=None,
 
 
 def record_stream_abort(app, *, billed, entity_id, model_config_id, source, endpoint_id, stream_t0,
-                        input_tokens=0, output_tokens=0, cost=0.0, effective=_UNSET, api_key_id=None,
+                        input_tokens=0, output_tokens=0, cost=0.0, cached_input_tokens=None,
+                        effective=_UNSET, api_key_id=None,
                         reason="disconnect", timing=RequestTiming(), ttft=None, ttft_visible=None):
     """Abort accounting for a streaming generator that ends before billing.
 
@@ -1132,6 +1150,7 @@ def record_stream_abort(app, *, billed, entity_id, model_config_id, source, endp
                 entity_id, model_config_id, source,
                 endpoint_id=endpoint_id, duration=time.monotonic() - stream_t0,
                 input_tokens=input_tokens, output_tokens=output_tokens, cost=cost,
+                cached_input_tokens=cached_input_tokens,
                 effective=effective, api_key_id=api_key_id,
                 timing=timing, upstream_t0=stream_t0,
                 ttft=ttft, ttft_visible=ttft_visible,
@@ -1237,13 +1256,14 @@ def _send_message_stream(app, messages, model, entity_id, source, effective, dis
         stream got. Shared by the break-on-disconnect path and GeneratorExit so
         the two cannot bill differently.
         """
-        input_tokens, output_tokens, cost = estimate_abort_usage(
+        input_tokens, output_tokens, cost, cached_tokens = estimate_abort_usage(
             usage, messages, len(parts), mc_in_cost, mc_out_cost,
             cached_in_cost_per_million=mc_cached_cost)
         record_stream_abort(
             app, billed=billed, entity_id=entity_id, model_config_id=mc_id,
             source=source, endpoint_id=ep_id, stream_t0=t0,
             input_tokens=input_tokens, output_tokens=output_tokens, cost=cost,
+            cached_input_tokens=cached_tokens,
             effective=effective,
             timing=timing, ttft=t_first_any, ttft_visible=t_first,
         )
@@ -1327,6 +1347,7 @@ def _send_message_stream(app, messages, model, entity_id, source, effective, dis
                     entity_id, mc_id, source,
                     input_tokens, output_tokens, cost,
                     effective=effective,
+                    cached_input_tokens=cached_tokens,
                     endpoint_id=ep_id, duration=duration,
                     timing=timing, upstream_t0=t0,
                     ttft=t_first_any, ttft_visible=t_first, outcome="ok",

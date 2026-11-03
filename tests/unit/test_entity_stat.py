@@ -81,3 +81,33 @@ def test_update_stats_last_used_at_advances(app, test_user, test_model):
         t2 = db.session.get(EntityStat, entity_id).last_used_at
 
         assert t2 >= t1
+
+
+def test_update_stats_records_the_cached_split_and_bumps_both_totals(app, test_user, test_model):
+    """The pre-cutover bump path must carry the split, not only the row."""
+    entity_id, model_id = test_user["id"], test_model["id"]
+    with app.app_context():
+        from sqlalchemy import select
+
+        from lumen.extensions import db
+        from lumen.models.entity_stat import EntityStat
+        from lumen.models.model_stat import ModelStat
+        from lumen.models.request_log import RequestLog
+        from lumen.services.llm import update_stats
+
+        update_stats(entity_id, model_id, "chat", 1_000, 50, 0.01,
+                     cached_input_tokens=250)
+        update_stats(entity_id, model_id, "chat", 10, 5, 0.02)
+        db.session.commit()
+
+        logs = db.session.execute(
+            select(RequestLog).where(RequestLog.entity_id == entity_id).order_by(RequestLog.id)
+        ).scalars().all()
+        assert [log.cached_input_tokens for log in logs] == [250, None]
+
+        estat = db.session.get(EntityStat, entity_id)
+        assert (estat.input_tokens, estat.cached_input_tokens) == (1_010, 250)
+        assert estat.folded_cached_input_tokens == 0  # bumped by billing, not the fold
+        mstat = db.session.execute(select(ModelStat).filter_by(
+            entity_id=entity_id, model_config_id=model_id, source="chat")).scalar_one()
+        assert (mstat.input_tokens, mstat.cached_input_tokens) == (1_010, 250)

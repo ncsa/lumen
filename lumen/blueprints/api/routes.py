@@ -19,7 +19,7 @@ from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.services import model_cache, request_rates
-from lumen.services.cost import calculate_audio_cost, usage_tokens, calculate_cost
+from lumen.services.cost import calculate_audio_cost, calculate_cost, usage_tokens
 from lumen.services.crypto import cache_salt_for_entity, hash_api_key
 from lumen.services.key_expiry import revoke_if_expired
 from lumen.services.live_state import get_live_state
@@ -649,6 +649,7 @@ def _complete_and_bill(model_name: str, messages: list, **kwargs):
         )
         bill_request(entity_id, mc_id, "api", usage_prompt, usage_completion, cost,
                      effective=effective, api_key_id=ak_id,
+                     cached_input_tokens=cached_prompt,
                      endpoint_id=ep_id, duration=duration,
                      timing=timing, upstream_t0=t0,
                      # Non-streaming: the whole body arrives in one piece, so the
@@ -752,13 +753,14 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
             far the stream got. Shared by the break-on-disconnect path and
             GeneratorExit so the two cannot bill differently.
             """
-            input_tokens, output_tokens, cost = estimate_abort_usage(
+            input_tokens, output_tokens, cost, cached_tokens = estimate_abort_usage(
                 usage, messages, content_deltas, mc_in_cost, mc_out_cost,
                 cached_in_cost_per_million=mc_cached_cost)
             record_stream_abort(
                 app, billed=billed, entity_id=entity_id, model_config_id=mc_id,
                 source="api", endpoint_id=ep_id, stream_t0=t0,
                 input_tokens=input_tokens, output_tokens=output_tokens, cost=cost,
+                cached_input_tokens=cached_tokens,
                 effective=effective, api_key_id=ak_id,
                 timing=timing, ttft=t_first_any, ttft_visible=t_first_visible,
             )
@@ -824,6 +826,7 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                         with app.app_context():
                             bill_request(entity_id, mc_id, "api", input_tokens, output_tokens,
                                          cost, effective=effective, api_key_id=ak_id,
+                                         cached_input_tokens=cached_tokens,
                                          endpoint_id=ep_id, duration=duration,
                                          timing=timing, upstream_t0=t0,
                                          ttft=t_first_any, ttft_visible=t_first_visible,
@@ -980,7 +983,10 @@ def _do_audio(kind: str):
         payload = response.model_dump() if hasattr(response, "model_dump") else {"text": str(response)}
         usage = payload.get("usage") if isinstance(payload, dict) else None
 
-        in_tok, out_tok, seconds, cost = 0, 0, 0, 0.0
+        # cached_tok stays None unless the upstream reports a token usage object
+        # with a cache breakdown; None is stored as SQL NULL ("unknown"), which
+        # is not the same claim as a reported zero.
+        in_tok, out_tok, seconds, cost, cached_tok = 0, 0, 0, 0.0, None
         if isinstance(usage, dict) and usage.get("type") == "duration":
             seconds = int(usage.get("seconds") or 0)
             cost = calculate_audio_cost(seconds, mc_audio_per_hour)
@@ -1002,6 +1008,7 @@ def _do_audio(kind: str):
         bill_request(entity_id, mc_id, "api", in_tok, out_tok, cost,
                      effective=effective, api_key_id=ak_id, audio_seconds=seconds,
                      endpoint_id=ep_id, duration=duration,
+                     cached_input_tokens=cached_tok,
                      timing=timing, upstream_t0=t0,
                      # Non-streaming: the transcription arrives in one piece, so the
                      # first chunk is the response and both marks are the duration.

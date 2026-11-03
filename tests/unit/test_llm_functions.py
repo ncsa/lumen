@@ -1023,7 +1023,7 @@ def test_estimate_abort_usage_prefers_exact_usage_over_the_delta_count():
     from lumen.services.llm import estimate_abort_usage
     usage = _Usage(prompt_tokens=1000, completion_tokens=2000)
     assert estimate_abort_usage(usage, [{"role": "user", "content": "hi"}], 3, 1.0, 2.0) == (
-        1000, 2000, pytest.approx(0.005),
+        1000, 2000, pytest.approx(0.005), 0,
     )
 
 
@@ -1032,11 +1032,15 @@ def test_estimate_abort_usage_discounts_only_reported_cached_tokens():
     usage = _Usage(prompt_tokens=1_000_000, completion_tokens=100_000)
     usage.prompt_tokens_details = types.SimpleNamespace(cached_tokens=250_000)
     messages = [{"role": "user", "content": "hi"}]
+    # The cached count comes back with the rest, so the abort's request_logs row
+    # can record the same split the cost was computed from.
     assert estimate_abort_usage(usage, messages, 3, 2.0, 4.0, 0.5) == (
-        1_000_000, 100_000, pytest.approx(2.025),
+        1_000_000, 100_000, pytest.approx(2.025), 250_000,
     )
-    # With no terminal usage, a prompt estimate cannot tell what was cached.
+    # With no terminal usage, a prompt estimate cannot tell what was cached and
+    # must report unknown (None -> SQL NULL), not a zero it cannot vouch for.
     estimated = estimate_abort_usage(None, messages, 3, 2.0, 4.0, 0.5)
+    assert estimated[3] is None
     assert estimated[2] == pytest.approx(round(estimated[0] * 2 / 1_000_000 + 3 * 4 / 1_000_000, 6))
 
 
@@ -1044,7 +1048,7 @@ def test_estimate_abort_usage_counts_one_output_token_per_content_delta():
     """Without the terminal usage chunk, the delta count is the output estimate."""
     from lumen.services.llm import estimate_abort_usage
     messages = [{"role": "user", "content": "x" * 400}]
-    assert estimate_abort_usage(None, messages, 7, 1.0, 2.0) == (100, 7, pytest.approx(0.000114))
+    assert estimate_abort_usage(None, messages, 7, 1.0, 2.0) == (100, 7, pytest.approx(0.000114), None)
 
 
 # ---------------------------------------------------------------------------

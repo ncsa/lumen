@@ -357,7 +357,20 @@ cost_usd = (uncached_input_tokens / 1_000_000 × input_cost_per_million)
          + (output_tokens / 1_000_000 × output_cost_per_million)
 ```
 
-The two input terms split the upstream's prompt total using the cached count it reports (`prompt_tokens_details.cached_tokens`, or the top-level `cached_tokens` variant); a backend that reports no cache split bills the whole prompt at the input rate, as before. When `cached_input_cost_per_million` is unset, cached input is billed at the input rate too, so the two lines collapse into the original formula and no existing price changes. The input total recorded in `request_logs` stays the full prompt (cached tokens included) — only the cost reflects the split, so no cached-token usage metric is stored.
+The two input terms split the upstream's prompt total using the cached count it reports (`prompt_tokens_details.cached_tokens`, or the top-level `cached_tokens` variant); a backend that reports no cache split bills the whole prompt at the input rate, as before. When `cached_input_cost_per_million` is unset, cached input is billed at the input rate too, so the two lines collapse into the original formula and no existing price changes. The input total recorded in `request_logs` stays the full prompt (cached tokens included): the split is carried by its own columns, not by shrinking the input total.
+
+Only **cache reads** are discounted. Anthropic-style cache *writes* are billed as ordinary input — the `cache_creation_input_tokens` breakdown of the Anthropic API is not part of the OpenAI-compatible usage object Lumen reads, and pricing it belongs to the Anthropic-style endpoint work, not here. Nothing about other providers' cache semantics is assumed: Lumen prices what the upstream reports against the rates an admin sets, and a backend that reports nothing keeps the previous behaviour bit for bit.
+
+### Cached-token telemetry
+
+`request_logs.cached_input_tokens` stores the cached part of the prompt (NULL when there is nothing to record — an aborted request with no terminal usage object, or a row from before the column existed; a usage object without cache fields records 0), `model_stats` and `entity_stats` carry a running `cached_input_tokens` total plus its `folded_*` part, and `flask check-stats` compares the fold's share with `request_logs` like any other total. Recording it is what makes a request's stored cost checkable: before this, `cost` was the only trace of the discount.
+
+Two things are deliberately **not** included, to be raised separately:
+
+* **The continuous aggregates** (`request_metrics_1m`, `request_counts_hourly_by_entity`) and therefore the usage charts and the monitor's `?tokens=true` windows. Adding a field to a continuous aggregate is a `DROP` + `CREATE ... WITH NO DATA` + full `refresh_continuous_aggregate` over the 13-month retention window — a one-time rebuild, but one that belongs to its own change rather than riding along with a schema addition. Until then, anything that recomputes cost from chart tokens × published rates **overstates** a request that had cache reads; `request_logs.cost` and the stats totals are authoritative.
+* **Cache writes.** See above.
+
+The load numbers behind that deferral (TimescaleDB 2.27/pg17, 2,000,000 request_logs rows in one chunk, ~94 B/row compacted): the `ADD COLUMN` is metadata-only at **2.8 ms** with no size change; NULL costs 0 bytes per row and a recorded count adds ~4 bytes (+2.6% on the compacted table); the fold's per-entity window aggregate over ~1.97M rows went from 199.0 ms to 203.4 ms with an **identical buffer count** (24,713), and the per-model variant stayed at ~247 ms. A backfill, if one were ever wanted, measured 27.4 s plus 4.6 s `VACUUM FULL`. The expensive part is the continuous-aggregate rebuild, not the column.
 
 Coin values use sentinel semantics: `-2` = unlimited, `0` = blocked, positive = budget ceiling.
 

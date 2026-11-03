@@ -2160,6 +2160,9 @@ def test_api_chat_bills_cached_input(app, client, monkeypatch, test_user, test_m
         log = db.session.execute(select(RequestLog).filter_by(entity_id=test_user["id"])).scalar_one()
         assert float(log.cost) == pytest.approx(2.025)
         assert log.input_tokens == 1_000_000
+        # The split the cost came from is recorded too, so the stored cost can be
+        # checked against the tokens later.
+        assert log.cached_input_tokens == 250_000
 
 
 def test_api_completions_reports_and_bills_cached_input(

@@ -5,6 +5,7 @@ All notable changes to Lumen will be documented in this file.
 ## [Unreleased]
 
 - Configure a separate cached-input token price per model; unset rates use the normal input price, while zero is free. The rate is published on `/v1/models` and written into the generated OpenCode config (`cost.cache.read`/`write`) so cache-aware clients bill the same figure.
+- Record the cached-input token count per request (`request_logs.cached_input_tokens`, NULL when no upstream usage was available) and fold it into the `model_stats` / `entity_stats` totals, so a discounted request's stored cost can be checked against its tokens. The usage charts still show the full prompt: the continuous aggregates behind them do not carry the cached count yet. (#66)
 
 ## [2.3.1] - 2026-11-07
 

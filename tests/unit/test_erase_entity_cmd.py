@@ -86,7 +86,10 @@ def _seed_user(name, model_id, private_model_name, raw_prefix):
     db.session.add(EntityStat(entity_id=user.id, requests=0, input_tokens=0, output_tokens=0,
                               audio_seconds=0, cost=0, conversations=1))
     db.session.commit()
-    bill_request(user.id, model_id, "chat", 100, 50, 0.25, effective=None, audio_seconds=3)
+    # Every counter is non-zero on the chat row, cached_input_tokens included, so
+    # the merge assertions below show each one being added.
+    bill_request(user.id, model_id, "chat", 100, 50, 0.25, effective=None, audio_seconds=3,
+                 cached_input_tokens=40)
     bill_request(user.id, model_id, "api", 10, 5, 0.5, effective=None, api_key_id=active.id)
     return user.id, active.id, revoked.id
 
@@ -733,7 +736,10 @@ def test_erasure_merges_folded_counters_into_existing_ghost_rows(app, post_cutov
     fold(app)
     with app.app_context():
         api = _model_rows(ghost_id)["api"]
-        pending = (1, 3, 2, 1, Decimal("0.125"))
+        # The pending row's counters in TOTALS order, added to both the total and
+        # the folded part. Its cached count was never recorded (NULL), which the
+        # fold sums as nothing.
+        pending = (1, 3, 2, 0, 1, Decimal("0.125"))
         assert api == tuple(m + d for m, d in zip(merged["api"], pending + pending))
         log_count = db.session.scalar(select(func.count()).select_from(RequestLog))
         for model_ in (ModelStat, EntityStat):
