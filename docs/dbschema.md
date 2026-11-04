@@ -822,6 +822,8 @@ so the long `start_offset` only recomputes hours the child rewrote. Created `WIT
 - Real-time over a real-time child: a request made this hour shows through this view before any
   refresh.
 - The `CAST`s keep the counts `bigint`; `SUM` of a bigint is `numeric`.
+- The all-users `/usage` charts read it for the Week and Month ranges, and the heatmap reads it for
+  every range.
 
 ### request_counts_daily
 
@@ -829,7 +831,8 @@ Org-wide daily usage for the Year and All ranges, a hierarchical aggregate over
 [`request_counts_hourly`](#request_counts_hourly) (migration `c6e8a0b2d4f6`, #177). Same columns
 and expressions as `request_counts_hourly`, with `bucket` = `time_bucket('1 day', bucket)`: UTC
 days, whatever the session time zone. The heatmap needs the hour of day, so it stays on the hourly
-view.
+view. The Year window starts at a UTC midnight (`_usage_period_start`) so `bucket >= :start`
+selects whole days, for the per-entity charts too.
 
 **Refresh policy:** `start_offset` 30 days, `end_offset` 1 day, `schedule_interval` 1 hour. Created
 `WITH NO DATA`; `flask upgrade` backfills it from `request_counts_hourly`'s materialised rows.

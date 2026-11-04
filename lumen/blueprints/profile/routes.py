@@ -719,29 +719,52 @@ _VALID_TRUNC   = frozenset(cfg["trunc"]  for cfg in _USAGE_PERIODS.values())
 
 
 def _usage_period_start(period_str):
-    """Start of the window, **floored to the hour**.
+    """Start of the window, floored to the hour, or to the UTC day for ``year``.
 
     The alignment is load-bearing, not cosmetic. Every aggregate this module
-    reads is hourly: ``bucket`` is ``time_bucket('1 hour', time)``, the hour's
-    start. On an unaligned start the aggregate arms (``bucket >= :start``) and
-    the raw arms (``time >= :start``) are not the same predicate — a request at
-    09:45 has ``bucket = 09:00``, so with ``start = 09:30`` the raw arm counts
-    it and the aggregate arm drops it, along with everything else in the
-    window's first partial hour. Flooring makes the two predicates identical,
-    because for an hour-aligned ``S``, ``time_bucket('1 hour', time) >= S`` is
-    true exactly when ``time >= S``.
+    reads buckets by ``time_bucket(width, time)``, the bucket's start: one hour
+    for ``request_counts_hourly_by_entity`` and ``request_counts_hourly``, one
+    day for ``request_counts_daily``. On an unaligned start ``bucket >= :start``
+    and the raw ``time >= :start`` are not the same predicate — a request at
+    09:45 has ``bucket = 09:00``, so with ``start = 09:30`` the raw rows count it
+    and the aggregate drops it, along with everything else in the window's first
+    partial bucket. Flooring to the widest bucket a period reads makes the two
+    predicates identical, because for a width-aligned ``S``,
+    ``time_bucket(width, time) >= S`` is true exactly when ``time >= S``.
 
-    The cost is that a window can reach up to 59 minutes further back than its
-    name suggests. That is invisible at the page's coarsest-to-finest bucket
+    ``year`` is floored to the UTC day because its org-wide arm reads the daily
+    view. The per-entity arm reads the hourly entity aggregate but gets the same
+    start, so the org-wide and per-entity windows stay the same window. ``all``
+    has no start.
+
+    The cost is that a window can reach up to 59 minutes (a day, for ``year``)
+    further back than its name suggests. That is invisible at the page's bucket
     widths (1 day / 1 week / 1 month) and is the same widening for every chart
     on the page, per-entity and org-wide alike, which is the point.
     """
     cfg = _USAGE_PERIODS.get(period_str, _USAGE_PERIODS["week"])
     if cfg["offset"] is None:
         return None
-    return (datetime.now(timezone.utc) - cfg["offset"]).replace(
+    start = (datetime.now(timezone.utc) - cfg["offset"]).replace(
         minute=0, second=0, microsecond=0
     )
+    if period_str == "year":
+        start = start.replace(hour=0)
+    return start
+
+
+def _org_usage_view(period_str):
+    """The org-wide aggregate the summary, requests, tokens and models charts read.
+
+    ``year`` and ``all`` read ``request_counts_daily``: their chart buckets (1
+    week, 1 month) are whole UTC days, so re-bucketing daily rows gives the same
+    series as hourly rows at a 24th of the rows. ``week`` and ``month`` read
+    ``request_counts_hourly``, whose start is only hour-aligned. The heatmap
+    always reads the hourly view, because it needs the hour of day.
+    """
+    if period_str in ("year", "all"):
+        return "request_counts_daily"
+    return "request_counts_hourly"
 
 
 def _usage_period_bucket(period_str):
@@ -801,6 +824,7 @@ def usage_summary():
     period = request.args.get("period", "week")
     start = _usage_period_start(period)
     eid = _usage_entity_id()
+    view = _org_usage_view(period)
 
     if eid:
         params = {"eid": eid}
@@ -824,12 +848,12 @@ def usage_summary():
         last_active = last_used_at.isoformat() + "Z" if last_used_at else None
         new_users = 0
     elif start is not None:
-        row = db.session.execute(text("""
+        row = db.session.execute(text(f"""
             SELECT
                 COALESCE(SUM(requests), 0),
                 COALESCE(SUM(input_tokens + output_tokens), 0),
                 COALESCE(SUM(cost), 0.0)
-            FROM request_counts_hourly
+            FROM {view}
             WHERE bucket >= :start
         """), {"start": start}).one()
         new_users = db.session.scalar(
@@ -840,12 +864,12 @@ def usage_summary():
         )
         last_active = None
     else:
-        row = db.session.execute(text("""
+        row = db.session.execute(text(f"""
             SELECT
                 COALESCE(SUM(requests), 0),
                 COALESCE(SUM(input_tokens + output_tokens), 0),
                 COALESCE(SUM(cost), 0.0)
-            FROM request_counts_hourly
+            FROM {view}
         """)).one()
         new_users = db.session.scalar(
             select(func.count(Entity.id)).where(Entity.entity_type == "user")
@@ -948,6 +972,7 @@ def usage_requests():
     if bucket not in _VALID_BUCKETS:
         abort(HTTPStatus.BAD_REQUEST)
     eid = _usage_entity_id()
+    view = _org_usage_view(period)
 
     if eid:
         params = {"bucket": bucket, "eid": eid}
@@ -963,16 +988,16 @@ def usage_requests():
         """
         rows = db.session.execute(text(agg_sql), params).all()
     elif start is not None:
-        rows = db.session.execute(text("""
+        rows = db.session.execute(text(f"""
             SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period, SUM(requests) AS count
-            FROM request_counts_hourly
+            FROM {view}
             WHERE bucket >= :start
             GROUP BY 1 ORDER BY 1
         """), {"bucket": bucket, "start": start}).all()
     else:
-        rows = db.session.execute(text("""
+        rows = db.session.execute(text(f"""
             SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period, SUM(requests) AS count
-            FROM request_counts_hourly
+            FROM {view}
             GROUP BY 1 ORDER BY 1
         """), {"bucket": bucket}).all()
 
@@ -990,6 +1015,7 @@ def usage_tokens():
     if bucket not in _VALID_BUCKETS:
         abort(HTTPStatus.BAD_REQUEST)
     eid = _usage_entity_id()
+    view = _org_usage_view(period)
 
     if eid:
         params = {"bucket": bucket, "eid": eid}
@@ -1006,18 +1032,18 @@ def usage_tokens():
         """
         rows = db.session.execute(text(agg_sql), params).all()
     elif start is not None:
-        rows = db.session.execute(text("""
+        rows = db.session.execute(text(f"""
             SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period,
                    SUM(input_tokens + output_tokens) AS tokens
-            FROM request_counts_hourly
+            FROM {view}
             WHERE bucket >= :start
             GROUP BY 1 ORDER BY 1
         """), {"bucket": bucket, "start": start}).all()
     else:
-        rows = db.session.execute(text("""
+        rows = db.session.execute(text(f"""
             SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period,
                    SUM(input_tokens + output_tokens) AS tokens
-            FROM request_counts_hourly
+            FROM {view}
             GROUP BY 1 ORDER BY 1
         """), {"bucket": bucket}).all()
 
@@ -1032,6 +1058,7 @@ def usage_models():
     period = request.args.get("period", "week")
     start = _usage_period_start(period)
     eid = _usage_entity_id()
+    view = _org_usage_view(period)
 
     if eid:
         params = {"eid": eid}
@@ -1048,17 +1075,17 @@ def usage_models():
         """
         rows = db.session.execute(text(agg_sql), params).all()
     elif start is not None:
-        rows = db.session.execute(text("""
+        rows = db.session.execute(text(f"""
             SELECT mc.model_name, SUM(rch.requests) AS requests
-            FROM request_counts_hourly rch
+            FROM {view} rch
             JOIN model_configs mc ON rch.model_config_id = mc.id
             WHERE rch.bucket >= :start
             GROUP BY mc.model_name ORDER BY requests DESC
         """), {"start": start}).all()
     else:
-        rows = db.session.execute(text("""
+        rows = db.session.execute(text(f"""
             SELECT mc.model_name, SUM(rch.requests) AS requests
-            FROM request_counts_hourly rch
+            FROM {view} rch
             JOIN model_configs mc ON rch.model_config_id = mc.id
             GROUP BY mc.model_name ORDER BY requests DESC
         """)).all()
