@@ -771,9 +771,9 @@ request_logs
 
 **Refresh them bottom-up, child before parent.** Where the child has materialised, a parent
 refresh copies the child's materialised rows, not raw `request_logs`, so a parent refreshed before
-its child copies the child's stale rows. `flask upgrade`, `flask reassign-model` and
-`seed_analytics.py` follow `AGGREGATE_REFRESH_ORDER` in `lumen/commands.py`; a manual
-`flask backfill-aggregate` must do the same.
+its child copies the child's stale rows. `flask reassign-model` follows
+`AGGREGATE_REFRESH_ORDER` in `lumen/commands.py`, and `flask upgrade` and `seed_analytics.py`
+follow `USAGE_AGGREGATES` there; a manual `flask backfill-aggregate` must do the same.
 
 All four views below are **real-time**: they set `timescaledb.materialized_only = false`, so
 a query unions the materialised rows with a live scan of the raw rows newer than the

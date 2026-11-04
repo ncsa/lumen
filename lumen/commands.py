@@ -1566,8 +1566,9 @@ def _backfill_missing_months():
             return
 
         now = datetime.now(timezone.utc)
-        usage = [name for name in _continuous_aggregates(conn) if name in USAGE_AGGREGATES]
-        for name in usage:
+        existing = set(_continuous_aggregates(conn))
+        # USAGE_AGGREGATES is already child before parent; walk it, not the catalog.
+        for name in (n for n in USAGE_AGGREGATES if n in existing):
             missing = _missing_months(conn, name, now)
             if not missing:
                 click.echo(f"Aggregate backfill: no missing months in '{name}'.")

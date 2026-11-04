@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 
 from lumen import create_app
+from lumen.commands import USAGE_AGGREGATES
 from lumen.extensions import db
 from lumen.models.entity import Entity
 from lumen.models.model_config import ModelConfig
@@ -36,14 +37,12 @@ def random_time(lo: datetime, hi: datetime) -> datetime:
     return lo + timedelta(seconds=random.random() * delta)
 
 
-# Children before the aggregates built on them: a parent refresh reads its child's
-# materialised rows, so refreshing it first would copy stale ones.
-USAGE_AGGREGATES = ("request_counts_hourly_by_entity", "request_counts_hourly", "request_counts_daily")
 
 
 def refresh_usage_aggregates(engine, start: datetime, end: datetime) -> None:
     """Materialise the usage aggregates over [start, end), bottom-up, on an AUTOCOMMIT connection."""
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        # Child before parent: a parent refresh reads its child's materialised rows.
         for view in USAGE_AGGREGATES:
             # START/NOW are naive UTC; psycopg 3 would send them as timestamp to the
             # polymorphic window arguments, so cast to the aggregate's timestamptz.

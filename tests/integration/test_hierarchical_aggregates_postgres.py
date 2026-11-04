@@ -201,12 +201,14 @@ def test_no_retention_on_the_org_wide_views(engine):
         ), {"h": HOURLY, "d": DAILY}).scalar() == 0
 
 
-def test_org_wide_sums_keep_the_column_types(engine):
+@pytest.mark.parametrize("view", [HOURLY, DAILY])
+def test_org_wide_sums_keep_the_column_types(engine, view):
+    """The types of the raw-based hourly view this replaces: SUM of a bigint is numeric."""
     with engine.connect() as conn:
         types = dict(conn.execute(text(
             "SELECT column_name, data_type FROM information_schema.columns "
             "WHERE table_name = :v"
-        ), {"v": DAILY}).all())
+        ), {"v": view}).all())
     assert types == {
         "bucket": "timestamp with time zone", "model_config_id": "integer",
         "source": "character varying", "requests": "bigint", "input_tokens": "bigint",

@@ -114,6 +114,12 @@ def _create_rollup(view, width, child):
     op.execute(f"ALTER MATERIALIZED VIEW {view} SET (timescaledb.materialized_only = false)")
 
 
+def _comment(view, comment):
+    # A COMMENT takes no bind parameters; double any quote so the literal stays closed.
+    escaped = comment.replace("'", "''")
+    op.execute(f"COMMENT ON VIEW {view} IS '{escaped}'")
+
+
 def _drop(view):
     # The policy has to go first: a job referencing the view blocks the DROP.
     op.execute(f"SELECT remove_continuous_aggregate_policy('{view}', if_exists => true)")
@@ -134,7 +140,7 @@ def upgrade():
             schedule_interval => INTERVAL '1 hour')
     """)
     # A continuous aggregate is a plain view (relkind 'v'): see g1h2i3j4k5l6.
-    op.execute(f"COMMENT ON VIEW {HOURLY} IS '{_HOURLY_COMMENT}'")
+    _comment(HOURLY, _HOURLY_COMMENT)
 
     _create_rollup(DAILY, "1 day", HOURLY)
     op.execute(f"""
@@ -143,7 +149,7 @@ def upgrade():
             end_offset   => INTERVAL '1 day',
             schedule_interval => INTERVAL '1 hour')
     """)
-    op.execute(f"COMMENT ON VIEW {DAILY} IS '{_DAILY_COMMENT}'")
+    _comment(DAILY, _DAILY_COMMENT)
 
 
 def downgrade():
@@ -177,4 +183,4 @@ def downgrade():
     """)
     # j4k5l6m7n8o9's real-time setting and comment.
     op.execute(f"ALTER MATERIALIZED VIEW {HOURLY} SET (timescaledb.materialized_only = false)")
-    op.execute(f"COMMENT ON VIEW {HOURLY} IS '{_RAW_HOURLY_COMMENT}'")
+    _comment(HOURLY, _RAW_HOURLY_COMMENT)
