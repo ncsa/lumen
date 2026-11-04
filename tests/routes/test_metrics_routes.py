@@ -380,6 +380,30 @@ def test_timescale_gauges_after_a_check(app, client):
     assert 0 <= samples["lumen_timescaledb_health_age_seconds"] < 60
 
 
+def test_timescale_gauges_for_a_failed_job_that_never_succeeded(app, client):
+    """A job that ran but never succeeded is read as Failed with no success time (#417)."""
+    from lumen.services import metrics_snapshot
+    from lumen.services.timescale_health import Job, TimescaleHealth
+
+    health = TimescaleHealth(
+        installed_version="2.27.2",
+        available_version="2.27.2",
+        request_logs_hypertable=True,
+        jobs=(
+            ("refresh:request_counts_hourly",
+             Job(1000, "policy_refresh_continuous_aggregate", "request_counts_hourly", "Failed", 1, None)),
+        ),
+    )
+    metrics_snapshot.publish_timescale_health(health)
+    samples = _samples(_scrape(app, client))
+
+    assert samples['lumen_timescaledb_job_present{job="refresh:request_counts_hourly"}'] == 1
+    assert samples['lumen_timescaledb_job_last_run_failed{job="refresh:request_counts_hourly"}'] == 1
+    assert samples['lumen_timescaledb_job_failures_total{job="refresh:request_counts_hourly"}'] == 1
+    # Never succeeded: there is no success time to measure an age from.
+    assert 'lumen_timescaledb_job_last_success_age_seconds{job="refresh:request_counts_hourly"}' not in samples
+
+
 def test_missing_extension_reports_everything_absent(app, client):
     from lumen.services import metrics_snapshot
     from lumen.services.timescale_health import EXPECTED_JOBS, TimescaleHealth
