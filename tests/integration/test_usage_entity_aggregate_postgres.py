@@ -32,8 +32,9 @@ here is equality, not existence:
    depths.
 
 6. A hard-deleted entity answers nothing, as its nulled raw rows would. The
-   foreign key nulls the raw rows; the aggregate materialised the id and never
-   re-checks it.
+   foreign key is RESTRICT now, so an entity with raw rows cannot be deleted;
+   one deleted while it was SET NULL had its raw rows nulled, but the
+   aggregate materialised the id and never re-checks it.
 
 7. The endpoints read only the aggregate: no ``request_logs`` scan and no
    coverage ``MIN`` query. History older than the refresh policy's window is
@@ -620,11 +621,12 @@ def test_the_windows_first_partial_hour_is_not_dropped(
 def deleted_entity(pg_migrated, entity_usage):
     """History that is materialised in the aggregate, then its entity deleted.
 
-    Nothing in the application does this — deleting a project flips ``active``
-    — so it is the DBA-level ``DELETE FROM entities`` that ``ON DELETE SET
-    NULL`` on ``request_logs.entity_id`` exists to survive. Raw rows drop to
-    NULL; the aggregate materialised the id and never re-evaluates the foreign
-    key, so its rows keep the old id for as long as the view lives.
+    ``request_logs.entity_id`` is ``ON DELETE RESTRICT``, so this cannot happen
+    any more; it simulates an entity deleted while the foreign key was still
+    ``SET NULL``: the raw rows are nulled first (they are two hours old, so
+    uncompressed), then the entity is deleted. The aggregate materialised the
+    id and never re-evaluates the foreign key, so its rows keep the old id for
+    as long as the view lives.
 
     Yields ``(admin_client_entity_id, deleted_entity_id, hour)``.
     """
@@ -648,6 +650,7 @@ def deleted_entity(pg_migrated, entity_usage):
     _refresh(pg_migrated, window=(hour, hour + timedelta(hours=1)))
 
     with pg_migrated.begin() as conn:
+        conn.execute(text("UPDATE request_logs SET entity_id = NULL WHERE entity_id = :e"), {"e": gone})
         conn.execute(text("DELETE FROM entities WHERE id = :e"), {"e": gone})
 
     yield admin, gone, hour
@@ -661,9 +664,9 @@ def deleted_entity(pg_migrated, entity_usage):
 
 @pytest.mark.postgres
 def test_a_deleted_entitys_history_is_not_resurrected(pg_app, pg_migrated, deleted_entity):
-    """The aggregate must not resurrect what the foreign key nulled out.
+    """The aggregate must not resurrect what the old foreign key nulled out.
 
-    The raw rows were nulled by the foreign key, so the entity has no history
+    The raw rows were nulled, as the old SET NULL action did, so the entity has no history
     left. Without the existence clause the aggregate still returns its full
     materialised history to an admin who asks for it by id.
     """
@@ -675,7 +678,7 @@ def test_a_deleted_entitys_history_is_not_resurrected(pg_app, pg_migrated, delet
         in_view = conn.execute(text(
             f"SELECT COALESCE(SUM(requests), 0) FROM {VIEW} WHERE entity_id = :e"
         ), {"e": gone}).scalar()
-    assert raw_rows == 0, "ON DELETE SET NULL did not fire; this test proves nothing"
+    assert raw_rows == 0, "the raw rows were not nulled; this test proves nothing"
     assert int(in_view) == 3, (
         "the aggregate no longer holds the deleted entity's rows, so there is "
         "nothing here for the endpoints to leak and this test is vacuous"
@@ -694,6 +697,33 @@ def test_a_deleted_entitys_history_is_not_resurrected(pg_app, pg_migrated, delet
         resp = client.get(f"{path}?entity_id={gone}&period=week")
         assert resp.status_code == HTTPStatus.OK
         assert resp.get_json() == [], path
+
+
+@pytest.mark.postgres
+def test_deleting_an_entity_with_history_is_refused(pg_migrated, entity_usage):
+    """``ON DELETE RESTRICT``: a direct delete fails and the raw rows keep their id."""
+    ts = datetime.now(timezone.utc) - timedelta(hours=2)
+    with pg_migrated.begin() as conn:
+        kept = conn.execute(text(
+            "INSERT INTO entities (entity_type, name, initials, active) "
+            "VALUES ('user', 'ph8q-kept', 'PQ', true) RETURNING id"
+        )).scalar()
+        for _ in range(3):
+            conn.execute(text(_INSERT.replace(":time", "CAST(:ts AS timestamptz)")), {
+                "ts": ts, "eid": kept, "model": entity_usage["models"][0],
+                "inp": 5, "out": 6, "cost": "0.5", "dur": 1.0, "ttft": 0.5,
+            })
+    try:
+        with pytest.raises(exc.IntegrityError, match="request_logs_entity_id_fkey"):
+            with pg_migrated.begin() as conn:
+                conn.execute(text("DELETE FROM entities WHERE id = :e"), {"e": kept})
+        with pg_migrated.connect() as conn:
+            assert conn.execute(text("SELECT COUNT(*) FROM entities WHERE id = :e"), {"e": kept}).scalar() == 1
+            assert conn.execute(text("SELECT COUNT(*) FROM request_logs WHERE entity_id = :e"), {"e": kept}).scalar() == 3
+    finally:
+        with pg_migrated.begin() as conn:
+            conn.execute(text("DELETE FROM request_logs WHERE entity_id = :e"), {"e": kept})
+            conn.execute(text("DELETE FROM entities WHERE id = :e"), {"e": kept})
 
 
 # --------------------------------------------------------------------------

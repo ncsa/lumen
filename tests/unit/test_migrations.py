@@ -432,3 +432,60 @@ def test_ghost_upgrade_allows_one_ghost_and_downgrade_drops_index(tmp_path):
     assert "uq_entities_single_ghost" not in {i["name"] for i in sa.inspect(engine).get_indexes("entities")}
     with engine.begin() as conn:
         assert conn.exec_driver_sql("SELECT COUNT(*) FROM entities").scalar() == 3
+
+
+# ---------------------------------------------------------------------------
+# c8d0e2f4a6b8: request_logs foreign keys ON DELETE RESTRICT
+#
+# PostgreSQL-only; the RESTRICT behaviour against compressed chunks is covered
+# in tests/integration/test_endpoint_retirement_postgres.py and
+# tests/integration/test_usage_entity_aggregate_postgres.py.
+# ---------------------------------------------------------------------------
+
+_FK_RESTRICT_REVISION_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "migrations" / "versions" / "c8d0e2f4a6b8_request_logs_fk_restrict.py"
+)
+
+
+def _fk_restrict_revision():
+    spec = importlib.util.spec_from_file_location("fk_restrict_revision", _FK_RESTRICT_REVISION_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_request_log_foreign_keys_restrict():
+    from lumen.models.request_log import RequestLog
+
+    fks = {fk.parent.name: (fk.target_fullname, fk.ondelete) for fk in RequestLog.__table__.foreign_keys}
+    assert fks == {
+        "entity_id": ("entities.id", "RESTRICT"),
+        "model_config_id": ("model_configs.id", "RESTRICT"),
+        "model_endpoint_id": ("model_endpoints.id", "RESTRICT"),
+    }
+
+
+def test_request_log_fk_comments_match_migration():
+    from lumen.models.request_log import RequestLog
+
+    migration = {column: comment for _, column, _, comment, _ in _fk_restrict_revision()._FKS}
+    assert migration == {c: RequestLog.__table__.c[c].comment for c in migration}
+
+
+def test_fk_restrict_is_a_no_op_on_sqlite(tmp_path):
+    revision = _fk_restrict_revision()
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'fk.db'}")
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE entities (id INTEGER PRIMARY KEY)")
+        conn.exec_driver_sql(
+            "CREATE TABLE request_logs (id INTEGER PRIMARY KEY,"
+            " entity_id INTEGER REFERENCES entities(id) ON DELETE SET NULL)"
+        )
+    before = sa.inspect(engine).get_foreign_keys("request_logs")
+
+    _run_revision(engine, revision.upgrade)
+    assert sa.inspect(engine).get_foreign_keys("request_logs") == before
+    _run_revision(engine, revision.downgrade)
+    assert sa.inspect(engine).get_foreign_keys("request_logs") == before
+    engine.dispose()

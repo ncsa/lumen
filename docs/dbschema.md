@@ -343,7 +343,7 @@ Unified table for both human users (authenticated via OAuth) and programmatic pr
 - `fk_entities_owner_membership` — `FOREIGN KEY (owner_entity_id, id) REFERENCES entity_managers (user_entity_id, project_entity_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED`. The owner's manager row cannot be deleted while they own the project (transfer ownership first). Deferred so a project and its owner's manager row can be inserted in the same transaction. Not enforced on SQLite, which runs without foreign keys.
 
 **Notes:**
-- All foreign keys that reference `entities.id` cascade on delete, except `model_configs.owner_entity_id`, `api_keys.created_by_entity_id`, `api_keys.revoked_by_entity_id`, and the `request_logs` FKs, which use `SET NULL`.
+- All foreign keys that reference `entities.id` cascade on delete, except `model_configs.owner_entity_id`, `api_keys.created_by_entity_id` and `api_keys.revoked_by_entity_id`, which use `SET NULL`, and `request_logs.entity_id`, which uses `RESTRICT`: an entity with request history cannot be deleted (see `request_logs`).
 - Acknowledgement (`needs_ack`) is a property of the model, not of the entity.
 - Deleting a user who owns a project fails on `fk_entities_owner_membership`; transfer ownership first.
 - The ghost (`entity_type = 'ghost'`, name `Erased user`) has no email, is inactive, and has no memberships, balance or limits. `flask erase-entity` creates it on first use; the migration does not seed it. Login and every user listing filter on `entity_type = 'user'`, so it never signs in and never appears next to real users.
@@ -716,9 +716,9 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 |--------|------|----------|-------------|
 | `id` | BigInteger | NO | Surrogate primary key (Integer on SQLite); avoids timestamp collision under concurrent load |
 | `time` | DateTime (with timezone) | NO | UTC timestamp of the request; TimescaleDB partition key. Indexed but non-unique. |
-| `entity_id` | Integer (FK → entities) | YES | The entity that made the request; set to NULL if the entity is later deleted |
-| `model_config_id` | Integer (FK → model_configs) | YES | The model used; set to NULL if the model is later deleted |
-| `model_endpoint_id` | Integer (FK → model_endpoints) | YES | The specific backend endpoint that served the request. Endpoints are retired (marked inactive), never deleted, so the reference stays resolvable; only a direct SQL deletion nulls it |
+| `entity_id` | Integer (FK → entities) | YES | The entity that made the request. `RESTRICT` on delete; NULL only on rows nulled while the FK was `SET NULL` |
+| `model_config_id` | Integer (FK → model_configs) | YES | The model used. `RESTRICT` on delete; models are retired, never deleted |
+| `model_endpoint_id` | Integer (FK → model_endpoints) | YES | The specific backend endpoint that served the request. `RESTRICT` on delete; endpoints are retired (marked inactive), never deleted, so the reference stays resolvable |
 | `source` | String(8) | NO | Origin of the request: `'chat'` or `'api'` |
 | `input_tokens` | Integer | NO | Input token count for this request |
 | `output_tokens` | Integer | NO | Output token count for this request |
@@ -738,7 +738,9 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 **Constraints:** index `request_logs_time_idx` on (`time` DESC); index `ix_request_logs_entity_id` on (`entity_id`); index `ix_request_logs_model_config_id_time` on (`model_config_id`, `time` DESC)
 
 **Notes:**
-- Foreign keys use `SET NULL` on delete (not cascade) to preserve historical log data when entities or models are removed. Endpoints are not removed at all: the config sync retires them by clearing `model_endpoints.active`, so `model_endpoint_id` keeps pointing at the endpoint that served each request, and the `SET NULL` action on that column only fires if a row is deleted directly in SQL.
+- **Rows referenced by `request_logs` are never hard-deleted.** The three foreign keys use `RESTRICT` on delete, so a direct `DELETE` of an entity, model or endpoint that has request history fails. Retire or deactivate instead: models and endpoints are retired (the config sync clears `model_endpoints.active`, so `model_endpoint_id` keeps pointing at the endpoint that served each request), and entities are deactivated. The only sanctioned hard delete of an entity is `flask erase-entity` (see [Erasing a user](#erasing-a-user-gdpr)), which moves the entity's `request_logs` rows to the ghost before deleting it.
+- The FKs used to be `SET NULL`. On the compressed hypertable that action rewrote history: deleting a parent ran an `UPDATE` over every chunk, which decompresses compressed batches and aborts past `timescaledb.max_tuples_decompressed_per_dml_transaction`. Rows nulled that way before the switch keep their NULLs, which is why the columns stay nullable.
+- A direct `DELETE` is cheap to refuse for a model (`model_config_id` is indexed on uncompressed chunks and the compression `segmentby` on compressed ones). For an entity or an endpoint it is slow: compressed chunks have no index on `entity_id`, and `model_endpoint_id` has none anywhere, so the check scans every chunk, decompressing in memory, before it fails. It never writes to `request_logs`.
 - `time` is indexed by `request_logs_time_idx`, the index TimescaleDB creates with the hypertable (declared on the model, and created by the migration on SQLite), but not unique; concurrent workers may insert rows with the same timestamp without collision.
 - **Timing columns measure the user's wait, which `duration` does not.** `duration` starts *after* preflight (model lookup, access checks, coin budget, endpoint selection, pool checkout) and ends before the billing commit, while `time` is stamped *after* that commit. So neither can be walked backwards to the moment the request arrived. Together the new columns partition the request: `started_at` + `queue_wait` + `preflight` + `ttft_visible` is when the user first sees anything.
 - **`started_at` is stored, not derived.** The obvious reconstruction, `time − duration − queue_wait`, silently assumes preflight and the billing commit take zero time. Both grow under load, so the error is largest during exactly the burst the column exists to explain.
@@ -934,9 +936,8 @@ for example on a `request_logs` row logged after the sweep, everything in it rol
 command says to re-run. Interrupted during the aggregate refresh, the user is gone; re-running with
 the same id refreshes from the buckets still materialised under it, or reports nothing to do.
 
-**Depends on #176:** the `request_logs.entity_id` foreign key is still `ON DELETE SET NULL`. Until it
-is `RESTRICT`, a row the walk and sweep both missed is nulled instead of failing the delete. The
-PostgreSQL integration tests run against the `RESTRICT` key.
+**`RESTRICT` is the safety net:** `request_logs.entity_id` is `ON DELETE RESTRICT`, so a row the walk
+and sweep both missed fails the final delete instead of being left pointing at nobody.
 
 ---
 

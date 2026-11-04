@@ -259,16 +259,16 @@ Entity ──< EntityStat
 Entity ──< GroupMember >── Group ──< GroupLimit
 Entity ──< Conversation ──< Message
 Entity ──< EntityManager (user → project)
-Entity ──< RequestLog (SET NULL on delete)
+Entity ──< RequestLog (RESTRICT on delete)
 Entity ──< ModelConfig (owner_entity_id, SET NULL on delete)
 ModelConfig ──< ModelEndpoint
 ModelConfig ──< ModelStat
-ModelConfig ──< RequestLog (SET NULL on delete)
+ModelConfig ──< RequestLog (RESTRICT on delete)
 ```
 
 ### Notable schema decisions
 
-- **`RequestLog` FKs use `SET NULL` on delete** — preserves historical data when entities or models are removed. All other FKs cascade.
+- **`RequestLog` FKs use `RESTRICT` on delete** — a direct `DELETE` of an entity, model or endpoint that has request history fails, so the compressed hypertable is never rewritten. Models and endpoints are retired and entities deactivated instead; the only sanctioned hard delete of an entity is `flask erase-entity`, which first moves its request logs to the ghost entity. All other FKs cascade.
 - **Users are erased, not deleted ad hoc** — `flask erase-entity` hard-deletes a user for GDPR erasure: it deletes their personal data explicitly and moves their request history, stats, models and revoked, anonymised API keys to the single shared ghost entity (`entity_type = 'ghost'`), so usage totals stay complete without pointing at the person. See *Erasing a user* in `docs/dbschema.md`.
 - **Endpoints are retired, not deleted** — removing an endpoint from `config.yaml` (or its model) clears `model_endpoints.active`; the row stays so `request_logs.model_endpoint_id` keeps pointing at the endpoint that served each request, and inactive rows are excluded from discovery, routing, and health checks. Re-adding the URL reactivates the same row after a fresh probe.
 - **Coin values use `Numeric(12,6)`** — avoids floating-point precision errors for financial accumulation.
@@ -411,7 +411,7 @@ Protected by an optional Bearer token. Aggregates across workers via `prometheus
 
 ### Request Logging
 
-Every proxied request is written to `request_logs` (TimescaleDB hypertable partitioned by `time`). Foreign keys use `SET NULL ON DELETE` to preserve historical data after users or models are removed; endpoints are never deleted (they are retired by clearing `model_endpoints.active`), so `model_endpoint_id` stays resolvable.
+Every proxied request is written to `request_logs` (TimescaleDB hypertable partitioned by `time`). Foreign keys use `ON DELETE RESTRICT`: users are deactivated and models and endpoints retired (endpoints by clearing `model_endpoints.active`), never deleted while they have request history, so every reference stays resolvable. A direct `DELETE` fails.
 
 ### Analytics Dashboard (`/usage`)
 

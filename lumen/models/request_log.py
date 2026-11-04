@@ -15,14 +15,17 @@ class RequestLog(db.Model):
     partitioned by time, enabling efficient time-range queries and retention
     policies. On SQLite it behaves as a plain table.
 
-    FK columns use SET NULL on delete to preserve historical records when
-    entities or models are removed. Endpoints are not removed: the config
-    sync retires them by clearing model_endpoints.active, so
-    model_endpoint_id keeps referencing the endpoint that served each
-    request (SET NULL remains as a safety net for direct SQL deletions).
-    Updating this column would force TimescaleDB to decompress compressed
-    chunks — bounded by a tuple limit and liable to abort a large sync —
-    which is exactly what retirement avoids.
+    The three FK columns are ON DELETE RESTRICT: a direct DELETE of an
+    entity, model or endpoint that has request history fails. Rows here are
+    never rewritten to follow a parent's deletion, because updating them
+    forces TimescaleDB to decompress compressed chunks — bounded by a tuple
+    limit and liable to abort — and would strip history of who made it.
+    Instead the parents are kept: entities are deactivated, models and
+    endpoints are retired (the config sync clears model_endpoints.active),
+    so each row keeps referencing what served it. The only sanctioned hard
+    delete of an entity is `flask erase-entity`, which first moves the
+    entity's rows to the ghost entity. The columns stay nullable: rows
+    nulled while these FKs were SET NULL still exist.
     """
 
     __tablename__ = "request_logs"
@@ -48,25 +51,25 @@ class RequestLog(db.Model):
     )
     # TimescaleDB partition key; kept non-unique to prevent collisions between concurrent workers.
     time: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), index=False, comment="UTC request timestamp; TimescaleDB partition key")
-    # SET NULL on delete so historical data is preserved after entity removal
+    # RESTRICT on delete: entities are deactivated, not deleted, while they
+    # have history; flask erase-entity moves the rows to the ghost first
     entity_id: Mapped[Optional[int]] = mapped_column(
         db.Integer,
-        db.ForeignKey("entities.id", ondelete="SET NULL"),
-        comment="Requesting entity; SET NULL on delete to preserve historical data",
+        db.ForeignKey("entities.id", ondelete="RESTRICT"),
+        comment="Requesting entity; RESTRICT on delete: entities are deactivated, not deleted, while they have request history",
     )
-    # SET NULL on delete so historical data is preserved after model removal
+    # RESTRICT on delete: models are retired (deactivated), never deleted
     model_config_id: Mapped[Optional[int]] = mapped_column(
         db.Integer,
-        db.ForeignKey("model_configs.id", ondelete="SET NULL"),
-        comment="Model used; SET NULL on delete to preserve historical data",
+        db.ForeignKey("model_configs.id", ondelete="RESTRICT"),
+        comment="Model used; RESTRICT on delete: models are retired (deactivated), never deleted",
     )
-    # SET NULL on delete only as a safety net for direct SQL deletions; the
-    # sync retires endpoints (model_endpoints.active = false) instead of
-    # deleting them, precisely so this column is never rewritten
+    # RESTRICT on delete: the sync retires endpoints (model_endpoints.active =
+    # false) instead of deleting them, so this column is never rewritten
     model_endpoint_id: Mapped[Optional[int]] = mapped_column(
         db.Integer,
-        db.ForeignKey("model_endpoints.id", ondelete="SET NULL"),
-        comment="Backend endpoint that served the request; endpoints are retired (deactivated), never deleted, so this reference is stable",
+        db.ForeignKey("model_endpoints.id", ondelete="RESTRICT"),
+        comment="Backend endpoint that served the request; RESTRICT on delete: endpoints are retired (deactivated), never deleted",
     )
     # 'chat' (web UI) or 'api' (API key)
     source: Mapped[str] = mapped_column(db.String(8), comment="Origin of the request: chat (web UI) or api (API key)")
