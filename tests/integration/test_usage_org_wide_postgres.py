@@ -8,7 +8,10 @@ invariant, and this module proves it per period and per endpoint:
 1. Org-wide equals raw ``request_logs`` with the same buckets.
 2. Org-wide equals the sum of the per-entity API results plus the raw rows of a
    hard-deleted entity. The per-entity API hides deleted entities, the org-wide
-   totals keep their traffic (their raw rows have a NULL ``entity_id``).
+   totals keep their traffic (their raw rows have a NULL ``entity_id``). Since
+   ``c8d0e2f4a6b8`` the foreign key is ``RESTRICT`` and no delete can leave such
+   rows, but history written under ``SET NULL`` keeps them, so the seed writes
+   them directly.
 
 The seed has several entities, models and sources, costs with six decimal
 places, rows across more than a year, rows at UTC midnight and on each window's
@@ -204,7 +207,7 @@ def _seed_times(now):
 
 @pytest.fixture(scope="module")
 def world(pg_app, engine):
-    """Seed, hard-delete one entity, then run ``flask upgrade``."""
+    """Seed, with a hard-deleted entity's NULL-entity rows, then run ``flask upgrade``."""
     rng = random.Random(242)
     now = datetime.now(timezone.utc)
     with engine.begin() as conn:
@@ -215,7 +218,9 @@ def world(pg_app, engine):
         entities = {key: conn.execute(text(
             "INSERT INTO entities (entity_type, name, initials, active) "
             "VALUES ('user', :n, 'OQ', true) RETURNING id"
-        ), {"n": f"orgq-{key}"}).scalar() for key in ("a", "b", "c", DELETED)}
+        ), {"n": f"orgq-{key}"}).scalar() for key in ("a", "b", "c")}
+        # What an entity deleted under the old ON DELETE SET NULL left behind.
+        entities[DELETED] = None
         for when in _seed_times(now):
             for key, eid in entities.items():
                 for source in SOURCES:
@@ -224,10 +229,9 @@ def world(pg_app, engine):
         # The current hour, before the upgrade: it stays above every watermark.
         for eid in entities.values():
             _insert(conn, rng, now, eid, models[0], "chat")
-        conn.execute(text("DELETE FROM entities WHERE id = :e"), {"e": entities[DELETED]})
         assert conn.execute(text(
             "SELECT COUNT(*) FROM request_logs WHERE entity_id IS NULL"
-        )).scalar() > 0, "the delete left no NULL-entity rows behind"
+        )).scalar() > 0, "the seed wrote no NULL-entity rows"
 
     with pg_app.app_context():
         result = pg_app.test_cli_runner().invoke(upgrade_cmd, [])
