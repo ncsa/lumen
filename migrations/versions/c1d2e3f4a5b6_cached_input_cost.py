@@ -1,7 +1,7 @@
 """Add cached_input_cost_per_million to model_configs
 
 Revision ID: c1d2e3f4a5b6
-Revises: b4c6d8e0f2a4
+Revises: c8d0e2f4a6b8
 Create Date: 2026-11-02 00:00:00.000000
 
 Providers that run prompt caching report how many input tokens they served from
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "c1d2e3f4a5b6"
-down_revision = "b4c6d8e0f2a4"
+down_revision = "c8d0e2f4a6b8"
 branch_labels = None
 depends_on = None
 
