@@ -1,7 +1,7 @@
 """Rebuild request_counts_hourly over the entity aggregate; add request_counts_daily
 
 Revision ID: c6e8a0b2d4f6
-Revises: b4c6d8e0f2a4
+Revises: c8d0e2f4a6b8
 Create Date: 2026-11-04 00:00:00.000000
 
 ``request_counts_hourly`` and ``request_counts_hourly_by_entity`` each scanned raw
@@ -56,7 +56,7 @@ On SQLite there are no continuous aggregates and this migration does nothing.
 from alembic import op
 
 revision = "c6e8a0b2d4f6"
-down_revision = "b4c6d8e0f2a4"
+down_revision = "c8d0e2f4a6b8"
 branch_labels = None
 depends_on = None
 

@@ -32,7 +32,7 @@ ENTITY = "request_counts_hourly_by_entity"
 HOURLY = "request_counts_hourly"
 DAILY = "request_counts_daily"
 REVISION = "c6e8a0b2d4f6"
-BEFORE = "b4c6d8e0f2a4"
+BEFORE = "c8d0e2f4a6b8"
 
 
 @pytest.fixture(scope="module")
