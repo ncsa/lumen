@@ -29,6 +29,7 @@ All notable changes to Lumen will be documented in this file.
 - Tests now pin that `subtract_coins` never creates or deducts a balance for an unlimited (-2) coin pool. (#365)
 - Billing takes the per-entity balance lock last and no longer runs existence SELECTs, so concurrent requests from one entity or project key queue far less. (#171)
 - Drop redundant indexes on `request_logs` and `model_stats`, so each request insert maintains fewer indexes. (#175)
+- Make hard-deleting an entity, model or endpoint that has request history fail instead of rewriting `request_logs` (#176).
 - `backfill-aggregate` / `reassign-model` no longer fail when run within the first bucket of a month. (#388)
 - Cut redundant DB queries: one entity count per metrics pass, no duplicate metrics/TimescaleDB check at startup, usage page skips hidden user-growth charts (#178).
 - Add `flask erase-entity` to hard-delete a user for GDPR erasure, moving their request history, usage totals, models and revoked, anonymised API keys to a shared anonymous ghost user (#378).
