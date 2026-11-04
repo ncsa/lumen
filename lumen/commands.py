@@ -1333,16 +1333,79 @@ def backfill_aggregate_cmd(name, from_month, force):
         click.echo("Backfill complete: no months to refresh.")
 
 
+# The per-month totals ``check-aggregate`` compares across the usage aggregates.
+_USAGE_TOTALS = ("requests", "input_tokens", "output_tokens", "cost")
+
+
+def _watermark(conn, view_name):
+    """Where the aggregate's materialisation ends, or None if it has never been refreshed.
+
+    Read through TimescaleDB's internal functions, which ``timescaledb_information`` does
+    not expose. A never-refreshed aggregate stores the minimum timestamptz (4714 BC),
+    which no ``datetime`` can hold, so anything before year 1 is reported as None.
+    """
+    return conn.execute(text(
+        "SELECT CASE WHEN w >= TIMESTAMPTZ '0001-01-02 00:00:00+00' THEN w END FROM ("
+        "  SELECT _timescaledb_functions.to_timestamp("
+        "         _timescaledb_functions.cagg_watermark(mat_hypertable_id)) AS w "
+        "  FROM _timescaledb_catalog.continuous_agg "
+        "  WHERE user_view_schema = 'public' AND user_view_name = :v) s"
+    ), {"v": view_name}).scalar()
+
+
+def _monthly_totals(conn, view_name, before):
+    """``{month: (requests, input_tokens, output_tokens, cost)}`` materialised before ``before``.
+
+    Read off the materialisation hypertable, for the reason ``check-aggregate`` gives.
+    Months are UTC, which every usage aggregate's buckets nest in.
+    """
+    bucket = _bucket_column(conn, view_name)
+    sums = ", ".join(f"COALESCE(SUM({c}), 0)" for c in _USAGE_TOTALS)
+    rows = conn.execute(text(
+        f"SELECT date_trunc('month', \"{bucket}\", 'UTC'), {sums} "
+        f"FROM {_materialization_hypertable(conn, view_name)} "
+        f"WHERE \"{bucket}\" < :b GROUP BY 1"
+    ), {"b": before}).all()
+    return {row[0].astimezone(timezone.utc): tuple(row[1:]) for row in rows}
+
+
+def _cross_view_differences(conn):
+    """Compare the usage aggregates' per-month totals below the daily watermark.
+
+    Returns ``(cutoff, differences)``: ``cutoff`` is the first month *not* compared
+    (None when the daily aggregate has never been refreshed), ``differences`` lists
+    ``(month, column, values)`` with one value per ``USAGE_AGGREGATES`` entry. The
+    org-wide aggregates are sums over the entity aggregate's rows, so any difference in
+    a month every one of them has fully materialised is drift.
+    """
+    watermark = _watermark(conn, USAGE_AGGREGATES[-1])
+    if watermark is None:
+        return None, []
+    cutoff = _month_start(watermark)
+    totals = [_monthly_totals(conn, name, cutoff) for name in USAGE_AGGREGATES]
+    zero = (0,) * len(_USAGE_TOTALS)
+    differences = []
+    for month in sorted(set().union(*totals)):
+        per_view = [t.get(month, zero) for t in totals]
+        for i, column in enumerate(_USAGE_TOTALS):
+            values = [v[i] for v in per_view]
+            if len(set(values)) > 1:
+                differences.append((month, column, values))
+    return cutoff, differences
+
+
 @click.command("check-aggregate")
 @with_appcontext
 def check_aggregate_cmd():
-    """Report whether the entity aggregate covers all of request_logs. Read-only.
+    """Report whether the usage aggregates cover request_logs and agree. Read-only.
 
     ``request_logs`` is never pruned (#167). Exits 1 if a retention policy exists on
-    it, if the aggregate does not reach back to its oldest row, or if any month is
-    missing or only partly covered (the rule ``flask upgrade`` backfills by); the
-    per-user /usage charts, which read only the aggregate, then miss that history
-    until ``flask upgrade`` or ``flask backfill-aggregate`` is run.
+    it, if the entity aggregate does not reach back to its oldest row, if any month of
+    any usage aggregate is missing or only partly covered (the rule ``flask upgrade``
+    backfills by), or if the monthly requests, tokens or cost of the three usage
+    aggregates differ in any month below the daily aggregate's watermark. The /usage
+    charts, which read only the aggregates, then miss or misstate that history until
+    ``flask upgrade`` or ``flask backfill-aggregate`` is run.
     """
     if db.engine.dialect.name != "postgresql":
         click.echo(f"check-aggregate requires PostgreSQL/TimescaleDB; nothing to do on "
@@ -1361,8 +1424,11 @@ def check_aggregate_cmd():
                        f"  SELECT remove_retention_policy('request_logs');")
             failed = True
 
-        if ENTITY_AGGREGATE not in _continuous_aggregates(conn):
-            click.echo(f"Error: '{ENTITY_AGGREGATE}' does not exist. Run 'flask db upgrade' first.")
+        existing = _continuous_aggregates(conn)
+        absent = [name for name in USAGE_AGGREGATES if name not in existing]
+        for name in absent:
+            click.echo(f"Error: '{name}' does not exist. Run 'flask db upgrade' first.")
+        if absent:
             raise SystemExit(1)
         # Read the materialisation hypertable, never the view: with
         # materialized_only = false the view answers from raw above the watermark, so a
@@ -1389,19 +1455,41 @@ def check_aggregate_cmd():
         # The same per-month rule 'flask upgrade' backfills by, so a month the earliest
         # bucket alone cannot see (an interior month, or one only the refresh policy's
         # trailing window has partly materialised) is reported too.
-        missing = _missing_months(conn, ENTITY_AGGREGATE, datetime.now(timezone.utc))
-        if missing:
-            click.echo(f"Error: these months of '{ENTITY_AGGREGATE}' are missing or partly covered:")
+        now = datetime.now(timezone.utc)
+        for name in USAGE_AGGREGATES:
+            missing = _missing_months(conn, name, now)
+            if not missing:
+                if name == ENTITY_AGGREGATE and raw_oldest is not None and covered:
+                    click.echo(f"{ENTITY_AGGREGATE} covers request_logs.")
+                continue
+            click.echo(f"Error: these months of '{name}' are missing or partly covered:")
             for start, first_raw, first_bucket in missing:
                 state = "missing" if first_bucket is None else "partly covered"
                 click.echo(f"  {start:%Y-%m}: {state} (first request_logs row {_fmt(first_raw)}, "
                            f"first materialised bucket {_fmt(first_bucket)})")
-            click.echo(f"  Run 'flask upgrade', or 'flask backfill-aggregate --from "
+            name_arg = "" if name == ENTITY_AGGREGATE else f"--name {name} "
+            click.echo(f"  Run 'flask upgrade', or 'flask backfill-aggregate {name_arg}--from "
                        f"{missing[0][0]:%Y-%m}'.")
             covered = False
-        if raw_oldest is not None and covered:
-            click.echo(f"{ENTITY_AGGREGATE} covers request_logs.")
         failed = failed or not covered
+
+        # Every month the daily aggregate has fully materialised is fully materialised
+        # in the two it is built on too, so their totals must be equal there.
+        cutoff, differences = _cross_view_differences(conn)
+        if cutoff is None:
+            click.echo(f"'{USAGE_AGGREGATES[-1]}' has never been refreshed; "
+                       f"no month to compare across the usage aggregates.")
+        elif differences:
+            click.echo(f"Error: the usage aggregates disagree below {cutoff:%Y-%m} "
+                       f"({' / '.join(USAGE_AGGREGATES)}):")
+            for month, column, values in differences:
+                click.echo(f"  {month:%Y-%m}: {column} {' / '.join(str(v) for v in values)}")
+            click.echo(f"  Refresh those months bottom-up: 'flask backfill-aggregate --name <view> "
+                       f"--from {differences[0][0]:%Y-%m}' for {', '.join(USAGE_AGGREGATES)}, "
+                       f"in that order.")
+            failed = True
+        else:
+            click.echo(f"Usage aggregates agree on every month before {cutoff:%Y-%m}.")
 
     if failed:
         raise SystemExit(1)

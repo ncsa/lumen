@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import text
 
+from lumen.commands import USAGE_AGGREGATES, _in_refresh_order
 from tests.integration.conftest import TEST_CONFIG
 
 pytestmark = pytest.mark.postgres
@@ -98,7 +99,9 @@ def lifecycle_db(pg_migrated):
     Every test here asserts on unqualified aggregate totals and on whether a
     retention policy exists, so one test's rows and policies would fail the next.
     Raw rows are deleted and every aggregate is then recomputed over the window
-    they occupied, which drops their materialised rows. The window is bounded and
+    they occupied (the oldest row a test writes is 15 months old), which drops their
+    materialised rows; ``check-aggregate`` compares the aggregates' totals, so a stale
+    row left in one of them would fail a later test. The window is bounded and
     ends at ``now()`` on purpose: ``NULL, NULL`` would move each aggregate's
     watermark past the current bucket and disable real-time aggregation for the
     tests that run after this one.
@@ -111,11 +114,12 @@ def lifecycle_db(pg_migrated):
         )).scalar():
             conn.execute(text("SELECT remove_retention_policy('request_logs')"))
         conn.execute(text("DELETE FROM request_logs WHERE source = :s"), {"s": SOURCE})
-        for view in conn.execute(text(
+        # Bottom-up: an org-wide view refreshed before its child keeps the child's stale rows.
+        for view in _in_refresh_order(conn.execute(text(
             "SELECT view_name FROM timescaledb_information.continuous_aggregates"
-        )).scalars().all():
+        )).scalars().all()):
             conn.execute(text(
-                f"CALL refresh_continuous_aggregate('{view}', now() - INTERVAL '30 days', now())"
+                f"CALL refresh_continuous_aggregate('{view}', now() - INTERVAL '20 months', now())"
             ))
 
 
@@ -286,8 +290,9 @@ def test_check_aggregate_passes_once_backfilled_and_adds_no_jobs(pg_url, recent_
     if not _aggregate_exists(recent_row, ENTITY_AGGREGATE):
         pytest.skip(f"{ENTITY_AGGREGATE} migration is not on disk yet")
 
-    backfill = _run(pg_url, "backfill-aggregate", "--from", _months_ago(1))
-    assert backfill.returncode == 0, backfill.stdout + backfill.stderr
+    for view in USAGE_AGGREGATES:  # bottom-up: each org-wide view reads its child's rows
+        backfill = _run(pg_url, "backfill-aggregate", "--name", view, "--from", _months_ago(1))
+        assert backfill.returncode == 0, backfill.stdout + backfill.stderr
     jobs = _job_count(recent_row)
 
     result = _run(pg_url, "check-aggregate")
@@ -296,6 +301,7 @@ def test_check_aggregate_passes_once_backfilled_and_adds_no_jobs(pg_url, recent_
     assert "earliest materialised bucket:" in result.stdout, output
     assert "oldest request_logs row:" in result.stdout, output
     assert f"{ENTITY_AGGREGATE} covers request_logs." in result.stdout, output
+    assert "Usage aggregates agree on every month before" in result.stdout, output
     assert _job_count(recent_row) == jobs, "check-aggregate added a job"
     assert _retention_drop_after(recent_row) is None, "check-aggregate added a retention policy"
 
