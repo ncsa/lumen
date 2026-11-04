@@ -242,6 +242,7 @@ erDiagram
         int entity_id FK
         int model_config_id FK
         int model_endpoint_id FK
+        int api_key_id FK
         string source
         int input_tokens
         int output_tokens
@@ -264,6 +265,7 @@ erDiagram
     entities |o--o{ api_keys : "revoked"
     entities |o--o{ auth_requests : "approves"
     api_keys |o--o{ auth_requests : "minted at claim"
+    api_keys |o--o{ request_logs : "used by"
     entities ||--o| entity_limits : "has"
     entities ||--o| entity_balances : "has"
     entities ||--o{ model_configs : "owns"
@@ -719,6 +721,7 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 | `entity_id` | Integer (FK → entities) | YES | The entity that made the request. `RESTRICT` on delete; NULL only on rows nulled while the FK was `SET NULL` |
 | `model_config_id` | Integer (FK → model_configs) | YES | The model used. `RESTRICT` on delete; models are retired, never deleted |
 | `model_endpoint_id` | Integer (FK → model_endpoints) | YES | The specific backend endpoint that served the request. `RESTRICT` on delete; endpoints are retired (marked inactive), never deleted, so the reference stays resolvable |
+| `api_key_id` | Integer (FK → api_keys) | YES | The API key that made the request. NULL for chat requests and for API requests logged before this column existed (see Notes). `RESTRICT` on delete; keys are revoked, never deleted |
 | `source` | String(8) | NO | Origin of the request: `'chat'` or `'api'` |
 | `input_tokens` | Integer | NO | Input token count for this request |
 | `output_tokens` | Integer | NO | Output token count for this request |
@@ -738,9 +741,11 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 **Constraints:** index `request_logs_time_idx` on (`time` DESC); index `ix_request_logs_entity_id` on (`entity_id`); index `ix_request_logs_model_config_id_time` on (`model_config_id`, `time` DESC)
 
 **Notes:**
-- **Rows referenced by `request_logs` are never hard-deleted.** The three foreign keys use `RESTRICT` on delete, so a direct `DELETE` of an entity, model or endpoint that has request history fails. Retire or deactivate instead: models and endpoints are retired (the config sync clears `model_endpoints.active`, so `model_endpoint_id` keeps pointing at the endpoint that served each request), and entities are deactivated. The only sanctioned hard delete of an entity is `flask erase-entity` (see [Erasing a user](#erasing-a-user-gdpr)), which moves the entity's `request_logs` rows to the ghost before deleting it.
+- **Rows referenced by `request_logs` are never hard-deleted.** The four foreign keys use `RESTRICT` on delete, so a direct `DELETE` of an entity, model, endpoint or API key that has request history fails. Retire or deactivate instead: models and endpoints are retired (the config sync clears `model_endpoints.active`, so `model_endpoint_id` keeps pointing at the endpoint that served each request), entities are deactivated, and API keys are revoked (`revoked_at`); `flask erase-entity` keeps an erased user's keys under the ghost. The only sanctioned hard delete of an entity is `flask erase-entity` (see [Erasing a user](#erasing-a-user-gdpr)), which moves the entity's `request_logs` rows to the ghost before deleting it.
 - The FKs used to be `SET NULL`. On the compressed hypertable that action rewrote history: deleting a parent ran an `UPDATE` over every chunk, which decompresses compressed batches and aborts past `timescaledb.max_tuples_decompressed_per_dml_transaction`. Rows nulled that way before the switch keep their NULLs, which is why the columns stay nullable.
 - A direct `DELETE` is cheap to refuse for a model (`model_config_id` is indexed on uncompressed chunks and the compression `segmentby` on compressed ones). For an entity or an endpoint it is slow: compressed chunks have no index on `entity_id`, and `model_endpoint_id` has none anywhere, so the check scans every chunk, decompressing in memory, before it fails. It never writes to `request_logs`.
+- **`api_key_id` together with `source`:** `'api'` with a value is the key that made the request; `'chat'` with NULL is a web UI request, which uses no key; `'api'` with NULL means the key is unknown, because the row was logged before the column existed (or by an older pod during the rolling update that added it).
+- **`fk_request_logs_api_key_id` is `NOT VALID` on PostgreSQL, on purpose, and is never validated.** The migration (`c5d7e9f1a3b6`) adds the column and then the foreign key with `NOT VALID`, so new rows are checked against `api_keys` but existing rows are not. Validating would scan the whole never-pruned hypertable, decompressing every compressed chunk while holding a lock that blocks billing, and would prove nothing, because every row older than the column is NULL. `pg_constraint.convalidated` therefore stays `false`. `api_key_id` has no index, so a direct `DELETE` of an API key is refused only after a scan of every chunk, like an endpoint.
 - `time` is indexed by `request_logs_time_idx`, the index TimescaleDB creates with the hypertable (declared on the model, and created by the migration on SQLite), but not unique; concurrent workers may insert rows with the same timestamp without collision.
 - **Timing columns measure the user's wait, which `duration` does not.** `duration` starts *after* preflight (model lookup, access checks, coin budget, endpoint selection, pool checkout) and ends before the billing commit, while `time` is stamped *after* that commit. So neither can be walked backwards to the moment the request arrived. Together the new columns partition the request: `started_at` + `queue_wait` + `preflight` + `ttft_visible` is when the user first sees anything.
 - **`started_at` is stored, not derived.** The obvious reconstruction, `time − duration − queue_wait`, silently assumes preflight and the billing commit take zero time. Both grow under load, so the error is largest during exactly the burst the column exists to explain.

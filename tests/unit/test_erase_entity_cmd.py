@@ -529,6 +529,8 @@ HANDLED = {
     ("model_configs", "owner_entity_id"): "models step",
     ("model_stats", "entity_id"): "merge_stats_into",
     ("request_logs", "entity_id"): "request_logs move",
+    # The key survives under the ghost, so the reference stays valid.
+    ("request_logs", "api_key_id"): "no-op",
 }
 
 
