@@ -21,9 +21,11 @@ from lumen.timeutils import utcnow
 
 pytestmark = pytest.mark.postgres
 
-AGGREGATE = "request_counts_hourly"
-# request_logs.source is VARCHAR(8) and request_counts_hourly groups by it, so the
-# tag isolates this module's rows in the aggregate as well as in the raw table.
+# Built on request_logs. request_counts_hourly is built on this one and reads only its
+# materialised rows, so refreshing hourly alone would materialise nothing here.
+AGGREGATE = "request_counts_hourly_by_entity"
+# request_logs.source is VARCHAR(8) and every usage aggregate groups by it, so the
+# tag isolates this module's rows in the aggregates as well as in the raw table.
 SOURCE = "naivetst"
 
 
@@ -47,12 +49,12 @@ def _hour_with_one_row(engine, days_ago):
     return start, start + timedelta(hours=1)
 
 
-def _materialised_requests(engine, start):
+def _materialised_requests(engine, start, view=AGGREGATE):
     with engine.connect() as conn:
         mat = conn.execute(text(
             "SELECT materialization_hypertable_schema || '.' || materialization_hypertable_name "
             "FROM timescaledb_information.continuous_aggregates WHERE view_name = :v"
-        ), {"v": AGGREGATE}).scalar()
+        ), {"v": view}).scalar()
         return conn.execute(text(
             f"SELECT COALESCE(SUM(requests), 0) FROM {mat} "
             "WHERE source = :s AND bucket = CAST(:b AS timestamp) AT TIME ZONE 'UTC'"
@@ -71,10 +73,20 @@ def test_refresh_window_materialises_a_naive_utc_window(engine):
 
 
 def test_seed_refresh_materialises_a_naive_utc_window(engine):
-    start, end = _hour_with_one_row(engine, days_ago=6)
+    """The seed refreshes every usage aggregate bottom-up, so the row reaches all three.
+
+    The window is a whole UTC day: request_counts_daily rejects a window holding no
+    whole bucket.
+    """
+    hour, _ = _hour_with_one_row(engine, days_ago=6)
+    start = hour.replace(hour=0)
+    end = start + timedelta(days=1)
     assert start.tzinfo is None and end.tzinfo is None
-    assert _materialised_requests(engine, start) == 0
+    for view in seed_analytics.USAGE_AGGREGATES:
+        assert _materialised_requests(engine, hour, view) == 0
 
-    seed_analytics.refresh_hourly_aggregate(engine, start, end)
+    seed_analytics.refresh_usage_aggregates(engine, start, end)
 
-    assert _materialised_requests(engine, start) == 1
+    assert _materialised_requests(engine, hour, "request_counts_hourly_by_entity") == 1
+    assert _materialised_requests(engine, hour, "request_counts_hourly") == 1
+    assert _materialised_requests(engine, start, "request_counts_daily") == 1

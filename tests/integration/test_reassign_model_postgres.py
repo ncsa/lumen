@@ -37,7 +37,9 @@ pytestmark = pytest.mark.postgres
 
 OLD_ROWS = 60  # well above the lowered guard (10)
 RECENT_ROWS = 3
-AGGREGATES = ("request_counts_hourly", "request_counts_hourly_by_entity", "request_metrics_1m")
+# In refresh order: _seed_history refreshes them in this order, children first.
+AGGREGATES = ("request_counts_hourly_by_entity", "request_counts_hourly", "request_counts_daily",
+              "request_metrics_1m")
 # request_metrics_1m keeps 30 days (5006b6594383); its older buckets are never refreshed.
 RETENTION = {"request_metrics_1m": "30 days"}
 
@@ -208,8 +210,8 @@ def test_moves_compressed_history_and_refreshes_aggregates(pg_app, engine):
 
 
 def test_refreshes_every_child_aggregate_before_its_parent(pg_app, engine):
-    """by_entity before hourly: once hourly is built on by_entity, the reverse order
-    would rebuild it from by_entity's buckets still under FROM."""
+    """by_entity before hourly before daily: each is built on the one before, and the
+    reverse order would rebuild it from its child's buckets still under FROM."""
     from_id, to_id = _models(engine)
     _seed_history(engine, from_id)
     real = commands._refresh_months
@@ -225,6 +227,7 @@ def test_refreshes_every_child_aggregate_before_its_parent(pg_app, engine):
     assert result.exit_code == 0, result.output
     assert sorted(refreshed) == sorted(AGGREGATES)
     assert refreshed.index("request_counts_hourly_by_entity") < refreshed.index("request_counts_hourly"), refreshed
+    assert refreshed.index("request_counts_hourly") < refreshed.index("request_counts_daily"), refreshed
     assert refreshed == [name for name in commands.AGGREGATE_REFRESH_ORDER if name in AGGREGATES]
     _assert_fully_moved(engine, from_id, to_id)
 

@@ -49,6 +49,8 @@ def test_fresh_migration_has_no_problems(conn):
     assert health.installed_version == health.available_version
     assert health.request_logs_hypertable is True
     assert [name for name, _ in health.jobs] == list(timescale_health.EXPECTED_JOBS)
+    assert health.job("refresh:request_counts_daily").target == "request_counts_daily"
+    assert health.aggregate("request_counts_daily").materialized_only is False
     assert health.job("retention:request_metrics_1m").proc_name == "policy_retention"
     assert health.request_logs_retention is False
 
@@ -109,7 +111,7 @@ def test_startup_logs_no_problem_on_a_fresh_database(pg_migrated_isolated, monke
     try:
         records = [r for r in caplog.records if "TimescaleDB" in r.getMessage()]
         assert [r.levelno for r in records] == [logging.INFO], [r.getMessage() for r in records]
-        assert "5 expected jobs" in records[0].getMessage()
+        assert "6 expected jobs" in records[0].getMessage()
     finally:
         with app.app_context():
             db.engine.dispose()

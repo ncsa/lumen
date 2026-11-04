@@ -83,7 +83,7 @@ _ASSUMED_SCRAPE_INTERVAL = 30.0
 _JITTER = 0.1
 
 #: Seconds between TimescaleDB health checks, rounded up to whole passes. Well
-#: inside the 3-hour ``start_offset`` of ``request_counts_hourly``, so a failing
+#: inside the 30-day ``start_offset`` of ``request_counts_hourly``, so a failing
 #: refresh job shows on /metrics long before it can leave a gap.
 _TIMESCALE_HEALTH_INTERVAL = 300.0
 

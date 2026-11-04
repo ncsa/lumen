@@ -83,7 +83,7 @@ def test_continuous_aggregate_is_real_time(pg_migrated):
 def test_continuous_aggregate_reflects_inserted_rows(pg_migrated):
     """Insert, refresh, read back — including the bucket that is still open.
 
-    The aggregate's own policy lags real time by at least an hour, so the
+    The aggregate's own policy lags real time by three hours, so the
     refresh has to be explicit — the same reason ``seed_analytics.py`` calls it
     directly. The first two rows are dated well into the past so they fall
     outside the policy's ``end_offset`` window and are eligible for
@@ -108,12 +108,15 @@ def test_continuous_aggregate_reflects_inserted_rows(pg_migrated):
                    (now() - INTERVAL '3 days', 'api', 300, 400, 1.5, 2.5)
         """))
 
-    # refresh_continuous_aggregate cannot run inside a transaction block.
+    # refresh_continuous_aggregate cannot run inside a transaction block. The hourly
+    # view is built on request_counts_hourly_by_entity and reads its materialised
+    # rows, so the child is refreshed first.
     with pg_migrated.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-        conn.execute(text(
-            "CALL refresh_continuous_aggregate('request_counts_hourly', "
-            "now() - INTERVAL '30 days', now() - INTERVAL '1 hour')"
-        ))
+        for view in ("request_counts_hourly_by_entity", "request_counts_hourly"):
+            conn.execute(text(
+                f"CALL refresh_continuous_aggregate('{view}', "
+                "now() - INTERVAL '30 days', now() - INTERVAL '1 hour')"
+            ))
 
     # Returns the row's own timestamp so the bucket can be named exactly rather
     # than by re-reading the clock and racing an hour boundary.

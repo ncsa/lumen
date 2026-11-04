@@ -24,6 +24,7 @@ def engine(pg_migrated_isolated):
 @pytest.mark.parametrize(("view", "width"), [
     ("request_counts_hourly", timedelta(hours=1)),
     ("request_counts_hourly_by_entity", timedelta(hours=1)),
+    ("request_counts_daily", timedelta(days=1)),
     ("request_metrics_1m", timedelta(minutes=1)),
 ])
 def test_bucket_width_reads_the_catalog(engine, view, width):
@@ -32,8 +33,9 @@ def test_bucket_width_reads_the_catalog(engine, view, width):
 
 
 @pytest.mark.parametrize(("view", "end_offset"), [
-    ("request_counts_hourly", timedelta(hours=1)),
+    ("request_counts_hourly", timedelta(hours=3)),
     ("request_counts_hourly_by_entity", timedelta(hours=1)),
+    ("request_counts_daily", timedelta(days=1)),
     ("request_metrics_1m", timedelta(minutes=1)),
     ("no_such_aggregate", timedelta(0)),
 ])
