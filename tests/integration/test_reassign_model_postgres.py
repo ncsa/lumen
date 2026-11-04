@@ -207,6 +207,28 @@ def test_moves_compressed_history_and_refreshes_aggregates(pg_app, engine):
     assert "decompression limit" in str(aborted.value), f"the control UPDATE failed with something else: {aborted.value}"
 
 
+def test_refreshes_every_child_aggregate_before_its_parent(pg_app, engine):
+    """by_entity before hourly: once hourly is built on by_entity, the reverse order
+    would rebuild it from by_entity's buckets still under FROM."""
+    from_id, to_id = _models(engine)
+    _seed_history(engine, from_id)
+    real = commands._refresh_months
+    refreshed = []
+
+    def recording(conn, name, start, now):
+        refreshed.append(name)
+        return real(conn, name, start, now)
+
+    with patch.object(commands, "_refresh_months", side_effect=recording):
+        result = _run(pg_app, from_id, to_id)
+
+    assert result.exit_code == 0, result.output
+    assert sorted(refreshed) == sorted(AGGREGATES)
+    assert refreshed.index("request_counts_hourly_by_entity") < refreshed.index("request_counts_hourly"), refreshed
+    assert refreshed == [name for name in commands.AGGREGATE_REFRESH_ORDER if name in AGGREGATES]
+    _assert_fully_moved(engine, from_id, to_id)
+
+
 def test_rerun_and_no_request_logs_skip_the_refresh(pg_app, engine):
     from lumen.extensions import db
     from lumen.models.conversation import Conversation
