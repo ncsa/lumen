@@ -372,6 +372,22 @@ Two things are deliberately **not** included, to be raised separately:
 
 The load numbers behind that deferral (TimescaleDB 2.27/pg17, 2,000,000 request_logs rows in one chunk, ~94 B/row compacted): the `ADD COLUMN` is metadata-only at **2.8 ms** with no size change; NULL costs 0 bytes per row and a recorded count adds ~4 bytes (+2.6% on the compacted table); the fold's per-entity window aggregate over ~1.97M rows went from 199.0 ms to 203.4 ms with an **identical buffer count** (24,713), and the per-model variant stayed at ~247 ms. A backfill, if one were ever wanted, measured 27.4 s plus 4.6 s `VACUUM FULL`. The expensive part is the continuous-aggregate rebuild, not the column.
 
+Measured before/after on one dataset (2,000,000 request rows in a single chunk plus 400,000 appended, 800 `model_stats` / 20 `entity_stats` rows, both schemas measured on the same data):
+
+| Footprint | Before | After |
+|-----------|--------|-------|
+| `request_logs` heap / indexes / total | 214 MB / 176 MB / 390 MB | 214 MB / 176 MB / 390 MB |
+| Compressed chunk (table / index / toast / total) | 5.66 MB / 96 kB / 6.33 MB / 12.53 MB | identical |
+| `flask db upgrade` (whole command) | — | 1.9 s, compressed chunk included |
+| Appended rows, 200k | 8.91 s | 9.07 s with a count recorded (+1.8%) |
+| Row width, `pg_column_size` | 97 B (no count) | 104 B with a count (~+7 B; 0 B while NULL) |
+| `model_stats` / `entity_stats` row width | — | +16 B each (two bigints, ~13 kB over 800 model rows) |
+| Fold pass, 2.8M rows | 417–576 ms, `shared hit` 38,092 / 38,064 | 469–556 ms, **same buffers** |
+| `/metrics` | 18 families, 219 series | identical names, series and values |
+| `/profile` page | 50,326 B | 50,326 B |
+
+So the column costs nothing until a count is actually recorded, and nothing extra in I/O afterwards: the fold scans the same pages, the metrics and payloads are unchanged, and the only real growth is the ~7 bytes per row that carries the number — the price of not losing it.
+
 Coin values use sentinel semantics: `-2` = unlimited, `0` = blocked, positive = budget ceiling.
 
 **Lifecycle:**
