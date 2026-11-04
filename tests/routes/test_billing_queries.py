@@ -125,6 +125,16 @@ def _marker(app):
         return db.session.execute(select(RequestLog.stats_deferred)).scalar_one()
 
 
+def _logged_key(app):
+    """``api_key_id`` of the one request_logs row the request wrote."""
+    from sqlalchemy import select
+
+    from lumen.extensions import db
+    from lumen.models.request_log import RequestLog
+    with app.app_context():
+        return db.session.execute(select(RequestLog.api_key_id)).scalar_one()
+
+
 def _upstream(log, result):
     def _create(**kwargs):
         log.append(UPSTREAM)
@@ -136,7 +146,7 @@ def test_api_non_stream_bills_hot_locks_last(
     app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, fresh_rate_limit, cutover,
 ):
     from lumen.blueprints.api import routes
-    token, _ = api_key
+    token, key_id = api_key
     _own_limit(app, test_user["id"])
     with _writes(app) as log:
         _capturing_openai(monkeypatch, routes, _upstream(log, _NonStreamResponse()))
@@ -144,13 +154,14 @@ def test_api_non_stream_bills_hot_locks_last(
         assert resp.status_code == HTTPStatus.OK
     assert _billing(log) == (CUTOVER_API_BILLING if cutover else API_BILLING)
     assert _marker(app) is (True if cutover else None)
+    assert _logged_key(app) == key_id
 
 
 def test_api_stream_bills_hot_locks_last(
     app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, fresh_rate_limit, cutover,
 ):
     from lumen.blueprints.api import routes
-    token, _ = api_key
+    token, key_id = api_key
     _own_limit(app, test_user["id"])
     with _writes(app) as log:
         _capturing_openai(monkeypatch, routes, _upstream(log, iter([_UsageChunk()])))
@@ -159,6 +170,7 @@ def test_api_stream_bills_hot_locks_last(
         resp.get_data()
     assert _billing(log) == (CUTOVER_API_BILLING if cutover else API_BILLING)
     assert _marker(app) is (True if cutover else None)
+    assert _logged_key(app) == key_id
 
 
 def test_api_aborted_stream_bills_hot_locks_last(
@@ -166,7 +178,7 @@ def test_api_aborted_stream_bills_hot_locks_last(
 ):
     """A client walking away mid-stream is billed through the same path, key included."""
     from lumen.blueprints.api import routes
-    token, _ = api_key
+    token, key_id = api_key
     _own_limit(app, test_user["id"])
     with _writes(app) as log:
         _capturing_openai(monkeypatch, routes, _upstream(log, iter([_UsageChunk(), _UsageChunk()])))
@@ -176,6 +188,7 @@ def test_api_aborted_stream_bills_hot_locks_last(
         resp.close()
     assert _billing(log) == (CUTOVER_API_BILLING if cutover else API_BILLING)
     assert _marker(app) is (True if cutover else None)
+    assert _logged_key(app) == key_id
 
     with app.app_context():
         from sqlalchemy import select
@@ -189,7 +202,7 @@ def test_audio_bills_hot_locks_last(
     app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, fresh_rate_limit, cutover,
 ):
     from lumen.blueprints.api import routes
-    token, _ = api_key
+    token, key_id = api_key
     _own_limit(app, test_user["id"])
 
     class _Transcription:
@@ -207,6 +220,7 @@ def test_audio_bills_hot_locks_last(
         assert resp.status_code == HTTPStatus.OK
     assert _billing(log) == (CUTOVER_API_BILLING if cutover else API_BILLING)
     assert _marker(app) is (True if cutover else None)
+    assert _logged_key(app) == key_id
 
 
 def test_chat_stream_bills_hot_locks_last(app, auth_client, test_user, test_model, test_model_endpoint, cutover):
@@ -231,6 +245,7 @@ def test_chat_stream_bills_hot_locks_last(app, auth_client, test_user, test_mode
             resp.get_data()
     assert _billing(log) == (CUTOVER_BILLING if cutover else BILLING)
     assert _marker(app) is (True if cutover else None)
+    assert _logged_key(app) is None  # chat uses no key
 
     after = log[log.index(UPSTREAM) + 1:]
     conversation = after[after.index(COMMIT) + 1:]

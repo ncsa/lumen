@@ -50,6 +50,7 @@ All notable changes to Lumen will be documented in this file.
 
 - `lumen.sh` no longer adds models without text input (e.g. audio-only) to the opencode config.
 - Monitor: degraded is drawn yellow and red is kept for down; Lumen counts as down when more than `lumen.down_above` (default 50%) of models are down, also in uptime and the 1y view; status strips show the time of non-ok buckets on mouse-over. (#308)
+- Record the API key used for each request in request_logs (NULL for chat and older requests) (#407)
 
 ### Fixed
 

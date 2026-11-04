@@ -852,6 +852,7 @@ def update_stats(
     ttft: float = None,
     ttft_visible: float = None,
     outcome: str = None,
+    api_key_id: int = None,
 ):
     """Append a RequestLog row, then update or create the ModelStat/EntityStat running totals.
 
@@ -877,6 +878,10 @@ def update_stats(
     derived. The timing columns ride the RequestLog INSERT that already runs, so
     none of this adds a statement. Anything not measured stays None and is
     stored as SQL NULL — deliberately not zero.
+
+    ``api_key_id`` is the API key that made the request, stored on the row in
+    ``request_logs.api_key_id``. It is None (SQL NULL) for chat, which uses no
+    key; on the same INSERT, so it adds no statement either.
     """
     # Decided before the row is built, so the row records the decision.
     logged_at = datetime.now(timezone.utc)
@@ -903,6 +908,7 @@ def update_stats(
         # nothing had been sent yet when the view ran.
         send_blocked=timing.blocked_seconds(),
         outcome=outcome,
+        api_key_id=api_key_id,
         stats_deferred=True if deferred else None,
     )
     db.session.add(log)
@@ -984,11 +990,13 @@ def bill_request(entity_id: int, model_config_id: int, source: str, input_tokens
     A new billing write must be added here, in this order, not beside a call.
 
     ``effective`` is the coin pool limit resolved during preflight, passed on to
-    subtract_coins (``_UNSET`` re-resolves it there). ``log_fields`` are the
-    remaining update_stats keywords (endpoint, timing, outcome, ...).
+    subtract_coins (``_UNSET`` re-resolves it there). ``api_key_id`` is both
+    recorded on the step 1 row and used for step 4; leave it None for chat.
+    ``log_fields`` are the remaining update_stats keywords (endpoint, timing,
+    outcome, ...).
     """
     update_stats(entity_id, model_config_id, source, input_tokens, output_tokens, cost,
-                 audio_seconds=audio_seconds, **log_fields)
+                 audio_seconds=audio_seconds, api_key_id=api_key_id, **log_fields)
     if api_key_id is not None:
         _record_api_key_usage(api_key_id, input_tokens, output_tokens, cost, audio_seconds=audio_seconds)
     subtract_coins(entity_id, model_config_id, cost, effective=effective)

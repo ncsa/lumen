@@ -295,6 +295,33 @@ def test_update_stats_accumulates(app, test_user, test_model):
         assert stat.output_tokens == 200  # 100 + 100
 
 
+def test_update_stats_without_api_key_logs_null(app, test_user, test_model):
+    entity_id, model_id = test_user["id"], test_model["id"]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.request_log import RequestLog
+        from lumen.services.llm import update_stats
+        update_stats(entity_id, model_id, "chat", _IN_TOKENS, _OUT_TOKENS, 0.0003, api_key_id=None)
+        db.session.commit()
+        assert db.session.execute(select(RequestLog.api_key_id)).scalar_one() is None
+
+
+def test_update_stats_with_api_key_logs_its_id(app, test_user, test_model):
+    entity_id, model_id = test_user["id"], test_model["id"]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        from lumen.models.request_log import RequestLog
+        from lumen.services.crypto import hash_api_key
+        from lumen.services.llm import update_stats
+        key = APIKey(entity_id=entity_id, name="stats-key", key_hash=hash_api_key("lk_test_update_stats"))
+        db.session.add(key)
+        db.session.commit()
+        update_stats(entity_id, model_id, "api", _IN_TOKENS, _OUT_TOKENS, 0.0003, api_key_id=key.id)
+        db.session.commit()
+        assert db.session.execute(select(RequestLog.api_key_id)).scalar_one() == key.id
+
+
 # ---------------------------------------------------------------------------
 # get_pool_limit with groups
 # ---------------------------------------------------------------------------
