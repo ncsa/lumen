@@ -18,6 +18,7 @@ All notable changes to Lumen will be documented in this file.
 - Speed up slow `lumen.sh` device-flow and stream-disconnect tests.
 - Speed up the test suite: skip real sleeps in all `lumen.sh` tests, clone per-module PostgreSQL test databases from one migrated template, and drop the per-migration upgrade/downgrade tests for already-released migrations. (#234)
 - Tests now verify that API-key hashes are keyed on `ENCRYPTION_KEY` (#164).
+- Tests now pin that the aggregate backfill's month step rolls December over into January of the next year. (#395)
 - Tests now pin that an upstream error below 400 maps to a generic 500 instead of passing through. (#315)
 - Tests now pin that a coin balance refilled exactly one hour ago is refilled on the next pass. (#312)
 - Tests pin API-key expiry at the exact expires_at instant (#310).

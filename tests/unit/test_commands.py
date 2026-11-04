@@ -496,3 +496,22 @@ def test_chunk_walk_refuses_a_column_outside_the_allowlist(column):
         commands._move_request_logs(column, 1, 2)
 
     assert conn.statements == []
+
+
+@pytest.mark.parametrize(("dt", "expected"), [
+    (datetime(2026, 12, 1, tzinfo=timezone.utc), datetime(2027, 1, 1, tzinfo=timezone.utc)),
+    (datetime(2026, 11, 1, tzinfo=timezone.utc), datetime(2026, 12, 1, tzinfo=timezone.utc)),
+    (datetime(2026, 12, 31, 15, 30, tzinfo=timezone.utc), datetime(2027, 1, 1, 15, 30, tzinfo=timezone.utc)),
+])
+def test_next_month(dt, expected):
+    result = commands._next_month(dt)
+    assert result == expected
+    assert result.tzinfo is timezone.utc
+
+
+def test_next_month_walk_is_strictly_increasing_across_the_year_boundary():
+    months = [datetime(2025, 11, 1, tzinfo=timezone.utc)]
+    for _ in range(13):
+        months.append(commands._next_month(months[-1]))
+    assert all(a < b for a, b in zip(months, months[1:]))
+    assert months[-1] == datetime(2026, 12, 1, tzinfo=timezone.utc)
