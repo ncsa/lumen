@@ -1,11 +1,13 @@
 """The request_logs_fk_restrict revision on real PostgreSQL + TimescaleDB.
 
-``request_logs.entity_id``, ``model_config_id`` and ``model_endpoint_id`` are
-``ON DELETE RESTRICT``: a direct ``DELETE`` of a parent that has request
+``request_logs.entity_id``, ``model_config_id``, ``model_endpoint_id`` and
+``api_key_id`` are ``ON DELETE RESTRICT``: a direct ``DELETE`` of a parent that has request
 history must fail rather than rewrite the compressed hypertable. Only a real
 TimescaleDB can show that the action reaches every chunk, that the check sees
 rows that exist only in a compressed chunk, and that the migration's
 drop-and-re-add of each FK survives a compressed chunk in both directions.
+``api_key_id`` came later (``c5d7e9f1a3b6``, ``NOT VALID``); it is held to the
+same RESTRICT checks at head, and the round trip below this revision drops it.
 
 The seeded history row sits in a closed chunk that the module fixture
 compresses once. Its endpoint belongs to a second model, so deleting the
@@ -38,7 +40,10 @@ _FKS = {
     "entity_id": ("request_logs_entity_id_fkey", "entities"),
     "model_config_id": ("request_logs_model_config_id_fkey", "model_configs"),
     "model_endpoint_id": ("request_logs_model_endpoint_id_fkey", "model_endpoints"),
+    "api_key_id": ("fk_request_logs_api_key_id", "api_keys"),
 }
+# The FKs c8d0e2f4a6b8 switches; api_key_id is added by a later revision.
+_REVISION_FKS = ("entity_id", "model_config_id", "model_endpoint_id")
 
 # Every FK on request_logs or one of its chunks, by referenced column.
 # confdeltype: 'r' = RESTRICT, 'n' = SET NULL.
@@ -72,13 +77,13 @@ def _fk_actions(conn):
     return actions
 
 
-def _assert_all_fks(conn, action):
+def _assert_all_fks(conn, action, columns=tuple(_FKS)):
     actions = _fk_actions(conn)
     chunks = set(conn.execute(text("SELECT show_chunks('request_logs')::text")).scalars())
     assert chunks, "request_logs has no chunks, so the chunk half of this check would prove nothing"
     assert set(actions) == {"request_logs"} | chunks
     for rel, by_column in actions.items():
-        assert by_column == dict.fromkeys(_FKS, action), rel
+        assert by_column == dict.fromkeys(columns, action), rel
 
 
 def _chunk_of_row(conn):
@@ -92,17 +97,17 @@ def _chunk_of_row(conn):
     ), {"s": _SOURCE}).one()
 
 
-def _row_ids(conn):
+def _row_ids(conn, columns=tuple(_FKS)):
     return conn.execute(text(
-        "SELECT entity_id, model_config_id, model_endpoint_id FROM request_logs WHERE source = :s"
+        f"SELECT {', '.join(columns)} FROM request_logs WHERE source = :s"
     ), {"s": _SOURCE}).all()
 
 
 @pytest.fixture(scope="module")
 def history(pg_migrated_isolated):
-    """One request_logs row in a compressed chunk, referencing all three parents.
+    """One request_logs row in a compressed chunk, referencing all four parents.
 
-    Yields ``{column: parent id}`` for the row's entity, model and endpoint.
+    Yields ``{column: parent id}`` for the row's entity, model, endpoint and API key.
     """
     _, engine = pg_migrated_isolated
     with engine.begin() as conn:
@@ -121,11 +126,16 @@ def history(pg_migrated_isolated):
             "INSERT INTO model_endpoints (model_config_id, url, api_key, healthy) "
             "VALUES (:m, 'https://fk-restrict.example/v1', 'k', true) RETURNING id"
         ), {"m": endpoint_model}).scalar()
+        api_key = conn.execute(text(
+            "INSERT INTO api_keys (entity_id, name, key_hash, requests, input_tokens,"
+            " output_tokens, audio_seconds, cost, created_at)"
+            " VALUES (:e, 'fk-restrict', 'fk-restrict-logged', 0, 0, 0, 0, 0, now()) RETURNING id"
+        ), {"e": entity}).scalar()
         # A month back lands in a closed 7-day chunk, which can be compressed.
         conn.execute(text(
-            "INSERT INTO request_logs (time, entity_id, model_config_id, model_endpoint_id, source) "
-            "VALUES (now() - INTERVAL '30 days', :e, :m, :ep, :s)"
-        ), {"e": entity, "m": model, "ep": endpoint, "s": _SOURCE})
+            "INSERT INTO request_logs (time, entity_id, model_config_id, model_endpoint_id, api_key_id, source) "
+            "VALUES (now() - INTERVAL '30 days', :e, :m, :ep, :k, :s)"
+        ), {"e": entity, "m": model, "ep": endpoint, "k": api_key, "s": _SOURCE})
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
         conn.execute(text(
             "SELECT compress_chunk(c, if_not_compressed => true) "
@@ -134,7 +144,7 @@ def history(pg_migrated_isolated):
     with engine.connect() as conn:
         _, compressed = _chunk_of_row(conn)
     assert compressed, "the seeded row's chunk is not compressed, so this module would prove nothing"
-    return {"entity_id": entity, "model_config_id": model, "model_endpoint_id": endpoint}
+    return {"entity_id": entity, "model_config_id": model, "model_endpoint_id": endpoint, "api_key_id": api_key}
 
 
 def test_every_request_logs_fk_restricts_at_head(pg_migrated_isolated, history):
@@ -185,14 +195,21 @@ def test_parents_without_history_can_still_be_deleted(pg_migrated_isolated, hist
             "INSERT INTO model_endpoints (model_config_id, url, api_key, healthy) "
             "VALUES (:m, 'https://fk-restrict-unlogged.example/v1', 'k', true) RETURNING id"
         ), {"m": model}).scalar()
+        api_key = conn.execute(text(
+            "INSERT INTO api_keys (entity_id, name, key_hash, requests, input_tokens,"
+            " output_tokens, audio_seconds, cost, created_at)"
+            " VALUES (:e, 'fk-restrict', 'fk-restrict-unlogged', 0, 0, 0, 0, 0, now()) RETURNING id"
+        ), {"e": entity}).scalar()
 
     with engine.begin() as conn:
+        conn.execute(text("DELETE FROM api_keys WHERE id = :id"), {"id": api_key})
         conn.execute(text("DELETE FROM model_endpoints WHERE id = :id"), {"id": endpoint})
         conn.execute(text("DELETE FROM model_configs WHERE id = :id"), {"id": model})
         conn.execute(text("DELETE FROM entities WHERE id = :id"), {"id": entity})
 
     with engine.connect() as conn:
         for table, id_ in (
+            ("api_keys", api_key),
             ("model_endpoints", endpoint),
             ("model_configs", model),
             ("entities", entity),
@@ -235,16 +252,18 @@ def test_autogenerate_proposes_no_fk_or_comment_changes(pg_migrated_isolated, hi
 
 def test_round_trip_over_a_compressed_chunk(pg_migrated_isolated, history):
     url, engine = pg_migrated_isolated
-    expected_row = [tuple(history[c] for c in _FKS)]
+    expected_row = [tuple(history[c] for c in _REVISION_FKS)]
     engine.dispose()
 
+    # Below this revision api_key_id does not exist yet: the downgrade drops it
+    # (c5d7e9f1a3b6), so only the three FKs this revision switches are compared.
     _flask_db(url, "downgrade", _BEFORE)
     with engine.connect() as conn:
-        _assert_all_fks(conn, "n")
+        _assert_all_fks(conn, "n", _REVISION_FKS)
         # The comparison has teeth: below the revision it sees the old FKs and comments.
         diffs = _fk_and_comment_diffs(conn)
         assert {d[0] for d in diffs} >= {"add_fk", "remove_fk", "modify_comment"}
-        assert _row_ids(conn) == expected_row
+        assert _row_ids(conn, _REVISION_FKS) == expected_row
         assert _chunk_of_row(conn)[1]
     engine.dispose()
 
@@ -253,5 +272,7 @@ def test_round_trip_over_a_compressed_chunk(pg_migrated_isolated, history):
         assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == _HEAD
         _assert_all_fks(conn, "r")
         assert _fk_and_comment_diffs(conn) == []
-        assert _row_ids(conn) == expected_row
+        assert _row_ids(conn, _REVISION_FKS) == expected_row
+        # The column came back empty: the downgrade dropped the key ids.
+        assert _row_ids(conn, ("api_key_id",)) == [(None,)]
         assert _chunk_of_row(conn)[1]

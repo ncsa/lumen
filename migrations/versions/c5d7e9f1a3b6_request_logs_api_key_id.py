@@ -1,7 +1,7 @@
 """Add request_logs.api_key_id, a NOT VALID foreign key to api_keys
 
 Revision ID: c5d7e9f1a3b6
-Revises: b4c6d8e0f2a4
+Revises: c8d0e2f4a6b8
 Create Date: 2026-11-03 00:00:00.000000
 
 Records which API key paid for each request (#407). API requests will get the
@@ -22,6 +22,14 @@ that neither scans the history:
    that scan. Skipping the check loses nothing: the column was created a
    moment earlier and every existing row is NULL.
 
+The foreign key is ``ON DELETE RESTRICT``, like the other ``request_logs``
+foreign keys since ``c8d0e2f4a6b8``: keys are revoked, never deleted, and
+``flask erase-entity`` keeps an erased user's keys under the ghost, so a
+direct ``DELETE`` of a key with request history fails instead of rewriting
+the compressed hypertable. ``api_key_id`` has no index, so that refusal scans
+every chunk first, like the endpoint case; no index is added for a path that
+should never run.
+
 The constraint is never validated, here or later, and stays
 ``convalidated = false`` on purpose. ``VALIDATE CONSTRAINT`` would be the same
 full-history scan, and it would prove nothing, because the only rows it would
@@ -35,14 +43,15 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "c5d7e9f1a3b6"
-down_revision = "b4c6d8e0f2a4"
+down_revision = "c8d0e2f4a6b8"
 branch_labels = None
 depends_on = None
 
 _FK = "fk_request_logs_api_key_id"
 _COMMENT = (
     "API key that made the request; NULL for chat (see source) and for API "
-    "requests logged before this column existed"
+    "requests logged before this column existed. RESTRICT on delete: keys are "
+    "revoked, never deleted"
 )
 
 
@@ -56,13 +65,13 @@ def upgrade():
         # NOT VALID: see the module docstring. Never followed by VALIDATE CONSTRAINT.
         op.execute(
             f"ALTER TABLE request_logs ADD CONSTRAINT {_FK} "
-            "FOREIGN KEY (api_key_id) REFERENCES api_keys (id) ON DELETE SET NULL NOT VALID"
+            "FOREIGN KEY (api_key_id) REFERENCES api_keys (id) ON DELETE RESTRICT NOT VALID"
         )
         op.execute(f"COMMENT ON COLUMN request_logs.api_key_id IS $comment${_COMMENT}$comment$")
     else:
         with op.batch_alter_table("request_logs") as batch_op:
             batch_op.add_column(sa.Column("api_key_id", sa.Integer(), nullable=True))
-            batch_op.create_foreign_key(_FK, "api_keys", ["api_key_id"], ["id"], ondelete="SET NULL")
+            batch_op.create_foreign_key(_FK, "api_keys", ["api_key_id"], ["id"], ondelete="RESTRICT")
 
 
 def downgrade():

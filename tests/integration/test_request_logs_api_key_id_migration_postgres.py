@@ -1,6 +1,6 @@
 """The request_logs_api_key_id revision on real PostgreSQL + TimescaleDB.
 
-The test steps this module's database back to ``b4c6d8e0f2a4`` with the same
+The test steps this module's database back to ``c8d0e2f4a6b8`` with the same
 ``flask db`` command the container runs, seeds a compressed chunk, upgrades
 again, and checks what the revision relies on: the foreign key exists but was
 added ``NOT VALID`` (so the upgrade never scanned the history), new rows are
@@ -27,7 +27,7 @@ from .conftest import TEST_CONFIG
 
 pytestmark = pytest.mark.postgres
 
-PREVIOUS = "b4c6d8e0f2a4"
+PREVIOUS = "c8d0e2f4a6b8"
 SOURCE = "akmark"  # request_logs.source is VARCHAR(8)
 FK = "fk_request_logs_api_key_id"
 
@@ -52,9 +52,9 @@ def _has_column(conn):
 
 
 def _constraint(conn):
-    """(contype, convalidated, referenced table) of the FK, or None."""
+    """(contype, convalidated, referenced table, delete action) of the FK, or None."""
     row = conn.execute(text(
-        "SELECT contype, convalidated, confrelid::regclass::text FROM pg_constraint "
+        "SELECT contype, convalidated, confrelid::regclass::text, confdeltype FROM pg_constraint "
         "WHERE conname = :n AND conrelid = 'request_logs'::regclass"
     ), {"n": FK}).one_or_none()
     return tuple(row) if row else None
@@ -114,7 +114,8 @@ def test_upgrade_adds_a_not_valid_fk_over_a_compressed_chunk(pg_migrated_isolate
         assert _has_column(conn)
         # contype 'f' and convalidated false: the FK exists, and the upgrade
         # skipped the scan of existing rows that a validated FK would need.
-        assert _constraint(conn) == ("f", False, "api_keys")
+        # confdeltype 'r': RESTRICT, like the other request_logs FKs.
+        assert _constraint(conn) == ("f", False, "api_keys", "r")
         comment = conn.execute(text(
             "SELECT col_description('request_logs'::regclass, attnum) FROM pg_attribute "
             "WHERE attrelid = 'request_logs'::regclass AND attname = 'api_key_id'"
