@@ -31,6 +31,17 @@ def test_bucket_width_reads_the_catalog(engine, view, width):
         assert commands._bucket_width(conn, view) == width
 
 
+@pytest.mark.parametrize(("view", "end_offset"), [
+    ("request_counts_hourly", timedelta(hours=1)),
+    ("request_counts_hourly_by_entity", timedelta(hours=1)),
+    ("request_metrics_1m", timedelta(minutes=1)),
+    ("no_such_aggregate", timedelta(0)),
+])
+def test_refresh_end_offset_reads_the_policy(engine, view, end_offset):
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        assert commands._refresh_end_offset(conn, view) == end_offset
+
+
 def test_bucket_width_of_an_unknown_view_is_none(engine):
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
         assert commands._bucket_width(conn, "no_such_aggregate") is None

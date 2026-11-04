@@ -44,8 +44,10 @@ ENTITY_AGGREGATE = "request_counts_hourly_by_entity"
 
 # Every continuous aggregate Lumen creates, children before the aggregates built on
 # them: refreshing a hierarchical aggregate before its child would rebuild it from the
-# child's stale rows. Aggregates missing from a database are skipped; ones not listed
-# here come last. request_counts_daily is created by a later migration.
+# child's stale rows. request_metrics_1m is built on request_logs, not on another
+# aggregate; its place at the end only keeps the walk stable. Aggregates missing from a
+# database are skipped; ones not listed here come last. request_counts_daily is created
+# by a later migration.
 AGGREGATE_REFRESH_ORDER = (
     ENTITY_AGGREGATE,
     "request_counts_hourly",
@@ -965,6 +967,8 @@ def _bucket_width(conn, view_name):
 
 
 #: The origin ``time_bucket`` aligns timestamptz buckets to by default: a Monday, in UTC.
+#: Every Lumen aggregate uses the default; one created with its own ``origin`` would not
+#: line up with this.
 _BUCKET_ORIGIN = datetime(2000, 1, 3, tzinfo=timezone.utc)
 
 
@@ -972,10 +976,11 @@ def _floor_to_bucket(dt, width):
     """Start of the bucket of ``width`` holding ``dt``, in UTC, as ``time_bucket`` aligns it.
 
     An unknown width (None) floors to the hour, the narrowest bucket of Lumen's usage
-    aggregates.
+    aggregates, and so does a width that is not positive. Calendar widths (months) are
+    not supported: they have no fixed length, and no Lumen aggregate uses one.
     """
     dt = dt.astimezone(timezone.utc)
-    if width is None:
+    if width is None or width <= timedelta(0):
         return dt.replace(minute=0, second=0, microsecond=0)
     return dt - (dt - _BUCKET_ORIGIN) % width
 
@@ -988,10 +993,10 @@ def _refresh_end_offset(conn, view_name):
     """
     offset = conn.execute(text(
         "SELECT CAST(j.config->>'end_offset' AS interval) FROM timescaledb_information.jobs j "
-        "JOIN timescaledb_information.continuous_aggregates a "
-        "ON a.materialization_hypertable_schema = j.hypertable_schema "
-        "AND a.materialization_hypertable_name = j.hypertable_name "
-        "WHERE j.proc_name = 'policy_refresh_continuous_aggregate' AND a.view_name = :v"
+        # A refresh job names the aggregate's view as its hypertable, not the
+        # materialisation hypertable.
+        "WHERE j.proc_name = 'policy_refresh_continuous_aggregate' "
+        "AND j.hypertable_schema = 'public' AND j.hypertable_name = :v"
     ), {"v": view_name}).scalar()
     return offset or timedelta(0)
 
@@ -1204,12 +1209,15 @@ def _missing_months(conn, name, now):
         nxt = _next_month(month)
         start = max(month, boundary) if boundary is not None else month
         if start < nxt:
+            # The bucket holding a retention boundary starts before it once the bucket
+            # is wider than the hour the boundary is floored to; probe from that bucket.
             first_raw, first_bucket = conn.execute(text(
                 "SELECT (SELECT time FROM request_logs "
                 "        WHERE time >= :s AND time < :e ORDER BY time LIMIT 1), "
                 f'       (SELECT "{bucket}" FROM {table} '
-                f'        WHERE "{bucket}" >= :s AND "{bucket}" < :e ORDER BY "{bucket}" LIMIT 1)'
-            ), {"s": start, "e": min(nxt, horizon)}).one()
+                f'        WHERE "{bucket}" >= :b AND "{bucket}" < :e ORDER BY "{bucket}" LIMIT 1)'
+            ), {"s": start, "b": max(month, _floor_to_bucket(start, width)),
+                "e": min(nxt, horizon)}).one()
             if first_raw is not None and (first_bucket is None
                                           or first_bucket > _floor_to_bucket(first_raw, width)):
                 missing.append((start, first_raw, first_bucket))

@@ -570,6 +570,8 @@ def test_refresh_order_puts_every_child_before_its_parent():
      datetime(2026, 3, 4, tzinfo=timezone.utc)),
     (datetime(2026, 3, 5, 14, 37, tzinfo=timezone.utc), None,
      datetime(2026, 3, 5, 14, tzinfo=timezone.utc)),
+    (datetime(2026, 3, 5, 14, 37, tzinfo=timezone.utc), timedelta(0),
+     datetime(2026, 3, 5, 14, tzinfo=timezone.utc)),
 ])
 def test_floor_to_bucket(dt, width, expected):
     assert commands._floor_to_bucket(dt, width) == expected
@@ -590,7 +592,7 @@ class _ProbeConn:
         start, end = params["s"], params["e"]
         self.windows.append((start, end))
         first_raw = next((t for t in self.raw if start <= t < end), None)
-        first_bucket = next((b for b in self.buckets if start <= b < end), None)
+        first_bucket = next((b for b in self.buckets if params["b"] <= b < end), None)
         return _Scalar((first_raw, first_bucket))
 
 
@@ -672,3 +674,14 @@ def test_missing_months_unreadable_width_floors_to_the_hour(daily_aggregate, mon
     assert commands._missing_months(_ProbeConn(raw, [_utc(2026, 10, 5, 9)]), "agg",
                                     _utc(2026, 11, 2, 12)) \
         == [(_utc(2026, 10, 1), raw[0], _utc(2026, 10, 5, 9))]
+
+
+def test_missing_months_finds_the_daily_bucket_holding_the_retention_boundary(daily_aggregate, monkeypatch):
+    # The boundary is floored to the hour, 10-10 06:00; the daily bucket holding it
+    # starts at midnight, before the boundary, and still covers the month from there.
+    monkeypatch.setattr(commands, "_retention_boundary", lambda conn, name: _utc(2026, 10, 10, 6))
+    raw = [_utc(2026, 10, 10, 8)]
+    conn = _ProbeConn(raw, [_utc(2026, 10, 10)])
+
+    assert commands._missing_months(conn, "request_counts_daily", _utc(2026, 11, 3, 12)) == []
+    assert conn.windows[0] == (_utc(2026, 10, 10, 6), _utc(2026, 11, 1))
