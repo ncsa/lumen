@@ -30,6 +30,7 @@ All notable changes to Lumen will be documented in this file.
 - Tests now pin that a device-login user code must be exactly 8 letters or digits; shorter or longer input is rejected. (#416)
 - Tests now pin that each billed request advances its API key's request, token, audio and cost counters. (#400)
 - Billing takes the per-entity balance lock last and no longer runs existence SELECTs, so concurrent requests from one entity or project key queue far less. (#171)
+- Tests now verify that a deactivated admin is logged out of admin pages even with admin mode on. (#401)
 - Drop redundant indexes on `request_logs` and `model_stats`, so each request insert maintains fewer indexes. (#175)
 - Make hard-deleting an entity, model or endpoint that has request history fail instead of rewriting `request_logs` (#176).
 - `backfill-aggregate` / `reassign-model` no longer fail when run within the first bucket of a month. (#388)

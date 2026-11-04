@@ -45,3 +45,31 @@ def test_inactive_user_redirected(app, client):
 
     resp = client.get("/chat", follow_redirects=False)
     assert resp.status_code == HTTPStatus.FOUND
+
+
+def test_admin_required_rejects_inactive_admin(app, admin_client, admin_user):
+    """A deactivated admin with admin mode still on is logged out of admin pages.
+
+    Deactivation must take effect immediately: the session (including
+    admin_mode) is cleared and the request is redirected to the landing page,
+    as login_required does for inactive users.
+    """
+    from urllib.parse import urlparse
+
+    from lumen.extensions import db
+    from lumen.models.entity import Entity
+
+    assert admin_client.get("/admin/users").status_code == HTTPStatus.OK
+
+    with app.app_context():
+        entity = db.session.get(Entity, admin_user["id"])
+        entity.active = False
+        db.session.commit()
+
+    resp = admin_client.get("/admin/users", follow_redirects=False)
+    assert resp.status_code == HTTPStatus.FOUND
+    assert urlparse(resp.headers["Location"]).path == "/"
+
+    with admin_client.session_transaction() as sess:
+        assert "entity_id" not in sess
+        assert "admin_mode" not in sess
