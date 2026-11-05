@@ -234,6 +234,9 @@ echo "$(basename "$0") $* PGCONNECT_TIMEOUT=${PGCONNECT_TIMEOUT:-unset}" >> "$ST
 if [ "$(basename "$0")" = flask ] && [ "$1 $2 $3" = "--app run wait-for-migrations" ]; then
   exit "${GATE_EXIT:-0}"
 fi
+if [ "$(basename "$0")" = flask ]; then
+  exit "${COMMAND_EXIT:-0}"
+fi
 """
 
 
@@ -244,7 +247,7 @@ def run_entrypoint(tmp_path, monkeypatch):
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for name in ("flask", "uvicorn"):
+    for name in ("bash", "flask", "uvicorn"):
         stub = bin_dir / name
         stub.write_text(_STUB)
         stub.chmod(0o755)
@@ -304,3 +307,35 @@ def test_entrypoint_default_mode_does_not_serve_when_the_gate_fails(run_entrypoi
     status, calls = run_entrypoint("--workers", "4", GATE_EXIT="1")
     assert status == 1
     assert calls == ["flask --app run wait-for-migrations PGCONNECT_TIMEOUT=10"]
+
+
+def test_entrypoint_bash_opens_only_a_shell(run_entrypoint):
+    """`docker run <image> bash` must give a shell without touching the database.
+
+    `bash` is checked before the generic flask dispatch; if it were not, it would run
+    `flask --app run bash`, or serve after the migration gate, instead of a shell.
+    """
+    status, calls = run_entrypoint("bash")
+    assert status == 0
+    assert calls == ["bash  PGCONNECT_TIMEOUT=unset"]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [("check-stats", "--fix"), ("erase-entity", "42", "--yes"), ("db", "current")],
+)
+def test_entrypoint_runs_any_flask_command(run_entrypoint, args):
+    status, calls = run_entrypoint(*args)
+    assert status == 0
+    assert calls == [f"flask --app run {' '.join(args)} PGCONNECT_TIMEOUT=10"]
+
+
+def test_entrypoint_command_keeps_an_operator_connect_timeout(run_entrypoint):
+    _, calls = run_entrypoint("check-stats", PGCONNECT_TIMEOUT="45")
+    assert calls == ["flask --app run check-stats PGCONNECT_TIMEOUT=45"]
+
+
+def test_entrypoint_command_exit_status_reaches_the_container(run_entrypoint):
+    status, calls = run_entrypoint("check-aggregate", COMMAND_EXIT="3")
+    assert status == 3
+    assert calls == ["flask --app run check-aggregate PGCONNECT_TIMEOUT=10"]

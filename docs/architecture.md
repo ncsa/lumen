@@ -436,7 +436,9 @@ lumen     uvicorn asgi:app --reload            port 5001
 
 Starting Lumen is two steps, both through `entrypoint.sh`:
 1. **Upgrade** (`entrypoint.sh upgrade`, the `lumen-upgrade` Compose service or the Helm migration Job): `flask upgrade` runs every Alembic migration, then backfills missing months of the aggregate, and exits. Safe to re-run; a failed run resumes.
-2. **Serve** (default mode): `flask wait-for-migrations` waits until the database is at the migration head this image expects, then `uvicorn asgi:app --host 0.0.0.0 --port 5001`. The serve step never migrates.
+2. **Serve** (no arguments, or options such as `--workers N`): `flask wait-for-migrations` waits until the database is at the migration head this image expects, then `uvicorn asgi:app --host 0.0.0.0 --port 5001` with those options. The serve step never migrates.
+
+`entrypoint.sh` checks its first argument in this order: `bash` opens a shell with no database wait; any other argument without a leading `-` runs `flask --app run "$@"` (`upgrade` is one such command), with `PGCONNECT_TIMEOUT` defaulting to 10; anything else serves. See [Running commands in a deployment](admin/commands.md#running-commands-in-a-deployment).
 
 ### Production Scaling
 
