@@ -165,7 +165,7 @@ def _hour_requests(engine, relation, at):
 
 
 def test_b_a_row_inserted_now_shows_through_the_totals_view_before_any_refresh(engine):
-    at = _insert(engine, "now-total")
+    at = _insert(engine, "now-tot")
     with engine.connect() as conn:
         raw = conn.execute(text(
             "SELECT COUNT(*) FROM request_logs "
