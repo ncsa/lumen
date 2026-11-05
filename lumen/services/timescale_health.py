@@ -61,8 +61,9 @@ _AGGREGATES_SQL = text(
     "FROM timescaledb_information.continuous_aggregates"
 )
 _JOBS_SQL = text(
+    # last_successful_finish is '-infinity' until a job first succeeds, which psycopg cannot load.
     "SELECT j.job_id, j.proc_name, j.hypertable_name, s.last_run_status, "
-    "s.total_failures, s.last_successful_finish "
+    "s.total_failures, NULLIF(s.last_successful_finish, '-infinity') AS last_successful_finish "
     "FROM timescaledb_information.jobs j "
     "LEFT JOIN timescaledb_information.job_stats s ON s.job_id = j.job_id "
     "ORDER BY j.job_id"

@@ -115,3 +115,52 @@ def test_startup_logs_no_problem_on_a_fresh_database(pg_migrated_isolated, monke
     finally:
         with app.app_context():
             db.engine.dispose()
+
+
+def test_job_that_never_succeeded_is_reported_as_failed(conn):
+    """A job that ran but never succeeded keeps ``last_successful_finish = '-infinity'`` (#417).
+
+    NOTE: this writes TimescaleDB's internal ``_timescaledb_internal.bgw_job_stat``
+    table directly, and its columns are pinned to the CI image
+    (``timescale/timescaledb:2.27.2-pg17``). If a TimescaleDB upgrade breaks this
+    test, the failure points here: switch to the scheduler-driven approach of
+    ``tests/integration/test_timescale_job_failure_postgres.py`` (an isolated
+    database, deleting the job's stat row first so the first run is the failing one).
+    """
+    job_id = check(conn).job("refresh:request_counts_hourly").job_id
+    # last_start/last_finish/next_start must be real timestamps: job_stats
+    # reports last_run_status = NULL when last_finish is -infinity.
+    conn.execute(text(
+        "INSERT INTO _timescaledb_internal.bgw_job_stat ("
+        " job_id, last_start, last_finish, next_start, last_successful_finish,"
+        " last_run_success, total_runs, total_duration, total_duration_failures,"
+        " total_successes, total_failures, total_crashes, consecutive_failures,"
+        " consecutive_crashes"
+        ") VALUES ("
+        " :job_id, now(), now(), now(), '-infinity',"
+        " false, 1, interval '0', interval '0',"
+        " 0, 1, 0, 0,"
+        " 0"
+        ") ON CONFLICT (job_id) DO UPDATE SET"
+        " last_start = EXCLUDED.last_start, last_finish = EXCLUDED.last_finish,"
+        " next_start = EXCLUDED.next_start,"
+        " last_successful_finish = EXCLUDED.last_successful_finish,"
+        " last_run_success = EXCLUDED.last_run_success,"
+        " total_runs = EXCLUDED.total_runs, total_duration = EXCLUDED.total_duration,"
+        " total_duration_failures = EXCLUDED.total_duration_failures,"
+        " total_successes = EXCLUDED.total_successes,"
+        " total_failures = EXCLUDED.total_failures,"
+        " total_crashes = EXCLUDED.total_crashes,"
+        " consecutive_failures = EXCLUDED.consecutive_failures,"
+        " consecutive_crashes = EXCLUDED.consecutive_crashes"
+    ), {"job_id": job_id})
+
+    health = check(conn)
+
+    job = health.job("refresh:request_counts_hourly")
+    assert job.last_run_status == "Failed"
+    assert job.last_successful_finish is None
+    assert problems(health) == [
+        f"Background job refresh:request_counts_hourly (job {job_id}) failed its last run; "
+        "1 failures in total."
+    ]
