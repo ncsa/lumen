@@ -71,6 +71,17 @@ class RequestLog(db.Model):
         db.ForeignKey("model_endpoints.id", ondelete="RESTRICT"),
         comment="Backend endpoint that served the request; RESTRICT on delete: endpoints are retired (deactivated), never deleted",
     )
+    # RESTRICT on delete: keys are revoked (revoked_at), never deleted, and
+    # erase-entity keeps an erased user's keys under the ghost.
+    # On PostgreSQL the migration adds this FK NOT VALID and never validates it:
+    # every row older than the column is NULL, and validating would scan the
+    # whole never-pruned hypertable.
+    api_key_id: Mapped[Optional[int]] = mapped_column(
+        db.Integer,
+        db.ForeignKey("api_keys.id", ondelete="RESTRICT", name="fk_request_logs_api_key_id"),
+        nullable=True,
+        comment="API key that made the request; NULL for chat (see source) and for API requests logged before this column existed. RESTRICT on delete: keys are revoked, never deleted",
+    )
     # 'chat' (web UI) or 'api' (API key)
     source: Mapped[str] = mapped_column(db.String(8), comment="Origin of the request: chat (web UI) or api (API key)")
     input_tokens: Mapped[int] = mapped_column(db.Integer, default=0, comment="Input token count for this request")

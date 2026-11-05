@@ -411,7 +411,7 @@ Protected by an optional Bearer token. Aggregates across workers via `prometheus
 
 ### Request Logging
 
-Every proxied request is written to `request_logs` (TimescaleDB hypertable partitioned by `time`). Foreign keys use `ON DELETE RESTRICT`: users are deactivated and models and endpoints retired (endpoints by clearing `model_endpoints.active`), never deleted while they have request history, so every reference stays resolvable. A direct `DELETE` fails.
+Every proxied request is written to `request_logs` (TimescaleDB hypertable partitioned by `time`). Foreign keys use `ON DELETE RESTRICT`: users are deactivated, models and endpoints retired (endpoints by clearing `model_endpoints.active`) and API keys revoked, never deleted while they have request history, so every reference stays resolvable. A direct `DELETE` fails.
 
 ### Analytics Dashboard (`/usage`)
 

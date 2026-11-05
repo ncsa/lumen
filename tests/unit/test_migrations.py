@@ -463,6 +463,7 @@ def test_request_log_foreign_keys_restrict():
         "entity_id": ("entities.id", "RESTRICT"),
         "model_config_id": ("model_configs.id", "RESTRICT"),
         "model_endpoint_id": ("model_endpoints.id", "RESTRICT"),
+        "api_key_id": ("api_keys.id", "RESTRICT"),
     }
 
 
