@@ -92,11 +92,15 @@
     </tbody>
   </table>
 </div>
-<p class="mb-0">
-  Want a model that’s not listed? Go to
-  <a href="https://llmhub.computes.illinois.edu" target="_blank" rel="noopener noreferrer">LLMHub</a>
-  to launch your own.
-</p>
+{% if config.LLMHUB_URL %}
+<div class="alert alert-info d-flex flex-wrap align-items-center gap-2 mb-0" role="note">
+  <i class="bi bi-rocket-takeoff-fill fs-5" aria-hidden="true"></i>
+  <span class="me-auto"><strong>Want a model that’s not listed?</strong> Launch your own on LLMHub.</span>
+  <a class="btn btn-outline-primary btn-sm" href="{{ config.LLMHUB_URL }}" target="_blank" rel="noopener noreferrer">
+    Go to LLMHub<span class="visually-hidden"> (opens in a new tab)</span>
+  </a>
+</div>
+{% endif %}
 </ilw-content>
 {% include '_ack_modal.html' %}
 {% endblock %}
