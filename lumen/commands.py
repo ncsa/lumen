@@ -42,6 +42,19 @@ from .extensions import db
 # itself is never pruned (#167), so this is about chart speed, not about saving data.
 ENTITY_AGGREGATE = "request_counts_hourly_by_entity"
 
+# Every continuous aggregate Lumen creates, children before the aggregates built on
+# them: refreshing a hierarchical aggregate before its child would rebuild it from the
+# child's stale rows. request_metrics_1m is built on request_logs, not on another
+# aggregate; its place at the end only keeps the walk stable. Aggregates missing from a
+# database are skipped; ones not listed here come last. request_counts_daily is created
+# by a later migration.
+AGGREGATE_REFRESH_ORDER = (
+    ENTITY_AGGREGATE,
+    "request_counts_hourly",
+    "request_counts_daily",
+    "request_metrics_1m",
+)
+
 # request_logs key columns the chunk walk can move rows along. The column name is
 # interpolated into SQL, so every helper that takes one checks it against this set.
 MOVABLE_COLUMNS = frozenset({"model_config_id", "entity_id"})
@@ -611,6 +624,9 @@ def _reassign_start(conn, column, from_id, boundaries):
 def _refresh_reassigned(start, boundaries):
     """Refresh every aggregate month by month from the month of ``start`` to now.
 
+    In the order of ``boundaries``, which ``_aggregates_with_column`` gives in refresh
+    order, so a hierarchical aggregate is refreshed after the child it is built on.
+
     The policies only reprocess their own short windows, so without this every older
     bucket keeps FROM forever. An aggregate with its own retention starts at that
     boundary instead: refreshing older windows rebuilds rows retention drops again.
@@ -891,26 +907,32 @@ def _autocommit_connection():
     return db.engine.connect().execution_options(isolation_level="AUTOCOMMIT")
 
 
+def _in_refresh_order(names):
+    """``names`` in ``AGGREGATE_REFRESH_ORDER``, then any it does not list, alphabetically."""
+    known = [name for name in AGGREGATE_REFRESH_ORDER if name in names]
+    return known + sorted(name for name in names if name not in AGGREGATE_REFRESH_ORDER)
+
+
 def _continuous_aggregates(conn):
-    """Names of every continuous aggregate in this database, alphabetically."""
-    return conn.execute(text(
+    """Names of every continuous aggregate in this database, in refresh order."""
+    return _in_refresh_order(conn.execute(text(
         "SELECT view_name FROM timescaledb_information.continuous_aggregates ORDER BY view_name"
-    )).scalars().all()
+    )).scalars().all())
 
 
 def _aggregates_with_column(conn, column):
-    """Names of the continuous aggregates grouped by ``column``, alphabetically.
+    """Names of the continuous aggregates grouped by ``column``, in refresh order.
 
     Only these hold buckets keyed on it, so only these need checking and refreshing
     after rows move along it.
     """
     _check_column(column)
-    return conn.execute(text(
+    return _in_refresh_order(conn.execute(text(
         "SELECT a.view_name FROM timescaledb_information.continuous_aggregates a "
         "JOIN information_schema.columns c "
         "ON c.table_schema = a.view_schema AND c.table_name = a.view_name "
         "WHERE c.column_name = :c ORDER BY a.view_name"
-    ), {"c": column}).scalars().all()
+    ), {"c": column}).scalars().all())
 
 
 def _bucket_column(conn, view_name):
@@ -942,6 +964,41 @@ def _bucket_width(conn, view_name):
         click.echo(f"  Warning: could not read the bucket width of '{view_name}' from the "
                    f"TimescaleDB catalog ({exc.orig}); refreshing every month in full.")
         return None
+
+
+#: The origin ``time_bucket`` aligns timestamptz buckets to by default: a Monday, in UTC.
+#: Every Lumen aggregate uses the default; one created with its own ``origin`` would not
+#: line up with this.
+_BUCKET_ORIGIN = datetime(2000, 1, 3, tzinfo=timezone.utc)
+
+
+def _floor_to_bucket(dt, width):
+    """Start of the bucket of ``width`` holding ``dt``, in UTC, as ``time_bucket`` aligns it.
+
+    An unknown width (None) floors to the hour, the narrowest bucket of Lumen's usage
+    aggregates, and so does a width that is not positive. Calendar widths (months) are
+    not supported: they have no fixed length, and no Lumen aggregate uses one.
+    """
+    dt = dt.astimezone(timezone.utc)
+    if width is None or width <= timedelta(0):
+        return dt.replace(minute=0, second=0, microsecond=0)
+    return dt - (dt - _BUCKET_ORIGIN) % width
+
+
+def _refresh_end_offset(conn, view_name):
+    """``end_offset`` of the aggregate's refresh policy as a ``timedelta``.
+
+    Zero without a policy, or with one refreshing up to now: its last ``end_offset``
+    is never materialised by the policy, only by a manual refresh.
+    """
+    offset = conn.execute(text(
+        "SELECT CAST(j.config->>'end_offset' AS interval) FROM timescaledb_information.jobs j "
+        # A refresh job names the aggregate's view as its hypertable, not the
+        # materialisation hypertable.
+        "WHERE j.proc_name = 'policy_refresh_continuous_aggregate' "
+        "AND j.hypertable_schema = 'public' AND j.hypertable_name = :v"
+    ), {"v": view_name}).scalar()
+    return offset or timedelta(0)
 
 
 def _window_too_small(start, end, width):
@@ -1130,7 +1187,8 @@ def _missing_months(conn, name, now):
 
     Two indexed probes per month: the earliest raw row and the earliest materialised
     bucket. A month is missing when it has raw rows and no bucket, or when its first
-    bucket is later than the hour of its first raw row. Whole-month refreshes plus the
+    bucket is later than the bucket of its first raw row, at the aggregate's own bucket
+    width (the hour when it cannot be read). Whole-month refreshes plus the
     policy's trailing window can only leave a month uncovered at its head, so this
     finds every gap they can leave; a hole inside a month is not detected.
     """
@@ -1140,25 +1198,28 @@ def _missing_months(conn, name, now):
     bucket = _bucket_column(conn, name)
     table = _materialization_hypertable(conn, name)
     boundary = _retention_boundary(conn, name)
-    # A refresh ends at now rounded down to a whole bucket, so the hour holding now is
-    # never materialised; a month whose only rows are in it is not missing anything.
-    horizon = now.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    width = _bucket_width(conn, name)
+    # A refresh ends at a whole bucket, the policy's at now - end_offset, so the
+    # buckets after that are not materialised yet; a month whose only rows are in them
+    # is not missing anything. Real-time aggregation serves them.
+    horizon = _floor_to_bucket(now - _refresh_end_offset(conn, name), width)
     missing = []
     month = _month_start(oldest)
     while month < horizon:
         nxt = _next_month(month)
         start = max(month, boundary) if boundary is not None else month
         if start < nxt:
+            # The bucket holding a retention boundary starts before it once the bucket
+            # is wider than the hour the boundary is floored to; probe from that bucket.
             first_raw, first_bucket = conn.execute(text(
                 "SELECT (SELECT time FROM request_logs "
                 "        WHERE time >= :s AND time < :e ORDER BY time LIMIT 1), "
                 f'       (SELECT "{bucket}" FROM {table} '
-                f'        WHERE "{bucket}" >= :s AND "{bucket}" < :e ORDER BY "{bucket}" LIMIT 1)'
-            ), {"s": start, "e": min(nxt, horizon)}).one()
-            # The entity aggregate buckets by the hour, aligned to UTC.
-            first_hour = None if first_raw is None else \
-                first_raw.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
-            if first_raw is not None and (first_bucket is None or first_bucket > first_hour):
+                f'        WHERE "{bucket}" >= :b AND "{bucket}" < :e ORDER BY "{bucket}" LIMIT 1)'
+            ), {"s": start, "b": max(month, _floor_to_bucket(start, width)),
+                "e": min(nxt, horizon)}).one()
+            if first_raw is not None and (first_bucket is None
+                                          or first_bucket > _floor_to_bucket(first_raw, width)):
                 missing.append((start, first_raw, first_bucket))
         month = nxt
     return missing
@@ -1166,7 +1227,9 @@ def _missing_months(conn, name, now):
 
 @click.command("backfill-aggregate")
 @click.option("--name", default=ENTITY_AGGREGATE, show_default=True,
-              help="Continuous aggregate to materialise.")
+              help="Continuous aggregate to materialise. Refresh bottom-up: an aggregate "
+                   "built on another one reads that child's rows, so backfill the child first "
+                   f"({' -> '.join(AGGREGATE_REFRESH_ORDER)}).")
 @click.option("--from", "from_month", metavar="YYYY-MM", default=None,
               help="First month to refresh. Defaults to the month of the oldest request_logs row.")
 @click.option("--force", is_flag=True,
@@ -1181,6 +1244,10 @@ def backfill_aggregate_cmd(name, from_month, force):
     ``CALL refresh_continuous_aggregate(NULL, NULL)`` over 13 months of a production
     hypertable is a single long transaction with unbounded memory, so this walks
     month by month, oldest first, and prints the row counts either side of each call.
+
+    Aggregates must be refreshed bottom-up, child before parent: one built on another
+    aggregate is computed from that child's materialised rows, so backfilling it before
+    the child rebuilds it from the child's stale rows.
     """
     if db.engine.dialect.name != "postgresql":
         click.echo(f"backfill-aggregate requires PostgreSQL/TimescaleDB; nothing to do on "
@@ -1279,7 +1346,9 @@ def check_aggregate_cmd():
                    f"{db.engine.dialect.name}.")
         return
 
-    with db.engine.connect() as conn:
+    # Autocommit: ``_missing_months`` reads the bucket width, and a failed catalog read
+    # would abort an open transaction under every read after it.
+    with _autocommit_connection() as conn:
         failed = False
         retention = _retention_job(conn)
         if retention is not None:

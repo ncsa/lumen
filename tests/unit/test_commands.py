@@ -515,3 +515,173 @@ def test_next_month_walk_is_strictly_increasing_across_the_year_boundary():
         months.append(commands._next_month(months[-1]))
     assert all(a < b for a, b in zip(months, months[1:]))
     assert months[-1] == datetime(2026, 12, 1, tzinfo=timezone.utc)
+
+
+class _ViewsConn:
+    """Answers the catalog read of ``_continuous_aggregates`` and ``_aggregates_with_column``."""
+
+    def __init__(self, views):
+        self.views = views
+
+    def execute(self, *args, **kwargs):
+        views = self.views
+
+        class _Result:
+            def scalars(self):
+                return self
+
+            def all(self):
+                return sorted(views)
+
+        return _Result()
+
+
+def test_aggregates_come_in_refresh_order_unknown_last_absent_skipped():
+    # request_counts_daily is absent here; two unknown views sort last, alphabetically.
+    conn = _ViewsConn(["zz_custom", "request_metrics_1m", "aa_custom",
+                       "request_counts_hourly", "request_counts_hourly_by_entity"])
+    expected = ["request_counts_hourly_by_entity", "request_counts_hourly", "request_metrics_1m",
+                "aa_custom", "zz_custom"]
+
+    assert commands._continuous_aggregates(conn) == expected
+    assert commands._aggregates_with_column(conn, "model_config_id") == expected
+
+
+def test_refresh_order_puts_every_child_before_its_parent():
+    order = commands.AGGREGATE_REFRESH_ORDER
+    assert order.index(commands.ENTITY_AGGREGATE) < order.index("request_counts_hourly") \
+        < order.index("request_counts_daily")
+    assert commands._in_refresh_order(list(reversed(order))) == list(order)
+    assert commands._in_refresh_order([]) == []
+
+
+@pytest.mark.parametrize(("dt", "width", "expected"), [
+    (datetime(2026, 3, 5, 14, 37, tzinfo=timezone.utc), timedelta(hours=1),
+     datetime(2026, 3, 5, 14, tzinfo=timezone.utc)),
+    (datetime(2026, 3, 5, 14, 37, tzinfo=timezone.utc), timedelta(days=1),
+     datetime(2026, 3, 5, tzinfo=timezone.utc)),
+    (datetime(2026, 3, 5, 14, 37, 12, tzinfo=timezone.utc), timedelta(minutes=1),
+     datetime(2026, 3, 5, 14, 37, tzinfo=timezone.utc)),
+    # time_bucket aligns weeks to Monday 2000-01-03; 2026-03-05 is a Thursday.
+    (datetime(2026, 3, 5, 14, 37, tzinfo=timezone.utc), timedelta(weeks=1),
+     datetime(2026, 3, 2, tzinfo=timezone.utc)),
+    # Another zone is floored in UTC: 2026-03-05 01:30 +05:00 is 03-04 20:30 UTC.
+    (datetime(2026, 3, 5, 1, 30, tzinfo=timezone(timedelta(hours=5))), timedelta(days=1),
+     datetime(2026, 3, 4, tzinfo=timezone.utc)),
+    (datetime(2026, 3, 5, 14, 37, tzinfo=timezone.utc), None,
+     datetime(2026, 3, 5, 14, tzinfo=timezone.utc)),
+    (datetime(2026, 3, 5, 14, 37, tzinfo=timezone.utc), timedelta(0),
+     datetime(2026, 3, 5, 14, tzinfo=timezone.utc)),
+])
+def test_floor_to_bucket(dt, width, expected):
+    assert commands._floor_to_bucket(dt, width) == expected
+
+
+class _ProbeConn:
+    """Answers ``_missing_months``' probes from in-memory raw rows and materialised buckets."""
+
+    def __init__(self, raw, buckets):
+        self.raw = sorted(raw)
+        self.buckets = sorted(buckets)
+        self.windows = []
+
+    def execute(self, statement, params=None):
+        sql = str(statement)
+        if sql == "SELECT MIN(time) FROM request_logs":
+            return _Scalar(self.raw[0] if self.raw else None)
+        start, end = params["s"], params["e"]
+        self.windows.append((start, end))
+        first_raw = next((t for t in self.raw if start <= t < end), None)
+        first_bucket = next((b for b in self.buckets if params["b"] <= b < end), None)
+        return _Scalar((first_raw, first_bucket))
+
+
+class _Scalar:
+    def __init__(self, value):
+        self.value = value
+
+    def scalar(self):
+        return self.value
+
+    def one(self):
+        return self.value
+
+
+def _utc(*args):
+    return datetime(*args, tzinfo=timezone.utc)
+
+
+@pytest.fixture
+def daily_aggregate(monkeypatch):
+    """Make ``_missing_months`` see a 1-day aggregate with a 1-day end_offset and no retention."""
+    monkeypatch.setattr(commands, "_bucket_column", lambda conn, name: "bucket")
+    monkeypatch.setattr(commands, "_materialization_hypertable", lambda conn, name: "mat")
+    monkeypatch.setattr(commands, "_retention_boundary", lambda conn, name: None)
+    monkeypatch.setattr(commands, "_bucket_width", lambda conn, name: timedelta(days=1))
+    offset = {"value": timedelta(days=1)}
+    monkeypatch.setattr(commands, "_refresh_end_offset", lambda conn, name: offset["value"])
+    return offset
+
+
+def test_missing_months_compares_against_the_daily_bucket(daily_aggregate):
+    # A daily bucket at midnight covers a first raw row later that day: not missing,
+    # where flooring to the hour would have reported the month every time.
+    raw = [_utc(2026, 9, 3, 14, 37), _utc(2026, 10, 2, 9, 5)]
+    buckets = [_utc(2026, 9, 3), _utc(2026, 10, 4)]
+    conn = _ProbeConn(raw, buckets)
+
+    missing = commands._missing_months(conn, "request_counts_daily", _utc(2026, 11, 3, 12))
+
+    assert missing == [(_utc(2026, 10, 1), raw[1], buckets[1])]
+
+
+def test_missing_months_reports_a_month_with_no_daily_bucket(daily_aggregate):
+    raw = [_utc(2026, 9, 3, 14, 37)]
+    conn = _ProbeConn(raw, [])
+
+    assert commands._missing_months(conn, "request_counts_daily", _utc(2026, 11, 3, 12)) \
+        == [(_utc(2026, 9, 1), raw[0], None)]
+
+
+def test_missing_months_stops_at_the_end_offset(daily_aggregate):
+    # now is 11-02 12:00 with a 1-day end_offset: the policy materialises only up to
+    # 11-01 00:00, so the month's rows on 11-01 are not missing yet.
+    now = _utc(2026, 11, 2, 12)
+    raw = [_utc(2026, 10, 5, 8), _utc(2026, 11, 1, 6)]
+    conn = _ProbeConn(raw, [_utc(2026, 10, 5)])
+
+    assert commands._missing_months(conn, "request_counts_daily", now) == []
+    assert conn.windows == [(_utc(2026, 10, 1), _utc(2026, 11, 1))], \
+        "the current month starts at the horizon and must not be probed"
+
+    # Without the end_offset the horizon is today's midnight, and 11-01 is missing.
+    daily_aggregate["value"] = timedelta(0)
+    conn = _ProbeConn(raw, [_utc(2026, 10, 5)])
+    assert commands._missing_months(conn, "request_counts_daily", now) \
+        == [(_utc(2026, 11, 1), raw[1], None)]
+    assert conn.windows[-1] == (_utc(2026, 11, 1), _utc(2026, 11, 2))
+
+
+def test_missing_months_unreadable_width_floors_to_the_hour(daily_aggregate, monkeypatch):
+    monkeypatch.setattr(commands, "_bucket_width", lambda conn, name: None)
+    daily_aggregate["value"] = timedelta(hours=1)
+    raw = [_utc(2026, 10, 5, 8, 30)]
+
+    assert commands._missing_months(_ProbeConn(raw, [_utc(2026, 10, 5, 8)]), "agg",
+                                    _utc(2026, 11, 2, 12)) == []
+    assert commands._missing_months(_ProbeConn(raw, [_utc(2026, 10, 5)]), "agg",
+                                    _utc(2026, 11, 2, 12)) == []
+    assert commands._missing_months(_ProbeConn(raw, [_utc(2026, 10, 5, 9)]), "agg",
+                                    _utc(2026, 11, 2, 12)) \
+        == [(_utc(2026, 10, 1), raw[0], _utc(2026, 10, 5, 9))]
+
+
+def test_missing_months_finds_the_daily_bucket_holding_the_retention_boundary(daily_aggregate, monkeypatch):
+    # The boundary is floored to the hour, 10-10 06:00; the daily bucket holding it
+    # starts at midnight, before the boundary, and still covers the month from there.
+    monkeypatch.setattr(commands, "_retention_boundary", lambda conn, name: _utc(2026, 10, 10, 6))
+    raw = [_utc(2026, 10, 10, 8)]
+    conn = _ProbeConn(raw, [_utc(2026, 10, 10)])
+
+    assert commands._missing_months(conn, "request_counts_daily", _utc(2026, 11, 3, 12)) == []
+    assert conn.windows[0] == (_utc(2026, 10, 10, 6), _utc(2026, 11, 1))
