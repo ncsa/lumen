@@ -84,7 +84,7 @@ Lumen sits between clients (browser users and API consumers) and one or more pri
 | ASGI server | Uvicorn 0.30+ | Multi-worker capable; `--workers N` for scale |
 | ORM | SQLAlchemy 2.0+ / Flask-SQLAlchemy 3.1+ | 2.x select()-style API throughout |
 | Migrations | Alembic via Flask-Migrate 4.0+ | 30+ migrations versioned in `migrations/versions/` |
-| Database | PostgreSQL 17 + TimescaleDB 2.27.2 | TimescaleDB used for `request_logs` hypertable |
+| Database | PostgreSQL 17 + TimescaleDB 2.31.0 | TimescaleDB used for `request_logs` hypertable |
 | Auth | Authlib 1.3+ · CILogon OAuth2/OIDC | Institutional IdP federation via CILogon |
 | LLM client | OpenAI SDK 1.0+ | Used both for proxying and health checks |
 | Rate limiting | Flask-Limiter 3.5+ | In-memory (single worker) or Redis (multi-worker) |
@@ -430,7 +430,7 @@ data there while regular users are scoped to their own. Built on `request_logs` 
 ### Docker Compose (development / single-node)
 
 ```
-postgres  timescale/timescaledb:2.27.2-pg17   port 5678
+postgres  timescale/timescaledb:2.31.0-pg17   port 5678
 lumen     uvicorn asgi:app --reload            port 5001
 ```
 

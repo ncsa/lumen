@@ -284,7 +284,7 @@ with the same `PGCONNECT_TIMEOUT` default (for the gate only; uvicorn gets your 
 ### Upgrading TimescaleDB
 
 TimescaleDB is required: Lumen does not run on a plain `postgres` image. Pin the image tag
-(`timescale/timescaledb:2.27.2-pg17` is the tested version) and upgrade on purpose. A new image
+(`timescale/timescaledb:2.31.0-pg17` is the tested version) and upgrade on purpose. A new image
 only installs the new extension files; the database keeps running the old version until it is
 updated, and nothing in Lumen updates it for you.
 

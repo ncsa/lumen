@@ -69,13 +69,13 @@ oauth2:
 
 ### PostgreSQL
 
-The bundled PostgreSQL uses `timescale/timescaledb:2.27.2-pg17` to match the production docker-compose setup. Override `postgresql.image` if you need a different version, but keep a TimescaleDB image with a pinned tag: TimescaleDB is required, and on a plain `postgres` image the migrations fail and the migration Job fails at `flask db upgrade`. See "Upgrading TimescaleDB" in the main README before changing the tag.
+The bundled PostgreSQL uses `timescale/timescaledb:2.31.0-pg17` to match the production docker-compose setup. Override `postgresql.image` if you need a different version, but keep a TimescaleDB image with a pinned tag: TimescaleDB is required, and on a plain `postgres` image the migrations fail and the migration Job fails at `flask db upgrade`. See "Upgrading TimescaleDB" in the main README before changing the tag.
 
 **Bundled (default):**
 ```yaml
 postgresql:
   enabled: true
-  image: "timescale/timescaledb:2.27.2-pg17"  # override to pin a different version
+  image: "timescale/timescaledb:2.31.0-pg17"  # override to pin a different version
   auth:
     username: lumen
     password: strong-password
@@ -89,7 +89,7 @@ postgresql:
   url: "postgresql://lumen:password@my-postgres.example.com:5432/lumen"
 ```
 
-An external database must also run TimescaleDB (2.27.2 is the tested version): the migrations create the `timescaledb` extension, so the database user needs permission to do that, or a superuser must create it first.
+An external database must also run TimescaleDB (2.31.0 is the tested version): the migrations create the `timescaledb` extension, so the database user needs permission to do that, or a superuser must create it first.
 
 **External via Secret:**
 ```yaml
@@ -205,7 +205,7 @@ models:
 | `oauth2.serverMetadataUrl` | CILogon OIDC URL | OIDC provider metadata URL |
 | `existingSecret` | `""` | Name of pre-existing Secret with credentials |
 | `postgresql.enabled` | `true` | Deploy bundled PostgreSQL |
-| `postgresql.image` | `timescale/timescaledb:2.27.2-pg17` | PostgreSQL container image |
+| `postgresql.image` | `timescale/timescaledb:2.31.0-pg17` | PostgreSQL container image |
 | `postgresql.url` | `""` | External PostgreSQL URL (when enabled=false); the database must run TimescaleDB |
 | `postgresql.existingSecret` | `""` | Secret containing database URL (when enabled=false); the database must run TimescaleDB |
 | `redis.enabled` | `false` | Deploy bundled Redis |
