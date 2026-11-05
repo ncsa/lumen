@@ -30,6 +30,17 @@ def _make_model_endpoint(app, model_id, healthy=True):
         db.session.commit()
 
 
+def _model_row_status(html, model_name):
+    """Return the model_status of the MODEL_ROWS entry for model_name."""
+    m = re.search(
+        r"model_name: " + re.escape(json.dumps(model_name)) + r",.*?model_status: \"([^\"]*)\",",
+        html,
+        re.DOTALL,
+    )
+    assert m, f"no MODEL_ROWS entry for {model_name!r}"
+    return m.group(1)
+
+
 # ---------------------------------------------------------------------------
 # Profile index page
 # ---------------------------------------------------------------------------
@@ -43,6 +54,16 @@ def test_profile_page_with_model(app, auth_client, test_model):
     _make_model_endpoint(app, test_model["id"])
     resp = auth_client.get("/profile")
     assert resp.status_code == HTTPStatus.OK
+    assert _model_row_status(resp.get_data(as_text=True), test_model["model_name"]) == "ok"
+
+
+def test_profile_page_with_two_healthy_endpoints(app, auth_client, test_model):
+    """Two endpoints, both healthy → ok status."""
+    _make_model_endpoint(app, test_model["id"])
+    _make_model_endpoint(app, test_model["id"])
+    resp = auth_client.get("/profile")
+    assert resp.status_code == HTTPStatus.OK
+    assert _model_row_status(resp.get_data(as_text=True), test_model["model_name"]) == "ok"
 
 
 def test_profile_page_with_degraded_model(app, auth_client, test_model):
@@ -55,6 +76,7 @@ def test_profile_page_with_degraded_model(app, auth_client, test_model):
         db.session.commit()
     resp = auth_client.get("/profile")
     assert resp.status_code == HTTPStatus.OK
+    assert _model_row_status(resp.get_data(as_text=True), test_model["model_name"]) == "degraded"
 
 
 def test_profile_page_with_down_model(app, auth_client, test_model):
@@ -66,11 +88,13 @@ def test_profile_page_with_down_model(app, auth_client, test_model):
         db.session.commit()
     resp = auth_client.get("/profile")
     assert resp.status_code == HTTPStatus.OK
+    assert _model_row_status(resp.get_data(as_text=True), test_model["model_name"]) == "down"
 
 
 def test_profile_page_with_no_endpoints(app, auth_client, test_model):
     resp = auth_client.get("/profile")
     assert resp.status_code == HTTPStatus.OK
+    assert _model_row_status(resp.get_data(as_text=True), test_model["model_name"]) == "down"
 
 
 @pytest.mark.parametrize(
