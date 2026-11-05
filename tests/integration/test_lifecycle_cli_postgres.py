@@ -10,6 +10,10 @@ which is exactly the failure these tests exist to catch — so they invoke
 ``uv run flask ...`` the same way ``tests/integration/conftest.py`` invokes
 ``flask db upgrade``.
 
+They backfill ``request_counts_hourly_by_entity``, the aggregate built on raw
+``request_logs``: ``request_counts_hourly`` and ``request_counts_daily`` are built on
+it and read its materialised rows, so they cannot show what raw chunks do.
+
 These commands mutate state that is global to the database — they move every
 aggregate's watermark, and some tests add a retention policy by hand — so this
 module runs against ``pg_migrated_isolated`` rather than the shared ``pg_migrated``.
@@ -144,7 +148,7 @@ def test_refresh_inside_a_transaction_block_is_rejected(pg_migrated):
     with pytest.raises(Exception) as exc:
         with pg_migrated.begin() as conn:
             conn.execute(text(
-                "CALL refresh_continuous_aggregate('request_counts_hourly', NULL, NULL)"
+                "CALL refresh_continuous_aggregate('request_counts_hourly_by_entity', NULL, NULL)"
             ))
     assert "transaction block" in str(exc.value)
 
@@ -152,7 +156,7 @@ def test_refresh_inside_a_transaction_block_is_rejected(pg_migrated):
 def test_backfill_aggregate_runs_outside_a_transaction_block(pg_url, recent_row):
     """Fails if the command is ever changed to refresh through ``db.session``."""
     result = _run(pg_url, "backfill-aggregate",
-                  "--name", "request_counts_hourly", "--from", _months_ago(1))
+                  "--name", "request_counts_hourly_by_entity", "--from", _months_ago(1))
     output = result.stdout + result.stderr
     assert "cannot run inside a transaction block" not in output, output
     assert result.returncode == 0, output
@@ -161,7 +165,7 @@ def test_backfill_aggregate_runs_outside_a_transaction_block(pg_url, recent_row)
 
     with recent_row.connect() as conn:
         materialised = conn.execute(text(
-            "SELECT SUM(requests) FROM request_counts_hourly"
+            "SELECT SUM(requests) FROM request_counts_hourly_by_entity"
         )).scalar()
     assert materialised == 1
 
@@ -173,7 +177,7 @@ def test_backfill_aggregate_refuses_window_before_retention_boundary(pg_url, rec
         ))
 
     result = _run(pg_url, "backfill-aggregate",
-                  "--name", "request_counts_hourly", "--from", _months_ago(15))
+                  "--name", "request_counts_hourly_by_entity", "--from", _months_ago(15))
     assert result.returncode != 0, result.stdout + result.stderr
     assert "refusing to refresh" in result.stdout
     assert "EMPTY and DELETES" in result.stdout
@@ -189,7 +193,7 @@ def test_backfill_aggregate_force_overrides_the_retention_refusal(pg_url, recent
             "SELECT add_retention_policy('request_logs', drop_after => INTERVAL '13 months')"
         ))
 
-    result = _run(pg_url, "backfill-aggregate", "--name", "request_counts_hourly",
+    result = _run(pg_url, "backfill-aggregate", "--name", "request_counts_hourly_by_entity",
                   "--from", _months_ago(15), "--force")
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
@@ -210,14 +214,14 @@ def test_backfill_force_erases_the_materialised_rows_it_warns_about(pg_url, rece
     silently skipping them — a run with nothing before the boundary prints the same words.
     """
     _insert_row(recent_row, "15 months")
-    first = _run(pg_url, "backfill-aggregate", "--name", "request_counts_hourly",
+    first = _run(pg_url, "backfill-aggregate", "--name", "request_counts_hourly_by_entity",
                  "--from", _months_ago(15))
     assert first.returncode == 0, first.stdout + first.stderr
 
     def rows_before_boundary():
         with recent_row.connect() as conn:
             return conn.execute(text(
-                "SELECT COUNT(*) FROM request_counts_hourly "
+                "SELECT COUNT(*) FROM request_counts_hourly_by_entity "
                 "WHERE bucket < now() - INTERVAL '13 months'"
             )).scalar()
 
@@ -233,7 +237,7 @@ def test_backfill_force_erases_the_materialised_rows_it_warns_about(pg_url, rece
             "SELECT drop_chunks('request_logs', older_than => INTERVAL '13 months')"
         ))
 
-    result = _run(pg_url, "backfill-aggregate", "--name", "request_counts_hourly",
+    result = _run(pg_url, "backfill-aggregate", "--name", "request_counts_hourly_by_entity",
                   "--from", _months_ago(15), "--force")
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
@@ -241,7 +245,7 @@ def test_backfill_force_erases_the_materialised_rows_it_warns_about(pg_url, rece
     assert rows_before_boundary() == 0, "--force did not erase the rows it warned about"
     with recent_row.connect() as conn:
         surviving = conn.execute(text(
-            "SELECT SUM(requests) FROM request_counts_hourly"
+            "SELECT SUM(requests) FROM request_counts_hourly_by_entity"
         )).scalar()
     assert surviving == 1, "the in-retention row was erased along with the old ones"
 
@@ -254,20 +258,20 @@ def test_backfill_defaults_from_to_the_month_of_the_oldest_row(pg_url, recent_ro
     would otherwise only ever run on SQLite, which returns before reaching it.
     """
     _insert_row(recent_row, "2 months")
-    result = _run(pg_url, "backfill-aggregate", "--name", "request_counts_hourly")
+    result = _run(pg_url, "backfill-aggregate", "--name", "request_counts_hourly_by_entity")
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
     assert f"from {_months_ago(2)} to {_months_ago(0)}" in result.stdout, result.stdout
     with recent_row.connect() as conn:
         materialised = conn.execute(text(
-            "SELECT SUM(requests) FROM request_counts_hourly"
+            "SELECT SUM(requests) FROM request_counts_hourly_by_entity"
         )).scalar()
     assert materialised == 2, "the default --from did not reach the oldest row"
 
 
 def test_backfill_on_an_empty_request_logs_exits_clean(pg_url, lifecycle_db):
     """The MIN(time) IS NULL branch of the default --from, on PostgreSQL."""
-    result = _run(pg_url, "backfill-aggregate", "--name", "request_counts_hourly")
+    result = _run(pg_url, "backfill-aggregate", "--name", "request_counts_hourly_by_entity")
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
     assert "request_logs is empty; nothing to backfill." in result.stdout, output
@@ -480,8 +484,7 @@ def test_backfill_leaves_real_time_aggregation_working_for_the_current_bucket(pg
     ever stops clamping its window end to ``now()``.
 
     Uses the entity aggregate because it is the one the command backfills by
-    default; ``request_counts_hourly`` is real-time too since ``j4k5l6m7n8o9``,
-    so either would show the loss.
+    default.
     """
     if not _aggregate_exists(recent_row, ENTITY_AGGREGATE):
         pytest.skip(f"{ENTITY_AGGREGATE} migration is not on disk yet")
@@ -529,7 +532,7 @@ def test_backfill_retries_a_concurrent_refresh_instead_of_aborting(pg_url, recen
         mat = conn.execute(text(
             "SELECT materialization_hypertable_schema || '.' || materialization_hypertable_name "
             "FROM timescaledb_information.continuous_aggregates "
-            "WHERE view_name = 'request_counts_hourly'"
+            "WHERE view_name = 'request_counts_hourly_by_entity'"
         )).scalar()
 
     holder = engine.connect()
@@ -541,7 +544,7 @@ def test_backfill_retries_a_concurrent_refresh_instead_of_aborting(pg_url, recen
         with _autocommit(engine) as conn:
             try:
                 conn.execute(text(
-                    "CALL refresh_continuous_aggregate('request_counts_hourly', "
+                    "CALL refresh_continuous_aggregate('request_counts_hourly_by_entity', "
                     "now() - INTERVAL '400 days', now())"
                 ))
                 blocked["outcome"] = "ok"
@@ -572,7 +575,7 @@ def test_backfill_retries_a_concurrent_refresh_instead_of_aborting(pg_url, recen
     releaser.start()
     try:
         result = _run(pg_url, "backfill-aggregate",
-                      "--name", "request_counts_hourly", "--from", _months_ago(1))
+                      "--name", "request_counts_hourly_by_entity", "--from", _months_ago(1))
     finally:
         releaser.join(timeout=120)
         holder.rollback()
@@ -596,11 +599,11 @@ def test_backfill_is_idempotent_so_from_can_resume_mid_run(pg_url, recent_row):
     totals = []
     for _ in range(2):
         result = _run(pg_url, "backfill-aggregate",
-                      "--name", "request_counts_hourly", "--from", _months_ago(1))
+                      "--name", "request_counts_hourly_by_entity", "--from", _months_ago(1))
         assert result.returncode == 0, result.stdout + result.stderr
         with recent_row.connect() as conn:
             totals.append(conn.execute(text(
                 "SELECT SUM(requests), SUM(input_tokens), SUM(output_tokens) "
-                "FROM request_counts_hourly"
+                "FROM request_counts_hourly_by_entity"
             )).one())
     assert totals[0] == totals[1], f"re-running a month changed the aggregate: {totals}"

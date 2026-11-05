@@ -23,7 +23,7 @@ import pytest
 from sqlalchemy import create_engine, exc, text
 
 from lumen import commands
-from lumen.commands import ENTITY_AGGREGATE, check_aggregate_cmd, upgrade_cmd
+from lumen.commands import ENTITY_AGGREGATE, USAGE_AGGREGATES, check_aggregate_cmd, upgrade_cmd
 from tests.conftest import no_snapshot_refresher
 from tests.unit.test_migrations import _script_dir
 
@@ -93,11 +93,13 @@ def clean(engine):
             "SELECT remove_retention_policy('request_logs', if_exists => true)"
         ))
         conn.execute(text("DELETE FROM request_logs"))
-        conn.execute(text(
-            f"CALL refresh_continuous_aggregate('{ENTITY_AGGREGATE}', "
-            f"CAST(:s AS timestamptz), now())"
-        ), {"s": _month(6)})
-    assert _materialised_rows(engine) == 0, "cleanup left materialised rows behind"
+        # Bottom-up: each org-wide view is computed from its child's materialised rows.
+        for view in USAGE_AGGREGATES:
+            conn.execute(text(
+                f"CALL refresh_continuous_aggregate('{view}', CAST(:s AS timestamptz), now())"
+            ), {"s": _month(6)})
+    for view in USAGE_AGGREGATES:
+        assert _materialised_rows(engine, view) == 0, f"cleanup left {view} rows behind"
 
 
 def _autocommit(engine):
@@ -132,8 +134,8 @@ def _refresh(engine, start, end):
         ), {"s": start, "e": end})
 
 
-def _mat_table(conn):
-    return commands._materialization_hypertable(conn, ENTITY_AGGREGATE)
+def _mat_table(conn, view=ENTITY_AGGREGATE):
+    return commands._materialization_hypertable(conn, view)
 
 
 def _first_bucket(engine, start, end):
@@ -144,21 +146,24 @@ def _first_bucket(engine, start, end):
         ), {"s": start, "e": end}).scalar()
 
 
-def _materialised_rows(engine):
+def _materialised_rows(engine, view=ENTITY_AGGREGATE):
     with engine.connect() as conn:
-        return conn.execute(text(f"SELECT COUNT(*) FROM {_mat_table(conn)}")).scalar()
+        return conn.execute(text(f"SELECT COUNT(*) FROM {_mat_table(conn, view)}")).scalar()
 
 
-def _upgrade(pg_app, monkeypatch, fail_at=None):
-    """Run ``flask upgrade``; returns (result, the windows it refreshed).
+def _upgrade(pg_app, monkeypatch, fail_at=None, view=ENTITY_AGGREGATE):
+    """Run ``flask upgrade``; returns (result, the windows it refreshed of ``view``).
 
-    ``fail_at``: the window start whose refresh fails as one does once its lock
-    retries run out. Every other window is refreshed for real.
+    ``fail_at``: the window start of ``view`` whose refresh fails as one does once its
+    lock retries run out. Every other window is refreshed for real. The org-wide views
+    are backfilled after the entity aggregate, from its rows.
     """
     windows = []
     real = commands._refresh_window
 
     def recording(conn, name, start, end):
+        if name != view:
+            return real(conn, name, start, end)
         windows.append((start, end))
         if start == fail_at:
             raise exc.DBAPIError("CALL refresh_continuous_aggregate", {}, Exception("injected failure"))
@@ -208,7 +213,8 @@ def test_empty_database_migrates_to_head(empty_pg_url):
                             capture_output=True, text=True, env=env, timeout=300)
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
-    assert f"Aggregate backfill: no missing months in '{ENTITY_AGGREGATE}'." in result.stdout, output
+    for view in USAGE_AGGREGATES:
+        assert f"Aggregate backfill: no missing months in '{view}'." in result.stdout, output
     assert "Upgrade complete." in result.stdout, output
     engine = create_engine(empty_pg_url)
     with engine.connect() as conn:
@@ -224,7 +230,8 @@ def test_interrupted_backfill_resumes_at_the_failed_month(pg_app, engine, monkey
     result, windows = _upgrade(pg_app, monkeypatch, fail_at=months[2])
     assert result.exit_code == 1, result.output
     assert _starts(windows) == months[:3]
-    assert f"Error: refreshing {months[2]:%Y-%m} failed: injected failure" in result.output
+    assert (f"Error: refreshing {months[2]:%Y-%m} of '{ENTITY_AGGREGATE}' failed: injected failure"
+            in result.output)
     assert "Upgrade complete." not in result.output
     for m in months[:2]:
         assert _first_bucket(engine, m, commands._next_month(m)) == m + timedelta(days=2)
@@ -340,6 +347,81 @@ def test_fully_covered_aggregate_refreshes_nothing(pg_app, engine, monkeypatch):
     assert result.exit_code == 0, result.output
     assert windows == []
     assert f"Aggregate backfill: no missing months in '{ENTITY_AGGREGATE}'." in result.output
+
+
+def _view_requests(engine, view, bucket_of):
+    """Requests ``view`` returns, real-time half included, in the bucket holding ``bucket_of``."""
+    width = "1 day" if view == "request_counts_daily" else "1 hour"
+    with engine.connect() as conn:
+        return conn.execute(text(
+            f"SELECT COALESCE(SUM(requests), 0) FROM {view} "
+            f"WHERE bucket = time_bucket(CAST(:w AS interval), CAST(:t AS timestamptz))"
+        ), {"w": width, "t": bucket_of}).scalar()
+
+
+def _materialised_totals(engine, view, end):
+    """``(requests, input_tokens, output_tokens, cost)`` materialised in ``view`` before ``end``."""
+    with engine.connect() as conn:
+        return tuple(conn.execute(text(
+            "SELECT COALESCE(SUM(requests), 0), COALESCE(SUM(input_tokens), 0), "
+            "COALESCE(SUM(output_tokens), 0), COALESCE(SUM(cost), 0) "
+            f"FROM {_mat_table(conn, view)} WHERE bucket < :e"
+        ), {"e": end}).one())
+
+
+def _raw_totals(engine, end):
+    with engine.connect() as conn:
+        return tuple(conn.execute(text(
+            "SELECT COUNT(*), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0), "
+            "COALESCE(SUM(cost), 0) FROM request_logs WHERE time < :e"
+        ), {"e": end}).one())
+
+
+def test_upgrade_backfills_the_org_wide_views_bottom_up(pg_app, engine, monkeypatch):
+    """The entity aggregate first, then hourly from it, then daily from hourly.
+
+    A current-bucket row is visible through both org-wide views before any refresh,
+    through real-time aggregation chained over the child, and still visible after the
+    backfill: the backfill stops at now, so the open buckets stay above the watermarks.
+    """
+    m2, m1 = _month(2), _month(1)
+    _insert(engine, m2 + timedelta(days=2), m2 + timedelta(days=9, hours=23, minutes=59),
+            m1 + timedelta(days=3))
+    with engine.begin() as conn:
+        current = conn.execute(text(
+            "INSERT INTO request_logs (time, source, input_tokens, output_tokens, cost, duration) "
+            "VALUES (now(), 'api', 7, 9, 0.123456, 0.1) RETURNING time"
+        )).scalar()
+    for view in ("request_counts_hourly", "request_counts_daily"):
+        assert _view_requests(engine, view, current) == 1, f"{view} hides the current bucket"
+
+    names = []
+    real = commands._refresh_window
+
+    def recording(conn, name, start, end):
+        names.append(name)
+        return real(conn, name, start, end)
+
+    monkeypatch.setattr(commands, "_refresh_window", recording)
+    result = pg_app.test_cli_runner().invoke(upgrade_cmd, [])
+    monkeypatch.setattr(commands, "_refresh_window", real)
+    assert result.exit_code == 0, result.output
+    assert names == sorted(names, key=USAGE_AGGREGATES.index), names
+    assert set(names) == set(USAGE_AGGREGATES), names
+
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    for view in USAGE_AGGREGATES:
+        assert _materialised_totals(engine, view, today) == _raw_totals(engine, today), view
+        assert _view_requests(engine, view, current) == 1, f"{view} lost the current bucket"
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO request_logs (time, source, input_tokens, output_tokens, cost, duration) "
+            "VALUES (:t, 'api', 1, 1, 0.01, 0.1)"
+        ), {"t": current})
+    for view in ("request_counts_hourly", "request_counts_daily"):
+        assert _view_requests(engine, view, current) == 2, \
+            f"a request made after the backfill is invisible through {view}"
 
 
 class _Records(logging.Handler):

@@ -546,7 +546,8 @@ def test_rising_failures_are_logged_even_when_the_last_run_succeeded(caplog):
         metrics_snapshot._log_health_changes(_health(failures={name: 5}), _health(failures={name: 5}))
     [(level, message)] = _timescale_messages(caplog)
     assert level == logging.WARNING
-    assert "compression:request_logs (job 1003) failed 3 time(s) since the last check; 5 failures" in message
+    job_id = 1000 + list(timescale_health.EXPECTED_JOBS).index(name)  # as _health numbers them
+    assert f"compression:request_logs (job {job_id}) failed 3 time(s) since the last check; 5 failures" in message
 
 
 def test_a_failing_job_is_logged_again_only_when_its_count_rises(caplog):

@@ -336,6 +336,7 @@ def test_timescale_gauges_after_a_check(app, client):
         aggregates=(
             Aggregate("request_counts_hourly", False, "_materialized_hypertable_3"),
             Aggregate("request_metrics_1m", True, "_materialized_hypertable_7"),
+            Aggregate("request_counts_daily", False, "_materialized_hypertable_9"),
         ),
         jobs=(
             ("refresh:request_counts_hourly",
@@ -344,6 +345,8 @@ def test_timescale_gauges_after_a_check(app, client):
              Job(1001, "policy_compression", "request_logs", "Success", 0, finished)),
             ("retention:request_metrics_1m",
              Job(1004, "policy_retention", "request_metrics_1m", None, None, None)),
+            ("refresh:request_counts_daily",
+             Job(1005, "policy_refresh_continuous_aggregate", "request_counts_daily", "Success", 0, finished)),
         ),
         request_logs_retention=True,
     )
@@ -357,12 +360,17 @@ def test_timescale_gauges_after_a_check(app, client):
     assert samples['lumen_timescaledb_aggregate_present{view="request_counts_hourly_by_entity"}'] == 0
     assert samples['lumen_timescaledb_aggregate_materialized_only{view="request_counts_hourly"}'] == 0
     assert samples['lumen_timescaledb_aggregate_materialized_only{view="request_metrics_1m"}'] == 1
+    assert samples['lumen_timescaledb_aggregate_present{view="request_counts_daily"}'] == 1
+    assert samples['lumen_timescaledb_aggregate_materialized_only{view="request_counts_daily"}'] == 0
     # A missing aggregate has no materialized_only value to report.
     assert 'lumen_timescaledb_aggregate_materialized_only{view="request_counts_hourly_by_entity"}' not in samples
 
     assert samples['lumen_timescaledb_job_present{job="refresh:request_counts_hourly"}'] == 1
     assert samples['lumen_timescaledb_job_present{job="refresh:request_counts_hourly_by_entity"}'] == 0
     assert samples['lumen_timescaledb_job_present{job="compression:request_logs"}'] == 1
+    assert samples['lumen_timescaledb_job_present{job="refresh:request_counts_daily"}'] == 1
+    assert samples['lumen_timescaledb_job_last_run_failed{job="refresh:request_counts_daily"}'] == 0
+    assert samples['lumen_timescaledb_job_failures_total{job="refresh:request_counts_daily"}'] == 0
     assert samples['lumen_timescaledb_job_last_run_failed{job="refresh:request_counts_hourly"}'] == 1
     assert samples['lumen_timescaledb_job_last_run_failed{job="compression:request_logs"}'] == 0
     assert samples['lumen_timescaledb_job_failures_total{job="refresh:request_counts_hourly"}'] == 3

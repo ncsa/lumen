@@ -46,14 +46,17 @@ ENTITY_AGGREGATE = "request_counts_hourly_by_entity"
 # them: refreshing a hierarchical aggregate before its child would rebuild it from the
 # child's stale rows. request_metrics_1m is built on request_logs, not on another
 # aggregate; its place at the end only keeps the walk stable. Aggregates missing from a
-# database are skipped; ones not listed here come last. request_counts_daily is created
-# by a later migration.
+# database are skipped; ones not listed here come last.
 AGGREGATE_REFRESH_ORDER = (
     ENTITY_AGGREGATE,
     "request_counts_hourly",
     "request_counts_daily",
     "request_metrics_1m",
 )
+
+# The aggregates behind the /usage charts, which ``flask upgrade`` keeps backfilled. The
+# org-wide two are built on the entity aggregate (hourly) and on hourly (daily).
+USAGE_AGGREGATES = (ENTITY_AGGREGATE, "request_counts_hourly", "request_counts_daily")
 
 # request_logs key columns the chunk walk can move rows along. The column name is
 # interpolated into SQL, so every helper that takes one checks it against this set.
@@ -1534,11 +1537,14 @@ REQUEST_LOGS_RETENTION_ERROR = (
 
 
 def _backfill_missing_months():
-    """Refresh every month of the entity aggregate that ``_missing_months`` reports.
+    """Refresh every month of the usage aggregates that ``_missing_months`` reports.
 
-    Oldest first, each over its whole month up to now. Safe to re-run: it probes again
-    and resumes at the first month still missing, and re-refreshing a month recomputes
-    it from raw rows. Exits 1 when a month still fails after the lock retries.
+    Covers ``USAGE_AGGREGATES`` in refresh order, so the entity aggregate is filled
+    before the org-wide views computed from its materialised rows; an aggregate missing
+    from the database is skipped. Oldest month first, each over its whole month up to
+    now. Safe to re-run: it probes again and resumes at the first month still missing,
+    and re-refreshing a month recomputes it from its source. Exits 1 when a month still
+    fails after the lock retries.
     """
     if db.engine.dialect.name != "postgresql":
         click.echo(f"Aggregate backfill: skipped, needs PostgreSQL/TimescaleDB "
@@ -1560,20 +1566,24 @@ def _backfill_missing_months():
             return
 
         now = datetime.now(timezone.utc)
-        missing = _missing_months(conn, ENTITY_AGGREGATE, now)
-        if not missing:
-            click.echo(f"Aggregate backfill: no missing months in '{ENTITY_AGGREGATE}'.")
-            return
-        click.echo(f"Aggregate backfill: refreshing {len(missing)} missing or partly covered "
-                   f"months of '{ENTITY_AGGREGATE}'.")
-        bucket = _bucket_column(conn, ENTITY_AGGREGATE)
-        for start, _, _ in missing:
-            try:
-                _refresh_month(conn, ENTITY_AGGREGATE, bucket, start, now)
-            except DBAPIError as exc:
-                click.echo(f"Error: refreshing {start:%Y-%m} failed: {exc.orig}")
-                click.echo("  Re-run 'flask upgrade' to resume at the first month still missing.")
-                raise SystemExit(1)
+        existing = set(_continuous_aggregates(conn))
+        # USAGE_AGGREGATES is already child before parent; walk it, not the catalog.
+        for name in (n for n in USAGE_AGGREGATES if n in existing):
+            missing = _missing_months(conn, name, now)
+            if not missing:
+                click.echo(f"Aggregate backfill: no missing months in '{name}'.")
+                continue
+            click.echo(f"Aggregate backfill: refreshing {len(missing)} missing or partly "
+                       f"covered months of '{name}'.")
+            bucket = _bucket_column(conn, name)
+            for start, _, _ in missing:
+                try:
+                    _refresh_month(conn, name, bucket, start, now)
+                except DBAPIError as exc:
+                    click.echo(f"Error: refreshing {start:%Y-%m} of '{name}' failed: {exc.orig}")
+                    click.echo("  Re-run 'flask upgrade' to resume at the first month still "
+                               "missing.")
+                    raise SystemExit(1)
 
 
 # Run in order after the migrations, each only once the previous one succeeded. Every
@@ -1587,7 +1597,7 @@ def upgrade_cmd():
     """Bring the database up to date for this image, then exit.
 
     Applies every migration (``flask db upgrade`` to head), then runs the
-    post-migration data steps: today, the backfill of the entity aggregate's missing
+    post-migration data steps: today, the backfill of the usage aggregates' missing
     months. Stops at the first failure with exit 1; running it again resumes. This is
     the one-shot upgrade step that runs before the app starts.
     """

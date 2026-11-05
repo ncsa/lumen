@@ -55,6 +55,7 @@ def _aggregates(**overrides):
         "request_counts_hourly": ("request_counts_hourly", False, "_materialized_hypertable_3"),
         "request_counts_hourly_by_entity":
             ("request_counts_hourly_by_entity", False, "_materialized_hypertable_5"),
+        "request_counts_daily": ("request_counts_daily", False, "_materialized_hypertable_9"),
         "request_metrics_1m": ("request_metrics_1m", False, "_materialized_hypertable_7"),
     }
     rows.update(overrides)
@@ -70,6 +71,7 @@ def _jobs(*extra, drop=()):
         (1002, "policy_refresh_continuous_aggregate", "_materialized_hypertable_5", "Success", 0, _FINISHED),
         (1003, "policy_refresh_continuous_aggregate", "_materialized_hypertable_7", "Success", 0, _FINISHED),
         (1004, "policy_retention", "request_metrics_1m", "Success", 0, _FINISHED),
+        (1005, "policy_refresh_continuous_aggregate", "_materialized_hypertable_9", "Success", 0, _FINISHED),
     ]
     return [r for r in rows if r[0] not in drop] + list(extra)
 
@@ -147,8 +149,19 @@ def test_materialized_only_aggregate():
     assert "request_metrics_1m has materialized_only = true" in found[0]
 
 
+def test_missing_daily_aggregate_also_loses_its_refresh_job():
+    found = problems(check(_healthy_conn(
+        aggregates=_aggregates(request_counts_daily=None), jobs=_jobs(drop=(1005,)))))
+    assert found == [
+        "Continuous aggregate request_counts_daily is missing.",
+        "Background job refresh:request_counts_daily "
+        + "(policy_refresh_continuous_aggregate on request_counts_daily) is missing.",
+    ]
+
+
 @pytest.mark.parametrize("job_id, name", [
     (1000, "refresh:request_counts_hourly"),
+    (1005, "refresh:request_counts_daily"),
     (1001, "compression:request_logs"),
     (1004, "retention:request_metrics_1m"),
 ])
@@ -181,7 +194,7 @@ def test_unexpected_catalog_shape_reports_missing_jobs_without_crashing():
 
 
 def test_request_logs_retention_is_its_own_flag():
-    jobs = _jobs((1005, "policy_retention", "request_logs", "Success", 0, _FINISHED))
+    jobs = _jobs((1006, "policy_retention", "request_logs", "Success", 0, _FINISHED))
     health = check(_healthy_conn(jobs=jobs))
     assert health.request_logs_retention is True
     assert problems(health) == [REQUEST_LOGS_RETENTION]
@@ -239,7 +252,7 @@ def test_healthy_database_logs_one_info_summary(app, monkeypatch, caplog):
     records = _logged(caplog)
     assert [r.levelno for r in records] == [logging.INFO]
     assert "TimescaleDB 2.27.2" in records[0].getMessage()
-    assert "5 expected jobs" in records[0].getMessage()
+    assert "6 expected jobs" in records[0].getMessage()
 
 
 def test_missing_extension_logs_an_error(app, monkeypatch, caplog):
@@ -265,7 +278,7 @@ def test_missing_hypertable_is_an_error_and_other_problems_are_warnings(app, mon
 
 def test_request_logs_retention_is_left_to_the_tripwire(app, monkeypatch, caplog):
     """Not logged again, and no "healthy" summary that would contradict the tripwire's ERROR."""
-    jobs = _jobs((1005, "policy_retention", "request_logs", "Success", 0, _FINISHED))
+    jobs = _jobs((1006, "policy_retention", "request_logs", "Success", 0, _FINISHED))
     _with_health(monkeypatch, _healthy_conn(jobs=jobs))
     with app.app_context(), caplog.at_level(logging.INFO):
         _as_postgres(monkeypatch)

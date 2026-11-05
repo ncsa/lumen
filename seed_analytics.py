@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 
 from lumen import create_app
+from lumen.commands import USAGE_AGGREGATES
 from lumen.extensions import db
 from lumen.models.entity import Entity
 from lumen.models.model_config import ModelConfig
@@ -36,15 +37,19 @@ def random_time(lo: datetime, hi: datetime) -> datetime:
     return lo + timedelta(seconds=random.random() * delta)
 
 
-def refresh_hourly_aggregate(engine, start: datetime, end: datetime) -> None:
-    """Materialise request_counts_hourly over [start, end) on its own AUTOCOMMIT connection."""
+
+
+def refresh_usage_aggregates(engine, start: datetime, end: datetime) -> None:
+    """Materialise the usage aggregates over [start, end), bottom-up, on an AUTOCOMMIT connection."""
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-        # START/NOW are naive UTC; psycopg 3 would send them as timestamp to the
-        # polymorphic window arguments, so cast to the aggregate's timestamptz.
-        conn.execute(db.text(
-            "CALL refresh_continuous_aggregate('request_counts_hourly', "
-            "CAST(:start AS timestamptz), CAST(:end AS timestamptz))"
-        ), {"start": start, "end": end})
+        # Child before parent: a parent refresh reads its child's materialised rows.
+        for view in USAGE_AGGREGATES:
+            # START/NOW are naive UTC; psycopg 3 would send them as timestamp to the
+            # polymorphic window arguments, so cast to the aggregate's timestamptz.
+            conn.execute(db.text(
+                f"CALL refresh_continuous_aggregate('{view}', "
+                "CAST(:start AS timestamptz), CAST(:end AS timestamptz))"
+            ), {"start": start, "end": end})
 
 
 def seed():
@@ -143,8 +148,8 @@ def seed():
         # Refresh the continuous aggregate so analytics page shows data        #
         # Must run outside a transaction block (AUTOCOMMIT).                   #
         # ------------------------------------------------------------------ #
-        print("Refreshing continuous aggregate...")
-        refresh_hourly_aggregate(db.engine, START, NOW + timedelta(hours=2))
+        print("Refreshing continuous aggregates...")
+        refresh_usage_aggregates(db.engine, START, NOW + timedelta(hours=2))
         print("  done")
 
         print("\nSeeding complete.")

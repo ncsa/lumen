@@ -314,7 +314,9 @@ erDiagram
 - [conversations](#conversations)
 - [messages](#messages)
 - [request\_logs](#request_logs)
+- [request\_counts\_hourly](#request_counts_hourly) *(continuous aggregate)*
 - [request\_counts\_hourly\_by\_entity](#request_counts_hourly_by_entity) *(continuous aggregate)*
+- [request\_counts\_daily](#request_counts_daily) *(continuous aggregate)*
 - [request\_metrics\_1m](#request_metrics_1m) *(continuous aggregate)*
 
 ---
@@ -758,7 +760,22 @@ PostgreSQL only. TimescaleDB continuous aggregates over `request_logs`, refreshe
 background policies. They are what keeps the usage charts fast; `request_logs` itself is never
 pruned, so every aggregate can always be recomputed from it.
 
-All three views below are **real-time**: they set `timescaledb.materialized_only = false`, so
+The usage aggregates form a hierarchy; `request_metrics_1m` reads `request_logs` directly:
+
+```
+request_logs
+  -> request_counts_hourly_by_entity   1 hour, per entity
+    -> request_counts_hourly           1 hour, org-wide
+      -> request_counts_daily          1 day, org-wide
+```
+
+**Refresh them bottom-up, child before parent.** Where the child has materialised, a parent
+refresh copies the child's materialised rows, not raw `request_logs`, so a parent refreshed before
+its child copies the child's stale rows. `flask reassign-model` follows
+`AGGREGATE_REFRESH_ORDER` in `lumen/commands.py`, and `flask upgrade` and `seed_analytics.py`
+follow `USAGE_AGGREGATES` there; a manual `flask backfill-aggregate` must do the same.
+
+All four views below are **real-time**: they set `timescaledb.materialized_only = false`, so
 a query unions the materialised rows with a live scan of the raw rows newer than the
 materialisation watermark. Without that — and `true` is the default on TimescaleDB 2.13+ — the
 current bucket is missing, and a user who ran forty requests this hour sees zero.
@@ -775,18 +792,49 @@ reports whether it has run far enough back.
 
 ### request_counts_hourly
 
-`time_bucket('1 hour', time)` grouped by `bucket, model_config_id, source`, carrying `requests`,
-`input_tokens`, `output_tokens`, `cost`. Org-wide only — it has no `entity_id`, which is why the
-per-entity charts needed the aggregate below. `materialized_only = false`, `start_offset` 3 hours,
-`end_offset` 1 hour, refreshed hourly.
+Org-wide hourly usage, a hierarchical aggregate over
+[`request_counts_hourly_by_entity`](#request_counts_hourly_by_entity) (migration `c6e8a0b2d4f6`,
+#177). Before that it read raw `request_logs` with its own refresh scan.
 
-It was created before TimescaleDB 2.13 flipped the `materialized_only` default to `true`, and was
-left unset — so from that version on it silently became materialised-only and the org-wide `/usage`
-charts, which read this view and have no raw-`request_logs` fallback, lost the last one to two hours
-of every day. Migration `j4k5l6m7n8o9` sets it explicitly. `end_offset` stays at one bucket width:
-real-time aggregation already covers everything past the watermark, and an `end_offset` shorter than
-the bucket would materialise a partial open bucket and hide the rest of that hour until the next
-scheduled run.
+**Grouped by:** `bucket` (`time_bucket('1 hour', bucket)` of the child), `model_config_id`, `source`
+
+| Column | Expression | Description |
+|--------|------------|-------------|
+| `bucket` | `time_bucket('1 hour', bucket)` | Start of the hour, TIMESTAMPTZ |
+| `model_config_id` | `model_config_id` | The model used; NULL once the model is deleted |
+| `source` | `source` | `'chat'` or `'api'` |
+| `requests` | `CAST(SUM(requests) AS BIGINT)` | Requests in the bucket |
+| `input_tokens` | `CAST(SUM(input_tokens) AS BIGINT)` | Input tokens |
+| `output_tokens` | `CAST(SUM(output_tokens) AS BIGINT)` | Output tokens |
+| `cost` | `SUM(cost)` | Cost in USD |
+
+**Refresh policy:** `start_offset` 30 days (the child's), `end_offset` 3 hours, `schedule_interval`
+1 hour. The child lags up to about two hours, so the 3-hour `end_offset` keeps this view's
+watermark on hours the child has already materialised. Refresh is driven by the invalidation log,
+so the long `start_offset` only recomputes hours the child rewrote. Created `WITH NO DATA`;
+`flask upgrade` backfills it from the child's materialised rows.
+
+**Notes:**
+- **Its totals equal the per-entity sums.** It sums the child's rows, including the NULL
+  `entity_id` group of deleted users, so for any window of whole hours it equals the sum over
+  `request_counts_hourly_by_entity`, which equals raw `request_logs`. Org-wide totals do not shrink
+  when a user is deleted.
+- Real-time over a real-time child: a request made this hour shows through this view before any
+  refresh.
+- The `CAST`s keep the counts `bigint`; `SUM` of a bigint is `numeric`.
+
+### request_counts_daily
+
+Org-wide daily usage for the Year and All ranges, a hierarchical aggregate over
+[`request_counts_hourly`](#request_counts_hourly) (migration `c6e8a0b2d4f6`, #177). Same columns
+and expressions as `request_counts_hourly`, with `bucket` = `time_bucket('1 day', bucket)`: UTC
+days, whatever the session time zone. The heatmap needs the hour of day, so it stays on the hourly
+view.
+
+**Refresh policy:** `start_offset` 30 days, `end_offset` 1 day, `schedule_interval` 1 hour. Created
+`WITH NO DATA`; `flask upgrade` backfills it from `request_counts_hourly`'s materialised rows.
+
+No retention policy on either org-wide view.
 
 ### request_counts_hourly_by_entity
 
