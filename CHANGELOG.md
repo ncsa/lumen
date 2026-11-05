@@ -25,7 +25,7 @@ All notable changes to Lumen will be documented in this file.
 ### Changed
 
 - `lumen.sh` no longer adds models without text input (e.g. audio-only) to the opencode config.
-- The Models page links to LLMHub for launching models that are not listed.
+- The Models page links to LLMHub for launching models that are not listed, when `app.llmhub_url` is set (editable in the admin config editor).
 
 ### Fixed
 
