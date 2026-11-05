@@ -27,7 +27,7 @@ function seriesBody(range, uptime, hardwareRange = { benefit: null, cost: null, 
   return {
     range, model: 'org/qwen', generated_at: '2026-10-17T17:00:00Z', daily: false,
     header: { status: 'ok', healthy: 1, configured: 1, uptime, peak_rpm: 3, description: 'Qwen', strip: ['ok'] },
-    strip: [{ t, status: 'ok' }],
+    strip_times: [t],
     prices: [{ t, input_price: 0.2, output_price: 0.8, input_median: 0.25, input_p5: 0.1, input_p95: 0.4, output_median: 1, output_p5: 0.5, output_p95: 2 }],
     traffic: traffic ?? { unit: 'minute', points: [{ t, requests: 2, tokens: null, estimated: false }], average: { requests: 2, tokens: null } },
     hardware: { points: [{ day: '2026-10-17', benefit: hardwareRange.benefit, cost: 24, partial: true, estimated: false, ...hardwarePoint }], range: hardwareRange },
@@ -39,6 +39,15 @@ test('requests the model series under the page prefix', () => {
   const p = page();
   assert.equal(p.requests.length, 1);
   assert.equal(p.requests[0].url, '/monitor/api/series?model=org%2Fqwen&range=24h');
+});
+
+test('the model strip gets the time of its cells', async () => {
+  const p = page();
+  const body = seriesBody('24h', 50);
+  body.header.strip = ['down'];
+  await answer(p.requests[0], body);
+  const [strip] = p.byId('model-strip').children;
+  assert.match(strip.children[0].attributes.title, / – down$/);
 });
 
 test('a late response for an earlier range does not replace the selected range', async () => {

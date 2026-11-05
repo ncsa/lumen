@@ -7,6 +7,8 @@ required. If someone replaces the hypertable with a plain table, at least one
 test here must fail — otherwise this file is decoration.
 """
 
+from datetime import timedelta
+
 import pytest
 from sqlalchemy import text
 
@@ -16,9 +18,9 @@ pytestmark = pytest.mark.postgres
 def test_timescaledb_extension_is_installed(pg_migrated):
     """The migration runs CREATE EXTENSION unconditionally on PostgreSQL.
 
-    This is not a nice-to-have: ``entrypoint.sh`` runs ``flask db upgrade``
-    before ``exec uvicorn``, so a database without the extension fails the
-    migration and the container never starts.
+    This is not a nice-to-have: the upgrade step runs ``flask db upgrade``
+    before the app may start, so a database without the extension fails the
+    migration and the app never starts.
     """
     with pg_migrated.connect() as conn:
         version = conn.execute(text(
@@ -81,7 +83,7 @@ def test_continuous_aggregate_is_real_time(pg_migrated):
 def test_continuous_aggregate_reflects_inserted_rows(pg_migrated):
     """Insert, refresh, read back — including the bucket that is still open.
 
-    The aggregate's own policy lags real time by at least an hour, so the
+    The aggregate's own policy lags real time by three hours, so the
     refresh has to be explicit — the same reason ``seed_analytics.py`` calls it
     directly. The first two rows are dated well into the past so they fall
     outside the policy's ``end_offset`` window and are eligible for
@@ -106,12 +108,15 @@ def test_continuous_aggregate_reflects_inserted_rows(pg_migrated):
                    (now() - INTERVAL '3 days', 'api', 300, 400, 1.5, 2.5)
         """))
 
-    # refresh_continuous_aggregate cannot run inside a transaction block.
+    # refresh_continuous_aggregate cannot run inside a transaction block. The hourly
+    # view is built on request_counts_hourly_by_entity and reads its materialised
+    # rows, so the child is refreshed first.
     with pg_migrated.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-        conn.execute(text(
-            "CALL refresh_continuous_aggregate('request_counts_hourly', "
-            "now() - INTERVAL '30 days', now() - INTERVAL '1 hour')"
-        ))
+        for view in ("request_counts_hourly_by_entity", "request_counts_hourly"):
+            conn.execute(text(
+                f"CALL refresh_continuous_aggregate('{view}', "
+                "now() - INTERVAL '30 days', now() - INTERVAL '1 hour')"
+            ))
 
     # Returns the row's own timestamp so the bucket can be named exactly rather
     # than by re-reading the clock and racing an hour boundary.
@@ -146,3 +151,33 @@ def test_migration_is_at_a_single_head(pg_migrated):
     with pg_migrated.connect() as conn:
         heads = conn.execute(text("SELECT version_num FROM alembic_version")).scalars().all()
     assert len(heads) == 1, f"expected one alembic head, got {heads}"
+
+
+def test_migration_cuts_the_stats_fold_over_automatically(pg_migrated):
+    """``f5b6c7d8e9f0`` sets the cutover an hour back, with no operator step.
+
+    Old pods bumping mid-rollout are safe: their rows carry no
+    ``stats_deferred`` marker, and the fold adds only marked rows. A cutover
+    already set is kept; ``test_stats_deferred_migration_postgres`` covers that.
+    """
+    with pg_migrated.connect() as conn:
+        rows = conn.execute(text("SELECT id, cutover_at, folded_until FROM stats_fold_state")).all()
+        now = conn.execute(text("SELECT now() AT TIME ZONE 'UTC'")).scalar()
+    [(row_id, cutover_at, folded_until)] = rows
+    assert row_id == 1
+    assert cutover_at == folded_until
+    # The session's migration ran at most a few minutes before this test.
+    assert now - timedelta(hours=1, minutes=30) <= cutover_at <= now - timedelta(minutes=59)
+
+
+def test_request_logs_has_the_stats_deferred_marker(pg_migrated):
+    with pg_migrated.connect() as conn:
+        column = conn.execute(text(
+            "SELECT data_type, is_nullable, column_default, "
+            "col_description('request_logs'::regclass, ordinal_position) "
+            "FROM information_schema.columns "
+            "WHERE table_name = 'request_logs' AND column_name = 'stats_deferred'"
+        )).one()
+    data_type, nullable, default, comment = column
+    assert (data_type, nullable, default) == ("boolean", "YES", None)
+    assert comment.startswith("TRUE when billing left this request out of model_stats/entity_stats")

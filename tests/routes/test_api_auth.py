@@ -1617,6 +1617,27 @@ def test_chat_completions_upstream_5xx_is_generic_500(
     assert "backend exploded" not in err["message"]
 
 
+@pytest.mark.parametrize("status, passes_through", [
+    (HTTPStatus.FOUND, False),
+    (HTTPStatus.BAD_REQUEST, True),
+    (HTTPStatus.NOT_FOUND, True),
+])
+def test_classify_upstream_error_only_4xx_passes_through(status, passes_through):
+    """Only a 4xx is the caller's mistake. An APIStatusError carrying a status
+    below 400 is not, and must become the generic 500 rather than leak through."""
+    import openai
+
+    from lumen.blueprints.api.routes import _classify_upstream_error
+    exc = _make_openai_error(openai.APIStatusError, status,
+                             {"error": {"message": "odd upstream reply", "type": "weird"}})
+    msg, err_type, http_status = _classify_upstream_error(exc, "test")
+    if passes_through:
+        assert (msg, err_type, http_status) == ("odd upstream reply", "weird", status)
+    else:
+        assert (msg, err_type, http_status) == (
+            "Upstream error. Please try again.", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
+
+
 def test_chat_completions_streaming_error_emits_done(
     app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
 ):
@@ -1761,6 +1782,7 @@ def test_streaming_error_after_billing_holds_no_connection(
     the life of the process.
     """
     from lumen.blueprints.api import routes
+    from lumen.services import llm as llm_service
     token, _ = api_key
     _allow_model(app, test_user, test_model)
     with app.app_context():
@@ -1771,7 +1793,7 @@ def test_streaming_error_after_billing_holds_no_connection(
         raise RuntimeError("billing blew up")
 
     _fake_openai(monkeypatch, routes, [_UsageChunk()])
-    monkeypatch.setattr(routes, "_record_api_key_usage", boom)
+    monkeypatch.setattr(llm_service, "_record_api_key_usage", boom)
 
     resp = client.post(
         "/v1/chat/completions",
@@ -1810,6 +1832,7 @@ def test_streaming_billing_error_is_not_reported_as_an_upstream_error(
     exist.
     """
     from lumen.blueprints.api import routes
+    from lumen.services import llm as llm_service
     token, _ = api_key
     _allow_model(app, test_user, test_model)
 
@@ -1817,7 +1840,7 @@ def test_streaming_billing_error_is_not_reported_as_an_upstream_error(
         raise RuntimeError("billing blew up")
 
     _fake_openai(monkeypatch, routes, [_UsageChunk()])
-    monkeypatch.setattr(routes, "_record_api_key_usage", boom)
+    monkeypatch.setattr(llm_service, "_record_api_key_usage", boom)
 
     resp = client.post(
         "/v1/chat/completions",

@@ -4,19 +4,21 @@ import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from http import HTTPStatus
 from typing import NamedTuple, Optional
 
 import openai
 from flask import current_app, has_request_context, request
-from sqlalchemy import select
+from sqlalchemy import case, literal, or_, select
 from sqlalchemy import update as sa_update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.expression import FunctionElement
 
 from lumen.blueprints.metrics.middleware import observe_stream_abort
 from lumen.extensions import db
+from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
@@ -32,6 +34,7 @@ from lumen.models.request_log import RequestLog
 from lumen.services.cost import calculate_cost
 from lumen.services.crypto import cache_salt_for_entity
 from lumen.services.model_resolver import resolve_model_config
+from lumen.services.stats_cutover import cached_cutover_at
 from lumen.services.wsgi_disconnect import (
     SEND_BLOCKED_ENVIRON_KEY,
     STARTED_AT_ENVIRON_KEY,
@@ -39,7 +42,7 @@ from lumen.services.wsgi_disconnect import (
     SendBlocked,
     client_disconnect_event,
 )
-from lumen.timeutils import utcnow
+from lumen.timeutils import as_utc_naive, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +84,7 @@ def _least_sqlite(element, compiler, **kw):
 
 #: How old ``entity_balances.last_refill_at`` must be before the refiller
 #: credits that balance again — the cutoff in ``token_refill.refill_coin_balances``,
-#: which is what makes the next refill instant derivable here. Keep the two in step.
+#: which is what makes the next refill instant derivable here.
 REFILL_INTERVAL = timedelta(hours=1)
 
 
@@ -573,6 +576,46 @@ def get_effective_limit(entity_id: int, model_config_id: int, model_config=None)
     return get_pool_limit(entity_id)
 
 
+def _bump(model, key: dict, increments: dict, insert_values: dict, last_used_at: datetime = None):
+    """Apply ``increments`` to the ``model`` row matching ``key``, creating it on first use.
+
+    The row exists on every call after an entity's first, so the atomic UPDATE
+    runs alone: one statement, no existence SELECT. Only when it matches no row
+    does the dialect ``INSERT … ON CONFLICT (key) DO UPDATE`` run, inserting
+    ``key`` plus ``insert_values``; if a concurrent first request inserted the
+    row in between, the conflict applies the same ``increments`` to it, so both
+    requests are counted and nothing raises. Not an upsert every time: Postgres
+    draws the serial ``id`` (model_stats, entity_balances) before it detects
+    the conflict, so each steady-state call would burn a sequence value.
+
+    ``increments`` reference the existing row through the model's columns,
+    which ON CONFLICT DO UPDATE resolves against the conflicting row.
+
+    ``last_used_at``, when given, moves the row's ``last_used_at`` forward to
+    it but never back: the stats fold applies windows of past requests, so the
+    time it carries can be older than the one already stored. A new row takes
+    it as is, and ``increments`` must then not set ``last_used_at`` itself.
+    """
+    if last_used_at is not None:
+        assert "last_used_at" not in increments, "pass last_used_at either way, not both"
+        column = model.last_used_at
+        increments = {**increments, "last_used_at": case(
+            (or_(column.is_(None), column < last_used_at), literal(last_used_at, db.DateTime)),
+            else_=column,
+        )}
+        insert_values = {**insert_values, "last_used_at": last_used_at}
+    where = [getattr(model, col) == value for col, value in key.items()]
+    result = db.session.execute(sa_update(model).where(*where).values(**increments))
+    if result.rowcount:
+        return
+    dialect = postgresql if db.engine.dialect.name == "postgresql" else sqlite
+    db.session.execute(
+        dialect.insert(model)
+        .values(**key, **insert_values)
+        .on_conflict_do_update(index_elements=list(key), set_=increments)
+    )
+
+
 def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float, effective=_UNSET):
     """Deduct coin_cost from the entity's pool balance (no-op for unlimited or blocked).
 
@@ -588,32 +631,16 @@ def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float, effec
     if max_coins == -2:
         return
 
-    # Ensure balance row exists (first API use before login creates it).
-    # Check first: the row exists for every entity after its first request, so an
-    # unconditional INSERT would fail — and log a Postgres duplicate-key ERROR —
-    # on every subsequent request. Same race-safe pattern as update_stats below:
-    # if two concurrent first-requests both see None, the loser's IntegrityError
-    # is swallowed and the atomic UPDATE succeeds for both.
-    if db.session.execute(
-        select(EntityBalance).filter_by(entity_id=entity_id)
-    ).scalar_one_or_none() is None:
-        try:
-            with db.session.begin_nested():
-                db.session.add(EntityBalance(
-                    entity_id=entity_id,
-                    coins_left=starting,
-                    last_refill_at=utcnow(),
-                ))
-        except IntegrityError:
-            pass
-
     # Single atomic deduction, floored at 0: deduct when affordable, otherwise zero
     # (the budget is a soft limit — see check_coin_budget). One statement so a
     # concurrent refill/credit can never be clobbered back to 0 by a separate zeroing.
-    db.session.execute(
-        sa_update(EntityBalance)
-        .where(EntityBalance.entity_id == entity_id)
-        .values(coins_left=_greatest(0, EntityBalance.coins_left - coin_cost))
+    # The row is created on first use (first API use before login creates it),
+    # already deducted from the starting balance.
+    _bump(
+        EntityBalance,
+        {"entity_id": entity_id},
+        {"coins_left": _greatest(0, EntityBalance.coins_left - coin_cost)},
+        {"coins_left": max(0.0, float(starting) - float(coin_cost)), "last_refill_at": utcnow()},
     )
     db.session.flush()
 
@@ -825,8 +852,21 @@ def update_stats(
     ttft: float = None,
     ttft_visible: float = None,
     outcome: str = None,
+    api_key_id: int = None,
 ):
-    """Update or create ModelStat/EntityStat running totals and append a RequestLog row.
+    """Append a RequestLog row, then update or create the ModelStat/EntityStat running totals.
+
+    The running totals are bumped here only for a request from before the stats
+    cutover (none recorded yet, or ``log.time < cutover_at``). From the cutover
+    on, the bumps are skipped and the row is written with ``stats_deferred``
+    TRUE, which is what the stats fold adds. A bumped row stays NULL, as do the
+    rows of older code that never heard of the column, and the fold ignores
+    them, so every request is counted exactly once whatever the timing.
+
+    The RequestLog INSERT goes first and is flushed on its own: it takes no row
+    lock another request waits on, so running it ahead of the counter UPDATEs
+    keeps it out of their lock window. Billing should go through bill_request,
+    which fixes the order of every write in the transaction.
 
     ``aborted`` marks the RequestLog row as one whose stream ended before the
     client had read it; its token counts may be estimated (see
@@ -838,62 +878,17 @@ def update_stats(
     derived. The timing columns ride the RequestLog INSERT that already runs, so
     none of this adds a statement. Anything not measured stays None and is
     stored as SQL NULL — deliberately not zero.
+
+    ``api_key_id`` is the API key that made the request, stored on the row in
+    ``request_logs.api_key_id``. It is None (SQL NULL) for chat, which uses no
+    key; on the same INSERT, so it adds no statement either.
     """
-    now = utcnow()
-
-    # Ensure ModelStat row exists before the atomic increment.
-    # Use try/except to handle the race where two concurrent first-requests both
-    # see None and both attempt the INSERT — the loser gets IntegrityError which
-    # we swallow; the atomic UPDATE below then succeeds for both.
-    if db.session.execute(
-        select(ModelStat).filter_by(entity_id=entity_id, model_config_id=model_config_id, source=source)
-    ).scalar_one_or_none() is None:
-        try:
-            with db.session.begin_nested():
-                db.session.add(ModelStat(
-                    entity_id=entity_id, model_config_id=model_config_id, source=source,
-                    requests=0, input_tokens=0, output_tokens=0, cost=0,
-                ))
-        except IntegrityError:
-            pass
-
-    db.session.execute(
-        sa_update(ModelStat)
-        .where(ModelStat.entity_id == entity_id, ModelStat.model_config_id == model_config_id, ModelStat.source == source)
-        .values(
-            requests=ModelStat.requests + 1,
-            input_tokens=ModelStat.input_tokens + input_tokens,
-            output_tokens=ModelStat.output_tokens + output_tokens,
-            audio_seconds=ModelStat.audio_seconds + audio_seconds,
-            cost=ModelStat.cost + cost,
-            last_used_at=now,
-        )
-    )
-
-    # Ensure EntityStat row exists before the atomic increment.
-    # Same race-safe pattern as ModelStat above.
-    if db.session.execute(select(EntityStat).filter_by(entity_id=entity_id)).scalar_one_or_none() is None:
-        try:
-            with db.session.begin_nested():
-                db.session.add(EntityStat(entity_id=entity_id, requests=0, input_tokens=0, output_tokens=0, cost=0))
-        except IntegrityError:
-            pass
-
-    db.session.execute(
-        sa_update(EntityStat)
-        .where(EntityStat.entity_id == entity_id)
-        .values(
-            requests=EntityStat.requests + 1,
-            input_tokens=EntityStat.input_tokens + input_tokens,
-            output_tokens=EntityStat.output_tokens + output_tokens,
-            audio_seconds=EntityStat.audio_seconds + audio_seconds,
-            cost=EntityStat.cost + cost,
-            last_used_at=now,
-        )
-    )
-
+    # Decided before the row is built, so the row records the decision.
+    logged_at = datetime.now(timezone.utc)
+    cutover_at = cached_cutover_at()
+    deferred = cutover_at is not None and as_utc_naive(logged_at) >= cutover_at
     log = RequestLog(
-        time=datetime.now(timezone.utc),
+        time=logged_at,
         entity_id=entity_id,
         model_config_id=model_config_id,
         model_endpoint_id=endpoint_id,
@@ -913,9 +908,99 @@ def update_stats(
         # nothing had been sent yet when the view ran.
         send_blocked=timing.blocked_seconds(),
         outcome=outcome,
+        api_key_id=api_key_id,
+        stats_deferred=True if deferred else None,
     )
     db.session.add(log)
     db.session.flush()
+
+    if deferred:
+        return
+
+    now = utcnow()
+
+    _bump(
+        ModelStat,
+        {"entity_id": entity_id, "model_config_id": model_config_id, "source": source},
+        {
+            "requests": ModelStat.requests + 1,
+            "input_tokens": ModelStat.input_tokens + input_tokens,
+            "output_tokens": ModelStat.output_tokens + output_tokens,
+            "audio_seconds": ModelStat.audio_seconds + audio_seconds,
+            "cost": ModelStat.cost + cost,
+            "last_used_at": now,
+        },
+        {
+            "requests": 1, "input_tokens": input_tokens, "output_tokens": output_tokens,
+            "audio_seconds": audio_seconds, "cost": cost, "last_used_at": now,
+        },
+    )
+    _bump(
+        EntityStat,
+        {"entity_id": entity_id},
+        {
+            "requests": EntityStat.requests + 1,
+            "input_tokens": EntityStat.input_tokens + input_tokens,
+            "output_tokens": EntityStat.output_tokens + output_tokens,
+            "audio_seconds": EntityStat.audio_seconds + audio_seconds,
+            "cost": EntityStat.cost + cost,
+            "last_used_at": now,
+        },
+        {
+            "requests": 1, "input_tokens": input_tokens, "output_tokens": output_tokens,
+            "audio_seconds": audio_seconds, "cost": cost, "last_used_at": now,
+        },
+    )
+
+
+def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int, cost: float, audio_seconds: int = 0):
+    db.session.execute(
+        sa_update(APIKey)
+        .where(APIKey.id == api_key_id)
+        .values(
+            requests=APIKey.requests + 1,
+            input_tokens=APIKey.input_tokens + input_tokens,
+            output_tokens=APIKey.output_tokens + output_tokens,
+            audio_seconds=APIKey.audio_seconds + audio_seconds,
+            cost=APIKey.cost + Decimal(str(cost)),
+            last_used_at=utcnow(),
+        )
+    )
+
+
+def bill_request(entity_id: int, model_config_id: int, source: str, input_tokens: int, output_tokens: int,
+                 cost: float, *, effective, api_key_id: int = None, audio_seconds: int = 0, **log_fields):
+    """Bill one request in a single transaction, taking the hot row locks last, and commit.
+
+    The only billing write path; every caller goes through it. The order is fixed:
+
+    1. INSERT ``request_logs`` (flushed) — takes no row lock anyone waits on
+    2. UPDATE ``model_stats`` (before the stats cutover only)
+    3. UPDATE ``entity_stats`` (before the stats cutover only)
+    4. UPDATE ``api_keys`` (when ``api_key_id`` is given)
+    5. UPDATE ``entity_balances`` — the per-entity lock every request of the entity queues on
+    6. COMMIT
+
+    so the balance lock is held only for the commit, and because every billing
+    transaction takes its locks in the same order, two of them can never deadlock.
+    After the stats cutover steps 2 and 3 are skipped and step 1 writes the row
+    with ``stats_deferred`` TRUE: the stats fold adds that row into those totals
+    later, so the transaction writes only ``request_logs``, ``api_keys`` and
+    ``entity_balances``.
+    A new billing write must be added here, in this order, not beside a call.
+
+    ``effective`` is the coin pool limit resolved during preflight, passed on to
+    subtract_coins (``_UNSET`` re-resolves it there). ``api_key_id`` is both
+    recorded on the step 1 row and used for step 4; leave it None for chat.
+    ``log_fields`` are the remaining update_stats keywords (endpoint, timing,
+    outcome, ...).
+    """
+    update_stats(entity_id, model_config_id, source, input_tokens, output_tokens, cost,
+                 audio_seconds=audio_seconds, api_key_id=api_key_id, **log_fields)
+    if api_key_id is not None:
+        _record_api_key_usage(api_key_id, input_tokens, output_tokens, cost, audio_seconds=audio_seconds)
+    subtract_coins(entity_id, model_config_id, cost, effective=effective)
+    db.session.commit()
 
 
 # Characters per token for the prompt fallback estimate. The upstream reports the
@@ -968,7 +1053,7 @@ def estimate_abort_usage(usage, messages, content_deltas, in_cost_per_million, o
 
 def record_aborted_request(entity_id, model_config_id, source, endpoint_id=None, duration=0.0,
                            input_tokens=0, output_tokens=0, cost=0.0,
-                           effective=_UNSET, record_extra=None,
+                           effective=_UNSET, api_key_id=None,
                            timing=RequestTiming(), upstream_t0=None, ttft=None, ttft_visible=None):
     """Bill and log a request_logs row for a stream the client abandoned mid-response.
 
@@ -982,30 +1067,26 @@ def record_aborted_request(entity_id, model_config_id, source, endpoint_id=None,
     That replaces the old "cost == 0 identifies an abort" convention, which stopped
     being unique the moment aborted requests started carrying a real cost.
 
-    ``record_extra``, if given, runs inside the same session before the commit, for
-    accounting the caller owns (the API path's per-API-key totals).
+    ``api_key_id``, for an API request, also bills the key's running totals.
 
     Best-effort: never raise into the (already closing) generator.
     """
     try:
-        subtract_coins(entity_id, model_config_id, cost, effective=effective)
-        update_stats(
+        bill_request(
             entity_id, model_config_id, source,
             input_tokens, output_tokens, cost,
+            effective=effective, api_key_id=api_key_id,
             endpoint_id=endpoint_id, duration=duration, aborted=True,
             timing=timing, upstream_t0=upstream_t0,
             ttft=ttft, ttft_visible=ttft_visible, outcome="disconnect",
         )
-        if record_extra is not None:
-            record_extra()
-        db.session.commit()
     except Exception:
         logger.exception("failed to record aborted request (entity_id=%s, model=%s)", entity_id, model_config_id)
         db.session.rollback()
 
 
 def record_stream_abort(app, *, billed, entity_id, model_config_id, source, endpoint_id, stream_t0,
-                        input_tokens=0, output_tokens=0, cost=0.0, effective=_UNSET, record_extra=None,
+                        input_tokens=0, output_tokens=0, cost=0.0, effective=_UNSET, api_key_id=None,
                         reason="disconnect", timing=RequestTiming(), ttft=None, ttft_visible=None):
     """Abort accounting for a streaming generator that ends before billing.
 
@@ -1038,7 +1119,7 @@ def record_stream_abort(app, *, billed, entity_id, model_config_id, source, endp
                 entity_id, model_config_id, source,
                 endpoint_id=endpoint_id, duration=time.monotonic() - stream_t0,
                 input_tokens=input_tokens, output_tokens=output_tokens, cost=cost,
-                effective=effective, record_extra=record_extra,
+                effective=effective, api_key_id=api_key_id,
                 timing=timing, upstream_t0=stream_t0,
                 ttft=ttft, ttft_visible=ttft_visible,
             )
@@ -1225,15 +1306,14 @@ def _send_message_stream(app, messages, model, entity_id, source, effective, dis
         if entity_id is not None:
             phase = "billing"
             with app.app_context():
-                subtract_coins(entity_id, mc_id, cost, effective=effective)
-                update_stats(
+                bill_request(
                     entity_id, mc_id, source,
                     input_tokens, output_tokens, cost,
+                    effective=effective,
                     endpoint_id=ep_id, duration=duration,
                     timing=timing, upstream_t0=t0,
                     ttft=t_first_any, ttft_visible=t_first, outcome="ok",
                 )
-                db.session.commit()
             billed = True
     except GeneratorExit:
         # Client disconnected mid-stream before billing — bill what was consumed

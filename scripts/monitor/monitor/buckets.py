@@ -5,14 +5,23 @@ equal slots ending now; a bucket is never shorter than `refresh.web`, so it
 always has room for a probe. The 1y range uses one bucket per local day from
 the daily rows. A bucket takes the worst status of what fell into it
 (`STATUS_PRIORITY`); a bucket with nothing in it is `unknown`.
+
+`bucket_index()` and `status_rank()` do the same bucketing in SQL, so a query
+can `GROUP BY` bucket and return one row per bucket instead of every row.
+`utc_slot()` groups rows into slots aligned to the UTC clock instead, which
+Python can then map to local days.
 """
 
 import math
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
-from monitor.daily import local_day
-from monitor.totals import local_midnight
+from sqlalchemy import BigInteger, case
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.expression import ColumnElement, FunctionElement, literal
+
+from monitor.config import DEFAULT_DOWN_ABOVE
+from monitor.daily import local_day, local_midnight
 
 OK = "ok"
 DEGRADED = "degraded"
@@ -136,13 +145,121 @@ def bucket_statuses(points, grid: Grid | DayGrid) -> list[str]:
     return [worst(b) for b in buckets]
 
 
-def probe_status(success: bool, model_count: int | None, models_up: int | None) -> str:
-    """A probe's status for the Lumen strip: down when it failed, degraded when a model was down."""
+EPOCH = datetime(1970, 1, 1)
+MICROSECOND = timedelta(microseconds=1)
+
+
+class epoch_us(FunctionElement):
+    """Microseconds since the Unix epoch of a naive UTC timestamp column, as an exact integer.
+
+    PostgreSQL: `extract(epoch …)`, which is exact (numeric) from PostgreSQL 14 on and
+    rounds back to the microsecond before that. SQLite: `julianday()` only keeps
+    milliseconds, and as a float, so whole seconds come from `strftime('%s')` and the
+    microseconds from the stored text (`YYYY-MM-DD HH:MM:SS.ffffff`, as SQLAlchemy writes it).
+    `strftime` gets the text without its fraction: SQLite before 3.53 rounds `.9995` and
+    up to the next second.
+    """
+
+    type = BigInteger()
+    inherit_cache = True
+
+
+@compiles(epoch_us)
+def _epoch_us_default(element, compiler, **kw):
+    column = compiler.process(element.clauses, **kw)
+    return f"CAST(round(extract(epoch FROM {column}) * 1000000) AS BIGINT)"
+
+
+@compiles(epoch_us, "sqlite")
+def _epoch_us_sqlite(element, compiler, **kw):
+    column = compiler.process(element.clauses, **kw)
+    return (f"(CAST(strftime('%s', substr({column}, 1, 19)) AS INTEGER) * 1000000"
+            f" + CAST(substr({column}, 21, 6) AS INTEGER))")
+
+
+def bucket_index(column, grid: Grid) -> ColumnElement:
+    """SQL for `grid.index(column)`: `floor((column - grid.start) / grid.size)`, in whole microseconds.
+
+    Integer arithmetic, so a row exactly on a bucket edge lands where `Grid.index`
+    puts it. Only valid for rows at or after `grid.start` (filter on the column
+    first), and the result is not bounded: callers drop indexes ≥ `grid.count`.
+    """
+    start = (grid.start - EPOCH) // MICROSECOND
+    size = grid.size // MICROSECOND
+    return (epoch_us(column) - literal(start, BigInteger)) // literal(size, BigInteger)
+
+
+def utc_slot(column, seconds: int = 900) -> ColumnElement:
+    """SQL for the slot of `column` on the UTC clock: `floor(epoch seconds / seconds)`, in whole microseconds.
+
+    Unlike `bucket_index`, the slots do not depend on a range's start or on now:
+    with the default 15 minutes, every slot starts on a UTC quarter hour. Every
+    timezone offset and DST shift in use is a whole number of quarter hours, so
+    local midnight is a slot edge and a slot never spans two local days. Only
+    valid for times after the epoch (the division truncates).
+    """
+    return epoch_us(column) // literal(seconds * 1_000_000, BigInteger)
+
+
+def slot_start(slot: int, seconds: int = 900) -> datetime:
+    """The start (naive UTC) of a `utc_slot()`."""
+    return EPOCH + timedelta(seconds=slot * seconds)
+
+
+def status_rank(column) -> ColumnElement:
+    """SQL for a status's `STATUS_PRIORITY`, 0 for any other status; `MAX()` of it is a bucket's worst."""
+    return case(*((column == s, p) for s, p in STATUS_PRIORITY.items()), else_=0)
+
+
+RANK_STATUS = {p: s for s, p in STATUS_PRIORITY.items()}
+
+
+def rank_status(rank: int | None) -> str:
+    """The status for a bucket's `MAX(status_rank())`, the same as `worst()` of its statuses.
+
+    None (no rows) is unknown; 0 (only statuses outside `STATUS_PRIORITY`) is degraded.
+    """
+    if rank is None:
+        return UNKNOWN
+    return RANK_STATUS.get(rank, DEGRADED)
+
+
+def probe_status(success: bool, model_count: int | None, models_up: int | None, down_above: float = DEFAULT_DOWN_ABOVE) -> str:
+    """A probe's Lumen status: down when it failed or more than `down_above` percent of the
+    models it listed were down, degraded when at least one was, ok otherwise.
+
+    `models_up` counts the models Lumen did not report `down`; a model with only some
+    servers down is degraded and counts as up. Per-model statuses never go through here.
+    """
     if not success:
         return DOWN
-    if model_count is not None and models_up is not None and models_up < model_count:
-        return DEGRADED
-    return OK
+    if model_count is None or models_up is None or models_up >= model_count:
+        return OK
+    if (model_count - models_up) * 100 > down_above * model_count:
+        return DOWN
+    return DEGRADED
+
+
+def lumen_daily_status(polls: int, polls_up: int, polls_ok: int) -> str:
+    """1y Lumen status from a day's probes counted by `probe_status`: unknown without probes,
+    down when none was up, ok when ≥ 99% were ok, degraded otherwise."""
+    if not polls:
+        return UNKNOWN
+    if not polls_up:
+        return DOWN
+    if polls_ok / polls >= DAILY_OK:
+        return OK
+    return DEGRADED
+
+
+def probe_rank(success, model_count, models_up, down_above: float = DEFAULT_DOWN_ABOVE) -> ColumnElement:
+    """SQL for the `STATUS_PRIORITY` of `probe_status()`; `MAX()` of it is a bucket's worst probe."""
+    return case(
+        (~success, STATUS_PRIORITY[DOWN]),
+        (model_count.is_(None) | models_up.is_(None) | (models_up >= model_count), STATUS_PRIORITY[OK]),
+        ((model_count - models_up) * 100 > literal(down_above) * model_count, STATUS_PRIORITY[DOWN]),
+        else_=STATUS_PRIORITY[DEGRADED],
+    )
 
 
 def daily_status(polls: int | None, polls_ok: int | None) -> str:
@@ -166,7 +283,7 @@ def model_uptime(statuses: list[str]) -> float | None:
 
 
 def lumen_uptime(statuses: list[str]) -> float | None:
-    """Percent of buckets with data that had no failed probe: degraded counts as up."""
+    """Percent of buckets with data whose status is not down (see `probe_status`): degraded counts as up."""
     known = [s for s in statuses if s != UNKNOWN]
     if not known:
         return None

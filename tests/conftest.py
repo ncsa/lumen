@@ -1,9 +1,10 @@
 import os
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
-from lumen.services import metrics_snapshot, model_cache
+from lumen.services import metrics_snapshot, model_cache, stats_cutover, stats_fold
 
 TEST_CONFIG = str(Path(__file__).parent / "fixtures" / "test_config.yaml")
 # Flask-SQLAlchemy resolves relative sqlite paths against the instance dir.
@@ -63,7 +64,7 @@ def app(tmp_path_factory):
 
 
 def no_snapshot_refresher(monkeypatch):
-    """Make ``create_app`` skip the background metrics-snapshot refresher.
+    """Make ``create_app`` skip the background metrics-snapshot refresher and stats fold.
 
     Every ``create_app`` starts a ``metrics-snapshot`` daemon thread that wakes
     on its own schedule and checks out a pooled connection. A throwaway app's
@@ -71,8 +72,12 @@ def no_snapshot_refresher(monkeypatch):
     happens to be running, as phantom sessions and checkouts. Call this before
     ``create_app`` with ``monkeypatch``, or, from a module-scoped fixture, with
     the object from ``pytest.MonkeyPatch.context()``.
+
+    The stats fold thread is skipped for the same reason, and because a pass
+    landing mid-test would fold rows the test means to fold itself.
     """
-    monkeypatch.setattr(metrics_snapshot, "start_snapshot_refresher", lambda app: None)
+    monkeypatch.setattr(metrics_snapshot, "start_snapshot_refresher", lambda app, **kwargs: None)
+    monkeypatch.setattr(stats_fold, "start_fold_thread", lambda app: None)
 
 
 @pytest.fixture
@@ -97,10 +102,29 @@ def stopped_refresher():
 
 
 @pytest.fixture(autouse=True)
+def reset_timescale_health():
+    """Forget any published TimescaleDB health check after each test.
+
+    The startup log publishes its check as the refresher's baseline, and the
+    gauges on /metrics appear as soon as one is published, so a test that runs
+    the startup check with a mocked PostgreSQL must not leak it into the next.
+    """
+    yield
+    metrics_snapshot._timescale = None
+
+
+@pytest.fixture(autouse=True)
 def clear_model_cache():
     """Start every test with no model snapshot, so none survives from a test
     whose models and endpoints the next test's ``clean_db`` has deleted."""
     model_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def clear_cutover_cache():
+    """Start every test with no cached ``cutover_at``, so billing reads this
+    test's ``stats_fold_state`` rather than one an earlier test left behind."""
+    stats_cutover.clear_cutover_cache()
 
 
 @pytest.fixture(autouse=True)
@@ -111,6 +135,31 @@ def clean_db(app):
         for table in reversed(db.metadata.sorted_tables):
             db.session.execute(table.delete())
         db.session.commit()
+
+
+@pytest.fixture
+def post_cutover(app):
+    """Put the test after the stats cutover, so the fold owns every request it makes.
+
+    The suite's ``create_all()`` database has no ``stats_fold_state`` row, which
+    reads as "not cut over"; this inserts it with the cutover an hour back.
+    ``clean_db`` deletes it again after the test.
+    """
+    from lumen.extensions import db
+    from lumen.models.stats_fold_state import StatsFoldState
+    from lumen.timeutils import utcnow
+    with app.app_context():
+        at = utcnow() - timedelta(hours=1)
+        db.session.add(StatsFoldState(id=1, cutover_at=at, folded_until=at))
+        db.session.commit()
+    stats_cutover.clear_cutover_cache()
+
+
+def fold(app):
+    """Run one fold pass whose window covers everything billed so far."""
+    from lumen.services.stats_fold import fold_lag, fold_once
+    from lumen.timeutils import utcnow
+    return fold_once(app, now=utcnow() + fold_lag(app) + timedelta(seconds=1))
 
 
 @pytest.fixture

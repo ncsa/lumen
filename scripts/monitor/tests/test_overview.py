@@ -130,7 +130,7 @@ def test_lumen_card_empty(env):
 
 def test_lumen_card_1y_uses_daily_availability(env):
     store, sf = env
-    two_days_ago = [probe(60 * 37 + i, up=1) for i in range(99)] + [probe(60 * 37 + 99, success=False)]  # 99% ok
+    two_days_ago = [probe(60 * 37 + i) for i in range(99)] + [probe(60 * 37 + 99, success=False)]  # 99% ok
     yesterday = [probe(60 * 13 + i, rt=10) for i in range(3)] + [probe(60 * 13 + 3, success=False)]  # 23:00 local, 75%
     add(sf, *two_days_ago, *yesterday, probe(60, success=False), probe(59, success=False))
     with sf() as session:
@@ -139,6 +139,48 @@ def test_lumen_card_1y_uses_daily_availability(env):
     assert [b["status"] for b in card["buckets"][-4:]] == ["unknown", "ok", "degraded", "down"]
     assert card["buckets"][-1]["t"] == "2026-10-17T05:00:00Z"
     assert card["uptime"] == pytest.approx(100 * 102 / 106)
+
+
+def test_lumen_card_bucket_with_most_models_down_is_down(env):
+    store, sf = env
+    add(sf, probe(30, count=3, up=1), probe(20, count=3, up=2), probe(10))
+    with sf() as session:
+        card = lumen_card(session, store.current, RANGES["1h"], NOW)
+    statuses = [b["status"] for b in card["buckets"]]
+    assert (statuses[30], statuses[40], statuses[50]) == ("down", "degraded", "ok")
+    assert card["uptime"] == pytest.approx(200 / 3)
+    assert card["state"] == "UP"
+
+
+def test_lumen_card_follows_down_above_but_model_strips_do_not(env, tmp_path):
+    store, sf = env
+    add(sf, probe(30, count=2, up=1), sample("qwen", 30, "degraded"), sample("qwen", 20, "down"), sample("qwen", 10))
+    for down_above in (50, 0):
+        (tmp_path / "config.yaml").write_text(CONFIG.replace('lumen: {url: "https://lumen.test"}', f'lumen: {{url: "https://lumen.test", down_above: {down_above}}}'))
+        assert store.reload()
+        with sf() as session:
+            card = lumen_card(session, store.current, RANGES["1h"], NOW)
+            (row,) = model_rows(session, store.current, RANGES["1h"], NOW, [snap_model()])
+        assert card["buckets"][30]["status"] == ("degraded" if down_above == 50 else "down")
+        assert (row["strip"][30], row["strip"][40], row["strip"][50]) == ("degraded", "down", "ok")
+
+
+def test_lumen_card_1y_day_with_only_degraded_probes(env):
+    store, sf = env
+    add(sf, *[probe(60 * 13 + i, up=1) for i in range(5)])  # yesterday, 1 of 2 models down
+    with sf() as session:
+        card = lumen_card(session, store.current, RANGES["1y"], NOW)
+    assert card["buckets"][-2]["status"] == "degraded"
+    assert card["uptime"] == 100
+
+
+def test_lumen_card_1y_day_with_most_models_down_is_down(env):
+    store, sf = env
+    add(sf, *[probe(60 * 13 + i, count=3, up=1) for i in range(5)], probe(60 * 13 + 5, success=False))
+    with sf() as session:
+        card = lumen_card(session, store.current, RANGES["1y"], NOW)
+    assert card["buckets"][-2]["status"] == "down"
+    assert card["uptime"] == 0
 
 
 # --- Model table -------------------------------------------------------------------
@@ -351,3 +393,26 @@ def test_overview_payload(env):
     assert [m["id"] for m in data["models"]] == ["a", "b"]  # equal values keep the id order
     assert data["cards"]["active_models"] == 2
     assert all(len(m["strip"]) == 240 for m in data["models"])
+    # 12h buckets are 3 minutes, the last one starting 3 minutes before now.
+    assert len(data["strip_times"]) == 240
+    assert data["strip_times"][0] == "2026-10-17T05:00:00Z" and data["strip_times"][-1] == "2026-10-17T16:57:00Z"
+
+
+@pytest.mark.parametrize("range_key", list(RANGES))
+def test_strip_times_match_the_strips(env, range_key):
+    store, sf = env
+    snapshot = LiveSnapshot()
+    snapshot.set(Snapshot(NOW, [snap_model()]))
+    with sf() as session:
+        data = overview(session, store.current, snapshot, RANGES[range_key], NOW)
+    assert len(data["strip_times"]) == len(data["models"][0]["strip"])
+
+
+def test_1y_strip_times_are_local_dates(env):
+    store, sf = env
+    snapshot = LiveSnapshot()
+    snapshot.set(Snapshot(NOW, [snap_model()]))
+    with sf() as session:
+        data = overview(session, store.current, snapshot, RANGES["1y"], NOW)
+    assert len(data["strip_times"]) == 365
+    assert data["strip_times"][-2:] == ["2026-10-16", "2026-10-17"]

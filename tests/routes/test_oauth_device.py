@@ -411,3 +411,21 @@ def test_device_requested_ttl_over_lowered_cap_needs_new_choice(client, auth_cli
     assert b'<option value="86400" selected>1 day</option>' in page.data
     assert b"Invalid expiry" in approve.data
     assert _request_row(app, body["user_code"]).status == "pending"
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    ("ABCD-EFGH", "ABCD-EFGH"),
+    ("abcdefgh", "ABCD-EFGH"),
+    ("  ab cd-ef_gh!\n", "ABCD-EFGH"),
+])
+def test_normalize_user_code_accepts_exactly_eight_alphanumerics(raw, expected):
+    from lumen.blueprints.oauth.routes import _normalize_user_code
+
+    assert _normalize_user_code(raw) == expected
+
+
+@pytest.mark.parametrize("raw", ["ABCD-EFG", "A", "", None, "---- ----", "ABCD-EFGHJ"])
+def test_normalize_user_code_rejects_wrong_length(raw):
+    from lumen.blueprints.oauth.routes import _normalize_user_code
+
+    assert _normalize_user_code(raw) == ""

@@ -12,8 +12,8 @@ from ..extensions import db
 class APIKey(db.Model):
     """API keys that entities use to authenticate against the proxy.
 
-    The raw key is shown once at creation and never stored; only the SHA-256
-    hash is persisted. Cumulative usage counters (requests, tokens, cost) are
+    The raw key is shown once at creation and never stored; only its keyed
+    hash (HMAC-SHA256 under ENCRYPTION_KEY, see hash_api_key) is persisted. Cumulative usage counters (requests, tokens, cost) are
     incremented on each proxied request.
     """
 
@@ -27,7 +27,7 @@ class APIKey(db.Model):
     id: Mapped[int] = mapped_column(db.Integer, primary_key=True, comment="Primary key")
     entity_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), comment="Owning entity")
     name: Mapped[str] = mapped_column(db.String(128), default="", comment="Human-readable label for the key")
-    key_hash: Mapped[str] = mapped_column(db.String(64), unique=True, comment="SHA-256 hash of the raw key")
+    key_hash: Mapped[str] = mapped_column(db.String(64), unique=True, comment="HMAC-SHA256 of the raw key, keyed on ENCRYPTION_KEY")
     # Last few characters of the raw key shown in the UI for identification
     key_hint: Mapped[Optional[str]] = mapped_column(db.String(32), comment="Last few characters of the raw key shown in the UI for identification")
     revoked_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, comment="UTC time the key was revoked; null while the key is usable; approximate for keys revoked before this column existed")

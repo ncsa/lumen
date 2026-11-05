@@ -21,8 +21,8 @@ import requests
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from monitor import lumen_api
-from monitor.config import ConfigStore
+from monitor import buckets, lumen_api
+from monitor.config import DEFAULT_DOWN_ABOVE, ConfigStore
 from monitor.daily import local_day, upsert_daily
 from monitor.db import utcnow
 from monitor.models import Probe, Sample
@@ -85,12 +85,14 @@ def _last_minute(windows: dict | None) -> int | None:
     return _int(windows.get("last_minute")) if windows else None
 
 
-def lumen_state(session: Session) -> str:
+def lumen_state(session: Session, down_above: float = DEFAULT_DOWN_ABOVE) -> str:
     """UP, DEGRADED, DOWN or UNKNOWN from the last `STATE_WINDOW` probes.
 
-    DOWN when every one of them failed, DEGRADED when the latest succeeded with
-    fewer models up than listed, UNKNOWN only when there is no probe yet, UP
-    otherwise (a single failure among successes is not an outage).
+    DOWN when every one of them failed. When the latest succeeded, its
+    `probe_status` decides: DOWN when more than `down_above` percent of the
+    models were down, DEGRADED when at least one was, UP otherwise. When the
+    latest failed but an earlier one succeeded, UP (a single failure among
+    successes is not an outage). UNKNOWN only when there is no probe yet.
     """
     stmt = select(Probe).order_by(Probe.polled_at.desc(), Probe.id.desc()).limit(STATE_WINDOW)
     probes = session.execute(stmt).scalars().all()
@@ -99,8 +101,12 @@ def lumen_state(session: Session) -> str:
     if not any(p.success for p in probes):
         return DOWN
     latest = probes[0]
-    if latest.success and latest.models_up is not None and latest.model_count is not None and latest.models_up < latest.model_count:
-        return DEGRADED
+    if latest.success:
+        status = buckets.probe_status(True, latest.model_count, latest.models_up, down_above)
+        if status == buckets.DOWN:
+            return DOWN
+        if status == buckets.DEGRADED:
+            return DEGRADED
     return UP
 
 

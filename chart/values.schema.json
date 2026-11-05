@@ -140,6 +140,14 @@
             "maxRetries": { "type": "integer", "minimum": 0 }
           }
         },
+        "stats": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "foldInterval": { "type": "number", "exclusiveMinimum": 0 },
+            "foldLag": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
         "api": {
           "type": "object",
           "additionalProperties": false,
@@ -260,6 +268,20 @@
             "namespace": { "type": "string" }
           }
         }
+      }
+    },
+    "migration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "backoffLimit": { "type": "integer", "minimum": 0 },
+        "ttlSecondsAfterFinished": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "null" }
+          ]
+        },
+        "resources": { "type": "object" }
       }
     },
     "resources": { "type": "object" },

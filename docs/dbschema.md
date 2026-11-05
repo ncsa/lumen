@@ -183,6 +183,11 @@ erDiagram
         bigint audio_seconds
         numeric cost
         datetime last_used_at
+        int folded_requests
+        bigint folded_input_tokens
+        bigint folded_output_tokens
+        bigint folded_audio_seconds
+        numeric folded_cost
     }
 
     entity_stats {
@@ -194,6 +199,17 @@ erDiagram
         numeric cost
         int conversations
         datetime last_used_at
+        int folded_requests
+        bigint folded_input_tokens
+        bigint folded_output_tokens
+        bigint folded_audio_seconds
+        numeric folded_cost
+    }
+
+    stats_fold_state {
+        int id PK
+        datetime cutover_at
+        datetime folded_until
     }
 
     conversations {
@@ -226,6 +242,7 @@ erDiagram
         int entity_id FK
         int model_config_id FK
         int model_endpoint_id FK
+        int api_key_id FK
         string source
         int input_tokens
         int output_tokens
@@ -240,6 +257,7 @@ erDiagram
         float ttft_visible
         float send_blocked
         string outcome
+        bool stats_deferred
     }
 
     entities ||--o{ api_keys : "owns"
@@ -247,6 +265,7 @@ erDiagram
     entities |o--o{ api_keys : "revoked"
     entities |o--o{ auth_requests : "approves"
     api_keys |o--o{ auth_requests : "minted at claim"
+    api_keys |o--o{ request_logs : "used by"
     entities ||--o| entity_limits : "has"
     entities ||--o| entity_balances : "has"
     entities ||--o{ model_configs : "owns"
@@ -293,22 +312,27 @@ erDiagram
 - [entity\_managers](#entity_managers)
 - [model\_stats](#model_stats)
 - [entity\_stats](#entity_stats)
+- [stats\_fold\_state](#stats_fold_state)
 - [conversations](#conversations)
 - [messages](#messages)
 - [request\_logs](#request_logs)
+- [request\_counts\_hourly](#request_counts_hourly) *(continuous aggregate)*
 - [request\_counts\_hourly\_by\_entity](#request_counts_hourly_by_entity) *(continuous aggregate)*
+- [request\_counts\_daily](#request_counts_daily) *(continuous aggregate)*
+- [request\_counts\_hourly\_total](#request_counts_hourly_total) *(continuous aggregate)*
+- [request\_counts\_daily\_by\_entity](#request_counts_daily_by_entity) *(continuous aggregate)*
 - [request\_metrics\_1m](#request_metrics_1m) *(continuous aggregate)*
 
 ---
 
 ## entities
 
-Unified table for both human users (authenticated via OAuth) and programmatic projects (authenticated via API keys). The `entity_type` column distinguishes them.
+Unified table for both human users (authenticated via OAuth) and programmatic projects (authenticated via API keys). The `entity_type` column distinguishes them; a third type, `'ghost'`, is the single shared entity that erased users are merged into (see [Erasing a user](#erasing-a-user-gdpr)).
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `id` | Integer | NO | Primary key |
-| `entity_type` | String(8) | NO | `'user'` for human users, `'project'` for API projects |
+| `entity_type` | String(8) | NO | `'user'` for human users, `'project'` for API projects, `'ghost'` for the single shared erased-user entity |
 | `email` | String(256) | YES | Email address; populated for users, null for projects. Unique across users. |
 | `name` | String(256) | NO | Display name |
 | `initials` | String(4) | NO | Short initials used in UI avatars |
@@ -319,13 +343,16 @@ Unified table for both human users (authenticated via OAuth) and programmatic pr
 | `created_at` | DateTime | NO | UTC timestamp when the entity was created |
 
 **Constraints:**
+- `ck_entities_type` — `CHECK (entity_type IN ('user', 'project', 'ghost'))`. PostgreSQL only.
+- `uq_entities_single_ghost` — partial unique index `ON entities (entity_type) WHERE entity_type = 'ghost'`: at most one ghost row. Both dialects.
 - `ck_entities_project_owner` — `CHECK ((entity_type = 'project' AND owner_entity_id IS NOT NULL) OR (entity_type <> 'project' AND owner_entity_id IS NULL))`: every project has exactly one owner and users have none.
 - `fk_entities_owner_membership` — `FOREIGN KEY (owner_entity_id, id) REFERENCES entity_managers (user_entity_id, project_entity_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED`. The owner's manager row cannot be deleted while they own the project (transfer ownership first). Deferred so a project and its owner's manager row can be inserted in the same transaction. Not enforced on SQLite, which runs without foreign keys.
 
 **Notes:**
-- All foreign keys that reference `entities.id` cascade on delete, except `model_configs.owner_entity_id`, `api_keys.created_by_entity_id`, `api_keys.revoked_by_entity_id`, and the `request_logs` FKs, which use `SET NULL`.
+- All foreign keys that reference `entities.id` cascade on delete, except `model_configs.owner_entity_id`, `api_keys.created_by_entity_id` and `api_keys.revoked_by_entity_id`, which use `SET NULL`, and `request_logs.entity_id`, which uses `RESTRICT`: an entity with request history cannot be deleted (see `request_logs`).
 - Acknowledgement (`needs_ack`) is a property of the model, not of the entity.
 - Deleting a user who owns a project fails on `fk_entities_owner_membership`; transfer ownership first.
+- The ghost (`entity_type = 'ghost'`, name `Erased user`) has no email, is inactive, and has no memberships, balance or limits. `flask erase-entity` creates it on first use; the migration does not seed it. Login and every user listing filter on `entity_type = 'user'`, so it never signs in and never appears next to real users.
 
 ---
 
@@ -338,7 +365,7 @@ API keys that entities (users or projects) use to authenticate against the proxy
 | `id` | Integer | NO | Primary key |
 | `entity_id` | Integer (FK → entities) | NO | The entity that owns this key. Cascades on delete. |
 | `name` | String(128) | NO | Human-readable label for the key (e.g., "Production bot") |
-| `key_hash` | String(64) | NO | HMAC-SHA256 hash of the raw key. Unique. |
+| `key_hash` | String(64) | NO | HMAC-SHA256 of the raw key, keyed on `ENCRYPTION_KEY`; finding a key from its raw value takes the server secret. Unique. Erasure replaces it with 64 random hex characters. |
 | `key_hint` | String(32) | YES | Last few characters of the raw key shown in the UI for identification |
 | `revoked_at` | DateTime | YES | UTC time the key was revoked; null while the key is usable. Approximate (`last_used_at`, else `created_at`, else the migration time) for keys revoked before this column existed. |
 | `expires_at` | DateTime | YES | UTC time the key expires; null if it never expires. Set when the key is created, from the chosen TTL (capped by and defaulting to `api.keys.ttl`; for OAuth keys, the approved `auth_requests.ttl` counted from mint, including when an OAuth overwrite refreshes the key in place), and when its expiry is edited. A background job (and the API on use) revokes an overdue key by setting `revoked_at` to this value, with `revoked_by_entity_id` left null. Indexed. |
@@ -580,7 +607,7 @@ Maps users to the project entities they are members of. `role` is `'manager'` or
 
 ## model_stats
 
-Running aggregated usage counters per entity per model per source. Updated after every proxied request. Used for the usage dashboard.
+Running aggregated usage counters per entity per model per source, folded from `request_logs` by the stats fold (see [stats\_fold\_state](#stats_fold_state)); before the stats cutover, billing bumps them on every proxied request instead. Used for the usage dashboard.
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
@@ -594,14 +621,19 @@ Running aggregated usage counters per entity per model per source. Updated after
 | `audio_seconds` | BigInteger | NO | Total seconds of audio transcribed/translated |
 | `cost` | Numeric(12,6) | NO | Total cost in USD |
 | `last_used_at` | DateTime | NO | UTC timestamp of the most recent request counted in this row |
+| `folded_requests` | Integer | NO | Part of `requests` added by the stats fold since the cutover; `flask check-stats` compares it with `request_logs` |
+| `folded_input_tokens` | BigInteger | NO | Part of `input_tokens` added by the stats fold since the cutover |
+| `folded_output_tokens` | BigInteger | NO | Part of `output_tokens` added by the stats fold since the cutover |
+| `folded_audio_seconds` | BigInteger | NO | Part of `audio_seconds` added by the stats fold since the cutover |
+| `folded_cost` | Numeric(12,6) | NO | Part of `cost` added by the stats fold since the cutover |
 
-**Constraints:** `UNIQUE(entity_id, model_config_id, source)`
+**Constraints:** `UNIQUE(entity_id, model_config_id, source)`; index `ix_model_stats_model_config_id` on (`model_config_id`)
 
 ---
 
 ## entity_stats
 
-Pre-aggregated usage totals per entity across all models and sources. One row per entity, maintained atomically alongside `model_stats` on every proxied request. Enables O(1) per-entity lookups in the admin users table and projects listing without scanning `model_stats`.
+Pre-aggregated usage totals per entity across all models and sources. One row per entity, folded from `request_logs` alongside `model_stats` (bumped by billing on every proxied request before the stats cutover). Enables O(1) per-entity lookups in the admin users table and projects listing without scanning `model_stats`.
 
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
@@ -613,10 +645,34 @@ Pre-aggregated usage totals per entity across all models and sources. One row pe
 | `cost` | Numeric(12,6) | NO | Total cost in USD across all models and sources |
 | `conversations` | Integer | NO | Total webchat conversations started. Retained even when conversations are deleted or storage is disabled. |
 | `last_used_at` | DateTime | YES | UTC timestamp of the most recent request by this entity; null if never used |
+| `folded_requests` | Integer | NO | Part of `requests` added by the stats fold since the cutover; `flask check-stats` compares it with `request_logs` |
+| `folded_input_tokens` | BigInteger | NO | Part of `input_tokens` added by the stats fold since the cutover |
+| `folded_output_tokens` | BigInteger | NO | Part of `output_tokens` added by the stats fold since the cutover |
+| `folded_audio_seconds` | BigInteger | NO | Part of `audio_seconds` added by the stats fold since the cutover |
+| `folded_cost` | Numeric(12,6) | NO | Part of `cost` added by the stats fold since the cutover |
 
 **Notes:**
 - Populated on migration by a `GROUP BY` backfill from `model_stats`.
-- Always current — no refresh lag. Unlike `request_counts_hourly`, this is written synchronously with every request.
+- After the stats cutover the totals lag real time by up to `stats.fold_lag + stats.fold_interval` (about 6 minutes by default); the user's own `/profile` adds their not-yet-folded `request_logs` on top and is exact. `conversations` stays synchronous: it is bumped once per new conversation, not per request.
+- The `folded_*` columns (here and in `model_stats`) hold the fold's own part of each total, which `flask check-stats` compares with `request_logs` since the cutover; the totals themselves also carry history from before `request_logs` existed.
+
+---
+
+## stats_fold_state
+
+Single-row state of the stats fold, which adds `request_logs` rows into `model_stats` and `entity_stats` in windows instead of billing bumping them on every request. Before the cutover, billing bumps the counters and the fold does nothing; from `cutover_at` on, the fold owns every request.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `id` | Integer | NO | Primary key; always `1` |
+| `cutover_at` | DateTime | YES | UTC instant from which `request_logs` rows are folded instead of bumped by billing; null until cutover |
+| `folded_until` | DateTime | YES | UTC end (exclusive) of the last folded window; starts equal to `cutover_at`, null until cutover |
+
+**Notes:**
+- The migrations set the row on both dialects. On SQLite `e4f5a6b7c8d9` sets both columns to the migration time. On PostgreSQL `f5b6c7d8e9f0` sets both to the migration time minus one hour, unless a cutover is set already; no operator step is needed. Billing marks each row it leaves to the fold (`request_logs.stats_deferred`), and the fold counts only marked rows, so old pods still bumping during a rolling update are never counted twice.
+- A missing row (a database built with `create_all()`) means the same as a null `cutover_at`: not cut over.
+- Each fold pass covers the half-open window `[folded_until, now − lag)` and advances `folded_until` with a compare-and-set, so concurrent passes never fold a row twice.
+- `flask check-stats [--fix]` reports (and repairs) requests the fold missed, such as a billing transaction that committed more than `stats.fold_lag` after its timestamp. `check-stats` locks this row for its whole run, and `flask reassign-model` around its `model_stats` merge, so no fold pass runs in the middle of either.
 
 ---
 
@@ -666,9 +722,10 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 |--------|------|----------|-------------|
 | `id` | BigInteger | NO | Surrogate primary key (Integer on SQLite); avoids timestamp collision under concurrent load |
 | `time` | DateTime (with timezone) | NO | UTC timestamp of the request; TimescaleDB partition key. Indexed but non-unique. |
-| `entity_id` | Integer (FK → entities) | YES | The entity that made the request; set to NULL if the entity is later deleted |
-| `model_config_id` | Integer (FK → model_configs) | YES | The model used; set to NULL if the model is later deleted |
-| `model_endpoint_id` | Integer (FK → model_endpoints) | YES | The specific backend endpoint that served the request. Endpoints are retired (marked inactive), never deleted, so the reference stays resolvable; only a direct SQL deletion nulls it |
+| `entity_id` | Integer (FK → entities) | YES | The entity that made the request. `RESTRICT` on delete; NULL only on rows nulled while the FK was `SET NULL` |
+| `model_config_id` | Integer (FK → model_configs) | YES | The model used. `RESTRICT` on delete; models are retired, never deleted |
+| `model_endpoint_id` | Integer (FK → model_endpoints) | YES | The specific backend endpoint that served the request. `RESTRICT` on delete; endpoints are retired (marked inactive), never deleted, so the reference stays resolvable |
+| `api_key_id` | Integer (FK → api_keys) | YES | The API key that made the request. NULL for chat requests and for API requests logged before this column existed (see Notes). `RESTRICT` on delete; keys are revoked, never deleted |
 | `source` | String(8) | NO | Origin of the request: `'chat'` or `'api'` |
 | `input_tokens` | Integer | NO | Input token count for this request |
 | `output_tokens` | Integer | NO | Output token count for this request |
@@ -683,10 +740,17 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 | `ttft_visible` | Float | YES | Seconds to the first visible content delta |
 | `send_blocked` | Float | YES | Seconds blocked handing response chunks to the server |
 | `outcome` | String(16) | YES | How the request ended: `'ok'` or `'disconnect'` |
+| `stats_deferred` | Boolean | YES | TRUE when billing left this request out of `model_stats` / `entity_stats` for the stats fold to add; NULL when billing counted it directly (before the stats cutover, on an older pod during a rolling update, or with a stale cached cutover). The fold, `flask check-stats` and the `/profile` live tail read only TRUE rows, so every request is counted exactly once |
+
+**Constraints:** index `request_logs_time_idx` on (`time` DESC); index `ix_request_logs_entity_id` on (`entity_id`); index `ix_request_logs_model_config_id_time` on (`model_config_id`, `time` DESC)
 
 **Notes:**
-- Foreign keys use `SET NULL` on delete (not cascade) to preserve historical log data when entities or models are removed. Endpoints are not removed at all: the config sync retires them by clearing `model_endpoints.active`, so `model_endpoint_id` keeps pointing at the endpoint that served each request, and the `SET NULL` action on that column only fires if a row is deleted directly in SQL.
-- `time` is indexed but not unique; concurrent workers may insert rows with the same timestamp without collision.
+- **Rows referenced by `request_logs` are never hard-deleted.** The four foreign keys use `RESTRICT` on delete, so a direct `DELETE` of an entity, model, endpoint or API key that has request history fails. Retire or deactivate instead: models and endpoints are retired (the config sync clears `model_endpoints.active`, so `model_endpoint_id` keeps pointing at the endpoint that served each request), entities are deactivated, and API keys are revoked (`revoked_at`); `flask erase-entity` keeps an erased user's keys under the ghost. The only sanctioned hard delete of an entity is `flask erase-entity` (see [Erasing a user](#erasing-a-user-gdpr)), which moves the entity's `request_logs` rows to the ghost before deleting it.
+- The FKs used to be `SET NULL`. On the compressed hypertable that action rewrote history: deleting a parent ran an `UPDATE` over every chunk, which decompresses compressed batches and aborts past `timescaledb.max_tuples_decompressed_per_dml_transaction`. Rows nulled that way before the switch keep their NULLs, which is why the columns stay nullable.
+- A direct `DELETE` is cheap to refuse for a model (`model_config_id` is indexed on uncompressed chunks and the compression `segmentby` on compressed ones). For an entity or an endpoint it is slow: compressed chunks have no index on `entity_id`, and `model_endpoint_id` has none anywhere, so the check scans every chunk, decompressing in memory, before it fails. It never writes to `request_logs`.
+- **`api_key_id` together with `source`:** `'api'` with a value is the key that made the request; `'chat'` with NULL is a web UI request, which uses no key; `'api'` with NULL means the key is unknown, because the row was logged before the column existed (or by an older pod during the rolling update that added it).
+- **`fk_request_logs_api_key_id` is `NOT VALID` on PostgreSQL, on purpose, and is never validated.** The migration (`c5d7e9f1a3b6`) adds the column and then the foreign key with `NOT VALID`, so new rows are checked against `api_keys` but existing rows are not. Validating would scan the whole never-pruned hypertable, decompressing every compressed chunk while holding a lock that blocks billing, and would prove nothing, because every row older than the column is NULL. `pg_constraint.convalidated` therefore stays `false`. `api_key_id` has no index, so a direct `DELETE` of an API key is refused only after a scan of every chunk, like an endpoint.
+- `time` is indexed by `request_logs_time_idx`, the index TimescaleDB creates with the hypertable (declared on the model, and created by the migration on SQLite), but not unique; concurrent workers may insert rows with the same timestamp without collision.
 - **Timing columns measure the user's wait, which `duration` does not.** `duration` starts *after* preflight (model lookup, access checks, coin budget, endpoint selection, pool checkout) and ends before the billing commit, while `time` is stamped *after* that commit. So neither can be walked backwards to the moment the request arrived. Together the new columns partition the request: `started_at` + `queue_wait` + `preflight` + `ttft_visible` is when the user first sees anything.
 - **`started_at` is stored, not derived.** The obvious reconstruction, `time − duration − queue_wait`, silently assumes preflight and the billing commit take zero time. Both grow under load, so the error is largest during exactly the burst the column exists to explain.
 - **`started_at` is the second `TIMESTAMPTZ` in the schema** (with `time`), deliberately unlike the naive-UTC convention everywhere else. It exists to be subtracted from `time` on the same row, and mixing naive with aware in that arithmetic misbehaves on PostgreSQL. Write it with `datetime.now(timezone.utc)`, never `timeutils.utcnow()`.
@@ -703,7 +767,24 @@ PostgreSQL only. TimescaleDB continuous aggregates over `request_logs`, refreshe
 background policies. They are what keeps the usage charts fast; `request_logs` itself is never
 pruned, so every aggregate can always be recomputed from it.
 
-All three views below are **real-time**: they set `timescaledb.materialized_only = false`, so
+The usage aggregates form a hierarchy; `request_metrics_1m` reads `request_logs` directly:
+
+```
+request_logs
+  -> request_counts_hourly_by_entity   1 hour, per entity
+    -> request_counts_daily_by_entity  1 day, per entity
+    -> request_counts_hourly           1 hour, org-wide
+      -> request_counts_hourly_total   1 hour, org-wide totals (heatmap)
+      -> request_counts_daily          1 day, org-wide
+```
+
+**Refresh them bottom-up, child before parent.** Where the child has materialised, a parent
+refresh copies the child's materialised rows, not raw `request_logs`, so a parent refreshed before
+its child copies the child's stale rows. `flask reassign-model` and `flask erase-entity` follow
+`AGGREGATE_REFRESH_ORDER` in `lumen/commands.py`, and `flask upgrade` and `seed_analytics.py`
+follow `USAGE_AGGREGATES` there; a manual `flask backfill-aggregate` must do the same.
+
+All six views below are **real-time**: they set `timescaledb.materialized_only = false`, so
 a query unions the materialised rows with a live scan of the raw rows newer than the
 materialisation watermark. Without that — and `true` is the default on TimescaleDB 2.13+ — the
 current bucket is missing, and a user who ran forty requests this hour sees zero.
@@ -720,18 +801,82 @@ reports whether it has run far enough back.
 
 ### request_counts_hourly
 
-`time_bucket('1 hour', time)` grouped by `bucket, model_config_id, source`, carrying `requests`,
-`input_tokens`, `output_tokens`, `cost`. Org-wide only — it has no `entity_id`, which is why the
-per-entity charts needed the aggregate below. `materialized_only = false`, `start_offset` 3 hours,
-`end_offset` 1 hour, refreshed hourly.
+Org-wide hourly usage, a hierarchical aggregate over
+[`request_counts_hourly_by_entity`](#request_counts_hourly_by_entity) (migration `c6e8a0b2d4f6`,
+#177). Before that it read raw `request_logs` with its own refresh scan.
 
-It was created before TimescaleDB 2.13 flipped the `materialized_only` default to `true`, and was
-left unset — so from that version on it silently became materialised-only and the org-wide `/usage`
-charts, which read this view and have no raw-`request_logs` fallback, lost the last one to two hours
-of every day. Migration `j4k5l6m7n8o9` sets it explicitly. `end_offset` stays at one bucket width:
-real-time aggregation already covers everything past the watermark, and an `end_offset` shorter than
-the bucket would materialise a partial open bucket and hide the rest of that hour until the next
-scheduled run.
+**Grouped by:** `bucket` (`time_bucket('1 hour', bucket)` of the child), `model_config_id`, `source`
+
+| Column | Expression | Description |
+|--------|------------|-------------|
+| `bucket` | `time_bucket('1 hour', bucket)` | Start of the hour, TIMESTAMPTZ |
+| `model_config_id` | `model_config_id` | The model used; NULL once the model is deleted |
+| `source` | `source` | `'chat'` or `'api'` |
+| `requests` | `CAST(SUM(requests) AS BIGINT)` | Requests in the bucket |
+| `input_tokens` | `CAST(SUM(input_tokens) AS BIGINT)` | Input tokens |
+| `output_tokens` | `CAST(SUM(output_tokens) AS BIGINT)` | Output tokens |
+| `cost` | `SUM(cost)` | Cost in USD |
+
+**Refresh policy:** `start_offset` 30 days (the child's), `end_offset` 3 hours, `schedule_interval`
+1 hour. The child lags up to about two hours, so the 3-hour `end_offset` keeps this view's
+watermark on hours the child has already materialised. Refresh is driven by the invalidation log,
+so the long `start_offset` only recomputes hours the child rewrote. Created `WITH NO DATA`;
+`flask upgrade` backfills it from the child's materialised rows.
+
+**Notes:**
+- **Its totals equal the per-entity sums.** It sums the child's rows, including the NULL
+  `entity_id` group of deleted users, so for any window of whole hours it equals the sum over
+  `request_counts_hourly_by_entity`, which equals raw `request_logs`. Org-wide totals do not shrink
+  when a user is deleted.
+- Real-time over a real-time child: a request made this hour shows through this view before any
+  refresh.
+- The `CAST`s keep the counts `bigint`; `SUM` of a bigint is `numeric`.
+- The all-users `/usage` charts read it for the Week and Month ranges. The heatmap reads
+  [`request_counts_hourly_total`](#request_counts_hourly_total) instead.
+
+### request_counts_daily
+
+Org-wide daily usage for the Year and All ranges, a hierarchical aggregate over
+[`request_counts_hourly`](#request_counts_hourly) (migration `c6e8a0b2d4f6`, #177). Same columns
+and expressions as `request_counts_hourly`, with `bucket` = `time_bucket('1 day', bucket)`: UTC
+days, whatever the session time zone. The heatmap needs the hour of day, so it reads the hourly
+[`request_counts_hourly_total`](#request_counts_hourly_total). The Year window starts at a UTC midnight (`_usage_period_start`) so `bucket >= :start`
+selects whole days, for the per-entity charts too.
+
+**Refresh policy:** `start_offset` 30 days, `end_offset` 1 day, `schedule_interval` 1 hour. Created
+`WITH NO DATA`; `flask upgrade` backfills it from `request_counts_hourly`'s materialised rows.
+
+### request_counts_hourly_total
+
+Org-wide hourly totals for the all-users `/usage` heatmap, a hierarchical aggregate over
+[`request_counts_hourly`](#request_counts_hourly) (migration `d7f9b1c3e5a7`, #429). The heatmap
+needs one number per hour; the hourly view has a row per hour, model and source (about 350k a
+year), this one at most 8,760. Being hourly, it serves the heatmap's hour-aligned window for every
+range exactly.
+
+**Grouped by:** `bucket` (`time_bucket('1 hour', bucket)` of the child) only
+
+| Column | Expression | Description |
+|--------|------------|-------------|
+| `bucket` | `time_bucket('1 hour', bucket)` | Start of the hour, TIMESTAMPTZ |
+| `requests` | `CAST(SUM(requests) AS BIGINT)` | Requests in the hour |
+| `input_tokens` | `CAST(SUM(input_tokens) AS BIGINT)` | Input tokens |
+| `output_tokens` | `CAST(SUM(output_tokens) AS BIGINT)` | Output tokens |
+| `cost` | `SUM(cost)` | Cost in USD |
+
+**Refresh policy:** `start_offset` 30 days, `end_offset` 4 hours (one bucket behind the hourly
+view's 3 hours, so it only copies hours its child has materialised), `schedule_interval` 1 hour.
+Created `WITH NO DATA`; `flask upgrade` backfills it from `request_counts_hourly`'s materialised
+rows.
+
+**Notes:**
+- It keeps all four totals, so `flask check-aggregate` compares its monthly totals with the other
+  usage aggregates'. That comparison stops at the lowest watermark of all of them.
+- **Outside `flask reassign-model` and `flask erase-entity`.** They refresh only the aggregates
+  that have the column they move; this one has neither `model_config_id` nor `entity_id`. That is
+  correct: moving rows to another model or entity changes no hour's totals.
+
+No retention policy on any org-wide view.
 
 ### request_counts_hourly_by_entity
 
@@ -773,6 +918,44 @@ Created `WITH NO DATA`; full history is materialised by the operator backfill co
   uniformly fast.
 - Cardinality is bounded by *active* user-hours: a student uses one or two models in an hour, so a
   300-student class produces a few hundred rows per hour, not users × models × hours.
+- The per-entity charts read it for the Week and Month ranges, and the heatmap reads it for every
+  range. The other charts read [`request_counts_daily_by_entity`](#request_counts_daily_by_entity)
+  for Year and All.
+
+### request_counts_daily_by_entity
+
+Per-entity daily usage for the per-entity `/usage` summary, requests, tokens and models charts over
+the Year and All ranges, a hierarchical aggregate over
+[`request_counts_hourly_by_entity`](#request_counts_hourly_by_entity) (migration `e8a0c2d4f6b8`,
+#429). A user's All Time chart reads a row per day, model and source instead of one per hour. The
+Year window starts at a UTC midnight (`_usage_period_start`), so `bucket >= :start` selects whole
+days. The heatmap needs the hour of day, so it stays on the hourly entity view.
+
+**Grouped by:** `bucket` (`time_bucket('1 day', bucket)` of the child), `entity_id`,
+`model_config_id`, `source`
+
+| Column | Expression | Description |
+|--------|------------|-------------|
+| `bucket` | `time_bucket('1 day', bucket)` | Start of the UTC day, TIMESTAMPTZ |
+| `entity_id` | `entity_id` | The entity that made the requests; the NULL group of deleted entities is kept, so totals equal the child's |
+| `model_config_id` | `model_config_id` | The model used |
+| `source` | `source` | `'chat'` or `'api'` |
+| `requests` | `CAST(SUM(requests) AS BIGINT)` | Requests in the day |
+| `input_tokens` | `CAST(SUM(input_tokens) AS BIGINT)` | Input tokens |
+| `output_tokens` | `CAST(SUM(output_tokens) AS BIGINT)` | Output tokens |
+| `cost` | `SUM(cost)` | Cost in USD |
+
+**Refresh policy:** `start_offset` 30 days, `end_offset` 1 day, `schedule_interval` 1 hour. Created
+`WITH NO DATA`; `flask upgrade` backfills it from `request_counts_hourly_by_entity`'s materialised
+rows.
+
+**Notes:**
+- Only the four totals: the timing and TTFT measures of the child are not read per day.
+- It keeps all four totals, so `flask check-aggregate` compares its monthly totals with the other
+  usage aggregates'.
+- It has both `model_config_id` and `entity_id`, so `flask reassign-model` and `flask erase-entity`
+  refresh it after its child.
+- No retention policy.
 
 ### request_metrics_1m
 
@@ -820,6 +1003,69 @@ across the whole window.
 policy, calls `drop_chunks`, or deletes from it (#167); `tests/unit/test_request_logs_never_pruned.py`
 enforces this. The one retention policy Lumen adds is on `request_metrics_1m`, the only target that
 test allows. `flask check-aggregate` exits 1 if a retention policy was added to `request_logs` by hand.
+
+---
+
+## Erasing a user (GDPR)
+
+`flask erase-entity <id> [--yes]` hard-deletes a user for GDPR erasure. It cannot be undone, and
+on PostgreSQL it is off-hours operator work. Only users can be erased; it refuses a project, the
+ghost, a user who still owns a project (transfer ownership first), and, like `reassign-model`, runs
+only while `request_logs` has no retention policy.
+
+**What is deleted:** the user's `conversations` and their `messages`, `auth_requests`,
+`entity_balances`, `entity_limits`, `entity_model_consents`, `group_members` (owner rows included)
+and `entity_managers` rows, then the `entities` row. The command deletes these explicitly, children
+first, instead of relying on `ON DELETE CASCADE`: SQLite runs without foreign keys, so the same
+statements then erase the same rows on both dialects, and the per-table counts it prints are the
+record of the erasure. The cascades and `SET NULL`s stay as the backstop on PostgreSQL. A unit test
+walks every foreign key into `entities`, `conversations` and `api_keys` so a new table cannot be
+missed silently.
+
+**What moves to the ghost:**
+- `request_logs`: on PostgreSQL one chunk per transaction, oldest first, like `reassign-model`.
+  `entity_id` is not a `segmentby` column, so each chunk's UPDATE can decompress the whole chunk;
+  every chunk touched is recompressed. Rows logged during the walk are swept up in the final
+  transaction. `request_counts_hourly_by_entity` is then refreshed month by month from the user's
+  first row.
+- `model_stats` and `entity_stats`: added into the ghost's rows (latest `last_used_at` kept); a row
+  the ghost has no counterpart for is re-pointed.
+- `model_configs` the user owned: disabled and re-owned by the ghost, so `ON DELETE SET NULL` cannot
+  turn a private model public. A model still listed in `config.yaml` is re-enabled by the next sync
+  but stays unusable (only its inactive owner may use it); the command warns about it.
+- `api_keys`: revoked (`revoked_at` kept if already set, `revoked_by_entity_id` null), renamed
+  `ghost key`, and stripped of `key_hint`, `client_id`, `requested_by` and `created_by_entity_id`.
+  `key_hash` is replaced too: the old value is an HMAC of the user's raw key, so anyone holding
+  `ENCRYPTION_KEY` could hash the old key and find the row. A random value matches no raw key under
+  any secret. The usage counters, `created_at`, `last_used_at` and `expires_at` are kept as the key's
+  share of the pooled history. Other entities' keys only lose `created_by_entity_id` /
+  `revoked_by_entity_id` where those point at the user; another user's `auth_requests.api_key_id`
+  keeps pointing at the (now ghost) key.
+
+**Groups can lose their owner.** A group the user owned survives with no owner (`get_group_owner`
+returns None) until an admin sets one; the command lists those groups.
+
+**Not covered:** a pending `auth_requests` row has no `entity_id` until it is approved, so nothing
+links it to the user; the janitor deletes it after it expires. Personal data outside the database
+(application logs, backups, an `admins:` email in `config.yaml`) is out of scope.
+
+**How the ghost counts in usage.** The ghost accumulates the usage of every erased user. System-wide
+totals keep including it, so they never drop on an erasure: the all-users `/usage` view
+(`request_counts_hourly`), per-model numbers, Prometheus `lumen_model_*_total` (a drop would read as
+a counter reset) and the admin Users page header totals, which count `entity_type IN ('user',
+'ghost')`. Everything that lists or ranks individual users filters on `entity_type = 'user'`, so the
+ghost is never listed: the admin Users table, `users_total` / `users_active`, member and owner
+pickers.
+
+**Resuming.** Every step is safe to re-run. Interrupted before the final transaction commits, the
+user still exists, inactive, and every row belongs to the user or the ghost. The final transaction
+(sweep, stats merge, models, keys, deletes, entity delete) is one commit: if the entity delete fails,
+for example on a `request_logs` row logged after the sweep, everything in it rolls back and the
+command says to re-run. Interrupted during the aggregate refresh, the user is gone; re-running with
+the same id refreshes from the buckets still materialised under it, or reports nothing to do.
+
+**`RESTRICT` is the safety net:** `request_logs.entity_id` is `ON DELETE RESTRICT`, so a row the walk
+and sweep both missed fails the final delete instead of being left pointing at nobody.
 
 ---
 

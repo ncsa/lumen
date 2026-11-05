@@ -34,10 +34,11 @@ packages = ["monitor"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q -m 'not bench'"
 timeout = 120
 markers = [
     "postgres: needs a real PostgreSQL (set MONITOR_TEST_POSTGRES_URL; skipped otherwise)",
+    "bench: slow endpoint timings over 31d of data; run with pytest tests/bench_ranges.py -m bench (naming the file is required)",
 ]
 
 [tool.ruff]

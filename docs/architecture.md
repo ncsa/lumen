@@ -84,7 +84,7 @@ Lumen sits between clients (browser users and API consumers) and one or more pri
 | ASGI server | Uvicorn 0.30+ | Multi-worker capable; `--workers N` for scale |
 | ORM | SQLAlchemy 2.0+ / Flask-SQLAlchemy 3.1+ | 2.x select()-style API throughout |
 | Migrations | Alembic via Flask-Migrate 4.0+ | 30+ migrations versioned in `migrations/versions/` |
-| Database | PostgreSQL 17 + TimescaleDB 2.26 | TimescaleDB used for `request_logs` hypertable |
+| Database | PostgreSQL 17 + TimescaleDB 2.27.2 | TimescaleDB used for `request_logs` hypertable |
 | Auth | Authlib 1.3+ · CILogon OAuth2/OIDC | Institutional IdP federation via CILogon |
 | LLM client | OpenAI SDK 1.0+ | Used both for proxying and health checks |
 | Rate limiting | Flask-Limiter 3.5+ | In-memory (single worker) or Redis (multi-worker) |
@@ -92,7 +92,7 @@ Lumen sits between clients (browser users and API consumers) and one or more pri
 | Metrics | prometheus-client 0.20+ | Multiprocess mode supported |
 | PDF handling | pypdf 4.0+ | File upload support in chat |
 | Templating | Jinja2 with custom `_ThemeLoader` | Theme overlays without forking templates |
-| Packaging / runtime | uv / pyproject.toml | Python ≥ 3.11 required |
+| Packaging / runtime | uv / pyproject.toml | Python 3.14 required |
 | Testing | pytest · pytest-flask · Playwright · Locust | Unit, integration, E2E, and load tests |
 
 ---
@@ -104,7 +104,7 @@ lumen/                   # Main Python package
 ├── __init__.py          # App factory: create_app()
 ├── extensions.py        # Flask extension singletons (db, migrate, oauth, limiter, csrf)
 ├── decorators.py        # @login_required, @api_key_required, @admin_required
-├── commands.py          # Flask CLI commands (init_db, reassign_model, sync_*)
+├── commands.py          # Flask CLI commands (init_db, reassign_model, erase_entity, sync_*)
 ├── blueprints/          # One subdirectory per blueprint
 │   ├── auth/
 │   ├── chat/
@@ -259,16 +259,17 @@ Entity ──< EntityStat
 Entity ──< GroupMember >── Group ──< GroupLimit
 Entity ──< Conversation ──< Message
 Entity ──< EntityManager (user → project)
-Entity ──< RequestLog (SET NULL on delete)
+Entity ──< RequestLog (RESTRICT on delete)
 Entity ──< ModelConfig (owner_entity_id, SET NULL on delete)
 ModelConfig ──< ModelEndpoint
 ModelConfig ──< ModelStat
-ModelConfig ──< RequestLog (SET NULL on delete)
+ModelConfig ──< RequestLog (RESTRICT on delete)
 ```
 
 ### Notable schema decisions
 
-- **`RequestLog` FKs use `SET NULL` on delete** — preserves historical data when entities or models are removed. All other FKs cascade.
+- **`RequestLog` FKs use `RESTRICT` on delete** — a direct `DELETE` of an entity, model or endpoint that has request history fails, so the compressed hypertable is never rewritten. Models and endpoints are retired and entities deactivated instead; the only sanctioned hard delete of an entity is `flask erase-entity`, which first moves its request logs to the ghost entity. All other FKs cascade.
+- **Users are erased, not deleted ad hoc** — `flask erase-entity` hard-deletes a user for GDPR erasure: it deletes their personal data explicitly and moves their request history, stats, models and revoked, anonymised API keys to the single shared ghost entity (`entity_type = 'ghost'`), so usage totals stay complete without pointing at the person. See *Erasing a user* in `docs/dbschema.md`.
 - **Endpoints are retired, not deleted** — removing an endpoint from `config.yaml` (or its model) clears `model_endpoints.active`; the row stays so `request_logs.model_endpoint_id` keeps pointing at the endpoint that served each request, and inactive rows are excluded from discovery, routing, and health checks. Re-adding the URL reactivates the same row after a fresh probe.
 - **Coin values use `Numeric(12,6)`** — avoids floating-point precision errors for financial accumulation.
 - **`entity_stats` uses `entity_id` as PK (no surrogate key)** — there is exactly one row per entity; the FK doubles as the PK, which also prevents accidental duplicates.
@@ -290,7 +291,7 @@ Core proxy logic. Key functions:
 | `check_coin_budget(entity)` | Validate balance > 0 before forwarding; respects unlimited (-2) and blocked (0) sentinels |
 | `subtract_coins(entity, cost)` | Decrement `EntityBalance.coins_left`; uses `SELECT ... FOR UPDATE` |
 | `send_message_stream()` | Wraps OpenAI SDK streaming as SSE; accumulates token counts for post-request accounting |
-| `update_stats()` | Increment `ModelStat`, `EntityStat`, `APIKey` counters; insert `RequestLog` row |
+| `update_stats()` | Insert the `RequestLog` row and increment `APIKey` counters; increment `ModelStat` / `EntityStat` only before the stats cutover (afterwards the stats fold adds them) |
 
 ### Background Workers
 
@@ -301,6 +302,7 @@ All three workers are daemon threads started inside `create_app`. A `SERVER_IS_M
 | Health checker | `services/health.py` | 60 s | Polls each active `ModelEndpoint` via OpenAI `models.list()`; sets `healthy` flag (retired endpoints are skipped) |
 | Token refiller | `services/token_refill.py` | 60 s poll, hourly effective | Increments `EntityBalance` by `refresh_coins`, capped at `max_coins` |
 | Config watcher | `services/config_watcher.py` | 5 s | Hot-reloads models from `config.yaml` (skips files whose version is not exactly 3 with a logged error; retries a failed model sync with backoff — 5 s, 10 s, 20 s, … up to 5 min — and keeps the previous config until it applies); warns on restart-required changes |
+| Stats fold | `services/stats_fold.py` | `stats.fold_interval` (60 s) | After the stats cutover, adds the `request_logs` rows of `[folded_until, now − stats.fold_lag)` into `model_stats` / `entity_stats` and advances `folded_until` by compare-and-set; a no-op before the cutover |
 
 ---
 
@@ -403,10 +405,13 @@ Protected by an optional Bearer token. Aggregates across workers via `prometheus
 - Active entity counts, group membership counts (`LumenDBCollector`)
 - Per-model health status (ok / degraded / down / disabled)
 - Token pool utilisation per entity group
+- TimescaleDB health (`lumen_timescaledb_*`): extension update available, `request_logs` hypertable,
+  continuous aggregates, background jobs (present, last run failed, failure count, age of last success),
+  a retention policy on `request_logs`, and the age of the check; see "Prometheus metrics" in the README
 
 ### Request Logging
 
-Every proxied request is written to `request_logs` (TimescaleDB hypertable partitioned by `time`). Foreign keys use `SET NULL ON DELETE` to preserve historical data after users or models are removed; endpoints are never deleted (they are retired by clearing `model_endpoints.active`), so `model_endpoint_id` stays resolvable.
+Every proxied request is written to `request_logs` (TimescaleDB hypertable partitioned by `time`). Foreign keys use `ON DELETE RESTRICT`: users are deactivated, models and endpoints retired (endpoints by clearing `model_endpoints.active`) and API keys revoked, never deleted while they have request history, so every reference stays resolvable. A direct `DELETE` fails.
 
 ### Analytics Dashboard (`/usage`)
 
@@ -425,14 +430,13 @@ data there while regular users are scoped to their own. Built on `request_logs` 
 ### Docker Compose (development / single-node)
 
 ```
-postgres  timescale/timescaledb:2.26.4-pg17   port 5678
+postgres  timescale/timescaledb:2.27.2-pg17   port 5678
 lumen     uvicorn asgi:app --reload            port 5001
 ```
 
-The lumen container runs `entrypoint.sh`:
-1. Source `.env`
-2. `flask db upgrade` (Alembic migrations — safe to run on every start)
-3. `uvicorn asgi:app --host 0.0.0.0 --port 5001`
+Starting Lumen is two steps, both through `entrypoint.sh`:
+1. **Upgrade** (`entrypoint.sh upgrade`, the `lumen-upgrade` Compose service or the Helm migration Job): `flask upgrade` runs every Alembic migration, then backfills missing months of the aggregate, and exits. Safe to re-run; a failed run resumes.
+2. **Serve** (default mode): `flask wait-for-migrations` waits until the database is at the migration head this image expects, then `uvicorn asgi:app --host 0.0.0.0 --port 5001`. The serve step never migrates.
 
 ### Production Scaling
 
@@ -504,7 +508,7 @@ Footer content is driven by optional `theme.yaml` keys that each theme's `templa
 | Synchronous Flask workers | Each LLM streaming response holds a worker thread for the full duration (seconds to minutes). Under sustained concurrent load, thread exhaustion is the primary scaling limit. More uvicorn processes (`--workers N`) or more threads per process (`LUMEN_WSGI_WORKERS`) help but do not eliminate this. Consider migrating the streaming path to an async framework (Quart, FastAPI) for the `/v1` routes. |
 | Background workers per process | With N uvicorn workers only one runs background threads; if that process dies, health checks and coin refills pause until the process restarts. There is no leader-election or external scheduler. |
 | `EntityBalance` write contention | Every request writes to `entity_balances` for the coin deduction. Under high concurrency from a single entity, this row becomes a hot spot. `SELECT ... FOR UPDATE` serialises these writes; a high-QPS client will queue behind itself. |
-| `model_stats` upsert | After every request, `model_stats` is upserted for (entity, model, source). Under concurrent requests this becomes a serialised bottleneck per entity/model pair. Batching or an async write queue would help at scale. |
+| Usage totals | After the stats cutover billing no longer writes `model_stats` / `entity_stats`; the stats fold adds `request_logs` into them in the background, so the totals lag real time by about `stats.fold_lag + stats.fold_interval` (the user's own `/profile` adds the unfolded tail and is exact). The cutover is set by the upgrade's migration. Billing records its decision per row (`request_logs.stats_deferred` TRUE when it skips the bumps), and the fold counts only marked rows, so old pods that still bump during a rolling update are never counted twice. Rolling the app back without a database downgrade leaves at most `stats.fold_lag + stats.fold_interval` of marked, unfolded rows out of the totals until the new version returns and folds them; a database downgrade drops the column and loses those rows from the totals (`request_logs` itself is kept). A billing transaction that commits more than `stats.fold_lag` after its timestamp is missed until `flask check-stats --fix` runs. |
 | In-memory rate limiter | The default in-memory rate limit state is per-process and not shared across uvicorn workers. Without Redis, the effective limit is `N × configured_limit`. Operators should always configure `rate_limiting.storage_url` in production. |
 
 ### What Scales Well
@@ -563,7 +567,7 @@ Footer content is driven by optional `theme.yaml` keys that each theme's `templa
 
 10. **Store conversation model as a FK, not a string snapshot.** Change `conversations.model` to `model_config_id` (nullable FK with `SET NULL ON DELETE`) so model detail links remain valid and renames propagate automatically.
 
-11. **Batch `model_stats` and `entity_stats` writes.** Accumulate stat increments in-memory per worker and flush to the DB every N seconds (e.g., 10 s) to reduce write contention under high QPS. Accept a small window of potential loss (acceptable for analytics) in exchange for throughput.
+11. **Remove the pre-cutover stats bump.** Once every install has upgraded past the automatic cutover, drop the per-request `model_stats` / `entity_stats` bump from `update_stats`, leaving only the stats fold.
 
 ---
 

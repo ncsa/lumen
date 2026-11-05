@@ -1,10 +1,14 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import select
 
+from lumen.extensions import db
+from lumen.models.model_config import ModelConfig
 from lumen.services.llm import (
     _consent_satisfied,
+    _resolve_single_access,
     ack_notice_text,
     bulk_model_access_info,
     consent_state,
@@ -422,6 +426,32 @@ def _set_end_date(app, model_id, end_date):
     db.session.commit()
 
 
+#: Fixed naive-UTC instant the end_date boundary tests freeze the clock at.
+NOW = datetime(2030, 1, 1, 12, 0, 0)
+
+
+@pytest.fixture
+def frozen_llm_now(monkeypatch):
+    monkeypatch.setattr("lumen.services.llm.utcnow", lambda: NOW)
+
+
+@pytest.mark.parametrize("end_date, expected", [
+    (NOW, "blocked"),
+    (NOW + timedelta(microseconds=1), "allowed"),
+])
+def test_resolve_single_access_end_date_boundary(frozen_llm_now, end_date, expected):
+    """The model is blocked from the exact end instant, not one tick later."""
+    assert _resolve_single_access(False, None, model_end_date=end_date) == expected
+
+
+def test_model_blocked_at_exact_end_date(app, ids, frozen_llm_now):
+    entity_id, model_id = ids
+    with app.app_context():
+        _set_end_date(app, model_id, NOW)
+        assert get_model_access_status(entity_id, model_id) == "blocked"
+        assert get_model_access(entity_id, model_id) is False
+
+
 def test_future_end_date_still_allowed(app, ids):
     entity_id, model_id = ids
     with app.app_context():
@@ -450,6 +480,22 @@ def test_active_sql_filter_excludes_expired(app, ids):
         _set_end_date(app, model_id, utcnow() + timedelta(minutes=5))
         active_ids = db.session.execute(select(ModelConfig.id).where(ModelConfig.active)).scalars().all()
         assert model_id in active_ids
+
+
+def test_active_end_date_boundary(app, ids, monkeypatch):
+    """ModelConfig.active is False from the exact end instant, in SQL and Python."""
+    monkeypatch.setattr("lumen.models.model_config.utcnow", lambda: NOW)
+    entity_id, model_id = ids
+    with app.app_context():
+        _set_end_date(app, model_id, NOW)
+        active_ids = db.session.execute(select(ModelConfig.id).where(ModelConfig.active)).scalars().all()
+        assert model_id not in active_ids
+        assert db.session.get(ModelConfig, model_id).active is False
+        # 1 s rather than 1 µs: not every database keeps sub-second precision.
+        _set_end_date(app, model_id, NOW + timedelta(seconds=1))
+        active_ids = db.session.execute(select(ModelConfig.id).where(ModelConfig.active)).scalars().all()
+        assert model_id in active_ids
+        assert db.session.get(ModelConfig, model_id).active is True
 
 
 def test_bulk_unknown_model_id_raises(app, ids):
