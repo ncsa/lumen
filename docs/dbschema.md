@@ -320,6 +320,7 @@ erDiagram
 - [request\_counts\_hourly\_by\_entity](#request_counts_hourly_by_entity) *(continuous aggregate)*
 - [request\_counts\_daily](#request_counts_daily) *(continuous aggregate)*
 - [request\_counts\_hourly\_total](#request_counts_hourly_total) *(continuous aggregate)*
+- [request\_counts\_daily\_by\_entity](#request_counts_daily_by_entity) *(continuous aggregate)*
 - [request\_metrics\_1m](#request_metrics_1m) *(continuous aggregate)*
 
 ---
@@ -771,6 +772,7 @@ The usage aggregates form a hierarchy; `request_metrics_1m` reads `request_logs`
 ```
 request_logs
   -> request_counts_hourly_by_entity   1 hour, per entity
+    -> request_counts_daily_by_entity  1 day, per entity
     -> request_counts_hourly           1 hour, org-wide
       -> request_counts_hourly_total   1 hour, org-wide totals (heatmap)
       -> request_counts_daily          1 day, org-wide
@@ -778,11 +780,11 @@ request_logs
 
 **Refresh them bottom-up, child before parent.** Where the child has materialised, a parent
 refresh copies the child's materialised rows, not raw `request_logs`, so a parent refreshed before
-its child copies the child's stale rows. `flask reassign-model` follows
+its child copies the child's stale rows. `flask reassign-model` and `flask erase-entity` follow
 `AGGREGATE_REFRESH_ORDER` in `lumen/commands.py`, and `flask upgrade` and `seed_analytics.py`
 follow `USAGE_AGGREGATES` there; a manual `flask backfill-aggregate` must do the same.
 
-All five views below are **real-time**: they set `timescaledb.materialized_only = false`, so
+All six views below are **real-time**: they set `timescaledb.materialized_only = false`, so
 a query unions the materialised rows with a live scan of the raw rows newer than the
 materialisation watermark. Without that — and `true` is the default on TimescaleDB 2.13+ — the
 current bucket is missing, and a user who ran forty requests this hour sees zero.
@@ -916,6 +918,44 @@ Created `WITH NO DATA`; full history is materialised by the operator backfill co
   uniformly fast.
 - Cardinality is bounded by *active* user-hours: a student uses one or two models in an hour, so a
   300-student class produces a few hundred rows per hour, not users × models × hours.
+- The per-entity charts read it for the Week and Month ranges, and the heatmap reads it for every
+  range. The other charts read [`request_counts_daily_by_entity`](#request_counts_daily_by_entity)
+  for Year and All.
+
+### request_counts_daily_by_entity
+
+Per-entity daily usage for the per-entity `/usage` summary, requests, tokens and models charts over
+the Year and All ranges, a hierarchical aggregate over
+[`request_counts_hourly_by_entity`](#request_counts_hourly_by_entity) (migration `e8a0c2d4f6b8`,
+#429). A user's All Time chart reads a row per day, model and source instead of one per hour. The
+Year window starts at a UTC midnight (`_usage_period_start`), so `bucket >= :start` selects whole
+days. The heatmap needs the hour of day, so it stays on the hourly entity view.
+
+**Grouped by:** `bucket` (`time_bucket('1 day', bucket)` of the child), `entity_id`,
+`model_config_id`, `source`
+
+| Column | Expression | Description |
+|--------|------------|-------------|
+| `bucket` | `time_bucket('1 day', bucket)` | Start of the UTC day, TIMESTAMPTZ |
+| `entity_id` | `entity_id` | The entity that made the requests; the NULL group of deleted entities is kept, so totals equal the child's |
+| `model_config_id` | `model_config_id` | The model used |
+| `source` | `source` | `'chat'` or `'api'` |
+| `requests` | `CAST(SUM(requests) AS BIGINT)` | Requests in the day |
+| `input_tokens` | `CAST(SUM(input_tokens) AS BIGINT)` | Input tokens |
+| `output_tokens` | `CAST(SUM(output_tokens) AS BIGINT)` | Output tokens |
+| `cost` | `SUM(cost)` | Cost in USD |
+
+**Refresh policy:** `start_offset` 30 days, `end_offset` 1 day, `schedule_interval` 1 hour. Created
+`WITH NO DATA`; `flask upgrade` backfills it from `request_counts_hourly_by_entity`'s materialised
+rows.
+
+**Notes:**
+- Only the four totals: the timing and TTFT measures of the child are not read per day.
+- It keeps all four totals, so `flask check-aggregate` compares its monthly totals with the other
+  usage aggregates'.
+- It has both `model_config_id` and `entity_id`, so `flask reassign-model` and `flask erase-entity`
+  refresh it after its child.
+- No retention policy.
 
 ### request_metrics_1m
 

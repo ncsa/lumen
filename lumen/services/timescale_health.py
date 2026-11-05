@@ -21,8 +21,8 @@ from sqlalchemy import text
 
 HYPERTABLE = "request_logs"
 AGGREGATES = (
-    "request_counts_hourly", "request_counts_hourly_by_entity", "request_counts_hourly_total",
-    "request_counts_daily", "request_metrics_1m",
+    "request_counts_hourly", "request_counts_hourly_by_entity", "request_counts_daily_by_entity",
+    "request_counts_hourly_total", "request_counts_daily", "request_metrics_1m",
 )
 
 #: Every background job the migration chain creates, by a stable name.

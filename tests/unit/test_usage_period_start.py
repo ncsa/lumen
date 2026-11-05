@@ -1,6 +1,7 @@
 """``_usage_period_start``: the window start every /usage chart shares.
 
-``year`` reads ``request_counts_daily`` org-wide, so its start must be a UTC
+``year`` reads ``request_counts_daily`` org-wide and
+``request_counts_daily_by_entity`` per entity, so its start must be a UTC
 midnight; the shorter windows only need the hour. ``all`` has no start.
 """
 
@@ -45,3 +46,14 @@ def test_all_has_no_start(frozen):
 ])
 def test_org_wide_view_per_period(period, view):
     assert routes._org_usage_view(period) == view
+
+
+@pytest.mark.parametrize("period, view", [
+    ("week", "request_counts_hourly_by_entity"),
+    ("month", "request_counts_hourly_by_entity"),
+    ("year", "request_counts_daily_by_entity"),
+    ("all", "request_counts_daily_by_entity"),
+    ("bogus", "request_counts_hourly_by_entity"),
+])
+def test_per_entity_view_per_period(period, view):
+    assert routes._entity_usage_view(period) == view

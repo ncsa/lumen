@@ -8,8 +8,9 @@ and enforces no foreign key here. This module checks the PostgreSQL-only half:
   ``segmentby`` column, so every chunk UPDATE decompresses; as in
   ``test_reassign_model_postgres.py`` the guard is lowered to 10 at database level, so
   a move that is not split per chunk with the limit lifted aborts here on 60 rows;
-- ``request_counts_hourly_by_entity`` ends with the history under the ghost, and the
-  all-users ``/usage`` summary (``request_counts_hourly``) does not change;
+- ``request_counts_hourly_by_entity`` and ``request_counts_daily_by_entity`` end with
+  the history under the ghost, and the all-users ``/usage`` summary
+  (``request_counts_hourly``) does not change;
 - the cascades and SET NULLs stay as a backstop, so the same "no dependent row
   remains" and key checks as the unit tests must hold here too;
 - a run interrupted in the chunk walk or in the refresh resumes, and a row the walk
@@ -48,6 +49,8 @@ OLD_ROWS = 60  # well above the lowered guard (10)
 RECENT_ROWS = 3
 SEEDED = OLD_ROWS + RECENT_ROWS
 ENTITY_AGGREGATE = "request_counts_hourly_by_entity"
+# The per-entity daily view over it: it has entity_id, so the walk refreshes it after it.
+DAILY_ENTITY = "request_counts_daily_by_entity"
 # Grouped by bucket only, so the walk never returns it: see the test that pins that.
 TOTAL = "request_counts_hourly_total"
 EXPIRES = datetime(2030, 1, 1)
@@ -237,9 +240,11 @@ def _seed_history(engine, world):
         ))
         conn.execute(text("CALL refresh_continuous_aggregate('request_counts_hourly', now() - INTERVAL '60 days', now())"))
         conn.execute(text(f"CALL refresh_continuous_aggregate('{ENTITY_AGGREGATE}', now() - INTERVAL '60 days', now())"))
+        conn.execute(text(f"CALL refresh_continuous_aggregate('{DAILY_ENTITY}', now() - INTERVAL '60 days', now())"))
         conn.execute(text(f"CALL refresh_continuous_aggregate('{TOTAL}', now() - INTERVAL '60 days', now())"))
     assert _compressed_chunks(engine), "nothing was compressed; this test would prove nothing about compressed history"
     assert _materialised(engine, world["user"]) == SEEDED
+    assert _materialised(engine, world["user"], DAILY_ENTITY) == SEEDED
     world["logs"] = ids
     return ids
 
@@ -258,13 +263,13 @@ def _compressed_chunks(engine):
         return {c: conn.execute(text(f"SELECT count(*) FROM ONLY {c}")).scalar() for c in chunks}
 
 
-def _materialised(engine, entity_id):
-    """Requests materialised under ``entity_id`` in the per-entity aggregate (no retention)."""
+def _materialised(engine, entity_id, view=ENTITY_AGGREGATE):
+    """Requests materialised under ``entity_id`` in a per-entity aggregate (no retention)."""
     with engine.connect() as conn:
         table = conn.execute(text(
             "SELECT format('%I.%I', materialization_hypertable_schema, materialization_hypertable_name) "
             "FROM timescaledb_information.continuous_aggregates WHERE view_name = :v"
-        ), {"v": ENTITY_AGGREGATE}).scalar()
+        ), {"v": view}).scalar()
         return conn.execute(text(
             f"SELECT COALESCE(SUM(requests), 0) FROM {table} WHERE entity_id = :e"
         ), {"e": entity_id}).scalar()
@@ -346,6 +351,9 @@ def _assert_history_moved(engine, world, ghost_raw_before):
     assert _raw(engine, ghost) == ghost_raw_before + SEEDED
     assert _materialised(engine, world["user"]) == 0, f"{ENTITY_AGGREGATE} still has buckets under the user"
     assert _materialised(engine, ghost) == _raw(engine, ghost), f"{ENTITY_AGGREGATE} totals under the ghost do not match raw"
+    assert _materialised(engine, world["user"], DAILY_ENTITY) == 0, f"{DAILY_ENTITY} still has buckets under the user"
+    assert _materialised(engine, ghost, DAILY_ENTITY) == _raw(engine, ghost), \
+        f"{DAILY_ENTITY} totals under the ghost do not match raw"
     assert set(_compressed_chunks(engine).values()) <= {0}, "a compressed chunk was left with rows in its heap"
 
 
@@ -382,6 +390,31 @@ def test_moves_compressed_history_to_the_ghost_and_keeps_totals(pg_app, engine):
             conn.execute(text("UPDATE request_logs SET entity_id = :o WHERE entity_id = :g"),
                          {"o": world["other"], "g": ghost})
     assert "decompression limit" in str(aborted.value), f"the control UPDATE failed with something else: {aborted.value}"
+
+
+def test_refreshes_the_daily_entity_view_after_its_child(pg_app, engine):
+    """request_counts_daily_by_entity has entity_id, so the walk returns it, and it is
+    built on the per-entity aggregate, so it comes after it: the reverse order would
+    rebuild it from the child's buckets still under the user."""
+    world = _seed_world(pg_app)
+    _seed_history(engine, world)
+    ghost_raw = _ghost_raw(engine)
+    real = commands._refresh_months
+    refreshed = []
+
+    def recording(conn, name, start, now):
+        refreshed.append(name)
+        return real(conn, name, start, now)
+
+    with patch.object(commands, "_refresh_months", side_effect=recording):
+        result = _run(pg_app, world["user"])
+
+    assert result.exit_code == 0, result.output
+    assert f"refreshing '{DAILY_ENTITY}' from" in result.output
+    assert DAILY_ENTITY in refreshed, refreshed
+    assert refreshed.index(ENTITY_AGGREGATE) < refreshed.index(DAILY_ENTITY), refreshed
+    assert refreshed == [n for n in commands.AGGREGATE_REFRESH_ORDER if n in refreshed], refreshed
+    _assert_history_moved(engine, world, ghost_raw)
 
 
 def test_hourly_total_is_outside_the_walk_and_still_matches_hourly(pg_app, engine):
@@ -538,6 +571,7 @@ def test_resumes_after_the_refresh_fails(pg_app, engine):
     assert f"user {world['user']} deleted" in result.output
     assert _raw(engine, world["user"]) == 0
     assert _materialised(engine, world["user"]) == SEEDED
+    assert _materialised(engine, world["user"], DAILY_ENTITY) == SEEDED
 
     result = _run(pg_app, world["user"])
     assert result.exit_code == 0, result.output

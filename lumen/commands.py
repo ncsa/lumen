@@ -49,6 +49,7 @@ ENTITY_AGGREGATE = "request_counts_hourly_by_entity"
 # database are skipped; ones not listed here come last.
 AGGREGATE_REFRESH_ORDER = (
     ENTITY_AGGREGATE,
+    "request_counts_daily_by_entity",
     "request_counts_hourly",
     "request_counts_hourly_total",
     "request_counts_daily",
@@ -56,10 +57,10 @@ AGGREGATE_REFRESH_ORDER = (
 )
 
 # The aggregates behind the /usage charts, which ``flask upgrade`` keeps backfilled. The
-# org-wide ones are built on the entity aggregate (hourly) and on hourly (hourly_total,
-# the heatmap's per-hour totals, and daily).
-USAGE_AGGREGATES = (ENTITY_AGGREGATE, "request_counts_hourly", "request_counts_hourly_total",
-                    "request_counts_daily")
+# per-entity daily one and the org-wide hourly one are built on the entity aggregate; the
+# other org-wide ones on hourly (hourly_total, the heatmap's per-hour totals, and daily).
+USAGE_AGGREGATES = (ENTITY_AGGREGATE, "request_counts_daily_by_entity", "request_counts_hourly",
+                    "request_counts_hourly_total", "request_counts_daily")
 
 # request_logs key columns the chunk walk can move rows along. The column name is
 # interpolated into SQL, so every helper that takes one checks it against this set.
