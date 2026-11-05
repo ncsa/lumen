@@ -278,10 +278,12 @@ def entity_usage(pg_app, pg_migrated):
             )
 
     # Child first: the daily view is built on the hourly one's materialised rows.
-    # Its last bucket, today, is still open, so neither refresh reaches the
-    # current-hour rows below.
+    # The daily refresh stops at today's UTC midnight, as its policy's one-day
+    # end_offset does: an unbounded one materialises today's open bucket too, and
+    # rows written into today afterwards would then be invisible through the view.
     _refresh(pg_migrated)
-    _refresh(pg_migrated, DAILY_VIEW)
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    _refresh(pg_migrated, DAILY_VIEW, window=(None, today))
 
     # --- and only now the current hour, above the watermark.
     with pg_migrated.begin() as conn:

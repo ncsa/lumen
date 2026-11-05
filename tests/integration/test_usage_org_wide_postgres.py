@@ -267,7 +267,8 @@ def phase(request, world, engine):
     """``materialised``: as ``flask upgrade`` left it. ``fresh``: plus rows above every watermark."""
     hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
     open_bucket = {"request_counts_hourly_by_entity": hour, "request_counts_hourly": hour,
-                   "request_counts_hourly_total": hour, "request_counts_daily": hour.replace(hour=0)}
+                   "request_counts_hourly_total": hour, "request_counts_daily": hour.replace(hour=0),
+                   "request_counts_daily_by_entity": hour.replace(hour=0)}
     with engine.connect() as conn:
         marks = {view: _watermark(conn, view) for view in USAGE_AGGREGATES}
         # The upgrade materialised every closed bucket that holds rows; a watermark

@@ -116,7 +116,7 @@ def test_startup_logs_no_problem_on_a_fresh_database(pg_migrated_isolated, monke
     try:
         records = [r for r in caplog.records if "TimescaleDB" in r.getMessage()]
         assert [r.levelno for r in records] == [logging.INFO], [r.getMessage() for r in records]
-        assert "7 expected jobs" in records[0].getMessage()
+        assert "8 expected jobs" in records[0].getMessage()
     finally:
         with app.app_context():
             db.engine.dispose()
