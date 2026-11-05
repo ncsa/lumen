@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from lumen.commands import USAGE_AGGREGATES
+from lumen.commands import AGGREGATE_REFRESH_ORDER, USAGE_AGGREGATES
 
 COMMANDS_PAGE = Path(__file__).resolve().parent.parent.parent / "docs" / "admin" / "commands.md"
 
@@ -74,8 +74,19 @@ def test_upgrade_section_names_every_usage_aggregate(page):
 
 def test_upgrade_section_lists_usage_aggregates_in_refresh_order(page):
     section = _section(page, "`upgrade`")
+    assert section is not None, "docs/admin/commands.md has no `upgrade` section"
     positions = [section.find(f"`{name}`") for name in USAGE_AGGREGATES]
     assert positions == sorted(positions), (
         "The `upgrade` section must list the usage aggregates in the order flask upgrade "
         f"refreshes them (USAGE_AGGREGATES): {', '.join(USAGE_AGGREGATES)}"
+    )
+
+
+def test_backfill_aggregate_section_gives_the_refresh_order(page):
+    section = _section(page, "`backfill-aggregate`")
+    assert section is not None, "docs/admin/commands.md has no `backfill-aggregate` section"
+    chain = " → ".join(f"`{name}`" for name in AGGREGATE_REFRESH_ORDER)
+    assert chain in " ".join(section.split()), (
+        "The `backfill-aggregate` section must give the bottom-up order as "
+        f"AGGREGATE_REFRESH_ORDER: {chain}"
     )

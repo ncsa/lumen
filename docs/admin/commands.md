@@ -53,7 +53,8 @@ An aggregate missing from the database is skipped. Migrations create new aggrega
 and rely on this step to fill them.
 
 For each aggregate, the backfill looks at every calendar month from the oldest `request_logs` row
-through the current one. A month is *missing* when it has raw rows but no materialised bucket, and
+up to the aggregate's refresh horizon: now, less the refresh policy's end offset, rounded down to a
+whole bucket. Buckets after the horizon are not materialised yet, and are served from raw rows. A month is *missing* when it has raw rows but no materialised bucket, and
 *partly covered* when its first materialised bucket is later than the bucket of its first raw row,
 at the aggregate's own bucket width (the refresh policy only ever materialises a trailing window, so
 it can leave the head of a month behind). Each such month is refreshed over the whole month, oldest
@@ -176,7 +177,12 @@ compares the monthly `requests`, `input_tokens`, `output_tokens` and `cost` of t
 materialised rows, and exits 1 listing each month and column that differ: the other views are sums
 of the entity aggregate, so a difference is drift. It also exits 1 if a retention policy exists on
 `request_logs`, and prints the `SELECT remove_retention_policy('request_logs');` that removes it.
-Run it before upgrading.
+If one of the five aggregates does not exist, it exits 1 at once with
+`Error: '<name>' does not exist. Run 'flask db upgrade' first.`
+
+When every check passes it exits 0, and its last line is
+`Usage aggregates agree on every month before YYYY-MM.` (on an install with no requests yet, a note
+that the aggregates have never been refreshed). Run it before upgrading.
 
 ## Upgrading TimescaleDB
 

@@ -412,7 +412,7 @@ query time:
 
 | Metric | Labels | Meaning |
 |---|---|---|
-| `lumen_timescaledb_extension_update_available` | `installed`, `available` | 1 when the database runs an older extension than the image ships (see "Upgrading TimescaleDB") |
+| `lumen_timescaledb_extension_update_available` | `installed`, `available` | 1 when the database runs an older extension than the image ships (see [Upgrading TimescaleDB](docs/admin/commands.md#upgrading-timescaledb)) |
 | `lumen_timescaledb_hypertable_present` | `table` | 1 when `request_logs` is a hypertable |
 | `lumen_timescaledb_aggregate_present` | `view` | 1 when the continuous aggregate exists |
 | `lumen_timescaledb_aggregate_materialized_only` | `view` | 1 when the aggregate has `materialized_only = true` (should be 0) |
