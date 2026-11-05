@@ -4,10 +4,12 @@ import re
 from datetime import datetime, timedelta
 from decimal import Decimal
 from http import HTTPStatus
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
 
+from lumen.blueprints.profile.routes import _endpoint_status
 from lumen.timeutils import utcnow
 
 # ---------------------------------------------------------------------------
@@ -69,6 +71,24 @@ def test_profile_page_with_down_model(app, auth_client, test_model):
 def test_profile_page_with_no_endpoints(app, auth_client, test_model):
     resp = auth_client.get("/profile")
     assert resp.status_code == HTTPStatus.OK
+
+
+@pytest.mark.parametrize(
+    ("healthy", "expected"),
+    [
+        ([], "down"),
+        ([False], "down"),
+        ([False, False], "down"),
+        ([True, False], "degraded"),
+        ([True, True, False], "degraded"),
+        ([True], "ok"),
+        ([True, True], "ok"),
+    ],
+)
+def test_endpoint_status(healthy, expected):
+    """No healthy endpoints → down, some → degraded, all → ok."""
+    eps = [SimpleNamespace(healthy=h) for h in healthy]
+    assert _endpoint_status(eps) == expected
 
 
 # ---------------------------------------------------------------------------
