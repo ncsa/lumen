@@ -1545,7 +1545,7 @@ def wait_for_migrations_cmd(timeout):
     that exits 1 at once, since waiting cannot fix it. Each PostgreSQL check gives an
     unresponsive server up to 10 seconds, so the command can exit that much after
     --timeout. Connections made while the app loads are not covered: see
-    PGCONNECT_TIMEOUT in the README.
+    PGCONNECT_TIMEOUT in docs/admin/commands.md.
     """
     # Flask-Migrate's config and engine, so the script location and the database URL
     # resolve exactly as they do for ``flask db upgrade``.
