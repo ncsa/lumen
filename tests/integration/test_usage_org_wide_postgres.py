@@ -1,8 +1,9 @@
 """The org-wide /usage arms on the hierarchical views, proven equal on real TimescaleDB.
 
-After #177 the org-wide charts read ``request_counts_hourly`` (week, month, and
-the heatmap for every period) and ``request_counts_daily`` (year, all), both
-built over ``request_counts_hourly_by_entity``. The point of that change is an
+After #177 the org-wide charts read ``request_counts_hourly`` (week, month) and
+``request_counts_daily`` (year, all), both built over
+``request_counts_hourly_by_entity``; since #429 the heatmap reads
+``request_counts_hourly_total`` (every period), built over the hourly view. The point of that change is an
 invariant, and this module proves it per period and per endpoint:
 
 1. Org-wide equals raw ``request_logs`` with the same buckets.
@@ -20,7 +21,7 @@ upgrade``, the step that runs before the app starts.
 
 Every assertion runs twice (the ``phase`` fixture): once on the views as
 ``flask upgrade`` leaves them, and once after fresh rows land above every
-watermark, where only the real-time chain through the three views sees them.
+watermark, where only the real-time chain through the views sees them.
 
 The background jobs of this module's private database are paused, so no policy
 moves a watermark under a test.
@@ -52,8 +53,8 @@ DELETED = "deleted"
 # The view each org-wide arm reads, per period.
 EXPECTED_VIEW = {
     (endpoint, period): (
-        "request_counts_hourly"
-        if endpoint == "heatmap" or period in ("week", "month")
+        "request_counts_hourly_total" if endpoint == "heatmap"
+        else "request_counts_hourly" if period in ("week", "month")
         else "request_counts_daily"
     )
     for endpoint in ENDPOINTS for period in PERIODS
@@ -266,7 +267,7 @@ def phase(request, world, engine):
     """``materialised``: as ``flask upgrade`` left it. ``fresh``: plus rows above every watermark."""
     hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
     open_bucket = {"request_counts_hourly_by_entity": hour, "request_counts_hourly": hour,
-                   "request_counts_daily": hour.replace(hour=0)}
+                   "request_counts_hourly_total": hour, "request_counts_daily": hour.replace(hour=0)}
     with engine.connect() as conn:
         marks = {view: _watermark(conn, view) for view in USAGE_AGGREGATES}
         # The upgrade materialised every closed bucket that holds rows; a watermark
@@ -341,6 +342,22 @@ def test_org_wide_equals_raw_and_the_per_entity_sum(pg_app, engine, world, phase
     assert org == total
 
 
+def _grid(cells):
+    """A heatmap as the full 7x24 grid, zeros included: ``grid[dow][hour]``."""
+    return [[cells.get((dow, hour), 0) for hour in range(24)] for dow in range(7)]
+
+
+@pytest.mark.parametrize("period", PERIODS)
+def test_org_wide_heatmap_is_the_raw_seven_by_twenty_four_grid(pg_app, engine, world, phase, period):
+    """The heatmap off ``request_counts_hourly_total`` cell for cell against raw request_logs."""
+    with pg_app.app_context():
+        start = _period_start(period)
+    body = _get(_client(pg_app, world["admin"]), "heatmap", period)
+    grid = _grid(_normalise("heatmap", body))
+    assert grid == _grid(_raw(engine, "heatmap", period, start))
+    assert sum(1 for row in grid for cell in row if cell) > 1, "the seed fills a single cell"
+
+
 # --------------------------------------------------------------------------
 # 3. Which view each arm reads, and what the planner touches for "all".
 # --------------------------------------------------------------------------
@@ -368,8 +385,10 @@ def _captured(pg_app, client, endpoint, period):
 def test_each_org_wide_arm_reads_the_planned_view(pg_app, world, period, endpoint):
     (statement, _), = _captured(pg_app, _client(pg_app, world["admin"]), endpoint, period)
     expected = EXPECTED_VIEW[(endpoint, period)]
+    # The trailing space or newline keeps request_counts_hourly from matching
+    # request_counts_hourly_total.
     views = {v for v in ("request_counts_hourly_by_entity", "request_counts_hourly",
-                         "request_counts_daily") if f"FROM {v} " in statement or f"FROM {v}\n" in statement}
+                         "request_counts_hourly_total", "request_counts_daily") if f"FROM {v} " in statement or f"FROM {v}\n" in statement}
     assert views == {expected}, statement
 
 

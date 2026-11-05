@@ -380,9 +380,9 @@ def _raw_totals(engine, end):
 
 
 def test_upgrade_backfills_the_org_wide_views_bottom_up(pg_app, engine, monkeypatch):
-    """The entity aggregate first, then hourly from it, then daily from hourly.
+    """The entity aggregate first, then hourly from it, then hourly_total and daily from hourly.
 
-    A current-bucket row is visible through both org-wide views before any refresh,
+    A current-bucket row is visible through every org-wide view before any refresh,
     through real-time aggregation chained over the child, and still visible after the
     backfill: the backfill stops at now, so the open buckets stay above the watermarks.
     """
@@ -394,7 +394,7 @@ def test_upgrade_backfills_the_org_wide_views_bottom_up(pg_app, engine, monkeypa
             "INSERT INTO request_logs (time, source, input_tokens, output_tokens, cost, duration) "
             "VALUES (now(), 'api', 7, 9, 0.123456, 0.1) RETURNING time"
         )).scalar()
-    for view in ("request_counts_hourly", "request_counts_daily"):
+    for view in ("request_counts_hourly", "request_counts_hourly_total", "request_counts_daily"):
         assert _view_requests(engine, view, current) == 1, f"{view} hides the current bucket"
 
     names = []
@@ -421,7 +421,7 @@ def test_upgrade_backfills_the_org_wide_views_bottom_up(pg_app, engine, monkeypa
             "INSERT INTO request_logs (time, source, input_tokens, output_tokens, cost, duration) "
             "VALUES (:t, 'api', 1, 1, 0.01, 0.1)"
         ), {"t": current})
-    for view in ("request_counts_hourly", "request_counts_daily"):
+    for view in ("request_counts_hourly", "request_counts_hourly_total", "request_counts_daily"):
         assert _view_requests(engine, view, current) == 2, \
             f"a request made after the backfill is invisible through {view}"
 
@@ -463,8 +463,8 @@ def test_check_names_the_month_an_hourly_bucket_drifted_in(pg_app, engine, monke
     check = _check(pg_app)
     assert check.exit_code == 1, check.output
     assert "Error: the usage aggregates disagree" in check.output, check.output
-    assert f"  {m2:%Y-%m}: requests 2 / 1 / 2" in check.output, check.output
-    assert f"  {m2:%Y-%m}: cost 0.020000 / 0.010000 / 0.020000" in check.output, check.output
+    assert f"  {m2:%Y-%m}: requests 2 / 1 / 2 / 2" in check.output, check.output
+    assert f"  {m2:%Y-%m}: cost 0.020000 / 0.010000 / 0.020000 / 0.020000" in check.output, check.output
     assert f"  {m1:%Y-%m}:" not in check.output, check.output
     assert "missing or partly covered" not in check.output, check.output
 
@@ -480,7 +480,37 @@ def test_check_fails_when_the_daily_view_is_missing_a_month(pg_app, engine, monk
     assert f"  {m2:%Y-%m}: missing" in check.output, check.output
     assert f"flask backfill-aggregate --name request_counts_daily --from {m2:%Y-%m}" \
         in check.output, check.output
-    assert f"  {m2:%Y-%m}: requests 2 / 2 / 0" in check.output, check.output
+    assert f"  {m2:%Y-%m}: requests 2 / 2 / 2 / 0" in check.output, check.output
+    assert f"  {m1:%Y-%m}:" not in check.output, check.output
+
+
+def test_check_names_the_month_an_hourly_total_bucket_drifted_in(pg_app, engine, monkeypatch):
+    """One request_counts_hourly_total bucket gone, not the month's first: the
+    cross-view totals see it in the third column."""
+    m2, m1 = _backfilled(pg_app, engine, monkeypatch)
+    second = m2 + timedelta(days=9, hours=15)
+    _delete_materialised(engine, "request_counts_hourly_total", second, second + timedelta(hours=1))
+
+    check = _check(pg_app)
+    assert check.exit_code == 1, check.output
+    assert "Error: the usage aggregates disagree" in check.output, check.output
+    assert f"  {m2:%Y-%m}: requests 2 / 2 / 1 / 2" in check.output, check.output
+    assert f"  {m1:%Y-%m}:" not in check.output, check.output
+    assert "missing or partly covered" not in check.output, check.output
+
+
+def test_check_fails_when_the_hourly_total_view_is_missing_a_month(pg_app, engine, monkeypatch):
+    m2, m1 = _backfilled(pg_app, engine, monkeypatch)
+    _delete_materialised(engine, "request_counts_hourly_total", m2, m1)
+
+    check = _check(pg_app)
+    assert check.exit_code == 1, check.output
+    assert "Error: these months of 'request_counts_hourly_total' are missing or partly covered:" \
+        in check.output, check.output
+    assert f"  {m2:%Y-%m}: missing" in check.output, check.output
+    assert f"flask backfill-aggregate --name request_counts_hourly_total --from {m2:%Y-%m}" \
+        in check.output, check.output
+    assert f"  {m2:%Y-%m}: requests 2 / 2 / 0 / 2" in check.output, check.output
     assert f"  {m1:%Y-%m}:" not in check.output, check.output
 
 

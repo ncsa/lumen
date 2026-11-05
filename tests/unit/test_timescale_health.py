@@ -56,6 +56,8 @@ def _aggregates(**overrides):
         "request_counts_hourly_by_entity":
             ("request_counts_hourly_by_entity", False, "_materialized_hypertable_5"),
         "request_counts_daily": ("request_counts_daily", False, "_materialized_hypertable_9"),
+        "request_counts_hourly_total":
+            ("request_counts_hourly_total", False, "_materialized_hypertable_11"),
         "request_metrics_1m": ("request_metrics_1m", False, "_materialized_hypertable_7"),
     }
     rows.update(overrides)
@@ -72,6 +74,7 @@ def _jobs(*extra, drop=()):
         (1003, "policy_refresh_continuous_aggregate", "_materialized_hypertable_7", "Success", 0, _FINISHED),
         (1004, "policy_retention", "request_metrics_1m", "Success", 0, _FINISHED),
         (1005, "policy_refresh_continuous_aggregate", "_materialized_hypertable_9", "Success", 0, _FINISHED),
+        (1006, "policy_refresh_continuous_aggregate", "_materialized_hypertable_11", "Success", 0, _FINISHED),
     ]
     return [r for r in rows if r[0] not in drop] + list(extra)
 
@@ -93,6 +96,7 @@ def test_fresh_migration_has_no_problems():
     assert [name for name, _ in health.jobs] == list(timescale_health.EXPECTED_JOBS)
     assert health.job("retention:request_metrics_1m").job_id == 1004
     assert health.job("refresh:request_metrics_1m").target == "request_metrics_1m"
+    assert health.job("refresh:request_counts_hourly_total").job_id == 1006
     assert health.request_logs_retention is False
 
 
@@ -252,7 +256,7 @@ def test_healthy_database_logs_one_info_summary(app, monkeypatch, caplog):
     records = _logged(caplog)
     assert [r.levelno for r in records] == [logging.INFO]
     assert "TimescaleDB 2.27.2" in records[0].getMessage()
-    assert "6 expected jobs" in records[0].getMessage()
+    assert "7 expected jobs" in records[0].getMessage()
 
 
 def test_missing_extension_logs_an_error(app, monkeypatch, caplog):

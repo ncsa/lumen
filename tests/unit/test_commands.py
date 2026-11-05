@@ -551,8 +551,39 @@ def test_refresh_order_puts_every_child_before_its_parent():
     order = commands.AGGREGATE_REFRESH_ORDER
     assert order.index(commands.ENTITY_AGGREGATE) < order.index("request_counts_hourly") \
         < order.index("request_counts_daily")
+    assert order.index("request_counts_hourly") < order.index("request_counts_hourly_total")
     assert commands._in_refresh_order(list(reversed(order))) == list(order)
     assert commands._in_refresh_order([]) == []
+
+
+def _cross_view(monkeypatch, watermarks):
+    """Run ``_cross_view_differences`` on stubbed watermarks; return (cutoff, cutoffs read)."""
+    read = []
+
+    def monthly_totals(conn, name, before):
+        read.append((name, before))
+        return {}
+
+    monkeypatch.setattr(commands, "_watermark", lambda conn, name: watermarks[name])
+    monkeypatch.setattr(commands, "_monthly_totals", monthly_totals)
+    cutoff, differences = commands._cross_view_differences(object())
+    assert differences == []
+    return cutoff, read
+
+
+def test_cross_view_differences_cuts_off_at_the_lowest_watermark(monkeypatch):
+    """Not the last view's: hourly_total lagging daily must not get a month it lacks compared."""
+    watermarks = {name: _utc(2026, 11, 3, 12) for name in commands.USAGE_AGGREGATES}
+    watermarks["request_counts_hourly_total"] = _utc(2026, 9, 20, 4)
+    cutoff, read = _cross_view(monkeypatch, watermarks)
+    assert cutoff == _utc(2026, 9, 1)
+    assert read == [(name, _utc(2026, 9, 1)) for name in commands.USAGE_AGGREGATES]
+
+
+def test_cross_view_differences_compares_nothing_while_any_view_is_unrefreshed(monkeypatch):
+    watermarks = {name: _utc(2026, 11, 3, 12) for name in commands.USAGE_AGGREGATES}
+    watermarks["request_counts_hourly_total"] = None
+    assert _cross_view(monkeypatch, watermarks) == (None, [])
 
 
 @pytest.mark.parametrize(("dt", "width", "expected"), [

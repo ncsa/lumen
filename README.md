@@ -226,7 +226,7 @@ from the raw rows and overwrites it, so resuming never double-counts.
 ### `check-aggregate`
 
 Read-only: reports whether the usage aggregates (`request_counts_hourly_by_entity`,
-`request_counts_hourly`, `request_counts_daily`) cover all of `request_logs` and agree with each
+`request_counts_hourly`, `request_counts_hourly_total`, `request_counts_daily`) cover all of `request_logs` and agree with each
 other.
 
 ```bash
@@ -240,9 +240,9 @@ row. It exits 1 when the aggregate is empty or starts after the oldest raw row, 
 that history. It also checks every month by the rule `flask upgrade` backfills by, and exits 1
 listing each month that is *missing* (raw rows, no materialised bucket) or *partly covered* (its
 first materialised bucket is later than the hour of its first raw row), with both timestamps;
-`flask upgrade` fixes them. The month check runs for all three aggregates, each at its own
-bucket width. For every month before the one holding `request_counts_daily`'s watermark it then
-compares the monthly `requests`, `input_tokens`, `output_tokens` and `cost` of the three
+`flask upgrade` fixes them. The month check runs for all four aggregates, each at its own
+bucket width. For every month before the one holding the lowest of their watermarks it then
+compares the monthly `requests`, `input_tokens`, `output_tokens` and `cost` of the four
 aggregates' materialised rows, and exits 1 listing each month and column that differ: the org-wide
 views are sums of the entity aggregate, so a difference is drift. It also exits 1 if a retention
 policy exists on `request_logs`, and prints the `SELECT remove_retention_policy('request_logs');`

@@ -40,6 +40,10 @@ RECENT_ROWS = 3
 # In refresh order: _seed_history refreshes them in this order, children first.
 AGGREGATES = ("request_counts_hourly_by_entity", "request_counts_hourly", "request_counts_daily",
               "request_metrics_1m")
+# Grouped by bucket only, so the walk never returns it: moving rows between models
+# leaves every hour's totals unchanged. _seed_history still refreshes it, after hourly.
+TOTAL = "request_counts_hourly_total"
+SEEDED = tuple(n for n in commands.AGGREGATE_REFRESH_ORDER if n in AGGREGATES or n == TOTAL)
 # request_metrics_1m keeps 30 days (5006b6594383); its older buckets are never refreshed.
 RETENTION = {"request_metrics_1m": "30 days"}
 
@@ -129,7 +133,7 @@ def _seed_history(engine, from_id):
             "SELECT compress_chunk(c, recompress => true) "
             "FROM show_chunks('request_logs', older_than => INTERVAL '7 days') c"
         ))
-        for view in AGGREGATES:
+        for view in SEEDED:
             conn.execute(text(f"CALL refresh_continuous_aggregate('{view}', now() - INTERVAL '60 days', now())"))
     assert _compressed_chunks(engine), "nothing was compressed; this test would prove nothing about compressed history"
     assert _materialised(engine, "request_counts_hourly_by_entity", from_id) == OLD_ROWS + RECENT_ROWS
@@ -167,6 +171,16 @@ def _raw(engine, mcid, view=None):
         return conn.execute(text(
             f"SELECT count(*) FROM request_logs WHERE model_config_id = :m AND time >= {_since(view)}"
         ), {"m": mcid}).scalar()
+
+
+def _bucket_totals(engine, view):
+    """``{bucket: (requests, cost)}`` off ``view``'s materialisation hypertable."""
+    with engine.connect() as conn:
+        table = commands._materialization_hypertable(conn, view)
+        rows = conn.execute(text(
+            f"SELECT bucket, SUM(requests), SUM(cost) FROM {table} GROUP BY 1"
+        )).all()
+    return {bucket: (int(requests), cost) for bucket, requests, cost in rows}
 
 
 def _run(pg_app, from_id, to_id):
@@ -226,10 +240,29 @@ def test_refreshes_every_child_aggregate_before_its_parent(pg_app, engine):
 
     assert result.exit_code == 0, result.output
     assert sorted(refreshed) == sorted(AGGREGATES)
+    assert TOTAL not in refreshed, refreshed
     assert refreshed.index("request_counts_hourly_by_entity") < refreshed.index("request_counts_hourly"), refreshed
     assert refreshed.index("request_counts_hourly") < refreshed.index("request_counts_daily"), refreshed
     assert refreshed == [name for name in commands.AGGREGATE_REFRESH_ORDER if name in AGGREGATES]
     _assert_fully_moved(engine, from_id, to_id)
+
+
+def test_hourly_total_is_outside_the_walk_and_still_matches_hourly(pg_app, engine):
+    """The walk leaves request_counts_hourly_total alone, and it needs nothing: its
+    per-hour totals equal the refreshed hourly view's after the move."""
+    from_id, to_id = _models(engine)
+    _seed_history(engine, from_id)
+    before = _bucket_totals(engine, TOTAL)
+    assert before == _bucket_totals(engine, "request_counts_hourly")
+    with engine.connect() as conn:
+        assert TOTAL not in commands._aggregates_with_column(conn, "model_config_id")
+
+    result = _run(pg_app, from_id, to_id)
+
+    assert result.exit_code == 0, result.output
+    _assert_fully_moved(engine, from_id, to_id)
+    assert _bucket_totals(engine, TOTAL) == before
+    assert _bucket_totals(engine, "request_counts_hourly") == before
 
 
 def test_rerun_and_no_request_logs_skip_the_refresh(pg_app, engine):

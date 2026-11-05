@@ -48,6 +48,8 @@ OLD_ROWS = 60  # well above the lowered guard (10)
 RECENT_ROWS = 3
 SEEDED = OLD_ROWS + RECENT_ROWS
 ENTITY_AGGREGATE = "request_counts_hourly_by_entity"
+# Grouped by bucket only, so the walk never returns it: see the test that pins that.
+TOTAL = "request_counts_hourly_total"
 EXPIRES = datetime(2030, 1, 1)
 CREATED = datetime(2025, 1, 2, 3, 4, 5)
 REVOKED = datetime(2025, 6, 1, 12, 0, 0)
@@ -235,6 +237,7 @@ def _seed_history(engine, world):
         ))
         conn.execute(text("CALL refresh_continuous_aggregate('request_counts_hourly', now() - INTERVAL '60 days', now())"))
         conn.execute(text(f"CALL refresh_continuous_aggregate('{ENTITY_AGGREGATE}', now() - INTERVAL '60 days', now())"))
+        conn.execute(text(f"CALL refresh_continuous_aggregate('{TOTAL}', now() - INTERVAL '60 days', now())"))
     assert _compressed_chunks(engine), "nothing was compressed; this test would prove nothing about compressed history"
     assert _materialised(engine, world["user"]) == SEEDED
     world["logs"] = ids
@@ -265,6 +268,16 @@ def _materialised(engine, entity_id):
         return conn.execute(text(
             f"SELECT COALESCE(SUM(requests), 0) FROM {table} WHERE entity_id = :e"
         ), {"e": entity_id}).scalar()
+
+
+def _bucket_totals(engine, view):
+    """``{bucket: (requests, cost)}`` off ``view``'s materialisation hypertable."""
+    with engine.connect() as conn:
+        table = commands._materialization_hypertable(conn, view)
+        rows = conn.execute(text(
+            f"SELECT bucket, SUM(requests), SUM(cost) FROM {table} GROUP BY 1"
+        )).all()
+    return {bucket: (int(requests), cost) for bucket, requests, cost in rows}
 
 
 def _raw(engine, entity_id):
@@ -369,6 +382,26 @@ def test_moves_compressed_history_to_the_ghost_and_keeps_totals(pg_app, engine):
             conn.execute(text("UPDATE request_logs SET entity_id = :o WHERE entity_id = :g"),
                          {"o": world["other"], "g": ghost})
     assert "decompression limit" in str(aborted.value), f"the control UPDATE failed with something else: {aborted.value}"
+
+
+def test_hourly_total_is_outside_the_walk_and_still_matches_hourly(pg_app, engine):
+    """The walk leaves request_counts_hourly_total alone, and it needs nothing: moving
+    rows to the ghost changes no hour's totals, so they still equal the hourly view's."""
+    world = _seed_world(pg_app)
+    _seed_history(engine, world)
+    ghost_raw = _ghost_raw(engine)
+    before = _bucket_totals(engine, TOTAL)
+    assert before == _bucket_totals(engine, "request_counts_hourly")
+    with engine.connect() as conn:
+        assert TOTAL not in commands._aggregates_with_column(conn, "entity_id")
+
+    result = _run(pg_app, world["user"])
+
+    assert result.exit_code == 0, result.output
+    assert f"refreshing '{TOTAL}'" not in result.output
+    _assert_history_moved(engine, world, ghost_raw)
+    assert _bucket_totals(engine, TOTAL) == before
+    assert _bucket_totals(engine, "request_counts_hourly") == before
 
 
 def test_no_dependent_row_remains_and_keys_are_anonymised(pg_app, engine):

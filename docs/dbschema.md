@@ -319,6 +319,7 @@ erDiagram
 - [request\_counts\_hourly](#request_counts_hourly) *(continuous aggregate)*
 - [request\_counts\_hourly\_by\_entity](#request_counts_hourly_by_entity) *(continuous aggregate)*
 - [request\_counts\_daily](#request_counts_daily) *(continuous aggregate)*
+- [request\_counts\_hourly\_total](#request_counts_hourly_total) *(continuous aggregate)*
 - [request\_metrics\_1m](#request_metrics_1m) *(continuous aggregate)*
 
 ---
@@ -771,6 +772,7 @@ The usage aggregates form a hierarchy; `request_metrics_1m` reads `request_logs`
 request_logs
   -> request_counts_hourly_by_entity   1 hour, per entity
     -> request_counts_hourly           1 hour, org-wide
+      -> request_counts_hourly_total   1 hour, org-wide totals (heatmap)
       -> request_counts_daily          1 day, org-wide
 ```
 
@@ -780,7 +782,7 @@ its child copies the child's stale rows. `flask reassign-model` follows
 `AGGREGATE_REFRESH_ORDER` in `lumen/commands.py`, and `flask upgrade` and `seed_analytics.py`
 follow `USAGE_AGGREGATES` there; a manual `flask backfill-aggregate` must do the same.
 
-All four views below are **real-time**: they set `timescaledb.materialized_only = false`, so
+All five views below are **real-time**: they set `timescaledb.materialized_only = false`, so
 a query unions the materialised rows with a live scan of the raw rows newer than the
 materialisation watermark. Without that — and `true` is the default on TimescaleDB 2.13+ — the
 current bucket is missing, and a user who ran forty requests this hour sees zero.
@@ -827,22 +829,52 @@ so the long `start_offset` only recomputes hours the child rewrote. Created `WIT
 - Real-time over a real-time child: a request made this hour shows through this view before any
   refresh.
 - The `CAST`s keep the counts `bigint`; `SUM` of a bigint is `numeric`.
-- The all-users `/usage` charts read it for the Week and Month ranges, and the heatmap reads it for
-  every range.
+- The all-users `/usage` charts read it for the Week and Month ranges. The heatmap reads
+  [`request_counts_hourly_total`](#request_counts_hourly_total) instead.
 
 ### request_counts_daily
 
 Org-wide daily usage for the Year and All ranges, a hierarchical aggregate over
 [`request_counts_hourly`](#request_counts_hourly) (migration `c6e8a0b2d4f6`, #177). Same columns
 and expressions as `request_counts_hourly`, with `bucket` = `time_bucket('1 day', bucket)`: UTC
-days, whatever the session time zone. The heatmap needs the hour of day, so it stays on the hourly
-view. The Year window starts at a UTC midnight (`_usage_period_start`) so `bucket >= :start`
+days, whatever the session time zone. The heatmap needs the hour of day, so it reads the hourly
+[`request_counts_hourly_total`](#request_counts_hourly_total). The Year window starts at a UTC midnight (`_usage_period_start`) so `bucket >= :start`
 selects whole days, for the per-entity charts too.
 
 **Refresh policy:** `start_offset` 30 days, `end_offset` 1 day, `schedule_interval` 1 hour. Created
 `WITH NO DATA`; `flask upgrade` backfills it from `request_counts_hourly`'s materialised rows.
 
-No retention policy on either org-wide view.
+### request_counts_hourly_total
+
+Org-wide hourly totals for the all-users `/usage` heatmap, a hierarchical aggregate over
+[`request_counts_hourly`](#request_counts_hourly) (migration `d7f9b1c3e5a7`, #429). The heatmap
+needs one number per hour; the hourly view has a row per hour, model and source (about 350k a
+year), this one at most 8,760. Being hourly, it serves the heatmap's hour-aligned window for every
+range exactly.
+
+**Grouped by:** `bucket` (`time_bucket('1 hour', bucket)` of the child) only
+
+| Column | Expression | Description |
+|--------|------------|-------------|
+| `bucket` | `time_bucket('1 hour', bucket)` | Start of the hour, TIMESTAMPTZ |
+| `requests` | `CAST(SUM(requests) AS BIGINT)` | Requests in the hour |
+| `input_tokens` | `CAST(SUM(input_tokens) AS BIGINT)` | Input tokens |
+| `output_tokens` | `CAST(SUM(output_tokens) AS BIGINT)` | Output tokens |
+| `cost` | `SUM(cost)` | Cost in USD |
+
+**Refresh policy:** `start_offset` 30 days, `end_offset` 4 hours (one bucket behind the hourly
+view's 3 hours, so it only copies hours its child has materialised), `schedule_interval` 1 hour.
+Created `WITH NO DATA`; `flask upgrade` backfills it from `request_counts_hourly`'s materialised
+rows.
+
+**Notes:**
+- It keeps all four totals, so `flask check-aggregate` compares its monthly totals with the other
+  usage aggregates'. That comparison stops at the lowest watermark of all of them.
+- **Outside `flask reassign-model` and `flask erase-entity`.** They refresh only the aggregates
+  that have the column they move; this one has neither `model_config_id` nor `entity_id`. That is
+  correct: moving rows to another model or entity changes no hour's totals.
+
+No retention policy on any org-wide view.
 
 ### request_counts_hourly_by_entity
 

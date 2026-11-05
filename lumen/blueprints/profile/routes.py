@@ -760,7 +760,9 @@ def _org_usage_view(period_str):
     week, 1 month) are whole UTC days, so re-bucketing daily rows gives the same
     series as hourly rows at a 24th of the rows. ``week`` and ``month`` read
     ``request_counts_hourly``, whose start is only hour-aligned. The heatmap
-    always reads the hourly view, because it needs the hour of day.
+    does not use this: it needs the hour of day but no model or source, so for
+    every period it reads ``request_counts_hourly_total``, the hourly view
+    summed over models and sources.
     """
     if period_str in ("year", "all"):
         return "request_counts_daily"
@@ -1127,7 +1129,7 @@ def usage_heatmap():
                 EXTRACT(DOW FROM bucket)  AS dow,
                 EXTRACT(HOUR FROM bucket) AS hour,
                 SUM(requests) AS count
-            FROM request_counts_hourly
+            FROM request_counts_hourly_total
             WHERE bucket >= :start
             GROUP BY 1, 2
         """), {"start": start}).all()
@@ -1137,7 +1139,7 @@ def usage_heatmap():
                 EXTRACT(DOW FROM bucket)  AS dow,
                 EXTRACT(HOUR FROM bucket) AS hour,
                 SUM(requests) AS count
-            FROM request_counts_hourly
+            FROM request_counts_hourly_total
             GROUP BY 1, 2
         """)).all()
 

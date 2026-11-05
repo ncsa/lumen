@@ -24,9 +24,12 @@ pytestmark = pytest.mark.postgres
 # Built on request_logs. request_counts_hourly is built on this one and reads only its
 # materialised rows, so refreshing hourly alone would materialise nothing here.
 AGGREGATE = "request_counts_hourly_by_entity"
-# request_logs.source is VARCHAR(8) and every usage aggregate groups by it, so the
+# request_logs.source is VARCHAR(8) and the usage aggregates but one group by it, so the
 # tag isolates this module's rows in the aggregates as well as in the raw table.
 SOURCE = "naivetst"
+# Grouped by bucket only, so it has no source to filter on. This module's database is
+# private and each test's row sits alone in its hour, so the bucket isolates it there.
+TOTAL = "request_counts_hourly_total"
 
 
 @pytest.fixture(scope="module")
@@ -55,9 +58,10 @@ def _materialised_requests(engine, start, view=AGGREGATE):
             "SELECT materialization_hypertable_schema || '.' || materialization_hypertable_name "
             "FROM timescaledb_information.continuous_aggregates WHERE view_name = :v"
         ), {"v": view}).scalar()
+        source = "" if view == TOTAL else "source = :s AND "
         return conn.execute(text(
             f"SELECT COALESCE(SUM(requests), 0) FROM {mat} "
-            "WHERE source = :s AND bucket = CAST(:b AS timestamp) AT TIME ZONE 'UTC'"
+            f"WHERE {source}bucket = CAST(:b AS timestamp) AT TIME ZONE 'UTC'"
         ), {"s": SOURCE, "b": start}).scalar()
 
 
@@ -73,7 +77,7 @@ def test_refresh_window_materialises_a_naive_utc_window(engine):
 
 
 def test_seed_refresh_materialises_a_naive_utc_window(engine):
-    """The seed refreshes every usage aggregate bottom-up, so the row reaches all three.
+    """The seed refreshes every usage aggregate bottom-up, so the row reaches all four.
 
     The window is a whole UTC day: request_counts_daily rejects a window holding no
     whole bucket.
@@ -89,4 +93,5 @@ def test_seed_refresh_materialises_a_naive_utc_window(engine):
 
     assert _materialised_requests(engine, hour, "request_counts_hourly_by_entity") == 1
     assert _materialised_requests(engine, hour, "request_counts_hourly") == 1
+    assert _materialised_requests(engine, hour, TOTAL) == 1
     assert _materialised_requests(engine, start, "request_counts_daily") == 1
