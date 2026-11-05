@@ -126,12 +126,14 @@ def _insert(engine, *times):
             ), {"t": t})
 
 
-def _refresh(engine, start, end):
+def _refresh(engine, start, end, views=(ENTITY_AGGREGATE,)):
+    """Refresh ``views`` over ``[start, end)``, in the order given: pass them bottom-up."""
     with _autocommit(engine) as conn:
-        conn.execute(text(
-            f"CALL refresh_continuous_aggregate('{ENTITY_AGGREGATE}', "
-            f"CAST(:s AS timestamptz), CAST(:e AS timestamptz))"
-        ), {"s": start, "e": end})
+        for view in views:
+            conn.execute(text(
+                f"CALL refresh_continuous_aggregate('{view}', "
+                f"CAST(:s AS timestamptz), CAST(:e AS timestamptz))"
+            ), {"s": start, "e": end})
 
 
 def _mat_table(conn, view=ENTITY_AGGREGATE):
@@ -311,7 +313,7 @@ def test_only_an_interior_month_with_deleted_buckets_is_refreshed(pg_app, engine
     m3, m2, m1, m0 = _month(3), _month(2), _month(1), _month(0)
     rows = [m3 + timedelta(days=2), m2 + timedelta(days=2), m1 + timedelta(days=2)]
     _insert(engine, *rows)
-    _refresh(engine, m3, m0)
+    _refresh(engine, m3, m0, USAGE_AGGREGATES)
     # Delete m2's buckets the only way a refresh can: without raw rows it materialises
     # the month as empty. Re-inserted below the invalidation threshold, the rows are
     # logged as invalidated, so a later refresh of the month picks them up again.
@@ -337,7 +339,7 @@ def test_only_an_interior_month_with_deleted_buckets_is_refreshed(pg_app, engine
 def test_fully_covered_aggregate_refreshes_nothing(pg_app, engine, monkeypatch):
     m2, m1 = _month(2), _month(1)
     _insert(engine, m2 + timedelta(days=2), m1 + timedelta(days=2))
-    _refresh(engine, m2, datetime.now(timezone.utc))
+    _refresh(engine, m2, datetime.now(timezone.utc), USAGE_AGGREGATES)
 
     check = _check(pg_app)
     assert check.exit_code == 0, check.output
@@ -422,6 +424,88 @@ def test_upgrade_backfills_the_org_wide_views_bottom_up(pg_app, engine, monkeypa
     for view in ("request_counts_hourly", "request_counts_daily"):
         assert _view_requests(engine, view, current) == 2, \
             f"a request made after the backfill is invisible through {view}"
+
+
+def _backfilled(pg_app, engine, monkeypatch):
+    """Two rows at different hours of month -2, one in month -1, all three views backfilled."""
+    m2, m1 = _month(2), _month(1)
+    _insert(engine, m2 + timedelta(days=2, hours=3), m2 + timedelta(days=9, hours=15),
+            m1 + timedelta(days=3))
+    result, _ = _upgrade(pg_app, monkeypatch)
+    assert result.exit_code == 0, result.output
+    return m2, m1
+
+
+def _delete_materialised(engine, view, start, end):
+    """Remove ``view``'s materialised buckets in ``[start, end)``: drift no refresh logged."""
+    with _autocommit(engine) as conn:
+        deleted = conn.execute(text(
+            f"DELETE FROM {_mat_table(conn, view)} WHERE bucket >= :s AND bucket < :e"
+        ), {"s": start, "e": end}).rowcount
+    assert deleted > 0, f"nothing of {view} was deleted, so this test proves nothing"
+
+
+def test_check_passes_on_a_backfilled_database(pg_app, engine, monkeypatch):
+    _backfilled(pg_app, engine, monkeypatch)
+    check = _check(pg_app)
+    assert check.exit_code == 0, check.output
+    assert f"{ENTITY_AGGREGATE} covers request_logs." in check.output
+    assert f"Usage aggregates agree on every month before {_month(0):%Y-%m}." in check.output
+    assert "Error" not in check.output, check.output
+
+
+def test_check_names_the_month_an_hourly_bucket_drifted_in(pg_app, engine, monkeypatch):
+    """One hourly bucket gone, not the month's first: only the cross-view totals see it."""
+    m2, m1 = _backfilled(pg_app, engine, monkeypatch)
+    second = m2 + timedelta(days=9, hours=15)
+    _delete_materialised(engine, "request_counts_hourly", second, second + timedelta(hours=1))
+
+    check = _check(pg_app)
+    assert check.exit_code == 1, check.output
+    assert "Error: the usage aggregates disagree" in check.output, check.output
+    assert f"  {m2:%Y-%m}: requests 2 / 1 / 2" in check.output, check.output
+    assert f"  {m2:%Y-%m}: cost 0.020000 / 0.010000 / 0.020000" in check.output, check.output
+    assert f"  {m1:%Y-%m}:" not in check.output, check.output
+    assert "missing or partly covered" not in check.output, check.output
+
+
+def test_check_fails_when_the_daily_view_is_missing_a_month(pg_app, engine, monkeypatch):
+    m2, m1 = _backfilled(pg_app, engine, monkeypatch)
+    _delete_materialised(engine, "request_counts_daily", m2, m1)
+
+    check = _check(pg_app)
+    assert check.exit_code == 1, check.output
+    assert "Error: these months of 'request_counts_daily' are missing or partly covered:" \
+        in check.output, check.output
+    assert f"  {m2:%Y-%m}: missing" in check.output, check.output
+    assert f"flask backfill-aggregate --name request_counts_daily --from {m2:%Y-%m}" \
+        in check.output, check.output
+    assert f"  {m2:%Y-%m}: requests 2 / 2 / 0" in check.output, check.output
+    assert f"  {m1:%Y-%m}:" not in check.output, check.output
+
+
+# The watermark TimescaleDB stores for a continuous aggregate never refreshed: the
+# minimum timestamptz in microseconds, as ``test_lifecycle_cli_postgres.py`` reads it.
+_NEVER_REFRESHED_WATERMARK = -210866803200000000
+
+
+def test_check_compares_nothing_before_the_daily_view_is_refreshed(pg_app, engine, monkeypatch):
+    """The freshly migrated daily view: a watermark no ``datetime`` can hold.
+
+    The cleanup fixture's refresh moves the watermark forward again.
+    """
+    _backfilled(pg_app, engine, monkeypatch)
+    with _autocommit(engine) as conn:
+        conn.execute(text(
+            "UPDATE _timescaledb_catalog.continuous_aggs_watermark SET watermark = :w "
+            "WHERE mat_hypertable_id = (SELECT mat_hypertable_id "
+            "FROM _timescaledb_catalog.continuous_agg WHERE user_view_name = 'request_counts_daily')"
+        ), {"w": _NEVER_REFRESHED_WATERMARK})
+        assert commands._watermark(conn, "request_counts_daily") is None
+
+    check = _check(pg_app)
+    assert check.exit_code == 0, check.output
+    assert "'request_counts_daily' has never been refreshed; no month to compare" in check.output
 
 
 class _Records(logging.Handler):
