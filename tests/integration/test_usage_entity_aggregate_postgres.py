@@ -283,7 +283,7 @@ def entity_usage(pg_app, pg_migrated):
     # rows written into today afterwards would then be invisible through the view.
     _refresh(pg_migrated)
     today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    _refresh(pg_migrated, DAILY_VIEW, window=(None, today))
+    _refresh(pg_migrated, DAILY_VIEW, window=(today - timedelta(days=MAIN_OLD + 1), today))
 
     # --- and only now the current hour, above the watermark.
     with pg_migrated.begin() as conn:
