@@ -552,6 +552,7 @@ def test_refresh_order_puts_every_child_before_its_parent():
     assert order.index(commands.ENTITY_AGGREGATE) < order.index("request_counts_hourly") \
         < order.index("request_counts_daily")
     assert order.index("request_counts_hourly") < order.index("request_counts_hourly_total")
+    assert order.index(commands.ENTITY_AGGREGATE) < order.index("request_counts_daily_by_entity")
     assert commands._in_refresh_order(list(reversed(order))) == list(order)
     assert commands._in_refresh_order([]) == []
 

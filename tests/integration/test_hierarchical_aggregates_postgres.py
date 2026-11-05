@@ -1,8 +1,10 @@
 """The hierarchical usage aggregates of ``c6e8a0b2d4f6`` on real TimescaleDB 2.27.2.
 
-``request_counts_hourly`` is built on ``request_counts_hourly_by_entity``, and
-``request_counts_daily`` and ``request_counts_hourly_total`` (``d7f9b1c3e5a7``, the
-org-wide heatmap's per-hour totals) on ``request_counts_hourly``. Three TimescaleDB behaviours
+``request_counts_hourly`` and ``request_counts_daily_by_entity`` (``e8a0c2d4f6b8``,
+the per-entity Year and All ranges' daily view) are built on
+``request_counts_hourly_by_entity``, and ``request_counts_daily`` and
+``request_counts_hourly_total`` (``d7f9b1c3e5a7``, the org-wide heatmap's per-hour
+totals) on ``request_counts_hourly``. Three TimescaleDB behaviours
 carry that design, and the first tests here pin them:
 
   (a) a 1 hour aggregate over a 1 hour aggregate is accepted
@@ -33,9 +35,11 @@ ENTITY = "request_counts_hourly_by_entity"
 HOURLY = "request_counts_hourly"
 DAILY = "request_counts_daily"
 TOTAL = "request_counts_hourly_total"
+DAILY_ENTITY = "request_counts_daily_by_entity"
 REVISION = "c6e8a0b2d4f6"
 BEFORE = "c8d0e2f4a6b8"
 TOTAL_REVISION = "d7f9b1c3e5a7"
+DAILY_ENTITY_REVISION = "e8a0c2d4f6b8"
 
 
 @pytest.fixture(scope="module")
@@ -145,11 +149,12 @@ def test_a_hourly_is_a_one_hour_aggregate_over_the_one_hour_entity_aggregate(eng
     assert catalog[HOURLY] == (ENTITY, timedelta(hours=1))
     assert catalog[DAILY] == (HOURLY, timedelta(days=1))
     assert catalog[TOTAL] == (HOURLY, timedelta(hours=1))
+    assert catalog[DAILY_ENTITY] == (ENTITY, timedelta(days=1))
 
 
 def test_b_a_row_inserted_now_shows_through_both_views_before_any_refresh(engine):
     _insert(engine, "now-b")
-    for view in (ENTITY, HOURLY, DAILY):
+    for view in (ENTITY, HOURLY, DAILY, DAILY_ENTITY):
         assert _requests(engine, view, "now-b") == 1, f"{view} hides the current bucket"
         assert _requests(engine, _mat(engine, view), "now-b") == 0, \
             f"{view} has the row materialised, so this test proves nothing about real-time"
@@ -244,11 +249,40 @@ def test_totals_view_refreshed_in_order_has_the_hourly_views_monthly_totals(engi
     assert total == hourly
 
 
+def test_daily_entity_view_refreshed_in_order_has_the_entity_views_monthly_totals(engine):
+    """Rows in each of the three closed UTC months before this one, refreshed child first:
+    daily_by_entity's materialised monthly totals equal the entity aggregate's, every
+    column, over the refreshed window.
+    """
+    month = "date_trunc('month', now(), 'UTC')"
+    for back, hour in ((3, 3), (3, 23), (2, 22), (1, 0)):
+        _insert(engine, f"dbe-{back}",
+                f"{month} - INTERVAL '{back} months' + INTERVAL '5 days {hour} hours'")
+    with engine.connect() as conn:
+        start, end = conn.execute(text(
+            f"SELECT {month} - INTERVAL '3 months', {month}"
+        )).one()
+        seeded = {conn.execute(text(
+            f"SELECT {month} - INTERVAL '{back} months'"
+        )).scalar() for back in (1, 2, 3)}
+    for view in commands.AGGREGATE_REFRESH_ORDER:
+        if view in (ENTITY, DAILY_ENTITY):
+            _refresh(engine, view, start, end)
+    entity = {m: v for m, v in _monthly(engine, _mat(engine, ENTITY)).items() if start <= m < end}
+    daily = {m: v for m, v in _monthly(engine, _mat(engine, DAILY_ENTITY)).items()
+             if start <= m < end}
+    assert len(seeded) == 3
+    assert seeded <= set(daily), (seeded, daily)
+    assert daily == entity
+    for back in (1, 2, 3):
+        assert _requests(engine, _mat(engine, DAILY_ENTITY), f"dbe-{back}") == (2 if back == 3 else 1)
+
+
 # --- The migration's settings -----------------------------------------------------------
 
 
 @pytest.mark.parametrize("view, end_offset", [(HOURLY, "03:00:00"), (DAILY, "1 day"),
-                                              (TOTAL, "04:00:00")])
+                                              (TOTAL, "04:00:00"), (DAILY_ENTITY, "1 day")])
 def test_views_are_real_time_with_their_policy_and_comment(engine, view, end_offset):
     materialized_only, config, comment = _settings(engine, view)
     assert materialized_only is False, f"{view} hides the buckets after its last refresh"
@@ -261,8 +295,8 @@ def test_no_retention_on_the_org_wide_views(engine):
     with engine.connect() as conn:
         assert conn.execute(text(
             "SELECT COUNT(*) FROM timescaledb_information.jobs "
-            "WHERE proc_name = 'policy_retention' AND hypertable_name IN (:h, :d)"
-        ), {"h": HOURLY, "d": DAILY}).scalar() == 0
+            "WHERE proc_name = 'policy_retention' AND hypertable_name IN (:h, :d, :e)"
+        ), {"h": HOURLY, "d": DAILY, "e": DAILY_ENTITY}).scalar() == 0
 
 
 @pytest.mark.parametrize("view", [HOURLY, DAILY])
@@ -296,12 +330,30 @@ def test_totals_view_is_grouped_by_bucket_only_and_documents_the_walks(engine):
     assert "reassign-model" in comment and "erase-entity" in comment
 
 
+def test_daily_entity_view_keeps_the_entity_keys_and_is_in_both_walks(engine):
+    """Grouped like its child, so reassign-model and erase-entity find and refresh it."""
+    with engine.connect() as conn:
+        types = dict(conn.execute(text(
+            "SELECT column_name, data_type FROM information_schema.columns "
+            "WHERE table_name = :v"
+        ), {"v": DAILY_ENTITY}).all())
+        for column in ("model_config_id", "entity_id"):
+            walk = commands._aggregates_with_column(conn, column)
+            assert DAILY_ENTITY in walk, (column, walk)
+            assert walk.index(ENTITY) < walk.index(DAILY_ENTITY), (column, walk)
+    assert types == {
+        "bucket": "timestamp with time zone", "entity_id": "integer",
+        "model_config_id": "integer", "source": "character varying", "requests": "bigint",
+        "input_tokens": "bigint", "output_tokens": "bigint", "cost": "numeric",
+    }
+
+
 # --- Round trip --------------------------------------------------------------------------
 
 
 def test_downgrade_drops_the_totals_view_and_upgrade_recreates_it(db, engine):
     url = db[0]
-    assert _script_dir().get_current_head() == TOTAL_REVISION, "this revision is no longer head"
+    assert _script_dir().get_revision(DAILY_ENTITY_REVISION).down_revision == TOTAL_REVISION
 
     _ok(_flask_db(url, "downgrade", REVISION), "downgrade")
     catalog = _catalog(engine)
@@ -322,11 +374,36 @@ def test_downgrade_drops_the_totals_view_and_upgrade_recreates_it(db, engine):
     assert _hour_requests(engine, TOTAL, at) >= 1
 
 
+def test_downgrade_drops_the_daily_entity_view_and_upgrade_recreates_it(db, engine):
+    url = db[0]
+    assert _script_dir().get_current_head() == DAILY_ENTITY_REVISION, \
+        "this revision is no longer head"
+
+    _ok(_flask_db(url, "downgrade", TOTAL_REVISION), "downgrade")
+    catalog = _catalog(engine)
+    assert DAILY_ENTITY not in catalog
+    assert catalog[TOTAL] == (HOURLY, timedelta(hours=1))
+    with engine.connect() as conn:
+        assert conn.execute(text(
+            "SELECT COUNT(*) FROM timescaledb_information.jobs WHERE hypertable_name = :v"
+        ), {"v": DAILY_ENTITY}).scalar() == 0
+
+    _ok(_flask_db(url, "upgrade"), "upgrade")
+    assert _catalog(engine)[DAILY_ENTITY] == (ENTITY, timedelta(days=1))
+    materialized_only, config, comment = _settings(engine, DAILY_ENTITY)
+    assert materialized_only is False
+    assert (config["start_offset"], config["end_offset"]) == ("30 days", "1 day")
+    assert comment.startswith("Daily per-entity usage")
+    _insert(engine, "rt-dbe")
+    assert _requests(engine, DAILY_ENTITY, "rt-dbe") == 1
+
+
 def test_downgrade_restores_the_raw_hourly_view_and_upgrade_rebuilds_it(db, engine):
     url = db[0]
 
     _ok(_flask_db(url, "downgrade", BEFORE), "downgrade")
     assert DAILY not in _catalog(engine)
+    assert DAILY_ENTITY not in _catalog(engine)
     assert _catalog(engine)[HOURLY] == (None, timedelta(hours=1))
     assert "request_logs" in _definition(engine, HOURLY)
     materialized_only, config, comment = _settings(engine, HOURLY)
@@ -341,5 +418,7 @@ def test_downgrade_restores_the_raw_hourly_view_and_upgrade_rebuilds_it(db, engi
     assert catalog[HOURLY] == (ENTITY, timedelta(hours=1))
     assert catalog[DAILY] == (HOURLY, timedelta(days=1))
     assert catalog[TOTAL] == (HOURLY, timedelta(hours=1))
+    assert catalog[DAILY_ENTITY] == (ENTITY, timedelta(days=1))
     assert _requests(engine, HOURLY, "rt-down") == 1
+    assert _requests(engine, DAILY_ENTITY, "rt-down") == 1
     assert _requests(engine, DAILY, "rt-down") == 1

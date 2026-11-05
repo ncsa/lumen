@@ -38,8 +38,8 @@ pytestmark = pytest.mark.postgres
 OLD_ROWS = 60  # well above the lowered guard (10)
 RECENT_ROWS = 3
 # In refresh order: _seed_history refreshes them in this order, children first.
-AGGREGATES = ("request_counts_hourly_by_entity", "request_counts_hourly", "request_counts_daily",
-              "request_metrics_1m")
+AGGREGATES = ("request_counts_hourly_by_entity", "request_counts_daily_by_entity",
+              "request_counts_hourly", "request_counts_daily", "request_metrics_1m")
 # Grouped by bucket only, so the walk never returns it: moving rows between models
 # leaves every hour's totals unchanged. _seed_history still refreshes it, after hourly.
 TOTAL = "request_counts_hourly_total"
@@ -209,6 +209,7 @@ def test_moves_compressed_history_and_refreshes_aggregates(pg_app, engine):
     # The old buckets were materialised under FROM by the backfill; only an explicit
     # refresh reaching 40 days back moves them.
     assert _materialised(engine, "request_counts_hourly", to_id) == OLD_ROWS + RECENT_ROWS
+    assert _materialised(engine, "request_counts_daily_by_entity", to_id) == OLD_ROWS + RECENT_ROWS
 
     # Guard leak: the lifted limit was SET LOCAL, so a pooled connection still has 10.
     with engine.connect() as conn:
@@ -224,8 +225,9 @@ def test_moves_compressed_history_and_refreshes_aggregates(pg_app, engine):
 
 
 def test_refreshes_every_child_aggregate_before_its_parent(pg_app, engine):
-    """by_entity before hourly before daily: each is built on the one before, and the
-    reverse order would rebuild it from its child's buckets still under FROM."""
+    """by_entity before daily_by_entity and hourly, hourly before daily: each is built on
+    its child, and the reverse order would rebuild it from the child's buckets still
+    under FROM."""
     from_id, to_id = _models(engine)
     _seed_history(engine, from_id)
     real = commands._refresh_months
@@ -242,6 +244,8 @@ def test_refreshes_every_child_aggregate_before_its_parent(pg_app, engine):
     assert sorted(refreshed) == sorted(AGGREGATES)
     assert TOTAL not in refreshed, refreshed
     assert refreshed.index("request_counts_hourly_by_entity") < refreshed.index("request_counts_hourly"), refreshed
+    assert refreshed.index("request_counts_hourly_by_entity") \
+        < refreshed.index("request_counts_daily_by_entity"), refreshed
     assert refreshed.index("request_counts_hourly") < refreshed.index("request_counts_daily"), refreshed
     assert refreshed == [name for name in commands.AGGREGATE_REFRESH_ORDER if name in AGGREGATES]
     _assert_fully_moved(engine, from_id, to_id)

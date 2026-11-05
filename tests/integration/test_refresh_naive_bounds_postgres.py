@@ -77,10 +77,10 @@ def test_refresh_window_materialises_a_naive_utc_window(engine):
 
 
 def test_seed_refresh_materialises_a_naive_utc_window(engine):
-    """The seed refreshes every usage aggregate bottom-up, so the row reaches all four.
+    """The seed refreshes every usage aggregate bottom-up, so the row reaches all five.
 
-    The window is a whole UTC day: request_counts_daily rejects a window holding no
-    whole bucket.
+    The window is a whole UTC day: the daily views reject a window holding no whole
+    bucket.
     """
     hour, _ = _hour_with_one_row(engine, days_ago=6)
     start = hour.replace(hour=0)
@@ -95,3 +95,4 @@ def test_seed_refresh_materialises_a_naive_utc_window(engine):
     assert _materialised_requests(engine, hour, "request_counts_hourly") == 1
     assert _materialised_requests(engine, hour, TOTAL) == 1
     assert _materialised_requests(engine, start, "request_counts_daily") == 1
+    assert _materialised_requests(engine, start, "request_counts_daily_by_entity") == 1

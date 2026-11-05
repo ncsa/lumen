@@ -53,6 +53,9 @@ def test_fresh_migration_has_no_problems(conn):
     assert health.aggregate("request_counts_daily").materialized_only is False
     assert health.job("refresh:request_counts_hourly_total").target == "request_counts_hourly_total"
     assert health.aggregate("request_counts_hourly_total").materialized_only is False
+    assert health.job("refresh:request_counts_daily_by_entity").target \
+        == "request_counts_daily_by_entity"
+    assert health.aggregate("request_counts_daily_by_entity").materialized_only is False
     assert health.job("retention:request_metrics_1m").proc_name == "policy_retention"
     assert health.request_logs_retention is False
 

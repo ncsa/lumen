@@ -723,8 +723,9 @@ def _usage_period_start(period_str):
 
     The alignment is load-bearing, not cosmetic. Every aggregate this module
     reads buckets by ``time_bucket(width, time)``, the bucket's start: one hour
-    for ``request_counts_hourly_by_entity`` and ``request_counts_hourly``, one
-    day for ``request_counts_daily``. On an unaligned start ``bucket >= :start``
+    for ``request_counts_hourly_by_entity``, ``request_counts_hourly`` and
+    ``request_counts_hourly_total``, one day for ``request_counts_daily`` and
+    ``request_counts_daily_by_entity``. On an unaligned start ``bucket >= :start``
     and the raw ``time >= :start`` are not the same predicate — a request at
     09:45 has ``bucket = 09:00``, so with ``start = 09:30`` the raw rows count it
     and the aggregate drops it, along with everything else in the window's first
@@ -732,9 +733,10 @@ def _usage_period_start(period_str):
     predicates identical, because for a width-aligned ``S``,
     ``time_bucket(width, time) >= S`` is true exactly when ``time >= S``.
 
-    ``year`` is floored to the UTC day because its org-wide arm reads the daily
-    view. The per-entity arm reads the hourly entity aggregate but gets the same
-    start, so the org-wide and per-entity windows stay the same window. ``all``
+    ``year`` is floored to the UTC day because both its arms read a daily view:
+    ``request_counts_daily`` org-wide, ``request_counts_daily_by_entity``
+    per entity. The per-entity heatmap reads the hourly entity aggregate but gets
+    the same start, so every chart on the page shows the same window. ``all``
     has no start.
 
     The cost is that a window can reach up to 59 minutes (a day, for ``year``)
@@ -769,6 +771,19 @@ def _org_usage_view(period_str):
     return "request_counts_hourly"
 
 
+def _entity_usage_view(period_str):
+    """The per-entity aggregate the summary, requests, tokens and models charts read.
+
+    The per-entity twin of ``_org_usage_view``: ``year`` and ``all`` read
+    ``request_counts_daily_by_entity``, ``week`` and ``month`` read
+    ``request_counts_hourly_by_entity``. The per-entity heatmap does not use
+    this: it needs the hour of day, so it always reads the hourly entity view.
+    """
+    if period_str in ("year", "all"):
+        return "request_counts_daily_by_entity"
+    return "request_counts_hourly_by_entity"
+
+
 def _usage_period_bucket(period_str):
     cfg = _USAGE_PERIODS.get(period_str, _USAGE_PERIODS["week"])
     return cfg["bucket"], cfg["trunc"]
@@ -793,9 +808,12 @@ def _usage_entity_id():
 
 # --- Per-entity usage source -------------------------------------------------
 #
-# The five per-entity /usage queries below read only the
-# ``request_counts_hourly_by_entity`` continuous aggregate. History older than
-# the refresh policy's ``start_offset`` is visible through the view only once
+# The five per-entity /usage queries below read only the per-entity continuous
+# aggregates: ``request_counts_daily_by_entity`` for the summary, requests,
+# tokens and models charts over ``year`` and ``all`` (``_entity_usage_view``),
+# ``request_counts_hourly_by_entity`` for the other periods and for the heatmap
+# over every period. History older than a refresh policy's ``start_offset`` is
+# visible through a view only once ``flask upgrade`` or
 # ``flask backfill-aggregate`` has materialised it (``flask check-aggregate``
 # reports whether it has); per-user charts no longer fall back to raw
 # ``request_logs``.
@@ -827,6 +845,7 @@ def usage_summary():
     start = _usage_period_start(period)
     eid = _usage_entity_id()
     view = _org_usage_view(period)
+    entity_view = _entity_usage_view(period)
 
     if eid:
         params = {"eid": eid}
@@ -835,13 +854,13 @@ def usage_summary():
             params["start"] = start
             where += " AND bucket >= :start"
         # `bucket >= :start` selects exactly the raw rows with `time >= :start`
-        # only because ``_usage_period_start`` floors to the hour.
+        # only because ``_usage_period_start`` floors to the hour (the day for year).
         agg_sql = f"""
             SELECT
                 COALESCE(SUM(requests), 0),
                 COALESCE(SUM(input_tokens + output_tokens), 0),
                 COALESCE(SUM(cost), 0.0)
-            FROM request_counts_hourly_by_entity
+            FROM {entity_view}
             {where}
         """
         row = db.session.execute(text(agg_sql), params).one()
@@ -975,6 +994,7 @@ def usage_requests():
         abort(HTTPStatus.BAD_REQUEST)
     eid = _usage_entity_id()
     view = _org_usage_view(period)
+    entity_view = _entity_usage_view(period)
 
     if eid:
         params = {"bucket": bucket, "eid": eid}
@@ -984,7 +1004,7 @@ def usage_requests():
             where += " AND bucket >= :start"
         agg_sql = f"""
             SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period, SUM(requests) AS count
-            FROM request_counts_hourly_by_entity
+            FROM {entity_view}
             {where}
             GROUP BY 1 ORDER BY 1
         """
@@ -1018,6 +1038,7 @@ def usage_tokens():
         abort(HTTPStatus.BAD_REQUEST)
     eid = _usage_entity_id()
     view = _org_usage_view(period)
+    entity_view = _entity_usage_view(period)
 
     if eid:
         params = {"bucket": bucket, "eid": eid}
@@ -1028,7 +1049,7 @@ def usage_tokens():
         agg_sql = f"""
             SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period,
                    SUM(input_tokens + output_tokens) AS tokens
-            FROM request_counts_hourly_by_entity
+            FROM {entity_view}
             {where}
             GROUP BY 1 ORDER BY 1
         """
@@ -1061,6 +1082,7 @@ def usage_models():
     start = _usage_period_start(period)
     eid = _usage_entity_id()
     view = _org_usage_view(period)
+    entity_view = _entity_usage_view(period)
 
     if eid:
         params = {"eid": eid}
@@ -1070,7 +1092,7 @@ def usage_models():
             where += " AND rl.bucket >= :start"
         agg_sql = f"""
             SELECT mc.model_name, SUM(rl.requests) AS requests
-            FROM request_counts_hourly_by_entity rl
+            FROM {entity_view} rl
             JOIN model_configs mc ON rl.model_config_id = mc.id
             {where}
             GROUP BY mc.model_name ORDER BY requests DESC
