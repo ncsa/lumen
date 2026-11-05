@@ -218,20 +218,29 @@ def _monthly(engine, relation):
 
 
 def test_totals_view_refreshed_in_order_has_the_hourly_views_monthly_totals(engine):
-    """Rows over three months, refreshed child first: hourly_total's materialised monthly
-    totals equal the hourly view's, every column."""
-    for days_ago, hour in ((70, 3), (70, 3), (45, 22), (12, 0)):
-        _day(engine, f"tot-{days_ago}", days_ago, hour)
+    """Rows in each of the three closed UTC months before this one, refreshed child first:
+    hourly_total's materialised monthly totals equal the hourly view's, every column.
+
+    The months are counted from this month's UTC start, not as day offsets from now, so
+    the three always differ whatever the date.
+    """
+    month = "date_trunc('month', now(), 'UTC')"
+    for back, hour in ((3, 3), (3, 3), (2, 22), (1, 0)):
+        _insert(engine, f"tot-{back}",
+                f"{month} - INTERVAL '{back} months' + INTERVAL '3 days {hour} hours'")
     with engine.connect() as conn:
         start, end = conn.execute(text(
-            "SELECT date_trunc('month', now() - INTERVAL '80 days', 'UTC'), "
-            "date_trunc('day', now(), 'UTC')"
+            f"SELECT {month} - INTERVAL '3 months', {month}"
         )).one()
+        seeded = {conn.execute(text(
+            f"SELECT {month} - INTERVAL '{back} months'"
+        )).scalar() for back in (1, 2, 3)}
     for view in commands.AGGREGATE_REFRESH_ORDER:
         if view in (ENTITY, HOURLY, TOTAL):
             _refresh(engine, view, start, end)
     hourly, total = _monthly(engine, _mat(engine, HOURLY)), _monthly(engine, _mat(engine, TOTAL))
-    assert len(total) >= 3, total
+    assert len(seeded) == 3
+    assert seeded <= set(total), (seeded, total)
     assert total == hourly
 
 
