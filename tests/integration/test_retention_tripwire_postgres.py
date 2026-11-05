@@ -38,7 +38,7 @@ def create_pg_app(pg_migrated_isolated, monkeypatch):
     from config import Config
     monkeypatch.setattr(Config, "SQLALCHEMY_DATABASE_URI", url)
     from lumen.services import metrics_snapshot
-    monkeypatch.setattr(metrics_snapshot, "start_snapshot_refresher", lambda app: None)
+    monkeypatch.setattr(metrics_snapshot, "start_snapshot_refresher", lambda app, **kwargs: None)
 
     created = []
 

@@ -1,7 +1,7 @@
 """Regression guards for the help-doc screenshot inputs (scripts/).
 
 The committed docs/img/ shots must match what the guides describe: chat.png
-shows the empty new-chat state with the quick-interaction notice, and
+shows an open conversation with the per-reply and copy-all buttons, and
 model-detail.png shows a model with "Also known as" alias badges. These tests
 keep the capture script and screenshot.config.yaml from silently drifting away
 from that.
@@ -44,11 +44,10 @@ def test_capture_models_declare_aliases():
         )
 
 
-def test_chat_capture_shows_the_quick_chat_notice():
+def test_chat_capture_shows_both_copy_buttons():
     src = SCREENSHOTS_PY.read_text()
-    # The capture must wait for the notice before screenshotting.
-    assert 'wait_for_selector("#quick-chat-notice")' in src
-    # Opening a saved conversation or sending a message removes the notice, so
-    # the chat capture must do neither.
-    assert ".conv-item" not in src
+    # The copy-all button is disabled and no reply has a copy button until a
+    # conversation is open, so the capture must open one and wait for a reply.
+    assert 'page.click(".conv-item")' in src
+    assert 'wait_for_selector(".chat-bubble-assistant")' in src
     assert "#send-btn" not in src

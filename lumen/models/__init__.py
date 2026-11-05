@@ -17,6 +17,7 @@ from .model_config import ModelConfig
 from .model_endpoint import ModelEndpoint
 from .model_stat import ModelStat
 from .request_log import RequestLog
+from .stats_fold_state import StatsFoldState
 
 __all__ = [
     "Entity",
@@ -38,4 +39,5 @@ __all__ = [
     "GroupRule",
     "GroupLimit",
     "RequestLog",
+    "StatsFoldState",
 ]

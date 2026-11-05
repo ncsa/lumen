@@ -2,8 +2,8 @@
 """Regenerate the help-doc screenshots in docs/img/ from a running dev instance.
 
 Captures Chat, Models, Usage, Projects, Project detail, Profile, and Model detail with the
-footer and skip-to-content link cropped out. The chat shot is the empty new-chat state so
-the quick-interaction notice shows; the model-detail shot is taken as a non-admin user so
+footer and skip-to-content link cropped out. The chat shot opens a seeded conversation so
+the copy buttons show; the model-detail shot is taken as a non-admin user so
 admin-only endpoint URLs are not exposed.
 
 Prerequisites (see scripts/README.md):
@@ -189,13 +189,12 @@ def main():
         page = actx.new_page()
         page.goto(BASE + "/devlogin", wait_until="networkidle")
 
-        # Capture the empty new-chat state so the shot shows the
-        # quick-interaction notice (it disappears once a conversation is opened
-        # or the first message is sent). Seeded conversations still appear in
-        # the sidebar.
+        # Open the seeded conversation so the shot shows a reply with its copy
+        # button and the enabled copy-all button in the message area.
         page.goto(BASE + "/chat", wait_until="networkidle")
-        page.wait_for_selector("#quick-chat-notice")
-        page.wait_for_timeout(800)  # let the conversation sidebar load
+        page.click(".conv-item")
+        page.wait_for_selector(".chat-bubble-assistant")
+        page.evaluate("document.activeElement.blur()")  # no focus ring on the input
         hide_chrome(page)
         page.screenshot(path=f"{OUT}/chat.png")
         print("chat.png")

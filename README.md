@@ -55,6 +55,12 @@ docker compose up -d
 
 Lumen will be available at `https://your-domain`.
 
+Lumen does not migrate its database on start. The one-shot `lumen-upgrade` service runs first
+(`flask upgrade`: every migration plus the aggregate backfill) and `lumen` starts once it has exited
+successfully. To upgrade, pull the new image and run `docker compose up -d` again; `lumen-upgrade`
+runs again before the new `lumen` starts. Started on its own (`docker compose up --no-deps lumen`),
+`lumen` waits until the database has been upgraded.
+
 ---
 
 ## Local Development
@@ -143,9 +149,44 @@ Visit `http://localhost:5001`, click **Login**, and you'll be auto-logged in as 
 ## Operator Commands
 
 Run with `uv run flask --app run <command>` locally, or `flask <command>` inside the container.
-Both commands below need PostgreSQL/TimescaleDB; on SQLite they print a note and exit 0.
+`backfill-aggregate` and `check-aggregate` need PostgreSQL/TimescaleDB; on SQLite they print a note and exit 0.
 
 **`request_logs` is never pruned.** Lumen ships no retention policy and no command that deletes from it.
+
+### `upgrade`
+
+The one-shot upgrade step: brings the database up to date for this image, then exits.
+
+```bash
+flask upgrade
+```
+
+The image runs it with the `upgrade` argument (`docker run <image> upgrade`; in Compose the
+`lumen-upgrade` service, in Helm the migration Job). The app container never migrates: it waits at
+`wait-for-migrations` until this has run. It runs, in order, and
+stops at the first failure with exit 1:
+
+1. **Every migration** (`flask db upgrade` to head).
+2. **The post-migration data steps.** Each is safe to re-run and finishes what an earlier, failed
+   run left undone, so running `flask upgrade` again resumes. Today there is one: the **aggregate
+   backfill by missing month** for `request_counts_hourly_by_entity`.
+
+The backfill looks at every calendar month from the oldest `request_logs` row through the current
+one. A month is *missing* when it has raw rows but no materialised bucket, and *partly covered* when
+its first materialised bucket is later than the hour of its first raw row (the refresh policy only
+ever materialises the trailing 30 days, so it can leave the head of a month behind). Each such month
+is refreshed over the whole month, oldest first, up to now, with the same lock retries as
+`backfill-aggregate`. When every month is covered it costs two indexed reads per month and refreshes
+nothing. A month that still fails after the retries ends the run with exit 1; the next run checks
+again and starts at the first month still missing. A hole in the middle of a month is not detected:
+`flask backfill-aggregate --from YYYY-MM` fixes that by hand.
+
+The backfill is skipped on SQLite and on a database without TimescaleDB. If `request_logs` has a
+retention policy it is skipped too: it logs the same ERROR as the startup check and does not fail
+the upgrade. Months before the aggregate's own retention boundary, if it has one, are left out.
+
+In the image's `upgrade` and `wait-for-migrations` modes, `PGCONNECT_TIMEOUT` defaults to `10`
+(a value you set is kept), so a database host that never answers cannot hang them.
 
 ### `backfill-aggregate`
 
@@ -163,8 +204,8 @@ flask backfill-aggregate [--name NAME] [--from YYYY-MM] [--force]
 
 Migrations create their aggregates `WITH NO DATA`, and the refresh policy only ever materialises its
 own `start_offset` window — so per-user "All Time" charts stay near-empty until this is run: they read
-only `request_counts_hourly_by_entity` and no longer fall back to raw `request_logs`. **Run it
-right after `flask db upgrade` creates a new aggregate, and check the printed row counts.** It walks
+only `request_counts_hourly_by_entity` and no longer fall back to raw `request_logs`. The upgrade
+step (`flask upgrade`) runs it for every missing month, so you rarely need it by hand. It walks
 month by month because one `CALL refresh_continuous_aggregate(NULL, NULL)` over a production
 hypertable is a single long transaction with unbounded memory, and it never refreshes past `now()`,
 which would materialise the current bucket and hide every request logged after the backfill.
@@ -184,7 +225,9 @@ from the raw rows and overwrites it, so resuming never double-counts.
 
 ### `check-aggregate`
 
-Read-only: reports whether `request_counts_hourly_by_entity` covers all of `request_logs`.
+Read-only: reports whether the usage aggregates (`request_counts_hourly_by_entity`,
+`request_counts_daily_by_entity`, `request_counts_hourly`, `request_counts_hourly_total`,
+`request_counts_daily`) cover all of `request_logs` and agree with each other.
 
 ```bash
 flask check-aggregate
@@ -194,9 +237,95 @@ It prints the aggregate's earliest *materialised* bucket (read from its material
 not the view, which answers from raw for anything never refreshed) and the oldest `request_logs`
 row. It exits 1 when the aggregate is empty or starts after the oldest raw row, printing the
 `flask backfill-aggregate --from YYYY-MM` that fixes it; until then the per-user charts are missing
-that history. It also exits 1 if a retention policy exists on `request_logs`, and
-prints the `SELECT remove_retention_policy('request_logs');` that removes it. Run it before
-upgrading.
+that history. It also checks every month by the rule `flask upgrade` backfills by, and exits 1
+listing each month that is *missing* (raw rows, no materialised bucket) or *partly covered* (its
+first materialised bucket is later than the hour of its first raw row), with both timestamps;
+`flask upgrade` fixes them. The month check runs for all five aggregates, each at its own
+bucket width. For every month before the one holding the lowest of their watermarks it then
+compares the monthly `requests`, `input_tokens`, `output_tokens` and `cost` of the five
+aggregates' materialised rows, and exits 1 listing each month and column that differ: the other
+views are sums of the entity aggregate, so a difference is drift. It also exits 1 if a retention
+policy exists on `request_logs`, and prints the `SELECT remove_retention_policy('request_logs');`
+that removes it. Run it before upgrading.
+
+### `wait-for-migrations`
+
+Read-only: waits until the database is at the migration head this image ships, then exits 0.
+
+```bash
+flask wait-for-migrations [--timeout SECONDS]
+```
+
+| Flag | Meaning |
+|---|---|
+| `--timeout` | Give up and exit 1 after this many seconds. Default: wait forever. |
+
+It compares the heads of the bundled migrations with the revision stamped in the database, connecting
+the same way `flask db upgrade` does (including `database.url` from `config.yaml`). While the database
+is behind, empty or unreachable it logs the current and expected revisions and retries every 2 seconds;
+about every 30 seconds it logs a reminder to run the upgrade step (the image with `upgrade`, the
+`lumen-upgrade` Compose service, or the Helm migration Job). A revision this image does not know means a
+newer image already migrated the database, so it exits 1 at once. It never migrates anything.
+
+Two separate time budgets apply to a PostgreSQL server that accepts connections but never answers:
+
+- **The command's own checks.** Each one gives up after 10 seconds and counts as unreachable, so
+  the command can exit up to that much after `--timeout` has passed. Connection options already in
+  the database URL (or `PGOPTIONS`), such as `-c search_path=...`, are kept.
+- **Loading the app.** Before the command starts, the app opens connections that have no timeout of
+  their own. Set `PGCONNECT_TIMEOUT` (for example `10`) so a silent host cannot hold the command
+  before its first check; it does not change the 10-second budget above. The image's
+  `wait-for-migrations` mode (`docker run <image> wait-for-migrations [--timeout SECONDS]`) sets it
+  to `10` unless you set it yourself.
+
+The image's default (serve) mode runs this command, with no `--timeout`, before it starts uvicorn,
+with the same `PGCONNECT_TIMEOUT` default (for the gate only; uvicorn gets your environment as is).
+
+### Upgrading TimescaleDB
+
+TimescaleDB is required: Lumen does not run on a plain `postgres` image. Pin the image tag
+(`timescale/timescaledb:2.27.2-pg17` is the tested version) and upgrade on purpose. A new image
+only installs the new extension files; the database keeps running the old version until it is
+updated, and nothing in Lumen updates it for you.
+
+1. Bump the image tag (`postgresql.image` in the Helm chart, `image:` in `docker-compose.yml`) and
+   restart the database.
+2. Update the extension. This must be the first command in a fresh session (`-X` skips `.psqlrc`),
+   run as the owner of the extension (normally the user that ran `flask db upgrade`). `lumen` is
+   the example database name; use the one in your database URL:
+
+   ```bash
+   psql -X -d lumen -c 'ALTER EXTENSION timescaledb UPDATE;'
+   ```
+
+3. Restart Lumen.
+4. Confirm the startup log no longer shows `TimescaleDB extension is <old> but the server has <new>`,
+   and that `lumen_timescaledb_extension_update_available` on `/metrics` is `0`
+   (`SELECT extversion FROM pg_extension WHERE extname = 'timescaledb';` shows the new version).
+5. Run `flask check-aggregate`; it must exit 0.
+
+At startup, and then periodically in every worker process (see "Prometheus metrics" for the
+interval), Lumen checks the extension version, the `request_logs` hypertable, the continuous
+aggregates and their background jobs. It logs a WARNING per problem (ERROR when the extension or
+the hypertable is missing, or when `request_logs` has a retention policy) and never blocks startup.
+
+### `check-stats`
+
+Compares the folded usage totals with `request_logs` since the stats cutover, which the upgrade
+sets automatically. Only the rows billing left to the fold (`stats_deferred`) are compared.
+
+```bash
+flask check-stats [--fix]
+```
+
+Every difference is printed per `model_stats` / `entity_stats` row, and the command exits 1. A
+difference means requests the fold missed, such as a billing transaction that committed more than
+`stats.fold_lag` after its timestamp. `--fix` adds each difference to the totals instead. Before the
+cutover it does nothing. It scans every `request_logs` row since the cutover and holds the fold
+state while it does, so on a large install run it at a quiet time: the fold waits until it finishes.
+Do not run it while a `flask reassign-model` is in progress: until that command merges
+`model_stats` at its end, the check reports differences that are not drift, and `--fix` would
+count them twice.
 
 ---
 
@@ -435,6 +564,73 @@ api:
     token: "a-long-random-string"   # optional; Bearer token auth for /metrics
     multiproc_dir: "/tmp/prom"      # required for multi-worker aggregation (mount as shared volume)
 ```
+
+On PostgreSQL, `/metrics` also reports TimescaleDB health. Each worker process caches its own
+check and refreshes it on the metrics snapshot thread every `ceil(300 / I) × I` seconds, where
+`I = max(60, 30 × P)` is the snapshot interval and `P` is the number of worker processes per pod
+(`WEB_CONCURRENCY`, or `wsgiProcesses` in the chart; `wsgiWorkers` sets threads and does not count).
+Each sleep is jittered by ±10%, so the gap between checks can reach 1.1 × that interval plus the
+query time:
+
+| Worker processes `P` | Check interval | Longest gap (with jitter) |
+|---|---|---|
+| 1–2 | 300 s | 330 s |
+| 4 | 360 s | 396 s |
+| 8 | 480 s | 528 s |
+| 9 | 540 s | 594 s |
+| 10–20 | `30 × P` (300–600 s) | 660 s at 20 |
+| 64 | 1920 s | 2112 s |
+| 256 | 7680 s | 8448 s |
+
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `lumen_timescaledb_extension_update_available` | `installed`, `available` | 1 when the database runs an older extension than the image ships (see "Upgrading TimescaleDB") |
+| `lumen_timescaledb_hypertable_present` | `table` | 1 when `request_logs` is a hypertable |
+| `lumen_timescaledb_aggregate_present` | `view` | 1 when the continuous aggregate exists |
+| `lumen_timescaledb_aggregate_materialized_only` | `view` | 1 when the aggregate has `materialized_only = true` (should be 0) |
+| `lumen_timescaledb_job_present` | `job` | 1 when the expected background job exists |
+| `lumen_timescaledb_job_last_run_failed` | `job` | 1 when the job's last run failed |
+| `lumen_timescaledb_job_failures_total` | `job` | Failed runs of the job (counter) |
+| `lumen_timescaledb_job_last_success_age_seconds` | `job` | Seconds since the job last finished successfully |
+| `lumen_timescaledb_request_logs_retention_policy` | | 1 when `request_logs` has a retention policy (it must never be pruned) |
+| `lumen_timescaledb_health_age_seconds` | | Age of the check these gauges come from |
+
+`job` is one of `refresh:request_counts_hourly`, `refresh:request_counts_hourly_by_entity`,
+`refresh:request_metrics_1m`, `compression:request_logs` and `retention:request_metrics_1m`.
+
+Suggested alert expressions (the chart ships no alert rules). The two age thresholds below are
+sized for **up to 20 worker processes** per pod (longest check gap 660 s), with a margin of
+about 1.8×. For more processes, set them from `T = 2 × max(600, 30 × P)` seconds:
+`health_age_seconds > T` and `job_last_success_age_seconds{job=~"refresh:.*"} > 7200 + T`.
+The job age is computed at scrape time from the cached last success. A stale check can therefore
+make it read too high, by up to one check gap, but never too low. The `+ T` keeps a healthy hourly
+refresh from firing.
+
+```promql
+# Refresh or compression jobs failing. A refresh outage longer than 3 hours leaves a permanent gap in the hourly charts.
+increase(lumen_timescaledb_job_failures_total[1h]) > 0
+lumen_timescaledb_job_last_run_failed == 1
+# Two missed hourly refreshes plus T = 1200 s (up to 20 processes): 7200 + 1200
+lumen_timescaledb_job_last_success_age_seconds{job=~"refresh:.*"} > 8400
+
+# Missing or misconfigured objects
+lumen_timescaledb_job_present == 0
+lumen_timescaledb_hypertable_present == 0
+lumen_timescaledb_aggregate_present == 0
+lumen_timescaledb_aggregate_materialized_only == 1
+lumen_timescaledb_request_logs_retention_policy == 1
+
+# Extension older than the image (warning, not paging)
+lumen_timescaledb_extension_update_available == 1
+
+# The health check itself stopped refreshing. T = 1200 s (up to 20 processes)
+lumen_timescaledb_health_age_seconds > 1200
+```
+
+The failure alerts show a failing job within one check gap. A job that stops running without
+failing shows up only through the age alert. Above 60 worker processes, `7200 + T` passes
+the 3-hour window in which a refresh outage can still be recovered.
 
 ## License
 

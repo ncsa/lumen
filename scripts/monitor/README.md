@@ -22,14 +22,20 @@ uv sync
 uv run monitor migrate               # create or upgrade the schema
 uv run monitor collect --probe       # probe GET /v1/models once: health, response time, samples
 uv run monitor collect --price       # record today's Lumen, models.dev and hardware prices once
-uv run monitor serve                 # the loops plus the dashboard on :5000 until SIGTERM/SIGINT
+uv run monitor serve                 # the loops plus the dashboard on :5002 until SIGTERM/SIGINT
 ```
 
 A probe writes one `probes` row (success, response time, models listed and up) and, when it
-succeeds, one `samples` row per model plus today's availability counters. The Lumen state
-comes from the last 3 probes: DOWN when all failed, DEGRADED when the latest one lists a model
-that is down, UP otherwise, UNKNOWN before the first probe. The first probe of each local day
-deletes probes and samples older than `retention`.
+succeeds, one `samples` row per model plus today's availability counters. Each model keeps
+the status Lumen reports: ok when all its servers are healthy, degraded when some are, down
+when none are (or it has none). A successful probe is down for Lumen when more than
+`lumen.down_above` percent of its models are down (default 50: 1 of 3 down is degraded, 2 of 3
+is down, 2 of 4 is degraded), degraded when at least one is, ok otherwise. The percentage only
+applies to Lumen overall: a degraded model counts as up there and never changes its own status.
+The Lumen state comes from the last 3 probes: DOWN when all failed, otherwise the status of the
+latest one when it succeeded (DOWN / DEGRADED / UP), UP when it failed but an earlier one
+succeeded, UNKNOWN before the first probe. The first probe of each local day deletes probes
+and samples older than `retention`.
 
 `monitor serve` runs three loops on one scheduler thread: the probe every `refresh.web`, the
 models run every `refresh.models` and the price run every `refresh.price` (which also re-reads
@@ -72,12 +78,13 @@ only when it is `final` and not `estimated`.
 
 ![Overview](docs/overview.png)
 
-`monitor serve` also serves the dashboard (no login) on port 5000 (`--host`, `--port`), in
+`monitor serve` also serves the dashboard (no login) on port 5002 (`--host`, `--port`), in
 the same process as the loops so it sees the last probe. Every page, API and static file sits
 under `base_path` (restart after changing it). The overview has:
 
 - the Lumen card: UP / DEGRADED / DOWN, last / min / avg / max response time, uptime (a
-  degraded Lumen counts as up) and a response-time strip;
+  degraded Lumen counts as up, a failed probe or one with more than `lumen.down_above` percent
+  of models down counts as down) and a response-time strip;
 - status cards: active models, healthy / configured instances, requests and tokens in the last
   hour and today (tokens show "—" until Lumen reports them);
 - the model table (canonical models only): a status strip, uptime (the share of buckets that
@@ -88,9 +95,15 @@ under `base_path` (restart after changing it). The overview has:
 
 Ranges are 1h, 12h, 24h, 7d and 30d from the raw probes and samples, bucketed at 1m, 3m, 5m,
 30m and 2h (never below `refresh.web`); a bucket shows its worst status and is "no data" when
-empty. 1y uses one bucket per local day: ok at 99% availability or more, degraded above 0%,
-down otherwise. `*` marks values that include days which are not yet `final` or are
-`estimated`; `†` marks a model without a `models:` GPU entry. The page reloads its data every
+empty. Strips, badges and the Lumen chart draw ok green, degraded yellow and down red; strip
+cells also get shorter (degraded hatched), so the state does not rely on colour. Hovering a
+cell that is not ok (degraded, down or no data) shows when its bucket starts, in local time (the
+day on 1y); a screen reader hears the first 5 such periods. 1y uses one bucket per local day. For a model: ok at 99% availability or more, degraded
+above 0%, down otherwise. For Lumen, from the probes still kept: ok when 99% or more of the
+day's probes were ok, down when none was up (failed, or more than `lumen.down_above` percent of
+models down), degraded otherwise; its uptime is the share of probes that were up. `*` marks
+values that include days which are not yet `final` or are `estimated`; `†` marks a model
+without a `models:` GPU entry. The page reloads its data every
 `refresh.page` without a full reload. The JSON behind it is `/api/overview?range=&sort=&dir=`
 and `/api/lumen?range=`.
 
@@ -126,7 +139,7 @@ CI publishes the image as `ncsa/lumen-monitor` and `ghcr.io/ncsa/lumen-monitor` 
 
 ```bash
 docker build -t lumen-monitor scripts/monitor
-docker run -p 5000:5000 -v $PWD/config.yaml:/app/config.yaml lumen-monitor
+docker run -p 5002:5002 -v $PWD/config.yaml:/app/config.yaml lumen-monitor
 ```
 
 The container runs `monitor migrate && monitor serve`.
@@ -138,7 +151,7 @@ cp scripts/monitor/config.yaml.example scripts/monitor/config.yaml   # then edit
 MONITOR_LUMEN_API_KEY=... MONITOR_DB_PASSWORD=... docker compose -f scripts/monitor/compose.yaml up -d --build
 ```
 
-It publishes the dashboard on `127.0.0.1:5000` only; put the reverse proxy in front of it and
+It publishes the dashboard on `127.0.0.1:5002` only; put the reverse proxy in front of it and
 set `MONITOR_BASE_PATH` (or `base_path`) when it is served under a prefix such as `/monitor`.
 
 **Run a single replica.** The loops run inside the web process, so two replicas would both
@@ -183,4 +196,14 @@ a throwaway database:
 docker run -d --rm --name monitor-test-pg -e POSTGRES_USER=monitor -e POSTGRES_PASSWORD=monitor -e POSTGRES_DB=monitor_ci -p 55434:5432 postgres:17
 MONITOR_TEST_POSTGRES_URL=postgresql://monitor:monitor@localhost:55434/monitor_ci uv run pytest -rs
 docker stop monitor-test-pg
+```
+
+`tests/bench_ranges.py` times the dashboard endpoints on every range over 31d of 1-minute data
+and a year of daily rows. It is marked `bench` and is not part of the default run; name the file
+to run it (`pytest -m bench` alone collects nothing). `MONITOR_BENCH_MODELS` sets the model count
+(default 13) and `MONITOR_BENCH_REPEAT` the requests per endpoint and range (default 3). With
+`MONITOR_TEST_POSTGRES_URL` set it also runs on PostgreSQL, and drops every table there on exit:
+
+```bash
+uv run pytest tests/bench_ranges.py -m bench -s
 ```

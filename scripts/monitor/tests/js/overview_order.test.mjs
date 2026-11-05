@@ -26,7 +26,7 @@ function page() {
 
 function overviewBody(range, extra = {}) {
   return {
-    range, generated_at: '2026-10-17T17:00:00Z', sort: 'model', direction: 'asc', models: [],
+    range, generated_at: '2026-10-17T17:00:00Z', sort: 'model', direction: 'asc', models: [], strip_times: [],
     cards: { active_models: range === '1h' ? 1 : 24, healthy: 1, configured: 1, today_estimated: false },
     ...extra,
   };
@@ -99,4 +99,15 @@ test('the model link keeps the selected range', async () => {
   const [row] = p.byId('model-rows').children;
   const link = row.children[0].children[0];
   assert.equal(link.attributes.href, '/model/org/model%20a?range=1h');
+});
+
+test('model strips get the time of their cells', async () => {
+  const p = page();
+  const [ov, lumen] = requestsFor(p.requests, '24h');
+  await answer(ov, overviewBody('24h', { models: [{ id: 'm', strip: ['ok', 'degraded'] }], strip_times: ['2026-10-17T16:50:00Z', '2026-10-17T16:55:00Z'] }));
+  await answer(lumen, lumenBody('24h'));
+  const [row] = p.byId('model-rows').children;
+  const [strip] = row.children[1].children;
+  assert.equal(strip.children[0].attributes.title, undefined);
+  assert.match(strip.children[1].attributes.title, / – degraded$/);
 });

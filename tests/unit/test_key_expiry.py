@@ -181,6 +181,20 @@ def test_expire_keys(app, test_user):
         assert _state("overdue") == (overdue_at, None)
 
 
+def test_expire_keys_revokes_a_key_expiring_exactly_now(app, test_user, monkeypatch):
+    # A key is expired the moment the clock reaches expires_at, not only after it.
+    now = utcnow()
+    monkeypatch.setattr("lumen.services.key_expiry.utcnow", lambda: now)
+    with app.app_context():
+        _add_key("boundary", test_user["id"], expires_at=now)
+        _add_key("just_future", test_user["id"], expires_at=now + timedelta(seconds=1))
+        db.session.commit()
+
+        assert expire_keys() == 1
+        assert _state("boundary") == (now, None)
+        assert _state("just_future") == (None, None)
+
+
 def test_revoke_if_expired(app, test_user):
     now = utcnow()
     overdue_at = now - timedelta(minutes=1)
@@ -198,6 +212,24 @@ def test_revoke_if_expired(app, test_user):
         assert revoke_if_expired(never) is False
         assert _state("future") == (None, None)
         assert _state("never") == (None, None)
+
+
+def test_revoke_if_expired_at_exact_expiry(app, test_user, monkeypatch):
+    """A key is expired once the clock reaches ``expires_at``."""
+    now = utcnow().replace(microsecond=0)
+    monkeypatch.setattr("lumen.services.key_expiry.utcnow", lambda: now)
+    with app.app_context():
+        uid = test_user["id"]
+        boundary = _add_key("boundary", uid, expires_at=now)
+        just_future = _add_key("just_future", uid, expires_at=now + timedelta(seconds=1))
+        db.session.commit()
+
+        assert revoke_if_expired(boundary) is True
+        assert _state("boundary") == (now, None)
+        assert revoke_if_expired(boundary) is False  # already revoked
+        assert boundary.revoked_at == now
+        assert revoke_if_expired(just_future) is False
+        assert _state("just_future") == (None, None)
 
 
 @pytest.mark.parametrize("cap, expected", [

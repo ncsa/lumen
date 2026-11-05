@@ -13,6 +13,7 @@ from monitor.buckets import (
     bucket_statuses,
     daily_status,
     get_range,
+    lumen_daily_status,
     lumen_uptime,
     make_grid,
     model_uptime,
@@ -116,6 +117,35 @@ def test_probe_status():
     assert probe_status(True, 3, 2) == "degraded"
     assert probe_status(True, 3, 3) == "ok"
     assert probe_status(True, None, None) == "ok"
+
+
+@pytest.mark.parametrize("success, count, up, status", [
+    (True, 3, 2, "degraded"),  # 1 of 3 down
+    (True, 3, 1, "down"),      # 2 of 3 down
+    (True, 4, 2, "degraded"),  # exactly 50% is not above
+    (True, 10, 4, "down"),
+    (True, 1, 0, "down"),
+    (True, 0, 0, "ok"),
+    (False, 3, 3, "down"),
+])
+def test_probe_status_down_above_50(success, count, up, status):
+    assert probe_status(success, count, up, 50) == status
+
+
+def test_probe_status_down_above_30():
+    assert probe_status(True, 10, 7, 30) == "degraded"
+    assert probe_status(True, 10, 6, 30) == "down"
+
+
+@pytest.mark.parametrize("polls, polls_up, polls_ok, status", [
+    (0, 0, 0, "unknown"),
+    (10, 0, 0, "down"),
+    (100, 100, 99, "ok"),
+    (10, 10, 0, "degraded"),  # only degraded probes
+    (10, 8, 5, "degraded"),   # a mix of ok, degraded and down
+])
+def test_lumen_daily_status(polls, polls_up, polls_ok, status):
+    assert lumen_daily_status(polls, polls_up, polls_ok) == status
 
 
 @pytest.mark.parametrize("polls, polls_ok, status", [

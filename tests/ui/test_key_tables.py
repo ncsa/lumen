@@ -23,8 +23,8 @@ from tests.ui.test_accessibility import _run_all_checks
 
 ORIGIN = "http://lumen.test"
 # Must match the bundle base.html loads; the copy is that file, byte for byte.
-BOOTSTRAP_JS_URL = "https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"
-BOOTSTRAP_JS = Path(__file__).parent.parent / "fixtures" / "vendor" / "bootstrap-5.3.0.bundle.min.js"
+BOOTSTRAP_JS_URL = "https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
+BOOTSTRAP_JS = Path(__file__).parent.parent / "fixtures" / "vendor" / "bootstrap-5.3.8.bundle.min.js"
 DAY = 86400
 
 
@@ -38,7 +38,13 @@ def open_page(auth_client, browser):
         url = urlsplit(request.url)
         if request.url == BOOTSTRAP_JS_URL:
             # The tables and modals need Bootstrap's JS; serve the pinned copy.
-            route.fulfill(status=200, content_type="application/javascript", body=BOOTSTRAP_JS.read_bytes())
+            route.fulfill(
+                status=200,
+                content_type="application/javascript",
+                # base.html loads it with crossorigin + integrity, so it needs CORS.
+                headers={"Access-Control-Allow-Origin": "*"},
+                body=BOOTSTRAP_JS.read_bytes(),
+            )
             return
         if f"{url.scheme}://{url.netloc}" != ORIGIN:
             route.abort()  # other CDN assets: keep the test hermetic
@@ -176,6 +182,12 @@ def _focused_ttl_button_id(page):
     return page.evaluate("document.activeElement.matches('.ttl-key-btn') ? document.activeElement.dataset.id : null")
 
 
+def _wait_for_ttl_modal_closed(page):
+    page.wait_for_selector("#keyTtlModal", state="hidden")
+    # hidden alone is not enough: Bootstrap fires hidden.bs.modal (which restores focus) after the backdrop fade.
+    page.wait_for_function("!document.body.classList.contains('modal-open')")
+
+
 def test_edit_expiry_modal(app, restore_config, open_page, key_page):
     app.config["KEY_TTL"] = 30 * DAY
     path, post_path, expires_idx = key_page
@@ -199,7 +211,7 @@ def test_edit_expiry_modal(app, restore_config, open_page, key_page):
     assert page.locator("#edit-key-ttl-select option:checked").inner_text().strip() == "30 days"
     _run_all_checks(page.content().encode(), f"{path} (Edit Key Expiry modal open)")
     page.keyboard.press("Escape")
-    page.wait_for_selector("#keyTtlModal", state="hidden")
+    _wait_for_ttl_modal_closed(page)
     assert _focused_ttl_button_id(page) == str(kid)
 
     # Saving updates the row in place and returns focus to the re-rendered button.
@@ -208,7 +220,7 @@ def test_edit_expiry_modal(app, restore_config, open_page, key_page):
     page.wait_for_selector("#keyTtlModal.show")
     page.select_option("#edit-key-ttl-select", label="7 days")
     page.click("#key-ttl-save-btn")
-    page.wait_for_selector("#keyTtlModal", state="hidden")
+    _wait_for_ttl_modal_closed(page)
     assert posted[-1] == (f"{post_path}/{kid}/ttl", {"ttl": 7 * DAY})
     assert _row_cells(page, "live-key")[expires_idx] != before
     assert _focused_ttl_button_id(page) == str(kid)
@@ -245,11 +257,15 @@ def test_edit_expiry_closed_while_saving_still_updates_row(app, restore_config, 
     before = _row_cells(page, "live-key")[expires_idx]
     page.locator(f".ttl-key-btn[data-id='{kid}']").click()
     page.wait_for_selector("#keyTtlModal.show")
+    # .show is set when the fade-in starts; Bootstrap ignores Escape until shown.bs.modal (which focuses the select).
+    page.wait_for_function("document.activeElement.id === 'edit-key-ttl-select'")
     page.select_option("#edit-key-ttl-select", label="1 day")
     page.click("#key-ttl-save-btn")
     page.wait_for_function("document.getElementById('key-ttl-save-btn').disabled")
-    page.keyboard.press("Escape")
-    page.wait_for_selector("#keyTtlModal", state="hidden")
+    # Disabling the focused Save button lets Chrome move focus to <body>, where Bootstrap
+    # does not see Escape; press it on the dialog itself.
+    page.locator("#keyTtlModal").press("Escape")
+    _wait_for_ttl_modal_closed(page)
     errors = []
     page.on("pageerror", lambda e: errors.append(e))
     held[0].fallback()  # the original handler answers it now
@@ -294,10 +310,11 @@ def test_edit_expiry_error_after_close_alerts(app, restore_config, open_page, ke
     before = _row_cells(page, "live-key")[expires_idx]
     page.locator(f".ttl-key-btn[data-id='{kid}']").click()
     page.wait_for_selector("#keyTtlModal.show")
+    page.wait_for_function("document.activeElement.id === 'edit-key-ttl-select'")  # shown: Escape now closes it
     page.click("#key-ttl-save-btn")
     page.wait_for_function("document.getElementById('key-ttl-save-btn').disabled")
-    page.keyboard.press("Escape")
-    page.wait_for_selector("#keyTtlModal", state="hidden")
+    page.locator("#keyTtlModal").press("Escape")
+    _wait_for_ttl_modal_closed(page)
     if failure == "http":
         with app.app_context():
             db.session.get(APIKey, kid).revoked_at = utcnow()  # revoked meanwhile: the server answers 409

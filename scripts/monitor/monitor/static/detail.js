@@ -216,7 +216,7 @@
     });
   }
 
-  function renderHeader(h) {
+  function renderHeader(h, times) {
     const status = h.status || 'unknown';
     const badge = document.getElementById('model-status');
     badge.textContent = status;
@@ -225,11 +225,11 @@
     document.getElementById('model-uptime').textContent = fmtPct(h.uptime);
     document.getElementById('model-peak').textContent = isNum(h.peak_rpm) ? fmtInt(h.peak_rpm) : dash;
     document.getElementById('model-desc').textContent = h.description || '';
-    document.getElementById('model-strip').replaceChildren(strip(h.strip));
+    document.getElementById('model-strip').replaceChildren(strip(h.strip, times));
   }
 
   function render(s) {
-    renderHeader(s.header);
+    renderHeader(s.header, s.strip_times);
     priceChart('input-price', 'input', s.prices, s.daily);
     priceChart('output-price', 'output', s.prices, s.daily);
     trafficChart('requests', 'requests', s.traffic, fmtInt);

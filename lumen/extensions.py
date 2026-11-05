@@ -22,10 +22,9 @@ def _chat_limit():
     cfg = current_app.config.get("YAML_DATA", {})
     return cfg.get("rate_limiting", {}).get("limit", "30 per minute")
 
-# Root modules of the PostgreSQL DBAPIs this app may be built against. psycopg2
-# is the pinned driver; psycopg (3) is listed so a driver swap cannot silently
-# drop the guarantee below. Every other DBAPI (sqlite3) falls through untouched.
-_POSTGRES_DBAPI_MODULES = frozenset({"psycopg2", "psycopg"})
+# Root module of the PostgreSQL DBAPI (psycopg 3). Every other DBAPI (sqlite3)
+# falls through untouched.
+_POSTGRES_DBAPI_MODULE = "psycopg"
 
 
 @event.listens_for(Engine, "connect")
@@ -53,10 +52,10 @@ def _force_utc_session(dbapi_connection, connection_record):
 
     The ``COMMIT`` is required, not tidiness: ``SET`` is transactional, so the
     pool's rollback-on-return would revert it, and leaving the transaction open
-    would both hold the connection idle-in-transaction and make psycopg2 refuse
-    the dialect's own ``set_session`` call.
+    would both hold the connection idle-in-transaction and make psycopg refuse
+    the dialect's own autocommit / isolation-level changes.
     """
-    if type(dbapi_connection).__module__.split(".")[0] not in _POSTGRES_DBAPI_MODULES:
+    if type(dbapi_connection).__module__.split(".")[0] != _POSTGRES_DBAPI_MODULE:
         return
     with dbapi_connection.cursor() as cursor:
         cursor.execute("SET TIME ZONE 'UTC'")
