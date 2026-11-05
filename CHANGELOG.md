@@ -15,6 +15,7 @@ All notable changes to Lumen will be documented in this file.
 - `/v1/models` and the model detail page read request rates from `request_metrics_1m` instead of scanning `request_logs`, and `request_metrics_1m` now keeps 30 days (`request_logs` is still never pruned). (#169)
 - Proxied API and chat requests and `/v1/models` make far fewer database queries, and rejected (403/429) requests no longer re-resolve access and budget; `/v1/models` request and token counts may now be up to a minute old. (#170)
 - The coin refiller commits in small batches, runs on one replica at a time, and no longer re-reads balances that get no refill, so billing no longer waits on a refill pass. (#172)
+- Usage heatmap and per-user Year/All charts read smaller hourly-total and daily per-user aggregates (#429)
 - The TimescaleDB health check no longer fails when a background job has never succeeded; such a job is now reported as failed on startup and on `/metrics`. (#417)
 - Speed up slow `lumen.sh` device-flow and stream-disconnect tests.
 - Speed up the test suite: skip real sleeps in all `lumen.sh` tests, clone per-module PostgreSQL test databases from one migrated template, and drop the per-migration upgrade/downgrade tests for already-released migrations. (#234)

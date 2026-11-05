@@ -50,13 +50,16 @@ ENTITY_AGGREGATE = "request_counts_hourly_by_entity"
 AGGREGATE_REFRESH_ORDER = (
     ENTITY_AGGREGATE,
     "request_counts_hourly",
+    "request_counts_hourly_total",
     "request_counts_daily",
     "request_metrics_1m",
 )
 
 # The aggregates behind the /usage charts, which ``flask upgrade`` keeps backfilled. The
-# org-wide two are built on the entity aggregate (hourly) and on hourly (daily).
-USAGE_AGGREGATES = (ENTITY_AGGREGATE, "request_counts_hourly", "request_counts_daily")
+# org-wide ones are built on the entity aggregate (hourly) and on hourly (hourly_total,
+# the heatmap's per-hour totals, and daily).
+USAGE_AGGREGATES = (ENTITY_AGGREGATE, "request_counts_hourly", "request_counts_hourly_total",
+                    "request_counts_daily")
 
 # request_logs key columns the chunk walk can move rows along. The column name is
 # interpolated into SQL, so every helper that takes one checks it against this set.
@@ -435,6 +438,9 @@ def reassign_model_cmd(from_id, to_id):
                            f"  Refreshing the aggregates over windows whose raw chunks were\n"
                            f"  dropped would erase their history. Run 'flask check-aggregate'.")
                 raise SystemExit(1)
+            # request_counts_hourly_total has neither model_config_id nor entity_id, so
+            # neither this walk nor erase-entity's returns it. That is correct: moving
+            # rows to another model or entity leaves every hour's totals unchanged.
             boundaries = {name: _retention_boundary(conn, name)
                           for name in _aggregates_with_column(conn, "model_config_id")}
             # Read before anything moves: afterwards FROM has no raw rows left to date it.
@@ -768,6 +774,9 @@ def erase_entity_cmd(entity_id, yes):
                            f"  Refreshing the aggregates over windows whose raw chunks were\n"
                            f"  dropped would erase their history. Run 'flask check-aggregate'.")
                 raise SystemExit(1)
+            # request_counts_hourly_total has neither entity_id nor model_config_id, so
+            # neither this walk nor reassign-model's returns it. That is correct: moving
+            # rows to the ghost entity leaves every hour's totals unchanged.
             boundaries = {name: _retention_boundary(conn, name)
                           for name in _aggregates_with_column(conn, "entity_id")}
 
@@ -1370,18 +1379,20 @@ def _monthly_totals(conn, view_name, before):
 
 
 def _cross_view_differences(conn):
-    """Compare the usage aggregates' per-month totals below the daily watermark.
+    """Compare the usage aggregates' per-month totals below the lowest watermark.
 
     Returns ``(cutoff, differences)``: ``cutoff`` is the first month *not* compared
-    (None when the daily aggregate has never been refreshed), ``differences`` lists
+    (None when any usage aggregate has never been refreshed), ``differences`` lists
     ``(month, column, values)`` with one value per ``USAGE_AGGREGATES`` entry. The
     org-wide aggregates are sums over the entity aggregate's rows, so any difference in
-    a month every one of them has fully materialised is drift.
+    a month every one of them has fully materialised is drift. The cutoff is the
+    minimum watermark across all of them, not any one view's, so a month one view has
+    not materialised yet is never compared.
     """
-    watermark = _watermark(conn, USAGE_AGGREGATES[-1])
-    if watermark is None:
+    watermarks = [_watermark(conn, name) for name in USAGE_AGGREGATES]
+    if any(w is None for w in watermarks):
         return None, []
-    cutoff = _month_start(watermark)
+    cutoff = _month_start(min(watermarks))
     totals = [_monthly_totals(conn, name, cutoff) for name in USAGE_AGGREGATES]
     zero = (0,) * len(_USAGE_TOTALS)
     differences = []
@@ -1402,8 +1413,8 @@ def check_aggregate_cmd():
     ``request_logs`` is never pruned (#167). Exits 1 if a retention policy exists on
     it, if the entity aggregate does not reach back to its oldest row, if any month of
     any usage aggregate is missing or only partly covered (the rule ``flask upgrade``
-    backfills by), or if the monthly requests, tokens or cost of the three usage
-    aggregates differ in any month below the daily aggregate's watermark. The /usage
+    backfills by), or if the monthly requests, tokens or cost of the usage
+    aggregates differ in any month below the lowest of their watermarks. The /usage
     charts, which read only the aggregates, then miss or misstate that history until
     ``flask upgrade`` or ``flask backfill-aggregate`` is run.
     """
@@ -1473,11 +1484,13 @@ def check_aggregate_cmd():
             covered = False
         failed = failed or not covered
 
-        # Every month the daily aggregate has fully materialised is fully materialised
-        # in the two it is built on too, so their totals must be equal there.
+        # Every month below the lowest watermark is fully materialised in every usage
+        # aggregate, so their totals must be equal there.
         cutoff, differences = _cross_view_differences(conn)
         if cutoff is None:
-            click.echo(f"'{USAGE_AGGREGATES[-1]}' has never been refreshed; "
+            never = [name for name in USAGE_AGGREGATES if _watermark(conn, name) is None]
+            click.echo(f"{', '.join(repr(n) for n in never)} "
+                       f"{'has' if len(never) == 1 else 'have'} never been refreshed; "
                        f"no month to compare across the usage aggregates.")
         elif differences:
             click.echo(f"Error: the usage aggregates disagree below {cutoff:%Y-%m} "
