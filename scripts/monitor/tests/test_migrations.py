@@ -47,6 +47,9 @@ def _columns(url, table):
         engine.dispose()
 
 
+CACHED_INPUT_DAILY = {"cached_input_price"}
+
+
 SPLIT_DAILY = {"input_tokens", "output_tokens", "input_tokens_covered_until", "output_tokens_covered_until"}
 SPLIT_SAMPLES = {"input_tokens_last_minute", "output_tokens_last_minute"}
 COMBINED_DAILY = {"tokens", "tokens_covered_until"}
@@ -77,3 +80,13 @@ def test_split_tokens_revision_swaps_the_combined_columns_for_the_split(tmp_path
         # The other columns survive; the combined tokens come back empty.
         assert conn.execute(text("SELECT requests, tokens FROM daily_stats WHERE model = 'qwen'")).one() == (10, None)
     engine.dispose()
+
+
+def test_cached_input_price_revision_adds_and_drops_the_column(tmp_path):
+    url = f"sqlite:///{tmp_path / 'monitor.db'}"
+    upgrade(url, "0003")
+    assert not CACHED_INPUT_DAILY & _columns(url, "daily_stats")
+    upgrade(url, "0004")
+    assert CACHED_INPUT_DAILY <= _columns(url, "daily_stats")
+    downgrade(url, "0003")
+    assert not CACHED_INPUT_DAILY & _columns(url, "daily_stats")

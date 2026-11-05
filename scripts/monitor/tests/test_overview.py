@@ -37,7 +37,7 @@ MIDNIGHT = datetime(2026, 10, 17, 5, 0)  # local midnight starting TODAY, as UTC
 def snap_model(model_id="qwen", **extra):
     base = {
         "id": model_id, "description": f"{model_id} description", "status": "ok", "configured": 2, "healthy": 1,
-        "input_price": 0.2, "output_price": 0.8,
+        "input_price": 0.2, "output_price": 0.8, "cached_input_price": 0.05,
         "requests": {"last_minute": 3, "last_hour": 100, "last_day": 2000, "last_month": None},
         "tokens": {"last_minute": 3000, "last_hour": 100000, "last_day": 2000000, "last_month": None},
     }
@@ -225,6 +225,7 @@ def test_prices_modelsdev_and_traffic_columns(env):
     assert row["id"] == "qwen" and row["description"] == "qwen description"
     assert (row["healthy"], row["configured"]) == (1, 2)
     assert (row["input_price"], row["output_price"]) == (0.2, 0.8)
+    assert row["cached_input_price"] == 0.05
     assert (row["modelsdev_input_median"], row["modelsdev_input_p5"], row["modelsdev_input_p95"]) == (0.25, 0.12, 0.4)
     assert (row["modelsdev_output_median"], row["modelsdev_providers"]) == (1.0, 7)
     assert (row["requests_24h"], row["tokens_24h"]) == (2000, 2000000)
@@ -238,6 +239,15 @@ def test_prices_fall_back_to_the_latest_daily_row(env):
     assert (row["input_price"], row["output_price"]) == (0.3, 1.2)
     assert row["tokens_24h"] is None
     assert row["modelsdev_input_median"] is None
+
+
+def test_cached_input_price_falls_back_to_the_latest_daily_row(env):
+    store, sf = env
+    add(sf, lumen_row(TODAY - timedelta(days=1), input_price=0.3, output_price=1.2, cached_input_price=0.06))
+    with sf() as session:
+        (row,) = model_rows(session, store.current, RANGES["24h"], NOW,
+                            [snap_model(input_price=None, output_price=None, cached_input_price=None)])
+    assert (row["input_price"], row["output_price"], row["cached_input_price"]) == (0.3, 1.2, 0.06)
 
 
 def test_no_gpu_config_is_flagged(env):

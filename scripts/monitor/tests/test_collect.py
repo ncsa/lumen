@@ -29,10 +29,11 @@ DAY = date(2026, 10, 17)
 RTX6000_DAY = 625 * 12 / 365 + 0.6 * 24 * 0.24
 
 
-def lumen_model(model_id, input_cost=0.2, output_cost=0.8, healthy=1, parent=None):
+def lumen_model(model_id, input_cost=0.2, output_cost=0.8, cached_input_cost=None, healthy=1, parent=None):
     return {
         "id": model_id, "root": f"org/{model_id}", "parent": parent, "status": "ok",
         "input_cost_per_million": input_cost, "output_cost_per_million": output_cost,
+        "cached_input_cost_per_million": cached_input_cost,
         "instances": {"configured": 1, "healthy": healthy},
         "requests": {"last_minute": 0, "last_hour": 0, "last_day": 0},
     }
@@ -58,7 +59,7 @@ class FakeHttp:
         self.lumen = {"data": [
             lumen_model("qwen"),
             lumen_model("qwen-alias", parent="qwen"),
-            lumen_model("big", input_cost=0.3, output_cost=1.2),
+            lumen_model("big", input_cost=0.3, output_cost=1.2, cached_input_cost=0.05),
             lumen_model("unconfigured"),
         ]}
         self.lumen_status = 200
@@ -115,6 +116,8 @@ def test_price_run_writes_every_source(env, http):
     assert {r.day for r in stored.values()} == {DAY}
 
     assert (stored["qwen", "lumen"].input_price, stored["qwen", "lumen"].output_price) == (0.2, 0.8)
+    assert (stored["big", "lumen"].input_price, stored["big", "lumen"].output_price, stored["big", "lumen"].cached_input_price) == (0.3, 1.2, 0.05)
+    assert stored["qwen", "lumen"].cached_input_price is None
     assert ("qwen-alias", "lumen") not in stored
 
     dev = stored["qwen", "models.dev"]

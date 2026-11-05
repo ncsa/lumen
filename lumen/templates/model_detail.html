@@ -248,6 +248,12 @@
                   <th scope="row" class="text-muted fw-normal ps-3">Input</th>
                   <td class="text-end pe-3">{{ "%.2f"|format(config.input_cost_per_million | float) }} / 1M</td>
                 </tr>
+                {% if config.cached_input_cost_per_million is not none %}
+                <tr>
+                  <th scope="row" class="text-muted fw-normal ps-3">Cached input</th>
+                  <td class="text-end pe-3">{{ "%.2f"|format(config.cached_input_cost_per_million | float) }} / 1M</td>
+                </tr>
+                {% endif %}
                 <tr>
                   <th scope="row" class="text-muted fw-normal ps-3">Output</th>
                   <td class="text-end pe-3">{{ "%.2f"|format(config.output_cost_per_million | float) }} / 1M</td>

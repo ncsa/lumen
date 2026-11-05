@@ -55,6 +55,7 @@ def parse_models(payload: dict) -> list[dict]:
             "healthy": instances.get("healthy"),
             "input_price": _float(row.get("input_cost_per_million")),
             "output_price": _float(row.get("output_cost_per_million")),
+            "cached_input_price": _float(row.get("cached_input_cost_per_million")),
             "requests": _windows(row.get("requests")),
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,

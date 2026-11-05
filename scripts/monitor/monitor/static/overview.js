@@ -15,8 +15,10 @@
     return `${median.toFixed(2)} (${fmtFix(p5, 2)}–${fmtFix(p95, 2)})`;
   }
 
-  function inOut(input, output) {
-    return [el('div', { class: 'io', text: `in ${input}` }), el('div', { class: 'io', text: `out ${output}` })];
+  function inOut(input, output, cached) {
+    const lines = [el('div', { class: 'io', text: `in ${input}` }), el('div', { class: 'io', text: `out ${output}` })];
+    if (cached) lines.push(el('div', { class: 'io', text: `cached in ${cached}` }));
+    return lines;
   }
 
   function cell(content) {
@@ -52,7 +54,7 @@
         cell(strip(m.strip, times)),
         cell(fmtPct(m.uptime)),
         cell(`${m.healthy ?? dash}/${m.configured ?? dash}`),
-        cell(inOut(fmtFix(m.input_price, 2), fmtFix(m.output_price, 2))),
+        cell(inOut(fmtFix(m.input_price, 2), fmtFix(m.output_price, 2), m.cached_input_price != null ? fmtFix(m.cached_input_price, 2) : null)),
         cell(isNum(m.modelsdev_input_median)
           ? inOut(priceRange(m.modelsdev_input_median, m.modelsdev_input_p5, m.modelsdev_input_p95),
             priceRange(m.modelsdev_output_median, m.modelsdev_output_p5, m.modelsdev_output_p95))
