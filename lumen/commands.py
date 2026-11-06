@@ -33,6 +33,7 @@ from lumen.services.erasure import _erase_dependents, _ghost_keys, get_or_create
 from lumen.services.llm import _bump
 from lumen.services.stats_cutover import lock_fold_state
 from lumen.services.stats_fold import TOTALS, fold_increments, window_sums
+from lumen.services.timescale_health import extension_versions
 from lumen.timeutils import as_utc_naive
 
 from .extensions import db
@@ -1688,6 +1689,49 @@ def _backfill_missing_months():
                     raise SystemExit(1)
 
 
+_EXTENSION_OWNER_SQL = text(
+    "SELECT r.rolname, current_database() FROM pg_extension e "
+    "JOIN pg_roles r ON r.oid = e.extowner WHERE e.extname = 'timescaledb'"
+)
+
+
+def _extension_owner_and_database(session):
+    """The role that owns ``timescaledb`` and the current database, from the catalog."""
+    return tuple(session.execute(_EXTENSION_OWNER_SQL).one())
+
+
+def _warn_if_timescaledb_behind():
+    """Print the exact ``ALTER EXTENSION timescaledb UPDATE`` command when the extension is behind.
+
+    Advisory only: it never runs the command (the update is one-way and stays a
+    deliberate operator step) and never fails the upgrade. Prints nothing on SQLite,
+    without the extension, or when the installed version is the server's. A
+    database error is rolled back and reported as one note. The ``-U``/``-d``
+    values are the extension's owner and the database read from the catalog,
+    since the connecting user need not own the extension.
+    """
+    if db.engine.dialect.name != "postgresql":
+        return
+    try:
+        installed, available = extension_versions(db.session)
+        if not (installed and available and installed != available):
+            return
+        owner, database = _extension_owner_and_database(db.session)
+    except DBAPIError as exc:
+        click.echo(f"Note: could not check the TimescaleDB extension version: {exc.orig}")
+        return
+    finally:
+        # Read-only: also ends a failed transaction, and leaves none idle.
+        db.session.rollback()
+    psql = f"psql -X -U {owner} -d {database} -c 'ALTER EXTENSION timescaledb UPDATE;'"
+    click.echo(f"WARNING: TimescaleDB extension is {installed} but the server has {available}. "
+               "Back up the database, then run as the first command of a fresh session:")
+    click.echo(f"  {psql}")
+    click.echo(f"  Compose: docker compose exec postgres {psql}")
+    click.echo(f"  Helm (bundled PostgreSQL): kubectl exec -it <fullname>-postgresql-0 -- {psql}")
+    click.echo('See "Upgrading TimescaleDB" in docs/admin/commands.md.')
+
+
 # Run in order after the migrations, each only once the previous one succeeded. Every
 # step must be safe to re-run and finish what an earlier, failed run left undone.
 POST_MIGRATION_STEPS = (_backfill_missing_months,)
@@ -1698,13 +1742,16 @@ POST_MIGRATION_STEPS = (_backfill_missing_months,)
 def upgrade_cmd():
     """Bring the database up to date for this image, then exit.
 
-    Applies every migration (``flask db upgrade`` to head), then runs the
-    post-migration data steps: today, the backfill of the usage aggregates' missing
-    months. Stops at the first failure with exit 1; running it again resumes. This is
-    the one-shot upgrade step that runs before the app starts.
+    Applies every migration (``flask db upgrade`` to head), warns with the exact
+    ``ALTER EXTENSION timescaledb UPDATE`` command when the TimescaleDB extension is
+    older than the server's (advisory: it never runs it and never fails), then runs
+    the post-migration data steps: today, the backfill of the usage aggregates'
+    missing months. Stops at the first failure with exit 1; running it again
+    resumes. This is the one-shot upgrade step that runs before the app starts.
     """
     click.echo("Applying migrations ...")
     migrate_upgrade()
+    _warn_if_timescaledb_behind()
     for step in POST_MIGRATION_STEPS:
         step()
     click.echo("Upgrade complete.")
