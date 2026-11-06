@@ -1,8 +1,7 @@
 # Operator Commands
 
 Lumen ships these `flask` commands for operators. In a deployment, give the command to the image
-as its argument (see [Running commands in a deployment](#running-commands-in-a-deployment)); in a
-local checkout, run `uv run flask --app run <command>`. This page writes them as `flask <command>`
+as its argument; in a local checkout, run `uv run flask --app run <command>`. This page writes them as `flask <command>`
 for short. `flask --app run <command> --help` prints the same usage and options as this page.
 
 | Command | What it does |
@@ -84,13 +83,10 @@ the first failure with exit 1:
    run left undone, so running `flask upgrade` again resumes. Today there is one: the **aggregate
    backfill by missing month** of the five usage aggregates.
 
-For the extension check, the `-U` and `-d` values are read from the catalog: the role that owns the
-`timescaledb` extension (the connecting user need not own it) and the current database. Both are
-shell-quoted, so a name with spaces or shell metacharacters stays one argument when pasted; simple
-names such as `lumen` print unchanged. Lumen cannot tell how it was deployed, so it prints the plain
-`psql` command (also the one to use with an external database), the Compose form and the Helm form
-for the bundled PostgreSQL (`<fullname>` is the release's full name). With extension 2.26.0 on a
-2.31.0 server, owned by `lumen` in database `lumen`:
+For the extension check, the `-U` and `-d` values (the role that owns the `timescaledb` extension
+and the current database) are read from the catalog and shell-quoted, and the WARNING prints the
+plain `psql` command, the Compose form and the Helm form. With extension 2.26.0 on a 2.31.0 server,
+owned by `lumen` in database `lumen`:
 
 ```text
 WARNING: TimescaleDB extension is 2.26.0 but the server has 2.31.0. Back up the database, then run as the first command of a fresh session:
@@ -104,14 +100,10 @@ It prints nothing on SQLite, without the extension, or when the versions match. 
 cannot be read, it prints one `Note: could not check the TimescaleDB extension version: …` line and
 the upgrade continues.
 
-The backfill walks the usage aggregates child before parent, in this order, because an aggregate
-built on another one is computed from that child's materialised rows:
-
-1. `request_counts_hourly_by_entity`
-2. `request_counts_daily_by_entity` (built on `request_counts_hourly_by_entity`)
-3. `request_counts_hourly` (built on `request_counts_hourly_by_entity`)
-4. `request_counts_hourly_total` (built on `request_counts_hourly`)
-5. `request_counts_daily` (built on `request_counts_hourly`)
+The backfill walks the usage aggregates child before parent, in the
+[refresh order](#backfill-aggregate): `request_counts_hourly_by_entity`,
+`request_counts_daily_by_entity`, `request_counts_hourly`, `request_counts_hourly_total`,
+`request_counts_daily`.
 
 An aggregate missing from the database is skipped. Migrations create new aggregates `WITH NO DATA`
 and rely on this step to fill them.
@@ -121,8 +113,9 @@ up to the aggregate's refresh horizon: now, less the refresh policy's end offset
 whole bucket. Buckets after the horizon are not materialised yet, and are served from raw rows. A month is *missing* when it has raw rows but no materialised bucket, and
 *partly covered* when its first materialised bucket is later than the bucket of its first raw row,
 at the aggregate's own bucket width (the refresh policy only ever materialises a trailing window, so
-it can leave the head of a month behind). Each such month is refreshed over the whole month, oldest
-first, up to now, with the same lock retries as `backfill-aggregate`. When every month is covered it
+it can leave the head of a month behind). Each such month is refreshed, oldest first, from its first
+day, or from the aggregate's retention boundary when that falls inside the month, to the month's end
+or up to now, with the same lock retries as `backfill-aggregate`. When every month is covered it
 costs two indexed reads per month and refreshes nothing. A month that still fails after the retries
 ends the run with exit 1; the next run checks again and starts at the first month still missing. A
 hole in the middle of a month is not detected: `flask backfill-aggregate --name NAME --from YYYY-MM`
@@ -130,14 +123,7 @@ fixes that by hand.
 
 The backfill is skipped on SQLite and on a database without TimescaleDB. If `request_logs` has a
 retention policy it is skipped too: it logs the same ERROR as the startup check and does not fail
-the upgrade. Months before an aggregate's own retention boundary, if it has one, are left out.
-
-**Not done by `upgrade`: updating the TimescaleDB extension.** After you bump the TimescaleDB image,
-`ALTER EXTENSION timescaledb UPDATE` is a separate, manual step; see
-[Upgrading TimescaleDB](#upgrading-timescaledb).
-
-When the image runs a command (`docker run <image> upgrade` and the like), `PGCONNECT_TIMEOUT`
-defaults to `10` (a value you set is kept), so a database host that never answers cannot hang it.
+the upgrade. Months entirely before an aggregate's own retention boundary, if it has one, are skipped.
 
 ## `wait-for-migrations`
 
@@ -153,10 +139,11 @@ flask wait-for-migrations [--timeout SECONDS]
 
 It compares the heads of the bundled migrations with the revision stamped in the database, connecting
 the same way `flask db upgrade` does (including `database.url` from `config.yaml`). While the database
-is behind, empty or unreachable it logs the current and expected revisions and retries every 2 seconds;
-about every 30 seconds it logs a reminder to run the upgrade step (the image with `upgrade`, the
-`lumen-upgrade` Compose service, or the Helm migration Job). A revision this image does not know means a
-newer image already migrated the database, so it exits 1 at once. It never migrates anything.
+is behind, empty or unreachable it checks again every 2 seconds, logs the current and expected
+revisions only when they change, and about every 30 seconds logs a reminder to run the upgrade step
+(the image with `upgrade`, the `lumen-upgrade` Compose service, or the Helm migration Job). A
+revision this image does not know means a newer image already migrated the database, so it exits
+1 at once. It never migrates anything.
 
 Two separate time budgets apply to a PostgreSQL server that accepts connections but never answers:
 
@@ -170,7 +157,7 @@ Two separate time budgets apply to a PostgreSQL server that accepts connections 
   unless you set it yourself.
 
 The image's default (serve) mode runs this command, with no `--timeout`, before it starts uvicorn,
-with the same `PGCONNECT_TIMEOUT` default (for the gate only; uvicorn gets your environment as is).
+with the same `PGCONNECT_TIMEOUT` default, for the gate only.
 
 ## `backfill-aggregate`
 
@@ -214,9 +201,15 @@ TimescaleDB refuses an *overlapping* refresh outright rather than queueing behin
 landing while a scheduled policy job is mid-refresh fails immediately with `SQLSTATE 55P03`
 (`LockNotAvailable`). `request_metrics_1m`'s policy fires every minute, so a long backfill will meet
 one; each month is retried for up to 60 seconds and the line reports `(after N lock retries)`. Every
-month that succeeds is printed with `OK`, and a month that fails outright prints the exact
-`--from` to resume with. Re-running an already-refreshed month is safe: it recomputes that window
-from its source and overwrites it, so resuming never double-counts.
+month that succeeds is printed with `OK`, except a month younger than one bucket, which prints
+`skipped (less than one bucket old; served live by real-time aggregation)`; a month that fails
+outright prints the exact `--from` to resume with. Re-running an already-refreshed month is safe:
+it recomputes that window from its source and overwrites it, so resuming never double-counts.
+
+It exits 1 with `Error: '<name>' is not a continuous aggregate in this database.` for an unknown
+`--name`, and with `Error: --from must be YYYY-MM, got '<value>'.` for a malformed `--from`. With no
+`--from` and an empty `request_logs`, it prints `request_logs is empty; nothing to backfill.` and
+exits 0.
 
 ## `check-aggregate`
 
@@ -235,18 +228,127 @@ printing the `flask backfill-aggregate --from YYYY-MM` that fixes it; until then
 are missing that history. It also checks every month by the rule [`flask upgrade`](#upgrade)
 backfills by, and exits 1 listing each month that is *missing* (raw rows, no materialised bucket) or
 *partly covered* (its first materialised bucket is later than the bucket of its first raw row), with
-both timestamps; `flask upgrade` fixes them. The month check runs for all five aggregates, each at
+both timestamps; `flask upgrade`, or `flask backfill-aggregate [--name <view>] --from YYYY-MM` from
+the first listed month, fixes them. The month check runs for all five aggregates, each at
 its own bucket width. For every month before the one holding the lowest of their watermarks it then
 compares the monthly `requests`, `input_tokens`, `output_tokens` and `cost` of the five aggregates'
 materialised rows, and exits 1 listing each month and column that differ: the other views are sums
-of the entity aggregate, so a difference is drift. It also exits 1 if a retention policy exists on
-`request_logs`, and prints the `SELECT remove_retention_policy('request_logs');` that removes it.
+of the entity aggregate, so a difference is drift. To fix drift, refresh those months bottom-up
+with `flask backfill-aggregate --name <view> --from YYYY-MM`, from the first listed month, for each
+usage aggregate in the [refresh order](#backfill-aggregate). It also exits 1 if a retention policy
+exists on `request_logs`, and prints the `SELECT remove_retention_policy('request_logs');` that removes it.
 If one of the five aggregates does not exist, it exits 1 at once with
 `Error: '<name>' does not exist. Run 'flask db upgrade' first.`
 
 When every check passes it exits 0, and its last line is
 `Usage aggregates agree on every month before YYYY-MM.` (on an install with no requests yet, a note
 that the aggregates have never been refreshed). Run it before upgrading.
+
+## `check-stats`
+
+Compares the folded usage totals with `request_logs` since the stats cutover, which the upgrade
+sets automatically. Only the rows billing left to the fold (`stats_deferred`) are compared.
+
+```bash
+flask check-stats [--fix]
+```
+
+| Flag | Meaning |
+|---|---|
+| `--fix` | Add each difference to the totals. |
+
+Every difference is printed per `model_stats` / `entity_stats` row, and the command exits 1. A
+difference means requests the fold missed, such as a billing transaction that committed more than
+`stats.fold_lag` after its timestamp. `--fix` adds each difference to the totals instead. Before the
+cutover it does nothing. It scans every `request_logs` row since the cutover and holds the fold
+state while it does, so on a large install run it at a quiet time: the fold waits until it finishes.
+Do not run it while a [`flask reassign-model`](#reassign-model) is in progress: until that command
+merges `model_stats` at its end, the check reports differences that are not drift, and `--fix`
+would count them twice.
+
+## `init-db`
+
+Syncs the models (`model_configs`, their endpoints and `model_aliases`) from `config.yaml` to the
+database, disables the models no longer in the file, then exits. If the aliases are invalid, it
+fails before writing anything.
+
+```bash
+flask init-db
+```
+
+You rarely need it: the app syncs the models on every start, and the config watcher syncs them
+whenever `config.yaml` changes (see [Hot Reload](config.md#hot-reload)). Use it to push a model
+change to the database without waiting for the watcher or restarting. It does not update in-memory
+settings like `APP_NAME` or `CHAT_CONVERSATION_REMOVE_MODE`; those only update when the watcher
+picks up the change or the app restarts.
+
+## `reassign-model`
+
+Moves all conversations, stats and request history from one model to another.
+
+```bash
+flask reassign-model FROM_ID TO_ID
+```
+
+`FROM_ID` and `TO_ID` are `model_configs.id` values. It refuses, with exit 1, when `FROM_ID` and
+`TO_ID` are the same model_config id or either id does not exist. The `FROM` row in `model_configs`
+is left as it is. The command moves:
+
+- the conversations that use `FROM`,
+- its `request_logs` rows,
+- its `model_stats` rows, merged into `TO`'s where both have one for the same entity and source.
+
+On PostgreSQL it then refreshes the affected aggregates from `FROM`'s first request onwards.
+
+It is not atomic on PostgreSQL: `request_logs` moves one chunk per transaction, so a failure partway
+leaves the history split between `FROM` and `TO`. It is safe to re-run: the same command picks up
+where the last one stopped. Run it off-hours for a model with a large history, and retire `FROM` in
+`config.yaml` first so no new requests are logged against it while it runs. It refuses to run while
+`request_logs` has a retention policy. Do not run [`check-stats`](#check-stats) at the same time.
+
+## `erase-entity`
+
+Hard-deletes a user for GDPR erasure. It cannot be undone; run it off-hours.
+
+```bash
+flask erase-entity ENTITY_ID [--yes]
+```
+
+| Flag | Meaning |
+|---|---|
+| `--yes` | Erase without asking for confirmation. Only for scripts. |
+
+`ENTITY_ID` is the user's `entities.id`. Run it without `--yes` first: it prints which groups will
+be left without an owner, then names the user and asks before it changes anything:
+
+```text
+Erasing user 42
+  groups that will be left without an owner: physics-lab
+Erase user 42: Jane Doe <jane@example.edu>? This deletes the user and cannot be undone. Continue? [y/N]:
+```
+
+The name and email are shown only in the confirmation prompt, so a `--yes` run logs only the id;
+run it interactively with `docker run --rm -it` so the container, and the prompt in its log, is
+removed afterwards.
+
+`y` or `yes` (any case) continues; `n`, `no` or Enter prints `Aborted.` and exits 1 with nothing
+changed; any other answer asks again. Use `--yes` only in a script that has already checked the id.
+
+It deletes the user's conversations, messages, auth requests, balance, limits, model consents,
+group and project memberships. It moves the user's request history, usage stats and models
+(disabled) to the shared ghost user, and the user's API keys too, revoked and anonymised. Groups the
+user owned are left without an owner. Only users can be erased: it refuses a project, the ghost, a
+user who still owns a project (transfer ownership first), and runs only while `request_logs` has no
+retention policy.
+
+On PostgreSQL `request_logs` moves one chunk per transaction, and each UPDATE can decompress a whole
+chunk, hence off-hours. It is safe to re-run: an interrupted run leaves every row owned by the user
+or the ghost, and re-running with the same id, even after the user is deleted, finishes the
+aggregate refresh.
+
+What is deleted and what moves, table by table, is in
+[Erasing a user](https://ncsa.github.io/lumen/dbschema/#erasing-a-user-gdpr) in the database schema
+reference.
 
 ## Upgrading TimescaleDB
 
@@ -295,107 +397,3 @@ At startup, and then periodically in every worker process (see "Prometheus metri
 extension version, the `request_logs` hypertable, the continuous aggregates and their background
 jobs. It logs a WARNING per problem (ERROR when the extension or the hypertable is missing, or when
 `request_logs` has a retention policy) and never blocks startup.
-
-## `check-stats`
-
-Compares the folded usage totals with `request_logs` since the stats cutover, which the upgrade
-sets automatically. Only the rows billing left to the fold (`stats_deferred`) are compared.
-
-```bash
-flask check-stats [--fix]
-```
-
-| Flag | Meaning |
-|---|---|
-| `--fix` | Add each difference to the totals. |
-
-Every difference is printed per `model_stats` / `entity_stats` row, and the command exits 1. A
-difference means requests the fold missed, such as a billing transaction that committed more than
-`stats.fold_lag` after its timestamp. `--fix` adds each difference to the totals instead. Before the
-cutover it does nothing. It scans every `request_logs` row since the cutover and holds the fold
-state while it does, so on a large install run it at a quiet time: the fold waits until it finishes.
-Do not run it while a [`flask reassign-model`](#reassign-model) is in progress: until that command
-merges `model_stats` at its end, the check reports differences that are not drift, and `--fix`
-would count them twice.
-
-## `init-db`
-
-Syncs the models (`model_configs` and their endpoints) from `config.yaml` to the database, then
-exits.
-
-```bash
-flask init-db
-```
-
-You rarely need it: the app syncs the models on every start, and the config watcher syncs them
-whenever `config.yaml` changes (see [Hot Reload](config.md#hot-reload)). Use it to push a model
-change to the database without waiting for the watcher or restarting. It does not update in-memory
-settings like `APP_NAME` or `CHAT_CONVERSATION_REMOVE_MODE`; those only update when the watcher
-picks up the change or the app restarts.
-
-## `reassign-model`
-
-Moves all conversations, stats and request history from one model to another.
-
-```bash
-flask reassign-model FROM_ID TO_ID
-```
-
-`FROM_ID` and `TO_ID` are `model_configs.id` values. The `FROM` row in `model_configs` is left as
-it is. The command moves:
-
-- the conversations that use `FROM`,
-- its `request_logs` rows,
-- its `model_stats` rows, merged into `TO`'s where both have one for the same entity and source.
-
-On PostgreSQL it then refreshes the affected aggregates from `FROM`'s first request onwards.
-
-It is not atomic on PostgreSQL: `request_logs` moves one chunk per transaction, so a failure partway
-leaves the history split between `FROM` and `TO`. It is safe to re-run: the same command picks up
-where the last one stopped. Run it off-hours for a model with a large history, and retire `FROM` in
-`config.yaml` first so no new requests are logged against it while it runs. It refuses to run while
-`request_logs` has a retention policy. Do not run [`check-stats`](#check-stats) at the same time.
-
-## `erase-entity`
-
-Hard-deletes a user for GDPR erasure. It cannot be undone; run it off-hours.
-
-```bash
-flask erase-entity ENTITY_ID [--yes]
-```
-
-| Flag | Meaning |
-|---|---|
-| `--yes` | Erase without asking for confirmation. Only for scripts. |
-
-`ENTITY_ID` is the user's `entities.id`. Run it without `--yes` first: it prints which groups will
-be left without an owner, and asks before it changes anything, naming who will be erased:
-
-```text
-Erasing user 42
-  groups that will be left without an owner: physics-lab
-Erase user 42: Jane Doe <jane@example.edu>? This deletes the user and cannot be undone. Continue? [y/N]:
-```
-
-The name and email are shown only in the confirmation prompt, so a `--yes` run logs only the id;
-run it interactively with `docker run --rm -it` so the container, and the prompt in its log, is
-removed afterwards.
-
-Anything but `y` prints `Aborted.` and exits 1 with nothing changed. Use `--yes` only in a script
-that has already checked the id.
-
-It deletes the user's conversations, messages, auth requests, balance, limits, model consents,
-group and project memberships. It moves the user's request history, usage stats and models
-(disabled) to the shared ghost user, and the user's API keys too, revoked and anonymised. Groups the
-user owned are left without an owner. Only users can be erased: it refuses a project, the ghost, a
-user who still owns a project (transfer ownership first), and runs only while `request_logs` has no
-retention policy.
-
-On PostgreSQL `request_logs` moves one chunk per transaction, and each UPDATE can decompress a whole
-chunk, hence off-hours. It is safe to re-run: an interrupted run leaves every row owned by the user
-or the ghost, and re-running with the same id, even after the user is deleted, finishes the
-aggregate refresh.
-
-What is deleted and what moves, table by table, is in
-[Erasing a user](https://ncsa.github.io/lumen/dbschema/#erasing-a-user-gdpr) in the database schema
-reference.
