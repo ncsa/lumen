@@ -5,6 +5,7 @@ import shlex
 import shutil
 import tempfile
 import time
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from email.utils import parsedate_to_datetime
@@ -393,6 +394,62 @@ def init_db_cmd():
     click.echo("Database synced from config.yaml.")
 
 
+#: PostgreSQL advisory lock key shared by reassign-model, erase-entity and
+#: check-stats, so none of them runs while another one does. Any fixed bigint no
+#: other code in the database uses (token_refill uses 7_172_093_405_172).
+STATS_WALK_LOCK_KEY = 7_172_093_405_173
+
+#: What reassign-model and erase-entity print when the lock is taken.
+WALK_LOCK_HELD = "Error: a reassign-model, erase-entity or check-stats is already running; retry when it finishes."
+
+
+@contextmanager
+def stats_walk_lock():
+    """Hold the advisory lock shared by reassign-model, erase-entity and check-stats.
+
+    Yields whether it got the lock; it never waits. On PostgreSQL the lock is
+    session-level, on a connection of its own committed right after the lock
+    call, so it stays held while the command commits on db.session, and a
+    crashed command releases it when its connection drops. Callers take it
+    before lock_fold_state, never after. On SQLite it yields True: reassign-model
+    and erase-entity move every row under the fold lock there, so there is no
+    unlocked walk to keep check-stats away from.
+    """
+    if db.engine.dialect.name != "postgresql":
+        yield True
+        return
+    conn = db.engine.connect()
+    try:
+        acquired = conn.execute(
+            text("SELECT pg_try_advisory_lock(:key)"), {"key": STATS_WALK_LOCK_KEY}
+        ).scalar_one()
+        conn.commit()
+    except Exception:
+        # The lock may be held without us knowing; dropping the connection frees it.
+        conn.invalidate()
+        conn.close()
+        raise
+    if not acquired:
+        conn.close()
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        _release_stats_walk_lock(conn)
+
+
+def _release_stats_walk_lock(conn):
+    """Unlock and close; if the unlock fails, drop the connection so the lock dies with it."""
+    try:
+        conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": STATS_WALK_LOCK_KEY})
+        conn.commit()
+    except Exception:
+        conn.invalidate()
+    finally:
+        conn.close()
+
+
 @click.command("reassign-model")
 @click.argument("from_id", type=int)
 @click.argument("to_id", type=int)
@@ -408,7 +465,19 @@ def reassign_model_cmd(from_id, to_id):
     re-run: the same command picks up where the last one stopped. Run it off-hours
     for a model with a large history, and retire FROM in config.yaml first so no new
     requests are logged against it while it runs.
+
+    On PostgreSQL reassign-model, erase-entity and check-stats do not run at the
+    same time: check-stats skips, the other two exit with an error.
     """
+    with stats_walk_lock() as acquired:
+        if not acquired:
+            click.echo(WALK_LOCK_HELD)
+            raise SystemExit(1)
+        _reassign_model(from_id, to_id)
+
+
+def _reassign_model(from_id, to_id):
+    """reassign-model itself, run under stats_walk_lock."""
     from lumen.models.conversation import Conversation
     from lumen.models.request_log import RequestLog
 
@@ -709,11 +778,23 @@ def check_stats_cmd(fix):
     fold state meanwhile, so no fold pass runs in the middle. Scans every
     request_logs row since the cutover. Does nothing before the cutover.
 
-    Do not run it while reassign-model is moving request_logs: rows already
-    moved to TO count for TO, while FROM's folded part is merged only at the
-    end, so the check reports differences that are not drift, and --fix would
-    count them twice.
+    On PostgreSQL reassign-model, erase-entity and check-stats do not run at
+    the same time: check-stats skips, the other two exit with an error. While
+    either of the other two moves request_logs, rows already moved count for
+    their target, whose folded part is merged only at the end, so a check then
+    would report differences that are not drift, and --fix would count them
+    twice. A skipped run prints "Skipped" and exits 0.
     """
+    with stats_walk_lock() as acquired:
+        if not acquired:
+            click.echo("Skipped: a reassign-model or erase-entity (or another check-stats) is running; "
+                       "run check-stats after it finishes.")
+            return
+        _check_stats(fix)
+
+
+def _check_stats(fix):
+    """check-stats itself, run under stats_walk_lock."""
     cutover_at, folded_until = lock_fold_state()
     if cutover_at is None:
         db.session.rollback()
@@ -766,7 +847,19 @@ def erase_entity_cmd(entity_id, yes):
     decompress a whole chunk, hence off-hours. Safe to re-run: an interrupted run
     leaves every row owned by the user or the ghost, and re-running with the same id,
     even after the user is deleted, finishes the aggregate refresh.
+
+    On PostgreSQL reassign-model, erase-entity and check-stats do not run at the
+    same time: check-stats skips, the other two exit with an error.
     """
+    with stats_walk_lock() as acquired:
+        if not acquired:
+            click.echo(WALK_LOCK_HELD)
+            raise SystemExit(1)
+        _erase_entity(entity_id, yes)
+
+
+def _erase_entity(entity_id, yes):
+    """erase-entity itself, run under stats_walk_lock."""
     postgres = db.engine.dialect.name == "postgresql"
     if postgres:
         with db.engine.connect() as conn:

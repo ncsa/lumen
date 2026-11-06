@@ -14,10 +14,13 @@ production: the thing under test is the command the container actually runs.
 import os
 import subprocess
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, text
+
+from lumen.commands import STATS_WALK_LOCK_KEY
 
 # Set by CI (see .github/workflows/test.yml). Absent locally unless a developer
 # exports it, in which case these tests skip rather than fail.
@@ -175,3 +178,27 @@ def pg_migrated_isolated(_pg_template):
             ), {"n": name})
             conn.execute(text(f'DROP DATABASE IF EXISTS "{name}"'))
         admin.dispose()
+
+
+@contextmanager
+def holding_stats_walk_lock(engine):
+    """Hold the advisory lock reassign-model, erase-entity and check-stats share,
+    on a connection of its own, as another of those commands would."""
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": STATS_WALK_LOCK_KEY}).scalar()
+        conn.commit()
+        try:
+            yield
+        finally:
+            conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": STATS_WALK_LOCK_KEY})
+            conn.commit()
+
+
+def stats_walk_lock_is_free(engine):
+    """Whether no session holds the shared advisory lock: takes it and gives it back."""
+    with engine.connect() as conn:
+        free = conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": STATS_WALK_LOCK_KEY}).scalar()
+        if free:
+            conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": STATS_WALK_LOCK_KEY})
+        conn.commit()
+        return free

@@ -28,10 +28,10 @@ import pytest
 from sqlalchemy import create_engine, exc, text
 
 from lumen import commands
-from lumen.commands import reassign_model_cmd
+from lumen.commands import WALK_LOCK_HELD, check_stats_cmd, reassign_model_cmd
 from tests.conftest import no_snapshot_refresher
 
-from .conftest import TEST_CONFIG
+from .conftest import TEST_CONFIG, holding_stats_walk_lock, stats_walk_lock_is_free
 
 pytestmark = pytest.mark.postgres
 
@@ -323,6 +323,7 @@ def test_resumes_after_a_chunk_fails(pg_app, engine):
     assert result.exit_code == 1, result.output
     assert "Chunks done: " in result.output
     assert "re-run" in result.output
+    assert stats_walk_lock_is_free(engine), "the failed run kept the advisory lock"
     assert 0 < _raw(engine, from_id) < OLD_ROWS + RECENT_ROWS, "the failure did not land between the two chunks"
 
     result = _run(pg_app, from_id, to_id)
@@ -389,3 +390,39 @@ def test_refuses_with_a_retention_policy_on_request_logs(pg_app, engine):
     assert result.exit_code == 1, result.output
     assert "flask check-aggregate" in result.output
     assert _raw(engine, from_id) == 1, "rows moved before the refusal"
+
+
+def test_refuses_while_the_stats_walk_lock_is_held(pg_app, engine):
+    """Another reassign-model, an erase-entity or a check-stats holds the lock: exit 1, nothing moved."""
+    from_id, to_id = _models(engine)
+    _seed(engine, from_id, "2 days", 1)
+    with holding_stats_walk_lock(engine):
+        result = _run(pg_app, from_id, to_id)
+    assert result.exit_code == 1, result.output
+    assert WALK_LOCK_HELD in result.output
+    assert _raw(engine, from_id) == 1 and _raw(engine, to_id) == 0, "rows moved while the lock was held"
+
+    result = _run(pg_app, from_id, to_id)
+    assert result.exit_code == 0, result.output
+    assert _raw(engine, from_id) == 0 and _raw(engine, to_id) == 1
+    assert stats_walk_lock_is_free(engine), "the successful run kept the advisory lock"
+
+
+def test_refuses_while_check_stats_runs(pg_app, engine):
+    """A reassign-model started in the middle of a check-stats exits 1 and moves nothing."""
+    from_id, to_id = _models(engine)
+    _seed(engine, from_id, "2 days", 1)
+    inner = []
+    real = commands.window_sums
+
+    def reassign_meanwhile(*args):
+        inner.append(_run(pg_app, from_id, to_id))
+        return real(*args)
+
+    with patch.object(commands, "window_sums", side_effect=reassign_meanwhile):
+        check = pg_app.test_cli_runner().invoke(check_stats_cmd, [])
+    assert inner, f"check-stats never reached its scan: {check.output}"
+    assert inner[0].exit_code == 1, inner[0].output
+    assert WALK_LOCK_HELD in inner[0].output
+    assert _raw(engine, from_id) == 1, "rows moved while check-stats ran"
+    assert stats_walk_lock_is_free(engine), "check-stats kept the advisory lock"
