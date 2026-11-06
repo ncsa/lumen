@@ -415,7 +415,7 @@ def stats_walk_lock():
     and erase-entity move every row under the fold lock there, so there is no
     unlocked walk to keep check-stats away from.
     """
-    if db.engine.dialect.name != "postgresql":
+    if True:  # MUTATION A: lock bypassed
         yield True
         return
     conn = db.engine.connect()
