@@ -771,6 +771,17 @@ def test_config_page_renders_auto_price_checkbox(admin_client):
     assert "function syncAutoPriceFields()" in html
 
 
+def test_config_page_renders_cached_input_price_box(admin_client):
+    """The model form has a Cached Input Cost box; unset rates default to the input price."""
+    html = admin_client.get("/admin/config").get_data(as_text=True)
+    assert "field('mdl-cached-in-cost','Cached Input Cost / 1M tokens ($)'," in html
+    assert "defaults to input price when unset" in html
+    assert re.search(r"m\.cached_input_cost_per_million\s*=\s*numVal\('mdl-cached-in-cost'\);", html)
+    # FIELD_LABELS covers the new key in the Update toast; audio pricing stays wired.
+    assert "cached_input_cost_per_million: 'cached input price'," in html
+    assert "syncAudioCostField()" in html
+
+
 def test_config_post_round_trips_auto_price(app, admin_client, tmp_path):
     """Saving writes ``auto_price: true`` for ticked models and omits it for the rest."""
     config = """\
@@ -803,6 +814,42 @@ models:
         saved = yaml.safe_load(cfg.read_text())
         assert saved["models"][0]["auto_price"] is True
         assert "auto_price" not in saved["models"][1]
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
+def test_config_post_round_trips_cached_input_price(app, admin_client, tmp_path):
+    """A model's cached input rate survives a save; unset models stay without the key."""
+    config = """\
+version: 3
+app:
+  name: Lumen
+  secret_key: real-secret
+models:
+  - name: cached-model
+    input_cost_per_million: 1
+    output_cost_per_million: 2
+    cached_input_cost_per_million: 0.1
+    endpoints:
+      - url: https://api.example.com/v1
+        api_key: sk-real
+  - name: plain-model
+    input_cost_per_million: 3
+    output_cost_per_million: 4
+    endpoints:
+      - url: https://api.example.com/v1
+        api_key: sk-real
+"""
+    original, cfg = _use_config(app, tmp_path, config)
+    try:
+        data = admin_client.get("/admin/api/config").get_json()
+        assert data["models"][0]["cached_input_cost_per_million"] == 0.1
+        assert "cached_input_cost_per_million" not in data["models"][1]
+        resp = admin_client.post("/admin/api/config", json=data)
+        assert resp.status_code == HTTPStatus.OK
+        saved = yaml.safe_load(cfg.read_text())
+        assert saved["models"][0]["cached_input_cost_per_million"] == 0.1
+        assert "cached_input_cost_per_million" not in saved["models"][1]
     finally:
         app.config["CONFIG_YAML"] = original
 

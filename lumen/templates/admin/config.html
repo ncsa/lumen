@@ -657,8 +657,9 @@ function renderModelForm(m, idx) {
     ${card('Pricing & Limits', `
       ${row3(field('mdl-in-cost', 'Input Cost / 1M tokens ($)',  ni('mdl-in-cost',  m.input_cost_per_million)),
              field('mdl-out-cost','Output Cost / 1M tokens ($)', ni('mdl-out-cost', m.output_cost_per_million)),
-             field('mdl-audio-cost','Audio Cost / hour ($)', ni('mdl-audio-cost', m.audio_cost_per_hour), 'speech-to-text only'))}
+             field('mdl-cached-in-cost','Cached Input Cost / 1M tokens ($)', ni('mdl-cached-in-cost', m.cached_input_cost_per_million), 'defaults to input price when unset'))}
       <div class="mb-3 d-flex align-items-baseline gap-2">${cbi('mdl-autoprice', !!m.auto_price, 'Automatic price (from models.dev)', ' onchange="syncAutoPriceFields()"')}<span class="text-muted small fst-italic">set from models.dev on Update</span></div>
+      ${field('mdl-audio-cost','Audio Cost / hour ($)', ni('mdl-audio-cost', m.audio_cost_per_hour), 'speech-to-text only')}
       ${row3(field('mdl-ctx',    'Context Window (tokens)', ni('mdl-ctx',    m.context_window,  '1')),
              field('mdl-maxout', 'Max Output Tokens',       ni('mdl-maxout', m.max_output_tokens,'1')),
              field('mdl-cutoff', 'Knowledge Cutoff',        ti('mdl-cutoff', m.knowledge_cutoff, 'YYYY-MM')))}
@@ -743,6 +744,7 @@ function collectCurrentModel() {
   m.end_date               = val('mdl-enddate')  || undefined;
   m.input_cost_per_million = numVal('mdl-in-cost');
   m.output_cost_per_million= numVal('mdl-out-cost');
+  m.cached_input_cost_per_million = numVal('mdl-cached-in-cost');
   m.auto_price             = boolVal('mdl-autoprice') || undefined;
   m.audio_cost_per_hour    = $('mdl-in-audio')?.checked ? numVal('mdl-audio-cost') : undefined;
   m.context_window         = numVal('mdl-ctx');
@@ -799,6 +801,7 @@ async function syncModel() {
       max_output_tokens: 'max output',
       input_cost_per_million: 'input price',
       output_cost_per_million: 'output price',
+      cached_input_cost_per_million: 'cached input price',
       knowledge_cutoff: 'cutoff',
       supports_reasoning: 'reasoning',
       input_modalities: 'input modalities',
@@ -833,7 +836,7 @@ async function syncAllModels() {
   btnOne.disabled = true;
   const FIELD_LABELS = {
     context_window: 'context size', max_output_tokens: 'max output',
-    input_cost_per_million: 'input price', output_cost_per_million: 'output price',
+    input_cost_per_million: 'input price', output_cost_per_million: 'output price', cached_input_cost_per_million: 'cached input price',
     knowledge_cutoff: 'cutoff', supports_reasoning: 'reasoning',
     input_modalities: 'input modalities', output_modalities: 'output modalities',
   };
