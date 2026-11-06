@@ -368,14 +368,18 @@ flask erase-entity ENTITY_ID [--yes]
 |---|---|
 | `--yes` | Erase without asking for confirmation. Only for scripts. |
 
-`ENTITY_ID` is the user's `entities.id`. Run it without `--yes` first: it prints who will be
-erased, and which groups will be left without an owner, and asks before it changes anything:
+`ENTITY_ID` is the user's `entities.id`. Run it without `--yes` first: it prints which groups will
+be left without an owner, and asks before it changes anything, naming who will be erased:
 
 ```text
-Erasing user 42: Jane Doe <jane@example.edu>
+Erasing user 42
   groups that will be left without an owner: physics-lab
-This deletes the user and cannot be undone. Continue? [y/N]:
+Erase user 42: Jane Doe <jane@example.edu>? This deletes the user and cannot be undone. Continue? [y/N]:
 ```
+
+The name and email are shown only in the confirmation prompt, so a `--yes` run logs only the id;
+run it interactively with `docker run --rm -it` so the container, and the prompt in its log, is
+removed afterwards.
 
 Anything but `y` prints `Aborted.` and exits 1 with nothing changed. Use `--yes` only in a script
 that has already checked the id.

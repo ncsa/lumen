@@ -206,13 +206,24 @@ def test_refuses_a_project_owner(app, world):
 def test_refuses_without_confirmation(app, world):
     result = _erase(app, world["user"], input="n\n")
     assert result.exit_code == 1
-    assert "Erin <erin" in result.output
+    assert f"Erase user {world['user']}: Erin <erin" in result.output
     assert "groups that will be left without an owner: erin-owned" in result.output
     assert "Aborted." in result.output
     with app.app_context():
         user = db.session.get(Entity, world["user"])
         assert user is not None and user.active is True
         assert db.session.execute(select(Entity).where(Entity.entity_type == "ghost")).first() is None
+
+
+def test_yes_does_not_print_name_or_email(app, world):
+    with app.app_context():
+        user = db.session.get(Entity, world["user"])
+        name, email = user.name, user.email
+    result = _erase(app, world["user"], "--yes")
+    assert result.exit_code == 0, result.output
+    assert f"Erasing user {world['user']}\n" in result.output
+    assert name not in result.output
+    assert email not in result.output
 
 
 def test_confirmation_yes_erases(app, world):

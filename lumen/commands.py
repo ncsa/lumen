@@ -811,10 +811,13 @@ def erase_entity_cmd(entity_id, yes):
         raise SystemExit(1)
 
     orphaned = groups_losing_owner(entity_id)
-    click.echo(f"Erasing user {entity_id}: {user.name} <{user.email}>")
+    # The name and email go only into the prompt, which --yes skips: stdout of a scripted
+    # run ends up in docker logs or log aggregation, and must not keep the erased person.
+    click.echo(f"Erasing user {entity_id}")
     if orphaned:
         click.echo(f"  groups that will be left without an owner: {', '.join(orphaned)}")
-    if not yes and not click.confirm("This deletes the user and cannot be undone. Continue?"):
+    if not yes and not click.confirm(f"Erase user {entity_id}: {user.name} <{user.email}>? "
+                                     f"This deletes the user and cannot be undone. Continue?"):
         click.echo("Aborted.")
         raise SystemExit(1)
 
