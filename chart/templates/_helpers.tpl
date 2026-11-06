@@ -64,7 +64,10 @@ most 52 characters (the controller appends an 11-character suffix to each Job).
 
 {{/*
 app.kubernetes.io/name label of the stats-check pod. Like lumen.migrateName, it
-must differ from the Deployment's selector label.
+must differ from the Deployment's selector label. A name that already ends in
+"-stats-check" can truncate to the same value, so that case gets "-cron" instead;
+that name ends differently, so it cannot equal the original either. Both stay
+within the 63-character label limit.
 */}}
 {{- define "lumen.statsCheckName" -}}
 {{- $name := include "lumen.name" . -}}

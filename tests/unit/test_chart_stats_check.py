@@ -35,7 +35,8 @@ def test_cronjob_runs_check_stats_fix_weekly_by_default(docs):
     spec = cronjob["spec"]
     assert spec["schedule"] == "17 3 * * 0"
     assert spec["concurrencyPolicy"] == "Forbid"
-    assert spec["failedJobsHistoryLimit"] >= 1
+    assert spec["successfulJobsHistoryLimit"] == 3
+    assert spec["failedJobsHistoryLimit"] == 3
     container = _container(cronjob)
     assert container["args"] == ["check-stats", "--fix"]
     # A `command` would bypass entrypoint.sh and its PGCONNECT_TIMEOUT default.
