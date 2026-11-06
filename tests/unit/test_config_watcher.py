@@ -279,6 +279,16 @@ def test_no_dev_user_no_warning(app, caplog, restore_config):
     assert not any("DEV LOGIN ENABLED" in r.message for r in caplog.records)
 
 
+def test_apply_hot_config_llmhub_url(app, restore_config):
+    """app.llmhub_url is hot-loaded; absent means empty (Models page hides the link)."""
+    from lumen.services.config_watcher import apply_hot_config
+    with app.app_context():
+        apply_hot_config(app, {"app": {"llmhub_url": "https://llmhub.example.edu"}})
+        assert app.config["LLMHUB_URL"] == "https://llmhub.example.edu"
+        apply_hot_config(app, {"app": {}})
+        assert app.config["LLMHUB_URL"] == ""
+
+
 # ---------------------------------------------------------------------------
 # apply_hot_config: global defaults and config-editor flag
 # ---------------------------------------------------------------------------

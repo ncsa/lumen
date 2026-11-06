@@ -166,7 +166,7 @@ DEFAULT_EARLY_ACCESS_MESSAGE = (
 KNOWN_APP_KEYS = frozenset({
     "announcement", "config_editor", "database", "debug", "dev_user",
     "diagnostics", "email_themes", "encryption_key", "github_url",
-    "graylist_default_notice", "logs", "name", "secret_key", "tagline", "theme",
+    "graylist_default_notice", "llmhub_url", "logs", "name", "secret_key", "tagline", "theme",
 })
 
 
@@ -265,6 +265,7 @@ def apply_hot_config(app, yaml_data: dict):
             app.config["DEV_USER"],
         )
     app.config["GITHUB_URL"] = app_cfg.get("github_url", "https://github.com/ncsa/lumen")
+    app.config["LLMHUB_URL"] = app_cfg.get("llmhub_url") or ""
 
     logs_cfg = app_cfg.get("logs", {})
     werkzeug_level = logging.WARNING if not logs_cfg.get("access", True) else logging.INFO
