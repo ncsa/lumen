@@ -68,6 +68,10 @@ All notable changes to Lumen will be documented in this file.
 - Fixed: flaky Edit Key Expiry UI test that checked focus before the modal finished closing (#327).
 - Fixed: flaky test_snapshot_older_than_max_age_reloads_on_next_read that failed on floating-point rounding at the MAX_AGE boundary (#333)
 
+### Security
+
+- Upgrade pypdf to 7.0.0, certifi to 2026.10.23 and joserfc to 1.8.0 to fix known CVEs (#448).
+
 ## [2.2.1] - 2026-10-16
 
 ### Fixed
