@@ -36,12 +36,25 @@ The entity and endpoint cases are slow and then fail. No index is added for a
 path that should never run.
 
 Deploy lock. PostgreSQL cannot change an FK's delete action in place, so each
-constraint is dropped and re-added under the same name. ``ADD FOREIGN KEY``
-validates every existing row, compressed chunks included, while holding a
-``SHARE ROW EXCLUSIVE`` lock on ``request_logs`` and its chunks. That lock
-blocks inserts, so billing waits for the length of the migration. It happens
-three times, one pass per constraint, all inside the migration transaction.
-The parent tables are small, so each pass is one scan of ``request_logs``.
+constraint is dropped and re-added under the same name. A plain
+``ADD FOREIGN KEY`` would validate every existing row, compressed chunks
+included, while holding a ``SHARE ROW EXCLUSIVE`` lock on ``request_logs`` and
+its chunks. That lock blocks inserts, so billing would wait for three full
+scans of the never-pruned hypertable, one per constraint.
+
+Each constraint is therefore re-added ``NOT VALID``, in both directions, like
+``fk_request_logs_api_key_id`` in ``c5d7e9f1a3b6``. That is a catalogue-only
+change: new INSERTs and UPDATEs are checked from now on, existing rows are not
+scanned, and the delete action applies at once. Skipping the check loses
+nothing, because the constraint just dropped covered the same column and the
+same parent and had already proved every existing row.
+
+There is no ``VALIDATE CONSTRAINT``, here or later, so ``convalidated`` stays
+``false`` on these three FKs on purpose. On its own ``VALIDATE`` takes only
+``SHARE UPDATE EXCLUSIVE``, but ``env.py`` runs every pending revision in one
+transaction. It would run after ``DROP CONSTRAINT`` has taken
+``ACCESS EXCLUSIVE`` on ``request_logs``, a lock held until commit, so billing
+would still wait for the full scans, which would prove nothing new.
 
 The column comments are updated to the new stance; the downgrade restores
 ``SET NULL`` and the previous comments.
@@ -97,9 +110,12 @@ def _set_comment(column, comment):
 def _switch(restrict):
     for name, column, parent, restrict_comment, set_null_comment in _FKS:
         op.drop_constraint(name, "request_logs", type_="foreignkey")
-        op.create_foreign_key(
-            name, "request_logs", parent, [column], ["id"],
-            ondelete="RESTRICT" if restrict else "SET NULL",
+        # NOT VALID: see "Deploy lock" in the module docstring. Never followed
+        # by VALIDATE CONSTRAINT.
+        op.execute(
+            f"ALTER TABLE request_logs ADD CONSTRAINT {name} "
+            f"FOREIGN KEY ({column}) REFERENCES {parent} (id) "
+            f"ON DELETE {'RESTRICT' if restrict else 'SET NULL'} NOT VALID"
         )
         _set_comment(column, restrict_comment if restrict else set_null_comment)
 
