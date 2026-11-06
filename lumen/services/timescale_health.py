@@ -111,14 +111,23 @@ class TimescaleHealth:
         return next((a for a in self.aggregates if a.view == view), None)
 
 
+def extension_versions(conn) -> tuple[Optional[str], Optional[str]]:
+    """The installed and the server's default ``timescaledb`` version, either ``None`` if absent.
+
+    The extension is behind when both are set and differ, the rule
+    :func:`keyed_problems` applies; ``flask upgrade`` reads the same two values.
+    """
+    row = conn.execute(_EXTENSION_SQL).first()
+    return (row[0], row[1]) if row else (None, None)
+
+
 def check(conn) -> TimescaleHealth:
     """Read the catalog in at most four read-only statements. ``conn`` is a session or connection.
 
     Without the extension the ``timescaledb_information`` views do not exist, so
     only the first statement runs.
     """
-    row = conn.execute(_EXTENSION_SQL).first()
-    installed, available = (row[0], row[1]) if row else (None, None)
+    installed, available = extension_versions(conn)
     if installed is None:
         return TimescaleHealth(installed_version=None, available_version=available)
 

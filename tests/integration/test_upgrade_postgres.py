@@ -13,6 +13,7 @@ empty-database case runs it as a subprocess, as the image's ``upgrade`` mode doe
 
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import uuid
@@ -630,3 +631,46 @@ def test_failing_migration_runs_no_post_step(pg_app, engine, monkeypatch, tmp_pa
     assert "Upgrade complete." not in result.output
     with engine.connect() as conn:
         assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == head
+
+
+def _extension_version(engine):
+    with engine.connect() as conn:
+        return conn.execute(text(
+            "SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'"
+        )).scalar()
+
+
+def test_up_to_date_extension_prints_no_warning(pg_app, engine, monkeypatch):
+    with engine.connect() as conn:
+        installed, available = commands.extension_versions(conn)
+    assert installed == available, "the CI image is expected to run the latest extension"
+    result, _ = _upgrade(pg_app, monkeypatch)
+    assert result.exit_code == 0, result.output
+    assert "WARNING:" not in result.output
+    assert "Note: could not check" not in result.output
+
+
+def test_extension_behind_names_the_real_owner_and_database_and_runs_no_ddl(
+        pg_app, engine, monkeypatch):
+    """Only the version pair is stubbed; owner and database come from the catalog.
+
+    The migrations created the extension as the URL's user (``lumen`` in CI), in this
+    module's private copy of the database, so both must show up in the command.
+    """
+    before = _extension_version(engine)
+    owner, database = engine.url.username, engine.url.database
+    monkeypatch.setattr(commands, "extension_versions", lambda conn: ("2.26.0", "2.31.0"))
+
+    result, _ = _upgrade(pg_app, monkeypatch)
+
+    assert result.exit_code == 0, result.output
+    psql = f"psql -X -U {shlex.quote(owner)} -d {shlex.quote(database)} -c 'ALTER EXTENSION timescaledb UPDATE;'"
+    lines = result.output.splitlines()
+    assert "WARNING: TimescaleDB extension is 2.26.0 but the server has 2.31.0. Back up the " \
+           "database, then run as the first command of a fresh session:" in lines
+    assert f"  {psql}" in lines
+    assert f"  Compose: docker compose exec postgres {psql}" in lines
+    assert f"  Helm (bundled PostgreSQL): kubectl exec -it <fullname>-postgresql-0 -- {psql}" \
+        in lines
+    assert _extension_version(engine) == before
+    assert "Upgrade complete." in result.output
