@@ -13,6 +13,7 @@ empty-database case runs it as a subprocess, as the image's ``upgrade`` mode doe
 
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import uuid
@@ -658,14 +659,14 @@ def test_extension_behind_names_the_real_owner_and_database_and_runs_no_ddl(
     """
     before = _extension_version(engine)
     owner, database = engine.url.username, engine.url.database
-    monkeypatch.setattr(commands, "extension_versions", lambda conn: ("2.26.0", before))
+    monkeypatch.setattr(commands, "extension_versions", lambda conn: ("2.26.0", "2.31.0"))
 
     result, _ = _upgrade(pg_app, monkeypatch)
 
     assert result.exit_code == 0, result.output
-    psql = f"psql -X -U {owner} -d {database} -c 'ALTER EXTENSION timescaledb UPDATE;'"
+    psql = f"psql -X -U {shlex.quote(owner)} -d {shlex.quote(database)} -c 'ALTER EXTENSION timescaledb UPDATE;'"
     lines = result.output.splitlines()
-    assert f"WARNING: TimescaleDB extension is 2.26.0 but the server has {before}. Back up the " \
+    assert "WARNING: TimescaleDB extension is 2.26.0 but the server has 2.31.0. Back up the " \
            "database, then run as the first command of a fresh session:" in lines
     assert f"  {psql}" in lines
     assert f"  Compose: docker compose exec postgres {psql}" in lines

@@ -4,6 +4,8 @@ The migrations are PostgreSQL-only (``migrations/env.py`` refuses SQLite), so he
 they are stubbed and these tests cover the order of the steps and the SQLite skip.
 ``tests/integration/test_upgrade_postgres.py`` runs the real thing.
 """
+import shlex
+
 import pytest
 from sqlalchemy.exc import DBAPIError
 
@@ -123,6 +125,32 @@ def test_the_commands_name_the_extension_owner_and_database(app, monkeypatch):
     assert result.exit_code == 0, result.output
     assert "  psql -X -U postgres -d prod -c 'ALTER EXTENSION timescaledb UPDATE;'" \
         in result.output.splitlines()
+
+
+@pytest.mark.parametrize(("owner", "database"), [
+    ("DB Admin", "lumen prod"),                 # whitespace
+    ("o'brien", "it's"),                        # apostrophes
+    ("x; rm -rf ~", "$(id)`id`|&><*?\\\"!"),  # shell metacharacters
+])
+def test_each_name_stays_one_literal_shell_argument(app, monkeypatch, owner, database):
+    with app.app_context():
+        _as_postgres(monkeypatch, ("2.26.0", "2.31.0"), owner=(owner, database))
+        result = _run(app)
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    start = lines.index(BEHIND_LINES[0])
+    psql_line, compose_line, helm_line = lines[start + 1:start + 4]
+    commands_shown = [psql_line.removeprefix("  "),
+                      compose_line.removeprefix("  Compose: "),
+                      helm_line.removeprefix("  Helm (bundled PostgreSQL): ")]
+    assert compose_line.startswith("  Compose: ")
+    assert helm_line.startswith("  Helm (bundled PostgreSQL): ")
+    expected_psql = ["psql", "-X", "-U", owner, "-d", database,
+                     "-c", "ALTER EXTENSION timescaledb UPDATE;"]
+    assert shlex.split(commands_shown[0]) == expected_psql
+    assert shlex.split(commands_shown[1]) == ["docker", "compose", "exec", "postgres", *expected_psql]
+    assert shlex.split(commands_shown[2]) == [
+        "kubectl", "exec", "-it", "<fullname>-postgresql-0", "--", *expected_psql]
 
 
 @pytest.mark.parametrize("versions", [

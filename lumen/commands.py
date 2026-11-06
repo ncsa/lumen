@@ -1,6 +1,7 @@
 import math
 import os
 import re
+import shlex
 import shutil
 import tempfile
 import time
@@ -1708,7 +1709,8 @@ def _warn_if_timescaledb_behind():
     without the extension, or when the installed version is the server's. A
     database error is rolled back and reported as one note. The ``-U``/``-d``
     values are the extension's owner and the database read from the catalog,
-    since the connecting user need not own the extension.
+    since the connecting user need not own the extension. Both are shell-quoted, so a
+    name with spaces or shell metacharacters stays one literal argument when pasted.
     """
     if db.engine.dialect.name != "postgresql":
         return
@@ -1723,7 +1725,7 @@ def _warn_if_timescaledb_behind():
     finally:
         # Read-only: also ends a failed transaction, and leaves none idle.
         db.session.rollback()
-    psql = f"psql -X -U {owner} -d {database} -c 'ALTER EXTENSION timescaledb UPDATE;'"
+    psql = f"psql -X -U {shlex.quote(owner)} -d {shlex.quote(database)} -c 'ALTER EXTENSION timescaledb UPDATE;'"
     click.echo(f"WARNING: TimescaleDB extension is {installed} but the server has {available}. "
                "Back up the database, then run as the first command of a fresh session:")
     click.echo(f"  {psql}")
