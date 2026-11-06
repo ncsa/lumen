@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import NullPool
 
 from lumen.commands import STATS_WALK_LOCK_KEY
 
@@ -195,10 +196,19 @@ def holding_stats_walk_lock(engine):
 
 
 def stats_walk_lock_is_free(engine):
-    """Whether no session holds the shared advisory lock: takes it and gives it back."""
-    with engine.connect() as conn:
-        free = conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": STATS_WALK_LOCK_KEY}).scalar()
-        if free:
-            conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": STATS_WALK_LOCK_KEY})
-        conn.commit()
-        return free
+    """Whether no session holds the shared advisory lock: takes it and gives it back.
+
+    Probes on a new physical session, never one from ``engine``'s pool: a pooled
+    session may be the one holding a leaked lock, and advisory locks are reentrant
+    for their owner, so it would take the lock again and report it free.
+    """
+    probe = create_engine(engine.url, poolclass=NullPool)
+    try:
+        with probe.connect() as conn:
+            free = conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": STATS_WALK_LOCK_KEY}).scalar()
+            if free:
+                conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": STATS_WALK_LOCK_KEY})
+            conn.commit()
+            return free
+    finally:
+        probe.dispose()

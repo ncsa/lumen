@@ -444,7 +444,9 @@ def _release_stats_walk_lock(conn):
     try:
         conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": STATS_WALK_LOCK_KEY})
         conn.commit()
-    except Exception:
+    except Exception as exc:
+        click.echo(f"Warning: releasing the advisory lock failed ({exc}); dropping its connection to free it.",
+                   err=True)
         conn.invalidate()
     finally:
         conn.close()

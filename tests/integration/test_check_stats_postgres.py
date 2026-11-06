@@ -16,10 +16,10 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import create_engine, select, text
 
 from lumen import commands
-from lumen.commands import check_stats_cmd
+from lumen.commands import STATS_WALK_LOCK_KEY, check_stats_cmd
 from tests.conftest import no_snapshot_refresher
 
 from .conftest import TEST_CONFIG, holding_stats_walk_lock, stats_walk_lock_is_free
@@ -136,3 +136,36 @@ def test_fixes_a_late_row_and_releases_the_lock(pg_app, engine):
     result = _check(pg_app)
     assert result.exit_code == 0, result.output
     assert "match request_logs" in result.output
+
+
+def test_the_release_probe_sees_a_lock_leaked_into_the_pool(pg_migrated_isolated):
+    """A session that still holds the lock, back in a one-connection pool, is the one
+    the pool hands out next. The probe must not use it: being the owner, it would
+    take the lock again and report it free."""
+    pooled = create_engine(pg_migrated_isolated[0], pool_size=1, max_overflow=0)
+    try:
+        with pooled.connect() as conn:
+            assert conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": STATS_WALK_LOCK_KEY}).scalar()
+            conn.commit()
+        assert not stats_walk_lock_is_free(pooled), "the probe reused the session holding the lock"
+        with pooled.connect() as conn:
+            assert conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": STATS_WALK_LOCK_KEY}).scalar()
+            conn.commit()
+        assert stats_walk_lock_is_free(pooled)
+    finally:
+        pooled.dispose()
+
+
+def test_a_run_that_does_not_unlock_is_caught(pg_app, engine):
+    """With the release reduced to closing the connection, the lock leaks into the
+    pool, and the release assertions the other tests make report it."""
+    _late_row(pg_app)
+    with patch.object(commands, "_release_stats_walk_lock", side_effect=lambda conn: conn.close()):
+        result = _check(pg_app)
+    try:
+        assert "Skipped" not in result.output, result.output
+        assert not stats_walk_lock_is_free(engine), "a leaked lock went unnoticed"
+    finally:
+        # Closing the pooled sessions ends the one holding the lock.
+        engine.dispose()
+    assert stats_walk_lock_is_free(engine)

@@ -353,7 +353,8 @@ aggregate refresh.
 On PostgreSQL `erase-entity`, [`reassign-model`](#reassign-model) and [`check-stats`](#check-stats)
 do not run at the same time: `check-stats` skips, the other two exit with an error. An
 `erase-entity` started while one of them runs exits 1 with `Error: a reassign-model, erase-entity or
-check-stats is already running; retry when it finishes.` and changes nothing.
+check-stats is already running; retry when it finishes.` and changes nothing. It takes the lock before it
+asks for confirmation, so an unanswered prompt keeps the other two out as well; answer it promptly.
 
 What is deleted and what moves, table by table, is in
 [Erasing a user](https://ncsa.github.io/lumen/dbschema/#erasing-a-user-gdpr) in the database schema
