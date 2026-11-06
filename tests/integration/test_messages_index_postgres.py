@@ -83,6 +83,10 @@ def test_round_trip(pg_migrated_isolated):
     engine.dispose()
 
 
+def _index_oid(conn, name):
+    return conn.execute(text("SELECT CAST(to_regclass(:name) AS oid)"), {"name": name}).scalar()
+
+
 def test_upgrade_rebuilds_an_invalid_leftover(pg_migrated_isolated):
     url, engine = pg_migrated_isolated
     engine.dispose()
@@ -96,10 +100,33 @@ def test_upgrade_rebuilds_an_invalid_leftover(pg_migrated_isolated):
         ), {"name": _COMPOSITE})
     with engine.connect() as conn:
         assert _messages_indexes(conn)[_COMPOSITE][1] is False
+        leftover = _index_oid(conn, _COMPOSITE)
     engine.dispose()
 
     _flask_db(url, "upgrade")
     _assert_at_head(engine)
+    with engine.connect() as conn:
+        assert _index_oid(conn, _COMPOSITE) != leftover
+    engine.dispose()
+
+
+def test_upgrade_keeps_a_valid_leftover(pg_migrated_isolated):
+    url, engine = pg_migrated_isolated
+    engine.dispose()
+
+    _flask_db(url, "downgrade", _BEFORE)
+    # What a run that died after the concurrent build but before the version stamp leaves behind.
+    with engine.begin() as conn:
+        conn.execute(text(f"CREATE INDEX {_COMPOSITE} ON messages (conversation_id, created_at)"))
+    with engine.connect() as conn:
+        assert _messages_indexes(conn)[_COMPOSITE][1] is True
+        leftover = _index_oid(conn, _COMPOSITE)
+    engine.dispose()
+
+    _flask_db(url, "upgrade")
+    _assert_at_head(engine)
+    with engine.connect() as conn:
+        assert _index_oid(conn, _COMPOSITE) == leftover
     engine.dispose()
 
 

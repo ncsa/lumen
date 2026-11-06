@@ -54,7 +54,7 @@ def _drop_if_invalid(name):
         {"name": name},
     ).scalar()
     if invalid:
-        op.drop_index(name, table_name="messages", postgresql_concurrently=True)
+        op.drop_index(name, table_name="messages", postgresql_concurrently=True, if_exists=True)
 
 
 def upgrade():
