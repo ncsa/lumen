@@ -67,6 +67,7 @@ All notable changes to Lumen will be documented in this file.
 - Monitor: the model detail price charts now draw a stepped line across the 1h, 12h and 24h ranges instead of a single point.
 - Fixed: flaky Edit Key Expiry UI test that checked focus before the modal finished closing (#327).
 - Fixed: flaky test_snapshot_older_than_max_age_reloads_on_next_read that failed on floating-point rounding at the MAX_AGE boundary (#333)
+- Monitor: `collect` and `serve` refuse to start without an http(s) `lumen.url`; the Docker images pin uv. (#446)
 
 ## [2.2.1] - 2026-10-16
 

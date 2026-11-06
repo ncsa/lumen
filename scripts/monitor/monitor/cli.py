@@ -37,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     try:
-        store = ConfigStore(args.config)
+        store = ConfigStore(args.config, require_lumen=args.command != "migrate")
     except ConfigError as exc:
         log.error("%s", exc)
         return 2

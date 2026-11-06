@@ -25,6 +25,8 @@ uv run monitor collect --price       # record today's Lumen, models.dev and hard
 uv run monitor serve                 # the loops plus the dashboard on :5002 until SIGTERM/SIGINT
 ```
 
+`lumen.url` (Lumen's `http(s)://` address) is required for `collect` and `serve`, which exit 2 without it.
+
 A probe writes one `probes` row (success, response time, models listed and up) and, when it
 succeeds, one `samples` row per model plus today's availability counters. Each model keeps
 the status Lumen reports: ok when all its servers are healthy, degraded when some are, down
