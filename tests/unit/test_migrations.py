@@ -490,3 +490,40 @@ def test_fk_restrict_is_a_no_op_on_sqlite(tmp_path):
     _run_revision(engine, revision.downgrade)
     assert sa.inspect(engine).get_foreign_keys("request_logs") == before
     engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# f9b1d3e5a7c9: the api_keys table comment says HMAC-SHA256. PostgreSQL-only;
+# the comment as migrated is checked in
+# tests/integration/test_api_keys_table_comment_postgres.py.
+# ---------------------------------------------------------------------------
+
+_API_KEYS_COMMENT_REVISION_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "migrations" / "versions" / "f9b1d3e5a7c9_api_keys_table_comment.py"
+)
+
+
+def _api_keys_comment_revision():
+    spec = importlib.util.spec_from_file_location("api_keys_comment_revision", _API_KEYS_COMMENT_REVISION_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_api_keys_table_comment_matches_migration():
+    from lumen.models.api_key import APIKey
+
+    assert _api_keys_comment_revision()._NEW == APIKey.__table__.comment
+
+
+def test_api_keys_table_comment_is_a_no_op_on_sqlite(tmp_path):
+    revision = _api_keys_comment_revision()
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'comment.db'}")
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE api_keys (id INTEGER PRIMARY KEY)")
+
+    _run_revision(engine, revision.upgrade)
+    _run_revision(engine, revision.downgrade)
+    assert sa.inspect(engine).get_table_names() == ["api_keys"]
+    engine.dispose()
