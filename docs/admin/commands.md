@@ -269,6 +269,21 @@ the other two moves `request_logs`, the check would report differences that are 
 erase-entity (or another check-stats) is running; run check-stats after it finishes.` and exits 0
 without checking anything.
 
+**Run it on a schedule.** The fold counts a request once its billing transaction has committed,
+in the pass whose window covers the request's timestamp. A transaction that commits more than
+`stats.fold_lag` after its timestamp, for example one queued on an entity's balance lock, lands
+behind the fold and is never counted, and nothing reports it at runtime. Run `check-stats --fix`
+weekly to add such rows back. The Helm chart does this by default with a CronJob (`statsCheck.*`,
+Sundays at 03:17; see "Scheduled stats check" in the chart's README). With Compose, run it from
+cron on the host:
+
+```bash
+17 3 * * 0  cd /path/to/compose && docker compose run --rm lumen-upgrade check-stats --fix
+```
+
+A scheduled run that overlaps a `reassign-model` or `erase-entity` skips and exits 0; the next run
+checks.
+
 ## `init-db`
 
 Syncs the models (`model_configs`, their endpoints and `model_aliases`) from `config.yaml` to the
