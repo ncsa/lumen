@@ -21,7 +21,7 @@ class APIKey(db.Model):
     __table_args__ = (
         db.Index("ix_api_keys_entity_id", "entity_id"),
         db.Index("ix_api_keys_expires_at", "expires_at"),
-        {"comment": "API keys for entity authentication; only the SHA-256 hash is stored, never the plaintext"},
+        {"comment": "API keys for entity authentication; only an HMAC-SHA256 of the key is stored, never the plaintext"},
     )
 
     id: Mapped[int] = mapped_column(db.Integer, primary_key=True, comment="Primary key")
