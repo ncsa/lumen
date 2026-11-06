@@ -149,8 +149,10 @@ Visit `http://localhost:5001`, click **Login**, and you'll be auto-logged in as 
 ## Operator Commands
 
 Lumen ships `flask` commands for operators: `upgrade`, `wait-for-migrations`, `backfill-aggregate`,
-`check-aggregate`, `check-stats`, `init-db`, `reassign-model` and `erase-entity`. Run them as
-`flask <command>` inside the container, or `uv run flask --app run <command>` locally. Each one, and
+`check-aggregate`, `check-stats`, `init-db`, `reassign-model` and `erase-entity`. Give the command to
+the image as its argument (`docker run <image> check-stats`), run `flask --app run <command>` in a
+running container, or `uv run flask --app run <command>` locally; see
+[Running commands in a deployment](docs/admin/commands.md#running-commands-in-a-deployment). Each one, and
 the runbook for upgrading TimescaleDB, is documented in the Admin Guide under
 [Operator Commands](docs/admin/commands.md).
 

@@ -1,8 +1,9 @@
 # Operator Commands
 
-Lumen ships these `flask` commands for operators. Run them as `flask <command>` inside the
-container, or as `uv run flask --app run <command>` in a local checkout. `flask <command> --help`
-prints the same usage and options as this page.
+Lumen ships these `flask` commands for operators. In a deployment, give the command to the image
+as its argument (see [Running commands in a deployment](#running-commands-in-a-deployment)); in a
+local checkout, run `uv run flask --app run <command>`. This page writes them as `flask <command>`
+for short. `flask --app run <command> --help` prints the same usage and options as this page.
 
 | Command | What it does |
 |---|---|
@@ -21,6 +22,45 @@ and exit 0. Flask-Migrate also adds `flask db …`; use `flask upgrade` rather t
 
 **`request_logs` is never pruned.** Lumen ships no retention policy and no command that deletes
 from it.
+
+## Running commands in a deployment
+
+The image's entrypoint runs any command given as its first argument as
+`flask --app run <command> [options]`, and exits with the command's status. Use it for every
+command on this page and for `db …`:
+
+```bash
+docker run --rm -e CONFIG_YAML=… -e DATABASE_URL=… -v …:/app/instance <image> check-stats --fix
+```
+
+With Compose, run it in a one-off container of the `lumen` service. `docker compose run` starts the
+services `lumen` depends on first, so the database is up and the upgrade step has run:
+
+```bash
+docker compose run --rm lumen check-aggregate
+```
+
+With Helm, run it in the running app pod (`<fullname>` is the release's full name). `kubectl exec`
+bypasses the entrypoint, so name the app yourself:
+
+```bash
+kubectl exec deploy/<fullname> -- flask --app run check-aggregate
+```
+
+For a shell in the image, give it `bash`. It starts a shell at once, without waiting for the
+database:
+
+```bash
+docker run --rm -it <image> bash
+```
+
+How the entrypoint reads its arguments:
+
+| Argument | What runs |
+|---|---|
+| `bash` | A shell. |
+| A command, e.g. `upgrade`, `check-stats --fix`, `erase-entity 42 --yes`, `db current` | `flask --app run` with those arguments. `PGCONNECT_TIMEOUT` defaults to `10` (a value you set is kept), so a database host that never answers cannot hang it. |
+| Nothing, or options such as `--workers 4` | The server: [`wait-for-migrations`](#wait-for-migrations), then uvicorn with those options. |
 
 ## `upgrade`
 
@@ -72,8 +112,8 @@ the upgrade. Months before an aggregate's own retention boundary, if it has one,
 `ALTER EXTENSION timescaledb UPDATE` is a separate, manual step; see
 [Upgrading TimescaleDB](#upgrading-timescaledb).
 
-In the image's `upgrade` and `wait-for-migrations` modes, `PGCONNECT_TIMEOUT` defaults to `10`
-(a value you set is kept), so a database host that never answers cannot hang them.
+When the image runs a command (`docker run <image> upgrade` and the like), `PGCONNECT_TIMEOUT`
+defaults to `10` (a value you set is kept), so a database host that never answers cannot hang it.
 
 ## `wait-for-migrations`
 
@@ -101,9 +141,9 @@ Two separate time budgets apply to a PostgreSQL server that accepts connections 
   the database URL (or `PGOPTIONS`), such as `-c search_path=...`, are kept.
 - **Loading the app.** Before the command starts, the app opens connections that have no timeout of
   their own. Set `PGCONNECT_TIMEOUT` (for example `10`) so a silent host cannot hold the command
-  before its first check; it does not change the 10-second budget above. The image's
-  `wait-for-migrations` mode (`docker run <image> wait-for-migrations [--timeout SECONDS]`) sets it
-  to `10` unless you set it yourself.
+  before its first check; it does not change the 10-second budget above. The image sets it
+  to `10` when it runs a command (`docker run <image> wait-for-migrations [--timeout SECONDS]`)
+  unless you set it yourself.
 
 The image's default (serve) mode runs this command, with no `--timeout`, before it starts uvicorn,
 with the same `PGCONNECT_TIMEOUT` default (for the gate only; uvicorn gets your environment as is).
