@@ -46,9 +46,11 @@ _FKS = {
 _REVISION_FKS = ("entity_id", "model_config_id", "model_endpoint_id")
 
 # Every FK on request_logs or one of its chunks, by referenced column.
-# confdeltype: 'r' = RESTRICT, 'n' = SET NULL.
+# confdeltype: 'r' = RESTRICT, 'n' = SET NULL. convalidated is false for a
+# FK added NOT VALID, which this revision does so that it never scans history.
 _FK_ACTIONS = """
-    SELECT c.conrelid::regclass::text AS rel, a.attname AS col, c.confdeltype AS action
+    SELECT c.conrelid::regclass::text AS rel, a.attname AS col, c.confdeltype AS action,
+           c.convalidated AS validated
     FROM pg_constraint c
     JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
     WHERE c.contype = 'f'
@@ -72,9 +74,26 @@ def _flask_db(url, *args):
 def _fk_actions(conn):
     """``{relation: {column: confdeltype}}`` for request_logs and every chunk."""
     actions = {}
-    for rel, col, action in conn.execute(text(_FK_ACTIONS)).all():
+    for rel, col, action, _ in conn.execute(text(_FK_ACTIONS)).all():
         actions.setdefault(rel, {})[col] = action
     return actions
+
+
+def _assert_not_validated(conn, columns=_REVISION_FKS):
+    """The FKs on ``columns`` are ``NOT VALID`` on request_logs and every chunk.
+
+    A validating ``ADD FOREIGN KEY`` would leave ``convalidated = true``, so this
+    shows the revision re-added them without scanning the history.
+    """
+    chunks = set(conn.execute(text("SELECT show_chunks('request_logs')::text")).scalars())
+    assert chunks, "request_logs has no chunks, so the chunk half of this check would prove nothing"
+    validated = {}
+    for rel, col, _, is_valid in conn.execute(text(_FK_ACTIONS)).all():
+        if col in columns:
+            validated.setdefault(rel, {})[col] = is_valid
+    assert set(validated) == {"request_logs"} | chunks
+    for rel, by_column in validated.items():
+        assert by_column == dict.fromkeys(columns, False), rel
 
 
 def _assert_all_fks(conn, action, columns=tuple(_FKS)):
@@ -260,6 +279,7 @@ def test_round_trip_over_a_compressed_chunk(pg_migrated_isolated, history):
     _flask_db(url, "downgrade", _BEFORE)
     with engine.connect() as conn:
         _assert_all_fks(conn, "n", _REVISION_FKS)
+        _assert_not_validated(conn)
         # The comparison has teeth: below the revision it sees the old FKs and comments.
         diffs = _fk_and_comment_diffs(conn)
         assert {d[0] for d in diffs} >= {"add_fk", "remove_fk", "modify_comment"}
@@ -271,6 +291,7 @@ def test_round_trip_over_a_compressed_chunk(pg_migrated_isolated, history):
     with engine.connect() as conn:
         assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == _HEAD
         _assert_all_fks(conn, "r")
+        _assert_not_validated(conn)
         assert _fk_and_comment_diffs(conn) == []
         assert _row_ids(conn, _REVISION_FKS) == expected_row
         # The column came back empty: the downgrade dropped the key ids.

@@ -53,12 +53,16 @@ class RequestLog(db.Model):
     time: Mapped[datetime] = mapped_column(db.DateTime(timezone=True), index=False, comment="UTC request timestamp; TimescaleDB partition key")
     # RESTRICT on delete: entities are deactivated, not deleted, while they
     # have history; flask erase-entity moves the rows to the ghost first
+    # On PostgreSQL c8d0e2f4a6b8 re-adds this FK NOT VALID and never validates
+    # it: the dropped SET NULL FK had already proved every row.
     entity_id: Mapped[Optional[int]] = mapped_column(
         db.Integer,
         db.ForeignKey("entities.id", ondelete="RESTRICT"),
         comment="Requesting entity; RESTRICT on delete: entities are deactivated, not deleted, while they have request history",
     )
     # RESTRICT on delete: models are retired (deactivated), never deleted
+    # On PostgreSQL c8d0e2f4a6b8 re-adds this FK NOT VALID and never validates
+    # it: the dropped SET NULL FK had already proved every row.
     model_config_id: Mapped[Optional[int]] = mapped_column(
         db.Integer,
         db.ForeignKey("model_configs.id", ondelete="RESTRICT"),
@@ -66,6 +70,8 @@ class RequestLog(db.Model):
     )
     # RESTRICT on delete: the sync retires endpoints (model_endpoints.active =
     # false) instead of deleting them, so this column is never rewritten
+    # On PostgreSQL c8d0e2f4a6b8 re-adds this FK NOT VALID and never validates
+    # it: the dropped SET NULL FK had already proved every row.
     model_endpoint_id: Mapped[Optional[int]] = mapped_column(
         db.Integer,
         db.ForeignKey("model_endpoints.id", ondelete="RESTRICT"),
