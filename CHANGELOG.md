@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-11-06
+
 **Upgrade:** `flask enable-retention` is removed — `request_logs` is never pruned; the upgrade step backfills `request_counts_hourly_by_entity` (`flask check-aggregate` stays a read-only check); startup logs an ERROR if a retention policy is found on `request_logs`; per-user `/usage` charts now read only `request_counts_hourly_by_entity` and no longer scan `request_logs`. (#167)
 
 **Upgrade:** Lumen no longer migrates on container start. Run the image with `upgrade` first (Compose: new `lumen-upgrade` service; Helm: new migration Job); it applies all migrations, including the usage-stats cutover, and backfills missing aggregate months. Upgrading only the image (Compose without `lumen-upgrade`, or a newer `image.tag` on an older chart) leaves Lumen waiting at startup; the chart needs image 2.3.0+. The chart's `startupProbe` budget drops from 30 to 5 minutes. The Job is tuned with the new Helm `migration.backoffLimit`, `migration.ttlSecondsAfterFinished` and `migration.resources` values, and app pods wait for it in a `wait-for-migrations` initContainer. (#376)
@@ -793,3 +795,7 @@ All notable changes to Lumen will be documented in this file.
 ### Added
 
 - Initial production release: OpenAI-compatible web chat, CILogon login, token budgets, groups, admin panel, load balancing, conversation history, markdown, API endpoint, model health dashboard, hot-reload, Illinois branding, Docker.
+
+### Contributors
+
+- <img src="https://github.com/robkooper.png?size=20" width="20" height="20" alt=""> [Rob Kooper](https://github.com/robkooper)
