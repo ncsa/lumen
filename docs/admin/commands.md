@@ -76,9 +76,33 @@ The image runs it with the `upgrade` argument (`docker run <image> upgrade`; in 
 the first failure with exit 1:
 
 1. **Every migration** (`flask db upgrade` to head).
-2. **The post-migration data steps.** Each is safe to re-run and finishes what an earlier, failed
+2. **The TimescaleDB extension version check** (advisory). When the extension in the database is
+   older than the version the server ships, it prints a WARNING with the exact command to run. It
+   never fails the upgrade and never updates the extension: `ALTER EXTENSION … UPDATE` is one-way,
+   so it stays a deliberate step (see [Upgrading TimescaleDB](#upgrading-timescaledb)).
+3. **The post-migration data steps.** Each is safe to re-run and finishes what an earlier, failed
    run left undone, so running `flask upgrade` again resumes. Today there is one: the **aggregate
    backfill by missing month** of the five usage aggregates.
+
+For the extension check, the `-U` and `-d` values are read from the catalog: the role that owns the
+`timescaledb` extension (the connecting user need not own it) and the current database. Both are
+shell-quoted, so a name with spaces or shell metacharacters stays one argument when pasted; simple
+names such as `lumen` print unchanged. Lumen cannot tell how it was deployed, so it prints the plain
+`psql` command (also the one to use with an external database), the Compose form and the Helm form
+for the bundled PostgreSQL (`<fullname>` is the release's full name). With extension 2.26.0 on a
+2.31.0 server, owned by `lumen` in database `lumen`:
+
+```text
+WARNING: TimescaleDB extension is 2.26.0 but the server has 2.31.0. Back up the database, then run as the first command of a fresh session:
+  psql -X -U lumen -d lumen -c 'ALTER EXTENSION timescaledb UPDATE;'
+  Compose: docker compose exec postgres psql -X -U lumen -d lumen -c 'ALTER EXTENSION timescaledb UPDATE;'
+  Helm (bundled PostgreSQL): kubectl exec -it <fullname>-postgresql-0 -- psql -X -U lumen -d lumen -c 'ALTER EXTENSION timescaledb UPDATE;'
+See "Upgrading TimescaleDB" in docs/admin/commands.md.
+```
+
+It prints nothing on SQLite, without the extension, or when the versions match. If the catalog
+cannot be read, it prints one `Note: could not check the TimescaleDB extension version: …` line and
+the upgrade continues.
 
 The backfill walks the usage aggregates child before parent, in this order, because an aggregate
 built on another one is computed from that child's materialised rows:
@@ -229,8 +253,8 @@ that the aggregates have never been refreshed). Run it before upgrading.
 TimescaleDB is required: Lumen does not run on a plain `postgres` image. Pin the image tag
 (`timescale/timescaledb:2.31.0-pg17` is the tested version) and upgrade on purpose. A new image
 only installs the new extension files; the database keeps running the old version until it is
-updated, and nothing in Lumen, including [`flask upgrade`](#upgrade), updates it for you. Until
-then Lumen keeps working, but logs `TimescaleDB extension is <old> but the server has <new>` at
+updated, and nothing in Lumen updates it for you: [`flask upgrade`](#upgrade) prints a WARNING
+with the exact command for your database, but never runs it. Until then Lumen keeps working, but logs `TimescaleDB extension is <old> but the server has <new>` at
 startup and reports `lumen_timescaledb_extension_update_available` as `1` on `/metrics`.
 
 `ALTER EXTENSION … UPDATE` cannot be undone.
@@ -240,7 +264,8 @@ startup and reports `lumen_timescaledb_extension_update_available` as `1` on `/m
    restart the database.
 3. Update the extension. This must be the first command in a fresh session (`-X` skips `.psqlrc`),
    run as the owner of the extension (normally the user that ran the migrations). `lumen` is the
-   example database name; use the one in your database URL.
+   example owner and database name; the WARNING from [`flask upgrade`](#upgrade) prints these
+   commands with your real ones.
 
     Compose:
 
@@ -251,7 +276,7 @@ startup and reports `lumen_timescaledb_extension_update_available` as `1` on `/m
     Helm, with the bundled PostgreSQL (`<fullname>` is the release's full name):
 
     ```bash
-    kubectl exec -it <fullname>-postgresql-0 -- psql -X -U <owner> -d <db> -c 'ALTER EXTENSION timescaledb UPDATE;'
+    kubectl exec -it <fullname>-postgresql-0 -- psql -X -U lumen -d lumen -c 'ALTER EXTENSION timescaledb UPDATE;'
     ```
 
 4. Check the version. This must return the new version (`2.31.0`):
