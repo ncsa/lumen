@@ -14,10 +14,12 @@ compresses once. Its endpoint belongs to a second model, so deleting the
 row's model is refused by the model FK itself and not by the endpoint FK
 behind the ``model_endpoints`` cascade. The round trip steps this module's
 private database back below the revision and up again, so it runs against
-``pg_migrated_isolated`` and leaves it at head.
+``pg_migrated_isolated`` and leaves it at head. The lock test does the same
+while a billing-style insert holds ``request_logs`` open.
 """
 import os
 import subprocess
+import time
 
 import pytest
 from alembic.autogenerate import compare_metadata
@@ -59,12 +61,16 @@ _FK_ACTIONS = """
 """
 
 
-def _flask_db(url, *args):
-    result = subprocess.run(
+def _flask_db_command(url, *args):
+    return (
         ["uv", "run", "flask", "--app", "run", "db", *args],
-        capture_output=True, text=True, timeout=300,
-        env={**os.environ, "DATABASE_URL": url, "CONFIG_YAML": TEST_CONFIG, "BACKGROUND_WORKER": "false"},
+        {**os.environ, "DATABASE_URL": url, "CONFIG_YAML": TEST_CONFIG, "BACKGROUND_WORKER": "false"},
     )
+
+
+def _flask_db(url, *args):
+    command, env = _flask_db_command(url, *args)
+    result = subprocess.run(command, capture_output=True, text=True, timeout=300, env=env)
     assert result.returncode == 0, (
         f"flask db {' '.join(args)} failed:\n--- stdout ---\n{result.stdout}\n"
         f"--- stderr ---\n{result.stderr}"
@@ -297,3 +303,112 @@ def test_round_trip_over_a_compressed_chunk(pg_migrated_isolated, history):
         # The column came back empty: the downgrade dropped the key ids.
         assert _row_ids(conn, ("api_key_id",)) == [(None,)]
         assert _chunk_of_row(conn)[1]
+
+
+# Upper bound for `flask db upgrade` to start and reach the blocker; it is the
+# poll deadline, not a sleep, so a fast machine waits far less.
+_QUEUE_DEADLINE = 120
+# Upper bound for the upgrade to finish once the blocker commits. The revision
+# is catalogue-only, so it needs a fraction of a second on the test database.
+_FINISH_DEADLINE = 60
+_LOCK_SOURCE = "fklock"  # request_logs.source is VARCHAR(8)
+# libpq reports this as application_name, so the watcher finds the upgrade's
+# backend and not a TimescaleDB job that happens to wait on the same insert.
+_UPGRADE_APP = "fk-restrict-lock-upgrade"
+
+# The upgrade's backends that `pid` blocks, with the statement each one runs
+# and whether its wait is a lock on request_logs.
+_BLOCKED_BY = """
+    SELECT a.query,
+           EXISTS (SELECT 1 FROM pg_locks l
+                   WHERE l.pid = a.pid AND NOT l.granted
+                     AND l.relation = 'request_logs'::regclass) AS on_request_logs
+    FROM pg_stat_activity a
+    WHERE a.datname = current_database() AND a.application_name = :app
+      AND :pid = ANY(pg_blocking_pids(a.pid))
+"""
+
+
+def _wait_until_blocked(conn, blocker_pid, upgrade):
+    """Poll until the upgrade waits on ``blocker_pid``; return its rows.
+
+    Fails as soon as the upgrade exits instead, and after ``_QUEUE_DEADLINE``.
+    """
+    deadline = time.monotonic() + _QUEUE_DEADLINE
+    while time.monotonic() < deadline:
+        if upgrade.poll() is not None:
+            out, err = upgrade.communicate()
+            pytest.fail(
+                f"the upgrade exited ({upgrade.returncode}) while the insert still held request_logs:\n"
+                f"--- stdout ---\n{out}\n--- stderr ---\n{err}"
+            )
+        blocked = conn.execute(text(_BLOCKED_BY), {"pid": blocker_pid, "app": _UPGRADE_APP}).all()
+        if blocked:
+            return blocked
+        time.sleep(0.2)
+    pytest.fail(f"the upgrade did not queue behind the insert within {_QUEUE_DEADLINE}s")
+
+
+def test_upgrade_waits_for_an_open_insert_and_then_finishes(pg_migrated_isolated, history):
+    """The upgrade only queues behind billing and finishes once billing commits.
+
+    A second connection inserts a request_logs row and keeps its transaction
+    open, as a billing INSERT on a running pod does, holding ``ROW EXCLUSIVE``.
+    The upgrade to this revision must wait for it, on ``request_logs`` and on
+    nothing else. Once the insert commits the upgrade finishes within a bound,
+    with the FKs switched ``NOT VALID``, and the billed row is kept.
+    """
+    url, engine = pg_migrated_isolated
+    expected = {"entity_id": history["entity_id"], "model_config_id": history["model_config_id"],
+                "model_endpoint_id": history["model_endpoint_id"]}
+    engine.dispose()
+    _flask_db(url, "downgrade", _BEFORE)
+    engine.dispose()
+
+    blocker = engine.connect()
+    upgrade = None
+    try:
+        blocker_pid = blocker.execute(text("SELECT pg_backend_pid()")).scalar_one()
+        blocker.execute(text(
+            "INSERT INTO request_logs (time, entity_id, model_config_id, model_endpoint_id, source) "
+            "VALUES (now(), :entity_id, :model_config_id, :model_endpoint_id, :s)"
+        ), {**expected, "s": _LOCK_SOURCE})
+        assert blocker.in_transaction()
+
+        command, env = _flask_db_command(url, "upgrade", "c8d0e2f4a6b8")
+        upgrade = subprocess.Popen(command, env={**env, "PGAPPNAME": _UPGRADE_APP}, text=True,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as watcher:
+            blocked = _wait_until_blocked(watcher, blocker_pid, upgrade)
+            assert len(blocked) == 1, blocked
+            query, on_request_logs = blocked[0]
+            assert on_request_logs, f"the upgrade waits on something other than request_logs: {query}"
+            assert "request_logs" in query and "DROP CONSTRAINT" in query.upper(), query
+            # Still queued: the migration has not run past the insert.
+            assert watcher.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == _BEFORE
+
+        blocker.commit()
+        out, err = upgrade.communicate(timeout=_FINISH_DEADLINE)
+        assert upgrade.returncode == 0, f"--- stdout ---\n{out}\n--- stderr ---\n{err}"
+    finally:
+        if upgrade is not None and upgrade.poll() is None:
+            upgrade.kill()
+            upgrade.communicate()
+        blocker.close()
+
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "c8d0e2f4a6b8"
+        _assert_all_fks(conn, "r", _REVISION_FKS)
+        _assert_not_validated(conn)
+        assert conn.execute(text(
+            "SELECT entity_id, model_config_id, model_endpoint_id FROM request_logs WHERE source = :s"
+        ), {"s": _LOCK_SOURCE}).all() == [tuple(expected.values())]
+    engine.dispose()
+
+    # Leave the module's database at head, without the extra row.
+    _flask_db(url, "upgrade")
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM request_logs WHERE source = :s"), {"s": _LOCK_SOURCE})
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == _HEAD
+        _assert_all_fks(conn, "r")
