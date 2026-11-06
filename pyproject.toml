@@ -49,7 +49,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=lumen --cov-report=term-missing -q"
+addopts = "--cov=lumen --cov-report=term-missing -q --durations=20 --durations-min=1.0"
 # Backstop only. The full suite runs in ~50s, so this never fires normally; it
 # exists so a test that hangs (a blocked socket read, a server that never shuts
 # down) fails with a stack trace naming the culprit instead of stalling CI.
