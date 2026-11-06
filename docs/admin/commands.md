@@ -284,8 +284,6 @@ cron on the host:
 A scheduled run that overlaps a `reassign-model` or `erase-entity` skips and exits 0; the next run
 checks.
 
-## `init-db`without checking anything.
-
 ## `init-db`
 
 Syncs the models (`model_configs`, their endpoints and `model_aliases`) from `config.yaml` to the
