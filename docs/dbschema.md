@@ -368,7 +368,7 @@ API keys that entities (users or projects) use to authenticate against the proxy
 | `key_hash` | String(64) | NO | HMAC-SHA256 of the raw key, keyed on `ENCRYPTION_KEY`; finding a key from its raw value takes the server secret. Unique. Erasure replaces it with 64 random hex characters. |
 | `key_hint` | String(32) | YES | Last few characters of the raw key shown in the UI for identification |
 | `revoked_at` | DateTime | YES | UTC time the key was revoked; null while the key is usable. Approximate (`last_used_at`, else `created_at`, else the migration time) for keys revoked before this column existed. |
-| `expires_at` | DateTime | YES | UTC time the key expires; null if it never expires. Set when the key is created, from the chosen TTL (capped by and defaulting to `api.keys.ttl`; for OAuth keys, the approved `auth_requests.ttl` counted from mint, including when an OAuth overwrite refreshes the key in place), and when its expiry is edited. A background job (and the API on use) revokes an overdue key by setting `revoked_at` to this value, with `revoked_by_entity_id` left null. Indexed. |
+| `expires_at` | DateTime | YES | UTC time the key expires; null if it never expires. Set when the key is created, from the chosen TTL (capped by and defaulting to `api.keys.ttl`; for OAuth keys, the approved `auth_requests.ttl` counted from mint, including when an OAuth overwrite refreshes the key in place), and when its expiry is edited. A background job (and the API on use) revokes an overdue key by setting `revoked_at` to this value, with `revoked_by_entity_id` left null. Indexed (`ix_api_keys_expires_at`). |
 | `requests` | Integer | NO | Cumulative request count made with this key |
 | `input_tokens` | BigInteger | NO | Cumulative input tokens consumed via this key |
 | `output_tokens` | BigInteger | NO | Cumulative output tokens produced via this key |
@@ -380,6 +380,10 @@ API keys that entities (users or projects) use to authenticate against the proxy
 | `requested_by` | String(128) | YES | Requester-supplied author label from the OAuth request (unverified) |
 | `created_by_entity_id` | Integer (FK → entities) | YES | The user who created this key (the approving user for OAuth claims). Null for legacy keys; SET NULL on creator deletion. |
 | `revoked_by_entity_id` | Integer (FK → entities) | YES | The user who revoked this key (the approving user when an OAuth overwrite revokes an extra key with the same name). Null while the key is usable, for keys revoked before this column existed, for system revocations (OAuth authorization-code replay, key expiry), and when the revoker is deleted (SET NULL). |
+
+**Constraints:** `UNIQUE(key_hash)`; index `ix_api_keys_entity_id` on (`entity_id`); index `ix_api_keys_expires_at` on (`expires_at`)
+
+**Storage:** `fillfactor = 80` (PostgreSQL only) so the per-request counter updates stay HOT; see migration `d3e4f5a6b7c8`.
 
 ---
 
@@ -510,6 +514,8 @@ Current coin balance for each entity. Updated on every request and on each refil
 | `coins_left` | Numeric(12,6) | NO | Current spendable coin balance |
 | `last_refill_at` | DateTime | NO | UTC timestamp of the most recent coin refill |
 
+**Storage:** `fillfactor = 80` (PostgreSQL only) so the per-request counter updates stay HOT; see migration `d3e4f5a6b7c8`.
+
 ---
 
 ## entity_model_consents
@@ -629,6 +635,8 @@ Running aggregated usage counters per entity per model per source, folded from `
 
 **Constraints:** `UNIQUE(entity_id, model_config_id, source)`; index `ix_model_stats_model_config_id` on (`model_config_id`)
 
+**Storage:** `fillfactor = 80` (PostgreSQL only) so the counter updates (billing before the stats cutover, the stats fold after) stay HOT; see migration `d3e4f5a6b7c8`.
+
 ---
 
 ## entity_stats
@@ -655,6 +663,8 @@ Pre-aggregated usage totals per entity across all models and sources. One row pe
 - Populated on migration by a `GROUP BY` backfill from `model_stats`.
 - After the stats cutover the totals lag real time by up to `stats.fold_lag + stats.fold_interval` (about 6 minutes by default); the user's own `/profile` adds their not-yet-folded `request_logs` on top and is exact. `conversations` stays synchronous: it is bumped once per new conversation, not per request.
 - The `folded_*` columns (here and in `model_stats`) hold the fold's own part of each total, which `flask check-stats` compares with `request_logs` since the cutover; the totals themselves also carry history from before `request_logs` existed.
+
+**Storage:** `fillfactor = 80` (PostgreSQL only) so the counter updates (billing before the stats cutover, the stats fold after) stay HOT; see migration `d3e4f5a6b7c8`.
 
 ---
 
