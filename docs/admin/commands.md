@@ -262,9 +262,27 @@ difference means requests the fold missed, such as a billing transaction that co
 `stats.fold_lag` after its timestamp. `--fix` adds each difference to the totals instead. Before the
 cutover it does nothing. It scans every `request_logs` row since the cutover and holds the fold
 state while it does, so on a large install run it at a quiet time: the fold waits until it finishes.
-Do not run it while a [`flask reassign-model`](#reassign-model) is in progress: until that command
-merges `model_stats` at its end, the check reports differences that are not drift, and `--fix`
-would count them twice.
+On PostgreSQL `check-stats`, [`reassign-model`](#reassign-model) and [`erase-entity`](#erase-entity)
+do not run at the same time: `check-stats` skips, the other two exit with an error. While either of
+the other two moves `request_logs`, the check would report differences that are not drift, and
+`--fix` would count them twice, so a `check-stats` started then prints `Skipped: a reassign-model or
+erase-entity (or another check-stats) is running; run check-stats after it finishes.` and exits 0
+without checking anything.
+
+**Run it on a schedule.** The fold counts a request once its billing transaction has committed,
+in the pass whose window covers the request's timestamp. A transaction that commits more than
+`stats.fold_lag` after its timestamp, for example one queued on an entity's balance lock, lands
+behind the fold and is never counted, and nothing reports it at runtime. Run `check-stats --fix`
+weekly to add such rows back. The Helm chart does this by default with a CronJob (`statsCheck.*`,
+Sundays at 03:17; see "Scheduled stats check" in the chart's README). With Compose, run it from
+cron on the host:
+
+```bash
+17 3 * * 0  cd /path/to/compose && docker compose run --rm lumen-upgrade check-stats --fix
+```
+
+A scheduled run that overlaps a `reassign-model` or `erase-entity` skips and exits 0; the next run
+checks.
 
 ## `init-db`
 
@@ -304,7 +322,12 @@ It is not atomic on PostgreSQL: `request_logs` moves one chunk per transaction, 
 leaves the history split between `FROM` and `TO`. It is safe to re-run: the same command picks up
 where the last one stopped. Run it off-hours for a model with a large history, and retire `FROM` in
 `config.yaml` first so no new requests are logged against it while it runs. It refuses to run while
-`request_logs` has a retention policy. Do not run [`check-stats`](#check-stats) at the same time.
+`request_logs` has a retention policy.
+
+On PostgreSQL `reassign-model`, [`erase-entity`](#erase-entity) and [`check-stats`](#check-stats)
+do not run at the same time: `check-stats` skips, the other two exit with an error. A
+`reassign-model` started while one of them runs exits 1 with `Error: a reassign-model, erase-entity
+or check-stats is already running; retry when it finishes.` and changes nothing.
 
 ## `erase-entity`
 
@@ -345,6 +368,12 @@ On PostgreSQL `request_logs` moves one chunk per transaction, and each UPDATE ca
 chunk, hence off-hours. It is safe to re-run: an interrupted run leaves every row owned by the user
 or the ghost, and re-running with the same id, even after the user is deleted, finishes the
 aggregate refresh.
+
+On PostgreSQL `erase-entity`, [`reassign-model`](#reassign-model) and [`check-stats`](#check-stats)
+do not run at the same time: `check-stats` skips, the other two exit with an error. An
+`erase-entity` started while one of them runs exits 1 with `Error: a reassign-model, erase-entity or
+check-stats is already running; retry when it finishes.` and changes nothing. It takes the lock before it
+asks for confirmation, so an unanswered prompt keeps the other two out as well; answer it promptly.
 
 What is deleted and what moves, table by table, is in
 [Erasing a user](https://ncsa.github.io/lumen/dbschema/#erasing-a-user-gdpr) in the database schema

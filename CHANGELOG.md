@@ -8,6 +8,7 @@ All notable changes to Lumen will be documented in this file.
 
 **Upgrade:** Lumen no longer migrates on container start. Run the image with `upgrade` first (Compose: new `lumen-upgrade` service; Helm: new migration Job); it applies all migrations, including the usage-stats cutover, and backfills missing aggregate months. Upgrading only the image (Compose without `lumen-upgrade`, or a newer `image.tag` on an older chart) leaves Lumen waiting at startup; the chart needs image 2.3.0+. The chart's `startupProbe` budget drops from 30 to 5 minutes. (#376)
 
+- `flask check-stats --fix` now runs weekly as a Helm CronJob (`statsCheck.*`) to add back requests whose billing committed more than `stats.fold_lag` late. On PostgreSQL, `check-stats`, `reassign-model` and `erase-entity` no longer run at the same time: `check-stats` skips, and the others exit with an error. (#445)
 - `flask upgrade` warns with the exact `ALTER EXTENSION timescaledb UPDATE` command when the TimescaleDB extension is older than the server's; it never runs it. (#437)
 - TimescaleDB pin moves to 2.31.0 (run `ALTER EXTENSION timescaledb UPDATE` after bumping the image); the image runs any `flask` operator command given as its argument (e.g. `docker run <image> check-stats`), and `bash` still opens a shell; operator commands are documented in the Admin Guide. (#402)
 - **Breaking:** Upgrade to SQLAlchemy 2.1; the PostgreSQL driver is now psycopg 3 (`psycopg[binary]`) and psycopg2 is no longer installed. `postgresql://` and `postgres://` URLs need no change; a database URL that names `postgresql+psycopg2://` fails at startup and must be changed to `postgresql://`.
@@ -68,6 +69,10 @@ All notable changes to Lumen will be documented in this file.
 - Fixed: flaky Edit Key Expiry UI test that checked focus before the modal finished closing (#327).
 - Fixed: flaky test_snapshot_older_than_max_age_reloads_on_next_read that failed on floating-point rounding at the MAX_AGE boundary (#333)
 - Monitor: `collect` and `serve` refuse to start without an http(s) `lumen.url`; the Docker images pin uv. (#446)
+
+### Security
+
+- Upgrade pypdf to 7.0.0, certifi to 2026.10.23 and joserfc to 1.8.0 to fix known CVEs (#448).
 
 ## [2.2.1] - 2026-10-16
 
