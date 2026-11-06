@@ -1,6 +1,6 @@
 FROM python:3.14-slim AS builder
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /bin/uv
 
 ENV UV_NO_CACHE=1 \
     UV_COMPILE_BYTECODE=1 \

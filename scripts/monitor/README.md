@@ -19,23 +19,30 @@ It replaces the single-file `monitor/app.py`; see [Migrating from monitor/app.py
 cd scripts/monitor
 cp config.yaml.example config.yaml   # then edit
 uv sync
-uv run monitor migrate               # create or upgrade the schema
+uv run monitor migrate               # create or upgrade the schema (to head)
 uv run monitor collect --probe       # probe GET /v1/models once: health, response time, samples
 uv run monitor collect --price       # record today's Lumen, models.dev and hardware prices once
 uv run monitor serve                 # the loops plus the dashboard on :5002 until SIGTERM/SIGINT
 ```
 
+`lumen.url` (Lumen's `http(s)://` address) is required for `collect` and `serve`, which exit 2 without it.
+
+`uv run monitor migrate [revision]` upgrades the schema to that Alembic revision instead; the
+default target is `head`.
+
 A probe writes one `probes` row (success, response time, models listed and up) and, when it
-succeeds, one `samples` row per model plus today's availability counters. Each model keeps
-the status Lumen reports: ok when all its servers are healthy, degraded when some are, down
-when none are (or it has none). A successful probe is down for Lumen when more than
-`lumen.down_above` percent of its models are down (default 50: 1 of 3 down is degraded, 2 of 3
-is down, 2 of 4 is degraded), degraded when at least one is, ok otherwise. The percentage only
-applies to Lumen overall: a degraded model counts as up there and never changes its own status.
-The Lumen state comes from the last 3 probes: DOWN when all failed, otherwise the status of the
-latest one when it succeeded (DOWN / DEGRADED / UP), UP when it failed but an earlier one
-succeeded, UNKNOWN before the first probe. The first probe of each local day deletes probes
-and samples older than `retention`.
+succeeds, one `samples` row per model plus today's availability counters. It asks for
+`/v1/models?tokens=true`; Lumen adds the input/output token counts only for its monitoring
+token, and an older Lumen ignores the parameter. The monitor stores no combined token count:
+tokens are input + output. Each model keeps the status Lumen reports: ok when all its servers
+are healthy, degraded when some are, down when none are (or it has none). A successful probe is
+down for Lumen when more than `lumen.down_above` percent of its models are down (default 50: 1
+of 3 down is degraded, 2 of 3 is down, 2 of 4 is degraded), degraded when at least one is, ok
+otherwise. The percentage only applies to Lumen overall: a degraded model counts as up there
+and never changes its own status. The Lumen state comes from the last 3 probes: DOWN when all
+failed, otherwise the status of the latest one when it succeeded (DOWN / DEGRADED / UP), UP
+when it failed but an earlier one succeeded, UNKNOWN before the first probe. The first probe of
+each local day deletes probes and samples older than `retention`.
 
 `monitor serve` runs three loops on one scheduler thread: the probe every `refresh.web`, the
 models run every `refresh.models` and the price run every `refresh.price` (which also re-reads
@@ -52,27 +59,14 @@ never compared with Lumen ids. Two entries with the same `lumen_id`, or a `lumen
 another entry's key, are a config error; a `lumen_id` that matches no Lumen model is logged
 on each price run and the entry is unused.
 
-The models run makes no HTTP call: it reads the request and token windows from the last
-successful probe (skipping the run when that probe is older than 2 × `refresh.web`) and adds
-the traffic since each metric's watermark (`covered_until` for requests,
-`input_tokens_covered_until` and `output_tokens_covered_until` for input and output tokens) to
-today's lumen row. The probe asks for `/v1/models?tokens=true`; Lumen adds the input/output
-token counts only for its monitoring token, and an older Lumen ignores the parameter. The
-monitor stores no combined token count: tokens are input + output. A gap up to 1h is counted
-from `last_hour`; up to 24h from `last_day`, marked `estimated`; a longer one from
-`last_month` (at most 30 days back), filling the missed days with `estimated` rows, or without
-`last_month` from the last 24h only, leaving the missed days empty. A gap across local
-midnight is split between the days by duration. A snapshot without a usable window for a
-metric leaves that metric's watermark where it was, so its gap is counted by the next snapshot
-that has one. The watermarks are stored, so a restart never counts the same time twice.
-
-Earlier days are marked `final` once every metric is counted past their end, normally on the
-first run after local midnight. A day whose traffic is still deferred stays open until a window
-covers it, or until it is 30 days old and no window can reach it; it then closes as
-`estimated`, since part of its traffic was never counted. A metric that stops being reported
-for good keeps every later day of that model open for those 30 days, not only the day of the
-gap. A day's totals are exact
-only when it is `final` and not `estimated`.
+The models run makes no HTTP call: it adds the traffic in the last probe's request and token
+windows since each metric's stored watermark to today's lumen row, so a restart never counts the
+same time twice. A gap longer than an hour is estimated from Lumen's longer windows, and the
+rows it adds are marked `estimated`. Earlier days become `final` once every metric is counted
+past their end, normally on the first run after local midnight; a day still waiting for traffic
+(as is every later day of a model whose metric stops being reported) closes as `estimated` once
+it is 30 days old, and a day's totals are exact only when it is `final` and not `estimated`.
+[`monitor/totals.py`](monitor/totals.py) documents the gap, midnight-split and finalisation rules.
 
 ## Dashboard
 
@@ -93,19 +87,22 @@ under `base_path` (restart after changing it). The overview has:
   Columns sort on click; a row opens the model's detail page. HW $/day is the latest
   day's cost; HW $/M tok covers the selected range.
 
-Ranges are 1h, 12h, 24h, 7d and 30d from the raw probes and samples, bucketed at 1m, 3m, 5m,
-30m and 2h (never below `refresh.web`); a bucket shows its worst status and is "no data" when
-empty. Strips, badges and the Lumen chart draw ok green, degraded yellow and down red; strip
-cells also get shorter (degraded hatched), so the state does not rely on colour. Hovering a
-cell that is not ok (degraded, down or no data) shows when its bucket starts, in local time (the
-day on 1y); a screen reader hears the first 5 such periods. 1y uses one bucket per local day. For a model: ok at 99% availability or more, degraded
-above 0%, down otherwise. For Lumen, from the probes still kept: ok when 99% or more of the
-day's probes were ok, down when none was up (failed, or more than `lumen.down_above` percent of
-models down), degraded otherwise; its uptime is the share of probes that were up. `*` marks
-values that include days which are not yet `final` or are `estimated`; `†` marks a model
-without a `models:` GPU entry. The page reloads its data every
-`refresh.page` without a full reload. The JSON behind it is `/api/overview?range=&sort=&dir=`
-and `/api/lumen?range=`.
+Across the dashboard:
+
+- **Ranges**: 1h, 12h, 24h, 7d and 30d from the raw probes and samples, bucketed at 1m, 3m,
+  5m, 30m and 2h (never below `refresh.web`); a bucket shows its worst status and is "no data"
+  when empty. Strips, badges and the Lumen chart draw ok green, degraded yellow and down red;
+  strip cells also get shorter (degraded hatched), so the state does not rely on colour.
+  Hovering a cell that is not ok (degraded, down or no data) shows when its bucket starts, in
+  local time (the day on 1y); a screen reader hears the first 5 such periods. `*` marks values
+  that include days which are not yet `final` or are `estimated`; `†` marks a model without a
+  `models:` GPU entry.
+- **1y status**: one bucket per local day. For a model: ok at 99% availability or more,
+  degraded above 0%, down otherwise. For Lumen, from the probes still kept: ok when 99% or more
+  of the day's probes were ok, down when none was up (failed, or more than `lumen.down_above`
+  percent of models down), degraded otherwise; its uptime is the share of probes that were up.
+- **API**: the page reloads its data every `refresh.page` without a full reload. The JSON
+  behind it is `/api/overview?range=&sort=&dir=` and `/api/lumen?range=`.
 
 ![Model detail](docs/detail.png)
 
