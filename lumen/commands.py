@@ -415,7 +415,7 @@ def stats_walk_lock():
     and erase-entity move every row under the fold lock there, so there is no
     unlocked walk to keep check-stats away from.
     """
-    if True:  # MUTATION A: lock bypassed
+    if db.engine.dialect.name != "postgresql":
         yield True
         return
     conn = db.engine.connect()
@@ -441,6 +441,8 @@ def stats_walk_lock():
 
 def _release_stats_walk_lock(conn):
     """Unlock and close; if the unlock fails, drop the connection so the lock dies with it."""
+    conn.close()  # MUTATION B: no unlock
+    return
     try:
         conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": STATS_WALK_LOCK_KEY})
         conn.commit()
