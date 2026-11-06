@@ -121,8 +121,9 @@ up to the aggregate's refresh horizon: now, less the refresh policy's end offset
 whole bucket. Buckets after the horizon are not materialised yet, and are served from raw rows. A month is *missing* when it has raw rows but no materialised bucket, and
 *partly covered* when its first materialised bucket is later than the bucket of its first raw row,
 at the aggregate's own bucket width (the refresh policy only ever materialises a trailing window, so
-it can leave the head of a month behind). Each such month is refreshed over the whole month, oldest
-first, up to now, with the same lock retries as `backfill-aggregate`. When every month is covered it
+it can leave the head of a month behind). Each such month is refreshed, oldest first, from its first
+day, or from the aggregate's retention boundary when that falls inside the month, to the month's end
+or up to now, with the same lock retries as `backfill-aggregate`. When every month is covered it
 costs two indexed reads per month and refreshes nothing. A month that still fails after the retries
 ends the run with exit 1; the next run checks again and starts at the first month still missing. A
 hole in the middle of a month is not detected: `flask backfill-aggregate --name NAME --from YYYY-MM`
@@ -130,7 +131,7 @@ fixes that by hand.
 
 The backfill is skipped on SQLite and on a database without TimescaleDB. If `request_logs` has a
 retention policy it is skipped too: it logs the same ERROR as the startup check and does not fail
-the upgrade. Months before an aggregate's own retention boundary, if it has one, are left out.
+the upgrade. Months entirely before an aggregate's own retention boundary, if it has one, are skipped.
 
 **Not done by `upgrade`: updating the TimescaleDB extension.** After you bump the TimescaleDB image,
 `ALTER EXTENSION timescaledb UPDATE` is a separate, manual step; see
@@ -153,10 +154,11 @@ flask wait-for-migrations [--timeout SECONDS]
 
 It compares the heads of the bundled migrations with the revision stamped in the database, connecting
 the same way `flask db upgrade` does (including `database.url` from `config.yaml`). While the database
-is behind, empty or unreachable it logs the current and expected revisions and retries every 2 seconds;
-about every 30 seconds it logs a reminder to run the upgrade step (the image with `upgrade`, the
-`lumen-upgrade` Compose service, or the Helm migration Job). A revision this image does not know means a
-newer image already migrated the database, so it exits 1 at once. It never migrates anything.
+is behind, empty or unreachable it checks again every 2 seconds, logs the current and expected
+revisions only when they change, and about every 30 seconds logs a reminder to run the upgrade step
+(the image with `upgrade`, the `lumen-upgrade` Compose service, or the Helm migration Job). A
+revision this image does not know means a newer image already migrated the database, so it exits
+1 at once. It never migrates anything.
 
 Two separate time budgets apply to a PostgreSQL server that accepts connections but never answers:
 
@@ -214,9 +216,15 @@ TimescaleDB refuses an *overlapping* refresh outright rather than queueing behin
 landing while a scheduled policy job is mid-refresh fails immediately with `SQLSTATE 55P03`
 (`LockNotAvailable`). `request_metrics_1m`'s policy fires every minute, so a long backfill will meet
 one; each month is retried for up to 60 seconds and the line reports `(after N lock retries)`. Every
-month that succeeds is printed with `OK`, and a month that fails outright prints the exact
-`--from` to resume with. Re-running an already-refreshed month is safe: it recomputes that window
-from its source and overwrites it, so resuming never double-counts.
+month that succeeds is printed with `OK`, except a month younger than one bucket, which prints
+`skipped (less than one bucket old; served live by real-time aggregation)`; a month that fails
+outright prints the exact `--from` to resume with. Re-running an already-refreshed month is safe:
+it recomputes that window from its source and overwrites it, so resuming never double-counts.
+
+It exits 1 with `Error: '<name>' is not a continuous aggregate in this database.` for an unknown
+`--name`, and with `Error: --from must be YYYY-MM, got '<value>'.` for a malformed `--from`. With no
+`--from` and an empty `request_logs`, it prints `request_logs is empty; nothing to backfill.` and
+exits 0.
 
 ## `check-aggregate`
 
@@ -235,12 +243,15 @@ printing the `flask backfill-aggregate --from YYYY-MM` that fixes it; until then
 are missing that history. It also checks every month by the rule [`flask upgrade`](#upgrade)
 backfills by, and exits 1 listing each month that is *missing* (raw rows, no materialised bucket) or
 *partly covered* (its first materialised bucket is later than the bucket of its first raw row), with
-both timestamps; `flask upgrade` fixes them. The month check runs for all five aggregates, each at
+both timestamps; `flask upgrade`, or `flask backfill-aggregate [--name <view>] --from YYYY-MM` from
+the first listed month, fixes them. The month check runs for all five aggregates, each at
 its own bucket width. For every month before the one holding the lowest of their watermarks it then
 compares the monthly `requests`, `input_tokens`, `output_tokens` and `cost` of the five aggregates'
 materialised rows, and exits 1 listing each month and column that differ: the other views are sums
-of the entity aggregate, so a difference is drift. It also exits 1 if a retention policy exists on
-`request_logs`, and prints the `SELECT remove_retention_policy('request_logs');` that removes it.
+of the entity aggregate, so a difference is drift. To fix drift, refresh those months bottom-up
+with `flask backfill-aggregate --name <view> --from YYYY-MM`, from the first listed month, for each
+usage aggregate in the [refresh order](#backfill-aggregate). It also exits 1 if a retention policy
+exists on `request_logs`, and prints the `SELECT remove_retention_policy('request_logs');` that removes it.
 If one of the five aggregates does not exist, it exits 1 at once with
 `Error: '<name>' does not exist. Run 'flask db upgrade' first.`
 
@@ -320,8 +331,9 @@ would count them twice.
 
 ## `init-db`
 
-Syncs the models (`model_configs` and their endpoints) from `config.yaml` to the database, then
-exits.
+Syncs the models (`model_configs`, their endpoints and `model_aliases`) from `config.yaml` to the
+database, disables the models no longer in the file, then exits. If the aliases are invalid, it
+fails before writing anything.
 
 ```bash
 flask init-db
@@ -341,8 +353,9 @@ Moves all conversations, stats and request history from one model to another.
 flask reassign-model FROM_ID TO_ID
 ```
 
-`FROM_ID` and `TO_ID` are `model_configs.id` values. The `FROM` row in `model_configs` is left as
-it is. The command moves:
+`FROM_ID` and `TO_ID` are `model_configs.id` values. It refuses, with exit 1, when `FROM_ID` and
+`TO_ID` are the same model_config id or either id does not exist. The `FROM` row in `model_configs`
+is left as it is. The command moves:
 
 - the conversations that use `FROM`,
 - its `request_logs` rows,
@@ -377,8 +390,8 @@ Erasing user 42: Jane Doe <jane@example.edu>
 This deletes the user and cannot be undone. Continue? [y/N]:
 ```
 
-Anything but `y` prints `Aborted.` and exits 1 with nothing changed. Use `--yes` only in a script
-that has already checked the id.
+`y` or `yes` (any case) continues; `n`, `no` or Enter prints `Aborted.` and exits 1 with nothing
+changed; any other answer asks again. Use `--yes` only in a script that has already checked the id.
 
 It deletes the user's conversations, messages, auth requests, balance, limits, model consents,
 group and project memberships. It moves the user's request history, usage stats and models
