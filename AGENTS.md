@@ -78,7 +78,7 @@ Following rules are here to help the AI avoid the same mistakes again:
 - When cutting a release, first pull the latest dependencies (`uv lock --upgrade`) and then run the full test suite before tagging — upgraded dependencies can introduce breaking changes, so the release must not go out unless the tests pass.
 - "The full test suite" always includes the PostgreSQL and Redis tests; a plain `uv run pytest` silently skips them. Start throwaway services and point the suite at them:
   ```bash
-  docker run -d --rm --name lumen-test-pg -e POSTGRES_USER=lumen -e POSTGRES_PASSWORD=lumen -e POSTGRES_DB=lumen_ci -p 55433:5432 timescale/timescaledb:2.27.2-pg17
+  docker run -d --rm --name lumen-test-pg -e POSTGRES_USER=lumen -e POSTGRES_PASSWORD=lumen -e POSTGRES_DB=lumen_ci -p 55433:5432 timescale/timescaledb:2.31.0-pg17
   docker run -d --rm --name lumen-test-redis -p 56380:6379 redis:7
   LUMEN_TEST_POSTGRES_URL=postgresql://lumen:lumen@localhost:55433/lumen_ci LUMEN_TEST_REDIS_URL=redis://localhost:56380/0 uv run pytest -rs
   docker stop lumen-test-pg lumen-test-redis

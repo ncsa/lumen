@@ -236,7 +236,7 @@ postgresql:
   existingSecretKey: "database-url"
   # -- Container image. TimescaleDB is required, also for an external postgresql.url: on a
   # plain postgres image the migration Job fails at `flask db upgrade`. Pin a timescaledb tag.
-  image: "timescale/timescaledb:2.27.2-pg17"
+  image: "timescale/timescaledb:2.31.0-pg17"
   auth:
     username: lumen
     password: ""

@@ -411,13 +411,15 @@ def test_all_summary_plan_reads_the_daily_materialisation_and_no_old_raw_chunk(p
     (statement, params), = _captured(pg_app, _client(pg_app, world["admin"]), "summary", "all")
     with engine.connect() as conn:
         plan = conn.exec_driver_sql("EXPLAIN (FORMAT JSON) " + statement, params or {}).scalar()
-        daily_id = conn.execute(text(
-            "SELECT mat_hypertable_id FROM _timescaledb_catalog.continuous_agg "
-            "WHERE user_view_name = 'request_counts_daily'"
-        )).scalar()
+        # Public views, not _timescaledb_catalog.chunk: its table_name column
+        # is gone in TimescaleDB 2.31.
         daily_chunks = set(conn.execute(text(
-            "SELECT c.table_name FROM _timescaledb_catalog.chunk c WHERE c.hypertable_id = :h"
-        ), {"h": daily_id}).scalars())
+            "SELECT ch.chunk_name FROM timescaledb_information.chunks ch "
+            "JOIN timescaledb_information.continuous_aggregates ca "
+            "  ON ch.hypertable_schema = ca.materialization_hypertable_schema "
+            " AND ch.hypertable_name = ca.materialization_hypertable_name "
+            "WHERE ca.view_name = 'request_counts_daily'"
+        )).scalars())
         mark = _watermark(conn, "request_counts_hourly_by_entity")
         old_raw = set(conn.execute(text(
             "SELECT chunk_name FROM timescaledb_information.chunks "
