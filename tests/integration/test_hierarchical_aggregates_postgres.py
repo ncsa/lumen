@@ -376,8 +376,7 @@ def test_downgrade_drops_the_totals_view_and_upgrade_recreates_it(db, engine):
 
 def test_downgrade_drops_the_daily_entity_view_and_upgrade_recreates_it(db, engine):
     url = db[0]
-    assert _script_dir().get_current_head() == DAILY_ENTITY_REVISION, \
-        "this revision is no longer head"
+    assert _script_dir().get_revision(DAILY_ENTITY_REVISION).down_revision == TOTAL_REVISION
 
     _ok(_flask_db(url, "downgrade", TOTAL_REVISION), "downgrade")
     catalog = _catalog(engine)
