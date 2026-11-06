@@ -302,7 +302,7 @@ All three workers are daemon threads started inside `create_app`. A `SERVER_IS_M
 | Health checker | `services/health.py` | 60 s | Polls each active `ModelEndpoint` via OpenAI `models.list()`; sets `healthy` flag (retired endpoints are skipped) |
 | Token refiller | `services/token_refill.py` | 60 s poll, hourly effective | Increments `EntityBalance` by `refresh_coins`, capped at `max_coins` |
 | Config watcher | `services/config_watcher.py` | 5 s | Hot-reloads models from `config.yaml` (skips files whose version is not exactly 3 with a logged error; retries a failed model sync with backoff — 5 s, 10 s, 20 s, … up to 5 min — and keeps the previous config until it applies); warns on restart-required changes |
-| Stats fold | `services/stats_fold.py` | `stats.fold_interval` (60 s) | After the stats cutover, adds the `request_logs` rows of `[folded_until, now − stats.fold_lag)` into `model_stats` / `entity_stats` and advances `folded_until` by compare-and-set; a no-op before the cutover |
+| Stats fold | `services/stats_fold.py` | `stats.fold_interval` (60 s) | After the stats cutover, adds the `request_logs` rows of `[folded_until, now − stats.fold_lag)` into `model_stats` / `entity_stats` and advances `folded_until` by compare-and-set; a no-op before the cutover. Rows that commit after their window was folded are added back by `flask check-stats --fix` (weekly Helm CronJob) |
 
 ---
 

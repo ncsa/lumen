@@ -1,0 +1,83 @@
+{{- if .Values.statsCheck.enabled }}
+# Scheduled `flask check-stats --fix`. The stats fold counts a request_logs row
+# only if it is committed before the pass whose window covers its timestamp; a
+# billing transaction that commits more than stats.fold_lag late is never folded.
+# This run adds those rows back. It holds the fold state while it scans, so the
+# default schedule is weekly, off-hours. On PostgreSQL it skips (exit 0) while a
+# reassign-model or erase-entity is moving request_logs.
+#
+# Same pod as the migration Job: env, config mount, prometheus multiproc dir,
+# image and scheduling.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "lumen.statsCheckCronJobName" . }}
+  labels:
+    {{- include "lumen.labels" . | nindent 4 }}
+    app.kubernetes.io/component: stats-check
+spec:
+  schedule: {{ .Values.statsCheck.schedule | quote }}
+  # Never start a run while the previous one is still scanning.
+  concurrencyPolicy: Forbid
+  # Keep finished runs, and their logs, for a few weeks: a failed run is the only
+  # sign that the totals were not repaired.
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "lumen.labels" . | nindent 8 }}
+        app.kubernetes.io/component: stats-check
+    spec:
+      # No retry: the next scheduled run repeats the whole check.
+      backoffLimit: 0
+      {{- $ttl := .Values.statsCheck.ttlSecondsAfterFinished }}
+      {{- if not (kindIs "invalid" $ttl) }}
+      ttlSecondsAfterFinished: {{ $ttl }}
+      {{- end }}
+      template:
+        metadata:
+          {{- with .Values.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          # Not the Deployment's selector labels: the Service would send traffic here.
+          labels:
+            app.kubernetes.io/name: {{ include "lumen.statsCheckName" . }}
+            app.kubernetes.io/instance: {{ .Release.Name }}
+            app.kubernetes.io/component: stats-check
+        spec:
+          restartPolicy: Never
+          {{- include "lumen.podSpecCommon" . | trim | nindent 10 }}
+          initContainers:
+            {{- include "lumen.waitForDbInitContainer" . | nindent 12 }}
+          containers:
+            # Through the image's entrypoint (no `command`), which runs the flask
+            # command and sets a default PGCONNECT_TIMEOUT.
+            - name: stats-check
+              securityContext:
+                {{- include "lumen.appSecurityContext" . | nindent 16 }}
+              image: {{ include "lumen.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args:
+                - check-stats
+                - --fix
+              env:
+                {{- include "lumen.appEnv" . | nindent 16 }}
+              resources:
+                {{- if .Values.statsCheck.resources }}
+                {{- toYaml .Values.statsCheck.resources | nindent 16 }}
+                {{- else }}
+                {{- include "lumen.appResources" . | nindent 16 }}
+                {{- end }}
+              volumeMounts:
+                {{- include "lumen.migrateVolumeMounts" . | nindent 16 }}
+          volumes:
+            - name: config
+              secret:
+                secretName: {{ include "lumen.fullname" . }}-config
+            {{- if and .Values.api.prometheus.enabled .Values.api.prometheus.multiprocDir }}
+            - name: prometheus-multiproc
+              emptyDir: {}
+            {{- end }}
+{{- end }}

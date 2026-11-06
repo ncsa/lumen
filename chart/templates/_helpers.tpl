@@ -55,6 +55,27 @@ case gets "-job" instead.
 {{- end }}
 
 {{/*
+Name of the stats-check CronJob: <fullname>-stats-check. A CronJob name may be at
+most 52 characters (the controller appends an 11-character suffix to each Job).
+*/}}
+{{- define "lumen.statsCheckCronJobName" -}}
+{{- printf "%s-stats-check" (include "lumen.fullname" . | trunc 40 | trimSuffix "-") -}}
+{{- end }}
+
+{{/*
+app.kubernetes.io/name label of the stats-check pod. Like lumen.migrateName, it
+must differ from the Deployment's selector label.
+*/}}
+{{- define "lumen.statsCheckName" -}}
+{{- $name := include "lumen.name" . -}}
+{{- $candidate := printf "%s-stats-check" ($name | trunc 51 | trimSuffix "-") -}}
+{{- if eq $candidate $name -}}
+{{- $candidate = printf "%s-cron" ($name | trunc 58 | trimSuffix "-") -}}
+{{- end -}}
+{{- $candidate -}}
+{{- end }}
+
+{{/*
 Common labels.
 */}}
 {{- define "lumen.labels" -}}

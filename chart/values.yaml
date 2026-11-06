@@ -334,6 +334,24 @@ migration:
   # -- Resources for the migration container. Empty uses the app container's resources.
   resources: {}
 
+## Scheduled stats check -----------------------------------------------------------
+## A CronJob (templates/stats-check-cronjob.yaml) runs `flask check-stats --fix`, which
+## adds back requests whose billing committed more than `stats.fold_lag` late and so
+## were missed by the stats fold. See "Scheduled stats check" in chart/README.md.
+
+statsCheck:
+  # -- Create the CronJob.
+  enabled: true
+  # -- Cron schedule, in the time zone of the cluster's controller manager (usually
+  # UTC). Weekly by default: each run scans request_logs since the stats cutover and
+  # pauses the fold while it does.
+  schedule: "17 3 * * 0"
+  # -- Seconds a finished run (and its pod logs) is kept before Kubernetes deletes it.
+  # null keeps the last 3 successful and 3 failed runs.
+  ttlSecondsAfterFinished: null
+  # -- Resources for the stats-check container. Empty uses the app container's resources.
+  resources: {}
+
 ## Resources for the Lumen app pod --------------------------------------------------
 
 resources: {}
