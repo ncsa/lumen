@@ -1,8 +1,7 @@
 # Operator Commands
 
 Lumen ships these `flask` commands for operators. In a deployment, give the command to the image
-as its argument (see [Running commands in a deployment](#running-commands-in-a-deployment)); in a
-local checkout, run `uv run flask --app run <command>`. This page writes them as `flask <command>`
+as its argument; in a local checkout, run `uv run flask --app run <command>`. This page writes them as `flask <command>`
 for short. `flask --app run <command> --help` prints the same usage and options as this page.
 
 | Command | What it does |
@@ -84,13 +83,10 @@ the first failure with exit 1:
    run left undone, so running `flask upgrade` again resumes. Today there is one: the **aggregate
    backfill by missing month** of the five usage aggregates.
 
-For the extension check, the `-U` and `-d` values are read from the catalog: the role that owns the
-`timescaledb` extension (the connecting user need not own it) and the current database. Both are
-shell-quoted, so a name with spaces or shell metacharacters stays one argument when pasted; simple
-names such as `lumen` print unchanged. Lumen cannot tell how it was deployed, so it prints the plain
-`psql` command (also the one to use with an external database), the Compose form and the Helm form
-for the bundled PostgreSQL (`<fullname>` is the release's full name). With extension 2.26.0 on a
-2.31.0 server, owned by `lumen` in database `lumen`:
+For the extension check, the `-U` and `-d` values (the role that owns the `timescaledb` extension
+and the current database) are read from the catalog and shell-quoted, and the WARNING prints the
+plain `psql` command, the Compose form and the Helm form. With extension 2.26.0 on a 2.31.0 server,
+owned by `lumen` in database `lumen`:
 
 ```text
 WARNING: TimescaleDB extension is 2.26.0 but the server has 2.31.0. Back up the database, then run as the first command of a fresh session:
@@ -104,14 +100,10 @@ It prints nothing on SQLite, without the extension, or when the versions match. 
 cannot be read, it prints one `Note: could not check the TimescaleDB extension version: …` line and
 the upgrade continues.
 
-The backfill walks the usage aggregates child before parent, in this order, because an aggregate
-built on another one is computed from that child's materialised rows:
-
-1. `request_counts_hourly_by_entity`
-2. `request_counts_daily_by_entity` (built on `request_counts_hourly_by_entity`)
-3. `request_counts_hourly` (built on `request_counts_hourly_by_entity`)
-4. `request_counts_hourly_total` (built on `request_counts_hourly`)
-5. `request_counts_daily` (built on `request_counts_hourly`)
+The backfill walks the usage aggregates child before parent, in the
+[refresh order](#backfill-aggregate): `request_counts_hourly_by_entity`,
+`request_counts_daily_by_entity`, `request_counts_hourly`, `request_counts_hourly_total`,
+`request_counts_daily`.
 
 An aggregate missing from the database is skipped. Migrations create new aggregates `WITH NO DATA`
 and rely on this step to fill them.
@@ -132,13 +124,6 @@ fixes that by hand.
 The backfill is skipped on SQLite and on a database without TimescaleDB. If `request_logs` has a
 retention policy it is skipped too: it logs the same ERROR as the startup check and does not fail
 the upgrade. Months entirely before an aggregate's own retention boundary, if it has one, are skipped.
-
-**Not done by `upgrade`: updating the TimescaleDB extension.** After you bump the TimescaleDB image,
-`ALTER EXTENSION timescaledb UPDATE` is a separate, manual step; see
-[Upgrading TimescaleDB](#upgrading-timescaledb).
-
-When the image runs a command (`docker run <image> upgrade` and the like), `PGCONNECT_TIMEOUT`
-defaults to `10` (a value you set is kept), so a database host that never answers cannot hang it.
 
 ## `wait-for-migrations`
 
@@ -172,7 +157,7 @@ Two separate time budgets apply to a PostgreSQL server that accepts connections 
   unless you set it yourself.
 
 The image's default (serve) mode runs this command, with no `--timeout`, before it starts uvicorn,
-with the same `PGCONNECT_TIMEOUT` default (for the gate only; uvicorn gets your environment as is).
+with the same `PGCONNECT_TIMEOUT` default, for the gate only.
 
 ## `backfill-aggregate`
 
@@ -258,54 +243,6 @@ If one of the five aggregates does not exist, it exits 1 at once with
 When every check passes it exits 0, and its last line is
 `Usage aggregates agree on every month before YYYY-MM.` (on an install with no requests yet, a note
 that the aggregates have never been refreshed). Run it before upgrading.
-
-## Upgrading TimescaleDB
-
-TimescaleDB is required: Lumen does not run on a plain `postgres` image. Pin the image tag
-(`timescale/timescaledb:2.31.0-pg17` is the tested version) and upgrade on purpose. A new image
-only installs the new extension files; the database keeps running the old version until it is
-updated, and nothing in Lumen updates it for you: [`flask upgrade`](#upgrade) prints a WARNING
-with the exact command for your database, but never runs it. Until then Lumen keeps working, but logs `TimescaleDB extension is <old> but the server has <new>` at
-startup and reports `lumen_timescaledb_extension_update_available` as `1` on `/metrics`.
-
-`ALTER EXTENSION … UPDATE` cannot be undone.
-
-1. **Back up the database.**
-2. Bump the image tag (`postgresql.image` in the Helm chart, `image:` in `docker-compose.yml`) and
-   restart the database.
-3. Update the extension. This must be the first command in a fresh session (`-X` skips `.psqlrc`),
-   run as the owner of the extension (normally the user that ran the migrations). `lumen` is the
-   example owner and database name; the WARNING from [`flask upgrade`](#upgrade) prints these
-   commands with your real ones.
-
-    Compose:
-
-    ```bash
-    docker compose exec postgres psql -X -U lumen -d lumen -c 'ALTER EXTENSION timescaledb UPDATE;'
-    ```
-
-    Helm, with the bundled PostgreSQL (`<fullname>` is the release's full name):
-
-    ```bash
-    kubectl exec -it <fullname>-postgresql-0 -- psql -X -U lumen -d lumen -c 'ALTER EXTENSION timescaledb UPDATE;'
-    ```
-
-4. Check the version. This must return the new version (`2.31.0`):
-
-    ```sql
-    SELECT extversion FROM pg_extension WHERE extname = 'timescaledb';
-    ```
-
-5. Restart Lumen. Confirm the startup log no longer shows
-   `TimescaleDB extension is <old> but the server has <new>`, and that
-   `lumen_timescaledb_extension_update_available` on `/metrics` is `0`.
-6. Run [`flask check-aggregate`](#check-aggregate); it must exit 0.
-
-At startup, and then periodically in every worker process (see "Prometheus metrics" in the
-[README](https://github.com/ncsa/lumen#prometheus-metrics) for the interval), Lumen checks the
-extension version, the `request_logs` hypertable, the continuous aggregates and their background
-jobs. It logs a WARNING per problem (ERROR when the extension or the hypertable is missing, or when
-`request_logs` has a retention policy) and never blocks startup.
 
 ## `check-stats`
 
@@ -408,3 +345,51 @@ aggregate refresh.
 What is deleted and what moves, table by table, is in
 [Erasing a user](https://ncsa.github.io/lumen/dbschema/#erasing-a-user-gdpr) in the database schema
 reference.
+
+## Upgrading TimescaleDB
+
+TimescaleDB is required: Lumen does not run on a plain `postgres` image. Pin the image tag
+(`timescale/timescaledb:2.31.0-pg17` is the tested version) and upgrade on purpose. A new image
+only installs the new extension files; the database keeps running the old version until it is
+updated, and nothing in Lumen updates it for you: [`flask upgrade`](#upgrade) prints a WARNING
+with the exact command for your database, but never runs it. Until then Lumen keeps working, but logs `TimescaleDB extension is <old> but the server has <new>` at
+startup and reports `lumen_timescaledb_extension_update_available` as `1` on `/metrics`.
+
+`ALTER EXTENSION … UPDATE` cannot be undone.
+
+1. **Back up the database.**
+2. Bump the image tag (`postgresql.image` in the Helm chart, `image:` in `docker-compose.yml`) and
+   restart the database.
+3. Update the extension. This must be the first command in a fresh session (`-X` skips `.psqlrc`),
+   run as the owner of the extension (normally the user that ran the migrations). `lumen` is the
+   example owner and database name; the WARNING from [`flask upgrade`](#upgrade) prints these
+   commands with your real ones.
+
+    Compose:
+
+    ```bash
+    docker compose exec postgres psql -X -U lumen -d lumen -c 'ALTER EXTENSION timescaledb UPDATE;'
+    ```
+
+    Helm, with the bundled PostgreSQL (`<fullname>` is the release's full name):
+
+    ```bash
+    kubectl exec -it <fullname>-postgresql-0 -- psql -X -U lumen -d lumen -c 'ALTER EXTENSION timescaledb UPDATE;'
+    ```
+
+4. Check the version. This must return the new version (`2.31.0`):
+
+    ```sql
+    SELECT extversion FROM pg_extension WHERE extname = 'timescaledb';
+    ```
+
+5. Restart Lumen. Confirm the startup log no longer shows
+   `TimescaleDB extension is <old> but the server has <new>`, and that
+   `lumen_timescaledb_extension_update_available` on `/metrics` is `0`.
+6. Run [`flask check-aggregate`](#check-aggregate); it must exit 0.
+
+At startup, and then periodically in every worker process (see "Prometheus metrics" in the
+[README](https://github.com/ncsa/lumen#prometheus-metrics) for the interval), Lumen checks the
+extension version, the `request_logs` hypertable, the continuous aggregates and their background
+jobs. It logs a WARNING per problem (ERROR when the extension or the hypertable is missing, or when
+`request_logs` has a retention policy) and never blocks startup.
