@@ -1076,6 +1076,7 @@ def test_sync_writes_cache_cost_rates(home, lumen_server, monkeypatch):
         {"id": "cache-demo", "max_model_len": 4000,
          "input_cost_per_million": 3.0, "output_cost_per_million": 9.0,
          "cached_input_cost_per_million": 0.3,
+         "cache_write_cost_per_million": 0.75,
          "input_modalities": ["text"], "output_modalities": ["text"]},
     ])
     r = run_script(home, port)
@@ -1084,7 +1085,7 @@ def test_sync_writes_cache_cost_rates(home, lumen_server, monkeypatch):
         (home / ".config" / "opencode" / "opencode.json").read_text()
     )["provider"]["lumen"]["models"]
     assert models["cache-demo"]["cost"] == {
-        "input": 3.0, "output": 9.0, "cache": {"read": 0.3, "write": 3.0},
+        "input": 3.0, "output": 9.0, "cache": {"read": 0.3, "write": 0.75},
     }
     # No configured cached-input rate: cached reads cost the input rate.
     assert models["gpt-demo"]["cost"]["cache"] == {"read": 1.0, "write": 1.0}

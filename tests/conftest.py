@@ -32,6 +32,13 @@ def app(tmp_path_factory):
     application = create_app()
     application.config["TESTING"] = True
     application.config["WTF_CSRF_ENABLED"] = False
+    # The session app would otherwise run the background metrics-snapshot
+    # refresher for the whole suite. A pass lands on its own ~interval
+    # schedule (between every test, at worst), and each one may publish a model
+    # snapshot from a half-built or half-deleted database that the test then
+    # reads - sporadic 404/503 in model and endpoint tests. Pool tests stop the
+    # thread with stopped_refresher for the same reason; stop it once here.
+    metrics_snapshot.stop_snapshot_refresher()
     with application.app_context():
         from lumen.extensions import db
         # Ask the engine where the file actually is instead of assuming the repo

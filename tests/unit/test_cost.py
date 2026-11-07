@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from lumen.services.cost import cached_tokens_from_usage, calculate_audio_cost, calculate_cost, usage_tokens
+from lumen.services.cost import cached_tokens_from_usage, calculate_audio_cost, calculate_cost, usage_tokens, write_tokens_from_usage
 
 
 def test_basic_cost():
@@ -74,20 +74,20 @@ def test_cached_tokens_from_usage_reads_the_wire_types_providers_send(usage, exp
 
 
 @pytest.mark.parametrize("usage, expected", [
-    (None, (0, 0, 0)),
+    (None, (0, 0, 0, 0)),
     (SimpleNamespace(prompt_tokens=100, completion_tokens=7,
-                     prompt_tokens_details=SimpleNamespace(cached_tokens=40)), (100, 40, 7)),
+                     prompt_tokens_details=SimpleNamespace(cached_tokens=40)), (100, 40, 7, 60)),
     ({"prompt_tokens": 100.0, "completion_tokens": 7.0,
-      "prompt_tokens_details": {"cached_tokens": 40.0}}, (100, 40, 7)),
+      "prompt_tokens_details": {"cached_tokens": 40.0}}, (100, 40, 7, 60)),
     # The audio upstream reports the same figures under these names.
-    ({"type": "tokens", "input_tokens": "12", "output_tokens": "3"}, (12, 0, 3)),
+    ({"type": "tokens", "input_tokens": "12", "output_tokens": "3"}, (12, 0, 3, 12)),
     # Unreadable counts become 0, so a prompt never carries a phantom cache.
-    ({"prompt_tokens": "x", "completion_tokens": None}, (0, 0, 0)),
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 140}}, (100, 0, 0)),
+    ({"prompt_tokens": "x", "completion_tokens": None}, (0, 0, 0, 0)),
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 140}}, (100, 0, 0, 100)),
 ])
 def test_usage_tokens_normalizes_every_spelling(usage, expected):
     """One reader for every billing and reporting path: the same usage object
-    must yield the same triple wherever it is read."""
+    must yield the same quadruple wherever it is read."""
     assert usage_tokens(usage) == expected
 
 

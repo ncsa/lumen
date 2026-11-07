@@ -247,6 +247,7 @@ def test_listing_reports_the_cases_it_covers(client, monitor_token, catalog):
     # A model without its own cached-input rate publishes null, not a resolved
     # number: the fallback to input_cost_per_million is the reader's rule.
     assert listed["plain"]["cached_input_cost_per_million"] is None
+    assert listed["plain"]["cache_write_cost_per_million"] is None
     assert listed["plain"]["requests"] == {"last_minute": 1, "last_hour": 1, "last_day": 2}
     assert listed["plain-a"]["parent"] == "plain"
     assert listed["requirements-removed"]["acknowledged_at"] == ACKED.isoformat() + "Z"
@@ -263,14 +264,18 @@ def test_listing_publishes_the_configured_cached_input_rate(app, client, monitor
     with app.app_context():
         mc = db.session.execute(select(ModelConfig).filter_by(model_name="plain")).scalar_one()
         mc.cached_input_cost_per_million = 0.25
+        mc.cache_write_cost_per_million = 0.5
         db.session.commit()
         model_cache.refresh(app)
 
     listed = {m["id"]: m for m in client.get("/v1/models", headers=_auth(monitor_token)).get_json()["data"]}
     assert listed["plain"]["cached_input_cost_per_million"] == 0.25
+    assert listed["plain"]["cache_write_cost_per_million"] == 0.5
     assert listed["plain-a"]["cached_input_cost_per_million"] == 0.25  # alias inherits
+    assert listed["plain-a"]["cache_write_cost_per_million"] == 0.5
     single = client.get("/v1/models/plain", headers=_auth(monitor_token)).get_json()
     assert single["cached_input_cost_per_million"] == 0.25
+    assert single["cache_write_cost_per_million"] == 0.5
 
 
 # ── Query counts ─────────────────────────────────────────────────────────────

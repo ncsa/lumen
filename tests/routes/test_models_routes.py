@@ -109,6 +109,8 @@ def test_models_cached_input_tooltip_only_when_set(app, auth_client):
         db.session.add_all([
             ModelConfig(model_name="cached-model", input_cost_per_million=1.0, output_cost_per_million=2.0,
                         cached_input_cost_per_million=0.1),
+            ModelConfig(model_name="cache-write-model", input_cost_per_million=1.0, output_cost_per_million=2.0,
+                        cache_write_cost_per_million=0.5),
             ModelConfig(model_name="plain-model", input_cost_per_million=1.0, output_cost_per_million=2.0),
         ])
         db.session.commit()
@@ -119,6 +121,10 @@ def test_models_cached_input_tooltip_only_when_set(app, auth_client):
     tip = cells[2].find("span", attrs={"data-bs-toggle": "tooltip"})
     assert tip is not None
     assert tip["title"] == "Cached input: 0.10 / 1M tokens"
+    write_cells = _row_for(resp.data, "cache-write-model").find_all("td")
+    write_tip = write_cells[2].find("span", attrs={"data-bs-toggle": "tooltip"})
+    assert write_tip is not None
+    assert write_tip["title"] == "Cache write: 0.50 / 1M tokens"
     plain_cells = _row_for(resp.data, "plain-model").find_all("td")
     assert plain_cells[2].find("span", attrs={"data-bs-toggle": "tooltip"}) is None
 
@@ -130,6 +136,8 @@ def test_model_detail_cached_input_row_only_when_set(app, auth_client):
         db.session.add_all([
             ModelConfig(model_name="cached-detail", input_cost_per_million=1.0, output_cost_per_million=2.0,
                         cached_input_cost_per_million=0.05),
+            ModelConfig(model_name="cache-write-detail", input_cost_per_million=1.0, output_cost_per_million=2.0,
+                        cache_write_cost_per_million=0.75),
             ModelConfig(model_name="plain-detail", input_cost_per_million=1.0, output_cost_per_million=2.0),
         ])
         db.session.commit()
@@ -138,8 +146,13 @@ def test_model_detail_cached_input_row_only_when_set(app, auth_client):
     th = soup.find("th", string="Cached input")
     assert th is not None
     assert th.parent.find("td").get_text(strip=True) == "0.05 / 1M"
+    write_soup = BeautifulSoup(auth_client.get("/models/cache-write-detail").data, "html.parser")
+    write = write_soup.find("th", string="Cache write")
+    assert write is not None
+    assert write.parent.find("td").get_text(strip=True) == "0.75 / 1M"
     plain = BeautifulSoup(auth_client.get("/models/plain-detail").data, "html.parser")
     assert plain.find("th", string="Cached input") is None
+    assert plain.find("th", string="Cache write") is None
 
 
 def test_model_detail_ok(auth_client, test_model):

@@ -96,7 +96,8 @@ def test_update_stats_records_the_cached_split_and_bumps_both_totals(app, test_u
         from lumen.services.llm import update_stats
 
         update_stats(entity_id, model_id, "chat", 1_000, 50, 0.01,
-                     cached_input_tokens=250)
+                     cached_input_tokens=250,
+                     cache_write_tokens=125)
         update_stats(entity_id, model_id, "chat", 10, 5, 0.02)
         db.session.commit()
 
@@ -104,10 +105,11 @@ def test_update_stats_records_the_cached_split_and_bumps_both_totals(app, test_u
             select(RequestLog).where(RequestLog.entity_id == entity_id).order_by(RequestLog.id)
         ).scalars().all()
         assert [log.cached_input_tokens for log in logs] == [250, None]
+        assert [log.cache_write_tokens for log in logs] == [125, None]
 
         estat = db.session.get(EntityStat, entity_id)
-        assert (estat.input_tokens, estat.cached_input_tokens) == (1_010, 250)
+        assert (estat.input_tokens, estat.cached_input_tokens, estat.cache_write_tokens) == (1_010, 250, 125)
         assert estat.folded_cached_input_tokens == 0  # bumped by billing, not the fold
         mstat = db.session.execute(select(ModelStat).filter_by(
             entity_id=entity_id, model_config_id=model_id, source="chat")).scalar_one()
-        assert (mstat.input_tokens, mstat.cached_input_tokens) == (1_010, 250)
+        assert (mstat.input_tokens, mstat.cached_input_tokens, mstat.cache_write_tokens) == (1_010, 250, 125)

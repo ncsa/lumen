@@ -20,7 +20,7 @@ _IN_COST = 3.0
 _OUT_COST = 4.0
 
 
-def _target(test_model, test_model_endpoint, cached_input_cost=None):
+def _target(test_model, test_model_endpoint, cached_input_cost=None, cache_write_cost=None):
     return StreamTarget(
         remote_model="resolved-remote",
         url="http://resolved.example/v1",
@@ -30,6 +30,7 @@ def _target(test_model, test_model_endpoint, cached_input_cost=None):
         input_cost=_IN_COST,
         output_cost=_OUT_COST,
         cached_input_cost=cached_input_cost,
+        cache_write_cost=cache_write_cost,
     )
 
 
@@ -134,6 +135,31 @@ def test_resolved_stream_bills_cached_input_at_target_rate(app, test_user, test_
         log = db.session.execute(select(RequestLog).filter_by(entity_id=test_user["id"])).scalar_one()
         assert float(log.cost) == pytest.approx(expected)
         assert log.cached_input_tokens == _HUGE_TOKEN_COUNT // 2
+        # vLLM-style upstream: no creation count, the whole remainder is the write.
+        assert log.cache_write_tokens == _HUGE_TOKEN_COUNT // 2
+
+
+def test_resolved_stream_bills_cache_write_at_target_rate(app, test_user, test_model, test_model_endpoint):
+    from lumen.extensions import db
+    from lumen.models.request_log import RequestLog
+    from lumen.services.llm import send_message_stream
+
+    usage = _Usage(prompt_tokens=_HUGE_TOKEN_COUNT, completion_tokens=100)
+    usage.prompt_tokens_details = SimpleNamespace(
+        cached_tokens=_HUGE_TOKEN_COUNT // 4, cache_creation_input_tokens=_HUGE_TOKEN_COUNT // 4)
+    with app.app_context():
+        _pool(db, test_user["id"])
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai([_Chunk(usage=usage)])):
+            _drain(send_message_stream(
+                [], "test-model", entity_id=test_user["id"],
+                resolved=_target(test_model, test_model_endpoint,
+                                 cached_input_cost=0.5, cache_write_cost=0.25)))
+        expected = calculate_cost(_HUGE_TOKEN_COUNT, 100, _IN_COST, _OUT_COST,
+                                  _HUGE_TOKEN_COUNT // 4, 0.5, _HUGE_TOKEN_COUNT // 4, 0.25)
+        log = db.session.execute(select(RequestLog).filter_by(entity_id=test_user["id"])).scalar_one()
+        assert float(log.cost) == pytest.approx(expected)
+        assert log.cached_input_tokens == _HUGE_TOKEN_COUNT // 4
+        assert log.cache_write_tokens == _HUGE_TOKEN_COUNT // 4
 
 
 def test_resolved_stream_abort_bills_against_the_target(app, test_user, test_model, test_model_endpoint):

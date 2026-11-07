@@ -49,7 +49,7 @@ def _state(folded_until=LO, cutover_at=LO):
 
 
 def _log(t, entity_id, model_id, source="api", input_tokens=10, output_tokens=5, audio_seconds=0, cost="0.5",
-         stats_deferred=True, cached_input_tokens=None):
+         stats_deferred=True, cached_input_tokens=None, cache_write_tokens=None):
     """Write a request_logs row stamped at naive-UTC ``t``, the way billing does (aware).
 
     Marked ``stats_deferred`` by default, as billing writes it after the cutover;
@@ -61,6 +61,7 @@ def _log(t, entity_id, model_id, source="api", input_tokens=10, output_tokens=5,
         time=t.replace(tzinfo=timezone.utc), entity_id=entity_id, model_config_id=model_id, source=source,
         input_tokens=input_tokens, output_tokens=output_tokens, audio_seconds=audio_seconds,
         cached_input_tokens=cached_input_tokens,
+        cache_write_tokens=cache_write_tokens,
         cost=Decimal(cost), duration=0.0, stats_deferred=stats_deferred,
     ))
     db.session.commit()
@@ -120,6 +121,24 @@ def test_fold_sums_cached_input_tokens_and_skips_unknown_rows(app, ids):
     es = _entity_stat(e1)
     assert (es.input_tokens, es.cached_input_tokens) == (1_020, 250)
     assert (es.folded_input_tokens, es.folded_cached_input_tokens) == (1_020, 250)
+
+
+def test_fold_sums_cache_write_tokens_and_skips_unknown_rows(app, ids):
+    """A NULL write count adds nothing; the folded_ part mirrors the total."""
+    (e1, _), (m1, _) = ids
+    _state()
+    _log(LO, e1, m1, input_tokens=1_000, cached_input_tokens=250, cache_write_tokens=125)
+    _log(LO + timedelta(minutes=1), e1, m1, input_tokens=10, cached_input_tokens=0, cache_write_tokens=0)
+    _log(LO + timedelta(minutes=2), e1, m1, input_tokens=10)  # unknown: no upstream usage
+
+    assert _fold_to(app, HI) == HI
+
+    s = _model_stats()[(e1, m1, "api")]
+    assert (s.input_tokens, s.cached_input_tokens, s.cache_write_tokens) == (1_020, 250, 125)
+    assert (s.folded_input_tokens, s.folded_cached_input_tokens, s.folded_cache_write_tokens) == (1_020, 250, 125)
+    es = _entity_stat(e1)
+    assert (es.input_tokens, es.cached_input_tokens, es.cache_write_tokens) == (1_020, 250, 125)
+    assert (es.folded_input_tokens, es.folded_cached_input_tokens, es.folded_cache_write_tokens) == (1_020, 250, 125)
 
 
 def test_row_at_hi_is_counted_once_by_the_next_pass(app, ids):

@@ -48,6 +48,7 @@ def test_connect_surfaces_model_limits_and_cost(app, auth_client):
             input_cost_per_million=5.0,
             output_cost_per_million=15.0,
             cached_input_cost_per_million=0.5,
+            cache_write_cost_per_million=0.25,
         ))
         db.session.commit()
 
@@ -58,6 +59,7 @@ def test_connect_surfaces_model_limits_and_cost(app, auth_client):
     assert priced["input_cost_per_million"] == 5.0
     assert priced["output_cost_per_million"] == 15.0
     assert priced["cached_input_cost_per_million"] == 0.5
+    assert priced["cache_write_cost_per_million"] == 0.25
 
 
 def test_connect_leaves_an_unset_cached_rate_null(auth_client, test_model):
@@ -66,6 +68,7 @@ def test_connect_leaves_an_unset_cached_rate_null(auth_client, test_model):
     tell "no separate rate" from a deliberate 0 (free cached input)."""
     rows = {r["id"]: r for r in _connect_data(auth_client.get("/connect").data)["models"]}
     assert rows[test_model["model_name"]]["cached_input_cost_per_million"] is None
+    assert rows[test_model["model_name"]]["cache_write_cost_per_million"] is None
 
 
 def test_connect_excludes_blocked_model(app, auth_client, test_model, test_user):
