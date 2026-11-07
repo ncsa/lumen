@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-11-07
+
 - Fix `/profile` crashing with "can't compare offset-naive and offset-aware datetimes" on databases with `timestamptz` usage columns
 - Add a migration converting legacy `timestamptz` columns (`model_stats.last_used_at`, `api_keys`, `messages`, …) to naive UTC; run `upgrade`, it rewrites those tables
 
