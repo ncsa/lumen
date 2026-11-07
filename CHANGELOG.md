@@ -4,6 +4,9 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+- Fix `/profile` crashing with "can't compare offset-naive and offset-aware datetimes" on databases with `timestamptz` usage columns
+- Add a migration converting legacy `timestamptz` columns (`model_stats.last_used_at`, `api_keys`, `messages`, …) to naive UTC; run `upgrade`, it rewrites those tables
+
 ## [2.3.0] - 2026-11-06
 
 **Upgrade:** `flask enable-retention` is removed — `request_logs` is never pruned; the upgrade step backfills `request_counts_hourly_by_entity` (`flask check-aggregate` stays a read-only check); startup logs an ERROR if a retention policy is found on `request_logs`; per-user `/usage` charts now read only `request_counts_hourly_by_entity` and no longer scan `request_logs`. (#167)
