@@ -141,3 +141,10 @@ def test_admin_view_of_a_user_stays_on_the_folded_tables(app, admin_client, post
     fold(app)
     _, usage, total_tokens = _profile(app, admin_client, f"/admin/users/{test_user['id']}/profile")
     assert total_tokens == 15
+
+
+def test_add_usage_accepts_aware_folded_last_used():
+    """A legacy timestamptz ``model_stats.last_used_at`` must not crash the tail merge."""
+    aware = utcnow().replace(tzinfo=timezone.utc)
+    tail = [(1, "chat", 1, 2, 3, 4, utcnow())]
+    assert profile_routes._add_usage((0, 0, 0, 0, aware), tail)[4].tzinfo is None

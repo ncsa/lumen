@@ -194,7 +194,8 @@ def _fetch_live_tail(eid: int, since):
 def _add_usage(row, tail_rows):
     """``row`` (requests, input tokens, output tokens, cost, last used) plus ``tail_rows``."""
     requests, input_tokens, output_tokens, cost, last = (
-        (row[0] or 0), (row[1] or 0), (row[2] or 0), (row[3] or 0), row[4],
+        (row[0] or 0), (row[1] or 0), (row[2] or 0), (row[3] or 0),
+        as_utc_naive(row[4]) if row[4] is not None else None,
     )
     for t in tail_rows:
         requests += t[2]
