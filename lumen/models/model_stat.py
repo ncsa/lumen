@@ -29,6 +29,7 @@ class ModelStat(db.Model):
     input_tokens: Mapped[int] = mapped_column(db.BigInteger, default=0, comment="Total input tokens consumed")
     output_tokens: Mapped[int] = mapped_column(db.BigInteger, default=0, comment="Total output tokens produced")
     cached_input_tokens: Mapped[int] = mapped_column(db.BigInteger, default=0, comment="Total cached input tokens among input_tokens (NULL rows in request_logs add nothing)")
+    cache_write_tokens: Mapped[int] = mapped_column(db.BigInteger, default=0, comment="Total cache-write tokens among input_tokens (NULL rows in request_logs add nothing)")
     audio_seconds: Mapped[int] = mapped_column(db.BigInteger, default=0, comment="Total seconds of audio transcribed/translated")
     cost: Mapped[Decimal] = mapped_column(db.Numeric(12, 6), default=0, comment="Total cost in USD")
     last_used_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, default=utcnow, comment="UTC timestamp of the most recent counted request")
@@ -38,6 +39,7 @@ class ModelStat(db.Model):
     folded_input_tokens: Mapped[int] = mapped_column(db.BigInteger, default=0, server_default="0", comment="Part of input_tokens added by the stats fold since the cutover")
     folded_output_tokens: Mapped[int] = mapped_column(db.BigInteger, default=0, server_default="0", comment="Part of output_tokens added by the stats fold since the cutover")
     folded_cached_input_tokens: Mapped[int] = mapped_column(db.BigInteger, default=0, server_default="0", comment="Part of cached_input_tokens added by the stats fold since the cutover")
+    folded_cache_write_tokens: Mapped[int] = mapped_column(db.BigInteger, default=0, server_default="0", comment="Part of cache_write_tokens added by the stats fold since the cutover")
     folded_audio_seconds: Mapped[int] = mapped_column(db.BigInteger, default=0, server_default="0", comment="Part of audio_seconds added by the stats fold since the cutover")
     folded_cost: Mapped[Decimal] = mapped_column(db.Numeric(12, 6), default=0, server_default="0", comment="Part of cost added by the stats fold since the cutover")
 

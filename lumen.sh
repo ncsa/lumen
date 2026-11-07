@@ -516,13 +516,14 @@ sync_models() {
        value: (
          {name: (.id + " via Lumen" + (if .parent then " (alias of " + .parent + ")" else "" end))}
          + {limit: (({context: .max_model_len} + (if .max_output_tokens then {output: .max_output_tokens} else {} end)))}
-         # OpenCode prices cached input separately and would charge nothing for it
-         # without a rate, so state both: a cache read costs the cached-input rate
-         # when the model has one, else the ordinary input rate (how Lumen bills
-         # an unset rate), and a cache write costs the input rate.
+         # OpenCode prices cached input and cache writes separately and would
+         # charge nothing for them without a rate, so state both: a cache read
+         # costs the cached-input rate when the model has one, else the ordinary
+         # input rate; a cache write costs the cache-write rate when set, else
+         # the input rate (how Lumen bills an unset rate).
          + {cost: {input: .input_cost_per_million, output: .output_cost_per_million,
                    cache: {read: (.cached_input_cost_per_million // .input_cost_per_million),
-                           write: .input_cost_per_million}}}
+                           write: (.cache_write_cost_per_million // .input_cost_per_million)}}}
          # Capability flags (issue #79): OpenCode derives image support from
          # modalities.input, not from attachment, and spells the function-call
          # flag tool_call. Unknown fields stay omitted, except tool_call:

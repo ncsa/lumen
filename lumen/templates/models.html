@@ -42,7 +42,7 @@
             <span class="text-muted">&mdash;</span>
           {% endif %}
         </td>
-        <td class="text-end">{% if config.cached_input_cost_per_million is not none %}<span data-bs-toggle="tooltip" data-bs-placement="left" title="Cached input: {{ '%.2f'|format(config.cached_input_cost_per_million | float) }} / 1M tokens">{{ "%.2f"|format(config.input_cost_per_million | float) }}</span>{% else %}{{ "%.2f"|format(config.input_cost_per_million | float) }}{% endif %}</td>
+        <td class="text-end">{% if config.cached_input_cost_per_million is not none or config.cache_write_cost_per_million is not none %}<span data-bs-toggle="tooltip" data-bs-placement="left" title="{% if config.cached_input_cost_per_million is not none %}Cached input: {{ '%.2f'|format(config.cached_input_cost_per_million | float) }} / 1M tokens{% endif %}{% if config.cached_input_cost_per_million is not none and config.cache_write_cost_per_million is not none %}; {% endif %}{% if config.cache_write_cost_per_million is not none %}Cache write: {{ '%.2f'|format(config.cache_write_cost_per_million | float) }} / 1M tokens{% endif %}">{{ "%.2f"|format(config.input_cost_per_million | float) }}</span>{% else %}{{ "%.2f"|format(config.input_cost_per_million | float) }}{% endif %}</td>
         <td class="text-end">{{ "%.2f"|format(config.output_cost_per_million | float) }}</td>
         <td>
           {% set checked_at = endpoints | map(attribute="last_checked_at") | select("ne", None) | list %}

@@ -76,19 +76,23 @@
           };
         }
         // Costs are USD per million tokens — OpenCode's models.dev cost unit.
-        // OpenCode prices cached input separately (cost.cache.read), and writes
-        // it as zero when the rate is absent, so both rates are always stated:
+        // OpenCode prices cached input and cache writes separately
+        // (cost.cache.read / cost.cache.write), so both rates are always stated:
         // a cache read costs the model's cached-input rate when it has one, else
         // the ordinary input rate (how Lumen bills an unset rate), and a cache
-        // write costs the input rate because Lumen bills writes as input.
+        // write costs the cache-write rate when set, else the input rate.
         const cachedRead = (m.cached_input_cost_per_million === null ||
                             m.cached_input_cost_per_million === undefined)
           ? m.input_cost_per_million
           : m.cached_input_cost_per_million;
+        const cacheWrite = (m.cache_write_cost_per_million === null ||
+                           m.cache_write_cost_per_million === undefined)
+          ? m.input_cost_per_million
+          : m.cache_write_cost_per_million;
         entry.cost = {
           input: m.input_cost_per_million,
           output: m.output_cost_per_million,
-          cache: { read: cachedRead, write: m.input_cost_per_million },
+          cache: { read: cachedRead, write: cacheWrite },
         };
         // Capability fields (issue #79). OpenCode derives image support from
         // modalities.input — attachment alone does not gate image requests —

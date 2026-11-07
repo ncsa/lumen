@@ -89,6 +89,7 @@ def _sums():
         # existed) contribute nothing: SUM skips NULL, so an unknown count never
         # inflates the total, and the running total keeps its value.
         func.coalesce(func.sum(RequestLog.cached_input_tokens), 0).label("cached_input_tokens"),
+        func.coalesce(func.sum(RequestLog.cache_write_tokens), 0).label("cache_write_tokens"),
         func.coalesce(func.sum(RequestLog.audio_seconds), 0).label("audio_seconds"),
         func.coalesce(func.sum(RequestLog.cost), 0).label("cost"),
         func.max(RequestLog.time).label("last_used_at"),
@@ -98,7 +99,7 @@ def _sums():
 #: The totals the fold adds to. Each also goes into its ``folded_*`` column,
 #: the fold's own part of the total, which ``flask check-stats`` compares with
 #: ``request_logs`` since the cutover.
-TOTALS = ("requests", "input_tokens", "output_tokens", "cached_input_tokens", "audio_seconds", "cost")
+TOTALS = ("requests", "input_tokens", "output_tokens", "cached_input_tokens", "cache_write_tokens", "audio_seconds", "cost")
 
 
 def window_sums(lo: datetime, hi: datetime) -> tuple[list, list]:

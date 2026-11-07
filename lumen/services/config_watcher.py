@@ -130,8 +130,16 @@ def validate_config_structure(data) -> list:
             or not math.isfinite(cached_price) or cached_price < 0
         ):
             errors.append(f"{label}: 'cached_input_cost_per_million' must be a non-negative number or null")
+        write_price = model.get("cache_write_cost_per_million")
+        if write_price is not None and (
+            isinstance(write_price, bool) or not isinstance(write_price, (int, float))
+            or not math.isfinite(write_price) or write_price < 0
+        ):
+            errors.append(f"{label}: 'cache_write_cost_per_million' must be a non-negative number or null")
         if "auto_price" in model and not isinstance(model["auto_price"], bool):
             errors.append(f"{label}: 'auto_price' must be true or false")
+        if "auto_cache_price" in model and not isinstance(model["auto_cache_price"], bool):
+            errors.append(f"{label}: 'auto_cache_price' must be true or false")
         endpoints = model.get("endpoints")
         if endpoints is None:
             continue
