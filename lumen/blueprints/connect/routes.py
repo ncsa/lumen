@@ -40,6 +40,20 @@ def _accessible_models(entity_id):
             "max_output_tokens": c.max_output_tokens,
             "input_cost_per_million": float(c.input_cost_per_million),
             "output_cost_per_million": float(c.output_cost_per_million),
+            # Null = cached input is billed at input_cost_per_million; the
+            # generated config resolves it so OpenCode's cache-aware costing
+            # agrees with what Lumen charges (issue #66).
+            "cached_input_cost_per_million": (
+                float(c.cached_input_cost_per_million)
+                if c.cached_input_cost_per_million is not None else None
+            ),
+            # Null = cache writes are billed at input_cost_per_million; the
+            # generated config resolves it so cache write pricing agrees with
+            # what Lumen charges.
+            "cache_write_cost_per_million": (
+                float(c.cache_write_cost_per_million)
+                if c.cache_write_cost_per_million is not None else None
+            ),
         }
         for c in configs
         if statuses.get(c.id, "allowed") != "blocked"

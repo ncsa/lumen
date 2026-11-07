@@ -352,9 +352,41 @@ Keys are HMAC-SHA256 hashed (using `LUMEN_ENCRYPTION_KEY`) before storage. The `
 Coins are a virtual currency unit (not 1:1 with tokens or dollars). Cost is computed as:
 
 ```
-cost_usd = (input_tokens / 1_000_000 × input_cost_per_million)
+cost_usd = (uncached_input_tokens / 1_000_000 × input_cost_per_million)
+         + (cached_input_tokens / 1_000_000 × cached_input_cost_per_million)
+         + (cache_write_tokens / 1_000_000 × cache_write_cost_per_million)
          + (output_tokens / 1_000_000 × output_cost_per_million)
 ```
+
+The two input terms split the upstream's prompt total using the cached count it reports (`prompt_tokens_details.cached_tokens`, or the top-level `cached_tokens` variant); a backend that reports no cache split bills the whole prompt at the input rate, as before. When `cached_input_cost_per_million` is unset, cached input is billed at the input rate too, and `cache_write_cost_per_million` does the same for written tokens, so a config without the new keys collapses into the original formula and no existing price changes. The input total recorded in `request_logs` stays the full prompt (cached tokens included): the split is carried by its own columns, not by shrinking the input total.
+
+Cache rates are per-side: `cached_input_cost_per_million` prices the cached part of the prompt and `cache_write_cost_per_million` prices prompt-cache writes (the `prompt_tokens_details.cache_creation_input_tokens` / top-level `cache_creation_input_tokens` counts when the upstream reports them; a provider that reports none simply bills those tokens at the input rate). Both default to the input rate when unset, so a backend that reports nothing keeps the previous behaviour bit for bit. Nothing about other providers' cache semantics is assumed: Lumen prices what the upstream reports against the rates an admin sets.
+
+### Cached-token telemetry
+
+`request_logs.cached_input_tokens` stores the cached part of the prompt and `request_logs.cache_write_tokens` the prompt-cache write part (each NULL when there is nothing to record — an aborted request with no terminal usage object, or a row from before the column existed; a usage object without cache fields records 0), `model_stats` and `entity_stats` carry running `cached_input_tokens` and `cache_write_tokens` totals plus their `folded_*` parts, and `flask check-stats` compares the fold's share with `request_logs` like any other total. Recording them is what makes a request's stored cost checkable: before this, `cost` was the only trace of the discount.
+
+One thing is deliberately **not** included, to be raised separately:
+
+* **The continuous aggregates** (`request_metrics_1m`, `request_counts_hourly_by_entity`) and therefore the usage charts and the monitor's `?tokens=true` windows. Adding a field to a continuous aggregate is a `DROP` + `CREATE ... WITH NO DATA` + full `refresh_continuous_aggregate` over the 13-month retention window — a one-time rebuild, but one that belongs to its own change rather than riding along with a schema addition. Until then, anything that recomputes cost from chart tokens × published rates **overstates** a request that had cache reads; `request_logs.cost` and the stats totals are authoritative.
+
+The load numbers behind that deferral (TimescaleDB 2.27/pg17, 2,000,000 request_logs rows in one chunk, ~94 B/row compacted): the `ADD COLUMN` is metadata-only at **2.8 ms** with no size change; NULL costs 0 bytes per row and a recorded count adds ~4 bytes (+2.6% on the compacted table); the fold's per-entity window aggregate over ~1.97M rows went from 199.0 ms to 203.4 ms with an **identical buffer count** (24,713), and the per-model variant stayed at ~247 ms. A backfill, if one were ever wanted, measured 27.4 s plus 4.6 s `VACUUM FULL`. The expensive part is the continuous-aggregate rebuild, not the column.
+
+Measured before/after on one dataset (2,000,000 request rows in a single chunk plus 400,000 appended, 800 `model_stats` / 20 `entity_stats` rows, both schemas measured on the same data):
+
+| Footprint | Before | After |
+|-----------|--------|-------|
+| `request_logs` heap / indexes / total | 214 MB / 176 MB / 390 MB | 214 MB / 176 MB / 390 MB |
+| Compressed chunk (table / index / toast / total) | 5.66 MB / 96 kB / 6.33 MB / 12.53 MB | identical |
+| `flask db upgrade` (whole command) | — | 1.9 s, compressed chunk included |
+| Appended rows, 200k | 8.91 s | 9.07 s with a count recorded (+1.8%) |
+| Row width, `pg_column_size` | 97 B (no count) | 104 B with a count (~+7 B; 0 B while NULL) |
+| `model_stats` / `entity_stats` row width | — | +16 B each (two bigints, ~13 kB over 800 model rows) |
+| Fold pass, 2.8M rows | 417–576 ms, `shared hit` 38,092 / 38,064 | 469–556 ms, **same buffers** |
+| `/metrics` | 18 families, 219 series | identical names, series and values |
+| `/profile` page | 50,326 B | 50,326 B |
+
+So the column costs nothing until a count is actually recorded, and nothing extra in I/O afterwards: the fold scans the same pages, the metrics and payloads are unchanged, and the only real growth is the ~7 bytes per row that carries the number — the price of not losing it.
 
 Coin values use sentinel semantics: `-2` = unlimited, `0` = blocked, positive = budget ceiling.
 

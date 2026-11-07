@@ -101,7 +101,7 @@ def current_models(session: Session, snapshot: LiveSnapshot | None) -> tuple[dat
     rows = session.execute(select(Sample).where(Sample.sampled_at == last).order_by(Sample.model)).scalars().all()
     return last, [
         {"id": s.model, "description": None, "status": s.status, "configured": s.configured, "healthy": s.healthy,
-         "input_price": None, "output_price": None, "requests": None, "tokens": None}
+         "input_price": None, "output_price": None, "cached_input_price": None, "requests": None, "tokens": None}
         for s in rows
     ]
 
@@ -313,6 +313,7 @@ def model_rows(session: Session, config: Config, rng: Range, now: datetime, mode
     elif stats is None:
         stats = _short_range_stats(session, make_grid(rng, config.refresh.web, now, tz), now - rng.span, now, ids)
     prices = _latest(session, "lumen", DailyStat.input_price, ids)
+    cached_prices = _latest(session, "lumen", DailyStat.cached_input_price, ids)
     modelsdev = _latest(session, "models.dev", DailyStat.input_median, ids)
     hardware = _latest(session, "hardware", DailyStat.daily_cost, ids)
 
@@ -320,10 +321,12 @@ def model_rows(session: Session, config: Config, rng: Range, now: datetime, mode
     for m in models:
         model_id = m["id"]
         price = prices.get(model_id)
+        cached_price = cached_prices.get(model_id)
         dev = modelsdev.get(model_id)
         hw = hardware.get(model_id)
         input_price = m.get("input_price") if m.get("input_price") is not None else (price.input_price if price else None)
         output_price = m.get("output_price") if m.get("output_price") is not None else (price.output_price if price else None)
+        cached_input_price = m.get("cached_input_price") if m.get("cached_input_price") is not None else (cached_price.cached_input_price if cached_price else None)
         table.append({
             "id": model_id,
             "description": m.get("description"),
@@ -333,6 +336,7 @@ def model_rows(session: Session, config: Config, rng: Range, now: datetime, mode
             "configured": m.get("configured"),
             "input_price": input_price,
             "output_price": output_price,
+            "cached_input_price": cached_input_price,
             "modelsdev_input_median": dev.input_median if dev else None,
             "modelsdev_input_p5": dev.input_p5 if dev else None,
             "modelsdev_input_p95": dev.input_p95 if dev else None,

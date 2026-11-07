@@ -67,6 +67,8 @@ erDiagram
         int id PK
         string model_name
         numeric input_cost_per_million
+        numeric cached_input_cost_per_million
+        numeric cache_write_cost_per_million
         numeric output_cost_per_million
         numeric audio_cost_per_hour
         int owner_entity_id FK
@@ -180,12 +182,16 @@ erDiagram
         int requests
         bigint input_tokens
         bigint output_tokens
+        bigint cached_input_tokens
+        bigint cache_write_tokens
         bigint audio_seconds
         numeric cost
         datetime last_used_at
         int folded_requests
         bigint folded_input_tokens
         bigint folded_output_tokens
+        bigint folded_cached_input_tokens
+        bigint folded_cache_write_tokens
         bigint folded_audio_seconds
         numeric folded_cost
     }
@@ -195,6 +201,7 @@ erDiagram
         int requests
         bigint input_tokens
         bigint output_tokens
+        bigint cached_input_tokens
         bigint audio_seconds
         numeric cost
         int conversations
@@ -202,6 +209,7 @@ erDiagram
         int folded_requests
         bigint folded_input_tokens
         bigint folded_output_tokens
+        bigint folded_cached_input_tokens
         bigint folded_audio_seconds
         numeric folded_cost
     }
@@ -246,6 +254,8 @@ erDiagram
         string source
         int input_tokens
         int output_tokens
+        int cached_input_tokens
+        int cache_write_tokens
         int audio_seconds
         numeric cost
         float duration
@@ -429,6 +439,8 @@ Configuration and metadata for each AI model that Lumen can proxy. One row per l
 | `id` | Integer | NO | Primary key |
 | `model_name` | String(128) | NO | Canonical model identifier sent to clients (e.g., `gpt-4o`). Unique. |
 | `input_cost_per_million` | Numeric(12,6) | NO | USD cost per one million input tokens |
+| `cached_input_cost_per_million` | Numeric(12,6) | YES | USD cost per one million cached input tokens; NULL uses `input_cost_per_million` (zero is a valid rate). Cache reads only — writes are priced by `cache_write_cost_per_million`. The cached token count itself is stored per request in `request_logs.cached_input_tokens` and folded into the stats totals; the continuous aggregates do not carry it yet. |
+| `cache_write_cost_per_million` | Numeric(12,6) | YES | USD cost per one million prompt-cache write tokens; NULL uses `input_cost_per_million` (zero is a valid rate). Writes and reads are priced independently; the written count is stored per request in `request_logs.cache_write_tokens` and folded into the stats totals. |
 | `output_cost_per_million` | Numeric(12,6) | NO | USD cost per one million output tokens |
 | `audio_cost_per_hour` | Numeric(12,6) | YES | USD cost per hour of audio; only set for speech-to-text (ASR) models |
 | `owner_entity_id` | Integer (FK → entities) | YES | Owning user entity; NULL = available to everyone. When set, only the owner may use the model. `SET NULL` on delete — deleting the owner makes the model public again. |
@@ -624,12 +636,16 @@ Running aggregated usage counters per entity per model per source, folded from `
 | `requests` | Integer | NO | Total number of requests |
 | `input_tokens` | BigInteger | NO | Total input tokens consumed |
 | `output_tokens` | BigInteger | NO | Total output tokens produced |
+| `cached_input_tokens` | BigInteger | NO | Total cached input tokens among `input_tokens`, folded from `request_logs.cached_input_tokens`; requests whose upstream reported no cache breakdown add nothing |
+| `cache_write_tokens` | BigInteger | NO | Total prompt-cache write tokens among `input_tokens`, folded from `request_logs.cache_write_tokens`; requests whose upstream reported no write breakdown add nothing |
 | `audio_seconds` | BigInteger | NO | Total seconds of audio transcribed/translated |
 | `cost` | Numeric(12,6) | NO | Total cost in USD |
 | `last_used_at` | DateTime | NO | UTC timestamp of the most recent request counted in this row |
 | `folded_requests` | Integer | NO | Part of `requests` added by the stats fold since the cutover; `flask check-stats` compares it with `request_logs` |
 | `folded_input_tokens` | BigInteger | NO | Part of `input_tokens` added by the stats fold since the cutover |
 | `folded_output_tokens` | BigInteger | NO | Part of `output_tokens` added by the stats fold since the cutover |
+| `folded_cached_input_tokens` | BigInteger | NO | Part of `cached_input_tokens` added by the stats fold since the cutover |
+| `folded_cache_write_tokens` | BigInteger | NO | Part of `cache_write_tokens` added by the stats fold since the cutover |
 | `folded_audio_seconds` | BigInteger | NO | Part of `audio_seconds` added by the stats fold since the cutover |
 | `folded_cost` | Numeric(12,6) | NO | Part of `cost` added by the stats fold since the cutover |
 
@@ -649,6 +665,8 @@ Pre-aggregated usage totals per entity across all models and sources. One row pe
 | `requests` | Integer | NO | Total request count across all models and sources |
 | `input_tokens` | BigInteger | NO | Total input tokens consumed across all models and sources |
 | `output_tokens` | BigInteger | NO | Total output tokens produced across all models and sources |
+| `cached_input_tokens` | BigInteger | NO | Total cached input tokens among `input_tokens` across all models and sources; requests whose upstream reported no cache breakdown add nothing |
+| `cache_write_tokens` | BigInteger | NO | Total prompt-cache write tokens among `input_tokens` across all models and sources; requests whose upstream reported no write breakdown add nothing |
 | `audio_seconds` | BigInteger | NO | Total seconds of audio transcribed/translated across all models and sources |
 | `cost` | Numeric(12,6) | NO | Total cost in USD across all models and sources |
 | `conversations` | Integer | NO | Total webchat conversations started. Retained even when conversations are deleted or storage is disabled. |
@@ -656,6 +674,7 @@ Pre-aggregated usage totals per entity across all models and sources. One row pe
 | `folded_requests` | Integer | NO | Part of `requests` added by the stats fold since the cutover; `flask check-stats` compares it with `request_logs` |
 | `folded_input_tokens` | BigInteger | NO | Part of `input_tokens` added by the stats fold since the cutover |
 | `folded_output_tokens` | BigInteger | NO | Part of `output_tokens` added by the stats fold since the cutover |
+| `folded_cached_input_tokens` | BigInteger | NO | Part of `cached_input_tokens` added by the stats fold since the cutover |
 | `folded_audio_seconds` | BigInteger | NO | Part of `audio_seconds` added by the stats fold since the cutover |
 | `folded_cost` | Numeric(12,6) | NO | Part of `cost` added by the stats fold since the cutover |
 
@@ -739,6 +758,8 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 | `source` | String(8) | NO | Origin of the request: `'chat'` or `'api'` |
 | `input_tokens` | Integer | NO | Input token count for this request |
 | `output_tokens` | Integer | NO | Output token count for this request |
+| `cached_input_tokens` | Integer | YES | Part of `input_tokens` the upstream served from its prompt cache and priced at `model_configs.cached_input_cost_per_million`. NULL when there is nothing to record — an aborted request with no terminal usage object, or a row written before this column existed — so "unknown" stays distinguishable from a reported zero; a usage object without cache fields records 0, matching the price charged. Rows are not backfilled. |
+| `cache_write_tokens` | Integer | YES | Part of `input_tokens` the upstream reported as prompt-cache writes (its `cache_creation_input_tokens` breakdown) and priced at `model_configs.cache_write_cost_per_million`. NULL when there is nothing to record — an aborted request with no terminal usage object, or a row written before this column existed — so "unknown" stays distinguishable from a reported zero; a usage object without write fields records 0, matching the price charged. Rows are not backfilled. |
 | `audio_seconds` | Integer | NO | Seconds of audio transcribed/translated; 0 for text requests |
 | `cost` | Numeric(12,6) | NO | Cost in USD for this request |
 | `duration` | Float | NO | Total proxy response time in seconds |
@@ -770,6 +791,7 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 - **`outcome` carries only values the code can actually write.** There is deliberately no `billing_error` or `upstream_error`: the row is created inside `update_stats`, which only flushes, so a failing commit rolls back the very row that would have recorded the failure. Enum values are added together with the code that writes them.
 - `ttft` and `ttft_visible` are both stored because on a reasoning model they differ by the whole thinking phase — which is what separates "the model was queued" from "the model was thinking".
 - `aborted` replaces the earlier "`cost` = 0 identifies an abandoned stream" convention: aborted streams are now billed for what they consumed, so their cost is usually non-zero. Rows written before the column was added are all `false` and were not backfilled — a completed request can also cost 0 (zero-priced model, audio model with no `audio_cost_per_hour`, missing upstream usage, or a cost that rounds to 0 at `Numeric(12,6)`), so the old convention could not be applied retroactively without false positives.
+- **`cached_input_tokens` and `cache_write_tokens` explain the cost; the aggregates cannot yet split them.** The counts are priced at `model_configs.cached_input_cost_per_million` / `cache_write_cost_per_million` and stored here so a discounted request stays distinguishable from a full-price one. The continuous aggregates that back the usage charts and the monitor's token windows do not carry them: adding a field to a continuous aggregate means dropping and recreating it, so that rebuild is deferred to its own change (see [architecture.md](architecture.md#cached-token-telemetry) for the measured cost of both halves). Until then a cost recomputed from chart tokens × published rates overstates any request with cache reads or writes; `request_logs.cost` and the stats totals are authoritative.
 
 ---
 

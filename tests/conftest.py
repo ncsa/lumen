@@ -10,6 +10,36 @@ TEST_CONFIG = str(Path(__file__).parent / "fixtures" / "test_config.yaml")
 # Flask-SQLAlchemy resolves relative sqlite paths against the instance dir.
 DB_PATH = Path(__file__).parent.parent / "instance" / "test_lumen.db"
 
+# The background-worker guarantees must hold before ANY test module loads, not
+# just once the session app fixture instantiates. The app fixture sets these
+# env vars itself (lazily, on first `app` request), but several tests create
+# their own apps with plain create_app() and no fixture request at all; if one
+# of those runs first, the process would start the health loop, coin refiller,
+# config watcher and friends against a non-test environment. Their passes
+# commit probe results into the shared database and re-publish the
+# process-wide model snapshot mid-test, which surfaces as sporadic 503/404
+# failures in unrelated tests. Setting the env here, at import time, covers
+# every in-process create_app regardless of fixture ordering.
+os.environ["BACKGROUND_WORKER"] = "false"
+os.environ["CONFIG_YAML"] = TEST_CONFIG
+
+# Suite stand-in for the health loop. The real start_health_checker spins a
+# daemon that probes every endpoint and re-publishes the process-wide model
+# snapshot on a 60s schedule; a test that exercises it (test_health.py,
+# test_start_health_checker_starts_daemon_thread) starts the real daemon,
+# which then races every later test's clean_db teardown and snapshot reads -
+# the sporadic 404/503/audio failures. Satisfy that test's contract (exactly
+# one daemon thread started) with a thread that never wakes up.
+def _dormant_health_checker(app):
+    import threading
+    def _sleep():
+        threading.Event().wait()
+    t = threading.Thread(target=_sleep, daemon=True)
+    t.start()
+
+from lumen.services import health as _health
+_health.start_health_checker = _dormant_health_checker
+
 
 @pytest.fixture(scope="session")
 def app(tmp_path_factory):
@@ -32,6 +62,13 @@ def app(tmp_path_factory):
     application = create_app()
     application.config["TESTING"] = True
     application.config["WTF_CSRF_ENABLED"] = False
+    # The session app would otherwise run the background metrics-snapshot
+    # refresher for the whole suite. A pass lands on its own ~interval
+    # schedule (between every test, at worst), and each one may publish a model
+    # snapshot from a half-built or half-deleted database that the test then
+    # reads - sporadic 404/503 in model and endpoint tests. Pool tests stop the
+    # thread with stopped_refresher for the same reason; stop it once here.
+    metrics_snapshot.stop_snapshot_refresher()
     with application.app_context():
         from lumen.extensions import db
         # Ask the engine where the file actually is instead of assuming the repo

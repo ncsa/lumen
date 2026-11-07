@@ -107,8 +107,11 @@ Fields shown to users on the Models page:
 | `input_cost_per_million` | Coins charged per 1M input tokens | 0.0 |
 | `output_cost_per_million` | Coins charged per 1M output tokens | 0.0 |
 | `auto_price` | Take input/output prices from models.dev on Update (admin only, not shown to users) | `false` |
+| `auto_cache_price` | Take cached input / cache write prices from models.dev on Update while `auto_price` is also on (admin only, not shown to users) | `false` |
 
-Prices are set by hand unless `auto_price: true` is set; a missing key means manual. Update (in the config editor or `sync_models.py`) only changes the prices of models with `auto_price: true`, and keeps the current price if models.dev has none. In the config editor, tick **Automatic price (from models.dev)** in Pricing & Limits; the input and output price fields are then read-only.
+Optional `cached_input_cost_per_million` sets the coins charged per 1M cached input tokens, and optional `cache_write_cost_per_million` the coins per 1M prompt-cache write tokens. Omit either key or set it to `null` to use `input_cost_per_million`; `0` makes that part free. These are pricing settings, not separate cached-token usage metrics. Set them in YAML or in the admin config editor (Models → Pricing & Limits → Cached Input Cost / Cache Write Cost). The rates are published as `cached_input_cost_per_million` and `cache_write_cost_per_million` on `GET /v1/models` and `GET /v1/models/<id>` (null when unset) and written into the generated OpenCode config as `cost.cache.read` / `cost.cache.write`, so a client that prices the cached tokens a response reports reaches the same figure Lumen billed.
+
+Prices are set by hand unless `auto_price: true` is set; a missing key means manual. Update (in the config editor or `sync_models.py`) only changes the prices of models with `auto_price: true`, and keeps the current price if models.dev has none. In the config editor, tick **Automatic price (from models.dev)** in Pricing & Limits; the input and output price fields are then read-only, and a second **Automatic cache pricing (from models.dev)** checkbox appears next to it, which switches the cached input and cache write fields to read-only as well and lets Update fill both cache rates from models.dev on top of the plain prices.
 
 See the [Introduction](../introduction.md#tokens-and-coins) for how coin costs are calculated.
 

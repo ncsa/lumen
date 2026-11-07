@@ -347,6 +347,8 @@
         "properties": {
           "name": { "type": "string", "minLength": 1 },
           "input_cost_per_million": { "type": "number", "minimum": 0 },
+          "cached_input_cost_per_million": { "type": ["number", "null"], "minimum": 0, "description": "Optional coins per million cached input tokens; null defaults to input_cost_per_million." },
+          "cache_write_cost_per_million": { "type": ["number", "null"], "minimum": 0, "description": "Optional coins per million prompt-cache write tokens; null defaults to input_cost_per_million." },
           "output_cost_per_million": { "type": "number", "minimum": 0 },
           "auto_price": { "type": "boolean" },
           "endpoints": {

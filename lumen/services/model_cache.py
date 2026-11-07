@@ -94,6 +94,8 @@ class ModelSnapshot:
     ack_message: Optional[str] = None
     #: Alias names of this model, sorted.
     aliases: tuple[str, ...] = ()
+    cached_input_cost_per_million: Optional[Decimal] = None
+    cache_write_cost_per_million: Optional[Decimal] = None
 
     @property
     def active(self) -> bool:
@@ -160,6 +162,8 @@ def _load() -> _Snapshot:
             model_name=r.model_name,
             input_cost_per_million=r.input_cost_per_million,
             output_cost_per_million=r.output_cost_per_million,
+            cached_input_cost_per_million=r.cached_input_cost_per_million,
+            cache_write_cost_per_million=r.cache_write_cost_per_million,
             audio_cost_per_hour=r.audio_cost_per_hour,
             owner_entity_id=r.owner_entity_id,
             needs_ack=r.needs_ack,
@@ -182,6 +186,8 @@ def _load() -> _Snapshot:
             select(
                 ModelConfig.id, ModelConfig.model_name,
                 ModelConfig.input_cost_per_million, ModelConfig.output_cost_per_million,
+                ModelConfig.cached_input_cost_per_million,
+                ModelConfig.cache_write_cost_per_million,
                 ModelConfig.audio_cost_per_hour, ModelConfig.owner_entity_id,
                 ModelConfig.needs_ack, ModelConfig.early_access,
                 ModelConfig.disabled, ModelConfig.end_date,

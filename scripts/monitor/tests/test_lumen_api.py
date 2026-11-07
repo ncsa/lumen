@@ -64,6 +64,13 @@ def test_a_combined_tokens_field_is_ignored():
     assert by_id["big"]["tokens"] is None
 
 
+def test_cached_input_price_is_read_when_set_and_none_when_missing():
+    [with_cached] = lumen_api.parse_models({"data": [model_row("qwen", cached_input_cost_per_million=0.05)]})
+    [plain] = lumen_api.parse_models({"data": [model_row("qwen")]})
+    assert with_cached["cached_input_price"] == 0.05
+    assert plain["cached_input_price"] is None
+
+
 def test_not_an_object_is_an_error():
     with pytest.raises(ValueError):
         lumen_api.parse_models([])

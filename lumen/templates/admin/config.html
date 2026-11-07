@@ -622,10 +622,20 @@ function syncAudioCostField() {
   if (!on) cost.value = '';
 }
 
-// Automatic price: models.dev sets input/output prices on Update, so lock them (readonly keeps values in collect).
+// Automatic price: models.dev sets input/output prices on Update, so lock them
+// (readonly keeps values in collect). Cache pricing is a separate opt-in that
+// only makes sense while the main autofill is on, so its checkbox is hidden
+// (and cleared) unless mdl-autoprice is checked, and it locks the cache fields.
 function syncAutoPriceFields() {
   const auto = boolVal('mdl-autoprice');
   for (const id of ['mdl-in-cost', 'mdl-out-cost']) { const el = $(id); if (el) el.readOnly = auto; }
+  const wrap = $('mdl-autocacheprice-wrap');
+  if (wrap) {
+    wrap.style.display = auto ? '' : 'none';
+    if (!auto) { const cb = $('mdl-autocacheprice'); if (cb) cb.checked = false; }
+  }
+  const cache = boolVal('mdl-autocacheprice');
+  for (const id of ['mdl-cached-in-cost', 'mdl-cached-write-cost']) { const el = $(id); if (el) el.readOnly = cache; }
 }
 
 function renderModelForm(m, idx) {
@@ -655,10 +665,12 @@ function renderModelForm(m, idx) {
       ${field('mdl-enddate','End Date', ti('mdl-enddate', m.end_date, 'YYYY-MM-DD'),'UTC; model is hidden and rejected after this; empty = no end date')}
     `)}
     ${card('Pricing & Limits', `
-      ${row3(field('mdl-in-cost', 'Input Cost / 1M tokens ($)',  ni('mdl-in-cost',  m.input_cost_per_million)),
-             field('mdl-out-cost','Output Cost / 1M tokens ($)', ni('mdl-out-cost', m.output_cost_per_million)),
-             field('mdl-audio-cost','Audio Cost / hour ($)', ni('mdl-audio-cost', m.audio_cost_per_hour), 'speech-to-text only'))}
-      <div class="mb-3 d-flex align-items-baseline gap-2">${cbi('mdl-autoprice', !!m.auto_price, 'Automatic price (from models.dev)', ' onchange="syncAutoPriceFields()"')}<span class="text-muted small fst-italic">set from models.dev on Update</span></div>
+      ${row2(field('mdl-in-cost', 'Input Cost / 1M tokens ($)',  ni('mdl-in-cost',  m.input_cost_per_million)),
+             field('mdl-out-cost','Output Cost / 1M tokens ($)', ni('mdl-out-cost', m.output_cost_per_million)))}
+      ${row2(field('mdl-cached-in-cost','Cached Input Cost / 1M tokens ($)', ni('mdl-cached-in-cost', m.cached_input_cost_per_million), 'defaults to input price when unset'),
+             field('mdl-cached-write-cost','Cache Write Cost / 1M tokens ($)', ni('mdl-cached-write-cost', m.cache_write_cost_per_million), 'defaults to input price when unset'))}
+      <div class="mb-3 d-flex align-items-baseline gap-2">${cbi('mdl-autoprice', !!m.auto_price, 'Automatic price (from models.dev)', ' onchange="syncAutoPriceFields()"')}<span class="text-muted small fst-italic">set from models.dev on Update</span><span id="mdl-autocacheprice-wrap" style="display:none">${cbi('mdl-autocacheprice', !!m.auto_cache_price, 'Automatic cache pricing (from models.dev)', ' onchange="syncAutoPriceFields()"')}</span></div>
+      ${field('mdl-audio-cost','Audio Cost / hour ($)', ni('mdl-audio-cost', m.audio_cost_per_hour), 'speech-to-text only')}
       ${row3(field('mdl-ctx',    'Context Window (tokens)', ni('mdl-ctx',    m.context_window,  '1')),
              field('mdl-maxout', 'Max Output Tokens',       ni('mdl-maxout', m.max_output_tokens,'1')),
              field('mdl-cutoff', 'Knowledge Cutoff',        ti('mdl-cutoff', m.knowledge_cutoff, 'YYYY-MM')))}
@@ -743,7 +755,10 @@ function collectCurrentModel() {
   m.end_date               = val('mdl-enddate')  || undefined;
   m.input_cost_per_million = numVal('mdl-in-cost');
   m.output_cost_per_million= numVal('mdl-out-cost');
+  m.cached_input_cost_per_million = numVal('mdl-cached-in-cost');
+  m.cache_write_cost_per_million = numVal('mdl-cached-write-cost');
   m.auto_price             = boolVal('mdl-autoprice') || undefined;
+  m.auto_cache_price          = boolVal('mdl-autocacheprice') || undefined;
   m.audio_cost_per_hour    = $('mdl-in-audio')?.checked ? numVal('mdl-audio-cost') : undefined;
   m.context_window         = numVal('mdl-ctx');
   m.max_output_tokens      = numVal('mdl-maxout');
@@ -799,6 +814,8 @@ async function syncModel() {
       max_output_tokens: 'max output',
       input_cost_per_million: 'input price',
       output_cost_per_million: 'output price',
+      cached_input_cost_per_million: 'cached input price',
+      cache_write_cost_per_million: 'cache write price',
       knowledge_cutoff: 'cutoff',
       supports_reasoning: 'reasoning',
       input_modalities: 'input modalities',
@@ -833,7 +850,7 @@ async function syncAllModels() {
   btnOne.disabled = true;
   const FIELD_LABELS = {
     context_window: 'context size', max_output_tokens: 'max output',
-    input_cost_per_million: 'input price', output_cost_per_million: 'output price',
+    input_cost_per_million: 'input price', output_cost_per_million: 'output price', cached_input_cost_per_million: 'cached input price', cache_write_cost_per_million: 'cache write price',
     knowledge_cutoff: 'cutoff', supports_reasoning: 'reasoning',
     input_modalities: 'input modalities', output_modalities: 'output modalities',
   };

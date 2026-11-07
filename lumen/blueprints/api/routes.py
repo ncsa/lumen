@@ -19,7 +19,7 @@ from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.services import model_cache, request_rates
-from lumen.services.cost import calculate_audio_cost, calculate_cost
+from lumen.services.cost import calculate_audio_cost, calculate_cost, usage_tokens
 from lumen.services.crypto import cache_salt_for_entity, hash_api_key
 from lumen.services.key_expiry import revoke_if_expired
 from lumen.services.live_state import get_live_state
@@ -205,6 +205,21 @@ def _model_dict(c, rates: dict, eps, ack_fields=None, tokens=None) -> dict:
         # Lumen status / cost fields
         "status": status,
         "input_cost_per_million": float(c.input_cost_per_million),
+        # Nullable for the same reason as the config field: null means cached
+        # input is billed at input_cost_per_million, so a client that also sees
+        # cached tokens in a usage payload can price them the way Lumen did.
+        "cached_input_cost_per_million": (
+            float(c.cached_input_cost_per_million)
+            if c.cached_input_cost_per_million is not None else None
+        ),
+        # Nullable for the same reason: null means written cache tokens are
+        # billed at input_cost_per_million, so a client that also sees
+        # cache-creation tokens in a usage payload can price them the way
+        # Lumen did.
+        "cache_write_cost_per_million": (
+            float(c.cache_write_cost_per_million)
+            if c.cache_write_cost_per_million is not None else None
+        ),
         "output_cost_per_million": float(c.output_cost_per_million),
         "instances": {
             "configured": len(eps),
@@ -599,6 +614,10 @@ def _complete_and_bill(model_name: str, messages: list, **kwargs):
     mc_id        = model_config.id
     mc_in_cost   = float(model_config.input_cost_per_million)
     mc_out_cost  = float(model_config.output_cost_per_million)
+    mc_cached_cost = (float(model_config.cached_input_cost_per_million)
+                      if model_config.cached_input_cost_per_million is not None else None)
+    mc_write_cost = (float(model_config.cache_write_cost_per_million)
+                      if model_config.cache_write_cost_per_million is not None else None)
     timeout, max_retries = upstream_call_bounds(streaming=False)
     # The arrival marks live in the WSGI environ; read them while the request
     # context is current.
@@ -631,13 +650,19 @@ def _complete_and_bill(model_name: str, messages: list, **kwargs):
         usage = response.usage
         if usage is None:
             logger.warning("Upstream did not return usage data (model=%s, entity_id=%s)", model_name, entity_id)
-            usage_prompt, usage_completion = 0, 0
-        else:
-            usage_prompt, usage_completion = usage.prompt_tokens, usage.completion_tokens
+        usage_prompt, cached_prompt, usage_completion, write_prompt = usage_tokens(usage)
 
-        cost = calculate_cost(usage_prompt, usage_completion, mc_in_cost, mc_out_cost)
+        cost = calculate_cost(
+            usage_prompt, usage_completion, mc_in_cost, mc_out_cost,
+            cached_input_tokens=cached_prompt,
+            cached_input_cost_per_million=mc_cached_cost,
+            cache_write_tokens=write_prompt,
+            cache_write_cost_per_million=mc_write_cost,
+        )
         bill_request(entity_id, mc_id, "api", usage_prompt, usage_completion, cost,
                      effective=effective, api_key_id=ak_id,
+                     cached_input_tokens=cached_prompt,
+                     cache_write_tokens=write_prompt,
                      endpoint_id=ep_id, duration=duration,
                      timing=timing, upstream_t0=t0,
                      # Non-streaming: the whole body arrives in one piece, so the
@@ -693,6 +718,10 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
     mc_id        = model_config.id
     mc_in_cost   = float(model_config.input_cost_per_million)
     mc_out_cost  = float(model_config.output_cost_per_million)
+    mc_cached_cost = (float(model_config.cached_input_cost_per_million)
+                      if model_config.cached_input_cost_per_million is not None else None)
+    mc_write_cost = (float(model_config.cache_write_cost_per_million)
+                      if model_config.cache_write_cost_per_million is not None else None)
     db.session.remove()  # return connection to pool before the LLM call
 
     # The generator body runs after this request's contexts are gone, on
@@ -739,12 +768,16 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
             far the stream got. Shared by the break-on-disconnect path and
             GeneratorExit so the two cannot bill differently.
             """
-            input_tokens, output_tokens, cost = estimate_abort_usage(
-                usage, messages, content_deltas, mc_in_cost, mc_out_cost)
+            input_tokens, output_tokens, cost, cached_tokens, write_tokens = estimate_abort_usage(
+                usage, messages, content_deltas, mc_in_cost, mc_out_cost,
+                cached_in_cost_per_million=mc_cached_cost,
+                cache_write_cost_per_million=mc_write_cost)
             record_stream_abort(
                 app, billed=billed, entity_id=entity_id, model_config_id=mc_id,
                 source="api", endpoint_id=ep_id, stream_t0=t0,
                 input_tokens=input_tokens, output_tokens=output_tokens, cost=cost,
+                cached_input_tokens=cached_tokens,
+                cache_write_tokens=write_tokens,
                 effective=effective, api_key_id=ak_id,
                 timing=timing, ttft=t_first_any, ttft_visible=t_first_visible,
             )
@@ -799,14 +832,21 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                 if not aborted:
                     duration = _time.monotonic() - t0
                     if usage is not None:
+                        input_tokens, cached_tokens, output_tokens, write_tokens = usage_tokens(usage)
                         cost = calculate_cost(
-                            usage.prompt_tokens, usage.completion_tokens,
+                            input_tokens, output_tokens,
                             mc_in_cost, mc_out_cost,
+                            cached_input_tokens=cached_tokens,
+                            cached_input_cost_per_million=mc_cached_cost,
+                            cache_write_tokens=write_tokens,
+                            cache_write_cost_per_million=mc_write_cost,
                         )
                         phase = "billing"
                         with app.app_context():
-                            bill_request(entity_id, mc_id, "api", usage.prompt_tokens, usage.completion_tokens,
+                            bill_request(entity_id, mc_id, "api", input_tokens, output_tokens,
                                          cost, effective=effective, api_key_id=ak_id,
+                                         cached_input_tokens=cached_tokens,
+                                         cache_write_tokens=write_tokens,
                                          endpoint_id=ep_id, duration=duration,
                                          timing=timing, upstream_t0=t0,
                                          ttft=t_first_any, ttft_visible=t_first_visible,
@@ -930,6 +970,10 @@ def _do_audio(kind: str):
     mc_id            = model_config.id
     mc_in_cost       = float(model_config.input_cost_per_million)
     mc_out_cost      = float(model_config.output_cost_per_million)
+    mc_cached_cost   = (float(model_config.cached_input_cost_per_million)
+                        if model_config.cached_input_cost_per_million is not None else None)
+    mc_write_cost = (float(model_config.cache_write_cost_per_million)
+                        if model_config.cache_write_cost_per_million is not None else None)
     mc_audio_per_hour = float(model_config.audio_cost_per_hour or 0)
     timeout, max_retries = upstream_call_bounds(streaming=False)
     # Read while the request context is current, like the paths above.
@@ -961,7 +1005,10 @@ def _do_audio(kind: str):
         payload = response.model_dump() if hasattr(response, "model_dump") else {"text": str(response)}
         usage = payload.get("usage") if isinstance(payload, dict) else None
 
-        in_tok, out_tok, seconds, cost = 0, 0, 0, 0.0
+        # cached_tok stays None unless the upstream reports a token usage object
+        # with a cache breakdown; None is stored as SQL NULL ("unknown"), which
+        # is not the same claim as a reported zero.
+        in_tok, out_tok, seconds, cost, cached_tok, write_tok = 0, 0, 0, 0.0, None, None
         if isinstance(usage, dict) and usage.get("type") == "duration":
             seconds = int(usage.get("seconds") or 0)
             cost = calculate_audio_cost(seconds, mc_audio_per_hour)
@@ -971,15 +1018,22 @@ def _do_audio(kind: str):
                     model_name, entity_id,
                 )
         elif isinstance(usage, dict) and (usage.get("type") == "tokens" or "prompt_tokens" in usage):
-            in_tok = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
-            out_tok = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
-            cost = round(in_tok * mc_in_cost / 1_000_000 + out_tok * mc_out_cost / 1_000_000, 6)
+            in_tok, cached_tok, out_tok, write_tok = usage_tokens(usage)
+            cost = calculate_cost(
+                in_tok, out_tok, mc_in_cost, mc_out_cost,
+                cached_input_tokens=cached_tok,
+                cached_input_cost_per_million=mc_cached_cost,
+                cache_write_tokens=write_tok,
+                cache_write_cost_per_million=mc_write_cost,
+            )
         else:
             logger.warning("Upstream did not return usage data (model=%s, entity_id=%s)", model_name, entity_id)
 
         bill_request(entity_id, mc_id, "api", in_tok, out_tok, cost,
                      effective=effective, api_key_id=ak_id, audio_seconds=seconds,
                      endpoint_id=ep_id, duration=duration,
+                     cached_input_tokens=cached_tok,
+                     cache_write_tokens=write_tok,
                      timing=timing, upstream_t0=t0,
                      # Non-streaming: the transcription arrives in one piece, so the
                      # first chunk is the response and both marks are the duration.
@@ -1048,6 +1102,24 @@ def completions():
         return _err("No response from model", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
 
     usage = response.usage
+    prompt_tokens, cached_tokens, completion_tokens, write_tokens = usage_tokens(usage)
+    usage_payload = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        # Summed from the two counts above, not copied from the upstream: the
+        # object is rebuilt here, and a total disagreeing with its parts is the
+        # inconsistency the cached breakdown exists to prevent.
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+    # A cache-aware client prices the cached tokens a response reports, so the
+    # rebuilt object restates the breakdown the chat endpoint forwards whole.
+    if cached_tokens or write_tokens:
+        details = {}
+        if cached_tokens:
+            details["cached_tokens"] = cached_tokens
+        if write_tokens:
+            details["cache_creation_input_tokens"] = write_tokens
+        usage_payload["prompt_tokens_details"] = details
     return jsonify(
         {
             "id": response.id,
@@ -1061,10 +1133,6 @@ def completions():
                     "finish_reason": response.choices[0].finish_reason,
                 }
             ],
-            "usage": {
-                "prompt_tokens": usage.prompt_tokens if usage else 0,
-                "completion_tokens": usage.completion_tokens if usage else 0,
-                "total_tokens": usage.total_tokens if usage else 0,
-            },
+            "usage": usage_payload,
         }
     )

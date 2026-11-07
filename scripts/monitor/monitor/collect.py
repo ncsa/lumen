@@ -63,7 +63,7 @@ def collect_prices(store: ConfigStore, session_factory: sessionmaker, now: datet
     with session_factory() as session:
         for model in models:
             model_id = model["id"]
-            upsert_daily(session, day, model_id, "lumen", input_price=model["input_price"], output_price=model["output_price"])
+            upsert_daily(session, day, model_id, "lumen", input_price=model["input_price"], output_price=model["output_price"], cached_input_price=model["cached_input_price"])
             written["lumen"] += 1
 
             entry = entries.get(model_id)
