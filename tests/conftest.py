@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from lumen.services import health as _health
 from lumen.services import metrics_snapshot, model_cache, stats_cutover, stats_fold
 
 TEST_CONFIG = str(Path(__file__).parent / "fixtures" / "test_config.yaml")
@@ -37,7 +38,6 @@ def _dormant_health_checker(app):
     t = threading.Thread(target=_sleep, daemon=True)
     t.start()
 
-from lumen.services import health as _health
 _health.start_health_checker = _dormant_health_checker
 
 

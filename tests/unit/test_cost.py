@@ -99,6 +99,52 @@ def test_calculate_cost_tolerates_an_unreadable_cached_count():
     assert calculate_cost(1_000_000, 0, 2.0, 4.0, "250000", 0.5) == 1.625
 
 
+def test_cache_write_cost_and_its_clamps():
+    # A write count within the remainder prices exactly, never overlapping
+    # the cached part; a count above it clamps to the remainder.
+    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, 0.5, 500_000, 0.25) == 1.15
+    assert calculate_cost(1_000_000, 0, 1.0, 2.0, 250_000, 0.5, 5_000_000, 0.25) == 0.3125
+    # A cached count above the prompt total clamps to it, leaving no write
+    # room at all.
+    assert calculate_cost(10, 0, 1.0, 2.0, 5_000_000, 0.1, 7, 0.25) == 0.000001
+
+
+def test_unset_cache_write_rate_bills_writes_at_the_input_rate():
+    # Without a write rate the write portion stays in the input-rate block,
+    # which is exactly how the request priced before write tokens existed.
+    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, 0.5, 500_000) == 2.025
+    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, 0.5, 500_000, None) == 2.025
+    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, 0.5) == 2.025
+
+
+def test_no_cache_rates_is_the_legacy_formula():
+    # With neither cache rate set the legacy formula prices the request
+    # exactly, whatever counts (or unreadable counts) are reported.
+    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, None, 500_000, None) == 2.4
+    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000) == 2.4
+
+
+@pytest.mark.parametrize("usage, prompt, cached, expected", [
+    (None, 100, 0, 0),
+    # No creation count reported: the non-cached remainder is the write.
+    ({"prompt_tokens": 100, "completion_tokens": 7}, 100, 0, 100),
+    # The OpenAI-compatible nested field, read like the cached_tokens twin.
+    (SimpleNamespace(prompt_tokens=100, completion_tokens=7,
+                     prompt_tokens_details=SimpleNamespace(cache_creation_input_tokens=40)), 100, 20, 40),
+    # The top-level variant, and a whole number echoed as a string.
+    ({"prompt_tokens": 100, "completion_tokens": 7, "cache_creation_input_tokens": 30}, 100, 20, 30),
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_creation_input_tokens": " 40 "}}, 100, 20, 40),
+    # A count beyond the remainder clamps to it; a malformed one falls back
+    # to the remainder as well, since either way those tokens were not
+    # served from the cache.
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_creation_input_tokens": 90}}, 100, 20, 80),
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_creation_input_tokens": "x"}}, 100, 20, 80),
+    # A fully cached prompt leaves no write room.
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_creation_input_tokens": 40}}, 100, 100, 0),
+])
+def test_write_tokens_from_usage(usage, prompt, cached, expected):
+    assert write_tokens_from_usage(usage, prompt, cached) == expected
+
 def test_audio_cost_one_hour():
     assert calculate_audio_cost(3600, 0.10) == 0.10
 
