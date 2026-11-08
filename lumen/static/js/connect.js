@@ -63,6 +63,56 @@
     return wrap;
   }
 
+  // ── JSONC output ─────────────────────────────────────────────────────────
+  // OpenCode reads JSONC, so the generated config can explain itself in
+  // comments. JSON.stringify cannot write one, so a member whose value is
+  // { comment: "text" } is emitted as // lines (one per \n in the text) with
+  // its key dropped.
+  function isComment(value) {
+    return value !== null && typeof value === "object" && typeof value.comment === "string";
+  }
+
+  function toJsonc(value, depth) {
+    depth = depth || 0;
+    const indent = "  ".repeat(depth);
+    const inner = indent + "  ";
+    if (isComment(value)) {
+      return value.comment.split("\n").map((line) => indent + "// " + line).join("\n");
+    }
+    if (Array.isArray(value)) {
+      if (!value.length) return "[]";
+      const items = value.map((item) => inner + toJsonc(item, depth + 1));
+      return "[\n" + items.join(",\n") + "\n" + indent + "]";
+    }
+    if (value !== null && typeof value === "object") {
+      const members = Object.keys(value)
+        .filter((key) => value[key] !== undefined)
+        .map((key) => ({ key: key, value: value[key] }));
+      if (!members.length) return "{}";
+      const lines = members.map((member, i) => {
+        const text = isComment(member.value)
+          ? toJsonc(member.value, depth + 1)
+          : inner + JSON.stringify(member.key) + ": " + toJsonc(member.value, depth + 1);
+        // A // line takes no separator; a member keeps its comma while a
+        // member still follows it.
+        const later = members.slice(i + 1).some((next) => !isComment(next.value));
+        return text + (!isComment(member.value) && later ? "," : "");
+      });
+      return "{\n" + lines.join("\n") + "\n" + indent + "}";
+    }
+    return JSON.stringify(value);
+  }
+
+  // Why a cache rate repeats the input price: Lumen bills it that way, and
+  // OpenCode would otherwise bill the tokens as free.
+  function cacheNote(sides) {
+    const what = sides.length === 2 ? "cache rates are" : "cache-" + sides[0] + " rate is";
+    const both = sides.length === 2 ? "both repeat" : "it repeats";
+    return "No " + what + " configured, so " + both + " the input price:\n" +
+      "Lumen bills an unset cache price at the input price; OpenCode charges\n" +
+      "nothing for a cache price the config does not state.";
+  }
+
   // ── OpenCode (always every accessible model) ─────────────────────────────
   function openCodeConfig() {
     const models = {};
@@ -77,18 +127,29 @@
         }
         // Costs are USD per million tokens — OpenCode's models.dev cost unit.
         // OpenCode prices cached input and cache writes separately
-        // (cost.cache.read / cost.cache.write), so the file states each rate the
-        // model actually configures and leaves the rest out: restating an unset
-        // rate as the input price would claim a cache price the instance never
-        // set. Lumen bills an unset rate at the input price on its own.
+        // (cost.cache.read / cost.cache.write) and charges nothing for a side
+        // the file does not state, while Lumen bills an unset rate at the input
+        // price. Both sides are written, so the two agree: the configured rate,
+        // or the input price with a comment saying it was filled in.
         entry.cost = {
           input: m.input_cost_per_million,
           output: m.output_cost_per_million,
         };
-        const cache = {};
-        if (m.cached_input_cost_per_million != null) cache.read = m.cached_input_cost_per_million;
-        if (m.cache_write_cost_per_million != null) cache.write = m.cache_write_cost_per_million;
-        if (Object.keys(cache).length) entry.cost.cache = cache;
+        const inputRate = m.input_cost_per_million;
+        const readRate = m.cached_input_cost_per_million != null
+          ? m.cached_input_cost_per_million : inputRate;
+        const writeRate = m.cache_write_cost_per_million != null
+          ? m.cache_write_cost_per_million : inputRate;
+        const filled = [];
+        if (m.cached_input_cost_per_million == null && readRate != null) filled.push("read");
+        if (m.cache_write_cost_per_million == null && writeRate != null) filled.push("write");
+        if (readRate != null || writeRate != null) {
+          const cache = {};
+          if (filled.length) cache["//"] = { comment: cacheNote(filled) };
+          if (readRate != null) cache.read = readRate;
+          if (writeRate != null) cache.write = writeRate;
+          entry.cost.cache = cache;
+        }
         // Capability fields (issue #79). OpenCode derives image support from
         // modalities.input — attachment alone does not gate image requests —
         // and reads tool_call (underscored) for function calling. Unknown
@@ -124,24 +185,25 @@
   function renderOpenCode() {
     const container = document.getElementById("examples-opencode");
     container.innerHTML = "";
-    const json = JSON.stringify(openCodeConfig(), null, 2);
+    const json = toJsonc(openCodeConfig());
 
     const download = document.createElement("button");
     download.type = "button";
     download.className = "btn btn-sm btn-primary";
-    download.textContent = "Download config.json";
-    download.setAttribute("aria-label", "Download opencode.json");
+    download.textContent = "Download config.jsonc";
+    download.setAttribute("aria-label", "Download opencode.jsonc");
     download.addEventListener("click", () => {
       const blob = new Blob([json], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "opencode.json";
+      a.download = "opencode.jsonc";
       a.click();
       URL.revokeObjectURL(url);
     });
 
-    container.appendChild(block("opencode.json", json, [download]));
+    container.appendChild(block("opencode.jsonc", json, [download],
+      "Comments are JSONC — OpenCode reads opencode.jsonc as well as opencode.json."));
   }
 
   // ── curl ─────────────────────────────────────────────────────────────────

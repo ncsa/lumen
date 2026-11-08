@@ -3,7 +3,7 @@
 The config is assembled client-side from the page's embedded model data, so a
 route test cannot see which cost fields reach the file. These tests load
 /connect in headless Chromium, with every same-origin request answered by the
-Flask test client (no live server), and read the generated JSON back.
+Flask test client (no live server), and read the generated JSONC back.
 """
 import json
 from urllib.parse import urlsplit
@@ -36,11 +36,24 @@ def connect_page(auth_client, browser):
         page.close()
 
 
-def _models(page):
+def _without_comments(text):
+    """Drop the // lines that explain prices the generator filled in."""
+    return "\n".join(line for line in text.splitlines() if not line.strip().startswith("//"))
+
+
+def _generated(page):
+    """Return (models, raw text) of the generated opencode.jsonc."""
     page.goto(f"{ORIGIN}/connect")
     page.wait_for_selector("#examples-opencode pre code")
-    config = json.loads(page.text_content("#examples-opencode pre code"))
-    return next(iter(config["provider"].values()))["models"]
+    text = page.text_content("#examples-opencode pre code")
+    config = json.loads(_without_comments(text))
+    return next(iter(config["provider"].values()))["models"], text
+
+
+def _cache_block(text, model_id):
+    """One model's cache block, from "cache": { to its closing brace."""
+    after_model = text.split(f'"{model_id}": {{', 1)[1]
+    return after_model.split('"cache": {', 1)[1].split("}", 1)[0]
 
 
 def _add_model(app, **fields):
@@ -49,15 +62,24 @@ def _add_model(app, **fields):
         db.session.commit()
 
 
-def test_config_omits_cache_prices_the_model_does_not_configure(connect_page, test_model):
-    """A model without cache rates gets no cost.cache: the file states the
-    instance's prices, and restating the input price as a cache price would claim
-    a setting that does not exist."""
-    entry = _models(connect_page)[test_model["model_name"]]
-    assert entry["cost"] == {"input": 1.0, "output": 2.0}
+def test_config_repeats_the_input_price_for_unset_cache_rates(connect_page, test_model):
+    """OpenCode bills an omitted cache price as free, so both sides are stated:
+    a model without cache rates repeats its input price, and a comment says the
+    rates were filled in — Lumen charges exactly that."""
+    models, text = _generated(connect_page)
+    entry = models[test_model["model_name"]]
+    assert entry["cost"] == {
+        "input": 1.0,
+        "output": 2.0,
+        "cache": {"read": 1.0, "write": 1.0},
+    }
+    block = _cache_block(text, test_model["model_name"])
+    assert "// No cache rates are configured, so both repeat the input price:" in block
+    assert "OpenCode charges" in block
+    assert "nothing for a cache price the config does not state." in block
 
 
-def test_config_states_both_rates_when_the_model_configures_them(app, connect_page):
+def test_config_states_configured_rates_and_adds_no_comment(app, connect_page):
     _add_model(
         app,
         model_name="cached-model",
@@ -66,15 +88,16 @@ def test_config_states_both_rates_when_the_model_configures_them(app, connect_pa
         cached_input_cost_per_million=0.5,
         cache_write_cost_per_million=5.0,
     )
-    entry = _models(connect_page)["cached-model"]
-    assert entry["cost"] == {
+    models, text = _generated(connect_page)
+    assert models["cached-model"]["cost"] == {
         "input": 5.0,
         "output": 15.0,
         "cache": {"read": 0.5, "write": 5.0},
     }
+    assert "//" not in _cache_block(text, "cached-model")
 
 
-def test_config_omits_only_the_side_the_model_leaves_unset(app, connect_page):
+def test_config_fills_only_the_side_the_model_leaves_unset(app, connect_page):
     _add_model(
         app,
         model_name="read-only-cache",
@@ -82,5 +105,20 @@ def test_config_omits_only_the_side_the_model_leaves_unset(app, connect_page):
         output_cost_per_million=4.0,
         cached_input_cost_per_million=0.2,
     )
-    entry = _models(connect_page)["read-only-cache"]
-    assert entry["cost"]["cache"] == {"read": 0.2}
+    models, text = _generated(connect_page)
+    assert models["read-only-cache"]["cost"]["cache"] == {"read": 0.2, "write": 2.0}
+    assert "// No cache-write rate is configured, so it repeats the input price:" in _cache_block(
+        text, "read-only-cache"
+    )
+
+
+def test_generated_file_is_named_jsonc(connect_page):
+    """The file carries comments, so it is offered as opencode.jsonc — OpenCode
+    reads either extension."""
+    connect_page.goto(f"{ORIGIN}/connect")
+    connect_page.wait_for_selector("#examples-opencode pre code")
+    assert connect_page.text_content("#examples-opencode .fw-semibold") == "opencode.jsonc"
+    assert connect_page.text_content("#examples-opencode button.btn-primary") == "Download config.jsonc"
+    assert "OpenCode reads opencode.jsonc as well as opencode.json" in connect_page.text_content(
+        "#examples-opencode"
+    )
