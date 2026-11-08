@@ -11,9 +11,13 @@ here:
    and not in ``last_minute``, which is the previous whole minute only.
 3. Materialising everything with ``refresh_continuous_aggregate`` changes no
    count.
-4. Neither call site selects from ``request_logs``.
+4. Neither call site sums ``request_logs`` for its token windows: they read
+   the aggregate. The cache-reporting flags cannot come from it — the aggregate
+   has no cache columns — so they are one bounded count over the last day of
+   raw logs, answered from ``model_cache`` for a health interval.
 5. ``?tokens=true`` with the monitoring token sums input/output tokens from
-   the aggregate over the same windows, plus ``last_month``.
+   the aggregate over the same windows, plus ``last_month``, and carries
+   those cache flags.
 
 The clock is pinned to the database's ``now()`` (``request_rates._now``) so the
 row ages below are exact. This module runs against ``pg_migrated_isolated`` —
@@ -231,7 +235,7 @@ def test_call_sites_never_select_from_request_logs(pg_app, seeded):
 @pytest.mark.postgres
 def test_monitor_token_counts_from_the_aggregate(pg_app, seeded):
     from lumen.extensions import db
-    from lumen.services import request_rates
+    from lumen.services import model_cache, request_rates
 
     inputs = {"last_minute": 3, "last_hour": 7, "last_day": 15, "last_month": 31}
     outputs = {k: v * 10 for k, v in inputs.items()}
@@ -248,6 +252,9 @@ def test_monitor_token_counts_from_the_aggregate(pg_app, seeded):
 
     client = pg_app.test_client()
     auth = {"Authorization": f"Bearer {MONITOR}"}
+    # Start from a cold cache, so which statements the requests run does not
+    # depend on what an earlier test happened to warm.
+    model_cache.clear()
     event.listen(engine, "before_cursor_execute", _record)
     try:
         listed = client.get("/v1/models?tokens=true", headers=auth)
@@ -262,4 +269,17 @@ def test_monitor_token_counts_from_the_aggregate(pg_app, seeded):
     assert {k: one.get_json()[k] for k in ("input_tokens", "output_tokens")} == {
         k: row[k] for k in ("input_tokens", "output_tokens")
     }
-    assert not [st for st in statements if "request_logs" in st], statements
+    # The token windows come from the aggregate. The cache flags cannot: the
+    # aggregate has no cache columns, so the listing runs one bounded count over
+    # the last day of raw logs. The second request shares that answer, because
+    # model_cache keeps it for a health interval - it is a periodic count, not
+    # a per-request scan of the hypertable.
+    logs = [st for st in statements if "request_logs" in st]
+    assert len(logs) == 1, logs
+    assert "cached_input_tokens" in logs[0] and "cache_write_tokens" in logs[0]
+    assert "GROUP BY request_logs.model_config_id" in logs[0]
+    # The seeded rows report no cache counts, so this model looks like a backend
+    # that reports nothing - the state the monitor warns about.
+    assert row["cache_metrics"]["reads"] is False
+    assert row["cache_metrics"]["writes"] is False
+    assert row["cache_metrics"]["requests"] >= 1
