@@ -48,6 +48,7 @@ def _columns(url, table):
 
 
 CACHED_INPUT_DAILY = {"cached_input_price"}
+CACHE_WRITE_DAILY = {"cache_write_price"}
 
 
 SPLIT_DAILY = {"input_tokens", "output_tokens", "input_tokens_covered_until", "output_tokens_covered_until"}
@@ -90,3 +91,14 @@ def test_cached_input_price_revision_adds_and_drops_the_column(tmp_path):
     assert CACHED_INPUT_DAILY <= _columns(url, "daily_stats")
     downgrade(url, "0003")
     assert not CACHED_INPUT_DAILY & _columns(url, "daily_stats")
+
+
+def test_cache_write_price_revision_adds_and_drops_the_column(tmp_path):
+    url = f"sqlite:///{tmp_path / 'monitor.db'}"
+    upgrade(url, "0004")
+    assert not CACHE_WRITE_DAILY & _columns(url, "daily_stats")
+    upgrade(url, "0005")
+    assert CACHE_WRITE_DAILY <= _columns(url, "daily_stats")
+    downgrade(url, "0004")
+    assert not CACHE_WRITE_DAILY & _columns(url, "daily_stats")
+    assert CACHED_INPUT_DAILY <= _columns(url, "daily_stats")

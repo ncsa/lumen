@@ -2209,6 +2209,56 @@ def test_api_chat_bills_cache_write(app, client, monkeypatch, test_user, test_mo
 
 
 @pytest.mark.parametrize("stream", [False, True])
+def test_api_chat_records_anthropic_style_usage_at_the_same_totals(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, fresh_rate_limit, stream,
+):
+    """An Anthropic-style usage object leaves the cached parts out of
+    ``input_tokens``. Normalized, it records the same prompt total and the same
+    split an OpenAI-style object would, so the stored metrics (and the stats
+    built from them) mean one thing whatever backend answered."""
+    from lumen.blueprints.api import routes
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    from lumen.models.request_log import RequestLog
+
+    token, _ = api_key
+    _allow_model(app, test_user, test_model)
+    with app.app_context():
+        model = db.session.get(ModelConfig, test_model["id"])
+        model.input_cost_per_million = 2
+        model.output_cost_per_million = 4
+        model.cached_input_cost_per_million = 0.5
+        model.cache_write_cost_per_million = 0.25
+        db.session.commit()
+        model_cache.refresh(app)
+
+    # 625k ordinary + 250k read + 125k written = the 1M prompt the OpenAI-style
+    # object in test_api_chat_bills_cache_write reports as prompt_tokens.
+    usage = SimpleNamespace(input_tokens=625_000, output_tokens=100_000,
+                            cache_read_input_tokens=250_000,
+                            cache_creation_input_tokens=125_000)
+    if stream:
+        chunk = _UsageChunk()
+        chunk.usage = usage
+        _capturing_openai(monkeypatch, routes, lambda **kw: iter([chunk]))
+    else:
+        response = _NonStreamResponse()
+        response.usage = usage
+        _capturing_openai(monkeypatch, routes, lambda **kw: response)
+
+    result = _chat_post(client, token, test_model["model_name"], stream)
+    assert result.status_code == HTTPStatus.OK
+    if stream:
+        assert "data: [DONE]" in result.get_data(as_text=True)
+    with app.app_context():
+        log = db.session.execute(select(RequestLog).filter_by(entity_id=test_user["id"])).scalar_one()
+        assert float(log.cost) == pytest.approx(1.80625)
+        assert log.input_tokens == 1_000_000
+        assert log.cached_input_tokens == 250_000
+        assert log.cache_write_tokens == 125_000
+
+
+@pytest.mark.parametrize("stream", [False, True])
 def test_api_chat_bills_cache_write_without_a_cached_rate(app, client, monkeypatch, test_user, test_model,
                                                           test_model_endpoint, api_key, fresh_rate_limit, stream):
     """A model may price writes only. The unset read rate must bill those tokens
@@ -2298,14 +2348,14 @@ def test_api_completions_reports_and_bills_cached_input(
         "total_tokens": 1_100_000,
         "prompt_tokens_details": {
             "cached_tokens": 250_000,
-            # Nothing reported the cache write, so the remainder of the prompt is it.
-            "cache_creation_input_tokens": 750_000,
         },
     }
     with app.app_context():
         log = db.session.execute(select(RequestLog).filter_by(entity_id=test_user["id"])).scalar_one()
         assert float(log.cost) == pytest.approx(2.025)
-        assert log.cache_write_tokens == 750_000
+        # Nothing reported a cache write, and the remainder of the prompt is
+        # not one: it bills as ordinary input and stays unrecorded.
+        assert log.cache_write_tokens is None
 
 
 def test_api_completions_reports_and_bills_cache_write(
@@ -2360,12 +2410,11 @@ def test_api_completions_reports_and_bills_cache_write(
         assert log.cache_write_tokens == 125_000
 
 
-def test_api_completions_omits_the_breakdown_without_cached_tokens(
+def test_api_completions_omits_the_breakdown_without_cache_fields(
     app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, fresh_rate_limit,
 ):
-    """No cached count reported: the whole prompt is still the write remainder,
-    so the rebuilt usage states the creation count (billed at the input rate
-    when no write rate is configured)."""
+    """No cache count reported: the rebuilt usage carries no breakdown, because
+    the endpoint only restates what the upstream sent."""
     from lumen.blueprints.api import routes
 
     token, _ = api_key
@@ -2387,7 +2436,6 @@ def test_api_completions_omits_the_breakdown_without_cached_tokens(
     assert result.status_code == HTTPStatus.OK
     assert result.get_json()["usage"] == {
         "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15,
-        "prompt_tokens_details": {"cache_creation_input_tokens": 10},
     }
 
 

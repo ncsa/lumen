@@ -15,9 +15,23 @@
     return `${median.toFixed(2)} (${fmtFix(p5, 2)}–${fmtFix(p95, 2)})`;
   }
 
-  function inOut(input, output, cached) {
+  // A backend that reports no cache count has those tokens billed at the input price, so a price
+  // configured for them cannot charge what the admin set. Mark the line whose price is not in play.
+  const CACHE_GAP = {
+    reads: 'Not billed at this price: the backend reported no cache reads in the last day, so Lumen charged the input price',
+    writes: 'Not billed at this price: the backend reported no cache writes in the last day (SGLang has no cache-write accounting), so Lumen charged the input price',
+  };
+
+  function priceLine(label, price, gap) {
+    const line = el('div', { class: 'io', text: `${label} ${price}` });
+    if (gap) line.append(marker('!', CACHE_GAP[gap]));
+    return line;
+  }
+
+  function inOut(input, output, cached, written, gap) {
     const lines = [el('div', { class: 'io', text: `in ${input}` }), el('div', { class: 'io', text: `out ${output}` })];
-    if (cached) lines.push(el('div', { class: 'io', text: `cached in ${cached}` }));
+    if (cached != null) lines.push(priceLine('cached in', cached, gap && gap.reads ? 'reads' : null));
+    if (written != null) lines.push(priceLine('cache write', written, gap && gap.writes ? 'writes' : null));
     return lines;
   }
 
@@ -54,7 +68,12 @@
         cell(strip(m.strip, times)),
         cell(fmtPct(m.uptime)),
         cell(`${m.healthy ?? dash}/${m.configured ?? dash}`),
-        cell(inOut(fmtFix(m.input_price, 2), fmtFix(m.output_price, 2), m.cached_input_price != null ? fmtFix(m.cached_input_price, 2) : null)),
+        cell(inOut(
+          fmtFix(m.input_price, 2), fmtFix(m.output_price, 2),
+          m.cached_input_price != null ? fmtFix(m.cached_input_price, 2) : null,
+          m.cache_write_price != null ? fmtFix(m.cache_write_price, 2) : null,
+          m.cache_warning,
+        )),
         cell(isNum(m.modelsdev_input_median)
           ? inOut(priceRange(m.modelsdev_input_median, m.modelsdev_input_p5, m.modelsdev_input_p95),
             priceRange(m.modelsdev_output_median, m.modelsdev_output_p5, m.modelsdev_output_p95))

@@ -1022,21 +1022,24 @@ def test_estimate_prompt_tokens_counts_text_of_every_content_shape():
 def test_estimate_abort_usage_prefers_exact_usage_over_the_delta_count():
     from lumen.services.llm import estimate_abort_usage
     usage = _Usage(prompt_tokens=1000, completion_tokens=2000)
+    # This usage reports no cache counts, so both sides stay unknown: the exact
+    # prompt total never stands in for a write count it did not report.
     assert estimate_abort_usage(usage, [{"role": "user", "content": "hi"}], 3, 1.0, 2.0) == (
-        1000, 2000, pytest.approx(0.005), 0, 1000,
+        1000, 2000, pytest.approx(0.005), None, None,
     )
 
 
-def test_estimate_abort_usage_discounts_only_reported_cached_tokens():
+def test_estimate_abort_usage_reports_only_the_counts_the_usage_carries():
     from lumen.services.llm import estimate_abort_usage
     usage = _Usage(prompt_tokens=1_000_000, completion_tokens=100_000)
     usage.prompt_tokens_details = types.SimpleNamespace(cached_tokens=250_000)
     messages = [{"role": "user", "content": "hi"}]
     # The cached and cache-write counts come back with the rest, so the abort's
     # request_logs row can record the same split the cost was computed from.
-    # The write count is the remainder nothing else claims: 1M prompt - 250k cached.
+    # This usage reports no creation count, so the write side stays unknown (an
+    # inferred remainder would be a count the upstream never sent).
     assert estimate_abort_usage(usage, messages, 3, 2.0, 4.0, 0.5) == (
-        1_000_000, 100_000, pytest.approx(2.025), 250_000, 750_000,
+        1_000_000, 100_000, pytest.approx(2.025), 250_000, None,
     )
     # With no terminal usage, a prompt estimate cannot tell what was cached or
     # written and must report unknown (None -> SQL NULL), not a zero it cannot

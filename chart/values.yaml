@@ -382,7 +382,9 @@ models: []
 # - name: gpt-4o                      # Lumen model ID used in API requests
 #   input_cost_per_million: 2.5       # REQUIRED; coins per 1M input tokens
 #   cached_input_cost_per_million: 0.0 # optional; coins per 1M cached input tokens; omit/null = input price (zero is valid)
-#   cache_write_cost_per_million: 0.5 # optional; coins per 1M prompt-cache write tokens; omit/null = input price (zero is valid)
+#   cache_write_cost_per_million: 0.5 # optional; coins per 1M prompt-cache write tokens; omit/null = input price (zero is valid).
+#                                     # Billed only from counts the backend reports; SGLang reports none, so its
+#                                     # non-cached prompt stays at the input rate.
 #   output_cost_per_million: 10.0     # REQUIRED; coins per 1M output tokens
 #   auto_price: false                 # true: the model update action sets prices from models.dev
 #   auto_cache_price: false           # true: the model update action also sets cache rates from models.dev

@@ -37,7 +37,8 @@ MIDNIGHT = datetime(2026, 10, 17, 5, 0)  # local midnight starting TODAY, as UTC
 def snap_model(model_id="qwen", **extra):
     base = {
         "id": model_id, "description": f"{model_id} description", "status": "ok", "configured": 2, "healthy": 1,
-        "input_price": 0.2, "output_price": 0.8, "cached_input_price": 0.05,
+        "input_price": 0.2, "output_price": 0.8, "cached_input_price": 0.05, "cache_write_price": 0.02,
+        "cache_metrics": {"requests": 2000, "reads": True, "writes": True},
         "requests": {"last_minute": 3, "last_hour": 100, "last_day": 2000, "last_month": None},
         "tokens": {"last_minute": 3000, "last_hour": 100000, "last_day": 2000000, "last_month": None},
     }
@@ -225,7 +226,8 @@ def test_prices_modelsdev_and_traffic_columns(env):
     assert row["id"] == "qwen" and row["description"] == "qwen description"
     assert (row["healthy"], row["configured"]) == (1, 2)
     assert (row["input_price"], row["output_price"]) == (0.2, 0.8)
-    assert row["cached_input_price"] == 0.05
+    assert (row["cached_input_price"], row["cache_write_price"]) == (0.05, 0.02)
+    assert row["cache_warning"] is None
     assert (row["modelsdev_input_median"], row["modelsdev_input_p5"], row["modelsdev_input_p95"]) == (0.25, 0.12, 0.4)
     assert (row["modelsdev_output_median"], row["modelsdev_providers"]) == (1.0, 7)
     assert (row["requests_24h"], row["tokens_24h"]) == (2000, 2000000)
@@ -248,6 +250,71 @@ def test_cached_input_price_falls_back_to_the_latest_daily_row(env):
         (row,) = model_rows(session, store.current, RANGES["24h"], NOW,
                             [snap_model(input_price=None, output_price=None, cached_input_price=None)])
     assert (row["input_price"], row["output_price"], row["cached_input_price"]) == (0.3, 1.2, 0.06)
+
+
+def test_cache_write_price_falls_back_to_the_latest_daily_row(env):
+    store, sf = env
+    add(sf, lumen_row(TODAY - timedelta(days=1), input_price=0.3, output_price=1.2,
+                      cached_input_price=0.06, cache_write_price=0.03))
+    with sf() as session:
+        (row,) = model_rows(session, store.current, RANGES["24h"], NOW,
+                            [snap_model(input_price=None, output_price=None, cached_input_price=None,
+                                        cache_write_price=None)])
+    assert (row["cached_input_price"], row["cache_write_price"]) == (0.06, 0.03)
+
+
+def test_a_cache_price_the_backend_never_reports_is_flagged(env):
+    """SGLang reports reads but no creation count, so the write price cannot
+    bill; the row carries that so the table can mark the line."""
+    store, sf = env
+    with sf() as session:
+        (row,) = model_rows(session, store.current, RANGES["24h"], NOW,
+                            [snap_model(cache_metrics={"requests": 40, "reads": True, "writes": False})])
+    assert row["cache_warning"] == {"reads": False, "writes": True}
+
+
+def test_both_unreported_cache_counts_are_flagged(env):
+    store, sf = env
+    with sf() as session:
+        (row,) = model_rows(session, store.current, RANGES["24h"], NOW,
+                            [snap_model(cache_metrics={"requests": 40, "reads": False, "writes": False})])
+    assert row["cache_warning"] == {"reads": True, "writes": True}
+
+
+def test_a_reported_cache_price_is_not_flagged(env):
+    store, sf = env
+    with sf() as session:
+        (row,) = model_rows(session, store.current, RANGES["24h"], NOW, [snap_model()])
+    assert row["cache_warning"] is None
+
+
+def test_a_cache_price_without_traffic_is_not_flagged(env):
+    """No requests in the last day means no evidence either way; only a backend
+    that answered and stayed silent explains a price that is not billing."""
+    store, sf = env
+    with sf() as session:
+        (row,) = model_rows(session, store.current, RANGES["24h"], NOW,
+                            [snap_model(cache_metrics={"requests": 0, "reads": False, "writes": False})])
+    assert row["cache_warning"] is None
+
+
+def test_an_unreported_count_without_its_price_is_not_flagged(env):
+    """A missing read count only matters when a read price is configured."""
+    store, sf = env
+    with sf() as session:
+        (row,) = model_rows(session, store.current, RANGES["24h"], NOW,
+                            [snap_model(cached_input_price=None,
+                                        cache_metrics={"requests": 40, "reads": False, "writes": True})])
+    assert row["cache_warning"] is None
+
+
+def test_no_warning_without_a_configured_cache_price(env):
+    store, sf = env
+    with sf() as session:
+        (row,) = model_rows(session, store.current, RANGES["24h"], NOW,
+                            [snap_model(cached_input_price=None, cache_write_price=None,
+                                        cache_metrics={"requests": 40, "reads": False, "writes": False})])
+    assert row["cache_warning"] is None
 
 
 def test_no_gpu_config_is_flagged(env):

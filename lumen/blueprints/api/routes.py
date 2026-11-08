@@ -143,15 +143,17 @@ def _api_limit():
     return cfg.get("rate_limiting", {}).get("limit", "30 per minute")
 
 
-def _monitor_tokens() -> dict | None:
-    """Token windows for a monitor-token ``?tokens=true`` request, else None.
+def _monitor_metrics() -> dict | None:
+    """Usage metrics for a monitor-token ``?tokens=true`` request, else None.
 
-    Any other caller, or the monitor token without the parameter, gets None and
-    so the normal response.
+    Returns ``{"tokens": ..., "cache": ...}`` — the token windows and the
+    per-model cache-reporting flags — for the monitor token asking for
+    ``tokens=true``; any other caller, or the monitor token without the
+    parameter, gets None and so the normal response without per-model usage.
     """
     if not g.monitor or request.args.get("tokens", "").lower() not in ("1", "true", "yes"):
         return None
-    return model_cache.token_counts()
+    return {"tokens": model_cache.token_counts(), "cache": model_cache.cache_counts()}
 
 
 def _ack_fields(config, row):
@@ -169,17 +171,17 @@ def _ack_fields(config, row):
     return tags, acknowledged_at, ack_notice_text(config)
 
 
-def _model_dict(c, rates: dict, eps, ack_fields=None, tokens=None) -> dict:
+def _model_dict(c, rates: dict, eps, ack_fields=None, metrics=None) -> dict:
     """Serialize a ModelSnapshot and its active EndpointSnapshots to an
     OpenAI/vLLM-compatible response dict.
 
     ``ack_fields`` ((tags, acknowledged_at, notice)) is None for the monitor
     token, which has no entity and sees no consent state.
 
-    ``tokens`` ({model_config_id: {input_tokens, output_tokens}} windows, from
-    ``request_rates.token_windows``) adds ``input_tokens`` and
-    ``output_tokens``; it is None except for the monitor token asking for
-    ``?tokens=true``.
+    ``metrics`` (``{"tokens": ..., "cache": ...}``, from
+    ``_monitor_metrics``) adds the ``input_tokens`` / ``output_tokens``
+    windows and ``cache_metrics``; it is None except for the monitor token
+    asking for ``?tokens=true``.
     """
     zero = {"last_minute": 0, "last_hour": 0, "last_day": 0}
     healthy_count = sum(1 for e in eps if e.healthy)
@@ -252,11 +254,17 @@ def _model_dict(c, rates: dict, eps, ack_fields=None, tokens=None) -> dict:
         if tags and notice:
             d["notice"] = notice
 
-    if tokens is not None:
+    if metrics is not None:
         no_tokens = dict.fromkeys(request_rates.TOKEN_WINDOWS, 0)
-        counts = tokens.get(c.id, {})
+        counts = metrics["tokens"].get(c.id, {})
         d["input_tokens"] = counts.get("input_tokens", no_tokens)
         d["output_tokens"] = counts.get("output_tokens", no_tokens)
+        # Whether this backend reported each cache count on any request in the
+        # last day. A model with no traffic is all False too, so the monitor
+        # looks at "requests" before treating the flags as a backend verdict.
+        d["cache_metrics"] = metrics["cache"].get(
+            c.id, {"requests": 0, "reads": False, "writes": False}
+        )
 
     return d
 
@@ -375,7 +383,7 @@ def list_models():
     try:
         configs = model_cache.models()
         rates = model_cache.request_counts()
-        tokens = _monitor_tokens()
+        metrics = _monitor_metrics()
     except model_cache.SnapshotUnavailable:
         return _snapshot_unavailable()
     if g.monitor:
@@ -402,7 +410,7 @@ def list_models():
         open_tags = ack[0] if ack is not None else []
         if open_tags and not include_unacked:
             continue
-        entry = _model_dict(c, rates, model_cache.listed_endpoints(c.id), ack, tokens)
+        entry = _model_dict(c, rates, model_cache.listed_endpoints(c.id), ack, metrics)
         data.append(entry)
         # Expose each alias as a discoverable ID so clients that validate their
         # configured model against discovery keep working. Aliases inherit the
@@ -440,14 +448,14 @@ def get_model(model_id):
     try:
         eps = model_cache.listed_endpoints(config.id)
         rates = model_cache.request_counts()
-        tokens = _monitor_tokens()
+        metrics = _monitor_metrics()
     except model_cache.SnapshotUnavailable:
         return _snapshot_unavailable()
     ack = None
     if not g.monitor:
         row = db.session.execute(select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=config.id)).scalar_one_or_none()
         ack = _ack_fields(config, row)
-    d = _model_dict(config, rates, eps, ack, tokens)
+    d = _model_dict(config, rates, eps, ack, metrics)
     # Requested via an alias? Return metadata under the requested ID so clients
     # that validate their configured model against discovery keep working.
     if model_id != config.model_name:

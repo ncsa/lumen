@@ -36,6 +36,24 @@ def _float(value) -> float | None:
         return None
 
 
+def _cache_metrics(value) -> dict | None:
+    """`cache_metrics` as sent by Lumen, or None when the instance does not send it.
+
+    `reads` / `writes` are true only when the backend reported that count on a
+    request in the last day; `requests` says how much traffic the verdict rests
+    on, so a model with no traffic is not mistaken for a backend without cache
+    accounting. Only actual booleans are accepted.
+    """
+    if not isinstance(value, dict):
+        return None
+    requests = value.get("requests")
+    return {
+        "requests": requests if isinstance(requests, int) and not isinstance(requests, bool) and requests >= 0 else 0,
+        "reads": value.get("reads") is True,
+        "writes": value.get("writes") is True,
+    }
+
+
 def parse_models(payload: dict) -> list[dict]:
     """Canonical models from a `/v1/models` response body."""
     if not isinstance(payload, dict):
@@ -56,6 +74,8 @@ def parse_models(payload: dict) -> list[dict]:
             "input_price": _float(row.get("input_cost_per_million")),
             "output_price": _float(row.get("output_cost_per_million")),
             "cached_input_price": _float(row.get("cached_input_cost_per_million")),
+            "cache_write_price": _float(row.get("cache_write_cost_per_million")),
+            "cache_metrics": _cache_metrics(row.get("cache_metrics")),
             "requests": _windows(row.get("requests")),
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,

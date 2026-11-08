@@ -37,12 +37,16 @@ function lumenBody() {
   return { range: '24h', state: 'UP', uptime: 99, buckets: [] };
 }
 
-async function render(models) {
+async function renderCell(models) {
   const p = page();
   const [ov, lumen] = p.requests;
   await answer(ov, overviewBody(models));
   await answer(lumen, lumenBody());
-  return p.byId('model-rows').children[0].children[4].children.map(d => d.textContent);
+  return p.byId('model-rows').children[0].children[4].children;
+}
+
+async function render(models) {
+  return (await renderCell(models)).map(d => d.textContent);
 }
 
 test('a cached-input price adds a "cached in" line to the Our $/M cell', async () => {
@@ -58,4 +62,42 @@ test('without a cached-input price the Our $/M cell stays two lines', async () =
 test('a zero cached-input price still gets its line', async () => {
   const lines = await render([model({ cached_input_price: 0 })]);
   assert.deepEqual(lines, ['in 1.10', 'out 2.20', 'cached in 0.00']);
+});
+
+test('a cache-write price adds a "cache write" line under the cached line', async () => {
+  const lines = await render([model({ cached_input_price: 0.1, cache_write_price: 0.05 })]);
+  assert.deepEqual(lines, ['in 1.10', 'out 2.20', 'cached in 0.10', 'cache write 0.05']);
+});
+
+test('a cache-write price without a cached-input price still gets its line', async () => {
+  const lines = await render([model({ cached_input_price: null, cache_write_price: 0.05 })]);
+  assert.deepEqual(lines, ['in 1.10', 'out 2.20', 'cache write 0.05']);
+});
+
+test('a cache price the backend does not report is marked', async () => {
+  const [cached, written] = (await renderCell([model({
+    cached_input_price: 0.1, cache_write_price: 0.05, cache_warning: { reads: false, writes: true },
+  })])).slice(2);
+  // Reads were reported, so only the write line carries the marker.
+  assert.equal(cached.textContent, 'cached in 0.10');
+  assert.equal(cached.children.length, 0);
+  assert.equal(written.textContent, 'cache write 0.05');
+  const [mark] = written.children;
+  assert.equal(mark.textContent, '!');
+  assert.equal(mark.attributes.class, 'marker');
+  assert.match(mark.attributes.title, /no cache writes in the last day/);
+});
+
+test('an unreported read price is marked on the cached line', async () => {
+  const [cached, written] = (await renderCell([model({
+    cached_input_price: 0.1, cache_write_price: 0.05, cache_warning: { reads: true, writes: false },
+  })])).slice(2);
+  assert.equal(cached.children.length, 1);
+  assert.match(cached.children[0].attributes.title, /no cache reads in the last day/);
+  assert.equal(written.children.length, 0);
+});
+
+test('a reported cache price carries no marker', async () => {
+  const lines = await render([model({ cached_input_price: 0.1, cache_write_price: 0.05, cache_warning: null })]);
+  assert.deepEqual(lines, ['in 1.10', 'out 2.20', 'cached in 0.10', 'cache write 0.05']);
 });

@@ -347,6 +347,7 @@ class _Counts:
 _counts: dict[str, _Counts] = {
     "requests": _Counts(request_rates.rates),
     "tokens": _Counts(request_rates.token_windows),
+    "cache": _Counts(request_rates.cache_reporting),
 }
 
 #: Serialises count loads. Separate from ``_load_lock`` so a slow count query
@@ -393,6 +394,11 @@ def request_counts() -> dict:
 def token_counts() -> dict:
     """``request_rates.token_windows()`` for all models, up to a health interval old."""
     return _read_counts(_counts["tokens"])
+
+
+def cache_counts() -> dict:
+    """``request_rates.cache_reporting()`` for all models, up to a health interval old."""
+    return _read_counts(_counts["cache"])
 
 
 def refresh_counts(app) -> None:

@@ -663,7 +663,7 @@ function renderModelForm(m, idx) {
       ${row2(field('mdl-in-cost', 'Input Cost / 1M tokens ($)',  ni('mdl-in-cost',  m.input_cost_per_million)),
              field('mdl-out-cost','Output Cost / 1M tokens ($)', ni('mdl-out-cost', m.output_cost_per_million)))}
       ${row2(field('mdl-cached-in-cost','Cached Input Cost / 1M tokens ($)', ni('mdl-cached-in-cost', m.cached_input_cost_per_million), 'defaults to input price when unset'),
-             field('mdl-cached-write-cost','Cache Write Cost / 1M tokens ($)', ni('mdl-cached-write-cost', m.cache_write_cost_per_million), 'defaults to input price when unset'))}
+             field('mdl-cached-write-cost','Cache Write Cost / 1M tokens ($)', ni('mdl-cached-write-cost', m.cache_write_cost_per_million), 'defaults to input price when unset; billed only from counts the backend reports (SGLang reports none)'))}
       <div class="mb-3 d-flex align-items-baseline gap-2 flex-wrap">${cbi('mdl-autoprice', !!m.auto_price, 'Automatic price (from models.dev)', ' onchange="syncAutoPriceFields()"')}<span class="text-muted small fst-italic">set from models.dev on Update</span>${cbi('mdl-autocacheprice', !!m.auto_cache_price, 'Automatic cache pricing (from models.dev)', ' onchange="syncAutoPriceFields()"')}<span class="text-muted small fst-italic">cache rates only; hand-set prices are kept</span></div>
       ${field('mdl-audio-cost','Audio Cost / hour ($)', ni('mdl-audio-cost', m.audio_cost_per_hour), 'speech-to-text only')}
       ${row3(field('mdl-ctx',    'Context Window (tokens)', ni('mdl-ctx',    m.context_window,  '1')),

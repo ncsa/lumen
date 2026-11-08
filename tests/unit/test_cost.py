@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from lumen.services.cost import cached_tokens_from_usage, calculate_audio_cost, calculate_cost, usage_tokens, write_tokens_from_usage
+from lumen.services.cost import calculate_audio_cost, calculate_cost, usage_tokens
 
 
 def test_basic_cost():
@@ -41,57 +41,12 @@ def test_unset_cached_rate_preserves_ordinary_cost():
     assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 2_000_000) == 2.4
 
 
-@pytest.mark.parametrize("usage, expected", [
-    (SimpleNamespace(prompt_tokens=100, prompt_tokens_details=SimpleNamespace(cached_tokens=40)), 40),
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 35}}, 35),
-    ({"prompt_tokens": 100, "cached_tokens": 25}, 25),
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 110}}, 0),
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 1.5}}, 0),
-    ({"prompt_tokens": 100, "cached_tokens": -1}, 0),
-    (None, 0),
-])
-def test_cached_tokens_from_usage(usage, expected):
-    assert cached_tokens_from_usage(usage) == expected
-
-
-@pytest.mark.parametrize("usage, expected", [
-    # Whole numbers echoed as floats or strings are read like the ints the
-    # OpenAI client returns — OpenCode and the DeepSeek harness accept the same
-    # shapes, so ignoring them would bill more than the client shows.
-    ({"prompt_tokens": 100.0, "prompt_tokens_details": {"cached_tokens": 40.0}}, 40),
-    ({"prompt_tokens": "100", "prompt_tokens_details": {"cached_tokens": "40"}}, 40),
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": " 40 "}}, 40),
-    # Anything else is not a count: reject rather than guess.
-    ({"prompt_tokens": "abc", "prompt_tokens_details": {"cached_tokens": 40}}, 0),
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": "1.5"}}, 0),
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": True}}, 0),
-    ({"prompt_tokens": True, "prompt_tokens_details": {"cached_tokens": 1}}, 0),
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": float("nan")}}, 0),
-    ({"prompt_tokens": 100, "prompt_tokens_details": object()}, 0),
-])
-def test_cached_tokens_from_usage_reads_the_wire_types_providers_send(usage, expected):
-    assert cached_tokens_from_usage(usage) == expected
-
-
-@pytest.mark.parametrize("usage, expected", [
-    (None, (0, 0, 0, 0)),
-    (SimpleNamespace(prompt_tokens=100, completion_tokens=7,
-                     prompt_tokens_details=SimpleNamespace(cached_tokens=40)), (100, 40, 7, 60)),
-    ({"prompt_tokens": 100.0, "completion_tokens": 7.0,
-      "prompt_tokens_details": {"cached_tokens": 40.0}}, (100, 40, 7, 60)),
-    # The audio upstream reports the same figures under these names.
-    ({"type": "tokens", "input_tokens": "12", "output_tokens": "3"}, (12, 0, 3, 12)),
-    # Unreadable counts become 0, so a prompt never carries a phantom cache.
-    ({"prompt_tokens": "x", "completion_tokens": None}, (0, 0, 0, 0)),
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 140}}, (100, 0, 0, 100)),
-    # vLLM 0.32: a warm repeat writes nothing and says so; the quadruple must
-    # take the reported zero instead of the non-cached remainder.
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 60, "created_cache_tokens": 0}}, (100, 60, 0, 0)),
-])
-def test_usage_tokens_normalizes_every_spelling(usage, expected):
-    """One reader for every billing and reporting path: the same usage object
-    must yield the same quadruple wherever it is read."""
-    assert usage_tokens(usage) == expected
+def test_an_unreported_cache_count_bills_as_ordinary_input():
+    # None means the upstream said nothing about the cache; 0 means it said
+    # zero. Either way the tokens bill at the input rate, but only the zero is
+    # a report worth recording.
+    assert calculate_cost(1_000_000, 0, 2.0, 4.0, None, 0.5, None, 0.25) == 2.0
+    assert calculate_cost(1_000_000, 0, 2.0, 4.0, 0, 0.5, 0, 0.25) == 2.0
 
 
 def test_calculate_cost_tolerates_an_unreadable_cached_count():
@@ -135,36 +90,112 @@ def test_no_cache_rates_is_the_legacy_formula():
     assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000) == 2.4
 
 
-@pytest.mark.parametrize("usage, prompt, cached, expected", [
-    (None, 100, 0, 0),
-    # No creation count reported: the non-cached remainder is the write.
-    ({"prompt_tokens": 100, "completion_tokens": 7}, 100, 0, 100),
-    # The OpenAI-compatible nested field, read like the cached_tokens twin.
+@pytest.mark.parametrize("usage, expected", [
+    # Nothing to go on: the prompt is 0 and neither cache count was reported.
+    (None, (0, None, 0, None)),
+    # OpenAI style. 'prompt_tokens' is already the whole prompt; the cached and
+    # written parts are inside it, not extra.
     (SimpleNamespace(prompt_tokens=100, completion_tokens=7,
-                     prompt_tokens_details=SimpleNamespace(cache_creation_input_tokens=40)), 100, 20, 40),
-    # The top-level variant, and a whole number echoed as a string.
-    ({"prompt_tokens": 100, "completion_tokens": 7, "cache_creation_input_tokens": 30}, 100, 20, 30),
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_creation_input_tokens": " 40 "}}, 100, 20, 40),
-    # A count beyond the remainder clamps to it; a malformed one falls back
-    # to the remainder as well, since either way those tokens were not
-    # served from the cache.
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_creation_input_tokens": 90}}, 100, 20, 80),
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_creation_input_tokens": "x"}}, 100, 20, 80),
-    # The same count under the spellings other servers use: vLLM's
-    # created_cache_tokens (nested and top level) and the OpenAI client's
-    # cache_write_tokens. vLLM sends null for the SDK field next to its own.
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"created_cache_tokens": 40}}, 100, 20, 40),
-    ({"prompt_tokens": 100, "created_cache_tokens": 10}, 100, 20, 10),
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_write_tokens": 30}}, 100, 20, 30),
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_write_tokens": None, "created_cache_tokens": 0}}, 100, 20, 0),
-    # Anthropic's field wins when a server sends several.
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_creation_input_tokens": 25, "created_cache_tokens": 40}}, 100, 20, 25),
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"created_cache_tokens": 90}}, 100, 20, 80),
-    # A fully cached prompt leaves no write room.
-    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_creation_input_tokens": 40}}, 100, 100, 0),
+                     prompt_tokens_details=SimpleNamespace(cached_tokens=40)),
+     (100, 40, 7, None)),
+    ({"prompt_tokens": 100.0, "completion_tokens": 7.0,
+      "prompt_tokens_details": {"cached_tokens": 40.0}}, (100, 40, 7, None)),
+    # The top-level spelling some servers use instead of the nested block.
+    ({"prompt_tokens": 100, "cached_tokens": 25}, (100, 25, 0, None)),
+    # A reported zero is a report: the backend does its own cache accounting
+    # and this request read and wrote nothing.
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 0, "created_cache_tokens": 0}},
+     (100, 0, 0, 0)),
+    # No cache fields at all: neither count is reported, so nothing is
+    # recorded for them (NULL in request_logs, billed at the input price).
+    ({"prompt_tokens": 100, "completion_tokens": 7}, (100, None, 7, None)),
+    # The audio upstream reports the same figures under these names.
+    ({"type": "tokens", "input_tokens": "12", "output_tokens": "3"}, (12, None, 3, None)),
 ])
-def test_write_tokens_from_usage(usage, prompt, cached, expected):
-    assert write_tokens_from_usage(usage, prompt, cached) == expected
+def test_usage_tokens_reads_openai_style_usage(usage, expected):
+    assert usage_tokens(usage) == expected
+
+
+@pytest.mark.parametrize("usage, expected", [
+    # Anthropic style: 'input_tokens' is only the ordinary part, so the prompt
+    # total is input + reads + writes. Normalized this way both styles report
+    # the same three numbers for the same request.
+    ({"input_tokens": 20, "cache_read_input_tokens": 60, "cache_creation_input_tokens": 20,
+      "output_tokens": 7}, (100, 60, 7, 20)),
+    (SimpleNamespace(input_tokens=20, cache_read_input_tokens=60,
+                     cache_creation_input_tokens=20, output_tokens=7), (100, 60, 7, 20)),
+    # Only one side reported: the other stays unreported rather than 0.
+    ({"input_tokens": 40, "cache_read_input_tokens": 60, "output_tokens": 7}, (100, 60, 7, None)),
+    ({"input_tokens": 80, "cache_creation_input_tokens": 20}, (100, None, 0, 20)),
+    # No cache fields: 'input_tokens' is the whole prompt.
+    ({"input_tokens": 60, "output_tokens": 7}, (60, None, 7, None)),
+    ({"input_tokens": "12", "output_tokens": "3"}, (12, None, 3, None)),
+])
+def test_usage_tokens_normalizes_anthropic_style_usage(usage, expected):
+    assert usage_tokens(usage) == expected
+
+
+@pytest.mark.parametrize("usage, expected", [
+    # The write count, in every spelling an OpenAI-compatible server sends.
+    # The first readable spelling wins, so a server that reports one of them
+    # still prices correctly.
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_creation_input_tokens": 40}},
+     (100, None, 0, 40)),
+    ({"prompt_tokens": 100, "cache_creation_input_tokens": 30}, (100, None, 0, 30)),
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_creation_input_tokens": " 40 "}},
+     (100, None, 0, 40)),
+    # vLLM's own spelling, and the OpenAI client's field next to it. vLLM
+    # sends null for the SDK field, so the reported zero must win.
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"created_cache_tokens": 40}}, (100, None, 0, 40)),
+    ({"prompt_tokens": 100, "created_cache_tokens": 10}, (100, None, 0, 10)),
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_write_tokens": 30}}, (100, None, 0, 30)),
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_write_tokens": None, "created_cache_tokens": 0}},
+     (100, None, 0, 0)),
+    # Anthropic's field wins when a server sends several.
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_creation_input_tokens": 25, "created_cache_tokens": 40}},
+     (100, None, 0, 25)),
+    # The cached part is split off first, so writes are limited to what is
+    # left; a count past that did not come from this prompt.
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 20, "created_cache_tokens": 80}},
+     (100, 20, 0, 80)),
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 20, "created_cache_tokens": 90}},
+     (100, 20, 0, None)),
+    # A fully cached prompt leaves no write room.
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 100,
+                                                      "cache_creation_input_tokens": 40}},
+     (100, 100, 0, None)),
+])
+def test_usage_tokens_reads_every_write_spelling(usage, expected):
+    assert usage_tokens(usage) == expected
+
+
+def test_usage_tokens_never_infers_a_write_count():
+    """Only a reported creation count is a write. SGLang reports its cache
+    reads and nothing about writes, so its non-cached remainder is ordinary
+    input, billed at the input price — the same as a model with no write
+    price configured."""
+    sglang = {"prompt_tokens": 1513, "completion_tokens": 1,
+              "prompt_tokens_details": {"cached_tokens": 1508}}
+    assert usage_tokens(sglang) == (1513, 1508, 1, None)
+    assert calculate_cost(1513, 1, 1.0, 2.0, 1508, 0.1, None, 0.05) == round(
+        (1513 - 1508) * 1.0 / 1e6 + 1508 * 0.1 / 1e6 + 2.0 / 1e6, 6)
+
+
+@pytest.mark.parametrize("usage, expected", [
+    # A count the prompt cannot contain is malformed, not a discount: it
+    # counts as unreported, and so does an unreadable one.
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 110}}, (100, None, 0, None)),
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 1.5}}, (100, None, 0, None)),
+    ({"prompt_tokens": 100, "cached_tokens": -1}, (100, None, 0, None)),
+    ({"prompt_tokens": "abc", "completion_tokens": 3}, (0, None, 3, None)),
+    ({"prompt_tokens": True, "completion_tokens": 3}, (0, None, 3, None)),
+    ({"prompt_tokens": 100, "prompt_tokens_details": object()}, (100, None, 0, None)),
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": float("nan")}},
+     (100, None, 0, None)),
+])
+def test_usage_tokens_rejects_counts_that_cannot_be_real(usage, expected):
+    assert usage_tokens(usage) == expected
+
 
 def test_audio_cost_one_hour():
     assert calculate_audio_cost(3600, 0.10) == 0.10

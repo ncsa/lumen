@@ -3,12 +3,15 @@
 A prompt cache is priced on both sides. The *read* is what the upstream reports
 as served from the cache ('cached_tokens'); the *write* is what it reports as
 created/stored ('cache_creation_input_tokens', the vLLM spelling
-'created_cache_tokens', or the OpenAI client's 'cache_write_tokens'), falling
-back to the non-cached remainder of the prompt when no creation count is
-reported (SGLang and DeepSeek report none, yet still process and store those
-tokens). The two rates are optional and independent: when a rate is unset, the
-matching tokens are billed at the ordinary input rate, so an existing
-configuration keeps its exact price.
+'created_cache_tokens', or the OpenAI client's 'cache_write_tokens'). A backend
+that reports no creation count (SGLang, DeepSeek) is billed for those tokens at
+the ordinary input rate, exactly as if no write rate were configured: Lumen
+prices the cache accounting an upstream reports, and never infers a write count
+from the remainder of the prompt.
+
+The two rates are optional and independent: when a rate is unset, the matching
+tokens are billed at the ordinary input rate, so an existing configuration
+keeps its exact price.
 """
 
 
@@ -29,11 +32,12 @@ def calculate_cost(
 
     'cached_input_tokens' is a subset of 'input_tokens' reported by the
     upstream; 'cache_write_tokens' is the part of the remainder it reports as
-    written to its prompt cache (or the whole remainder when no count is
-    reported). When no cache rate is configured, preserve ordinary input
-    pricing exactly. Zero is a valid configured rate. The two cache rates are
-    independent: a rate that is unset bills its tokens at the input rate, so a
-    model can price writes without pricing reads (and the other way round).
+    written to its prompt cache. A count the upstream did not report is None
+    (or 0) and bills as ordinary input. When no cache rate is configured,
+    preserve ordinary input pricing exactly. Zero is a valid configured rate.
+    The two cache rates are independent: a rate that is unset bills its tokens
+    at the input rate, so a model can price writes without pricing reads (and
+    the other way round).
     """
     if cached_input_cost_per_million is None and cache_write_cost_per_million is None:
         return round(
@@ -76,87 +80,79 @@ def calculate_cost(
 
 
 def usage_tokens(usage) -> tuple:
-    """(prompt_tokens, cached_prompt_tokens, completion_tokens, write_tokens) from usage.
+    """(prompt_tokens, cached_tokens, completion_tokens, write_tokens) from usage.
 
     The one place an upstream's usage object becomes numbers. Every billing and
     reporting path reads the same quadruple, so the streaming, non-streaming and
-    audio routes cannot drift apart. A count Lumen cannot read becomes 0 for the
-    read and the non-cached remainder for the write; neither ever discounts the
-    request below the input-price line.
+    audio routes cannot drift apart.
 
-    'prompt_tokens'/'completion_tokens' are the OpenAI spellings;
-    'input_tokens'/'output_tokens' cover the audio upstream, which reports
-    the same figures under those names.
+    Two usage layouts are normalized to the same total:
+
+    * OpenAI style: 'prompt_tokens' is the whole prompt and already includes
+      'prompt_tokens_details.cached_tokens' and '.cache_write_tokens'.
+    * Anthropic style: 'input_tokens' is only the ordinary part, so the prompt
+      is 'input_tokens' + 'cache_read_input_tokens' +
+      'cache_creation_input_tokens'.
+
+    Either way the first element is the full prompt, and the two cache counts
+    split it rather than add to it. Each cache count is None when the upstream
+    reports no such field at all and 0 when it reports zero; the difference is
+    kept in 'request_logs', where NULL means "not reported" (and is billed at
+    the input price) while a reported zero stays a zero. A count larger than
+    the prompt (or than the remainder left for writes) is malformed and counts
+    as unreported, so it can never discount or overcharge a request.
     """
     if usage is None:
-        return 0, 0, 0, 0
-    prompt = _as_token_count(_field(usage, "prompt_tokens"))
-    if prompt is None:
-        prompt = _as_token_count(_field(usage, "input_tokens")) or 0
+        return 0, None, 0, None
     completion = _as_token_count(_field(usage, "completion_tokens"))
     if completion is None:
         completion = _as_token_count(_field(usage, "output_tokens")) or 0
-    # cached_tokens_from_usage re-derives the prompt total; a prompt of 0 can
-    # have no cached part, so skip it and never report a cache on no input.
+    prompt = _as_token_count(_field(usage, "prompt_tokens"))
+    if prompt is None:
+        ordinary = _as_token_count(_field(usage, "input_tokens")) or 0
+        cached = _as_token_count(_field(usage, "cache_read_input_tokens"))
+        written = _as_token_count(_field(usage, "cache_creation_input_tokens"))
+        if cached is not None or written is not None:
+            # Anthropic style: input_tokens is the ordinary part only.
+            return ordinary + (cached or 0) + (written or 0), cached, completion, written
+        prompt = ordinary
     if not prompt:
-        return prompt, 0, completion, 0
-    cached = cached_tokens_from_usage(usage)
-    return prompt, cached, completion, write_tokens_from_usage(usage, prompt, cached)
-
-
-def cached_tokens_from_usage(usage) -> int:
-    """The prompt tokens usage says were served from a cache, else 0.
-
-    Reads the OpenAI-compatible 'prompt_tokens_details.cached_tokens' field,
-    or the top-level 'cached_tokens' variant. Only a count within the reported
-    prompt total is eligible for discounted pricing, and an unreadable count is
-    ignored rather than guessed at.
-    """
-    if usage is None:
-        return 0
-    prompt_tokens = _as_token_count(_field(usage, "prompt_tokens"))
-    if prompt_tokens is None:
-        return 0
+        return prompt, None, completion, None
     details = _field(usage, "prompt_tokens_details")
-    for value in (_field(details, "cached_tokens"), _field(usage, "cached_tokens")):
-        cached = _as_token_count(value)
-        if cached is not None and cached <= prompt_tokens:
-            return cached
-    return 0
+    cached = _first_count((details, usage), _CACHE_READ_FIELDS, prompt)
+    written = _first_count(
+        (details, usage), _CACHE_WRITE_FIELDS, prompt - (cached or 0)
+    )
+    return prompt, cached, completion, written
 
 
-def write_tokens_from_usage(usage, prompt_tokens: int = 0, cached_tokens: int = 0) -> int:
-    """The prompt tokens usage says were written into a cache, else the remainder.
+#: Fields reporting the cached part of a prompt total (OpenAI style).
+_CACHE_READ_FIELDS = ("cached_tokens",)
 
-    Reads the OpenAI-compatible 'prompt_tokens_details.cache_creation_input_tokens'
-    field (the counterpart of 'cached_tokens', reported by Anthropic and its
-    compatibles), then the two spellings other servers use for the same count:
-    vLLM's 'created_cache_tokens' and the OpenAI client's 'cache_write_tokens'.
-    Each is read nested first, then at the top level. Backends that never report
-    a creation count (SGLang, DeepSeek) still have to process and store the
-    non-cached part of the prompt, so the count falls back to the non-cached
-    remainder — that is what a write price pays for. Only a count within the
-    remainder is eligible, and a malformed count falls back to the remainder as
-    well, since either way those tokens cannot have been served from the cache.
+#: Fields reporting the written part of a prompt total. The first is the
+#: OpenAI-compatible breakdown; the other two are the vLLM and OpenAI client
+#: spellings of the same count.
+_CACHE_WRITE_FIELDS = (
+    "cache_creation_input_tokens",
+    "created_cache_tokens",
+    "cache_write_tokens",
+)
+
+
+def _first_count(holders, names, limit):
+    """The first readable count no larger than limit found in holders, else None.
+
+    Each holder (a usage object's nested details first, then the object itself)
+    is searched for each name in turn, so a server that reports one spelling
+    still prices correctly. A count above the limit cannot belong to this
+    prompt, so it is skipped in favour of the next spelling.
     """
-    if usage is None:
-        return 0
-    remainder = (prompt_tokens or 0) - (cached_tokens or 0)
-    if remainder <= 0:
-        return 0
-    details = _field(usage, "prompt_tokens_details")
-    for value in (
-        _field(details, "cache_creation_input_tokens"),
-        _field(details, "created_cache_tokens"),
-        _field(details, "cache_write_tokens"),
-        _field(usage, "cache_creation_input_tokens"),
-        _field(usage, "created_cache_tokens"),
-        _field(usage, "cache_write_tokens"),
-    ):
-        written = _as_token_count(value)
-        if written is not None and written <= remainder:
-            return written
-    return remainder
+    for holder in holders:
+        for name in names:
+            count = _as_token_count(_field(holder, name))
+            if count is not None and count <= limit:
+                return count
+    return None
 
 
 def _as_token_count(value):

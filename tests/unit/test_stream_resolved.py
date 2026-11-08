@@ -110,8 +110,10 @@ def test_resolved_stream_bills_against_the_target(app, test_user, test_model, te
         assert log.model_config_id == test_model["id"]
         assert log.model_endpoint_id == test_model_endpoint["id"]
         assert float(log.cost) == pytest.approx(expected)
-        # No cache fields in the usage object: 0 is the same claim the cost makes.
-        assert log.cached_input_tokens == 0
+        # No cache fields in the usage object: nothing is recorded, so the row
+        # says the upstream reported no cache split rather than claiming zero.
+        assert log.cached_input_tokens is None
+        assert log.cache_write_tokens is None
 
         balance = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one()
         assert float(balance.coins_left) == pytest.approx(10 - expected)
@@ -135,8 +137,9 @@ def test_resolved_stream_bills_cached_input_at_target_rate(app, test_user, test_
         log = db.session.execute(select(RequestLog).filter_by(entity_id=test_user["id"])).scalar_one()
         assert float(log.cost) == pytest.approx(expected)
         assert log.cached_input_tokens == _HUGE_TOKEN_COUNT // 2
-        # vLLM-style upstream: no creation count, the whole remainder is the write.
-        assert log.cache_write_tokens == _HUGE_TOKEN_COUNT // 2
+        # No creation count reported: the non-cached remainder is not a write,
+        # it bills as ordinary input at the input rate.
+        assert log.cache_write_tokens is None
 
 
 def test_resolved_stream_bills_cache_write_at_target_rate(app, test_user, test_model, test_model_endpoint):

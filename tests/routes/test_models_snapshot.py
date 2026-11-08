@@ -127,6 +127,13 @@ def catalog(app, test_user):
             "early", "requirements-removed", "private", "own", "disabled", "missing"]
 
 
+def _metrics(tokens):
+    """The monitor's metrics payload for ?tokens=true, else None."""
+    if not tokens:
+        return None
+    return {"tokens": request_rates.token_windows(), "cache": request_rates.cache_reporting()}
+
+
 def _legacy_list(entity_id, tokens=False, include_unacked=False):
     """The previous ``list_models``, run against live queries."""
     configs = db.session.execute(
@@ -138,7 +145,7 @@ def _legacy_list(entity_id, tokens=False, include_unacked=False):
     ).scalars().all():
         eps_by_model.setdefault(ep.model_config_id, []).append(ep)
     rates = request_rates.rates()
-    tokens = request_rates.token_windows() if tokens else None
+    metrics = _metrics(tokens)
     if entity_id is None:
         permitted = configs
     else:
@@ -156,7 +163,7 @@ def _legacy_list(entity_id, tokens=False, include_unacked=False):
         open_tags = ack[0] if ack is not None else []
         if open_tags and not include_unacked:
             continue
-        entry = _model_dict(c, rates, eps_by_model.get(c.id, []), ack, tokens)
+        entry = _model_dict(c, rates, eps_by_model.get(c.id, []), ack, metrics)
         data.append(entry)
         for alias in sorted(a.alias for a in c.aliases):
             alias_entry = dict(entry)
@@ -182,7 +189,7 @@ def _legacy_get(model_id, entity_id, tokens=False):
     if entity_id is not None:
         row = db.session.execute(select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=config.id)).scalar_one_or_none()
         ack = _ack_fields(config, row)
-    d = _model_dict(config, rates, list(eps), ack, request_rates.token_windows() if tokens else None)
+    d = _model_dict(config, rates, list(eps), ack, _metrics(tokens))
     if model_id != config.model_name:
         d["id"] = model_id
         d["parent"] = config.model_name

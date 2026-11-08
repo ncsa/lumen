@@ -892,13 +892,15 @@ def update_stats(
     from its prompt cache and priced at the cached rate. None — the default, and
     what an aborted request with no terminal usage object leaves — is stored as
     SQL NULL: "nothing to record" is not a zero it could vouch for, and the fold
-    skips NULLs so an unknown count never adds to a total. A usage object without
-    cache fields records 0, matching the price charged for it.
+    skips NULLs so an unknown count never adds to a total. A usage object that
+    reports no cache field at all (a backend without cache accounting) records
+    NULL as well; only a reported zero is stored as 0.
 
-    'cache_write_tokens' is the part of 'input_tokens' the upstream wrote into
-    its prompt cache and priced at the cache-write rate (falling back to the
-    non-cached remainder when no creation count is reported). It follows the
-    same NULL convention as the cached count.
+    'cache_write_tokens' is the part of 'input_tokens' the upstream reported as
+    written into its prompt cache and priced at the cache-write rate. A backend
+    that reports no creation count (SGLang, DeepSeek) leaves it NULL, and those
+    tokens are then billed at the input rate; it follows the same NULL
+    convention as the cached count.
 
     ``timing`` carries the arrival marks captured in the view (see
     RequestTiming) and ``upstream_t0`` is the monotonic instant taken

@@ -54,6 +54,7 @@ class DailyStat(Base):
     input_price: Mapped[Optional[float]] = mapped_column(Float, comment="Lumen input price, $/M tokens")
     output_price: Mapped[Optional[float]] = mapped_column(Float, comment="Lumen output price, $/M tokens")
     cached_input_price: Mapped[Optional[float]] = mapped_column(Float, comment="Lumen cached-input price, $/M tokens")
+    cache_write_price: Mapped[Optional[float]] = mapped_column(Float, comment="Lumen cache-write price, $/M tokens")
     requests: Mapped[Optional[float]] = mapped_column(Float, comment="Requests during the day (running total, may be prorated)")
     input_tokens: Mapped[Optional[float]] = mapped_column(Float, comment="Input tokens during the day (running total, may be prorated)")
     output_tokens: Mapped[Optional[float]] = mapped_column(Float, comment="Output tokens during the day (running total, may be prorated)")
