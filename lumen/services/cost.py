@@ -2,11 +2,13 @@
 
 A prompt cache is priced on both sides. The *read* is what the upstream reports
 as served from the cache ('cached_tokens'); the *write* is what it reports as
-created/stored ('cache_creation_input_tokens'), falling back to the non-cached
-remainder of the prompt when no creation count is reported (vLLM prefix caching
-and DeepSeek report none, yet still process and store those tokens). Either
-rate is optional: when a rate is unset, the matching tokens are billed at the
-ordinary input rate, so an existing configuration keeps its exact price.
+created/stored ('cache_creation_input_tokens', the vLLM spelling
+'created_cache_tokens', or the OpenAI client's 'cache_write_tokens'), falling
+back to the non-cached remainder of the prompt when no creation count is
+reported (SGLang and DeepSeek report none, yet still process and store those
+tokens). The two rates are optional and independent: when a rate is unset, the
+matching tokens are billed at the ordinary input rate, so an existing
+configuration keeps its exact price.
 """
 
 
@@ -29,9 +31,9 @@ def calculate_cost(
     upstream; 'cache_write_tokens' is the part of the remainder it reports as
     written to its prompt cache (or the whole remainder when no count is
     reported). When no cache rate is configured, preserve ordinary input
-    pricing exactly. Zero is a valid configured rate. A write rate only prices
-    a request when one is configured; without one, write tokens bill at the
-    input rate and the total is identical to not having reported them.
+    pricing exactly. Zero is a valid configured rate. The two cache rates are
+    independent: a rate that is unset bills its tokens at the input rate, so a
+    model can price writes without pricing reads (and the other way round).
     """
     if cached_input_cost_per_million is None and cache_write_cost_per_million is None:
         return round(
@@ -45,20 +47,30 @@ def calculate_cost(
     # breakdowns never overlap or exceed the prompt total.
     cached = min(_as_token_count(cached_input_tokens) or 0, input_tokens)
     write = min(_as_token_count(cache_write_tokens) or 0, input_tokens - cached)
+    input_rate = float(input_cost_per_million)
+    output_rate = float(output_cost_per_million)
+    # The rates are independent, so the unset one bills its tokens at the
+    # ordinary input rate instead of leaving a None to be multiplied.
+    cached_rate = (
+        input_rate
+        if cached_input_cost_per_million is None
+        else float(cached_input_cost_per_million)
+    )
     if cache_write_cost_per_million is None:
         # No write rate: the write portion stays in the input-rate block, which
         # is exactly how this request priced before write tokens existed.
         return round(
-            (input_tokens - cached) * float(input_cost_per_million) / 1_000_000
-            + cached * float(cached_input_cost_per_million) / 1_000_000
-            + output_tokens * float(output_cost_per_million) / 1_000_000,
+            (input_tokens - cached) * input_rate / 1_000_000
+            + cached * cached_rate / 1_000_000
+            + output_tokens * output_rate / 1_000_000,
             6,
         )
+    write_rate = float(cache_write_cost_per_million)
     return round(
-        (input_tokens - cached - write) * float(input_cost_per_million) / 1_000_000
-        + cached * float(cached_input_cost_per_million) / 1_000_000
-        + write * float(cache_write_cost_per_million) / 1_000_000
-        + output_tokens * float(output_cost_per_million) / 1_000_000,
+        (input_tokens - cached - write) * input_rate / 1_000_000
+        + cached * cached_rate / 1_000_000
+        + write * write_rate / 1_000_000
+        + output_tokens * output_rate / 1_000_000,
         6,
     )
 
@@ -118,13 +130,14 @@ def write_tokens_from_usage(usage, prompt_tokens: int = 0, cached_tokens: int = 
 
     Reads the OpenAI-compatible 'prompt_tokens_details.cache_creation_input_tokens'
     field (the counterpart of 'cached_tokens', reported by Anthropic and its
-    compatibles), or the top-level 'cache_creation_input_tokens' variant.
-    Backends that never report a creation count (vLLM prefix caching, DeepSeek)
-    still have to process and store the non-cached part of the prompt, so the
-    count falls back to the non-cached remainder — that is what a write price
-    pays for. Only a count within the remainder is eligible, and a malformed
-    count falls back to the remainder as well, since either way those tokens
-    cannot have been served from the cache.
+    compatibles), then the two spellings other servers use for the same count:
+    vLLM's 'created_cache_tokens' and the OpenAI client's 'cache_write_tokens'.
+    Each is read nested first, then at the top level. Backends that never report
+    a creation count (SGLang, DeepSeek) still have to process and store the
+    non-cached part of the prompt, so the count falls back to the non-cached
+    remainder — that is what a write price pays for. Only a count within the
+    remainder is eligible, and a malformed count falls back to the remainder as
+    well, since either way those tokens cannot have been served from the cache.
     """
     if usage is None:
         return 0
@@ -134,7 +147,11 @@ def write_tokens_from_usage(usage, prompt_tokens: int = 0, cached_tokens: int = 
     details = _field(usage, "prompt_tokens_details")
     for value in (
         _field(details, "cache_creation_input_tokens"),
+        _field(details, "created_cache_tokens"),
+        _field(details, "cache_write_tokens"),
         _field(usage, "cache_creation_input_tokens"),
+        _field(usage, "created_cache_tokens"),
+        _field(usage, "cache_write_tokens"),
     ):
         written = _as_token_count(value)
         if written is not None and written <= remainder:

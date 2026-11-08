@@ -84,6 +84,9 @@ def test_cached_tokens_from_usage_reads_the_wire_types_providers_send(usage, exp
     # Unreadable counts become 0, so a prompt never carries a phantom cache.
     ({"prompt_tokens": "x", "completion_tokens": None}, (0, 0, 0, 0)),
     ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 140}}, (100, 0, 0, 100)),
+    # vLLM 0.32: a warm repeat writes nothing and says so; the quadruple must
+    # take the reported zero instead of the non-cached remainder.
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 60, "created_cache_tokens": 0}}, (100, 60, 0, 0)),
 ])
 def test_usage_tokens_normalizes_every_spelling(usage, expected):
     """One reader for every billing and reporting path: the same usage object
@@ -107,6 +110,14 @@ def test_cache_write_cost_and_its_clamps():
     # A cached count above the prompt total clamps to it, leaving no write
     # room at all.
     assert calculate_cost(10, 0, 1.0, 2.0, 5_000_000, 0.1, 7, 0.25) == 0.000001
+
+
+def test_cache_write_rate_without_a_cached_rate():
+    # The rates are independent: a model can price writes and leave reads at
+    # the input price, and the unset rate must bill rather than raise.
+    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 0, None, 500_000, 0.25) == 1.525
+    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, None, 500_000, 0.25) == 1.525
+    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, None, 500_000, 0) == 1.4
 
 
 def test_unset_cache_write_rate_bills_writes_at_the_input_rate():
@@ -139,6 +150,16 @@ def test_no_cache_rates_is_the_legacy_formula():
     # served from the cache.
     ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_creation_input_tokens": 90}}, 100, 20, 80),
     ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_creation_input_tokens": "x"}}, 100, 20, 80),
+    # The same count under the spellings other servers use: vLLM's
+    # created_cache_tokens (nested and top level) and the OpenAI client's
+    # cache_write_tokens. vLLM sends null for the SDK field next to its own.
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"created_cache_tokens": 40}}, 100, 20, 40),
+    ({"prompt_tokens": 100, "created_cache_tokens": 10}, 100, 20, 10),
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_write_tokens": 30}}, 100, 20, 30),
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_write_tokens": None, "created_cache_tokens": 0}}, 100, 20, 0),
+    # Anthropic's field wins when a server sends several.
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_creation_input_tokens": 25, "created_cache_tokens": 40}}, 100, 20, 25),
+    ({"prompt_tokens": 100, "prompt_tokens_details": {"created_cache_tokens": 90}}, 100, 20, 80),
     # A fully cached prompt leaves no write room.
     ({"prompt_tokens": 100, "prompt_tokens_details": {"cache_creation_input_tokens": 40}}, 100, 100, 0),
 ])

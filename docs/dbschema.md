@@ -202,6 +202,7 @@ erDiagram
         bigint input_tokens
         bigint output_tokens
         bigint cached_input_tokens
+        bigint cache_write_tokens
         bigint audio_seconds
         numeric cost
         int conversations
@@ -210,6 +211,7 @@ erDiagram
         bigint folded_input_tokens
         bigint folded_output_tokens
         bigint folded_cached_input_tokens
+        bigint folded_cache_write_tokens
         bigint folded_audio_seconds
         numeric folded_cost
     }
@@ -759,7 +761,7 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 | `input_tokens` | Integer | NO | Input token count for this request |
 | `output_tokens` | Integer | NO | Output token count for this request |
 | `cached_input_tokens` | Integer | YES | Part of `input_tokens` the upstream served from its prompt cache and priced at `model_configs.cached_input_cost_per_million`. NULL when there is nothing to record — an aborted request with no terminal usage object, or a row written before this column existed — so "unknown" stays distinguishable from a reported zero; a usage object without cache fields records 0, matching the price charged. Rows are not backfilled. |
-| `cache_write_tokens` | Integer | YES | Part of `input_tokens` written to the prompt cache — the upstream's `cache_creation_input_tokens` breakdown when it reports one, otherwise the non-cached remainder, since a prefix-caching backend stored those tokens — priced at `model_configs.cache_write_cost_per_million`. NULL when there is nothing to record — an aborted request with no terminal usage object, or a row written before this column existed — so "unknown" stays distinguishable from a reported zero; a usage object without a prompt total records 0, matching the price charged. Rows are not backfilled. |
+| `cache_write_tokens` | Integer | YES | Part of `input_tokens` written to the prompt cache — the upstream's `cache_creation_input_tokens` breakdown (or its `created_cache_tokens` / `cache_write_tokens` spelling) when it reports one, otherwise the non-cached remainder, since a prefix-caching backend stored those tokens — priced at `model_configs.cache_write_cost_per_million`. NULL when there is nothing to record — an aborted request with no terminal usage object, or a row written before this column existed — so "unknown" stays distinguishable from a reported zero; a usage object without a prompt total records 0, matching the price charged. Rows are not backfilled. |
 | `audio_seconds` | Integer | NO | Seconds of audio transcribed/translated; 0 for text requests |
 | `cost` | Numeric(12,6) | NO | Cost in USD for this request |
 | `duration` | Float | NO | Total proxy response time in seconds |
