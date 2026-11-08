@@ -637,7 +637,7 @@ Running aggregated usage counters per entity per model per source, folded from `
 | `input_tokens` | BigInteger | NO | Total input tokens consumed |
 | `output_tokens` | BigInteger | NO | Total output tokens produced |
 | `cached_input_tokens` | BigInteger | NO | Total cached input tokens among `input_tokens`, folded from `request_logs.cached_input_tokens`; requests whose upstream reported no cache breakdown add nothing |
-| `cache_write_tokens` | BigInteger | NO | Total prompt-cache write tokens among `input_tokens`, folded from `request_logs.cache_write_tokens`; requests whose upstream reported no write breakdown add nothing |
+| `cache_write_tokens` | BigInteger | NO | Total prompt-cache write tokens among `input_tokens`, folded from `request_logs.cache_write_tokens`; a request whose upstream reports no write breakdown contributes its non-cached remainder |
 | `audio_seconds` | BigInteger | NO | Total seconds of audio transcribed/translated |
 | `cost` | Numeric(12,6) | NO | Total cost in USD |
 | `last_used_at` | DateTime | NO | UTC timestamp of the most recent request counted in this row |
@@ -666,7 +666,7 @@ Pre-aggregated usage totals per entity across all models and sources. One row pe
 | `input_tokens` | BigInteger | NO | Total input tokens consumed across all models and sources |
 | `output_tokens` | BigInteger | NO | Total output tokens produced across all models and sources |
 | `cached_input_tokens` | BigInteger | NO | Total cached input tokens among `input_tokens` across all models and sources; requests whose upstream reported no cache breakdown add nothing |
-| `cache_write_tokens` | BigInteger | NO | Total prompt-cache write tokens among `input_tokens` across all models and sources; requests whose upstream reported no write breakdown add nothing |
+| `cache_write_tokens` | BigInteger | NO | Total prompt-cache write tokens among `input_tokens` across all models and sources; a request whose upstream reports no write breakdown contributes its non-cached remainder |
 | `audio_seconds` | BigInteger | NO | Total seconds of audio transcribed/translated across all models and sources |
 | `cost` | Numeric(12,6) | NO | Total cost in USD across all models and sources |
 | `conversations` | Integer | NO | Total webchat conversations started. Retained even when conversations are deleted or storage is disabled. |
@@ -759,7 +759,7 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 | `input_tokens` | Integer | NO | Input token count for this request |
 | `output_tokens` | Integer | NO | Output token count for this request |
 | `cached_input_tokens` | Integer | YES | Part of `input_tokens` the upstream served from its prompt cache and priced at `model_configs.cached_input_cost_per_million`. NULL when there is nothing to record — an aborted request with no terminal usage object, or a row written before this column existed — so "unknown" stays distinguishable from a reported zero; a usage object without cache fields records 0, matching the price charged. Rows are not backfilled. |
-| `cache_write_tokens` | Integer | YES | Part of `input_tokens` the upstream reported as prompt-cache writes (its `cache_creation_input_tokens` breakdown) and priced at `model_configs.cache_write_cost_per_million`. NULL when there is nothing to record — an aborted request with no terminal usage object, or a row written before this column existed — so "unknown" stays distinguishable from a reported zero; a usage object without write fields records 0, matching the price charged. Rows are not backfilled. |
+| `cache_write_tokens` | Integer | YES | Part of `input_tokens` written to the prompt cache — the upstream's `cache_creation_input_tokens` breakdown when it reports one, otherwise the non-cached remainder, since a prefix-caching backend stored those tokens — priced at `model_configs.cache_write_cost_per_million`. NULL when there is nothing to record — an aborted request with no terminal usage object, or a row written before this column existed — so "unknown" stays distinguishable from a reported zero; a usage object without a prompt total records 0, matching the price charged. Rows are not backfilled. |
 | `audio_seconds` | Integer | NO | Seconds of audio transcribed/translated; 0 for text requests |
 | `cost` | Numeric(12,6) | NO | Cost in USD for this request |
 | `duration` | Float | NO | Total proxy response time in seconds |

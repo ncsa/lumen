@@ -225,6 +225,7 @@ models:
     input_cost_per_million: 5.0    # for usage tracking only
     output_cost_per_million: 15.0
     cached_input_cost_per_million: 0.5  # optional; defaults to input price when unset (0 = free cached input)
+    cache_write_cost_per_million: 0.5  # optional; defaults to input price when unset (0 = free cache writes)
     description: "OpenAI GPT-4o"   # optional short description shown in the UI
     url: https://huggingface.co/... # optional link shown in model details; HuggingFace URLs also load the model README; a bare repo id (org/name) expands to huggingface.co
     knowledge_cutoff: "2024-04"    # optional, shown in model details
