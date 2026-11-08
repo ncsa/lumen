@@ -63,9 +63,8 @@ def test_connect_surfaces_model_limits_and_cost(app, auth_client):
 
 
 def test_connect_leaves_an_unset_cached_rate_null(auth_client, test_model):
-    """Null is published as null, not resolved here: the generated OpenCode
-    config is what turns it into the input rate, and a client must be able to
-    tell "no separate rate" from a deliberate 0 (free cached input)."""
+    """Null is published as null, not resolved here, and a client must be able
+    to tell "no separate rate" from a deliberate 0 (free cached input)."""
     rows = {r["id"]: r for r in _connect_data(auth_client.get("/connect").data)["models"]}
     assert rows[test_model["model_name"]]["cached_input_cost_per_million"] is None
     assert rows[test_model["model_name"]]["cache_write_cost_per_million"] is None
