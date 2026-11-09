@@ -23,7 +23,9 @@
       <tr>
         <th scope="col" class="text-end">Input</th>
         <th scope="col" class="text-end">Output</th>
-        <th scope="col" class="text-end">Cache read / write</th>
+        {# Keep this column as wide as its label: with no width hint the auto layout
+           dumps the table's leftover width into it. #}
+        <th scope="col" class="text-end text-nowrap" style="width: 1%">Cache read / write</th>
       </tr>
     </thead>
     <tbody>
