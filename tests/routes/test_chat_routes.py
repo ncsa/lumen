@@ -74,6 +74,19 @@ def _seed_conversation(app, entity_id, updated_at, messages):
         return conv.id
 
 
+def _seed_conversations(app, entity_id, n):
+    """``n`` empty conversations, one second apart from SIDEBAR_T0, in one commit."""
+    from lumen.extensions import db
+    from lumen.models.conversation import Conversation
+    with app.app_context():
+        convs = [Conversation(entity_id=entity_id, title="Sidebar", model="test-model",
+                              updated_at=SIDEBAR_T0 + timedelta(seconds=i))
+                 for i in range(n)]
+        db.session.add_all(convs)
+        db.session.commit()
+        return [c.id for c in convs]
+
+
 def _previews(client, query=""):
     resp = client.get(f"/chat/conversations{query}")
     assert resp.status_code == HTTPStatus.OK
@@ -125,6 +138,20 @@ def sidebar_ignores_conversations_outside_the_page(app, client, entity_id):
     assert has_more is False
 
 
+def conversation_list_caps_limit_at_200(app, client, entity_id):
+    ids = _seed_conversations(app, entity_id, 205)
+    newest_first = ids[::-1]
+
+    for limit in (200, 1000):
+        previews, has_more = _previews(client, f"?limit={limit}")
+        assert list(previews) == newest_first[:200]
+        assert has_more is True
+
+    previews, has_more = _previews(client, f"?limit=200&before={newest_first[199]}")
+    assert list(previews) == newest_first[200:]
+    assert has_more is False
+
+
 def test_sidebar_preview_is_the_newest_message(app, auth_client, test_user):
     sidebar_newest_message(app, auth_client, test_user["id"])
 
@@ -143,6 +170,10 @@ def test_sidebar_preview_tie_on_created_at_takes_highest_id(app, auth_client, te
 
 def test_sidebar_preview_ignores_conversations_outside_the_page(app, auth_client, test_user):
     sidebar_ignores_conversations_outside_the_page(app, auth_client, test_user["id"])
+
+
+def test_conversation_list_caps_limit_at_200(app, auth_client, test_user):
+    conversation_list_caps_limit_at_200(app, auth_client, test_user["id"])
 
 
 def test_sidebar_preview_query_is_bounded_to_the_page(app, auth_client, test_user):
