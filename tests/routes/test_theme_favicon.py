@@ -26,7 +26,6 @@ EXPECTED_LINKS = {
     ],
     "uis": [
         ("icon", "/theme-static/favicon/favicon.ico"),
-        ("apple-touch-icon", "/theme-static/favicon/apple-touch-icon.png"),
     ],
 }
 
@@ -83,6 +82,24 @@ def test_default_svg_has_single_svg_root(app, client):
     root = ET.fromstring(resp.data)
     assert root.tag == "{http://www.w3.org/2000/svg}svg"
     assert not root.findall(".//{http://www.w3.org/2000/svg}svg")
+
+
+def test_protocol_relative_values_are_used_as_is(app, client):
+    cache = app.config["THEME_CACHE"]
+    original = cache["default"]
+    cache["default"] = {**original, "favicon": {
+        "ico": "//cdn.example.org/favicon.ico",
+        "apple_touch": "//cdn.example.org/touch.png",
+    }}
+    try:
+        with _theme(app, "default"):
+            html = client.get("/").get_data(as_text=True)
+    finally:
+        cache["default"] = original
+    assert _favicon_links(html) == [
+        ("icon", "//cdn.example.org/favicon.ico"),
+        ("apple-touch-icon", "//cdn.example.org/touch.png"),
+    ]
 
 
 def test_illinois_links_are_brand_cdn(app, client):

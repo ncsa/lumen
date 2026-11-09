@@ -512,11 +512,11 @@ Footer content is driven by optional `theme.yaml` keys that each theme's `templa
 - `footer_actions` — list of `{label, url}` rendered as the action buttons in the `ilw-footer` `actions` slot (Illinois theme).
 - `footer_menus` — list of `{title, links: [{label, url}], github_links}` rendered as `nav.ilw-footer-menu` columns inside an `ilw-grid`, each labelled by its `h2`; `github_links: true` appends GitHub Repository and Request Feature links built from `github_url` (Illinois theme).
 
-The browser-tab icon is driven by an optional `favicon:` block, rendered by the core partial `lumen/templates/_favicon.html` in the `<head>` of both `base.html` and `landing.html`:
+The browser-tab icon is driven by an optional `favicon:` block with the keys below. The core partial `lumen/templates/_favicon.html` renders it in the `<head>` of both `base.html` and `landing.html`:
 
-- `favicon.ico` — `<link rel="icon" sizes="32x32">`, the raster fallback.
-- `favicon.svg` — `<link rel="icon" type="image/svg+xml">`, preferred by browsers that support SVG icons.
-- `favicon.apple_touch` — `<link rel="apple-touch-icon">` (180×180 on an opaque background; iOS fills transparency with black).
+- `ico` — `<link rel="icon" sizes="32x32">`, the raster fallback.
+- `svg` — `<link rel="icon" type="image/svg+xml">`, preferred by browsers that support SVG icons.
+- `apple_touch` — `<link rel="apple-touch-icon">` (180×180 on an opaque background; iOS fills transparency with black).
 
 Each key is optional. A value starting with `http://`, `https://` or `//` is used as-is (the Illinois theme links to `cdn.brand.illinois.edu`); any other value is a path relative to the theme's `static/` directory and is served through `/theme-static/`. A theme without a `favicon:` block renders no favicon tags. Unlike `favicon:`, `logo:` accepts only a theme-relative path.
 
