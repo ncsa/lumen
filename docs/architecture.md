@@ -84,7 +84,7 @@ Lumen sits between clients (browser users and API consumers) and one or more pri
 | ASGI server | Uvicorn 0.30+ | Multi-worker capable; `--workers N` for scale |
 | ORM | SQLAlchemy 2.0+ / Flask-SQLAlchemy 3.1+ | 2.x select()-style API throughout |
 | Migrations | Alembic via Flask-Migrate 4.0+ | 30+ migrations versioned in `migrations/versions/` |
-| Database | PostgreSQL 17 + TimescaleDB 2.27.2 | TimescaleDB used for `request_logs` hypertable |
+| Database | PostgreSQL 17 + TimescaleDB 2.31.0 | TimescaleDB used for `request_logs` hypertable |
 | Auth | Authlib 1.3+ · CILogon OAuth2/OIDC | Institutional IdP federation via CILogon |
 | LLM client | OpenAI SDK 1.0+ | Used both for proxying and health checks |
 | Rate limiting | Flask-Limiter 3.5+ | In-memory (single worker) or Redis (multi-worker) |
@@ -302,7 +302,7 @@ All three workers are daemon threads started inside `create_app`. A `SERVER_IS_M
 | Health checker | `services/health.py` | 60 s | Polls each active `ModelEndpoint` via OpenAI `models.list()`; sets `healthy` flag (retired endpoints are skipped) |
 | Token refiller | `services/token_refill.py` | 60 s poll, hourly effective | Increments `EntityBalance` by `refresh_coins`, capped at `max_coins` |
 | Config watcher | `services/config_watcher.py` | 5 s | Hot-reloads models from `config.yaml` (skips files whose version is not exactly 3 with a logged error; retries a failed model sync with backoff — 5 s, 10 s, 20 s, … up to 5 min — and keeps the previous config until it applies); warns on restart-required changes |
-| Stats fold | `services/stats_fold.py` | `stats.fold_interval` (60 s) | After the stats cutover, adds the `request_logs` rows of `[folded_until, now − stats.fold_lag)` into `model_stats` / `entity_stats` and advances `folded_until` by compare-and-set; a no-op before the cutover |
+| Stats fold | `services/stats_fold.py` | `stats.fold_interval` (60 s) | After the stats cutover, adds the `request_logs` rows of `[folded_until, now − stats.fold_lag)` into `model_stats` / `entity_stats` and advances `folded_until` by compare-and-set; a no-op before the cutover. Rows that commit after their window was folded are added back by `flask check-stats --fix` (weekly Helm CronJob) |
 
 ---
 
@@ -430,13 +430,15 @@ data there while regular users are scoped to their own. Built on `request_logs` 
 ### Docker Compose (development / single-node)
 
 ```
-postgres  timescale/timescaledb:2.27.2-pg17   port 5678
+postgres  timescale/timescaledb:2.31.0-pg17   port 5678
 lumen     uvicorn asgi:app --reload            port 5001
 ```
 
 Starting Lumen is two steps, both through `entrypoint.sh`:
 1. **Upgrade** (`entrypoint.sh upgrade`, the `lumen-upgrade` Compose service or the Helm migration Job): `flask upgrade` runs every Alembic migration, then backfills missing months of the aggregate, and exits. Safe to re-run; a failed run resumes.
-2. **Serve** (default mode): `flask wait-for-migrations` waits until the database is at the migration head this image expects, then `uvicorn asgi:app --host 0.0.0.0 --port 5001`. The serve step never migrates.
+2. **Serve** (no arguments, or options such as `--workers N`): `flask wait-for-migrations` waits until the database is at the migration head this image expects, then `uvicorn asgi:app --host 0.0.0.0 --port 5001` with those options. The serve step never migrates.
+
+`entrypoint.sh` checks its first argument in this order: `bash` opens a shell with no database wait; any other argument without a leading `-` runs `flask --app run "$@"` (`upgrade` is one such command), with `PGCONNECT_TIMEOUT` defaulting to 10; anything else serves. See [Running commands in a deployment](admin/commands.md#running-commands-in-a-deployment).
 
 ### Production Scaling
 

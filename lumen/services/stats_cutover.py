@@ -86,7 +86,13 @@ def cached_cutover_at() -> Optional[datetime]:
 
 
 def clear_cutover_cache() -> None:
-    """Forget the cached ``cutover_at``, so the next billing call reads the row."""
+    """Forget the cached ``cutover_at``, so the next billing call reads the row.
+
+    A test seam: tests use this to start from an empty cache. Production never
+    calls it and relies on the ``CUTOVER_CACHE_TTL`` expiry instead. A config
+    reload does not clear it either, because ``cutover_at`` comes from the
+    database, not from config.
+    """
     global _cached
     with _lock:
         _cached = None

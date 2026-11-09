@@ -127,7 +127,7 @@ def test_job_that_never_succeeded_is_reported_as_failed(conn):
 
     NOTE: this writes TimescaleDB's internal ``_timescaledb_internal.bgw_job_stat``
     table directly, and its columns are pinned to the CI image
-    (``timescale/timescaledb:2.27.2-pg17``). If a TimescaleDB upgrade breaks this
+    (``timescale/timescaledb:2.31.0-pg17``). If a TimescaleDB upgrade breaks this
     test, the failure points here: switch to the scheduler-driven approach of
     ``tests/integration/test_timescale_job_failure_postgres.py`` (an isolated
     database, deleting the job's stat row first so the first run is the failing one).

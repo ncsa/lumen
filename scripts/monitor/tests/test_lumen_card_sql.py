@@ -128,7 +128,10 @@ def cards(session_factory, config, rng, now=NOW):
     with session_factory() as session:
         new = lumen_card(session, config, rng, now)
         old = old_lumen_card(session, config, rng, now)
-    assert new["avg_ms"] == pytest.approx(old["avg_ms"], rel=1e-12)
+    if old["avg_ms"] is None:  # an empty card; pytest.approx rejects None with a tolerance
+        assert new["avg_ms"] is None
+    else:
+        assert new["avg_ms"] == pytest.approx(old["avg_ms"], rel=1e-12)
     return {**new, "avg_ms": None}, {**old, "avg_ms": None}
 
 

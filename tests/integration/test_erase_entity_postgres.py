@@ -38,10 +38,10 @@ import pytest
 from sqlalchemy import create_engine, exc, func, select, text
 
 from lumen import commands
-from lumen.commands import erase_entity_cmd
+from lumen.commands import WALK_LOCK_HELD, erase_entity_cmd
 from tests.conftest import no_snapshot_refresher
 
-from .conftest import TEST_CONFIG
+from .conftest import TEST_CONFIG, holding_stats_walk_lock, stats_walk_lock_is_free
 
 pytestmark = pytest.mark.postgres
 
@@ -540,6 +540,7 @@ def test_resumes_after_a_chunk_fails(pg_app, engine):
         result = _run(pg_app, world["user"])
     assert result.exit_code == 1, result.output
     assert "Chunks done: " in result.output
+    assert stats_walk_lock_is_free(engine), "the failed run kept the advisory lock"
 
     ghost = _ghost_id(engine)
     owners = dict(_owners(engine, world["logs"]))
@@ -662,3 +663,26 @@ def test_refuses_with_a_retention_policy_on_request_logs(pg_app, engine):
     assert _raw(engine, world["user"]) == 1, "rows moved before the refusal"
     with engine.connect() as conn:
         assert conn.execute(text("SELECT active FROM entities WHERE id = :u"), {"u": world["user"]}).scalar() is True
+
+
+def test_refuses_while_the_stats_walk_lock_is_held(pg_app, engine):
+    """A reassign-model, another erase-entity or a check-stats holds the lock: exit 1
+    with nothing moved, deactivated or deleted; once it is free the erase runs and lets go."""
+    world = _seed_world(pg_app)
+    logs = _seed(engine, world["user"], world["model"], "2 days", 2)
+    totals = _stat_totals(engine)
+    with holding_stats_walk_lock(engine):
+        result = _run(pg_app, world["user"])
+    assert result.exit_code == 1, result.output
+    assert WALK_LOCK_HELD in result.output
+    assert _owners(engine, logs) == [(world["user"], 2)], "rows moved while the lock was held"
+    assert _stat_totals(engine) == totals
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT active FROM entities WHERE id = :u"), {"u": world["user"]}).scalar() is True
+        assert conn.execute(text("SELECT count(*) FROM conversations WHERE entity_id = :u"),
+                            {"u": world["user"]}).scalar() == 1
+
+    result = _run(pg_app, world["user"])
+    assert result.exit_code == 0, result.output
+    assert _owners(engine, logs) == [(_ghost_id(engine), 2)]
+    assert stats_walk_lock_is_free(engine), "the successful run kept the advisory lock"

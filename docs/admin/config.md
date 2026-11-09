@@ -116,11 +116,7 @@ On startup, Lumen validates `config.yaml` and loads it into memory. While runnin
 
 The reload is applied — and logged — only after the model sync to the database commits. If that sync fails (for example during a database outage), the previous configuration stays active, the failure is logged once as a pending reload, and the sync is retried with increasing delays (5 s, 10 s, 20 s, … up to 5 minutes) without requiring another edit to the file. Saving the file again resets the delay and retries immediately; if the saved file itself cannot be read, parsed, or validated, the pending reload is discarded and the running configuration stays active until a valid file is saved. If the sync succeeds but an in-memory setting cannot be applied, that is logged as an error and not retried: fix the setting or restart.
 
-The `init-db` command syncs model config changes to the database without waiting for the watcher or restarting. It does not update in-memory settings like `APP_NAME` or `CHAT_CONVERSATION_REMOVE_MODE` — those only update when the watcher picks up the change or the app restarts.
-
-```bash
-uv run flask init-db
-```
+To sync model config changes to the database without waiting for the watcher or restarting, run [`flask init-db`](commands.md#init-db).
 
 ## Security Notes
 

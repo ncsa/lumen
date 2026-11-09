@@ -368,7 +368,7 @@ API keys that entities (users or projects) use to authenticate against the proxy
 | `key_hash` | String(64) | NO | HMAC-SHA256 of the raw key, keyed on `ENCRYPTION_KEY`; finding a key from its raw value takes the server secret. Unique. Erasure replaces it with 64 random hex characters. |
 | `key_hint` | String(32) | YES | Last few characters of the raw key shown in the UI for identification |
 | `revoked_at` | DateTime | YES | UTC time the key was revoked; null while the key is usable. Approximate (`last_used_at`, else `created_at`, else the migration time) for keys revoked before this column existed. |
-| `expires_at` | DateTime | YES | UTC time the key expires; null if it never expires. Set when the key is created, from the chosen TTL (capped by and defaulting to `api.keys.ttl`; for OAuth keys, the approved `auth_requests.ttl` counted from mint, including when an OAuth overwrite refreshes the key in place), and when its expiry is edited. A background job (and the API on use) revokes an overdue key by setting `revoked_at` to this value, with `revoked_by_entity_id` left null. Indexed. |
+| `expires_at` | DateTime | YES | UTC time the key expires; null if it never expires. Set when the key is created, from the chosen TTL (capped by and defaulting to `api.keys.ttl`; for OAuth keys, the approved `auth_requests.ttl` counted from mint, including when an OAuth overwrite refreshes the key in place), and when its expiry is edited. A background job (and the API on use) revokes an overdue key by setting `revoked_at` to this value, with `revoked_by_entity_id` left null. Indexed (`ix_api_keys_expires_at`). |
 | `requests` | Integer | NO | Cumulative request count made with this key |
 | `input_tokens` | BigInteger | NO | Cumulative input tokens consumed via this key |
 | `output_tokens` | BigInteger | NO | Cumulative output tokens produced via this key |
@@ -380,6 +380,10 @@ API keys that entities (users or projects) use to authenticate against the proxy
 | `requested_by` | String(128) | YES | Requester-supplied author label from the OAuth request (unverified) |
 | `created_by_entity_id` | Integer (FK → entities) | YES | The user who created this key (the approving user for OAuth claims). Null for legacy keys; SET NULL on creator deletion. |
 | `revoked_by_entity_id` | Integer (FK → entities) | YES | The user who revoked this key (the approving user when an OAuth overwrite revokes an extra key with the same name). Null while the key is usable, for keys revoked before this column existed, for system revocations (OAuth authorization-code replay, key expiry), and when the revoker is deleted (SET NULL). |
+
+**Constraints:** `UNIQUE(key_hash)`; index `ix_api_keys_entity_id` on (`entity_id`); index `ix_api_keys_expires_at` on (`expires_at`)
+
+**Storage:** `fillfactor = 80` (PostgreSQL only) so the per-request counter updates stay HOT; see migration `d3e4f5a6b7c8`.
 
 ---
 
@@ -510,6 +514,8 @@ Current coin balance for each entity. Updated on every request and on each refil
 | `coins_left` | Numeric(12,6) | NO | Current spendable coin balance |
 | `last_refill_at` | DateTime | NO | UTC timestamp of the most recent coin refill |
 
+**Storage:** `fillfactor = 80` (PostgreSQL only) so the per-request counter updates stay HOT; see migration `d3e4f5a6b7c8`.
+
 ---
 
 ## entity_model_consents
@@ -629,6 +635,8 @@ Running aggregated usage counters per entity per model per source, folded from `
 
 **Constraints:** `UNIQUE(entity_id, model_config_id, source)`; index `ix_model_stats_model_config_id` on (`model_config_id`)
 
+**Storage:** `fillfactor = 80` (PostgreSQL only) so the counter updates (billing before the stats cutover, the stats fold after) stay HOT; see migration `d3e4f5a6b7c8`.
+
 ---
 
 ## entity_stats
@@ -655,6 +663,8 @@ Pre-aggregated usage totals per entity across all models and sources. One row pe
 - Populated on migration by a `GROUP BY` backfill from `model_stats`.
 - After the stats cutover the totals lag real time by up to `stats.fold_lag + stats.fold_interval` (about 6 minutes by default); the user's own `/profile` adds their not-yet-folded `request_logs` on top and is exact. `conversations` stays synchronous: it is bumped once per new conversation, not per request.
 - The `folded_*` columns (here and in `model_stats`) hold the fold's own part of each total, which `flask check-stats` compares with `request_logs` since the cutover; the totals themselves also carry history from before `request_logs` existed.
+
+**Storage:** `fillfactor = 80` (PostgreSQL only) so the counter updates (billing before the stats cutover, the stats fold after) stay HOT; see migration `d3e4f5a6b7c8`.
 
 ---
 
@@ -749,7 +759,9 @@ Append-only log of every proxied request. On PostgreSQL this table is converted 
 - The FKs used to be `SET NULL`. On the compressed hypertable that action rewrote history: deleting a parent ran an `UPDATE` over every chunk, which decompresses compressed batches and aborts past `timescaledb.max_tuples_decompressed_per_dml_transaction`. Rows nulled that way before the switch keep their NULLs, which is why the columns stay nullable.
 - A direct `DELETE` is cheap to refuse for a model (`model_config_id` is indexed on uncompressed chunks and the compression `segmentby` on compressed ones). For an entity or an endpoint it is slow: compressed chunks have no index on `entity_id`, and `model_endpoint_id` has none anywhere, so the check scans every chunk, decompressing in memory, before it fails. It never writes to `request_logs`.
 - **`api_key_id` together with `source`:** `'api'` with a value is the key that made the request; `'chat'` with NULL is a web UI request, which uses no key; `'api'` with NULL means the key is unknown, because the row was logged before the column existed (or by an older pod during the rolling update that added it).
-- **`fk_request_logs_api_key_id` is `NOT VALID` on PostgreSQL, on purpose, and is never validated.** The migration (`c5d7e9f1a3b6`) adds the column and then the foreign key with `NOT VALID`, so new rows are checked against `api_keys` but existing rows are not. Validating would scan the whole never-pruned hypertable, decompressing every compressed chunk while holding a lock that blocks billing, and would prove nothing, because every row older than the column is NULL. `pg_constraint.convalidated` therefore stays `false`. `api_key_id` has no index, so a direct `DELETE` of an API key is refused only after a scan of every chunk, like an endpoint.
+- **All four foreign keys are `NOT VALID` on PostgreSQL, on purpose, and are never validated.** New rows are checked against the parent, existing rows are not, and `pg_constraint.convalidated` stays `false`. Validating would scan the whole never-pruned hypertable, decompressing every compressed chunk while holding a lock that blocks billing, and would prove nothing:
+  - `fk_request_logs_api_key_id`: the migration (`c5d7e9f1a3b6`) adds the column and then the foreign key with `NOT VALID`, and every row older than the column is NULL. `api_key_id` has no index, so a direct `DELETE` of an API key is refused only after a scan of every chunk, like an endpoint.
+  - `request_logs_entity_id_fkey`, `request_logs_model_config_id_fkey` and `request_logs_model_endpoint_id_fkey`: the switch to `RESTRICT` (`c8d0e2f4a6b8`) drops each FK and re-adds it `NOT VALID`. The dropped FK covered the same column and parent and had already proved every row. A later `VALIDATE CONSTRAINT` would not help either: the upgrade runs every revision in one transaction, so it would run under the `ACCESS EXCLUSIVE` lock the drop holds until commit. Databases that ran the earlier, validating form of this revision keep `convalidated = true`; the schema is otherwise the same.
 - `time` is indexed by `request_logs_time_idx`, the index TimescaleDB creates with the hypertable (declared on the model, and created by the migration on SQLite), but not unique; concurrent workers may insert rows with the same timestamp without collision.
 - **Timing columns measure the user's wait, which `duration` does not.** `duration` starts *after* preflight (model lookup, access checks, coin budget, endpoint selection, pool checkout) and ends before the billing commit, while `time` is stamped *after* that commit. So neither can be walked backwards to the moment the request arrived. Together the new columns partition the request: `started_at` + `queue_wait` + `preflight` + `ttft_visible` is when the user first sees anything.
 - **`started_at` is stored, not derived.** The obvious reconstruction, `time − duration − queue_wait`, silently assumes preflight and the billing commit take zero time. Both grow under load, so the error is largest during exactly the burst the column exists to explain.

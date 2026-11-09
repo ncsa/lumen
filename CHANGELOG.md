@@ -4,68 +4,68 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-11-07
+
+- Fix `/profile` crashing with "can't compare offset-naive and offset-aware datetimes" on databases with `timestamptz` usage columns
+- Add a migration converting legacy `timestamptz` columns (`model_stats.last_used_at`, `api_keys`, `messages`, …) to naive UTC; run `upgrade`, it rewrites those tables
+
+## [2.3.0] - 2026-11-06
+
 **Upgrade:** `flask enable-retention` is removed — `request_logs` is never pruned; the upgrade step backfills `request_counts_hourly_by_entity` (`flask check-aggregate` stays a read-only check); startup logs an ERROR if a retention policy is found on `request_logs`; per-user `/usage` charts now read only `request_counts_hourly_by_entity` and no longer scan `request_logs`. (#167)
 
-**Upgrade:** Lumen no longer migrates on container start. Run the image with `upgrade` first (Compose: new `lumen-upgrade` service; Helm: new migration Job); it applies all migrations, including the usage-stats cutover, and backfills missing aggregate months. Upgrading only the image (Compose without `lumen-upgrade`, or a newer `image.tag` on an older chart) leaves Lumen waiting at startup; the chart needs image 2.3.0+. The chart's `startupProbe` budget drops from 30 to 5 minutes. (#376)
+**Upgrade:** Lumen no longer migrates on container start. Run the image with `upgrade` first (Compose: new `lumen-upgrade` service; Helm: new migration Job); it applies all migrations, including the usage-stats cutover, and backfills missing aggregate months. Upgrading only the image (Compose without `lumen-upgrade`, or a newer `image.tag` on an older chart) leaves Lumen waiting at startup; the chart needs image 2.3.0+. The chart's `startupProbe` budget drops from 30 to 5 minutes. The Job is tuned with the new Helm `migration.backoffLimit`, `migration.ttlSecondsAfterFinished` and `migration.resources` values, and app pods wait for it in a `wait-for-migrations` initContainer. (#376)
 
-- **Breaking:** Upgrade to SQLAlchemy 2.1; the PostgreSQL driver is now psycopg 3 (`psycopg[binary]`) and psycopg2 is no longer installed. `postgresql://` and `postgres://` URLs need no change; a database URL that names `postgresql+psycopg2://` fails at startup and must be changed to `postgresql://`.
-- **Breaking:** Python 3.14 is required; the Docker image and CI run on 3.14. Python 3.15 is not supported yet: with SQLAlchemy 2.1 it does not return garbage-collected connections to the pool.
-- `flask reassign-model` now moves `request_logs` one chunk at a time, so compressed history no longer hits the decompression limit, and it refreshes the continuous aggregates so /usage model breakdowns match. It also refuses to reassign a model to itself. (#174)
-- Chat sidebar no longer scans the whole `messages` table when listing conversations; adds a `(conversation_id, created_at)` index on `messages`. (#168)
-- `/v1/models` and the model detail page read request rates from `request_metrics_1m` instead of scanning `request_logs`, and `request_metrics_1m` now keeps 30 days (`request_logs` is still never pruned). (#169)
-- Proxied API and chat requests and `/v1/models` make far fewer database queries, and rejected (403/429) requests no longer re-resolve access and budget; `/v1/models` request and token counts may now be up to a minute old. (#170)
-- The coin refiller commits in small batches, runs on one replica at a time, and no longer re-reads balances that get no refill, so billing no longer waits on a refill pass. (#172)
-- Usage heatmap and per-user Year/All charts read smaller hourly-total and daily per-user aggregates (#429)
-- The TimescaleDB health check no longer fails when a background job has never succeeded; such a job is now reported as failed on startup and on `/metrics`. (#417)
-- Speed up slow `lumen.sh` device-flow and stream-disconnect tests.
-- Speed up the test suite: skip real sleeps in all `lumen.sh` tests, clone per-module PostgreSQL test databases from one migrated template, and drop the per-migration upgrade/downgrade tests for already-released migrations. (#234)
-- Tests now verify that API-key hashes are keyed on `ENCRYPTION_KEY` (#164).
-- Tests now pin that the aggregate backfill's month step rolls December over into January of the next year. (#395)
-- Tests now pin that an upstream error below 400 maps to a generic 500 instead of passing through. (#315)
-- Tests now pin that a coin balance refilled exactly one hour ago is refilled on the next pass. (#312)
-- Tests pin API-key expiry at the exact expires_at instant (#310).
-- `LUMEN_WSGI_WORKERS` now defaults to `auto`, sized at 2× DB pool capacity (10–256); Helm `wsgiWorkers` defaults to `"auto"` (#238).
-- Upgrade front-end libraries (Bootstrap 5.3.8, Bootstrap Icons 1.13.2, KaTeX 0.19.1, marked 18.1.2, DOMPurify 3.4.17, Chart.js 4.6.1); CDN assets are now version-pinned and loaded with Subresource Integrity. (#328)
-- OAuth key requests that replace an existing key now refresh its secret in place, keeping its name and usage stats, instead of revoking it. (#182)
-- Tests now pin the model `end_date` boundary: a model is blocked and hidden from the exact end instant. (#311)
-- Lumen now checks TimescaleDB health at startup and on `/metrics`: extension version drift, a missing `request_logs` hypertable or aggregate, missing or failing background jobs. The chart and compose example pin `timescaledb:2.27.2-pg17` and state that TimescaleDB is required. Added a TimescaleDB upgrade runbook (`ALTER EXTENSION timescaledb UPDATE`). (#173)
-- Tests now pin that `subtract_coins` never creates or deducts a balance for an unlimited (-2) coin pool. (#365)
-- Tests now pin that a device-login user code must be exactly 8 letters or digits; shorter or longer input is rejected. (#416)
-- Tests now pin that each billed request advances its API key's request, token, audio and cost counters. (#400)
-- Tests now pin the profile page's model status (`down` / `degraded` / `ok`). (#420)
-- Billing takes the per-entity balance lock last and no longer runs existence SELECTs, so concurrent requests from one entity or project key queue far less. (#171)
-- Tests now verify that a deactivated admin is logged out of admin pages even with admin mode on. (#401)
-- Drop redundant indexes on `request_logs` and `model_stats`, so each request insert maintains fewer indexes. (#175)
-- Make hard-deleting an entity, model or endpoint that has request history fail instead of rewriting `request_logs` (#176).
-- `backfill-aggregate` / `reassign-model` no longer fail when run within the first bucket of a month. (#388)
-- Cut redundant DB queries: one entity count per metrics pass, no duplicate metrics/TimescaleDB check at startup, usage page skips hidden user-growth charts (#178).
-- Add `flask erase-entity` to hard-delete a user for GDPR erasure, moving their request history, usage totals, models and revoked, anonymised API keys to a shared anonymous ghost user (#378).
-- Monitor dashboard: long ranges (7d, 30d, and the 1y Lumen card) group probes and samples in the database instead of in Python, so the overview and model pages load much faster. (#344)
-- Org-wide `/usage` charts read `request_counts_hourly`, now built on `request_counts_hourly_by_entity`, and a new `request_counts_daily` for Year and All, so org-wide and per-user totals agree and each refresh scans `request_logs` once; the Year range starts at UTC midnight, and `flask check-aggregate` also checks both views and that the three aggregates' monthly totals match. (#177)
-- Usage totals (`entity_stats` / `model_stats`) are now folded from `request_logs` by a background job instead of being updated on every request, removing two per-entity row locks from billing. The switch happens automatically during the upgrade, including rolling updates, with each request counted exactly once. (#319)
+**Upgrade:** The chart and compose example pin `timescaledb:2.31.0-pg17`; after bumping the TimescaleDB image, run `ALTER EXTENSION timescaledb UPDATE` in the database. (#402)
+
+- **Breaking:** Upgrade to SQLAlchemy 2.1; the PostgreSQL driver is now psycopg 3 (`psycopg[binary]`) and psycopg2 is no longer installed. `postgresql://` and `postgres://` URLs need no change; a database URL that names `postgresql+psycopg2://` fails at startup and must be changed to `postgresql://`. (#188)
+- **Breaking:** Python 3.14 is required; the Docker image runs on 3.14. Python 3.15 is not supported yet: with SQLAlchemy 2.1 it does not return garbage-collected connections to the pool. (#188)
 
 ### Added
 
+- Lumen checks TimescaleDB health at startup and on `/metrics`: extension version drift, a missing `request_logs` hypertable or aggregate, missing or failing background jobs; a background job that has never succeeded is reported as failed instead of failing the check. The chart and compose example state that TimescaleDB is required, and the docs add a TimescaleDB upgrade runbook. (#173, #417)
+- `flask upgrade` warns with the exact `ALTER EXTENSION timescaledb UPDATE` command when the TimescaleDB extension is older than the server's; it never runs it. (#437)
+- The image runs any `flask` operator command given as its argument (e.g. `docker run <image> check-stats`), and `bash` still opens a shell; operator commands are documented in the Admin Guide. (#402)
+- `flask erase-entity` hard-deletes a user for GDPR erasure, moving their request history, usage totals, models and revoked, anonymised API keys to a shared anonymous ghost user; the user's name and email appear only in the confirmation prompt, never with `--yes`, so they stay out of container logs. (#378, #444)
 - Chat: copy a single reply, or the whole conversation as Markdown, to the clipboard. (#326)
-- `lumen.sh` creates `~/.config/opencode/opencode.jsonc` when no opencode config exists, reads `opencode.jsonc`, and adds `--embed-key`, which also writes the key into the opencode config for apps that don't read the shell rc. `-s` now also updates the opencode config and shell rc to the given server. Without `-s`, the script uses the server from the opencode config and stops with an error when that config and your shell setup disagree on the server or key.
-- Monitor: opening a model keeps the overview's time range. The model page gains a cost / benefit chart, with benefit (input and output tokens at our model prices) as bars against hardware cost as a red dashed line. The tokens chart now shows output tokens above the centre line and input tokens below, each on its own scale. Lumen's `/v1/models?tokens=true` adds per-model token counts for the monitoring token only.
-- Add a standalone monitoring service in `scripts/monitor` that tracks Lumen health, uptime and response time, and records daily models.dev, Lumen and hardware/energy costs plus requests and tokens, with a status dashboard and per-model graphs.
-- Publish the monitor image as `ncsa/lumen-monitor` and `ghcr.io/ncsa/lumen-monitor`, versioned with Lumen; lint and Docker CI run as a matrix over Lumen and the monitor.
-- API keys can expire: users choose or change a key's TTL, capped by and defaulting to api.keys.ttl (admin API settings; 0 = never); expired keys are revoked (#71)
+- `lumen.sh` creates `~/.config/opencode/opencode.jsonc` when no opencode config exists, reads `opencode.jsonc`, and adds `--embed-key`, which also writes the key into the opencode config for apps that don't read the shell rc. `-s` also updates the opencode config and shell rc to the given server. Without `-s`, the script uses the server from the opencode config and stops with an error when that config and your shell setup disagree on the server or key. (#243, #305, #306)
+- A standalone monitoring service in `scripts/monitor` tracks Lumen health, uptime and response time, and records daily models.dev, Lumen and hardware/energy costs plus requests and tokens, with a status dashboard and per-model graphs (cost / benefit, stepped prices, output tokens above and input tokens below the centre line); `/v1/models?tokens=true` adds per-model token counts for the monitoring token. Degraded is drawn yellow and down red, Lumen counts as down when more than `lumen.down_above` (default 50%) of models are down, long ranges load fast, and opening a model keeps the overview's time range. `collect` and `serve` refuse to start without an http(s) `lumen.url`, and the images pin uv. (#221, #235, #240, #242, #253, #308, #344, #446)
+- Publish the monitor image as `ncsa/lumen-monitor` and `ghcr.io/ncsa/lumen-monitor`, versioned with Lumen. (#229)
+- API keys can expire: users choose or change a key's TTL, capped by and defaulting to `api.keys.ttl` (admin API settings; 0 = never), and `lumen.sh --ttl DURATION` asks for one; expired keys are revoked. (#71)
 
 ### Changed
 
-- `lumen.sh` no longer adds models without text input (e.g. audio-only) to the opencode config.
-- Monitor: degraded is drawn yellow and red is kept for down; Lumen counts as down when more than `lumen.down_above` (default 50%) of models are down, also in uptime and the 1y view; status strips show the time of non-ok buckets on mouse-over. (#308)
-- Record the API key used for each request in request_logs (NULL for chat and older requests) (#407)
+- Chat sidebar no longer scans the whole `messages` table when listing conversations; adds a `(conversation_id, created_at)` index on `messages`, built `CONCURRENTLY` on PostgreSQL so chat keeps writing during the upgrade. (#168, #442)
+- `/v1/models` and the model detail page read request rates from `request_metrics_1m` instead of scanning `request_logs`, and `request_metrics_1m` now keeps 30 days (`request_logs` is still never pruned). (#169)
+- Proxied API and chat requests and `/v1/models` make far fewer database queries, and rejected (403/429) requests no longer re-resolve access and budget; `/v1/models` request and token counts may now be up to a minute old. (#170)
+- Billing takes the per-entity balance lock last and no longer runs existence SELECTs, so concurrent requests from one entity or project key queue far less. (#171)
+- The coin refiller commits in small batches, runs on one replica at a time, and no longer re-reads balances that get no refill, so billing no longer waits on a refill pass. (#172)
+- Drop redundant indexes on `request_logs` and `model_stats`, so each request insert maintains fewer indexes. (#175)
+- Cut redundant DB queries: one entity count per metrics pass, no duplicate metrics/TimescaleDB check at startup, usage page skips hidden user-growth charts. (#178)
+- Usage heatmap and per-user Year/All charts read smaller hourly-total and daily per-user aggregates. (#429)
+- Org-wide `/usage` charts read `request_counts_hourly`, now built on `request_counts_hourly_by_entity`, and a new `request_counts_daily` for Year and All, so org-wide and per-user totals agree and each refresh scans `request_logs` once; the Year range starts at UTC midnight, and `flask check-aggregate` also checks both views and that the five aggregates' monthly totals match. (#177)
+- Usage totals (`entity_stats` / `model_stats`) are folded from `request_logs` by a background job instead of being updated on every request, removing two per-entity row locks from billing; `stats.fold_interval` / `stats.fold_lag` (Helm `config.stats.foldInterval` / `foldLag`) tune it and `flask check-stats [--fix]` compares and repairs the totals. The switch happens automatically during the upgrade, including rolling updates, with each request counted exactly once. (#319)
+- `flask check-stats --fix` runs weekly as a Helm CronJob (`statsCheck.*`) to add back requests whose billing committed more than `stats.fold_lag` late. On PostgreSQL, `check-stats`, `reassign-model` and `erase-entity` no longer run at the same time: `check-stats` skips, and the others exit with an error. (#445)
+- `LUMEN_WSGI_WORKERS` defaults to `auto`, sized at 2× DB pool capacity (10–256); Helm `wsgiWorkers` defaults to `"auto"`. (#238)
+- Upgrade front-end libraries (Bootstrap 5.3.8, Bootstrap Icons 1.13.2, KaTeX 0.19.1, marked 18.1.2, DOMPurify 3.4.17, Chart.js 4.6.1); CDN assets are version-pinned and loaded with Subresource Integrity. (#328)
+- OAuth key requests that replace an existing key refresh its secret in place, keeping its name and usage stats, instead of revoking it. (#182)
+- Hard-deleting an entity, model or endpoint that has request history fails instead of rewriting `request_logs`. (#176)
+- Record the API key used for each request in `request_logs` (NULL for chat and older requests). (#407)
+- `lumen.sh` no longer adds models without text input (e.g. audio-only) to the opencode config. (#208)
 - The Models page links to LLMHub for launching models that are not listed, when `app.llmhub_url` is set (editable in the admin config editor).
+
+### Removed
+
+- `flask enable-retention`; `request_logs` is never pruned (see the Upgrade note above). (#167)
 
 ### Fixed
 
-- The models.dev match for model sync no longer crosses major versions (a `-v2` model no longer takes a `-v1` listing's metadata or price).
-- Monitor: the model detail price charts now draw a stepped line across the 1h, 12h and 24h ranges instead of a single point.
-- Fixed: flaky Edit Key Expiry UI test that checked focus before the modal finished closing (#327).
-- Fixed: flaky test_snapshot_older_than_max_age_reloads_on_next_read that failed on floating-point rounding at the MAX_AGE boundary (#333)
+- `flask reassign-model` moves `request_logs` one chunk at a time, so compressed history no longer hits the decompression limit, and it refreshes the continuous aggregates so `/usage` model breakdowns match. It also refuses to reassign a model to itself. (#174)
+- `backfill-aggregate` / `reassign-model` no longer fail when run within the first bucket of a month. (#388)
+- The models.dev match for model sync no longer crosses major versions (a `-v2` model no longer takes a `-v1` listing's metadata or price). (#211)
+
+### Security
+
+- Upgrade pypdf to 7.0.0, certifi to 2026.10.23 and joserfc to 1.8.0 to fix known CVEs. (#448)
 
 ## [2.2.1] - 2026-10-16
 
@@ -801,3 +801,7 @@ All notable changes to Lumen will be documented in this file.
 ### Added
 
 - Initial production release: OpenAI-compatible web chat, CILogon login, token budgets, groups, admin panel, load balancing, conversation history, markdown, API endpoint, model health dashboard, hot-reload, Illinois branding, Docker.
+
+### Contributors
+
+- <img src="https://github.com/robkooper.png?size=20" width="20" height="20" alt=""> [Rob Kooper](https://github.com/robkooper)

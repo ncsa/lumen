@@ -1,9 +1,11 @@
 import math
 import os
 import re
+import shlex
 import shutil
 import tempfile
 import time
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from email.utils import parsedate_to_datetime
@@ -33,6 +35,7 @@ from lumen.services.erasure import _erase_dependents, _ghost_keys, get_or_create
 from lumen.services.llm import _bump
 from lumen.services.stats_cutover import lock_fold_state
 from lumen.services.stats_fold import TOTALS, fold_increments, window_sums
+from lumen.services.timescale_health import extension_versions
 from lumen.timeutils import as_utc_naive
 
 from .extensions import db
@@ -391,6 +394,64 @@ def init_db_cmd():
     click.echo("Database synced from config.yaml.")
 
 
+#: PostgreSQL advisory lock key shared by reassign-model, erase-entity and
+#: check-stats, so none of them runs while another one does. Any fixed bigint no
+#: other code in the database uses (token_refill uses 7_172_093_405_172).
+STATS_WALK_LOCK_KEY = 7_172_093_405_173
+
+#: What reassign-model and erase-entity print when the lock is taken.
+WALK_LOCK_HELD = "Error: a reassign-model, erase-entity or check-stats is already running; retry when it finishes."
+
+
+@contextmanager
+def stats_walk_lock():
+    """Hold the advisory lock shared by reassign-model, erase-entity and check-stats.
+
+    Yields whether it got the lock; it never waits. On PostgreSQL the lock is
+    session-level, on a connection of its own committed right after the lock
+    call, so it stays held while the command commits on db.session, and a
+    crashed command releases it when its connection drops. Callers take it
+    before lock_fold_state, never after. On SQLite it yields True: reassign-model
+    and erase-entity move every row under the fold lock there, so there is no
+    unlocked walk to keep check-stats away from.
+    """
+    if db.engine.dialect.name != "postgresql":
+        yield True
+        return
+    conn = db.engine.connect()
+    try:
+        acquired = conn.execute(
+            text("SELECT pg_try_advisory_lock(:key)"), {"key": STATS_WALK_LOCK_KEY}
+        ).scalar_one()
+        conn.commit()
+    except Exception:
+        # The lock may be held without us knowing; dropping the connection frees it.
+        conn.invalidate()
+        conn.close()
+        raise
+    if not acquired:
+        conn.close()
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        _release_stats_walk_lock(conn)
+
+
+def _release_stats_walk_lock(conn):
+    """Unlock and close; if the unlock fails, drop the connection so the lock dies with it."""
+    try:
+        conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": STATS_WALK_LOCK_KEY})
+        conn.commit()
+    except Exception as exc:
+        click.echo(f"Warning: releasing the advisory lock failed ({exc}); dropping its connection to free it.",
+                   err=True)
+        conn.invalidate()
+    finally:
+        conn.close()
+
+
 @click.command("reassign-model")
 @click.argument("from_id", type=int)
 @click.argument("to_id", type=int)
@@ -406,7 +467,19 @@ def reassign_model_cmd(from_id, to_id):
     re-run: the same command picks up where the last one stopped. Run it off-hours
     for a model with a large history, and retire FROM in config.yaml first so no new
     requests are logged against it while it runs.
+
+    On PostgreSQL reassign-model, erase-entity and check-stats do not run at the
+    same time: check-stats skips, the other two exit with an error.
     """
+    with stats_walk_lock() as acquired:
+        if not acquired:
+            click.echo(WALK_LOCK_HELD)
+            raise SystemExit(1)
+        _reassign_model(from_id, to_id)
+
+
+def _reassign_model(from_id, to_id):
+    """reassign-model itself, run under stats_walk_lock."""
     from lumen.models.conversation import Conversation
     from lumen.models.request_log import RequestLog
 
@@ -707,11 +780,23 @@ def check_stats_cmd(fix):
     fold state meanwhile, so no fold pass runs in the middle. Scans every
     request_logs row since the cutover. Does nothing before the cutover.
 
-    Do not run it while reassign-model is moving request_logs: rows already
-    moved to TO count for TO, while FROM's folded part is merged only at the
-    end, so the check reports differences that are not drift, and --fix would
-    count them twice.
+    On PostgreSQL reassign-model, erase-entity and check-stats do not run at
+    the same time: check-stats skips, the other two exit with an error. While
+    either of the other two moves request_logs, rows already moved count for
+    their target, whose folded part is merged only at the end, so a check then
+    would report differences that are not drift, and --fix would count them
+    twice. A skipped run prints "Skipped" and exits 0.
     """
+    with stats_walk_lock() as acquired:
+        if not acquired:
+            click.echo("Skipped: a reassign-model or erase-entity (or another check-stats) is running; "
+                       "run check-stats after it finishes.")
+            return
+        _check_stats(fix)
+
+
+def _check_stats(fix):
+    """check-stats itself, run under stats_walk_lock."""
     cutover_at, folded_until = lock_fold_state()
     if cutover_at is None:
         db.session.rollback()
@@ -764,7 +849,19 @@ def erase_entity_cmd(entity_id, yes):
     decompress a whole chunk, hence off-hours. Safe to re-run: an interrupted run
     leaves every row owned by the user or the ghost, and re-running with the same id,
     even after the user is deleted, finishes the aggregate refresh.
+
+    On PostgreSQL reassign-model, erase-entity and check-stats do not run at the
+    same time: check-stats skips, the other two exit with an error.
     """
+    with stats_walk_lock() as acquired:
+        if not acquired:
+            click.echo(WALK_LOCK_HELD)
+            raise SystemExit(1)
+        _erase_entity(entity_id, yes)
+
+
+def _erase_entity(entity_id, yes):
+    """erase-entity itself, run under stats_walk_lock."""
     postgres = db.engine.dialect.name == "postgresql"
     if postgres:
         with db.engine.connect() as conn:
@@ -809,10 +906,13 @@ def erase_entity_cmd(entity_id, yes):
         raise SystemExit(1)
 
     orphaned = groups_losing_owner(entity_id)
-    click.echo(f"Erasing user {entity_id}: {user.name} <{user.email}>")
+    # The name and email go only into the prompt, which --yes skips: stdout of a scripted
+    # run ends up in docker logs or log aggregation, and must not keep the erased person.
+    click.echo(f"Erasing user {entity_id}")
     if orphaned:
         click.echo(f"  groups that will be left without an owner: {', '.join(orphaned)}")
-    if not yes and not click.confirm("This deletes the user and cannot be undone. Continue?"):
+    if not yes and not click.confirm(f"Erase user {entity_id}: {user.name} <{user.email}>? "
+                                     f"This deletes the user and cannot be undone. Continue?"):
         click.echo("Aborted.")
         raise SystemExit(1)
 
@@ -1545,7 +1645,7 @@ def wait_for_migrations_cmd(timeout):
     that exits 1 at once, since waiting cannot fix it. Each PostgreSQL check gives an
     unresponsive server up to 10 seconds, so the command can exit that much after
     --timeout. Connections made while the app loads are not covered: see
-    PGCONNECT_TIMEOUT in the README.
+    PGCONNECT_TIMEOUT in docs/admin/commands.md.
     """
     # Flask-Migrate's config and engine, so the script location and the database URL
     # resolve exactly as they do for ``flask db upgrade``.
@@ -1688,6 +1788,50 @@ def _backfill_missing_months():
                     raise SystemExit(1)
 
 
+_EXTENSION_OWNER_SQL = text(
+    "SELECT r.rolname, current_database() FROM pg_extension e "
+    "JOIN pg_roles r ON r.oid = e.extowner WHERE e.extname = 'timescaledb'"
+)
+
+
+def _extension_owner_and_database(session):
+    """The role that owns ``timescaledb`` and the current database, from the catalog."""
+    return tuple(session.execute(_EXTENSION_OWNER_SQL).one())
+
+
+def _warn_if_timescaledb_behind():
+    """Print the exact ``ALTER EXTENSION timescaledb UPDATE`` command when the extension is behind.
+
+    Advisory only: it never runs the command (the update is one-way and stays a
+    deliberate operator step) and never fails the upgrade. Prints nothing on SQLite,
+    without the extension, or when the installed version is the server's. A
+    database error is rolled back and reported as one note. The ``-U``/``-d``
+    values are the extension's owner and the database read from the catalog,
+    since the connecting user need not own the extension. Both are shell-quoted, so a
+    name with spaces or shell metacharacters stays one literal argument when pasted.
+    """
+    if db.engine.dialect.name != "postgresql":
+        return
+    try:
+        installed, available = extension_versions(db.session)
+        if not (installed and available and installed != available):
+            return
+        owner, database = _extension_owner_and_database(db.session)
+    except DBAPIError as exc:
+        click.echo(f"Note: could not check the TimescaleDB extension version: {exc.orig}")
+        return
+    finally:
+        # Read-only: also ends a failed transaction, and leaves none idle.
+        db.session.rollback()
+    psql = f"psql -X -U {shlex.quote(owner)} -d {shlex.quote(database)} -c 'ALTER EXTENSION timescaledb UPDATE;'"
+    click.echo(f"WARNING: TimescaleDB extension is {installed} but the server has {available}. "
+               "Back up the database, then run as the first command of a fresh session:")
+    click.echo(f"  {psql}")
+    click.echo(f"  Compose: docker compose exec postgres {psql}")
+    click.echo(f"  Helm (bundled PostgreSQL): kubectl exec -it <fullname>-postgresql-0 -- {psql}")
+    click.echo('See "Upgrading TimescaleDB" in docs/admin/commands.md.')
+
+
 # Run in order after the migrations, each only once the previous one succeeded. Every
 # step must be safe to re-run and finish what an earlier, failed run left undone.
 POST_MIGRATION_STEPS = (_backfill_missing_months,)
@@ -1698,13 +1842,16 @@ POST_MIGRATION_STEPS = (_backfill_missing_months,)
 def upgrade_cmd():
     """Bring the database up to date for this image, then exit.
 
-    Applies every migration (``flask db upgrade`` to head), then runs the
-    post-migration data steps: today, the backfill of the usage aggregates' missing
-    months. Stops at the first failure with exit 1; running it again resumes. This is
-    the one-shot upgrade step that runs before the app starts.
+    Applies every migration (``flask db upgrade`` to head), warns with the exact
+    ``ALTER EXTENSION timescaledb UPDATE`` command when the TimescaleDB extension is
+    older than the server's (advisory: it never runs it and never fails), then runs
+    the post-migration data steps: today, the backfill of the usage aggregates'
+    missing months. Stops at the first failure with exit 1; running it again
+    resumes. This is the one-shot upgrade step that runs before the app starts.
     """
     click.echo("Applying migrations ...")
     migrate_upgrade()
+    _warn_if_timescaledb_behind()
     for step in POST_MIGRATION_STEPS:
         step()
     click.echo("Upgrade complete.")

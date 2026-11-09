@@ -69,13 +69,13 @@ oauth2:
 
 ### PostgreSQL
 
-The bundled PostgreSQL uses `timescale/timescaledb:2.27.2-pg17` to match the production docker-compose setup. Override `postgresql.image` if you need a different version, but keep a TimescaleDB image with a pinned tag: TimescaleDB is required, and on a plain `postgres` image the migrations fail and the migration Job fails at `flask db upgrade`. See "Upgrading TimescaleDB" in the main README before changing the tag.
+The bundled PostgreSQL uses `timescale/timescaledb:2.31.0-pg17` to match the production docker-compose setup. Override `postgresql.image` if you need a different version, but keep a TimescaleDB image with a pinned tag: TimescaleDB is required, and on a plain `postgres` image the migrations fail and the migration Job fails at `flask db upgrade`. See [Upgrading TimescaleDB](../docs/admin/commands.md#upgrading-timescaledb) in the Admin Guide before changing the tag.
 
 **Bundled (default):**
 ```yaml
 postgresql:
   enabled: true
-  image: "timescale/timescaledb:2.27.2-pg17"  # override to pin a different version
+  image: "timescale/timescaledb:2.31.0-pg17"  # override to pin a different version
   auth:
     username: lumen
     password: strong-password
@@ -89,7 +89,7 @@ postgresql:
   url: "postgresql://lumen:password@my-postgres.example.com:5432/lumen"
 ```
 
-An external database must also run TimescaleDB (2.27.2 is the tested version): the migrations create the `timescaledb` extension, so the database user needs permission to do that, or a superuser must create it first.
+An external database must also run TimescaleDB (2.31.0 is the tested version): the migrations create the `timescaledb` extension, so the database user needs permission to do that, or a superuser must create it first.
 
 **External via Secret:**
 ```yaml
@@ -186,6 +186,10 @@ models:
 | `migration.backoffLimit` | `6` | Pod retries of the migration Job before it is marked failed; each retry resumes — see [Database Migrations](#database-migrations) |
 | `migration.ttlSecondsAfterFinished` | `86400` | Seconds a finished migration Job and its pod logs are kept; `0` deletes it as soon as it finishes; `null` (in a values file, or `--set migration.ttlSecondsAfterFinished=null`) keeps it until the next release replaces it |
 | `migration.resources` | `{}` | Resources for the migration container; empty uses the app container's `resources` (by default a 512Mi / 1 CPU limit). Raise it for a large database: an OOM-killed pod uses up a retry, and once `backoffLimit` is spent new pods wait at the gate |
+| `statsCheck.enabled` | `true` | Run `flask check-stats --fix` as a CronJob — see [Scheduled stats check](#scheduled-stats-check) |
+| `statsCheck.schedule` | `"17 3 * * 0"` | Cron schedule of the stats check (weekly, Sunday 03:17 in the controller manager's time zone, usually UTC) |
+| `statsCheck.ttlSecondsAfterFinished` | `null` | Seconds a finished stats-check Job and its pod logs are kept; `null` keeps the last 3 successful and 3 failed runs |
+| `statsCheck.resources` | `{}` | Resources for the stats-check container; empty uses the app container's `resources` |
 | `config.secretKey` | `""` | Flask session signing key |
 | `config.encryptionKey` | `""` | API key hashing secret |
 | `config.debug` | `false` | Flask debug mode |
@@ -205,7 +209,7 @@ models:
 | `oauth2.serverMetadataUrl` | CILogon OIDC URL | OIDC provider metadata URL |
 | `existingSecret` | `""` | Name of pre-existing Secret with credentials |
 | `postgresql.enabled` | `true` | Deploy bundled PostgreSQL |
-| `postgresql.image` | `timescale/timescaledb:2.27.2-pg17` | PostgreSQL container image |
+| `postgresql.image` | `timescale/timescaledb:2.31.0-pg17` | PostgreSQL container image |
 | `postgresql.url` | `""` | External PostgreSQL URL (when enabled=false); the database must run TimescaleDB |
 | `postgresql.existingSecret` | `""` | Secret containing database URL (when enabled=false); the database must run TimescaleDB |
 | `redis.enabled` | `false` | Deploy bundled Redis |
@@ -245,6 +249,12 @@ The Job uses the same image, environment, config Secret and `wait-for-db` initCo
 The app container never migrates. Its entrypoint runs the same gate once more before uvicorn starts, which passes immediately after the initContainer. Because migrations happen before the container starts, the `startupProbe` only has to cover uvicorn startup (5 minutes by default).
 
 **Stats consistency check:** `flask check-stats` reports any difference between the folded usage totals and `request_logs`, and `--fix` repairs it. It scans all of `request_logs` since the stats cutover and pauses the fold meanwhile, so on a large install run it at a quiet time.
+
+## Scheduled stats check
+
+The usage totals (`model_stats` / `entity_stats`) are filled by the stats fold, which counts a request once its billing transaction has committed. A transaction that commits more than `stats.fold_lag` (300 s by default) after its timestamp, for example one stalled on a lock, lands behind the fold and is never counted. `flask check-stats --fix` finds those rows and adds them to the totals; see [`check-stats`](../docs/admin/commands.md#check-stats) in the Admin Guide.
+
+The chart runs it as a CronJob, `<fullname>-stats-check` (the fullname is shortened to 40 characters), every Sunday at 03:17 (`statsCheck.schedule`). Each run scans every `request_logs` row since the stats cutover and pauses the fold while it does, so pick a quiet time on a large install, or set `statsCheck.enabled: false` and run it yourself. The pod is the migration Job's: same image, env, config mount and scheduling settings. A run is not retried (`backoffLimit: 0`) and never overlaps the previous one (`concurrencyPolicy: Forbid`). A run that starts while a `reassign-model` or `erase-entity` is moving `request_logs` prints `Skipped: …` and succeeds; the next run checks. The last 3 successful and 3 failed runs are kept: `kubectl logs job/<job>` lists each repaired row and `Fixed N row(s).`
 
 ## Notes
 

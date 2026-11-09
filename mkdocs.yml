@@ -65,6 +65,7 @@ nav:
       - Users & Access Control: admin/config-users.md
       - Configuring Projects: admin/config-projects.md
       - Configuring Models: admin/config-models.md
+      - Operator Commands: admin/commands.md
   - Developer Reference:
       - Architecture: architecture.md
       - Database Schema: dbschema.md

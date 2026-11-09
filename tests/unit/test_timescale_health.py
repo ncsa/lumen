@@ -18,6 +18,7 @@ from lumen.services.timescale_health import (
     REQUEST_LOGS_RETENTION,
     TimescaleHealth,
     check,
+    extension_versions,
     problems,
 )
 
@@ -134,6 +135,29 @@ def test_extension_update_available():
     assert len(found) == 1
     assert "2.26.4" in found[0] and "2.27.2" in found[0]
     assert "ALTER EXTENSION timescaledb UPDATE" in found[0]
+
+
+def test_extension_versions_reads_installed_and_available():
+    conn = _Conn([("2.26.0", "2.31.0")])
+    assert extension_versions(conn) == ("2.26.0", "2.31.0")
+    assert len(conn.statements) == 1
+    assert conn.statements[0] == str(timescale_health._EXTENSION_SQL)
+    assert extension_versions(_Conn([])) == (None, None)
+
+
+def test_check_reports_the_versions_extension_versions_read(monkeypatch):
+    seen = []
+
+    def stub(conn):
+        seen.append(conn)
+        return ("2.26.0", "2.31.0")
+
+    monkeypatch.setattr(timescale_health, "extension_versions", stub)
+    conn = _Conn([(True,)], _aggregates(), _jobs())
+    health = check(conn)
+    assert seen == [conn]
+    assert (health.installed_version, health.available_version) == ("2.26.0", "2.31.0")
+    assert "extension_update" in timescale_health.keyed_problems(health)
 
 
 def test_request_logs_not_a_hypertable():

@@ -269,7 +269,13 @@ def start_fold_thread(app):
 
 
 def stop_fold_thread(timeout: float = 5.0) -> None:
-    """Stop every fold thread started in this process and wait for it to finish."""
+    """Stop every fold thread started in this process and wait for it to finish.
+
+    A test seam: tests use this to end the thread deterministically instead of
+    throwing into it from a patched ``_sleep``. Production never calls it; the
+    thread is a daemon that ends with the process, like the other background
+    workers.
+    """
     folders, _folders[:] = list(_folders), []
     for stop, _ in folders:
         stop.set()
