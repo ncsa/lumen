@@ -30,6 +30,13 @@
       </p>
       {% endif %}
 
+      {% if model_notice %}
+      <div class="alert alert-warning" id="model-notice" role="note" aria-labelledby="model-notice-label">
+        <strong id="model-notice-label">Notice</strong>
+        <div class="mt-1">{{ model_notice | markdown }}</div>
+      </div>
+      {% endif %}
+
       {% if config.description %}
       <p>{{ config.description }}</p>
       {% endif %}
@@ -54,10 +61,10 @@
       <a class="btn btn-primary" href="{{ url_for('connect.index', model=config.model_name) }}">Use this model</a>
       {% endif %}
 
-      {% if effective_notice %}
+      {% if ack_notice %}
       <div class="alert alert-warning mb-0" role="alert" aria-live="polite">
         <strong>Notice</strong>
-        <div id="model-notice-body" class="mt-1"></div>
+        <div id="model-ack-notice" class="mt-1">{{ ack_notice | markdown }}</div>
       </div>
       {% endif %}
 
@@ -380,13 +387,6 @@
 {% endif %}
 <script>
 (function () {
-  {% if effective_notice %}
-  const noticeBody = document.getElementById('model-notice-body');
-  if (noticeBody) {
-    noticeBody.innerHTML = DOMPurify.sanitize(marked.parse({{ effective_notice | tojson }}));
-  }
-  {% endif %}
-
   {% if config.url and "huggingface.co" in config.url %}
   const readmeEl = document.getElementById('hf-readme');
   fetch({{ url_for('models_page.model_readme', model_name=config.model_name) | tojson }})
@@ -416,7 +416,7 @@
 {% if access_status == 'needs_ack' and not consented %}
 const openAckModal = initAckConsent(() => location.reload());
 document.getElementById('ack-open-btn').addEventListener('click', () => {
-  openAckModal({{ config.model_name | tojson }}, {{ effective_notice | tojson if effective_notice else 'null' }}, {{ early_access_notice | tojson if early_access_notice else 'null' }});
+  openAckModal({{ config.model_name | tojson }}, {{ ack_notice | tojson if ack_notice else 'null' }}, {{ early_access_notice | tojson if early_access_notice else 'null' }});
 });
 {% endif %}
 </script>

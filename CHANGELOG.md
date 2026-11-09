@@ -13,6 +13,7 @@ All notable changes to Lumen will be documented in this file.
 - Add an Anthropic Messages subset and token estimates for the Python SDK and configured Claude Code, sharing Lumen access controls and billing. (#61)
 - Added: per-theme favicons (default, Illinois, UIC, UIS) and a `/favicon.ico` route (#479).
 - Speed up the slowest PostgreSQL migration tests and the request_logs prune guard (#475).
+- Model detail page: the model's notice now always shows in the main column. The acknowledgement text shows on the right only for models that need acknowledgement. Previously, the acknowledgement text replaced the notice. (#492)
 
 ## [2.3.1] - 2026-11-07
 
