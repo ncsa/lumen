@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+- The Models page links to LLMHub for launching models that are not listed, when `app.llmhub_url` is set (editable in the admin config editor).
+
 ## [2.3.1] - 2026-11-07
 
 - Fix `/profile` crashing with "can't compare offset-naive and offset-aware datetimes" on databases with `timestamptz` usage columns
@@ -51,7 +53,6 @@ All notable changes to Lumen will be documented in this file.
 - Hard-deleting an entity, model or endpoint that has request history fails instead of rewriting `request_logs`. (#176)
 - Record the API key used for each request in `request_logs` (NULL for chat and older requests). (#407)
 - `lumen.sh` no longer adds models without text input (e.g. audio-only) to the opencode config. (#208)
-- The Models page links to LLMHub for launching models that are not listed, when `app.llmhub_url` is set (editable in the admin config editor).
 
 ### Removed
 
