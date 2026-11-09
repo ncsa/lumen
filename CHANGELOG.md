@@ -4,7 +4,7 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
-- Add an Anthropic Messages subset and token estimates for the Python SDK and configured Claude Code, sharing Lumen access controls and billing. ([#61](https://github.com/ncsa/lumen/issues/61))
+- Add an Anthropic Messages subset and token estimates for the Python SDK and configured Claude Code, sharing Lumen access controls and billing. (#61, #75)
 
 ## [2.3.1] - 2026-11-07
 
