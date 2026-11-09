@@ -102,17 +102,18 @@ test('a reported cache price carries no marker', async () => {
   assert.deepEqual(lines, ['in 1.10', 'out 2.20', 'cached in 0.10', 'cache write 0.05']);
 });
 
-test('both unreported cache prices get one marker whose tip names both sides', async () => {
+test('both unreported cache prices are marked on their own lines', async () => {
   const [cached, written] = (await renderCell([model({
     cached_input_price: 0.1, cache_write_price: 0.05, cache_warning: { reads: true, writes: true },
   })])).slice(2);
-  const [mark] = cached.children;
-  assert.equal(mark.textContent, '!');
-  assert.equal(mark.attributes.class, 'marker');
-  assert.match(mark.attributes.title, /no cache reads or writes in the last day/);
-  // The same label appears once: the write line carries no second marker.
-  assert.equal(written.textContent, 'cache write 0.05');
-  assert.equal(written.children.length, 0);
+  const [readMark] = cached.children;
+  assert.equal(readMark.textContent, '!');
+  assert.equal(readMark.attributes.class, 'marker');
+  assert.match(readMark.attributes.title, /no cache reads in the last day/);
+  const [writeMark] = written.children;
+  assert.equal(writeMark.textContent, '!');
+  assert.equal(writeMark.attributes.class, 'marker');
+  assert.match(writeMark.attributes.title, /no cache writes in the last day/);
 });
 
 test('a missing side without its price gets no marker at all', async () => {

@@ -15,35 +15,23 @@
     return `${median.toFixed(2)} (${fmtFix(p5, 2)}–${fmtFix(p95, 2)})`;
   }
 
-  // A cache price the backend never reported cannot charge what the admin set: those tokens were
-  // billed at the input price. One marker per row, on the first cache price line whose side is
-  // missing; its tooltip names every side the backend did not report.
-  function cacheGapTip(gap, cached, written) {
-    const reads = Boolean(gap && gap.reads && cached);
-    const writes = Boolean(gap && gap.writes && written);
-    if (!reads && !writes) return null;
-    if (reads && writes) {
-      return 'Not billed at these prices: the backend reported no cache reads or writes in the last day, so Lumen charged the input price';
-    }
-    if (reads) {
-      return 'Not billed at this price: the backend reported no cache reads in the last day, so Lumen charged the input price';
-    }
-    return 'Not billed at this price: the backend reported no cache writes in the last day (SGLang has no cache-write accounting), so Lumen charged the input price';
-  }
+  // A backend that reports no cache count has those tokens billed at the input price, so a price
+  // configured for them cannot charge what the admin set. Mark the line whose price is not in play.
+  const CACHE_GAP = {
+    reads: 'Not billed at this price: the backend reported no cache reads in the last day, so Lumen charged the input price',
+    writes: 'Not billed at this price: the backend reported no cache writes in the last day (SGLang has no cache-write accounting), so Lumen charged the input price',
+  };
 
-  function priceLine(label, price, tip) {
+  function priceLine(label, price, gap) {
     const line = el('div', { class: 'io', text: `${label} ${price}` });
-    if (tip) line.append(marker('!', tip));
+    if (gap) line.append(marker('!', CACHE_GAP[gap]));
     return line;
   }
 
   function inOut(input, output, cached, written, gap) {
     const lines = [el('div', { class: 'io', text: `in ${input}` }), el('div', { class: 'io', text: `out ${output}` })];
-    const tip = cacheGapTip(gap, cached != null, written != null);
-    // One marker per row: on the cached line when reads are missing, else on the write line.
-    const marked = tip ? (gap.reads && cached != null ? 'reads' : 'writes') : null;
-    if (cached != null) lines.push(priceLine('cached in', cached, marked === 'reads' ? tip : null));
-    if (written != null) lines.push(priceLine('cache write', written, marked === 'writes' ? tip : null));
+    if (cached != null) lines.push(priceLine('cached in', cached, gap && gap.reads ? 'reads' : null));
+    if (written != null) lines.push(priceLine('cache write', written, gap && gap.writes ? 'writes' : null));
     return lines;
   }
 
