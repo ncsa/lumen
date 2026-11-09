@@ -13,16 +13,18 @@ c1d2e3f4a5b6; this change adds the write side everywhere the read exists:
   input tokens written into the provider's prompt cache. NULL = charge the
   ordinary input rate for them, so billing is unchanged until an admin sets it.
 * request_logs.cache_write_tokens — the part of input_tokens written
-  into the cache. NULL when there is nothing to record: an aborted request with
-  no terminal usage object, or a row written before this column existed. A
-  usage object without cache fields records the non-cached remainder of the
-  prompt, which is what a write price pays for.
+  into the cache. NULL when the backend reported no such count: an aborted
+  request with no terminal usage object, a row written before this column
+  existed, or an upstream without cache-write accounting. The non-cached
+  remainder of the prompt is never inferred as a write; a NULL keeps billing
+  that remainder at the input rate, so the column records what the backend
+  said rather than what the price assumed.
 * model_stats / entity_stats — a running cache_write_tokens total
   plus its folded_* part, so flask check-stats compares the fold's share
   with request_logs exactly as it does for the other token totals.
 
 Only storage lands here, mirroring d2e3f4a5b6c7; the continuous aggregates and
-the monitor keep their current definitions.
+the monitor's token windows keep their current definitions.
 """
 
 import sqlalchemy as sa
