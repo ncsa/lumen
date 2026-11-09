@@ -4,19 +4,22 @@ import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from http import HTTPStatus
 from typing import NamedTuple, Optional
 
 import openai
 from flask import current_app, has_request_context, request
-from sqlalchemy import select
+from sqlalchemy import case, literal, or_, select
 from sqlalchemy import update as sa_update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.expression import FunctionElement
 
 from lumen.blueprints.metrics.middleware import observe_stream_abort
 from lumen.extensions import db
+from lumen.models.api_key import APIKey
+from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
 from lumen.models.entity_model_consent import EntityModelConsent
@@ -31,6 +34,7 @@ from lumen.models.request_log import RequestLog
 from lumen.services.cost import calculate_cost
 from lumen.services.crypto import cache_salt_for_entity
 from lumen.services.model_resolver import resolve_model_config
+from lumen.services.stats_cutover import cached_cutover_at
 from lumen.services.wsgi_disconnect import (
     SEND_BLOCKED_ENVIRON_KEY,
     STARTED_AT_ENVIRON_KEY,
@@ -38,7 +42,7 @@ from lumen.services.wsgi_disconnect import (
     SendBlocked,
     client_disconnect_event,
 )
-from lumen.timeutils import utcnow
+from lumen.timeutils import as_utc_naive, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +84,7 @@ def _least_sqlite(element, compiler, **kw):
 
 #: How old ``entity_balances.last_refill_at`` must be before the refiller
 #: credits that balance again — the cutoff in ``token_refill.refill_coin_balances``,
-#: which is what makes the next refill instant derivable here. Keep the two in step.
+#: which is what makes the next refill instant derivable here.
 REFILL_INTERVAL = timedelta(hours=1)
 
 
@@ -267,26 +271,41 @@ def bulk_model_access_info(entity_id: int, model_config_ids: list) -> tuple:
     {model_config_id: acknowledged_at} for models where the entity has satisfied
     ALL of the model's acknowledgement requirements (needs_ack and early_access);
     the value is the most recent acknowledgement timestamp. A model without an
-    owner is public; an owned model is allowed only for its owner.
+    owner is public; an owned model is allowed only for its owner. Models with no
+    acknowledgement requirement never appear in consent_map; callers only read it
+    for a "needs_ack" status.
 
     Issues a fixed set of queries regardless of the number of models — replaces N+1
     per-model calls to get_model_access_status / has_model_consent.
     """
     if not model_config_ids:
         return {}, {}
+    return _access_info(entity_id, _model_baseline(model_config_ids))
 
-    baseline = _model_baseline(model_config_ids)
+
+def _access_info(entity_id: int, baseline: dict) -> tuple:
+    """bulk_model_access_info for an already-loaded baseline ({id: ModelConfig-like})."""
+    # Only models with an acknowledgement requirement can need a consent row;
+    # skip the query entirely when none of them has one.
+    ack_ids = [mc_id for mc_id, mc in baseline.items() if mc.needs_ack or mc.early_access]
 
     # Only models whose acknowledgement requirements are ALL satisfied appear in
     # consent_map; a requirement added after consent leaves its timestamp NULL,
     # so the model drops out and the UI re-prompts.
     consent_map = {}
-    for mc_id, row in consent_rows(entity_id, model_config_ids).items():
+    for mc_id, row in consent_rows(entity_id, ack_ids).items():
         open_tags, acknowledged_at = consent_state(baseline[mc_id], row)
         if not open_tags and acknowledged_at is not None:
             consent_map[mc_id] = acknowledged_at
 
     return _access_statuses(entity_id, baseline), consent_map
+
+
+def _model_access_info(entity_id: int, model_config_id: int, model_config=None) -> tuple:
+    """bulk_model_access_info for one model, from the already-loaded ``model_config`` if given."""
+    if model_config is None:
+        return bulk_model_access_info(entity_id, [model_config_id])
+    return _access_info(entity_id, {model_config_id: model_config})
 
 
 _rr_counters: dict = {}
@@ -306,15 +325,36 @@ def get_next_endpoint(model_config_id: int):
     return endpoints[idx]
 
 
-def _get_active_group_ids(entity_id: int) -> list:
-    """Return list of active group IDs the entity belongs to."""
-    return [
-        m.group_id for m in db.session.execute(
-            select(GroupMember)
-            .join(Group, Group.id == GroupMember.group_id)
-            .where(GroupMember.entity_id == entity_id, Group.active == True)  # noqa: E712
-        ).scalars().all()
-    ]
+class StreamTarget(NamedTuple):
+    """Plain scalars a streaming call needs from its model config and endpoint.
+
+    Built while a session is current, so the generator that consumes it never
+    touches an ORM object after the session that loaded it is gone.
+    """
+    remote_model: str
+    url: str
+    api_key: str
+    endpoint_id: int
+    model_config_id: int
+    input_cost: float
+    output_cost: float
+
+
+def stream_target(config, endpoint) -> StreamTarget:
+    """StreamTarget for ``config`` served by ``endpoint``.
+
+    Forwards the endpoint's override name, else the CANONICAL model name —
+    never an alias a client may have requested.
+    """
+    return StreamTarget(
+        remote_model=endpoint.model_name or config.model_name,
+        url=endpoint.url,
+        api_key=endpoint.api_key,
+        endpoint_id=endpoint.id,
+        model_config_id=config.id,
+        input_cost=float(config.input_cost_per_million),
+        output_cost=float(config.output_cost_per_million),
+    )
 
 
 def get_model_access_status(entity_id: int, model_config_id: int) -> str:
@@ -391,15 +431,18 @@ def ack_notice_text(mc):
     return "\n\n".join(n for n in model_notices(mc) if n) or None
 
 
-def get_model_access(entity_id: int, model_config_id: int) -> bool:
+def get_model_access(entity_id: int, model_config_id: int, model_config=None) -> bool:
     """
     Return True if entity can access the given model, False otherwise.
 
     For models that require acknowledgement (needs_ack and/or early_access), requires
     prior consent (EntityModelConsent) covering every current requirement. There is
     no way to skip this gate: chat and API requests are held to the same rule.
+
+    ``model_config`` is the already-loaded ModelConfig (anything with its
+    attributes); passing it skips reloading the model's access columns.
     """
-    access_statuses, consent_map = bulk_model_access_info(entity_id, [model_config_id])
+    access_statuses, consent_map = _model_access_info(entity_id, model_config_id, model_config)
     status = access_statuses[model_config_id]
     if status == "blocked":
         return False
@@ -419,26 +462,68 @@ def get_pool_limit(entity_id: int):
     then to the global defaults.tokens pool. EntityLimit with max_coins == 0 blocks the entity
     regardless of groups.
     """
-    user_limit = db.session.execute(select(EntityLimit).filter_by(entity_id=entity_id)).scalar_one_or_none()
-    if user_limit is not None:
-        if float(user_limit.max_coins) == 0:
-            return None  # explicitly blocked
-        return PoolLimit(float(user_limit.max_coins), float(user_limit.refresh_coins), float(user_limit.starting_coins))
+    pool, _balance = _load_pool_state(entity_id)
+    return pool
+
+
+class PoolBalance(NamedTuple):
+    coins_left: float
+    last_refill_at: Optional[datetime]
+
+
+def _load_pool_state(entity_id: int) -> tuple:
+    """Return (PoolLimit | None, PoolBalance | None) for an entity in one statement.
+
+    Loads the entity's own limit, its balance and the limits of its active
+    groups together (one row per active group with a limit, or a single row
+    without one), then applies get_pool_limit's rules. The balance is None when
+    the entity has no balance row yet.
+    """
+    group_limits = (
+        select(GroupMember.entity_id, GroupLimit.max_coins, GroupLimit.refresh_coins, GroupLimit.starting_coins)
+        .join(Group, Group.id == GroupMember.group_id)
+        .join(GroupLimit, GroupLimit.group_id == GroupMember.group_id)
+        .where(GroupMember.entity_id == entity_id, Group.active == True)  # noqa: E712
+        .subquery()
+    )
+    rows = db.session.execute(
+        select(
+            EntityLimit.id.label("limit_id"), EntityLimit.max_coins, EntityLimit.refresh_coins,
+            EntityLimit.starting_coins,
+            EntityBalance.id.label("balance_id"), EntityBalance.coins_left, EntityBalance.last_refill_at,
+            group_limits.c.max_coins.label("group_max_coins"),
+            group_limits.c.refresh_coins.label("group_refresh_coins"),
+            group_limits.c.starting_coins.label("group_starting_coins"),
+        )
+        .select_from(Entity)
+        .outerjoin(EntityLimit, EntityLimit.entity_id == Entity.id)
+        .outerjoin(EntityBalance, EntityBalance.entity_id == Entity.id)
+        .outerjoin(group_limits, group_limits.c.entity_id == Entity.id)
+        .where(Entity.id == entity_id)
+    ).all()
+    first = rows[0] if rows else None
+
+    balance = None
+    if first is not None and first.balance_id is not None:
+        balance = PoolBalance(float(first.coins_left), first.last_refill_at)
+
+    if first is not None and first.limit_id is not None:
+        if float(first.max_coins) == 0:
+            return None, balance  # explicitly blocked
+        return PoolLimit(float(first.max_coins), float(first.refresh_coins), float(first.starting_coins)), balance
 
     # No user-level limit — fall back to best group limit, then the global default pool.
-    group_ids = _get_active_group_ids(entity_id)
-    if group_ids:
-        group_limits = db.session.execute(
-            select(GroupLimit).where(GroupLimit.group_id.in_(group_ids))
-        ).scalars().all()
-        best = best_group_pool_limit(group_limits)
-        if best is not None:
-            return best
+    best = best_group_pool_limit(
+        PoolLimit(r.group_max_coins, r.group_refresh_coins, r.group_starting_coins)
+        for r in rows if r.group_max_coins is not None
+    )
+    if best is not None:
+        return best, balance
 
     td = current_app.config.get("TOKEN_DEFAULTS")
     if td and float(td["max"]) != 0:
-        return PoolLimit(float(td["max"]), float(td["refresh"]), float(td["starting"]))
-    return None
+        return PoolLimit(float(td["max"]), float(td["refresh"]), float(td["starting"])), balance
+    return None, balance
 
 
 def entity_has_unlimited_pool(entity_id_column):
@@ -478,17 +563,57 @@ def entity_has_unlimited_pool(entity_id_column):
     return own_unlimited_exists | (~own_limit_exists & inherited_unlimited)
 
 
-def get_effective_limit(entity_id: int, model_config_id: int):
+def get_effective_limit(entity_id: int, model_config_id: int, model_config=None):
     """
     Return (max_coins, refresh_coins, starting_coins) or None if blocked/no access.
 
     Checks model access (including acknowledgement) first, then returns the
     entity's coin pool.
-    max_coins == -2 means unlimited.
+    max_coins == -2 means unlimited. ``model_config`` is as for get_model_access.
     """
-    if not get_model_access(entity_id, model_config_id):
+    if not get_model_access(entity_id, model_config_id, model_config):
         return None
     return get_pool_limit(entity_id)
+
+
+def _bump(model, key: dict, increments: dict, insert_values: dict, last_used_at: datetime = None):
+    """Apply ``increments`` to the ``model`` row matching ``key``, creating it on first use.
+
+    The row exists on every call after an entity's first, so the atomic UPDATE
+    runs alone: one statement, no existence SELECT. Only when it matches no row
+    does the dialect ``INSERT … ON CONFLICT (key) DO UPDATE`` run, inserting
+    ``key`` plus ``insert_values``; if a concurrent first request inserted the
+    row in between, the conflict applies the same ``increments`` to it, so both
+    requests are counted and nothing raises. Not an upsert every time: Postgres
+    draws the serial ``id`` (model_stats, entity_balances) before it detects
+    the conflict, so each steady-state call would burn a sequence value.
+
+    ``increments`` reference the existing row through the model's columns,
+    which ON CONFLICT DO UPDATE resolves against the conflicting row.
+
+    ``last_used_at``, when given, moves the row's ``last_used_at`` forward to
+    it but never back: the stats fold applies windows of past requests, so the
+    time it carries can be older than the one already stored. A new row takes
+    it as is, and ``increments`` must then not set ``last_used_at`` itself.
+    """
+    if last_used_at is not None:
+        assert "last_used_at" not in increments, "pass last_used_at either way, not both"
+        column = model.last_used_at
+        increments = {**increments, "last_used_at": case(
+            (or_(column.is_(None), column < last_used_at), literal(last_used_at, db.DateTime)),
+            else_=column,
+        )}
+        insert_values = {**insert_values, "last_used_at": last_used_at}
+    where = [getattr(model, col) == value for col, value in key.items()]
+    result = db.session.execute(sa_update(model).where(*where).values(**increments))
+    if result.rowcount:
+        return
+    dialect = postgresql if db.engine.dialect.name == "postgresql" else sqlite
+    db.session.execute(
+        dialect.insert(model)
+        .values(**key, **insert_values)
+        .on_conflict_do_update(index_elements=list(key), set_=increments)
+    )
 
 
 def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float, effective=_UNSET):
@@ -506,37 +631,21 @@ def subtract_coins(entity_id: int, model_config_id: int, coin_cost: float, effec
     if max_coins == -2:
         return
 
-    # Ensure balance row exists (first API use before login creates it).
-    # Check first: the row exists for every entity after its first request, so an
-    # unconditional INSERT would fail — and log a Postgres duplicate-key ERROR —
-    # on every subsequent request. Same race-safe pattern as update_stats below:
-    # if two concurrent first-requests both see None, the loser's IntegrityError
-    # is swallowed and the atomic UPDATE succeeds for both.
-    if db.session.execute(
-        select(EntityBalance).filter_by(entity_id=entity_id)
-    ).scalar_one_or_none() is None:
-        try:
-            with db.session.begin_nested():
-                db.session.add(EntityBalance(
-                    entity_id=entity_id,
-                    coins_left=starting,
-                    last_refill_at=utcnow(),
-                ))
-        except IntegrityError:
-            pass
-
     # Single atomic deduction, floored at 0: deduct when affordable, otherwise zero
     # (the budget is a soft limit — see check_coin_budget). One statement so a
     # concurrent refill/credit can never be clobbered back to 0 by a separate zeroing.
-    db.session.execute(
-        sa_update(EntityBalance)
-        .where(EntityBalance.entity_id == entity_id)
-        .values(coins_left=_greatest(0, EntityBalance.coins_left - coin_cost))
+    # The row is created on first use (first API use before login creates it),
+    # already deducted from the starting balance.
+    _bump(
+        EntityBalance,
+        {"entity_id": entity_id},
+        {"coins_left": _greatest(0, EntityBalance.coins_left - coin_cost)},
+        {"coins_left": max(0.0, float(starting) - float(coin_cost)), "last_refill_at": utcnow()},
     )
     db.session.flush()
 
 
-def _denial_reason(entity_id: int, model_config_id: int) -> str:
+def _denial_reason(pool, access_status: str) -> str:
     """Return the 403 reason for an entity denied access to a model.
 
     ``get_effective_limit`` collapses "blocked", "no usable coin pool" and
@@ -546,25 +655,30 @@ def _denial_reason(entity_id: int, model_config_id: int) -> str:
     entity with no usable pool is refused by the acknowledge endpoint no
     matter what it acknowledges, so labelling such a denial
     ``needs_consent`` would send the caller chasing a 404. Returns
-    "needs_consent" or "no_access". Never raises, for the same reason
-    ``observe_rejection_quietly`` does not.
+    "needs_consent" or "no_access". Pure: ``pool`` and ``access_status`` are
+    what check_coin_budget already loaded, and a denied "needs_ack" status
+    means the consent is missing.
     """
-    try:
-        if get_pool_limit(entity_id) is None:
-            return "no_access"
-        if (
-            get_model_access_status(entity_id, model_config_id) == "needs_ack"
-            and not has_model_consent(entity_id, model_config_id)
-        ):
-            return "needs_consent"
-    except Exception:  # noqa: BLE001 - instrumentation must never escalate
-        pass
+    if pool is None:
+        return "no_access"
+    if access_status == "needs_ack":
+        return "needs_consent"
     return "no_access"
 
 
+class CoinBudget(NamedTuple):
+    """Result of check_coin_budget."""
+    ok: bool
+    code: Optional[HTTPStatus]
+    msg: Optional[str]
+    effective: Optional[PoolLimit]
+    reason: Optional[str]
+    retry_after: Optional[int]
+
+
 def check_coin_budget(entity_id: int, model_config_id: int,
-                      source: str = None, model_name: str = ""):
-    """Check coin budget. Returns (ok, http_code, error_message, effective, reason).
+                      source: str = None, model_name: str = "", model_config=None) -> CoinBudget:
+    """Check coin budget. Returns a CoinBudget (ok, code, msg, effective, reason, retry_after).
 
     ``effective`` is the resolved coin pool limit (or None); pass it to subtract_coins
     afterward to avoid re-resolving model access and the pool limit per request.
@@ -573,6 +687,12 @@ def check_coin_budget(entity_id: int, model_config_id: int,
     (``"needs_consent"`` from ``"no_access"``) and a 429 (``"coin_budget"``); it
     is None on success. The web and API surfaces keep their own messages — the
     API uses the reason to emit a ``consent_required`` error code.
+
+    ``retry_after`` is set only on a 429: the seconds until the balance is next
+    credited (see coin_retry_after), or None when no refill is coming.
+
+    ``model_config`` is the already-loaded ModelConfig (anything with its
+    attributes); passing it skips reloading the model's access columns.
 
     ``source`` ("chat" or "api", matching ``request_logs.source``) and
     ``model_name`` are only used to label the rejection counter; pass them from
@@ -586,47 +706,34 @@ def check_coin_budget(entity_id: int, model_config_id: int,
     zeroed by subtract_coins afterward. This is intentional — the budget is a soft
     spending limit, not a hard reservation.
     """
-    effective = get_effective_limit(entity_id, model_config_id)
-    if effective is None:
-        reason = _denial_reason(entity_id, model_config_id)
+    access_statuses, consent_map = _model_access_info(entity_id, model_config_id, model_config)
+    status = access_statuses[model_config_id]
+    has_access = status == "allowed" or (status == "needs_ack" and model_config_id in consent_map)
+    # A blocked model is "no_access" whatever the pool, so it is not loaded.
+    pool, balance = _load_pool_state(entity_id) if status != "blocked" else (None, None)
+    if not has_access or pool is None:
+        reason = _denial_reason(pool, status)
         if source:
             observe_rejection_quietly(reason, source, model_name)
-        return False, HTTPStatus.FORBIDDEN, "No access to this model", None, reason
-    max_coins, _, _starting = effective
-    if max_coins == -2:
-        return True, None, None, effective, None
-    balance = db.session.execute(select(EntityBalance).filter_by(entity_id=entity_id)).scalar_one_or_none()
-    if balance is not None and float(balance.coins_left) <= 0:
+        return CoinBudget(False, HTTPStatus.FORBIDDEN, "No access to this model", None, reason, None)
+    if pool.max_coins == -2:
+        return CoinBudget(True, None, None, pool, None, None)
+    if balance is not None and balance.coins_left <= 0:
         if source:
             observe_rejection_quietly("coin_budget", source, model_name)
-        return False, HTTPStatus.TOO_MANY_REQUESTS, "Coin budget exhausted", None, "coin_budget"
-    return True, None, None, effective, None
+        return CoinBudget(False, HTTPStatus.TOO_MANY_REQUESTS, "Coin budget exhausted", None, "coin_budget",
+                          _retry_after(pool, balance))
+    return CoinBudget(True, None, None, pool, None, None)
 
 
-def coin_retry_after(entity_id: int) -> Optional[int]:
-    """Seconds until this entity's coin balance is next credited, or None.
-
-    ``refill_coin_balances`` credits a balance once its ``last_refill_at`` is an
-    hour old (it runs every 60s, so that instant is the earliest, not the exact
-    moment), which makes the next refill a real derivable time rather than a
-    guessed one. None means no refill is coming and the caller must send no
-    ``Retry-After`` at all: an unlimited or blocked pool, a pool whose
-    ``refresh_coins`` is 0 (it never refills — the balance only moves when an
-    admin changes it), or an entity with no balance row yet.
-
-    Never raises: a header that cannot be derived must degrade to a missing
-    header, not to a 500 on a request that was being refused cleanly.
-    """
+def _retry_after(pool, balance) -> Optional[int]:
+    """Seconds until ``balance`` is next credited under ``pool``, or None. See coin_retry_after."""
     try:
-        pool = get_pool_limit(entity_id)
         if pool is None:
             return None
         max_coins, refresh_coins, _starting = pool
         if max_coins == -2 or refresh_coins <= 0:
             return None
-        balance = db.session.execute(
-            select(EntityBalance).filter_by(entity_id=entity_id)
-        ).scalar_one_or_none()
         if balance is None or balance.last_refill_at is None:
             return None
         last_refill = balance.last_refill_at
@@ -642,6 +749,29 @@ def coin_retry_after(entity_id: int) -> Optional[int]:
     except Exception:  # noqa: BLE001 - a missing header beats a failed response
         logger.debug("could not derive Retry-After from the coin balance", exc_info=True)
         return None
+
+
+def coin_retry_after(entity_id: int) -> Optional[int]:
+    """Seconds until this entity's coin balance is next credited, or None.
+
+    ``refill_coin_balances`` credits a balance once its ``last_refill_at`` is an
+    hour old (it runs every 60s, so that instant is the earliest, not the exact
+    moment), which makes the next refill a real derivable time rather than a
+    guessed one. None means no refill is coming and the caller must send no
+    ``Retry-After`` at all: an unlimited or blocked pool, a pool whose
+    ``refresh_coins`` is 0 (it never refills — the balance only moves when an
+    admin changes it), or an entity with no balance row yet.
+
+    Never raises: a header that cannot be derived must degrade to a missing
+    header, not to a 500 on a request that was being refused cleanly.
+    check_coin_budget already returns this as ``retry_after`` on a 429.
+    """
+    try:
+        pool, balance = _load_pool_state(entity_id)
+    except Exception:  # noqa: BLE001 - a missing header beats a failed response
+        logger.debug("could not derive Retry-After from the coin balance", exc_info=True)
+        return None
+    return _retry_after(pool, balance)
 
 
 #: WSGI environ key holding the seconds the request waited for a WSGI worker.
@@ -722,8 +852,21 @@ def update_stats(
     ttft: float = None,
     ttft_visible: float = None,
     outcome: str = None,
+    api_key_id: int = None,
 ):
-    """Update or create ModelStat/EntityStat running totals and append a RequestLog row.
+    """Append a RequestLog row, then update or create the ModelStat/EntityStat running totals.
+
+    The running totals are bumped here only for a request from before the stats
+    cutover (none recorded yet, or ``log.time < cutover_at``). From the cutover
+    on, the bumps are skipped and the row is written with ``stats_deferred``
+    TRUE, which is what the stats fold adds. A bumped row stays NULL, as do the
+    rows of older code that never heard of the column, and the fold ignores
+    them, so every request is counted exactly once whatever the timing.
+
+    The RequestLog INSERT goes first and is flushed on its own: it takes no row
+    lock another request waits on, so running it ahead of the counter UPDATEs
+    keeps it out of their lock window. Billing should go through bill_request,
+    which fixes the order of every write in the transaction.
 
     ``aborted`` marks the RequestLog row as one whose stream ended before the
     client had read it; its token counts may be estimated (see
@@ -735,62 +878,17 @@ def update_stats(
     derived. The timing columns ride the RequestLog INSERT that already runs, so
     none of this adds a statement. Anything not measured stays None and is
     stored as SQL NULL — deliberately not zero.
+
+    ``api_key_id`` is the API key that made the request, stored on the row in
+    ``request_logs.api_key_id``. It is None (SQL NULL) for chat, which uses no
+    key; on the same INSERT, so it adds no statement either.
     """
-    now = utcnow()
-
-    # Ensure ModelStat row exists before the atomic increment.
-    # Use try/except to handle the race where two concurrent first-requests both
-    # see None and both attempt the INSERT — the loser gets IntegrityError which
-    # we swallow; the atomic UPDATE below then succeeds for both.
-    if db.session.execute(
-        select(ModelStat).filter_by(entity_id=entity_id, model_config_id=model_config_id, source=source)
-    ).scalar_one_or_none() is None:
-        try:
-            with db.session.begin_nested():
-                db.session.add(ModelStat(
-                    entity_id=entity_id, model_config_id=model_config_id, source=source,
-                    requests=0, input_tokens=0, output_tokens=0, cost=0,
-                ))
-        except IntegrityError:
-            pass
-
-    db.session.execute(
-        sa_update(ModelStat)
-        .where(ModelStat.entity_id == entity_id, ModelStat.model_config_id == model_config_id, ModelStat.source == source)
-        .values(
-            requests=ModelStat.requests + 1,
-            input_tokens=ModelStat.input_tokens + input_tokens,
-            output_tokens=ModelStat.output_tokens + output_tokens,
-            audio_seconds=ModelStat.audio_seconds + audio_seconds,
-            cost=ModelStat.cost + cost,
-            last_used_at=now,
-        )
-    )
-
-    # Ensure EntityStat row exists before the atomic increment.
-    # Same race-safe pattern as ModelStat above.
-    if db.session.execute(select(EntityStat).filter_by(entity_id=entity_id)).scalar_one_or_none() is None:
-        try:
-            with db.session.begin_nested():
-                db.session.add(EntityStat(entity_id=entity_id, requests=0, input_tokens=0, output_tokens=0, cost=0))
-        except IntegrityError:
-            pass
-
-    db.session.execute(
-        sa_update(EntityStat)
-        .where(EntityStat.entity_id == entity_id)
-        .values(
-            requests=EntityStat.requests + 1,
-            input_tokens=EntityStat.input_tokens + input_tokens,
-            output_tokens=EntityStat.output_tokens + output_tokens,
-            audio_seconds=EntityStat.audio_seconds + audio_seconds,
-            cost=EntityStat.cost + cost,
-            last_used_at=now,
-        )
-    )
-
+    # Decided before the row is built, so the row records the decision.
+    logged_at = datetime.now(timezone.utc)
+    cutover_at = cached_cutover_at()
+    deferred = cutover_at is not None and as_utc_naive(logged_at) >= cutover_at
     log = RequestLog(
-        time=datetime.now(timezone.utc),
+        time=logged_at,
         entity_id=entity_id,
         model_config_id=model_config_id,
         model_endpoint_id=endpoint_id,
@@ -810,9 +908,99 @@ def update_stats(
         # nothing had been sent yet when the view ran.
         send_blocked=timing.blocked_seconds(),
         outcome=outcome,
+        api_key_id=api_key_id,
+        stats_deferred=True if deferred else None,
     )
     db.session.add(log)
     db.session.flush()
+
+    if deferred:
+        return
+
+    now = utcnow()
+
+    _bump(
+        ModelStat,
+        {"entity_id": entity_id, "model_config_id": model_config_id, "source": source},
+        {
+            "requests": ModelStat.requests + 1,
+            "input_tokens": ModelStat.input_tokens + input_tokens,
+            "output_tokens": ModelStat.output_tokens + output_tokens,
+            "audio_seconds": ModelStat.audio_seconds + audio_seconds,
+            "cost": ModelStat.cost + cost,
+            "last_used_at": now,
+        },
+        {
+            "requests": 1, "input_tokens": input_tokens, "output_tokens": output_tokens,
+            "audio_seconds": audio_seconds, "cost": cost, "last_used_at": now,
+        },
+    )
+    _bump(
+        EntityStat,
+        {"entity_id": entity_id},
+        {
+            "requests": EntityStat.requests + 1,
+            "input_tokens": EntityStat.input_tokens + input_tokens,
+            "output_tokens": EntityStat.output_tokens + output_tokens,
+            "audio_seconds": EntityStat.audio_seconds + audio_seconds,
+            "cost": EntityStat.cost + cost,
+            "last_used_at": now,
+        },
+        {
+            "requests": 1, "input_tokens": input_tokens, "output_tokens": output_tokens,
+            "audio_seconds": audio_seconds, "cost": cost, "last_used_at": now,
+        },
+    )
+
+
+def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int, cost: float, audio_seconds: int = 0):
+    db.session.execute(
+        sa_update(APIKey)
+        .where(APIKey.id == api_key_id)
+        .values(
+            requests=APIKey.requests + 1,
+            input_tokens=APIKey.input_tokens + input_tokens,
+            output_tokens=APIKey.output_tokens + output_tokens,
+            audio_seconds=APIKey.audio_seconds + audio_seconds,
+            cost=APIKey.cost + Decimal(str(cost)),
+            last_used_at=utcnow(),
+        )
+    )
+
+
+def bill_request(entity_id: int, model_config_id: int, source: str, input_tokens: int, output_tokens: int,
+                 cost: float, *, effective, api_key_id: int = None, audio_seconds: int = 0, **log_fields):
+    """Bill one request in a single transaction, taking the hot row locks last, and commit.
+
+    The only billing write path; every caller goes through it. The order is fixed:
+
+    1. INSERT ``request_logs`` (flushed) — takes no row lock anyone waits on
+    2. UPDATE ``model_stats`` (before the stats cutover only)
+    3. UPDATE ``entity_stats`` (before the stats cutover only)
+    4. UPDATE ``api_keys`` (when ``api_key_id`` is given)
+    5. UPDATE ``entity_balances`` — the per-entity lock every request of the entity queues on
+    6. COMMIT
+
+    so the balance lock is held only for the commit, and because every billing
+    transaction takes its locks in the same order, two of them can never deadlock.
+    After the stats cutover steps 2 and 3 are skipped and step 1 writes the row
+    with ``stats_deferred`` TRUE: the stats fold adds that row into those totals
+    later, so the transaction writes only ``request_logs``, ``api_keys`` and
+    ``entity_balances``.
+    A new billing write must be added here, in this order, not beside a call.
+
+    ``effective`` is the coin pool limit resolved during preflight, passed on to
+    subtract_coins (``_UNSET`` re-resolves it there). ``api_key_id`` is both
+    recorded on the step 1 row and used for step 4; leave it None for chat.
+    ``log_fields`` are the remaining update_stats keywords (endpoint, timing,
+    outcome, ...).
+    """
+    update_stats(entity_id, model_config_id, source, input_tokens, output_tokens, cost,
+                 audio_seconds=audio_seconds, api_key_id=api_key_id, **log_fields)
+    if api_key_id is not None:
+        _record_api_key_usage(api_key_id, input_tokens, output_tokens, cost, audio_seconds=audio_seconds)
+    subtract_coins(entity_id, model_config_id, cost, effective=effective)
+    db.session.commit()
 
 
 # Characters per token for the prompt fallback estimate. The upstream reports the
@@ -865,7 +1053,7 @@ def estimate_abort_usage(usage, messages, content_deltas, in_cost_per_million, o
 
 def record_aborted_request(entity_id, model_config_id, source, endpoint_id=None, duration=0.0,
                            input_tokens=0, output_tokens=0, cost=0.0,
-                           effective=_UNSET, record_extra=None,
+                           effective=_UNSET, api_key_id=None,
                            timing=RequestTiming(), upstream_t0=None, ttft=None, ttft_visible=None):
     """Bill and log a request_logs row for a stream the client abandoned mid-response.
 
@@ -879,30 +1067,26 @@ def record_aborted_request(entity_id, model_config_id, source, endpoint_id=None,
     That replaces the old "cost == 0 identifies an abort" convention, which stopped
     being unique the moment aborted requests started carrying a real cost.
 
-    ``record_extra``, if given, runs inside the same session before the commit, for
-    accounting the caller owns (the API path's per-API-key totals).
+    ``api_key_id``, for an API request, also bills the key's running totals.
 
     Best-effort: never raise into the (already closing) generator.
     """
     try:
-        subtract_coins(entity_id, model_config_id, cost, effective=effective)
-        update_stats(
+        bill_request(
             entity_id, model_config_id, source,
             input_tokens, output_tokens, cost,
+            effective=effective, api_key_id=api_key_id,
             endpoint_id=endpoint_id, duration=duration, aborted=True,
             timing=timing, upstream_t0=upstream_t0,
             ttft=ttft, ttft_visible=ttft_visible, outcome="disconnect",
         )
-        if record_extra is not None:
-            record_extra()
-        db.session.commit()
     except Exception:
         logger.exception("failed to record aborted request (entity_id=%s, model=%s)", entity_id, model_config_id)
         db.session.rollback()
 
 
 def record_stream_abort(app, *, billed, entity_id, model_config_id, source, endpoint_id, stream_t0,
-                        input_tokens=0, output_tokens=0, cost=0.0, effective=_UNSET, record_extra=None,
+                        input_tokens=0, output_tokens=0, cost=0.0, effective=_UNSET, api_key_id=None,
                         reason="disconnect", timing=RequestTiming(), ttft=None, ttft_visible=None):
     """Abort accounting for a streaming generator that ends before billing.
 
@@ -935,7 +1119,7 @@ def record_stream_abort(app, *, billed, entity_id, model_config_id, source, endp
                 entity_id, model_config_id, source,
                 endpoint_id=endpoint_id, duration=time.monotonic() - stream_t0,
                 input_tokens=input_tokens, output_tokens=output_tokens, cost=cost,
-                effective=effective, record_extra=record_extra,
+                effective=effective, api_key_id=api_key_id,
                 timing=timing, upstream_t0=stream_t0,
                 ttft=ttft, ttft_visible=ttft_visible,
             )
@@ -950,6 +1134,7 @@ def send_message_stream(
     source: str = "chat",
     effective=_UNSET,
     model_config_id: int = None,
+    resolved: StreamTarget = None,
 ):
     """Stream messages to LLM. Yields (chunk_text, None) for each token, then (None, result_dict).
 
@@ -961,6 +1146,12 @@ def send_message_stream(
     re-resolving ``model``, so a config reload that retargets an alias after the
     view's access check can never route or bill this request against a different
     (possibly private) model. ``model`` is still used for display/error strings.
+
+    ``resolved`` is the model and endpoint the view already picked, as a
+    StreamTarget. When set, the generator does no model or endpoint lookup at
+    all, so it checks out no DB connection before the first token. Without it,
+    the generator resolves them itself (by ``model_config_id``, else by name)
+    and re-checks there that the model is still active.
 
     Must be *called* inside an application context (view code); the returned
     generator runs without one. Each DB phase pushes its own short-lived app
@@ -980,37 +1171,32 @@ def send_message_stream(
     # Same reason as the disconnect Event: the arrival marks live in the WSGI
     # environ and only the view can reach them.
     timing = capture_request_timing()
-    return _send_message_stream(app, messages, model, entity_id, source, effective, disconnected, timing, model_config_id)
+    return _send_message_stream(app, messages, model, entity_id, source, effective, disconnected, timing, model_config_id, resolved)
 
 
-def _send_message_stream(app, messages, model, entity_id, source, effective, disconnected, timing, model_config_id):
+def _send_message_stream(app, messages, model, entity_id, source, effective, disconnected, timing, model_config_id,
+                         resolved):
     with app.app_context():
-        if model_config_id is not None:
-            config = db.session.get(ModelConfig, model_config_id)
-            if config is None or not config.active:
-                raise ValueError(f"Unknown or inactive model: {model}")
-        else:
-            config = resolve_model_config(model)
-            if config is None:
-                raise ValueError(f"Unknown or inactive model: {model}")
+        if resolved is None:
+            if model_config_id is not None:
+                config = db.session.get(ModelConfig, model_config_id)
+                if config is None or not config.active:
+                    raise ValueError(f"Unknown or inactive model: {model}")
+            else:
+                config = resolve_model_config(model)
+                if config is None:
+                    raise ValueError(f"Unknown or inactive model: {model}")
 
-        endpoint = get_next_endpoint(config.id)
-        if endpoint is None:
-            observe_rejection_quietly("no_healthy_endpoint", source, model)
-            raise RuntimeError(f"No healthy endpoints for model '{model}'")
+            endpoint = get_next_endpoint(config.id)
+            if endpoint is None:
+                observe_rejection_quietly("no_healthy_endpoint", source, model)
+                raise RuntimeError(f"No healthy endpoints for model '{model}'")
 
-        # Extract all scalars from ORM objects before the context exits. The
-        # streaming LLM call can take minutes; the context teardown releases the
-        # session (and its pool connection) before the first token is awaited.
-        # Forward the endpoint's override name, else the CANONICAL model name —
-        # never an alias a client may have requested.
-        remote_model = endpoint.model_name or config.model_name
-        ep_api_key   = endpoint.api_key
-        ep_url       = endpoint.url
-        ep_id        = endpoint.id
-        mc_id        = config.id
-        mc_in_cost   = float(config.input_cost_per_million)
-        mc_out_cost  = float(config.output_cost_per_million)
+            # Extract all scalars from ORM objects before the context exits. The
+            # streaming LLM call can take minutes; the context teardown releases the
+            # session (and its pool connection) before the first token is awaited.
+            resolved = stream_target(config, endpoint)
+        remote_model, ep_url, ep_api_key, ep_id, mc_id, mc_in_cost, mc_out_cost = resolved
         # Derive the per-entity prefix-cache salt while a context is current;
         # the create() call below runs context-free (no current_app). See #36.
         cache_salt   = cache_salt_for_entity(entity_id) if entity_id is not None else None
@@ -1120,15 +1306,14 @@ def _send_message_stream(app, messages, model, entity_id, source, effective, dis
         if entity_id is not None:
             phase = "billing"
             with app.app_context():
-                subtract_coins(entity_id, mc_id, cost, effective=effective)
-                update_stats(
+                bill_request(
                     entity_id, mc_id, source,
                     input_tokens, output_tokens, cost,
+                    effective=effective,
                     endpoint_id=ep_id, duration=duration,
                     timing=timing, upstream_t0=t0,
                     ttft=t_first_any, ttft_visible=t_first, outcome="ok",
                 )
-                db.session.commit()
             billed = True
     except GeneratorExit:
         # Client disconnected mid-stream before billing — bill what was consumed

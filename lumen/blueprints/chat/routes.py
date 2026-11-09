@@ -8,8 +8,6 @@ import filetype
 import pypdf
 from flask import Blueprint, Response, current_app, jsonify, render_template, request, session
 from sqlalchemy import and_, func, or_, select
-from sqlalchemy import update as sa_update
-from sqlalchemy.exc import IntegrityError
 from werkzeug.utils import secure_filename
 
 from lumen.decorators import login_required
@@ -20,9 +18,18 @@ from lumen.models.entity_stat import EntityStat
 from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
+from lumen.services import model_cache
 from lumen.services.live_state import get_live_state
-from lumen.services.llm import bulk_model_access_info, check_coin_budget, coin_retry_after, get_pool_limit, model_notices, send_message_stream
-from lumen.services.model_resolver import resolve_model_config
+from lumen.services.llm import (
+    _bump,
+    bulk_model_access_info,
+    check_coin_budget,
+    get_pool_limit,
+    model_notices,
+    observe_rejection_quietly,
+    send_message_stream,
+    stream_target,
+)
 from lumen.services.wsgi_disconnect import client_disconnect_event
 from lumen.timeutils import utcnow
 
@@ -66,18 +73,13 @@ def _count_conversation_started(entity_id):
     """Bump the persistent conversation counter in entity_stats.
 
     The counter survives conversation deletion and disabled storage. Uses the
-    same race-safe ensure-row + atomic-increment pattern as llm.py's stats.
+    same UPDATE-first, ON CONFLICT-on-first-use helper as llm.py's stats.
     """
-    if db.session.execute(select(EntityStat).filter_by(entity_id=entity_id)).scalar_one_or_none() is None:
-        try:
-            with db.session.begin_nested():
-                db.session.add(EntityStat(entity_id=entity_id, requests=0, input_tokens=0, output_tokens=0, cost=0))
-        except IntegrityError:
-            pass
-    db.session.execute(
-        sa_update(EntityStat)
-        .where(EntityStat.entity_id == entity_id)
-        .values(conversations=EntityStat.conversations + 1)
+    _bump(
+        EntityStat,
+        {"entity_id": entity_id},
+        {"conversations": EntityStat.conversations + 1},
+        {"requests": 0, "input_tokens": 0, "output_tokens": 0, "cost": 0, "conversations": 1},
     )
 
 
@@ -177,6 +179,13 @@ def chat_upload():
     return jsonify({"type": "doc", "filename": safe_name, "text": text})
 
 
+def _snapshot_unavailable():
+    """503 for a chat message that arrived while the model snapshot cannot be
+    loaded. Never served from an over-age snapshot (see model_cache._current)."""
+    logger.exception("model snapshot unavailable")
+    return jsonify({"error": "Models are temporarily unavailable, try again shortly"}), HTTPStatus.SERVICE_UNAVAILABLE
+
+
 @chat_bp.route("/chat/stream", methods=["POST"])
 @login_required
 @limiter.limit(_chat_limit, key_func=_chat_entity_id)
@@ -202,12 +211,15 @@ def chat_stream():
 
     entity_id = session["entity_id"]
 
-    model_config = resolve_model_config(model)
+    try:
+        model_config = model_cache.resolve(model)
+    except model_cache.SnapshotUnavailable:
+        return _snapshot_unavailable()
     if not model_config:
         return jsonify({"error": f"Unknown model: {model}"}), HTTPStatus.BAD_REQUEST
 
-    ok, code, msg, effective, _ = check_coin_budget(
-        entity_id, model_config.id, source="chat", model_name=model,
+    ok, code, msg, effective, _, retry_after = check_coin_budget(
+        entity_id, model_config.id, source="chat", model_name=model, model_config=model_config,
     )
     if not ok:
         if code == HTTPStatus.TOO_MANY_REQUESTS:
@@ -218,14 +230,23 @@ def chat_stream():
             # {"error": "<string>"} because chat.html renders `data.error`
             # directly (chat.html:710) -- nesting it the way /v1 does would
             # put "[object Object]" in the user's chat window.
-            retry_after = coin_retry_after(entity_id)
             if retry_after is not None:
                 return jsonify({"error": msg}), code, {"Retry-After": str(retry_after)}
         return jsonify({"error": msg}), code
 
-    store_conversations = db.session.execute(
-        select(Entity.store_conversations).where(Entity.id == entity_id)
-    ).scalar_one()
+    # Picked here, not in the generator, so the stream needs no DB phase of its
+    # own and a missing endpoint is a 503 before streaming, as on /v1.
+    try:
+        endpoint = model_cache.next_endpoint(model_config.id)
+    except model_cache.SnapshotUnavailable:
+        return _snapshot_unavailable()
+    if endpoint is None:
+        observe_rejection_quietly("no_healthy_endpoint", "chat", model)
+        return jsonify({"error": f"No healthy endpoints for model '{model}'"}), HTTPStatus.SERVICE_UNAVAILABLE
+    resolved = stream_target(model_config, endpoint)
+
+    # login_required already loaded this Entity; the identity map answers it.
+    store_conversations = db.session.get(Entity, entity_id).store_conversations
     if not store_conversations:
         conversation_id = None
     # With storage disabled there is no conversation row to signal a new chat;
@@ -249,7 +270,7 @@ def chat_stream():
     # push short-lived app contexts around the DB work — never across a yield.
     app = current_app._get_current_object()
     disconnected = client_disconnect_event()
-    llm_stream = send_message_stream(messages, model, entity_id=entity_id, source="chat", effective=effective, model_config_id=model_config.id)
+    llm_stream = send_message_stream(messages, model, entity_id=entity_id, source="chat", effective=effective, resolved=resolved)
     # Admitted last, once every rejection above has passed: a refused request
     # must never appear in flight. The ticket rides in the closure like the
     # disconnect Event, and generate()'s finally releases it. Nothing between
@@ -303,6 +324,7 @@ def chat_stream():
                 # client disconnected, this generator may never be closed.
                 with app.app_context():
                     conv = None
+                    started = False
                     if conversation_id:
                         conv = db.session.execute(
                             select(Conversation).filter_by(id=conversation_id, entity_id=entity_id)
@@ -315,7 +337,7 @@ def chat_stream():
                         conv = Conversation(entity_id=entity_id, title=title, model=model)
                         db.session.add(conv)
                         db.session.flush()
-                        _count_conversation_started(entity_id)
+                        started = True
 
                     user_msg = next((m for m in reversed(messages) if m["role"] == "user"), None)
                     if user_msg:
@@ -342,6 +364,12 @@ def chat_stream():
                     # check out a fresh connection to refresh it, and that connection
                     # would still be held during the final yield below.
                     conv_id = conv.id
+                    if started:
+                        # The entity_stats row lock is the one every request of
+                        # this entity takes, so it goes last: flush everything
+                        # else first, and the lock covers only the commit.
+                        db.session.flush()
+                        _count_conversation_started(entity_id)
                     db.session.commit()
 
                 result["conversation_id"] = conv_id

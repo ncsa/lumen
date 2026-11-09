@@ -3,7 +3,7 @@
   'use strict';
 
   const STATUS_TEXT = { ok: 'ok', degraded: 'degraded', down: 'down', unknown: 'no data' };
-  const STATUS_COLOR = { ok: '#1d7a3e', degraded: '#b5300c', down: '#6b0f0f', unknown: '#c8c8c8' };
+  const STATUS_COLOR = { ok: '#1d7a3e', degraded: '#e0a800', down: '#c62828', unknown: '#c8c8c8' };
   const dash = '—';
   const isNum = v => typeof v === 'number' && isFinite(v);
   const fmtInt = v => isNum(v) ? Math.round(v).toLocaleString() : dash;
@@ -36,12 +36,41 @@
   // but was not ok, so it is drawn as degraded, the way uptime counts it.
   const drawn = s => STATUS_COLOR[s] ? s : 'degraded';
 
-  function strip(statuses) {
+  // When a strip cell starts, in local time: "26 Oct 14:05", or "26 Oct 2026" for a 1y day ("2026-10-26").
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const pad = n => String(n).padStart(2, '0');
+  function fmtCellTime(iso) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+      const [y, m, d] = iso.split('-').map(Number);
+      return `${d} ${MONTHS[m - 1]} ${y}`;
+    }
+    const t = new Date(iso);
+    return `${t.getDate()} ${MONTHS[t.getMonth()]} ${pad(t.getHours())}:${pad(t.getMinutes())}`;
+  }
+  const MAX_LISTED = 5;
+
+  // `times` (one per cell, optional) gives each cell that is not ok (degraded, down or no data) a
+  // title with its time and status; the strip's aria-label lists those periods, at most MAX_LISTED.
+  function strip(statuses, times) {
     const counts = {};
     statuses.forEach(s => { counts[drawn(s)] = (counts[drawn(s)] || 0) + 1; });
     const summary = Object.entries(counts).map(([s, n]) => `${n} ${STATUS_TEXT[s]}`).join(', ');
-    const node = el('div', { class: 'strip', role: 'img', 'aria-label': `Status buckets: ${summary}`, title: summary });
-    statuses.forEach(s => node.append(el('span', { class: `strip-cell s-${drawn(s)}` })));
+    const periods = [];
+    const cells = statuses.map((s, i) => {
+      const attrs = { class: `strip-cell s-${drawn(s)}` };
+      if (times && times[i] && drawn(s) !== 'ok') {
+        attrs.title = `${fmtCellTime(times[i])} – ${STATUS_TEXT[drawn(s)]}`;
+        periods.push(attrs.title);
+      }
+      return el('span', attrs);
+    });
+    let label = `Status buckets: ${summary}`;
+    if (periods.length) {
+      const more = periods.length > MAX_LISTED ? `, +${periods.length - MAX_LISTED} more` : '';
+      label += `. Not ok: ${periods.slice(0, MAX_LISTED).join(', ')}${more}`;
+    }
+    const node = el('div', { class: 'strip', role: 'img', 'aria-label': label, title: summary });
+    cells.forEach(c => node.append(c));
     return node;
   }
 

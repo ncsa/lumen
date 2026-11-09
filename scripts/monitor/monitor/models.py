@@ -15,6 +15,13 @@ from monitor.db import utcnow
 SOURCES = ("models.dev", "lumen", "hardware")
 
 
+def token_sum(input_tokens, output_tokens):
+    """Input + output tokens, or None when either is unknown."""
+    if input_tokens is None or output_tokens is None:
+        return None
+    return input_tokens + output_tokens
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -47,9 +54,11 @@ class DailyStat(Base):
     input_price: Mapped[Optional[float]] = mapped_column(Float, comment="Lumen input price, $/M tokens")
     output_price: Mapped[Optional[float]] = mapped_column(Float, comment="Lumen output price, $/M tokens")
     requests: Mapped[Optional[float]] = mapped_column(Float, comment="Requests during the day (running total, may be prorated)")
-    tokens: Mapped[Optional[float]] = mapped_column(Float, comment="Input + output tokens during the day (running total, may be prorated)")
+    input_tokens: Mapped[Optional[float]] = mapped_column(Float, comment="Input tokens during the day (running total, may be prorated)")
+    output_tokens: Mapped[Optional[float]] = mapped_column(Float, comment="Output tokens during the day (running total, may be prorated)")
     covered_until: Mapped[Optional[datetime]] = mapped_column(DateTime, comment="Requests are counted up to this time (naive UTC)")
-    tokens_covered_until: Mapped[Optional[datetime]] = mapped_column(DateTime, comment="Tokens are counted up to this time (naive UTC)")
+    input_tokens_covered_until: Mapped[Optional[datetime]] = mapped_column(DateTime, comment="Input tokens are counted up to this time (naive UTC)")
+    output_tokens_covered_until: Mapped[Optional[datetime]] = mapped_column(DateTime, comment="Output tokens are counted up to this time (naive UTC)")
     estimated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, comment="Part of the totals was backfilled from a longer window")
     final: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, comment="The day has closed and the row no longer changes")
     configured: Mapped[Optional[int]] = mapped_column(Integer, comment="Configured instances at the last probe")
@@ -58,6 +67,18 @@ class DailyStat(Base):
     polls: Mapped[int] = mapped_column(Integer, nullable=False, default=0, comment="Probes that listed the model during the day")
     polls_ok: Mapped[int] = mapped_column(Integer, nullable=False, default=0, comment="Probes where the model status was ok")
     healthy_sum: Mapped[int] = mapped_column(Integer, nullable=False, default=0, comment="Sum of healthy instances over those probes")
+
+    @property
+    def tokens(self) -> float | None:
+        """Input + output tokens; None until both are counted."""
+        return token_sum(self.input_tokens, self.output_tokens)
+
+    @property
+    def tokens_covered_until(self) -> datetime | None:
+        """Tokens are counted up to the earlier of the input and output watermarks."""
+        if self.input_tokens_covered_until is None or self.output_tokens_covered_until is None:
+            return None
+        return min(self.input_tokens_covered_until, self.output_tokens_covered_until)
 
     # source = hardware: cost of running the model and the inputs used for it
     daily_cost: Mapped[Optional[float]] = mapped_column(Float, comment="Hardware + energy cost for the day, $")
@@ -95,4 +116,10 @@ class Sample(Base):
     configured: Mapped[Optional[int]] = mapped_column(Integer, comment="Configured instances")
     healthy: Mapped[Optional[int]] = mapped_column(Integer, comment="Healthy instances")
     requests_last_minute: Mapped[Optional[int]] = mapped_column(Integer, comment="Requests in the minute before the probe")
-    tokens_last_minute: Mapped[Optional[int]] = mapped_column(Integer, comment="Tokens in the minute before the probe, when Lumen reports them")
+    input_tokens_last_minute: Mapped[Optional[int]] = mapped_column(Integer, comment="Input tokens in the minute before the probe, when Lumen reports them")
+    output_tokens_last_minute: Mapped[Optional[int]] = mapped_column(Integer, comment="Output tokens in the minute before the probe, when Lumen reports them")
+
+    @property
+    def tokens_last_minute(self) -> int | None:
+        """Input + output tokens in the minute before the probe; None until both are reported."""
+        return token_sum(self.input_tokens_last_minute, self.output_tokens_last_minute)

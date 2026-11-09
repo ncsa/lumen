@@ -8,15 +8,20 @@ refresher thread while it is parked — asserting after a pass completes passes
 under the buggy hoisted-context shape too.
 """
 import ast
+import dataclasses
+import logging
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 from flask import has_app_context
+from sqlalchemy import text
 
 from lumen.extensions import db
-from lumen.services import metrics_snapshot
+from lumen.services import metrics_snapshot, timescale_health
+from lumen.services.timescale_health import Aggregate, Job, TimescaleHealth
 
 MODULE_PATH = Path(metrics_snapshot.__file__)
 
@@ -27,27 +32,6 @@ def restore_snapshot():
     original = metrics_snapshot._snapshot
     yield
     metrics_snapshot._snapshot = original
-
-
-@pytest.fixture
-def stopped_refresher():
-    """Leave the test's refresher the only one in the process, and stop it after.
-
-    Stopping first matters: ``create_app`` starts a refresher for the session
-    fixture's app, and ``pool.checkedout()`` is process-global, so a pass on that
-    thread makes the assertion below read a checkout the refresher under test
-    does not own (observed as a 1-in-3 flake).
-
-    Stopping after matters because the thread has to end deterministically.
-    Throwing into it from a patched ``_sleep`` (``raise SystemExit``) also ends
-    it, but pytest replaces ``threading.excepthook`` — which normally swallows
-    ``SystemExit`` — so every such test reports a
-    PytestUnhandledThreadExceptionWarning, and real thread failures then hide
-    among the noise.
-    """
-    metrics_snapshot.stop_snapshot_refresher()
-    yield
-    metrics_snapshot.stop_snapshot_refresher()
 
 
 def test_refresh_populates_every_snapshot_field(app, restore_snapshot):
@@ -85,6 +69,19 @@ def test_refresh_populates_every_snapshot_field(app, restore_snapshot):
     assert (snapshot.users_active, snapshot.users_total) == (1, 2)
     # get_snapshot() serves what the pass published, without touching the DB.
     assert metrics_snapshot.get_snapshot() is snapshot
+
+
+def test_a_refresh_pass_runs_three_statements(app, restore_snapshot):
+    """Usage, endpoint health and one entity count: active and total users share a statement."""
+    from tests.routes.test_metrics_routes import _count_statements_on_this_thread
+
+    with app.app_context():
+        statements, unsubscribe = _count_statements_on_this_thread(db.engine)
+        try:
+            metrics_snapshot.refresh_snapshot()
+        finally:
+            unsubscribe()
+    assert len(statements) == 3, statements
 
 
 def test_refresher_holds_no_connection_and_no_context_while_sleeping(
@@ -309,3 +306,314 @@ def test_create_app_starts_the_refresher_in_every_serving_process():
         f"lumen/__init__.py:{node.lineno}: start_snapshot_refresher() must be guarded only "
         "for a non-serving Flask CLI, never by BACKGROUND_WORKER or api.prometheus.enabled"
     )
+
+
+@pytest.mark.parametrize("prime_fails", [False, True])
+def test_create_app_tells_the_refresher_whether_startup_primed(
+    tmp_path, monkeypatch, restore_snapshot, prime_fails,
+):
+    """A primed startup must not be repeated by the refresher's first pass; a failed one must."""
+    import config as config_module
+    from lumen import create_app
+    from tests.unit.test_startup_sync_recovery import _write_config
+
+    monkeypatch.setattr(config_module.Config, "CONFIG_YAML", _write_config(tmp_path))
+    if prime_fails:
+        def boom():
+            raise RuntimeError("database down")
+        monkeypatch.setattr(metrics_snapshot, "refresh_snapshot", boom)
+    seen = []
+    monkeypatch.setattr(metrics_snapshot, "start_snapshot_refresher",
+                        lambda app, **kw: seen.append(kw))
+
+    create_app()
+
+    assert seen == [{"primed": not prime_fails}]
+
+
+# --- TimescaleDB health (#173) ---------------------------------------------------
+
+_FINISHED = datetime(2026, 10, 30, 5, 0)
+
+
+def _health(failed=(), failures=None, drop=(), materialized_only=()):
+    """A TimescaleHealth with every expected object, adjusted by the arguments."""
+    failures = failures or {}
+    aggregates = tuple(
+        Aggregate(view, view in materialized_only, f"_materialized_hypertable_{i}")
+        for i, view in enumerate(timescale_health.AGGREGATES)
+    )
+    jobs = tuple(
+        (name, Job(1000 + i, proc, target, "Failed" if name in failed else "Success",
+                   failures.get(name, 0), _FINISHED))
+        for i, (name, (proc, target)) in enumerate(timescale_health.EXPECTED_JOBS.items())
+        if name not in drop
+    )
+    return TimescaleHealth(
+        installed_version="2.27.2", available_version="2.27.2",
+        request_logs_hypertable=True, aggregates=aggregates, jobs=jobs,
+    )
+
+
+def _timescale_messages(caplog):
+    return [(r.levelno, r.getMessage()) for r in caplog.records
+            if r.name == metrics_snapshot.logger.name and "TimescaleDB" in r.getMessage()]
+
+
+def _run_passes(app, monkeypatch, count, primed=False):
+    """Run the real refresher loop for *count* passes; returns the passes that checked health.
+
+    With *primed* the initial sleep is not counted as a pass.
+    """
+    skipped = 1 if primed else 0
+    checked, sleeps = [], []
+    monkeypatch.setattr(metrics_snapshot, "refresh_timescale_health",
+                        lambda: checked.append(len(sleeps) - skipped))
+
+    def fake_sleep(seconds, stop):
+        sleeps.append(1)
+        if len(sleeps) >= count + skipped:
+            stop.set()
+
+    monkeypatch.setattr(metrics_snapshot, "_sleep", fake_sleep)
+    thread = metrics_snapshot.start_snapshot_refresher(app, primed=primed)
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+    return checked
+
+
+def test_health_is_checked_on_the_first_pass_then_every_300s_of_passes(
+    app, restore_snapshot, stopped_refresher, monkeypatch,
+):
+    original = app.config.get("POOL_TOPOLOGY")
+    try:
+        # 60 s passes: ceil(300 / 60) = 5.
+        app.config["POOL_TOPOLOGY"] = {"workers": 1, "replicas": 1}
+        assert _run_passes(app, monkeypatch, 11) == [0, 5, 10]
+        # 4 workers: 120 s passes, ceil(300 / 120) = 3.
+        app.config["POOL_TOPOLOGY"] = {"workers": 4, "replicas": 1}
+        assert _run_passes(app, monkeypatch, 7) == [0, 3, 6]
+    finally:
+        app.config["POOL_TOPOLOGY"] = original
+
+
+def test_a_primed_refresher_keeps_the_health_cadence_after_its_initial_sleep(
+    app, restore_snapshot, stopped_refresher, monkeypatch,
+):
+    original = app.config.get("POOL_TOPOLOGY")
+    try:
+        app.config["POOL_TOPOLOGY"] = {"workers": 1, "replicas": 1}
+        assert _run_passes(app, monkeypatch, 11, primed=True) == [0, 5, 10]
+    finally:
+        app.config["POOL_TOPOLOGY"] = original
+
+
+def test_a_primed_refresher_sleeps_before_its_first_pass(
+    app, restore_snapshot, stopped_refresher, monkeypatch,
+):
+    """Startup has just refreshed the snapshot and checked TimescaleDB; doing both again
+    in the same second is the duplicate work this avoids."""
+    calls = []
+    monkeypatch.setattr(metrics_snapshot, "refresh_snapshot", lambda: calls.append("snapshot"))
+    monkeypatch.setattr(metrics_snapshot, "refresh_timescale_health", lambda: calls.append("health"))
+
+    def fake_sleep(seconds, stop):
+        calls.append("sleep")
+        if calls.count("sleep") >= 2:
+            stop.set()
+
+    monkeypatch.setattr(metrics_snapshot, "_sleep", fake_sleep)
+    thread = metrics_snapshot.start_snapshot_refresher(app, primed=True)
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert calls == ["sleep", "snapshot", "health", "sleep"]
+
+
+def test_a_raising_health_check_leaves_the_snapshot_fresh(
+    app, restore_snapshot, stopped_refresher, monkeypatch, caplog,
+):
+    """The check runs after the snapshot, in its own try: it can neither delay nor stale it,
+    and a check that keeps failing the same way is logged once."""
+    metrics_snapshot._snapshot = metrics_snapshot._UNPRIMED
+    snapshots = []
+
+    def boom():
+        snapshots.append(metrics_snapshot.get_snapshot())
+        raise RuntimeError("catalog unreachable")
+
+    monkeypatch.setattr(metrics_snapshot, "refresh_timescale_health", boom)
+    monkeypatch.setattr(metrics_snapshot, "_TIMESCALE_HEALTH_INTERVAL", 1.0)  # due every pass
+
+    def fake_sleep(seconds, stop):
+        if len(snapshots) >= 3:
+            stop.set()
+
+    monkeypatch.setattr(metrics_snapshot, "_sleep", fake_sleep)
+    with caplog.at_level("WARNING"):
+        thread = metrics_snapshot.start_snapshot_refresher(app)
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+
+    # Every check saw a snapshot published by its own pass.
+    assert all(s.primed for s in snapshots)
+    assert len({s.captured_at for s in snapshots}) == 3
+    assert metrics_snapshot.get_snapshot() is snapshots[-1]
+    assert metrics_snapshot.get_timescale_health() is None
+    failures = [r for r in caplog.records if "Could not check TimescaleDB health" in r.getMessage()]
+    assert len(failures) == 1
+    assert "metrics snapshot refresh error" not in caplog.text
+
+
+def test_health_check_holds_no_connection_and_no_context_while_sleeping(
+    app, restore_snapshot, stopped_refresher, monkeypatch,
+):
+    """The health check shares the pass's one app context, so it is released before the sleep too."""
+    with app.app_context():
+        pool = db.engine.pool
+        monkeypatch.setattr(db.engine.dialect, "name", "postgresql")
+
+    def check(session):
+        session.execute(text("SELECT 1"))  # takes a pooled connection, as the real check does
+        return _health()
+
+    monkeypatch.setattr(timescale_health, "check", check)
+    observed = {}
+
+    def fake_sleep(seconds, stop):
+        observed["checked_out"] = pool.checkedout()
+        observed["has_app_context"] = has_app_context()
+        stop.set()
+
+    monkeypatch.setattr(metrics_snapshot, "_sleep", fake_sleep)
+    thread = metrics_snapshot.start_snapshot_refresher(app)
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+
+    assert metrics_snapshot.get_timescale_health().health == _health()
+    assert observed == {"checked_out": 0, "has_app_context": False}
+
+
+def test_sqlite_publishes_no_health(app):
+    with app.app_context():
+        assert metrics_snapshot.refresh_timescale_health() is None
+    assert metrics_snapshot.get_timescale_health() is None
+
+
+def test_health_check_is_still_a_separate_cadence_from_the_snapshot_pass():
+    """The TimescaleHealth must not become a snapshot field: a pass is capped at five statements."""
+    fields = {f.name for f in dataclasses.fields(metrics_snapshot.MetricsSnapshot)}
+    assert not any("timescale" in name for name in fields)
+
+
+def test_a_persisting_problem_is_logged_once(caplog):
+    broken = _health(drop=("refresh:request_counts_hourly",))
+    with caplog.at_level("INFO"):
+        metrics_snapshot._log_health_changes(_health(), broken)
+        metrics_snapshot._log_health_changes(broken, broken)
+        metrics_snapshot._log_health_changes(broken, broken)
+    assert _timescale_messages(caplog) == [(
+        logging.WARNING,
+        "TimescaleDB: Background job refresh:request_counts_hourly "
+        "(policy_refresh_continuous_aggregate on request_counts_hourly) is missing.",
+    )]
+
+
+def test_without_a_baseline_every_problem_is_new(caplog):
+    """The startup check failed, so nothing was logged yet: the first check logs it all."""
+    broken = TimescaleHealth(installed_version=None, available_version="2.27.2")
+    with caplog.at_level("INFO"):
+        metrics_snapshot._log_health_changes(None, broken)
+        metrics_snapshot._log_health_changes(None, _health())
+    assert _timescale_messages(caplog) == [
+        (logging.ERROR, f"TimescaleDB: {timescale_health.EXTENSION_MISSING}"),
+    ]
+
+
+def test_a_cleared_problem_is_logged(caplog):
+    broken = _health(materialized_only=("request_metrics_1m",))
+    with caplog.at_level("INFO"):
+        metrics_snapshot._log_health_changes(broken, _health())
+    [(level, message)] = _timescale_messages(caplog)
+    assert level == logging.INFO
+    assert message.startswith("TimescaleDB problem cleared: Continuous aggregate request_metrics_1m")
+
+
+def test_rising_failures_are_logged_even_when_the_last_run_succeeded(caplog):
+    """A job that failed and then recovered between two checks only shows as a rising count."""
+    name = "compression:request_logs"
+    with caplog.at_level("INFO"):
+        metrics_snapshot._log_health_changes(_health(failures={name: 2}), _health(failures={name: 5}))
+        metrics_snapshot._log_health_changes(_health(failures={name: 5}), _health(failures={name: 5}))
+    [(level, message)] = _timescale_messages(caplog)
+    assert level == logging.WARNING
+    job_id = 1000 + list(timescale_health.EXPECTED_JOBS).index(name)  # as _health numbers them
+    assert f"compression:request_logs (job {job_id}) failed 3 time(s) since the last check; 5 failures" in message
+
+
+def test_a_failing_job_is_logged_again_only_when_its_count_rises(caplog):
+    name = "refresh:request_metrics_1m"
+    first = _health(failed=(name,), failures={name: 1})
+    again = _health(failed=(name,), failures={name: 2})
+    with caplog.at_level("INFO"):
+        metrics_snapshot._log_health_changes(_health(), first)
+        metrics_snapshot._log_health_changes(first, first)
+        metrics_snapshot._log_health_changes(first, again)
+    messages = [m for _, m in _timescale_messages(caplog)]
+    assert len(messages) == 2
+    assert messages[0].endswith("failed its last run; 1 failures in total.")
+    assert messages[1].endswith("failed its last run; 2 failures in total.")
+
+
+def test_request_logs_retention_appearing_later_is_an_error(caplog):
+    """The same level the startup tripwire logs it at."""
+    with caplog.at_level("INFO"):
+        metrics_snapshot._log_health_changes(_health(), dataclasses.replace(_health(), request_logs_retention=True))
+    assert _timescale_messages(caplog) == [
+        (logging.ERROR, f"TimescaleDB: {timescale_health.REQUEST_LOGS_RETENTION}"),
+    ]
+
+
+class _PgError(Exception):
+    def __init__(self, sqlstate):
+        super().__init__(f"sqlstate {sqlstate}")
+        self.sqlstate = sqlstate
+
+
+class _DBError(Exception):
+    def __init__(self, sqlstate):
+        super().__init__("statement failed")
+        self.orig = _PgError(sqlstate)
+
+
+def _run_one_check(app, monkeypatch, exc, health_error=None):
+    def boom():
+        raise exc
+
+    monkeypatch.setattr(metrics_snapshot, "refresh_timescale_health", boom)
+    with app.app_context():
+        return metrics_snapshot._run_pass(True, health_error)
+
+
+def test_missing_catalog_view_is_skipped_quietly_as_at_startup(app, restore_snapshot, monkeypatch, caplog):
+    with caplog.at_level("WARNING"):
+        assert _run_one_check(app, monkeypatch, _DBError("42P01")) is None
+    assert "TimescaleDB" not in caplog.text
+    assert metrics_snapshot.get_timescale_health() is None
+
+
+def test_health_check_failures_are_told_apart_by_type(app, restore_snapshot, monkeypatch, caplog):
+    with caplog.at_level("WARNING"):
+        first = _run_one_check(app, monkeypatch, RuntimeError(""))
+        second = _run_one_check(app, monkeypatch, ValueError(""), first)
+        third = _run_one_check(app, monkeypatch, ValueError(""), second)
+    assert (first, second, third) == ("RuntimeError: ", "ValueError: ", "ValueError: ")
+    failures = [r for r in caplog.records if "Could not check TimescaleDB health" in r.getMessage()]
+    assert len(failures) == 2
+
+
+def test_a_successful_check_clears_the_remembered_failure(app, restore_snapshot, monkeypatch):
+    monkeypatch.setattr(metrics_snapshot, "refresh_timescale_health", lambda: None)
+    with app.app_context():
+        assert metrics_snapshot._run_pass(True, "RuntimeError: x") is None
+        # Not due this pass: the failure is carried over unchanged.
+        assert metrics_snapshot._run_pass(False, "RuntimeError: x") == "RuntimeError: x"

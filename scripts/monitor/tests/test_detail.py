@@ -3,10 +3,10 @@ from datetime import date, datetime, timedelta
 import pytest
 
 from monitor import migrate
-from monitor.buckets import RANGES
+from monitor.buckets import RANGES, range_days
 from monitor.config import ConfigStore
 from monitor.db import make_engine, make_session_factory
-from monitor.detail import series
+from monitor.detail import _price_points, _rows_by_source, series
 from monitor.models import DailyStat, Sample
 from monitor.probe import LiveSnapshot, Snapshot
 
@@ -54,13 +54,26 @@ def add(session_factory, *rows):
         session.commit()
 
 
-def sample(minutes_ago, status="ok", rpm=None, tpm=None, healthy=1, configured=2):
+def sample(minutes_ago, status="ok", rpm=None, tpm=None, healthy=1, configured=2, itpm=None, otpm=None):
     return Sample(model=MODEL, sampled_at=NOW - timedelta(minutes=minutes_ago), status=status,
-                  configured=configured, healthy=healthy, requests_last_minute=rpm, tokens_last_minute=tpm)
+                  configured=configured, healthy=healthy, requests_last_minute=rpm,
+                  input_tokens_last_minute=itpm if tpm is None else tpm * 3 // 4,
+                  output_tokens_last_minute=otpm if tpm is None else tpm // 4)
+
+
+def split_tokens(values):
+    """Stores a combined `tokens` / `tokens_covered_until` as 3/4 input and 1/4 output tokens."""
+    if "tokens" in values:
+        tokens = values.pop("tokens")
+        values["input_tokens"] = None if tokens is None else tokens * 3 / 4
+        values["output_tokens"] = None if tokens is None else tokens / 4
+    if "tokens_covered_until" in values:
+        values["input_tokens_covered_until"] = values["output_tokens_covered_until"] = values.pop("tokens_covered_until")
+    return values
 
 
 def daily(day, source, **values):
-    return DailyStat(day=day, model=MODEL, source=source, **values)
+    return DailyStat(day=day, model=MODEL, source=source, **split_tokens(values))
 
 
 def get(env, range_key, model=MODEL):
@@ -77,13 +90,20 @@ def test_every_series_for_every_range(env, range_key):
     assert data["traffic"]["unit"] == ("day" if data["daily"] else "minute")
     assert len(data["traffic"]["points"]) == TRAFFIC_POINTS[range_key]
     assert len(data["header"]["strip"]) == STRIP_BUCKETS[range_key]
+    assert len(data["strip_times"]) == STRIP_BUCKETS[range_key]
     assert data["instances"]["unit"] == ("day" if range_key == "1y" else "bucket")
     assert len(data["instances"]["points"]) == STRIP_BUCKETS[range_key]
-    assert len(data["prices"]) == len(data["hardware"]["points"]) == DAYS[range_key]
-    assert data["prices"][-1]["day"] == data["hardware"]["points"][-1]["day"] == "2026-10-17"
-    assert set(data["prices"][0]) == {"day", "input_price", "output_price", "input_median", "input_p5", "input_p95",
-                                      "output_median", "output_p5", "output_p95"}
-    assert set(data["hardware"]["range"]) == {"hw_per_mtok", "hw_per_request", "hw_partial"}
+    assert len(data["hardware"]["points"]) == DAYS[range_key]
+    assert data["hardware"]["points"][-1]["day"] == "2026-10-17"
+    if data["daily"]:
+        assert len(data["prices"]) == DAYS[range_key]
+        assert data["prices"][-1]["day"] == "2026-10-17"
+    else:
+        assert len(data["prices"]) == TRAFFIC_POINTS[range_key]
+        assert [p["t"] for p in data["prices"]] == [p["t"] for p in data["traffic"]["points"]]
+    assert set(data["prices"][0]) == {"day" if data["daily"] else "t", "input_price", "output_price", "input_median",
+                                      "input_p5", "input_p95", "output_median", "output_p5", "output_p95"}
+    assert set(data["hardware"]["range"]) == {"benefit", "cost", "partial", "days"}
     assert data["header"]["description"] == "Qwen 80B" and data["header"]["status"] == "ok"
 
 
@@ -93,10 +113,12 @@ def test_short_ranges_use_per_bucket_rates(env):
         sample(120, rpm=100))  # outside 1h
     data = get(env, "1h")
     points = data["traffic"]["points"]
-    assert points[-1] == {"t": "2026-10-17T16:59:00Z", "requests": 5, "tokens": 400, "estimated": False}
+    assert points[-1] == {"t": "2026-10-17T16:59:00Z", "requests": 5, "tokens": 400,
+                          "input_tokens": 300, "output_tokens": 100, "estimated": False}
     assert points[-10]["requests"] == 2 and points[-10]["tokens"] == 200
     assert points[0]["requests"] is None
-    assert data["traffic"]["average"] == {"requests": pytest.approx((5 + 2) / 2), "tokens": pytest.approx(300)}
+    assert data["traffic"]["average"] == {"requests": pytest.approx((5 + 2) / 2), "tokens": pytest.approx(300),
+                                          "input_tokens": pytest.approx(225), "output_tokens": pytest.approx(75)}
     assert data["instances"]["points"][-1] == {"t": "2026-10-17T16:59:00Z", "healthy": 1, "configured": 2}
     assert data["instances"]["points"][-10]["healthy"] == 2
 
@@ -111,12 +133,49 @@ def test_daily_series_from_7d_mark_inexact_days(env):
     for range_key in ("7d", "30d", "1y"):
         points = get(env, range_key)["traffic"]["points"]
         assert points[-3:] == [
-            {"t": "2026-10-15", "requests": 100.0, "tokens": 1e6, "estimated": False},
-            {"t": "2026-10-16", "requests": 200.0, "tokens": 2e6, "estimated": True},
-            {"t": "2026-10-17", "requests": 50.0, "tokens": 5e5, "estimated": True},  # not final yet
+            {"t": "2026-10-15", "requests": 100.0, "tokens": 1e6, "input_tokens": 7.5e5, "output_tokens": 2.5e5, "estimated": False},
+            {"t": "2026-10-16", "requests": 200.0, "tokens": 2e6, "input_tokens": 1.5e6, "output_tokens": 5e5, "estimated": True},
+            {"t": "2026-10-17", "requests": 50.0, "tokens": 5e5, "input_tokens": 3.75e5, "output_tokens": 1.25e5,
+             "estimated": True},  # not final yet
         ]
-        assert points[-4] == {"t": "2026-10-14", "requests": None, "tokens": None, "estimated": False}
+        assert points[-4] == {"t": "2026-10-14", "requests": None, "tokens": None, "input_tokens": None, "output_tokens": None,
+                              "estimated": False}
     assert get(env, "7d")["traffic"]["average"]["requests"] == pytest.approx(350 / 3)
+
+
+def test_per_bucket_split_tokens_and_averages(env):
+    _, sf, _ = env
+    add(sf, sample(0.5, itpm=400, otpm=100), sample(0.25, itpm=600, otpm=300),
+        sample(10, itpm=40, otpm=10),
+        sample(20, rpm=1))  # no token counts
+    data = get(env, "1h")
+    points = data["traffic"]["points"]
+    assert points[-1]["input_tokens"] == 500 and points[-1]["output_tokens"] == 200 and points[-1]["tokens"] == 700
+    assert points[-10]["input_tokens"] == 40 and points[-10]["output_tokens"] == 10 and points[-10]["tokens"] == 50
+    assert points[-20] == {"t": "2026-10-17T16:40:00Z", "requests": 1, "tokens": None,
+                           "input_tokens": None, "output_tokens": None, "estimated": False}
+    average = data["traffic"]["average"]
+    # the averages only cover points that have token counts
+    assert average["input_tokens"] == pytest.approx((500 + 40) / 2)
+    assert average["output_tokens"] == pytest.approx((200 + 10) / 2)
+    assert average["tokens"] == pytest.approx((700 + 50) / 2)
+
+
+def test_per_day_split_tokens_and_averages(env):
+    _, sf, _ = env
+    d1, d2 = TODAY - timedelta(days=2), TODAY - timedelta(days=1)
+    add(sf, daily(d1, "lumen", requests=10.0, final=True),  # a day without token counts
+        daily(d2, "lumen", input_tokens=4e6, output_tokens=1e6, final=True),
+        daily(TODAY, "lumen", input_tokens=2e5, output_tokens=1e5))
+    traffic = get(env, "30d")["traffic"]
+    assert [(p["t"], p["tokens"], p["input_tokens"], p["output_tokens"]) for p in traffic["points"][-3:]] == [
+        ("2026-10-15", None, None, None),
+        ("2026-10-16", 5e6, 4e6, 1e6),
+        ("2026-10-17", 3e5, 2e5, 1e5),
+    ]
+    assert traffic["average"]["input_tokens"] == pytest.approx((4e6 + 2e5) / 2)
+    assert traffic["average"]["output_tokens"] == pytest.approx((1e6 + 1e5) / 2)
+    assert traffic["average"]["tokens"] == pytest.approx((5e6 + 3e5) / 2)
 
 
 def test_price_band_median_and_ours_per_day(env):
@@ -132,30 +191,151 @@ def test_price_band_median_and_ours_per_day(env):
                           "output_median": 1.0, "output_p5": 0.5, "output_p95": 2.0}
     assert prices[-1]["input_price"] == 0.3 and prices[-1]["input_median"] is None
     assert prices[0]["input_price"] is None
+    store, sf, _ = env
+    tz = store.current.timezone
+    for range_key in ("30d", "1y"):
+        days = range_days(RANGES[range_key], NOW, tz)
+        with sf() as session:
+            rows = _rows_by_source(session, MODEL, days)
+        assert get(env, range_key)["prices"] == _price_points(rows, days)
 
 
-def test_hardware_per_day_and_over_the_range(env):
+DEV = {"input_median": 0.25, "input_p5": 0.12, "input_p95": 0.4, "output_median": 1.0, "output_p5": 0.5, "output_p95": 2.0}
+DEV_TODAY = {"input_median": 0.35, "input_p5": 0.2, "input_p95": 0.5, "output_median": 1.1, "output_p5": 0.6, "output_p95": 2.2}
+
+
+def test_short_range_prices_step_at_local_midnight(env):
     _, sf, _ = env
     yesterday = TODAY - timedelta(days=1)
-    add(sf, daily(yesterday, "hardware", daily_cost=24.0), daily(yesterday, "lumen", tokens=4e6, requests=4000.0, final=True),
-        daily(TODAY, "hardware", daily_cost=48.0),
-        # today is counted until 06:00 local: a quarter of the day's cost
-        daily(TODAY, "lumen", tokens=2e6, requests=1000.0, tokens_covered_until=MIDNIGHT + timedelta(hours=6),
-              covered_until=MIDNIGHT + timedelta(hours=6)))
-    hardware = get(env, "7d")["hardware"]
-    assert hardware["points"][-2] == {"day": "2026-10-16", "daily_cost": 24.0, "hw_per_mtok": 6.0, "hw_per_request": None, "hw_partial": False}
-    assert hardware["points"][-1]["hw_per_mtok"] == pytest.approx(12 / 2) and hardware["points"][-1]["hw_partial"] is True
-    assert hardware["range"]["hw_per_mtok"] == pytest.approx((24 + 12) / 6)
+    add(sf, daily(yesterday, "lumen", input_price=0.2, output_price=0.8), daily(TODAY, "lumen", input_price=0.3, output_price=0.9),
+        daily(yesterday, "models.dev", providers=5, **DEV), daily(TODAY, "models.dev", providers=5, **DEV_TODAY))
+    prices = get(env, "24h")["prices"]
+    step = 144
+    assert prices[step]["t"] == "2026-10-17T05:00:00Z"  # MIDNIGHT
+    assert all(v is not None for p in prices for v in p.values())
+    assert {(p["input_price"], p["output_price"]) for p in prices[:step]} == {(0.2, 0.8)}
+    assert {(p["input_price"], p["output_price"]) for p in prices[step:]} == {(0.3, 0.9)}
+    assert all({k: p[k] for k in DEV} == DEV for p in prices[:step])
+    assert all({k: p[k] for k in DEV} == DEV_TODAY for p in prices[step:])
 
 
-def test_hardware_falls_back_to_per_request_without_tokens(env):
+def test_short_range_prices_carry_the_latest_earlier_day_forward(env):
+    _, sf, _ = env
+    yesterday = TODAY - timedelta(days=1)
+    add(sf, daily(yesterday, "lumen", input_price=0.2, output_price=0.8), daily(yesterday, "models.dev", providers=5, **DEV),
+        daily(TODAY - timedelta(days=3), "lumen", input_price=0.1, output_price=0.4))
+    prices = get(env, "1h")["prices"]
+    assert len(prices) == 60
+    assert all(p == {"t": p["t"], "input_price": 0.2, "output_price": 0.8, **DEV} for p in prices)
+
+
+def test_short_range_prices_skip_rows_without_a_price(env):
+    _, sf, _ = env
+    yesterday = TODAY - timedelta(days=1)
+    # The probe writes today's lumen row before the first price run of the day fills its prices.
+    add(sf, daily(TODAY - timedelta(days=2), "lumen", input_price=0.1, output_price=0.4),
+        daily(yesterday, "lumen", status="ok", configured=2), daily(TODAY, "lumen", status="ok", configured=2))
+    prices = get(env, "24h")["prices"]
+    assert {(p["input_price"], p["output_price"]) for p in prices} == {(0.1, 0.4)}
+
+
+def test_short_range_prices_without_rows_are_none(env):
+    for range_key in ("1h", "12h", "24h"):
+        prices = get(env, range_key)["prices"]
+        assert all(v is None for p in prices for k, v in p.items() if k != "t")
+
+
+def split(day, **values):
+    """A lumen row with input/output tokens and our prices."""
+    return daily(day, "lumen", input_price=0.2, output_price=0.8, **values)
+
+
+def test_benefit_on_an_exact_final_day(env):
     _, sf, _ = env
     day = TODAY - timedelta(days=1)
-    add(sf, daily(day, "hardware", daily_cost=24.0), daily(day, "lumen", requests=4800.0, final=True))
-    hardware = get(env, "30d")["hardware"]
-    assert hardware["points"][-2]["hw_per_mtok"] is None
-    assert hardware["points"][-2]["hw_per_request"] == pytest.approx(0.005)
-    assert hardware["range"] == {"hw_per_mtok": None, "hw_per_request": pytest.approx(0.005), "hw_partial": False}
+    add(sf, daily(day, "hardware", daily_cost=24.0), split(day, input_tokens=10e6, output_tokens=5e6, final=True))
+    point = get(env, "7d")["hardware"]["points"][-2]
+    # 10 M input at $0.2 + 5 M output at $0.8
+    assert point == {"day": "2026-10-16", "benefit": pytest.approx(6.0), "cost": 24.0, "partial": False, "estimated": False}
+
+
+def test_no_benefit_without_split_counts(env):
+    _, sf, _ = env
+    day = TODAY - timedelta(days=1)
+    add(sf, daily(day, "hardware", daily_cost=24.0), split(day, requests=100.0, final=True))
+    hardware = get(env, "7d")["hardware"]
+    assert hardware["points"][-2]["benefit"] is None and hardware["points"][-2]["cost"] == 24.0
+    assert hardware["range"] == {"benefit": None, "cost": None, "partial": False, "days": 0}
+
+
+def test_no_benefit_without_a_price(env):
+    _, sf, _ = env
+    day = TODAY - timedelta(days=1)
+    add(sf, daily(day, "hardware", daily_cost=24.0),
+        daily(day, "lumen", input_tokens=10e6, output_tokens=5e6, input_price=0.2, final=True))
+    assert get(env, "7d")["hardware"]["points"][-2]["benefit"] is None
+
+
+def test_today_shows_a_whole_day_and_partial(env):
+    _, sf, _ = env
+    six = MIDNIGHT + timedelta(hours=6)
+    add(sf, daily(TODAY, "hardware", daily_cost=48.0),
+        # input counted until 12:00 local (half the day), output until 06:00 (a quarter)
+        split(TODAY, input_tokens=4e6, output_tokens=1e6, input_tokens_covered_until=six + timedelta(hours=6),
+              output_tokens_covered_until=six, covered_until=six + timedelta(hours=6)))
+    hardware = get(env, "7d")["hardware"]
+    point = hardware["points"][-1]
+    # the cost line stays at the full day's cost; each side's benefit so far is projected on its own watermark
+    assert point["cost"] == pytest.approx(48.0) and point["partial"] is True
+    assert point["benefit"] == pytest.approx(4 * 0.2 * 2 + 0.8 * 4)
+    # the totals compare the quarter both sides are counted for: a quarter of the projection and of the cost
+    assert hardware["range"] == {"benefit": pytest.approx((1.6 + 3.2) / 4), "cost": pytest.approx(12.0), "partial": True, "days": 1}
+
+
+def test_today_without_split_keeps_the_full_day_cost(env):
+    _, sf, _ = env
+    add(sf, daily(TODAY, "hardware", daily_cost=48.0),
+        daily(TODAY, "lumen", requests=1000.0, covered_until=MIDNIGHT + timedelta(hours=12)))
+    point = get(env, "7d")["hardware"]["points"][-1]
+    assert point["cost"] == pytest.approx(48.0) and point["benefit"] is None and point["partial"] is True
+
+
+def test_today_with_nothing_counted_yet_has_no_benefit(env):
+    _, sf, _ = env
+    add(sf, daily(TODAY, "hardware", daily_cost=48.0),
+        split(TODAY, input_tokens=0.0, output_tokens=0.0, input_tokens_covered_until=MIDNIGHT,
+              output_tokens_covered_until=MIDNIGHT))
+    hardware = get(env, "7d")["hardware"]
+    point = hardware["points"][-1]
+    assert point["benefit"] is None and point["cost"] == pytest.approx(48.0)
+    # no benefit yet, so the day stays out of the totals instead of adding $0 against $0
+    assert hardware["range"] == {"benefit": None, "cost": None, "partial": False, "days": 0}
+
+
+def test_range_totals_add_days_with_both(env):
+    _, sf, _ = env
+    d1, d2, d3 = (TODAY - timedelta(days=n) for n in (3, 2, 1))
+    add(sf,
+        daily(d1, "hardware", daily_cost=24.0), split(d1, input_tokens=10e6, output_tokens=5e6, final=True),
+        daily(d2, "hardware", daily_cost=24.0), split(d2, input_tokens=20e6, output_tokens=10e6, final=True, estimated=True),
+        # no counts: its cost stays out of the totals
+        daily(d3, "hardware", daily_cost=24.0), split(d3, requests=100.0, final=True),
+        daily(TODAY, "hardware", daily_cost=48.0),
+        split(TODAY, input_tokens=1e6, output_tokens=1e6, input_tokens_covered_until=MIDNIGHT + timedelta(hours=6),
+              output_tokens_covered_until=MIDNIGHT + timedelta(hours=6)))
+    hardware = get(env, "7d")["hardware"]
+    assert hardware["points"][-3]["estimated"] is True
+    assert hardware["range"] == {"benefit": pytest.approx(6 + 12 + 1), "cost": pytest.approx(24 + 24 + 12), "partial": True, "days": 3}
+
+
+def test_benefit_without_a_hardware_cost_stays_out_of_the_totals(env):
+    _, sf, _ = env
+    d1, d2 = TODAY - timedelta(days=2), TODAY - timedelta(days=1)
+    add(sf, daily(d1, "hardware", daily_cost=24.0), split(d1, input_tokens=10e6, output_tokens=5e6, final=True),
+        split(d2, input_tokens=10e6, output_tokens=5e6, final=True))
+    hardware = get(env, "7d")["hardware"]
+    assert hardware["points"][-2]["benefit"] == pytest.approx(6.0) and hardware["points"][-2]["cost"] is None
+    assert hardware["range"] == {"benefit": pytest.approx(6.0), "cost": pytest.approx(24.0), "partial": False, "days": 1}
 
 
 def test_1y_instances_from_the_daily_counters(env):
@@ -165,6 +345,13 @@ def test_1y_instances_from_the_daily_counters(env):
     assert data["instances"]["points"][-2] == {"t": "2026-10-16", "healthy": 1.5, "configured": 2}
     assert data["instances"]["points"][-1] == {"t": "2026-10-17", "healthy": None, "configured": None}
     assert data["header"]["strip"][-2] == "ok"
+    assert data["strip_times"][-2:] == ["2026-10-16", "2026-10-17"]
+
+
+def test_short_range_strip_times_match_the_buckets(env):
+    data = get(env, "1h")
+    assert data["strip_times"] == [p["t"] for p in data["instances"]["points"]]
+    assert data["strip_times"][-1] == "2026-10-17T16:59:00Z"
 
 
 def test_model_with_history_only_and_unknown_model(env):

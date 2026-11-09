@@ -4,9 +4,12 @@ import re
 from datetime import datetime, timedelta
 from decimal import Decimal
 from http import HTTPStatus
+from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import select
 
+from lumen.blueprints.profile.routes import _endpoint_status
 from lumen.timeutils import utcnow
 
 # ---------------------------------------------------------------------------
@@ -27,6 +30,17 @@ def _make_model_endpoint(app, model_id, healthy=True):
         db.session.commit()
 
 
+def _model_row_status(html, model_name):
+    """Return the model_status of the MODEL_ROWS entry for model_name."""
+    m = re.search(
+        r"model_name: " + re.escape(json.dumps(model_name)) + r",.*?model_status: \"([^\"]*)\",",
+        html,
+        re.DOTALL,
+    )
+    assert m, f"no MODEL_ROWS entry for {model_name!r}"
+    return m.group(1)
+
+
 # ---------------------------------------------------------------------------
 # Profile index page
 # ---------------------------------------------------------------------------
@@ -40,6 +54,16 @@ def test_profile_page_with_model(app, auth_client, test_model):
     _make_model_endpoint(app, test_model["id"])
     resp = auth_client.get("/profile")
     assert resp.status_code == HTTPStatus.OK
+    assert _model_row_status(resp.get_data(as_text=True), test_model["model_name"]) == "ok"
+
+
+def test_profile_page_with_two_healthy_endpoints(app, auth_client, test_model):
+    """Two endpoints, both healthy → ok status."""
+    _make_model_endpoint(app, test_model["id"])
+    _make_model_endpoint(app, test_model["id"])
+    resp = auth_client.get("/profile")
+    assert resp.status_code == HTTPStatus.OK
+    assert _model_row_status(resp.get_data(as_text=True), test_model["model_name"]) == "ok"
 
 
 def test_profile_page_with_degraded_model(app, auth_client, test_model):
@@ -52,6 +76,7 @@ def test_profile_page_with_degraded_model(app, auth_client, test_model):
         db.session.commit()
     resp = auth_client.get("/profile")
     assert resp.status_code == HTTPStatus.OK
+    assert _model_row_status(resp.get_data(as_text=True), test_model["model_name"]) == "degraded"
 
 
 def test_profile_page_with_down_model(app, auth_client, test_model):
@@ -63,11 +88,31 @@ def test_profile_page_with_down_model(app, auth_client, test_model):
         db.session.commit()
     resp = auth_client.get("/profile")
     assert resp.status_code == HTTPStatus.OK
+    assert _model_row_status(resp.get_data(as_text=True), test_model["model_name"]) == "down"
 
 
 def test_profile_page_with_no_endpoints(app, auth_client, test_model):
     resp = auth_client.get("/profile")
     assert resp.status_code == HTTPStatus.OK
+    assert _model_row_status(resp.get_data(as_text=True), test_model["model_name"]) == "down"
+
+
+@pytest.mark.parametrize(
+    ("healthy", "expected"),
+    [
+        ([], "down"),
+        ([False], "down"),
+        ([False, False], "down"),
+        ([True, False], "degraded"),
+        ([True, True, False], "degraded"),
+        ([True], "ok"),
+        ([True, True], "ok"),
+    ],
+)
+def test_endpoint_status(healthy, expected):
+    """No healthy endpoints → down, some → degraded, all → ok."""
+    eps = [SimpleNamespace(healthy=h) for h in healthy]
+    assert _endpoint_status(eps) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +160,68 @@ def test_create_key_success(auth_client):
     data = resp.get_json()
     assert data["name"] == "my key"
     assert "id" in data
+
+
+@pytest.mark.parametrize("cap", [0, 30 * 86400])
+def test_create_key_expires_at_from_cap(app, auth_client, restore_config, cap):
+    app.config["KEY_TTL"] = cap
+    resp = auth_client.post("/profile/keys", json={"name": "ttl", "key": "sk_" + "t" * 32})
+    assert resp.status_code == HTTPStatus.CREATED
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    with app.app_context():
+        expires_at = db.session.get(APIKey, resp.get_json()["id"]).expires_at
+    if cap:
+        assert abs(expires_at - (utcnow() + timedelta(seconds=cap))) < timedelta(minutes=1)
+    else:
+        assert expires_at is None
+
+
+@pytest.mark.parametrize("cap, ttl, expected", [
+    (30 * 86400, None, 30 * 86400),       # no ttl: the cap
+    (30 * 86400, 7 * 86400, 7 * 86400),   # below the cap
+    (30 * 86400, 30 * 86400, 30 * 86400), # at the cap
+    (0, None, 0),                         # no cap, no ttl: never
+    (0, 0, 0),                            # no cap: never allowed
+    (0, 365 * 86400, 365 * 86400),
+])
+def test_create_key_with_ttl(app, auth_client, restore_config, cap, ttl, expected):
+    app.config["KEY_TTL"] = cap
+    body = {"name": "ttl", "key": "sk_" + "u" * 32}
+    if ttl is not None:
+        body["ttl"] = ttl
+    resp = auth_client.post("/profile/keys", json=body)
+    assert resp.status_code == HTTPStatus.CREATED
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    with app.app_context():
+        expires_at = db.session.get(APIKey, resp.get_json()["id"]).expires_at
+    if expected:
+        assert abs(expires_at - (utcnow() + timedelta(seconds=expected))) < timedelta(minutes=1)
+        assert resp.get_json()["expires_at"] == expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    else:
+        assert expires_at is None
+        assert resp.get_json()["expires_at"] is None
+
+
+@pytest.mark.parametrize("cap, ttl", [
+    (30 * 86400, 30 * 86400 + 1),  # above the cap
+    (30 * 86400, 0),               # never while the cap is above 0
+    (0, 100 * 365 * 86400 + 1),    # above the 100-year bound
+    (30 * 86400, -1),
+    (30 * 86400, "86400"),
+    (30 * 86400, True),
+    (30 * 86400, 1.5),
+])
+def test_create_key_invalid_ttl_returns_400(app, auth_client, restore_config, cap, ttl):
+    app.config["KEY_TTL"] = cap
+    resp = auth_client.post("/profile/keys", json={"name": "bad-ttl", "key": "sk_" + "v" * 32, "ttl": ttl})
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert "ttl" in resp.get_json()["error"]
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    with app.app_context():
+        assert db.session.execute(select(APIKey).filter_by(name="bad-ttl")).first() is None
 
 
 def test_create_key_default_name(auth_client):
@@ -330,7 +437,7 @@ def test_old_delete_key_url_requires_login(client):
 # rotate_key
 # ---------------------------------------------------------------------------
 
-def _seed_key_with_usage(app, entity_id, raw, revoked_at=None):
+def _seed_key_with_usage(app, entity_id, raw, revoked_at=None, expires_at=None):
     """Insert a key with non-zero usage counters; return its id."""
     from lumen.extensions import db
     from lumen.models.api_key import APIKey
@@ -341,7 +448,7 @@ def _seed_key_with_usage(app, entity_id, raw, revoked_at=None):
             key_hash=hash_api_key(raw), key_hint=f"{raw[:7]}...{raw[-4:]}", revoked_at=revoked_at,
             requests=5, input_tokens=100, output_tokens=40, audio_seconds=7,
             cost=Decimal("1.500000"), last_used_at=datetime(2026, 9, 1, 12, 0),
-            created_at=datetime(2026, 8, 1, 9, 0),
+            created_at=datetime(2026, 8, 1, 9, 0), expires_at=expires_at,
         )
         db.session.add(ak)
         db.session.commit()
@@ -356,7 +463,7 @@ def _key_snapshot(app, kid):
         return {c: getattr(ak, c) for c in (
             "requests", "input_tokens", "output_tokens", "audio_seconds", "cost",
             "last_used_at", "name", "created_at", "created_by_entity_id", "entity_id", "revoked_at",
-            "key_hash", "key_hint",
+            "key_hash", "key_hint", "expires_at", "revoked_by_entity_id",
         )}
 
 
@@ -387,6 +494,25 @@ def test_rotate_key_forbidden_for_other_user(app, auth_client, admin_user):
     kid = _seed_key_with_usage(app, admin_user["id"], "sk_" + "o" * 32)
     resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": "sk_" + "p" * 32})
     assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_rotate_keeps_expires_at(app, auth_client, test_user):
+    expires_at = utcnow() + timedelta(days=3)
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "e" * 32, expires_at=expires_at)
+    resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": "sk_" + "f" * 32})
+    assert resp.status_code == HTTPStatus.OK
+    assert _key_snapshot(app, kid)["expires_at"] == expires_at
+
+
+def test_rotate_overdue_key_returns_409_and_revokes(app, auth_client, test_user):
+    expires_at = utcnow() - timedelta(minutes=1)
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "g" * 32, expires_at=expires_at)
+    resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": "sk_" + "h" * 32})
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert resp.get_json()["error"] == "Key is revoked"
+    after = _key_snapshot(app, kid)
+    assert (after["revoked_at"], after["revoked_by_entity_id"]) == (expires_at, None)
+    assert after["key_hint"] == "sk_gggg...gggg"  # the secret was not swapped
 
 
 def test_rotate_revoked_key_returns_409(app, auth_client, test_user):
@@ -438,6 +564,128 @@ def test_rotate_key_not_found(auth_client):
 
 def test_rotate_key_requires_login(client):
     resp = client.post("/profile/keys/1/rotate", json={"key": "sk_" + "z" * 32}, follow_redirects=False)
+    assert resp.status_code == HTTPStatus.FOUND
+
+
+# ---------------------------------------------------------------------------
+# edit_key_ttl
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("cap, ttl", [
+    (30 * 86400, 7 * 86400),     # below the cap
+    (30 * 86400, 30 * 86400),    # at the cap
+    (0, 365 * 86400),            # no cap
+    (0, 0),                      # no cap: never allowed
+])
+def test_edit_key_ttl_counts_from_now(app, auth_client, test_user, restore_config, cap, ttl):
+    app.config["KEY_TTL"] = cap
+    # An old key close to expiry: the new expiry is counted from the edit, not created_at.
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "a" * 32, expires_at=utcnow() + timedelta(hours=1))
+    before = _key_snapshot(app, kid)
+
+    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": ttl})
+    assert resp.status_code == HTTPStatus.OK
+
+    after = _key_snapshot(app, kid)
+    expires_at = after.pop("expires_at")
+    before.pop("expires_at")
+    assert after == before  # nothing but the expiry changes
+    if ttl:
+        assert abs(expires_at - (utcnow() + timedelta(seconds=ttl))) < timedelta(minutes=1)
+        assert resp.get_json() == {"id": kid, "name": "rotating", "expires_at": expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    else:
+        assert expires_at is None
+        assert resp.get_json() == {"id": kid, "name": "rotating", "expires_at": None}
+
+
+@pytest.mark.parametrize("cap, payload", [
+    (30 * 86400, {"ttl": 30 * 86400 + 1}),  # above the cap
+    (30 * 86400, {"ttl": 0}),               # never while the cap is above 0
+    (30 * 86400, {"ttl": "86400"}),
+    (30 * 86400, {"ttl": True}),
+    (30 * 86400, {}),
+    (30 * 86400, {"ttl": None}),
+    (30 * 86400, [86400]),
+])
+def test_edit_key_ttl_invalid_returns_400(app, auth_client, test_user, restore_config, cap, payload):
+    app.config["KEY_TTL"] = cap
+    expires_at = utcnow() + timedelta(days=3)
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "b" * 32, expires_at=expires_at)
+    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json=payload)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert "ttl" in resp.get_json()["error"]
+    assert _key_snapshot(app, kid)["expires_at"] == expires_at
+
+
+def test_edit_key_ttl_checks_cap_at_edit_time(app, auth_client, test_user, restore_config):
+    app.config["KEY_TTL"] = 0
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "c" * 32)  # created under no cap: never expires
+    app.config["KEY_TTL"] = 7 * 86400
+    assert auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 30 * 86400}).status_code == HTTPStatus.BAD_REQUEST
+    assert auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 0}).status_code == HTTPStatus.BAD_REQUEST
+    assert _key_snapshot(app, kid)["expires_at"] is None
+
+
+def test_edit_key_ttl_overdue_key_returns_409_and_revokes(app, auth_client, test_user):
+    expires_at = utcnow() - timedelta(minutes=1)
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "d" * 32, expires_at=expires_at)
+    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert resp.get_json()["error"] == "Key is revoked"
+    after = _key_snapshot(app, kid)
+    assert (after["revoked_at"], after["revoked_by_entity_id"], after["expires_at"]) == (expires_at, None, expires_at)
+
+
+def test_edit_key_ttl_revoked_key_returns_409(app, auth_client, test_user):
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "e" * 32, revoked_at=datetime(2026, 9, 2, 8, 0))
+    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert _key_snapshot(app, kid)["expires_at"] is None
+
+
+def test_edit_key_ttl_concurrent_revoke_returns_409(app, auth_client, test_user, monkeypatch):
+    """A revoke that commits after the liveness check wins over the edit."""
+    from lumen.blueprints.profile import routes as profile_routes
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "f" * 32)
+    real_resolve = profile_routes.resolve_key_ttl
+
+    def resolve_then_revoke(requested):
+        db.session.execute(APIKey.__table__.update().where(APIKey.id == kid).values(revoked_at=utcnow()))
+        return real_resolve(requested)
+
+    monkeypatch.setattr(profile_routes, "resolve_key_ttl", resolve_then_revoke)
+    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert _key_snapshot(app, kid)["expires_at"] is None
+
+
+def test_edit_key_ttl_oauth_minted_key(app, auth_client, test_user):
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "g" * 32)
+    with app.app_context():
+        db.session.get(APIKey, kid).client_id = "opencode"
+        db.session.commit()
+    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.OK
+    assert _key_snapshot(app, kid)["expires_at"] is not None
+
+
+def test_edit_key_ttl_forbidden_for_other_user(app, auth_client, admin_user):
+    kid = _seed_key_with_usage(app, admin_user["id"], "sk_" + "h" * 32)
+    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 86400})
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert _key_snapshot(app, kid)["expires_at"] is None
+
+
+def test_edit_key_ttl_not_found(auth_client):
+    assert auth_client.post("/profile/keys/999999/ttl", json={"ttl": 86400}).status_code == HTTPStatus.NOT_FOUND
+
+
+def test_edit_key_ttl_requires_login(client):
+    resp = client.post("/profile/keys/1/ttl", json={"ttl": 86400}, follow_redirects=False)
     assert resp.status_code == HTTPStatus.FOUND
 
 

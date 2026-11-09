@@ -26,6 +26,11 @@ refresh:
 lumen:
   url: https://lumen.example.edu
   api_key: ""    # a monitoring token is enough. Env MONITOR_LUMEN_API_KEY overrides.
+  # Lumen overall is DOWN when more than this percent of its models are down, DEGRADED
+  # when at least one is (default 50: 1 of 3 down is degraded, 2 of 3 is down). Only Lumen
+  # overall: a model counts as down only when Lumen reports it down (all its servers down);
+  # a model with some servers down is degraded and counts as up here.
+  down_above: 50
 
 # Hardware cost: kwh in $ per kWh, then per GPU type the power draw in watts
 # per GPU and the price in $ per GPU per month.

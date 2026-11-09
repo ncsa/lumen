@@ -1,7 +1,9 @@
 """Load and validate the monitor's config.yaml.
 
 `load_config()` raises `ConfigError` for a config the service cannot run with
-(bad durations, `refresh` values out of order, an unknown timezone). Problems
+(bad durations, `refresh` values out of order, an unknown timezone);
+`check_lumen_url()` rejects a missing or non-http(s) `lumen.url`, which only
+`collect` and `serve` need (`ConfigStore(require_lumen=True)`). Problems
 that only disable part of the service (an unknown GPU type, a missing `kwh`,
 a short `retention`) are collected in `Config.warnings` and logged, so the
 probes keep running while the hardware cost for that model is skipped.
@@ -16,6 +18,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from datetime import timedelta
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
@@ -36,6 +39,8 @@ MIN_RETENTION = timedelta(days=30)
 MAX_MODELS_REFRESH = timedelta(hours=1)
 # Upper bound for any duration; also keeps timedelta() from overflowing.
 MAX_DURATION = timedelta(days=3650)
+# Lumen counts as down when more than this percent of its models are down.
+DEFAULT_DOWN_ABOVE = 50.0
 TOP_LEVEL_KEYS = {"database_url", "base_path", "timezone", "retention", "refresh", "lumen", "price", "models"}
 
 _DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([smhd]?)\s*$")
@@ -82,6 +87,7 @@ class Config:
     gpus: dict[str, Gpu]
     models: dict[str, ModelHardware]
     warnings: list[str] = field(default_factory=list, compare=False)
+    down_above: float = DEFAULT_DOWN_ABOVE  # lumen.down_above, percent of models
 
     def model_entry(self, model: str) -> ModelHardware | None:
         """The `models:` entry for Lumen id `model`: the entry pinned to it with `lumen_id`, else
@@ -191,6 +197,21 @@ def _number(value, name: str, warnings: list[str]) -> float | None:
     return number
 
 
+def _parse_down_above(lumen: dict, warnings: list[str]) -> float:
+    """`lumen.down_above`: a percent from 0 to 100; anything else warns and falls back to the default."""
+    value = lumen.get("down_above")
+    if value is None:
+        return DEFAULT_DOWN_ABOVE
+    try:
+        number = None if isinstance(value, bool) or not isinstance(value, (int, float)) else float(value)
+    except OverflowError:
+        number = None
+    if number is None or not 0 <= number <= 100:
+        warnings.append(f"lumen.down_above: expected a number from 0 to 100, got {value!r}; using {DEFAULT_DOWN_ABOVE:g}")
+        return DEFAULT_DOWN_ABOVE
+    return number
+
+
 def _parse_refresh(raw: dict) -> Refresh:
     # An empty value (YAML null) means "use the default", as for every other key.
     section = {**DEFAULT_REFRESH, **{k: v for k, v in _section(raw, "refresh").items() if v is not None}}
@@ -296,6 +317,7 @@ def parse_config(raw: dict | None, env: dict | None = None) -> Config:
         warnings.append("retention is shorter than 30d: the 30d view will be cut short")
 
     lumen = _section(raw, "lumen")
+    down_above = _parse_down_above(lumen, warnings)
     kwh, gpus = _parse_price(raw, warnings)
     models = _parse_models(raw, gpus, warnings)
 
@@ -311,6 +333,7 @@ def parse_config(raw: dict | None, env: dict | None = None) -> Config:
         gpus=gpus,
         models=models,
         warnings=warnings,
+        down_above=down_above,
     )
 
 
@@ -329,18 +352,43 @@ def load_config(path: str | os.PathLike = DEFAULT_CONFIG_PATH, env: dict | None 
     return config
 
 
-class ConfigStore:
-    """The current config, re-read from disk on `reload()`."""
+def check_lumen_url(config: Config) -> None:
+    """Raise `ConfigError` unless `lumen.url` is an http(s) URL with a host.
 
-    def __init__(self, path: str | os.PathLike = DEFAULT_CONFIG_PATH, env: dict | None = None):
+    Kept out of `parse_config` so `migrate` and a missing file still work without it.
+    """
+    try:
+        parts = urlsplit(config.lumen_url)
+        ok = parts.scheme in ("http", "https") and bool(parts.hostname)
+    except ValueError:
+        ok = False
+    if not ok:
+        raise ConfigError("lumen.url is required: set it to Lumen's http(s):// address")
+
+
+class ConfigStore:
+    """The current config, re-read from disk on `reload()`.
+
+    With `require_lumen`, a config without an http(s) `lumen.url` is an error,
+    both at startup and on reload.
+    """
+
+    def __init__(self, path: str | os.PathLike = DEFAULT_CONFIG_PATH, env: dict | None = None, require_lumen: bool = False):
         self.path = path
         self.env = env
-        self.current = load_config(path, env)
+        self.require_lumen = require_lumen
+        self.current = self._load()
+
+    def _load(self) -> Config:
+        config = load_config(self.path, self.env)
+        if self.require_lumen:
+            check_lumen_url(config)
+        return config
 
     def reload(self) -> bool:
         """Re-read the file. On error, log it, keep the old config and return False."""
         try:
-            self.current = load_config(self.path, self.env)
+            self.current = self._load()
         except ConfigError as exc:
             log.error("config reload failed, keeping the previous config: %s", exc)
             return False

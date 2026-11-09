@@ -36,6 +36,15 @@ replica count comes from the `LUMEN_REPLICAS` env var (set automatically by the 
 chart from `replicaCount`). Pre-ping is always enabled to silently replace stale
 connections. SQLite has no connection limit, so pool sizing is skipped for it.
 
+The pool also sizes each process's request thread pool. With `LUMEN_WSGI_WORKERS`
+unset or `auto` (the default; Helm: `wsgiWorkers`), a process serves
+2 × (`pool_size` + `max_overflow`) concurrent requests, clamped to 10–256, since
+streaming requests release their connection before the upstream LLM call. It falls
+back to 10 only when the pool is unsized: on SQLite, or when `max_connections` can't
+be queried and no `pool_size` is configured; an explicit `pool_size` is still used
+then. A positive integer sets the thread count directly; any other value warns once
+and is treated as `auto`.
+
 Optional overrides under `app.database`:
 
 | Field | Description | Default |
@@ -180,6 +189,9 @@ config live **under `api:`** (e.g. `api.monitoring.token`, `api.prometheus.enabl
 
 ```yaml
 api:
+  keys:
+    ttl: "0"           # max and default API key lifetime: 0 = never, or e.g. 12h, 30d, 8w
+
   monitoring:
     token: "my-secret-token"
 
@@ -191,6 +203,14 @@ api:
 ```
 
 API requests always require model acknowledgment, just like the web UI: an API key cannot list or use a model with `needs_ack` or `early_access` until its user or project has acknowledged it. See [API access to models awaiting acknowledgment](../guides/connect.md#models-awaiting-acknowledgment).
+
+### api.keys
+
+`ttl` is both the maximum and the default lifetime of an API key: `0` (the default) means keys never expire, otherwise a whole number of hours, days or weeks such as `12h`, `30d` or `8w`, up to 100 years. On the profile page and on a project, users choose a key's lifetime in **Expires after**, up to this TTL, which is also the default; with `0` they may also choose **Never**. A key created through an OAuth key request expires at creation time plus this TTL. An expired key is revoked: a background job checks every minute, and an API request with an overdue key is rejected and revokes it on the spot. Rotating a key keeps its expiry.
+
+Changes take effect without a restart, for keys created afterwards; existing keys keep the expiry they were given. An invalid value is logged as a warning and treated as `0`, and the config editor refuses to save it. In the Helm chart this is `config.api.keys.ttl`.
+
+In the Config editor (`/admin/config`) this is the **Max / default key TTL** field on the **API Keys** card of the **API** section. The editor flags a malformed value as you type and will not save it; the server checks it again on save. Leaving the field blank removes the setting, which means `0`. When `app.config_editor` is `false` the field is read-only, like the rest of the editor.
 
 ### api.monitoring
 

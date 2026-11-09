@@ -11,7 +11,6 @@ from http import HTTPStatus
 
 import pytest
 
-from lumen.blueprints.api import routes as api_routes
 from lumen.services import request_rates
 
 NOW = datetime(2026, 10, 20, 12, 0, 15, tzinfo=timezone.utc)
@@ -21,10 +20,6 @@ MONITOR = "monitor-rates-token"
 @pytest.fixture(autouse=True)
 def pinned_clock(monkeypatch):
     monkeypatch.setattr(request_rates, "_now", lambda: NOW)
-    # /v1/models caches rates for 30s per worker; a cache another test filled
-    # would hide the rows seeded here.
-    monkeypatch.setitem(api_routes._rates_cache, "data", {})
-    monkeypatch.setitem(api_routes._rates_cache, "expires_at", 0.0)
 
 
 @pytest.fixture

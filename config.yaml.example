@@ -72,6 +72,11 @@ api:
   monitoring:
     token: ""   # Set to a long random string; leave empty to disable
 
+  keys:
+    ttl: "0"    # Maximum and default API key lifetime: 0 = keys never expire, or a duration
+                # such as 12h, 30d or 8w. Users may pick a shorter TTL; an expired key is revoked.
+                # Applies to keys created afterwards; existing keys keep their expiry.
+
 # Bounds on the calls Lumen makes to the upstream model endpoints. Without these
 # the OpenAI SDK defaults apply (600s timeout, 2 retries), so one stalled backend
 # can hold a worker thread for ~30 minutes.
@@ -90,6 +95,14 @@ llm:
   max_retries: 1        # retries for non-streaming upstream calls. Streaming calls are
                         # never retried: a retry restarts the whole generation while the
                         # first attempt may still be draining upstream.
+
+# Usage totals (entity_stats / model_stats) are folded from request_logs by a
+# background job after the stats cutover (SQLite cuts over automatically).
+stats:
+  fold_interval: 60  # seconds between fold passes
+  fold_lag: 300      # seconds the fold window ends behind now; leaves room for billing
+                     # transactions that commit after their request's timestamp. Totals
+                     # lag real time by about fold_lag + fold_interval.
 
 chat:
   upload:

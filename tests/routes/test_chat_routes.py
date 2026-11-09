@@ -2,6 +2,22 @@
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _fresh_chat_rate_limit(app):
+    """Give each test the full /chat/stream budget, and leave it clean.
+
+    The limiter's in-memory storage outlives a test, and every test's user is
+    entity 1, so without a reset these tests share one bucket with whatever
+    chat requests ran before them and fail with 429 depending on test order.
+    """
+    from lumen.extensions import limiter
+    limiter.reset()
+    yield
+    limiter.reset()
+
 
 def _grant_unlimited_pool(app, entity_id):
     from lumen.extensions import db
@@ -282,7 +298,7 @@ def test_chat_stream_ack_no_consent_403(app, auth_client, test_user, test_model)
 
 
 def test_chat_stream_ack_with_consent_passes_access(
-    app, auth_client, test_user, test_model,
+    app, auth_client, test_user, test_model, test_model_endpoint,
 ):
     """needs_ack + consent clears the access gate (stream starts, fails at LLM level).
 
@@ -312,7 +328,7 @@ def test_chat_stream_ack_with_consent_passes_access(
     resp.close()
 
 
-def test_chat_stream_holds_no_connection_at_yields(app, auth_client, test_user, test_model, monkeypatch):
+def test_chat_stream_holds_no_connection_at_yields(app, auth_client, test_user, test_model, test_model_endpoint, monkeypatch):
     """The streaming generator must not hold a DB connection while suspended at
     a yield. If the client disconnects while an event is in flight, the
     generator is never closed, teardown never runs, and any connection checked
@@ -322,7 +338,7 @@ def test_chat_stream_holds_no_connection_at_yields(app, auth_client, test_user, 
         from lumen.extensions import db
         pool = db.engine.pool
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None, resolved=None):
         # The real send_message_stream runs context-free between yields; its
         # DB phases each push their own short-lived app context.
         yield "Hello", None, None
@@ -366,7 +382,7 @@ def test_chat_stream_holds_no_connection_at_yields(app, auth_client, test_user, 
         resp.close()
 
 
-def test_chat_stream_error_path_holds_no_connection(app, auth_client, test_user, test_model, monkeypatch):
+def test_chat_stream_error_path_holds_no_connection(app, auth_client, test_user, test_model, test_model_endpoint, monkeypatch):
     """Same invariant for the except-path yield: after rollback, the generator
     must hold no connection while the error event is in flight."""
     with app.app_context():
@@ -374,7 +390,7 @@ def test_chat_stream_error_path_holds_no_connection(app, auth_client, test_user,
         from lumen.extensions import db
         pool = db.engine.pool
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None, resolved=None):
         yield "Hello", None, None
         # Missing "reply" key → KeyError inside the billing block, after the
         # conversation SELECT/flush has checked out a connection.
@@ -408,7 +424,7 @@ def test_chat_stream_error_path_holds_no_connection(app, auth_client, test_user,
         resp.close()
 
 
-def test_chat_stream_skips_persistence_when_storing_disabled(app, auth_client, test_user, test_model, monkeypatch):
+def test_chat_stream_skips_persistence_when_storing_disabled(app, auth_client, test_user, test_model, test_model_endpoint, monkeypatch):
     """With store_conversations off, a stream persists nothing and the final
     event carries no conversation_id — even if the client sends one."""
     with app.app_context():
@@ -418,7 +434,7 @@ def test_chat_stream_skips_persistence_when_storing_disabled(app, auth_client, t
         db.session.get(Entity, test_user["id"]).store_conversations = False
         db.session.commit()
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None, resolved=None):
         yield "Hello", None, None
         yield None, None, {
             "reply": "Hello",
@@ -457,7 +473,7 @@ def test_chat_stream_skips_persistence_when_storing_disabled(app, auth_client, t
         assert db.session.scalar(select(func.count(Message.id))) == 0
 
 
-def _fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
+def _fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None, resolved=None):
     yield "Hello", None, None
     yield None, None, {
         "reply": "Hello",
@@ -484,7 +500,7 @@ def _conversation_counter(app, entity_id):
         ) or 0
 
 
-def test_chat_stream_counts_conversation_when_storing(app, auth_client, test_user, test_model, monkeypatch):
+def test_chat_stream_counts_conversation_when_storing(app, auth_client, test_user, test_model, test_model_endpoint, monkeypatch):
     """A new stored conversation bumps the persistent counter; continuing it does not."""
     with app.app_context():
         _grant_unlimited_pool(app, test_user["id"])
@@ -516,7 +532,7 @@ def test_chat_stream_counts_conversation_when_storing(app, auth_client, test_use
     assert _conversation_counter(app, test_user["id"]) == 1
 
 
-def test_chat_stream_counts_conversation_when_storing_disabled(app, auth_client, test_user, test_model, monkeypatch):
+def test_chat_stream_counts_conversation_when_storing_disabled(app, auth_client, test_user, test_model, test_model_endpoint, monkeypatch):
     """With storage off, the first exchange bumps the counter; follow-ups don't."""
     with app.app_context():
         from lumen.extensions import db
@@ -552,6 +568,36 @@ def test_chat_stream_counts_conversation_when_storing_disabled(app, auth_client,
         from lumen.extensions import db
         from lumen.models.conversation import Conversation
         assert db.session.scalar(select(func.count(Conversation.id))) == 0
+
+
+def test_chat_stream_no_healthy_endpoint_is_503_before_streaming(app, auth_client, test_user, test_model, monkeypatch):
+    """No healthy endpoint: a plain 503 JSON error, as on /v1, before any stream
+    starts — counted, never admitted, never handed to the generator."""
+    from lumen.blueprints.chat import routes as chat_routes
+    from lumen.extensions import db
+    from lumen.models.model_endpoint import ModelEndpoint
+    with app.app_context():
+        _grant_unlimited_pool(app, test_user["id"])
+        db.session.add(ModelEndpoint(model_config_id=test_model["id"], url="http://localhost:9999/v1",
+                                     api_key="k", healthy=False))
+        db.session.commit()
+    state = _recording_live_state(monkeypatch, chat_routes)
+
+    def _never(*args, **kwargs):
+        raise AssertionError("send_message_stream called without a healthy endpoint")
+
+    monkeypatch.setattr(chat_routes, "send_message_stream", _never)
+    recorded = []
+    monkeypatch.setattr(
+        "lumen.blueprints.metrics.middleware.observe_rejection",
+        lambda reason, source, model="": recorded.append((reason, source, model)),
+    )
+
+    resp = _post_stream(auth_client, test_model)
+    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert resp.get_json() == {"error": f"No healthy endpoints for model '{test_model['model_name']}'"}
+    assert state.admits == 0
+    assert recorded == [("no_healthy_endpoint", "chat", test_model["model_name"])]
 
 
 def test_chat_stream_expired_model_rejected(app, auth_client, test_user, test_model):
@@ -623,7 +669,7 @@ def test_chat_notice_links_to_desktop_clients_header(auth_client):
 
 
 def test_chat_stream_disconnect_is_not_reported_as_empty_response(
-    app, auth_client, test_user, test_model, monkeypatch,
+    app, auth_client, test_user, test_model, test_model_endpoint, monkeypatch,
 ):
     """A departed client is not an empty model response.
 
@@ -639,7 +685,7 @@ def test_chat_stream_disconnect_is_not_reported_as_empty_response(
     with app.app_context():
         _grant_unlimited_pool(app, test_user["id"])
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None, resolved=None):
         yield "Hello", None, None
         disconnected.set()  # client vanishes mid-stream
         yield " world", None, None
@@ -1004,7 +1050,7 @@ def _post_stream(auth_client, test_model):
 
 
 def test_chat_stream_admits_once_and_releases_once(
-    app, auth_client, test_user, test_model, monkeypatch,
+    app, auth_client, test_user, test_model, test_model_endpoint, monkeypatch,
 ):
     """One admit in the view, one release in the generator, zero left over —
     and the request counts as live until it completes, not until the first
@@ -1014,7 +1060,7 @@ def test_chat_stream_admits_once_and_releases_once(
         _grant_unlimited_pool(app, test_user["id"])
     state = _recording_live_state(monkeypatch, chat_routes)
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None, resolved=None):
         yield "Hello", None, None
         yield None, None, dict(_FINAL_RESULT)
 
@@ -1038,7 +1084,7 @@ def test_chat_stream_admits_once_and_releases_once(
 
 
 def test_chat_stream_releases_when_the_generator_raises(
-    app, auth_client, test_user, test_model, monkeypatch,
+    app, auth_client, test_user, test_model, test_model_endpoint, monkeypatch,
 ):
     """A KeyError inside the billing block still leaves the count at zero."""
     from lumen.blueprints.chat import routes as chat_routes
@@ -1046,7 +1092,7 @@ def test_chat_stream_releases_when_the_generator_raises(
         _grant_unlimited_pool(app, test_user["id"])
     state = _recording_live_state(monkeypatch, chat_routes)
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None, resolved=None):
         yield "Hello", None, None
         yield None, None, {"model": "test-model"}  # no "reply" → KeyError
 
@@ -1062,7 +1108,7 @@ def test_chat_stream_releases_when_the_generator_raises(
 
 
 def test_chat_stream_releases_when_upstream_fails(
-    app, auth_client, test_user, test_model, monkeypatch,
+    app, auth_client, test_user, test_model, test_model_endpoint, monkeypatch,
 ):
     """An upstream failure raised out of send_message_stream releases too."""
     from lumen.blueprints.chat import routes as chat_routes
@@ -1070,7 +1116,7 @@ def test_chat_stream_releases_when_upstream_fails(
         _grant_unlimited_pool(app, test_user["id"])
     state = _recording_live_state(monkeypatch, chat_routes)
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None, resolved=None):
         raise RuntimeError("upstream is down")
         yield  # pragma: no cover - makes this a generator function
 
@@ -1084,7 +1130,7 @@ def test_chat_stream_releases_when_upstream_fails(
 
 
 def test_chat_stream_releases_on_client_disconnect(
-    app, auth_client, test_user, test_model, monkeypatch,
+    app, auth_client, test_user, test_model, test_model_endpoint, monkeypatch,
 ):
     """The client vanishes mid-stream: the generator returns early and the
     ticket goes with it."""
@@ -1096,7 +1142,7 @@ def test_chat_stream_releases_on_client_disconnect(
     state = _recording_live_state(monkeypatch, chat_routes)
     disconnected = threading.Event()
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None, resolved=None):
         yield "Hello", None, None
         disconnected.set()
         yield " world", None, None
@@ -1113,7 +1159,7 @@ def test_chat_stream_releases_on_client_disconnect(
 
 
 def test_chat_stream_releases_when_the_body_is_abandoned(
-    app, auth_client, test_user, test_model, monkeypatch,
+    app, auth_client, test_user, test_model, test_model_endpoint, monkeypatch,
 ):
     """Closing the response mid-stream (GeneratorExit) releases the ticket."""
     from lumen.blueprints.chat import routes as chat_routes
@@ -1121,7 +1167,7 @@ def test_chat_stream_releases_when_the_body_is_abandoned(
         _grant_unlimited_pool(app, test_user["id"])
     state = _recording_live_state(monkeypatch, chat_routes)
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None, resolved=None):
         yield "Hello", None, None
         yield " world", None, None
         yield None, None, dict(_FINAL_RESULT)
@@ -1175,7 +1221,7 @@ def test_unknown_model_is_never_admitted(app, auth_client, test_user, monkeypatc
 
 
 def test_releasing_a_finished_stream_twice_leaves_the_count_intact(
-    app, auth_client, test_user, test_model, monkeypatch,
+    app, auth_client, test_user, test_model, test_model_endpoint, monkeypatch,
 ):
     """close() after the generator has already run its finally must not
     decrement anything else."""
@@ -1185,13 +1231,14 @@ def test_releasing_a_finished_stream_twice_leaves_the_count_intact(
     state = _recording_live_state(monkeypatch, chat_routes)
     bystander = state.admit(test_model["model_name"], 4242)
 
-    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None):
+    def fake_stream(messages, model, entity_id=None, source="chat", effective=None, model_config_id=None, resolved=None):
         yield "Hello", None, None
         yield None, None, dict(_FINAL_RESULT)
 
     monkeypatch.setattr(chat_routes, "send_message_stream", fake_stream)
 
     resp = _post_stream(auth_client, test_model)
+    assert resp.status_code == HTTPStatus.OK
     b"".join(resp.response)
     resp.close()          # first release ran at StopIteration
     resp.close()          # and again — harmless

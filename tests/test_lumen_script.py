@@ -29,6 +29,12 @@ MODELS = {
             "parent": "gpt-demo",
             "output_modalities": ["text"],
         },
+        {
+            "id": "whisper-demo", "max_model_len": 4000,
+            "input_cost_per_million": 1.0, "output_cost_per_million": 2.0,
+            "input_modalities": ["audio"],
+            "output_modalities": ["text"],
+        },
     ],
 }
 
@@ -47,19 +53,26 @@ class FakeLumen(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _route(self):
+        """The request path below the server's mount prefix, or None."""
+        prefix = self.server.prefix
+        return self.path[len(prefix):] if self.path.startswith(prefix + "/") else None
+
     def do_POST(self):
         form = parse_qs(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode())
         s = self.server
         s.hits[self.path] = s.hits.get(self.path, 0) + 1
-        if self.path == "/oauth/device_authorization":
+        path = self._route()
+        if path == "/oauth/device_authorization":
             assert form.get("client_id") and form.get("name")
+            s.auth_forms.append(form)
             self._json(200, {
                 "device_code": "devcode-1", "user_code": "QQQQ-QQQQ",
                 "verification_uri": "http://127.0.0.1:1/device",
                 "interval": 1, "expires_in": 30,
                 **s.auth_extra,
             })
-        elif self.path == "/oauth/token":
+        elif path == "/oauth/token":
             assert form["grant_type"][0] == "urn:ietf:params:oauth:grant-type:device_code"
             code, obj, *headers = s.token_queue.pop(0) if s.token_queue else (400, {"error": "expired_token"})
             self._json(code, obj, *headers)
@@ -67,10 +80,11 @@ class FakeLumen(BaseHTTPRequestHandler):
             self._json(404, {"error": "not_found"})
 
     def do_GET(self):
-        if self.path == "/v1/models":
+        if self._route() == "/v1/models":
             auth = self.headers.get("Authorization", "")
-            if not auth.startswith("Bearer sk_"):
-                self._json(401, {"error": {"message": "no key"}})
+            self.server.auths.append(auth)
+            if not auth.startswith("Bearer sk_") or self.server.models_status == 401:
+                self._json(401, {"error": {"message": "Invalid, revoked, or expired API key"}})
                 return
             self.server.hits["/v1/models"] = self.server.hits.get("/v1/models", 0) + 1
             self._json(200, MODELS)
@@ -84,6 +98,10 @@ def lumen_server():
     server.hits = {}
     server.token_queue = []
     server.auth_extra = {}
+    server.auth_forms = []
+    server.auths = []
+    server.prefix = ""
+    server.models_status = 200
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield server
@@ -99,13 +117,38 @@ def home(tmp_path, monkeypatch):
     return home
 
 
-def run_script(home, server_port_or_url=None, args=(), env_extra=None, input=b"", timeout=30):
+@pytest.fixture()
+def bare_home(tmp_path):
+    """A home without any opencode config; pass opencode_env=False to
+    run_script so lumen.sh has to find (or create) the config itself."""
+    home = tmp_path / "home"
+    home.mkdir()
+    return home
+
+
+# Directory holding a no-op `sleep`, first on run_script's default PATH so the
+# device flow's poll interval costs nothing. Tests that check the sleeps pass
+# their own PATH via fake_bin.
+NO_SLEEP_BIN = None
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _no_sleep_bin(tmp_path_factory):
+    global NO_SLEEP_BIN
+    NO_SLEEP_BIN = tmp_path_factory.mktemp("no_sleep")
+    (NO_SLEEP_BIN / "sleep").write_text("#!/bin/sh\n")
+    (NO_SLEEP_BIN / "sleep").chmod(0o755)
+
+
+def run_script(home, server_port_or_url=None, args=(), env_extra=None, input=b"", timeout=30,
+               opencode_env=True):
     env = {
-        "PATH": "/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin",
+        "PATH": f"{NO_SLEEP_BIN}:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin",
         "SHELL": "/bin/bash",
     }
     if home is not None:
         env["HOME"] = str(home)
+    if home is not None and opencode_env:
         env["OPENCODE_CONFIG"] = str(home / ".config" / "opencode" / "opencode.json")
     if server_port_or_url:
         url = server_port_or_url if "://" in str(server_port_or_url) else f"http://127.0.0.1:{server_port_or_url}"
@@ -177,15 +220,17 @@ def test_bad_server_url_echoed_without_control_characters():
 
 # --- device flow ------------------------------------------------------------
 
-def test_device_flow_stores_key_and_rc_block(home, lumen_server):
+def test_device_flow_stores_key_and_rc_block(home, lumen_server, tmp_path):
     port = lumen_server.server_address[1]
+    env, sleeps = fake_bin(tmp_path)
     lumen_server.token_queue = [
         (400, {"error": "authorization_pending"}),
         (200, {"access_token": TEST_KEY, "token_type": "Bearer",
                "approved_by": "alice@example.edu"}),
     ]
-    r = run_script(home, port, args=["--no-opencode"], timeout=25)
+    r = run_script(home, port, args=["--no-opencode"], env_extra=env)
     assert r.returncode == 0, r.stderr
+    assert logged_sleeps(sleeps) == [1, 0, 1]
     assert b"QQQQ-QQQQ" in r.stdout
     assert b"alice@example.edu" in r.stdout
     keys = json.loads((home / ".config" / "lumen" / "keys.json").read_text())
@@ -289,9 +334,12 @@ def test_non_numeric_timing_values_are_not_evaluated(home, lumen_server, tmp_pat
     ] if field == "expires_in" else [
         (200, {"access_token": TEST_KEY, "token_type": "Bearer", "approved_by": "a@b"}),
     ]
-    r = run_script(home, port, args=["--no-opencode"], timeout=40)
+    env, sleeps = fake_bin(tmp_path)
+    r = run_script(home, port, args=["--no-opencode"], env_extra=env)
     assert r.returncode == 0, r.stderr
     assert not marker.exists()
+    # interval falls back to the default of 5; slow_down raises 1 to 6.
+    assert logged_sleeps(sleeps) == ([5] if field == "interval" else [1, 6, 6])
 
 
 @pytest.mark.parametrize("token", ['sk_x"; touch INJECTED; "', "sk_$(id)", "not_sk_token"])
@@ -372,7 +420,7 @@ def test_verification_uri_complete_opened_only_on_server(home, lumen_server, tmp
         (200, {"access_token": TEST_KEY, "token_type": "Bearer", "approved_by": "a@b"}),
     ]
     r = run_script(home, port, args=["--no-opencode"],
-                   env_extra={"PATH": f"{bindir}:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"})
+                   env_extra={"PATH": f"{bindir}:{NO_SLEEP_BIN}:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"})
     assert r.returncode == 0, r.stderr
     assert log.exists() == opened
 
@@ -434,6 +482,548 @@ def test_sync_writes_provider_block(home, lumen_server):
     assert b"Updated 2 models" in r.stdout
 
 
+def store_test_key(home, port):
+    keys = home / ".config" / "lumen" / "keys.json"
+    keys.parent.mkdir(parents=True)
+    keys.write_text(json.dumps({host_key(port): "sk_stored_key_000"}))
+
+
+def test_sync_creates_jsonc_when_no_config(bare_home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(bare_home, port)
+    r = run_script(bare_home, port, opencode_env=False)
+    assert r.returncode == 0, r.stderr
+    oc = bare_home / ".config" / "opencode"
+    assert not (oc / "opencode.json").exists()
+    cfg_path = oc / "opencode.jsonc"
+    assert stat.S_IMODE(cfg_path.stat().st_mode) == 0o600
+    cfg = json.loads(cfg_path.read_text())
+    assert cfg["$schema"] == "https://opencode.ai/config.json"
+    assert set(cfg["provider"]["lumen"]["models"]) == {"gpt-demo", "gpt-alias"}
+    assert b"warning" not in r.stderr
+    assert not (oc / "opencode.jsonc.bak").exists()
+
+
+JSONC_WITH_COMMENTS = """\
+{
+  // line comment with "quotes"
+  "$schema": "https://opencode.ai/config.json", /* block comment */
+  "theme": "a//b /* not a comment */",
+  "note": "say \\"//hi\\", ok",
+  /* comment
+     over two lines */
+  "provider": {
+    "other": {"options": {"baseURL": "https://example.com/v1",}, "list": [1, 2, ],},
+  },
+}
+"""
+
+
+def test_sync_reads_jsonc_with_comments(bare_home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(bare_home, port)
+    oc = bare_home / ".config" / "opencode"
+    oc.mkdir(parents=True)
+    (oc / "opencode.jsonc").write_text(JSONC_WITH_COMMENTS)
+    r = run_script(bare_home, port, opencode_env=False)
+    assert r.returncode == 0, r.stderr
+    assert not (oc / "opencode.json").exists()
+    cfg = json.loads((oc / "opencode.jsonc").read_text())
+    assert cfg["theme"] == "a//b /* not a comment */"
+    assert cfg["note"] == 'say "//hi", ok'
+    assert cfg["provider"]["other"] == {"options": {"baseURL": "https://example.com/v1"}, "list": [1, 2]}
+    assert set(cfg["provider"]["lumen"]["models"]) == {"gpt-demo", "gpt-alias"}
+    assert b"warning: comments in" in r.stderr
+    assert (oc / "opencode.jsonc.bak").read_text() == JSONC_WITH_COMMENTS
+    # The .bak is one-time: a later run keeps the first original.
+    (oc / "opencode.jsonc").write_text("// newer\n" + JSONC_WITH_COMMENTS)
+    r = run_script(bare_home, port, opencode_env=False)
+    assert r.returncode == 0, r.stderr
+    assert (oc / "opencode.jsonc.bak").read_text() == JSONC_WITH_COMMENTS
+
+
+def test_sync_jsonc_with_trailing_commas_only_has_no_warning(bare_home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(bare_home, port)
+    oc = bare_home / ".config" / "opencode"
+    oc.mkdir(parents=True)
+    (oc / "opencode.jsonc").write_text('{"theme": "x",}\n')
+    r = run_script(bare_home, port, opencode_env=False)
+    assert r.returncode == 0, r.stderr
+    assert json.loads((oc / "opencode.jsonc").read_text())["theme"] == "x"
+    assert b"warning" not in r.stderr
+    assert not (oc / "opencode.jsonc.bak").exists()
+
+
+def test_sync_prefers_json_over_jsonc(bare_home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(bare_home, port)
+    oc = bare_home / ".config" / "opencode"
+    oc.mkdir(parents=True)
+    (oc / "opencode.json").write_text("{}\n")
+    (oc / "opencode.jsonc").write_text(JSONC_WITH_COMMENTS)
+    r = run_script(bare_home, port, opencode_env=False)
+    assert r.returncode == 0, r.stderr
+    cfg = json.loads((oc / "opencode.json").read_text())
+    assert set(cfg["provider"]["lumen"]["models"]) == {"gpt-demo", "gpt-alias"}
+    assert (oc / "opencode.jsonc").read_text() == JSONC_WITH_COMMENTS
+    assert not (oc / "opencode.jsonc.bak").exists()
+
+
+def test_sync_creates_missing_opencode_config_env_path(bare_home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(bare_home, port)
+    target = bare_home / "elsewhere" / "custom.json"
+    r = run_script(bare_home, port, opencode_env=False,
+                   env_extra={"OPENCODE_CONFIG": str(target)})
+    assert r.returncode == 0, r.stderr
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    cfg = json.loads(target.read_text())
+    assert set(cfg["provider"]["lumen"]["models"]) == {"gpt-demo", "gpt-alias"}
+    assert not (bare_home / ".config" / "opencode").exists()
+
+
+def lumen_block(base_url, api_key):
+    return {"provider": {"lumen": {
+        "npm": "@ai-sdk/openai-compatible", "name": "Lumen",
+        "options": {"baseURL": base_url, "apiKey": api_key},
+        "models": {"old-model": {"name": "old-model via Lumen"}},
+    }}}
+
+
+@pytest.mark.parametrize("existing_mode", [0o644, 0o600])
+def test_embed_key_writes_literal_key_rc_and_keys(home, lumen_server, existing_mode):
+    port = lumen_server.server_address[1]
+    config = home / ".config" / "opencode" / "opencode.json"
+    config.chmod(existing_mode)
+    lumen_server.token_queue = [
+        (200, {"access_token": TEST_KEY, "token_type": "Bearer", "approved_by": "a@b"}),
+    ]
+    r = run_script(home, port, args=["--embed-key"])
+    assert r.returncode == 0, r.stderr
+    keys = json.loads((home / ".config" / "lumen" / "keys.json").read_text())
+    assert keys[host_key(port)] == TEST_KEY
+    assert f"export LUMEN_API_KEY='{TEST_KEY}'" in (home / ".bashrc").read_text()
+    cfg = json.loads(config.read_text())
+    assert cfg["provider"]["lumen"]["options"] == {
+        "baseURL": f"http://127.0.0.1:{port}/v1", "apiKey": TEST_KEY,
+    }
+    assert stat.S_IMODE(config.stat().st_mode) == 0o600
+    assert (f"{config} was readable by other users".encode() in r.stderr) == (existing_mode == 0o644)
+    assert b"The key is embedded in" in r.stdout
+
+
+def test_embed_key_creates_jsonc_with_literal_key(bare_home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(bare_home, port)
+    r = run_script(bare_home, port, args=["--embed-key"], opencode_env=False)
+    assert r.returncode == 0, r.stderr
+    config = bare_home / ".config" / "opencode" / "opencode.jsonc"
+    assert json.loads(config.read_text())["provider"]["lumen"]["options"]["apiKey"] == "sk_stored_key_000"
+    assert stat.S_IMODE(config.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize("embed", [True, False])
+def test_env_block_switched_to_literal_key_only_with_flag(home, lumen_server, embed):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    config = home / ".config" / "opencode" / "opencode.json"
+    config.write_text(json.dumps(lumen_block(f"http://127.0.0.1:{port}/v1", "{env:LUMEN_API_KEY}")))
+    r = run_script(home, port, args=["--embed-key"] if embed else [])
+    assert r.returncode == 0, r.stderr
+    lumen = json.loads(config.read_text())["provider"]["lumen"]
+    assert lumen["options"]["apiKey"] == ("sk_stored_key_000" if embed else "{env:LUMEN_API_KEY}")
+    assert lumen["options"]["baseURL"] == f"http://127.0.0.1:{port}/v1"
+    assert set(lumen["models"]) == {"gpt-demo", "gpt-alias"}
+    assert (b"The key is embedded in" in r.stdout) == embed
+
+
+def test_embedded_key_is_sticky_without_flag(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    config = home / ".config" / "opencode" / "opencode.json"
+    config.write_text(json.dumps(lumen_block(f"http://127.0.0.1:{port}/v1", "sk_old_embedded_000")))
+    config.chmod(0o644)
+    # With -s the stored key wins over the differing embedded one.
+    r = run_script(home, port, args=["-s", f"http://127.0.0.1:{port}"])
+    assert r.returncode == 0, r.stderr
+    assert json.loads(config.read_text())["provider"]["lumen"]["options"]["apiKey"] == "sk_stored_key_000"
+    assert stat.S_IMODE(config.stat().st_mode) == 0o600
+    assert b"readable by other users" in r.stderr
+
+
+def test_malformed_embedded_key_is_not_sticky(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    config = home / ".config" / "opencode" / "opencode.json"
+    config.write_text(json.dumps(lumen_block(f"http://127.0.0.1:{port}/v1", "not a key")))
+    r = run_script(home, port)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(config.read_text())["provider"]["lumen"]["options"]["apiKey"] == "not a key"
+
+
+def commented_config(base_url, api_key):
+    return "// my opencode config\n" + json.dumps(lumen_block(base_url, api_key), indent=2) + "\n"
+
+
+@pytest.mark.parametrize("args", [[], ["--embed-key"]])
+def test_backup_of_commented_literal_key_config_is_owner_only(home, lumen_server, args):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    config = home / ".config" / "opencode" / "opencode.json"
+    original = commented_config(f"http://127.0.0.1:{port}/v1", "sk_old_embedded_000")
+    config.write_text(original)
+    config.chmod(0o644)
+    r = run_script(home, port, args=["-s", f"http://127.0.0.1:{port}", *args])
+    assert r.returncode == 0, r.stderr
+    bak = config.with_name("opencode.json.bak")
+    assert bak.read_text() == original
+    assert stat.S_IMODE(bak.stat().st_mode) == 0o600
+    assert stat.S_IMODE(config.stat().st_mode) == 0o600
+    assert json.loads(config.read_text())["provider"]["lumen"]["options"]["apiKey"] == "sk_stored_key_000"
+    assert b"sk_" not in r.stdout + r.stderr
+
+
+@pytest.mark.parametrize("args", [[], ["--embed-key"]])
+def test_existing_backup_restricted_when_key_embedded(home, lumen_server, args):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    config = home / ".config" / "opencode" / "opencode.json"
+    config.write_text(commented_config(f"http://127.0.0.1:{port}/v1", "sk_old_embedded_000"))
+    bak = config.with_name("opencode.json.bak")
+    earlier = commented_config(f"http://127.0.0.1:{port}/v1", "sk_older_embedded_0")
+    bak.write_text(earlier)
+    bak.chmod(0o644)
+    r = run_script(home, port, args=["-s", f"http://127.0.0.1:{port}", *args])
+    assert r.returncode == 0, r.stderr
+    assert bak.read_text() == earlier
+    assert stat.S_IMODE(bak.stat().st_mode) == 0o600
+    assert f"{bak} was readable by other users".encode() in r.stderr
+    assert b"sk_" not in r.stdout + r.stderr
+
+
+def test_backup_of_commented_env_config_is_owner_only(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    config = home / ".config" / "opencode" / "opencode.json"
+    original = commented_config(f"http://127.0.0.1:{port}/v1", "{env:LUMEN_API_KEY}")
+    config.write_text(original)
+    config.chmod(0o644)
+    r = run_script(home, port, args=["--embed-key"])
+    assert r.returncode == 0, r.stderr
+    bak = config.with_name("opencode.json.bak")
+    assert bak.read_text() == original
+    assert stat.S_IMODE(bak.stat().st_mode) == 0o600
+
+
+# --- choosing the server and key ----------------------------------------------
+
+# Server A: nothing listens there, so a run that contacts it fails.
+SERVER_A = "http://127.0.0.1:9"
+KEY_A = "sk_key_for_A_000000"
+EMBEDDED_KEY = "sk_embedded_key_000"
+LOGIN = (200, {"access_token": TEST_KEY, "token_type": "Bearer", "approved_by": "a@b"})
+
+
+def write_config(home, base_url, api_key):
+    config = home / ".config" / "opencode" / "opencode.json"
+    config.write_text(json.dumps(lumen_block(base_url, api_key)))
+    return config
+
+
+def lumen_options(config):
+    return json.loads(config.read_text())["provider"]["lumen"]["options"]
+
+
+def keys_json(home):
+    return home / ".config" / "lumen" / "keys.json"
+
+
+def oauth_hits(server):
+    return {p: n for p, n in server.hits.items() if p.startswith("/oauth")}
+
+
+@pytest.mark.parametrize("env", [{}, {"LUMEN_BASE_URL": SERVER_A, "LUMEN_API_KEY": KEY_A}])
+def test_explicit_server_wins_over_config_and_env(home, lumen_server, env):
+    port = lumen_server.server_address[1]
+    server_b = f"http://127.0.0.1:{port}"
+    store_test_key(home, port)
+    stored = keys_json(home).read_bytes()
+    config = write_config(home, f"{SERVER_A}/v1", "{env:LUMEN_API_KEY}")
+    r = run_script(home, None, args=["-s", server_b], env_extra=env)
+    assert r.returncode == 0, r.stderr
+    assert lumen_options(config) == {"baseURL": f"{server_b}/v1", "apiKey": "{env:LUMEN_API_KEY}"}
+    bashrc = (home / ".bashrc").read_text()
+    assert "export LUMEN_API_KEY='sk_stored_key_000'" in bashrc
+    assert f"export LUMEN_BASE_URL='{server_b}'" in bashrc
+    assert keys_json(home).read_bytes() == stored
+    assert lumen_server.auths == ["Bearer sk_stored_key_000"]
+    assert not oauth_hits(lumen_server)
+
+
+def test_explicit_server_never_gets_other_servers_embedded_key(home, lumen_server):
+    port = lumen_server.server_address[1]
+    server_b = f"http://127.0.0.1:{port}"
+    config = write_config(home, f"{SERVER_A}/v1", KEY_A)
+    lumen_server.token_queue = [LOGIN]
+    r = run_script(home, None, args=["-s", server_b])
+    assert r.returncode == 0, r.stderr
+    assert lumen_server.hits.get("/oauth/device_authorization") == 1
+    assert lumen_server.auths == [f"Bearer {TEST_KEY}"]
+    assert lumen_options(config) == {"baseURL": f"{server_b}/v1", "apiKey": TEST_KEY}
+
+
+def test_explicit_server_reuses_embedded_key_for_same_server(home, lumen_server):
+    port = lumen_server.server_address[1]
+    server_b = f"http://127.0.0.1:{port}"
+    config = write_config(home, f"{server_b}/v1", EMBEDDED_KEY)
+    r = run_script(home, None, args=["-s", server_b])
+    assert r.returncode == 0, r.stderr
+    assert not oauth_hits(lumen_server)
+    assert lumen_server.auths == [f"Bearer {EMBEDDED_KEY}"]
+    assert json.loads(keys_json(home).read_text()) == {host_key(port): EMBEDDED_KEY}
+    bashrc = (home / ".bashrc").read_text()
+    assert f"export LUMEN_API_KEY='{EMBEDDED_KEY}'" in bashrc
+    assert f"export LUMEN_BASE_URL='{server_b}'" in bashrc
+    assert lumen_options(config)["apiKey"] == EMBEDDED_KEY
+
+
+@pytest.mark.parametrize("args", [[], ["--relogin"]])
+def test_dotfile_url_differing_from_config_aborts(home, lumen_server, args):
+    port = lumen_server.server_address[1]
+    config = write_config(home, f"http://127.0.0.1:{port}/v1", "{env:LUMEN_API_KEY}")
+    before = config.read_bytes()
+    (home / ".bashrc").write_text("# mine\n")
+    lumen_server.token_queue = [LOGIN]
+    r = run_script(home, SERVER_A, args=args)
+    assert r.returncode != 0
+    assert f"$LUMEN_BASE_URL is {SERVER_A} but".encode() in r.stderr
+    assert f"uses http://127.0.0.1:{port}".encode() in r.stderr
+    assert b"pass -s URL to choose one" in r.stderr
+    assert config.read_bytes() == before
+    assert (home / ".bashrc").read_text() == "# mine\n"
+    assert not lumen_server.hits
+
+
+@pytest.mark.parametrize("base_url", ["{s}/v1", "{s}/v1/", "{s}"])
+def test_config_url_adopted_without_base_url(home, lumen_server, base_url):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    config = write_config(home, base_url.format(s=f"http://127.0.0.1:{port}"), "{env:LUMEN_API_KEY}")
+    r = run_script(home, None)
+    assert r.returncode == 0, r.stderr
+    assert lumen_server.auths == ["Bearer sk_stored_key_000"]
+    assert lumen_options(config)["baseURL"] == f"http://127.0.0.1:{port}/v1"
+
+
+@pytest.mark.parametrize("via", ["-s", "env"])
+def test_no_opencode_keeps_v1_mounted_server(home, lumen_server, via):
+    """--no-opencode logs in to a Lumen mounted at a path ending in /v1 as
+    before: the /v1 normalization only applies with the opencode config."""
+    port = lumen_server.server_address[1]
+    mounted = f"http://127.0.0.1:{port}/v1"
+    lumen_server.prefix = "/v1"
+    lumen_server.token_queue = [LOGIN]
+    args = ["--no-opencode", "--relogin"]
+    env = {}
+    if via == "-s":
+        args += ["-s", mounted]
+    else:
+        env["LUMEN_BASE_URL"] = f"{mounted}/"
+    r = run_script(home, None, args=args, env_extra=env)
+    assert r.returncode == 0, r.stderr
+    assert lumen_server.hits.get("/v1/oauth/device_authorization") == 1
+    assert lumen_server.hits.get("/v1/oauth/token") == 1
+    assert "/oauth/device_authorization" not in lumen_server.hits
+    assert json.loads(keys_json(home).read_text()) == {host_key(port): TEST_KEY}
+    assert f"export LUMEN_BASE_URL='{mounted}'" in (home / ".bashrc").read_text()
+
+
+def test_no_opencode_env_key_matches_v1_mounted_server(home, lumen_server):
+    port = lumen_server.server_address[1]
+    mounted = f"http://127.0.0.1:{port}/v1"
+    r = run_script(home, None, args=["--no-opencode", "-s", mounted],
+                   env_extra={"LUMEN_BASE_URL": f"{mounted}/", "LUMEN_API_KEY": "sk_mounted_key_0000"})
+    assert r.returncode == 0, r.stderr
+    assert b"LUMEN_API_KEY=sk_mounted_key_0000" in r.stdout
+    assert not lumen_server.hits
+
+
+@pytest.mark.parametrize("source", ["keys", "env"])
+def test_base_url_with_v1_matches_config_url(home, lumen_server, source):
+    """$LUMEN_BASE_URL in the opencode baseURL form (with /v1) names the same
+    server as the config: no abort, and the env key still counts."""
+    port = lumen_server.server_address[1]
+    server_v1 = f"http://127.0.0.1:{port}/v1"
+    env = {"LUMEN_BASE_URL": f"{server_v1}/"}
+    if source == "keys":
+        store_test_key(home, port)
+    else:
+        env["LUMEN_API_KEY"] = "sk_stored_key_000"
+    config = write_config(home, server_v1, "sk_stored_key_000")
+    r = run_script(home, None, env_extra=env)
+    assert r.returncode == 0, r.stderr
+    assert not oauth_hits(lumen_server)
+    assert lumen_server.auths == ["Bearer sk_stored_key_000"]
+    assert lumen_options(config)["baseURL"] == server_v1
+
+
+def test_explicit_server_with_v1(home, lumen_server):
+    port = lumen_server.server_address[1]
+    server_b = f"http://127.0.0.1:{port}"
+    store_test_key(home, port)
+    config = write_config(home, f"{SERVER_A}/v1", "{env:LUMEN_API_KEY}")
+    r = run_script(home, None, args=["-s", f"{server_b}/v1"])
+    assert r.returncode == 0, r.stderr
+    assert lumen_server.hits.get("/v1/models") == 1
+    assert lumen_options(config)["baseURL"] == f"{server_b}/v1"
+    assert f"export LUMEN_BASE_URL='{server_b}'" in (home / ".bashrc").read_text()
+
+
+@pytest.mark.parametrize("source", ["keys", "env"])
+def test_embedded_key_differing_from_dotfile_key_aborts(home, lumen_server, source):
+    port = lumen_server.server_address[1]
+    env = {}
+    if source == "keys":
+        store_test_key(home, port)
+    else:
+        env = {"LUMEN_API_KEY": "sk_stored_key_000"}
+    config = write_config(home, f"http://127.0.0.1:{port}/v1", EMBEDDED_KEY)
+    before = config.read_bytes()
+    r = run_script(home, port, env_extra=env)
+    assert r.returncode != 0
+    assert b"opencode.json differs from" in r.stderr
+    assert b"--relogin" in r.stderr
+    assert f"pass -s http://127.0.0.1:{port} to keep".encode() in r.stderr
+    assert config.read_bytes() == before
+    assert not lumen_server.hits
+    assert b"sk_" not in r.stdout + r.stderr
+
+
+def test_relogin_replaces_mismatching_embedded_key(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    config = write_config(home, f"http://127.0.0.1:{port}/v1", EMBEDDED_KEY)
+    lumen_server.token_queue = [LOGIN]
+    r = run_script(home, port, args=["--relogin"])
+    assert r.returncode == 0, r.stderr
+    assert json.loads(keys_json(home).read_text())[host_key(port)] == TEST_KEY
+    assert f"export LUMEN_API_KEY='{TEST_KEY}'" in (home / ".bashrc").read_text()
+    assert lumen_options(config)["apiKey"] == TEST_KEY
+
+
+@pytest.mark.parametrize("base_url_env", [True, False])
+def test_embedded_key_reused_without_dotfile_key(home, lumen_server, base_url_env):
+    port = lumen_server.server_address[1]
+    server_b = f"http://127.0.0.1:{port}"
+    config = write_config(home, f"{server_b}/v1", EMBEDDED_KEY)
+    r = run_script(home, port if base_url_env else None)
+    assert r.returncode == 0, r.stderr
+    assert not oauth_hits(lumen_server)
+    assert lumen_server.auths == [f"Bearer {EMBEDDED_KEY}"]
+    assert json.loads(keys_json(home).read_text()) == {host_key(port): EMBEDDED_KEY}
+    bashrc = (home / ".bashrc").read_text()
+    assert f"export LUMEN_API_KEY='{EMBEDDED_KEY}'" in bashrc
+    assert f"export LUMEN_BASE_URL='{server_b}'" in bashrc
+    assert lumen_options(config) == {"baseURL": f"{server_b}/v1", "apiKey": EMBEDDED_KEY}
+
+
+def test_rejected_embedded_key_is_not_stored(home, lumen_server):
+    port = lumen_server.server_address[1]
+    write_config(home, f"http://127.0.0.1:{port}/v1", EMBEDDED_KEY)
+    lumen_server.models_status = 401
+    r = run_script(home, port)
+    assert r.returncode != 0
+    assert b"key expired or revoked" in r.stderr
+    assert not keys_json(home).exists()
+    assert not (home / ".bashrc").exists()
+
+
+def test_matching_key_and_url_sync(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    stored = keys_json(home).read_bytes()
+    config = write_config(home, f"http://127.0.0.1:{port}/v1", "sk_stored_key_000")
+    r = run_script(home, port)
+    assert r.returncode == 0, r.stderr
+    assert not oauth_hits(lumen_server)
+    lumen = json.loads(config.read_text())["provider"]["lumen"]
+    assert lumen["options"] == {"baseURL": f"http://127.0.0.1:{port}/v1", "apiKey": "sk_stored_key_000"}
+    assert set(lumen["models"]) == {"gpt-demo", "gpt-alias"}
+    assert keys_json(home).read_bytes() == stored
+    assert not (home / ".bashrc").exists()
+
+
+def test_embedded_key_without_base_url_is_not_trusted(home, lumen_server):
+    """A key without a baseURL is not paired with any server: it is neither
+    checked nor reused, and the sync adds the baseURL."""
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    config = home / ".config" / "opencode" / "opencode.json"
+    config.write_text(json.dumps({"provider": {"lumen": {"options": {"apiKey": EMBEDDED_KEY}}}}))
+    r = run_script(home, port)
+    assert r.returncode == 0, r.stderr
+    assert lumen_server.auths == ["Bearer sk_stored_key_000"]
+    assert lumen_options(config) == {
+        "baseURL": f"http://127.0.0.1:{port}/v1", "apiKey": "sk_stored_key_000",
+    }
+
+
+@pytest.mark.parametrize("base_url,message", [
+    ("http://evil.example.edu/v1", b"refusing plain http"),
+    ("https://evil.example.edu/$(id)/v1", b"invalid characters"),
+    ("https://evil.example.edu/../v1", b"'..'"),
+    ("javascript:alert(1)", b"invalid server URL"),
+])
+def test_malicious_config_url_rejected(home, lumen_server, base_url, message):
+    config = write_config(home, base_url, "{env:LUMEN_API_KEY}")
+    before = config.read_bytes()
+    r = run_script(home, None, env_extra={"LUMEN_API_KEY": "sk_hand_exported_0000"})
+    assert r.returncode != 0
+    assert message in r.stderr
+    assert config.read_bytes() == before
+    assert not (home / ".config" / "lumen").exists()
+
+
+def test_config_url_rederives_keys_host(home, lumen_server):
+    port = lumen_server.server_address[1]
+    keys_json(home).parent.mkdir(parents=True)
+    keys_json(home).write_text(json.dumps({"lumen.ncsa.illinois.edu": "sk_default_host_00"}))
+    write_config(home, f"http://127.0.0.1:{port}/v1", "{env:LUMEN_API_KEY}")
+    lumen_server.token_queue = [LOGIN]
+    r = run_script(home, None)
+    assert r.returncode == 0, r.stderr
+    assert lumen_server.hits.get("/oauth/device_authorization") == 1
+    assert lumen_server.auths == [f"Bearer {TEST_KEY}"]
+    assert json.loads(keys_json(home).read_text()) == {
+        "lumen.ncsa.illinois.edu": "sk_default_host_00", host_key(port): TEST_KEY,
+    }
+
+
+def test_no_opencode_ignores_mismatching_config(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    config = write_config(home, f"{SERVER_A}/v1", KEY_A)
+    before = config.read_bytes()
+    (home / ".bashrc").write_text("# mine\n")
+    r = run_script(home, port, args=["--no-opencode"])
+    assert r.returncode == 0, r.stderr
+    assert b"LUMEN_API_KEY=sk_stored_key_000" in r.stdout
+    assert config.read_bytes() == before
+    assert (home / ".bashrc").read_text() == "# mine\n"
+    assert not lumen_server.hits
+
+
+@pytest.mark.parametrize("args", [["--embed-key", "--no-opencode"], ["--no-opencode", "--embed-key"]])
+def test_embed_key_with_no_opencode_rejected(home, lumen_server, args):
+    port = lumen_server.server_address[1]
+    r = run_script(home, port, args=args)
+    assert r.returncode != 0
+    assert b"--embed-key" in r.stderr
+    assert not lumen_server.hits
+    assert not (home / ".bashrc").exists()
+
+
 def test_sync_no_aliases_flag(home, lumen_server):
     port = lumen_server.server_address[1]
     keys = home / ".config" / "lumen" / "keys.json"
@@ -482,6 +1072,37 @@ def test_sync_reports_added_and_removed(home, lumen_server):
     assert r.returncode == 0, r.stderr
     assert b"+ gpt-demo" in r.stdout
     assert b"- gone-model" in r.stdout
+
+
+def test_sync_skips_models_without_text_input(home, lumen_server, monkeypatch):
+    """Models whose input_modalities lack text (e.g. audio-only) are not
+    written; text+audio and unknown modalities are kept, a previously synced
+    model that is now skipped is reported as removed, and if nothing is left
+    the config stays untouched."""
+    port = lumen_server.server_address[1]
+    keys = home / ".config" / "lumen" / "keys.json"
+    keys.parent.mkdir(parents=True)
+    keys.write_text(json.dumps({host_key(port): "sk_stored_key_000"}))
+    cfg_path = home / ".config" / "opencode" / "opencode.json"
+    cfg_path.write_text(json.dumps({"provider": {"lumen": {"models": {"whisper-demo": {}}}}}))
+    monkeypatch.setitem(MODELS, "data", MODELS["data"] + [
+        {"id": "omni-demo", "max_model_len": 4000,
+         "input_cost_per_million": 1.0, "output_cost_per_million": 2.0,
+         "input_modalities": ["text", "audio"]},
+    ])
+    r = run_script(home, port)
+    assert r.returncode == 0, r.stderr
+    models = json.loads(cfg_path.read_text())["provider"]["lumen"]["models"]
+    assert set(models) == {"gpt-demo", "gpt-alias", "omni-demo"}
+    assert b"- whisper-demo" in r.stdout
+    assert b"Updated 3 models" in r.stdout
+
+    before = cfg_path.read_text()
+    monkeypatch.setitem(MODELS, "data", [m for m in MODELS["data"] if m["id"] == "whisper-demo"])
+    r = run_script(home, port)
+    assert r.returncode != 0
+    assert b"no models" in r.stderr
+    assert cfg_path.read_text() == before
 
 
 # --- hostile server values ----------------------------------------------------
@@ -599,3 +1220,73 @@ def test_malformed_env_key_ignored(home, lumen_server):
     assert r.returncode == 0, r.stderr
     assert b"ignoring malformed LUMEN_API_KEY" in r.stderr
     assert "LUMEN_API_KEY=sk_stored_key_000" in r.stdout.decode()
+
+
+# --- key TTL ------------------------------------------------------------------
+
+@pytest.mark.parametrize("ttl, seconds", [("12h", 43200), ("2d", 172800), ("8w", 4838400), ("0", 0)])
+def test_ttl_forwarded_and_expiry_printed(home, lumen_server, ttl, seconds):
+    port = lumen_server.server_address[1]
+    expires = "2026-11-01T12:00:00Z" if seconds else None
+    lumen_server.token_queue = [
+        (200, {"access_token": TEST_KEY, "token_type": "Bearer",
+               "approved_by": "alice@example.edu", "expires_at": expires}),
+    ]
+    r = run_script(home, port, args=["--no-opencode", "--ttl", ttl], timeout=25)
+    assert r.returncode == 0, r.stderr
+    assert lumen_server.auth_forms[0]["ttl"] == [str(seconds)]
+    if expires:
+        assert b"The key expires at 2026-11-01T12:00:00Z." in r.stdout
+    else:
+        assert b"The key never expires." in r.stdout
+
+
+def test_no_ttl_sends_none_and_old_server_prints_no_expiry(home, lumen_server):
+    port = lumen_server.server_address[1]
+    lumen_server.token_queue = [
+        (200, {"access_token": TEST_KEY, "token_type": "Bearer", "approved_by": "alice@example.edu"}),
+    ]
+    r = run_script(home, port, args=["--no-opencode"], timeout=25)
+    assert r.returncode == 0, r.stderr
+    assert "ttl" not in lumen_server.auth_forms[0]
+    assert b"expire" not in r.stdout
+
+
+def test_expiry_printed_without_control_characters(home, lumen_server):
+    port = lumen_server.server_address[1]
+    lumen_server.token_queue = [
+        (200, {"access_token": TEST_KEY, "token_type": "Bearer", "expires_at": "2026\u001b[31m-11-01"}),
+    ]
+    r = run_script(home, port, args=["--no-opencode", "--ttl", "1d"], timeout=25)
+    assert r.returncode == 0, r.stderr
+    assert b"\x1b" not in r.stdout
+    assert b"The key expires at 2026[31m-11-01." in r.stdout
+
+
+@pytest.mark.parametrize("ttl", ["5m", "-1", "abc", "1.5d", "1d2h", "01d", "9999999d", "$(id)"])
+def test_invalid_ttl_rejected_before_any_request(home, lumen_server, ttl):
+    port = lumen_server.server_address[1]
+    r = run_script(home, port, args=["--no-opencode", "--relogin", "--ttl", ttl])
+    assert r.returncode != 0
+    assert b"invalid --ttl" in r.stderr
+    assert lumen_server.hits == {}
+
+
+def test_ttl_ignored_when_key_already_stored(home, lumen_server):
+    port = lumen_server.server_address[1]
+    r = run_script(home, port, args=["--no-opencode", "--ttl", "8w"],
+                   env_extra={"LUMEN_API_KEY": "sk_unused_0000000"})
+    assert r.returncode == 0, r.stderr
+    assert "/oauth/device_authorization" not in lumen_server.hits
+
+
+def test_401_on_stored_key_shows_relogin_hint(home, lumen_server):
+    port = lumen_server.server_address[1]
+    keys = home / ".config" / "lumen" / "keys.json"
+    keys.parent.mkdir(parents=True)
+    keys.write_text(json.dumps({host_key(port): "sk_expired_key_000"}))
+    lumen_server.models_status = 401
+    r = run_script(home, port)
+    assert r.returncode != 0
+    assert "key expired or revoked — run lumen.sh --relogin" in r.stderr.decode()
+    assert json.loads((home / ".config" / "opencode" / "opencode.json").read_text()) == {}

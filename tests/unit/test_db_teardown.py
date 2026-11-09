@@ -6,6 +6,7 @@ before clearing its registry, and ``SessionTransaction.close()`` detaches the
 transaction before closing its connections — so a rollback that raises leaves the
 connection checked out with the still-registered session pinning it.
 """
+import contextvars
 import gc
 import logging
 from http import HTTPStatus
@@ -94,13 +95,28 @@ def test_failed_rollback_releases_the_pool_slot(app):
     assert pool.checkedout() == baseline
 
 
-def test_plain_requests_do_not_accumulate_checkouts(app, client):
+def test_plain_requests_do_not_accumulate_checkouts(app, client, stopped_refresher):
     """Repeated plain requests must not grow the pool's checked-out count.
 
     That growth is the production symptom: one connection stranded per failed
-    teardown, never returned. The count sits at one rather than zero because the
-    test client keeps the most recent app context (and so its session) alive — it
-    is the *absence of accumulation* that is under test here.
+    teardown, never returned. So each request must leave the pool and the
+    session registry exactly as it found them.
+
+    Each request runs in a fresh ``contextvars.Context``. pytest-flask pushes a
+    request context for every test that uses ``app``, and Flask reuses an
+    already-pushed app context for the same app. Called directly,
+    ``client.get`` would run every request inside that one long-lived context:
+    its session would stay registered until the test ended, and per-request
+    teardown, the code this test is about, would never run. An empty context
+    has no app context to reuse, so each request pushes and pops its own.
+
+    The refresher is stopped first (``stopped_refresher``) because both counts
+    are process-wide: ``pool.checkedout()`` and the session registry, a plain
+    dict keyed by ``id(app_ctx)``. A ``metrics-snapshot`` pass holds a
+    connection and a registered session while it runs, and a pass that started
+    after the baseline read showed up here as a leak (``2 <= 0 + 1`` in CI, with
+    several refreshers alive). Stopping waits for an in-flight pass to finish,
+    so nothing else can move either count during the loop.
     """
     with app.app_context():
         pool = db.engine.pool
@@ -108,17 +124,13 @@ def test_plain_requests_do_not_accumulate_checkouts(app, client):
     # would otherwise still be holding a connection and skew the baseline.
     gc.collect()
     baseline = pool.checkedout()
-    # Baselined for the same reason the pool count is, and for one more: the
-    # registry dict is process-wide, so a background thread holding a session --
-    # the metrics-snapshot refresher, mid-pass -- owns an entry that has nothing
-    # to do with these requests. A bare `<= 1` fails whenever that pass overlaps
-    # the loop. What is under test is the *absence of accumulation*, so measure
-    # growth against whatever was already there.
-    sessions_baseline = len(db.session.registry.registry)
+    sessions_baseline = set(db.session.registry.registry)
+    outstanding_baseline = len(pool_tracker.outstanding())
 
     for _ in range(5):
-        assert client.get("/healthz").status_code == HTTPStatus.OK
-        assert pool.checkedout() <= baseline + 1
-        assert len(db.session.registry.registry) <= sessions_baseline + 1
+        response = contextvars.Context().run(client.get, "/healthz")
+        assert response.status_code == HTTPStatus.OK
+        assert pool.checkedout() == baseline
+        assert set(db.session.registry.registry) == sessions_baseline
 
-    assert len(pool_tracker.outstanding()) <= 1
+    assert len(pool_tracker.outstanding()) <= outstanding_baseline

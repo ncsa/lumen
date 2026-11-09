@@ -1,12 +1,17 @@
 """Tests for YAML sync functions in lumen/commands.py."""
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 
+import psycopg.errors
+import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError
 
+from lumen import commands
 from lumen.commands import __file__ as commands_file
-from lumen.commands import backfill_aggregate_cmd, check_aggregate_cmd, sync_models_from_yaml
+from lumen.commands import backfill_aggregate_cmd, check_aggregate_cmd, reassign_model_cmd, sync_models_from_yaml
 
 
 def test_sync_models_creates_model_config(app):
@@ -291,3 +296,424 @@ def test_check_aggregate_is_a_clean_noop_on_sqlite(app):
     assert result.exit_code == 0, result.output
     assert "requires PostgreSQL/TimescaleDB" in result.output
     assert "sqlite" in result.output
+
+
+class _FailingConn:
+    """Raises ``errors`` from ``execute`` in turn, then succeeds."""
+
+    def __init__(self, *errors):
+        self.errors = list(errors)
+        self.calls = 0
+
+    def execute(self, *args, **kwargs):
+        self.calls += 1
+        if self.errors:
+            orig = self.errors.pop(0)
+            raise DBAPIError.instance("CALL refresh_continuous_aggregate", {}, orig, psycopg.Error)
+
+
+def test_refresh_window_retries_lock_not_available(monkeypatch):
+    monkeypatch.setattr(commands.time, "sleep", lambda _s: None)
+    conn = _FailingConn(psycopg.errors.LockNotAvailable("refresh in progress"),
+                        psycopg.errors.LockNotAvailable("refresh in progress"))
+
+    retries = commands._refresh_window(conn, "agg", datetime(2026, 1, 1), datetime(2026, 2, 1))
+
+    assert retries == 2
+    assert conn.calls == 3
+
+
+def test_refresh_window_raises_other_errors_immediately(monkeypatch):
+    monkeypatch.setattr(commands.time, "sleep", lambda _s: pytest.fail("must not retry"))
+    conn = _FailingConn(psycopg.errors.UndefinedTable("no such aggregate"))
+
+    with pytest.raises(DBAPIError) as excinfo:
+        commands._refresh_window(conn, "agg", datetime(2026, 1, 1), datetime(2026, 2, 1))
+
+    assert isinstance(excinfo.value.orig, psycopg.errors.UndefinedTable)
+    assert conn.calls == 1
+
+
+@pytest.fixture
+def reassign_data(app):
+    """Two models, one user, and history under the first: a conversation, a stat that
+    collides with one TO already has, a stat that does not, and two request_logs rows."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.conversation import Conversation
+        from lumen.models.entity import Entity
+        from lumen.models.model_config import ModelConfig
+        from lumen.models.model_stat import ModelStat
+        from lumen.models.request_log import RequestLog
+
+        user = Entity(entity_type="user", email="reassign@example.com", name="Reassign", active=True)
+        src = ModelConfig(model_name="old-model", input_cost_per_million=1, output_cost_per_million=1)
+        dst = ModelConfig(model_name="new-model", input_cost_per_million=1, output_cost_per_million=1)
+        db.session.add_all([user, src, dst])
+        db.session.flush()
+        db.session.add_all([
+            Conversation(entity_id=user.id, model="old-model"),
+            ModelStat(entity_id=user.id, model_config_id=src.id, source="chat",
+                      requests=3, input_tokens=30, output_tokens=60, cost=Decimal("0.3")),
+            ModelStat(entity_id=user.id, model_config_id=src.id, source="api",
+                      requests=2, input_tokens=20, output_tokens=40, cost=Decimal("0.2")),
+            ModelStat(entity_id=user.id, model_config_id=dst.id, source="chat",
+                      requests=1, input_tokens=10, output_tokens=20, cost=Decimal("0.1")),
+        ])
+        for _ in range(2):
+            db.session.add(RequestLog(time=datetime.now(timezone.utc), model_config_id=src.id, source="chat"))
+        db.session.commit()
+        return {"src": src.id, "dst": dst.id, "user": user.id}
+
+
+def _stats(db, model_config_id):
+    from lumen.models.model_stat import ModelStat
+    return {
+        s.source: (s.requests, s.input_tokens, s.output_tokens, s.cost)
+        for s in db.session.execute(select(ModelStat).filter_by(model_config_id=model_config_id)).scalars()
+    }
+
+
+def test_reassign_model_moves_everything_on_sqlite(app, reassign_data):
+    src, dst = reassign_data["src"], reassign_data["dst"]
+    result = app.test_cli_runner().invoke(reassign_model_cmd, [str(src), str(dst)])
+    assert result.exit_code == 0, result.output
+    assert "conversations updated: 1" in result.output
+    assert "model_stats moved: 1, merged: 1" in result.output
+    assert "request_logs updated: 2" in result.output
+
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.conversation import Conversation
+        from lumen.models.model_config import ModelConfig
+        from lumen.models.request_log import RequestLog
+
+        models = db.session.execute(select(Conversation.model)).scalars().all()
+        assert models == ["new-model"]
+        assert _stats(db, src) == {}
+        assert _stats(db, dst) == {
+            "chat": (4, 40, 80, Decimal("0.4")),
+            "api": (2, 20, 40, Decimal("0.2")),
+        }
+        owners = db.session.execute(select(RequestLog.model_config_id)).scalars().all()
+        assert owners == [dst, dst]
+        # The FROM row is left alone: still there, unchanged.
+        old = db.session.get(ModelConfig, src)
+        assert old is not None and old.model_name == "old-model"
+
+
+def test_reassign_model_second_run_is_a_noop(app, reassign_data):
+    src, dst = reassign_data["src"], reassign_data["dst"]
+    runner = app.test_cli_runner()
+    assert runner.invoke(reassign_model_cmd, [str(src), str(dst)]).exit_code == 0
+    with app.app_context():
+        from lumen.extensions import db
+        after_first = _stats(db, dst)
+
+    result = runner.invoke(reassign_model_cmd, [str(src), str(dst)])
+    assert result.exit_code == 0, result.output
+    assert "conversations updated: 0" in result.output
+    assert "model_stats moved: 0, merged: 0" in result.output
+    assert "request_logs updated: 0" in result.output
+    with app.app_context():
+        from lumen.extensions import db
+        assert _stats(db, dst) == after_first
+
+
+def test_reassign_model_unknown_id_exits_1(app, reassign_data):
+    runner = app.test_cli_runner()
+    result = runner.invoke(reassign_model_cmd, ["999999", str(reassign_data["dst"])])
+    assert result.exit_code == 1
+    assert "model_config id 999999 not found" in result.output
+    result = runner.invoke(reassign_model_cmd, [str(reassign_data["src"]), "999999"])
+    assert result.exit_code == 1
+    assert "model_config id 999999 not found" in result.output
+
+
+def test_reassign_model_to_itself_exits_1_and_keeps_stats(app, reassign_data):
+    """The old merge loop matched every stat against itself, doubled it, then deleted it."""
+    src = reassign_data["src"]
+    with app.app_context():
+        from lumen.extensions import db
+        before = _stats(db, src)
+
+    result = app.test_cli_runner().invoke(reassign_model_cmd, [str(src), str(src)])
+
+    assert result.exit_code == 1
+    assert "same model_config id" in result.output
+    with app.app_context():
+        from lumen.extensions import db
+        assert _stats(db, src) == before
+
+
+MONTH_START = datetime(2026, 11, 1)
+
+
+@pytest.mark.parametrize(("end", "width", "expected"), [
+    (MONTH_START + timedelta(minutes=34), timedelta(hours=1), True),
+    (MONTH_START + timedelta(hours=1), timedelta(hours=1), False),
+    (datetime(2026, 12, 1), timedelta(hours=1), False),
+    (MONTH_START + timedelta(seconds=30), timedelta(minutes=1), True),
+    (MONTH_START + timedelta(minutes=34), None, False),
+])
+def test_window_too_small(end, width, expected):
+    assert commands._window_too_small(MONTH_START, end, width) is expected
+
+
+def test_bucket_width_warns_and_returns_none_when_the_catalog_read_fails(capsys):
+    conn = _FailingConn(psycopg.errors.UndefinedTable("no such catalog table"))
+    assert commands._bucket_width(conn, "request_counts_hourly") is None
+    out = capsys.readouterr().out
+    assert "Warning: could not read the bucket width of 'request_counts_hourly'" in out
+    assert "no such catalog table" in out
+
+
+class _RecordingConn:
+    """Records every ``execute``; a helper that refuses its column must leave it empty."""
+
+    def __init__(self):
+        self.statements = []
+
+    def execute(self, statement, *args, **kwargs):
+        self.statements.append(statement)
+
+    def begin(self):
+        pytest.fail("must not open a transaction")
+
+
+@pytest.mark.parametrize("column", ["source", "model_config_id = 1 OR 1", ""])
+def test_chunk_walk_refuses_a_column_outside_the_allowlist(column):
+    conn = _RecordingConn()
+
+    with pytest.raises(ValueError, match="cannot be moved along column"):
+        commands._move_chunk(conn, column, 1, 2, datetime(2026, 1, 1), datetime(2026, 2, 1))
+    with pytest.raises(ValueError, match="cannot be moved along column"):
+        commands._reassign_start(conn, column, 1, {"agg": None})
+    with pytest.raises(ValueError, match="cannot be moved along column"):
+        commands._aggregates_with_column(conn, column)
+    # No app context here, so reaching db.engine would raise RuntimeError instead.
+    with pytest.raises(ValueError, match="cannot be moved along column"):
+        commands._move_request_logs(column, 1, 2)
+
+    assert conn.statements == []
+
+
+@pytest.mark.parametrize(("dt", "expected"), [
+    (datetime(2026, 12, 1, tzinfo=timezone.utc), datetime(2027, 1, 1, tzinfo=timezone.utc)),
+    (datetime(2026, 11, 1, tzinfo=timezone.utc), datetime(2026, 12, 1, tzinfo=timezone.utc)),
+    (datetime(2026, 12, 31, 15, 30, tzinfo=timezone.utc), datetime(2027, 1, 1, 15, 30, tzinfo=timezone.utc)),
+])
+def test_next_month(dt, expected):
+    result = commands._next_month(dt)
+    assert result == expected
+    assert result.tzinfo is timezone.utc
+
+
+def test_next_month_walk_is_strictly_increasing_across_the_year_boundary():
+    months = [datetime(2025, 11, 1, tzinfo=timezone.utc)]
+    for _ in range(13):
+        months.append(commands._next_month(months[-1]))
+    assert all(a < b for a, b in zip(months, months[1:]))
+    assert months[-1] == datetime(2026, 12, 1, tzinfo=timezone.utc)
+
+
+class _ViewsConn:
+    """Answers the catalog read of ``_continuous_aggregates`` and ``_aggregates_with_column``."""
+
+    def __init__(self, views):
+        self.views = views
+
+    def execute(self, *args, **kwargs):
+        views = self.views
+
+        class _Result:
+            def scalars(self):
+                return self
+
+            def all(self):
+                return sorted(views)
+
+        return _Result()
+
+
+def test_aggregates_come_in_refresh_order_unknown_last_absent_skipped():
+    # request_counts_daily is absent here; two unknown views sort last, alphabetically.
+    conn = _ViewsConn(["zz_custom", "request_metrics_1m", "aa_custom",
+                       "request_counts_hourly", "request_counts_hourly_by_entity"])
+    expected = ["request_counts_hourly_by_entity", "request_counts_hourly", "request_metrics_1m",
+                "aa_custom", "zz_custom"]
+
+    assert commands._continuous_aggregates(conn) == expected
+    assert commands._aggregates_with_column(conn, "model_config_id") == expected
+
+
+def test_refresh_order_puts_every_child_before_its_parent():
+    order = commands.AGGREGATE_REFRESH_ORDER
+    assert order.index(commands.ENTITY_AGGREGATE) < order.index("request_counts_hourly") \
+        < order.index("request_counts_daily")
+    assert order.index("request_counts_hourly") < order.index("request_counts_hourly_total")
+    assert order.index(commands.ENTITY_AGGREGATE) < order.index("request_counts_daily_by_entity")
+    assert commands._in_refresh_order(list(reversed(order))) == list(order)
+    assert commands._in_refresh_order([]) == []
+
+
+def _cross_view(monkeypatch, watermarks):
+    """Run ``_cross_view_differences`` on stubbed watermarks; return (cutoff, cutoffs read)."""
+    read = []
+
+    def monthly_totals(conn, name, before):
+        read.append((name, before))
+        return {}
+
+    monkeypatch.setattr(commands, "_watermark", lambda conn, name: watermarks[name])
+    monkeypatch.setattr(commands, "_monthly_totals", monthly_totals)
+    cutoff, differences = commands._cross_view_differences(object())
+    assert differences == []
+    return cutoff, read
+
+
+def test_cross_view_differences_cuts_off_at_the_lowest_watermark(monkeypatch):
+    """Not the last view's: hourly_total lagging daily must not get a month it lacks compared."""
+    watermarks = {name: _utc(2026, 11, 3, 12) for name in commands.USAGE_AGGREGATES}
+    watermarks["request_counts_hourly_total"] = _utc(2026, 9, 20, 4)
+    cutoff, read = _cross_view(monkeypatch, watermarks)
+    assert cutoff == _utc(2026, 9, 1)
+    assert read == [(name, _utc(2026, 9, 1)) for name in commands.USAGE_AGGREGATES]
+
+
+def test_cross_view_differences_compares_nothing_while_any_view_is_unrefreshed(monkeypatch):
+    watermarks = {name: _utc(2026, 11, 3, 12) for name in commands.USAGE_AGGREGATES}
+    watermarks["request_counts_hourly_total"] = None
+    assert _cross_view(monkeypatch, watermarks) == (None, [])
+
+
+@pytest.mark.parametrize(("dt", "width", "expected"), [
+    (datetime(2026, 3, 5, 14, 37, tzinfo=timezone.utc), timedelta(hours=1),
+     datetime(2026, 3, 5, 14, tzinfo=timezone.utc)),
+    (datetime(2026, 3, 5, 14, 37, tzinfo=timezone.utc), timedelta(days=1),
+     datetime(2026, 3, 5, tzinfo=timezone.utc)),
+    (datetime(2026, 3, 5, 14, 37, 12, tzinfo=timezone.utc), timedelta(minutes=1),
+     datetime(2026, 3, 5, 14, 37, tzinfo=timezone.utc)),
+    # time_bucket aligns weeks to Monday 2000-01-03; 2026-03-05 is a Thursday.
+    (datetime(2026, 3, 5, 14, 37, tzinfo=timezone.utc), timedelta(weeks=1),
+     datetime(2026, 3, 2, tzinfo=timezone.utc)),
+    # Another zone is floored in UTC: 2026-03-05 01:30 +05:00 is 03-04 20:30 UTC.
+    (datetime(2026, 3, 5, 1, 30, tzinfo=timezone(timedelta(hours=5))), timedelta(days=1),
+     datetime(2026, 3, 4, tzinfo=timezone.utc)),
+    (datetime(2026, 3, 5, 14, 37, tzinfo=timezone.utc), None,
+     datetime(2026, 3, 5, 14, tzinfo=timezone.utc)),
+    (datetime(2026, 3, 5, 14, 37, tzinfo=timezone.utc), timedelta(0),
+     datetime(2026, 3, 5, 14, tzinfo=timezone.utc)),
+])
+def test_floor_to_bucket(dt, width, expected):
+    assert commands._floor_to_bucket(dt, width) == expected
+
+
+class _ProbeConn:
+    """Answers ``_missing_months``' probes from in-memory raw rows and materialised buckets."""
+
+    def __init__(self, raw, buckets):
+        self.raw = sorted(raw)
+        self.buckets = sorted(buckets)
+        self.windows = []
+
+    def execute(self, statement, params=None):
+        sql = str(statement)
+        if sql == "SELECT MIN(time) FROM request_logs":
+            return _Scalar(self.raw[0] if self.raw else None)
+        start, end = params["s"], params["e"]
+        self.windows.append((start, end))
+        first_raw = next((t for t in self.raw if start <= t < end), None)
+        first_bucket = next((b for b in self.buckets if params["b"] <= b < end), None)
+        return _Scalar((first_raw, first_bucket))
+
+
+class _Scalar:
+    def __init__(self, value):
+        self.value = value
+
+    def scalar(self):
+        return self.value
+
+    def one(self):
+        return self.value
+
+
+def _utc(*args):
+    return datetime(*args, tzinfo=timezone.utc)
+
+
+@pytest.fixture
+def daily_aggregate(monkeypatch):
+    """Make ``_missing_months`` see a 1-day aggregate with a 1-day end_offset and no retention."""
+    monkeypatch.setattr(commands, "_bucket_column", lambda conn, name: "bucket")
+    monkeypatch.setattr(commands, "_materialization_hypertable", lambda conn, name: "mat")
+    monkeypatch.setattr(commands, "_retention_boundary", lambda conn, name: None)
+    monkeypatch.setattr(commands, "_bucket_width", lambda conn, name: timedelta(days=1))
+    offset = {"value": timedelta(days=1)}
+    monkeypatch.setattr(commands, "_refresh_end_offset", lambda conn, name: offset["value"])
+    return offset
+
+
+def test_missing_months_compares_against_the_daily_bucket(daily_aggregate):
+    # A daily bucket at midnight covers a first raw row later that day: not missing,
+    # where flooring to the hour would have reported the month every time.
+    raw = [_utc(2026, 9, 3, 14, 37), _utc(2026, 10, 2, 9, 5)]
+    buckets = [_utc(2026, 9, 3), _utc(2026, 10, 4)]
+    conn = _ProbeConn(raw, buckets)
+
+    missing = commands._missing_months(conn, "request_counts_daily", _utc(2026, 11, 3, 12))
+
+    assert missing == [(_utc(2026, 10, 1), raw[1], buckets[1])]
+
+
+def test_missing_months_reports_a_month_with_no_daily_bucket(daily_aggregate):
+    raw = [_utc(2026, 9, 3, 14, 37)]
+    conn = _ProbeConn(raw, [])
+
+    assert commands._missing_months(conn, "request_counts_daily", _utc(2026, 11, 3, 12)) \
+        == [(_utc(2026, 9, 1), raw[0], None)]
+
+
+def test_missing_months_stops_at_the_end_offset(daily_aggregate):
+    # now is 11-02 12:00 with a 1-day end_offset: the policy materialises only up to
+    # 11-01 00:00, so the month's rows on 11-01 are not missing yet.
+    now = _utc(2026, 11, 2, 12)
+    raw = [_utc(2026, 10, 5, 8), _utc(2026, 11, 1, 6)]
+    conn = _ProbeConn(raw, [_utc(2026, 10, 5)])
+
+    assert commands._missing_months(conn, "request_counts_daily", now) == []
+    assert conn.windows == [(_utc(2026, 10, 1), _utc(2026, 11, 1))], \
+        "the current month starts at the horizon and must not be probed"
+
+    # Without the end_offset the horizon is today's midnight, and 11-01 is missing.
+    daily_aggregate["value"] = timedelta(0)
+    conn = _ProbeConn(raw, [_utc(2026, 10, 5)])
+    assert commands._missing_months(conn, "request_counts_daily", now) \
+        == [(_utc(2026, 11, 1), raw[1], None)]
+    assert conn.windows[-1] == (_utc(2026, 11, 1), _utc(2026, 11, 2))
+
+
+def test_missing_months_unreadable_width_floors_to_the_hour(daily_aggregate, monkeypatch):
+    monkeypatch.setattr(commands, "_bucket_width", lambda conn, name: None)
+    daily_aggregate["value"] = timedelta(hours=1)
+    raw = [_utc(2026, 10, 5, 8, 30)]
+
+    assert commands._missing_months(_ProbeConn(raw, [_utc(2026, 10, 5, 8)]), "agg",
+                                    _utc(2026, 11, 2, 12)) == []
+    assert commands._missing_months(_ProbeConn(raw, [_utc(2026, 10, 5)]), "agg",
+                                    _utc(2026, 11, 2, 12)) == []
+    assert commands._missing_months(_ProbeConn(raw, [_utc(2026, 10, 5, 9)]), "agg",
+                                    _utc(2026, 11, 2, 12)) \
+        == [(_utc(2026, 10, 1), raw[0], _utc(2026, 10, 5, 9))]
+
+
+def test_missing_months_finds_the_daily_bucket_holding_the_retention_boundary(daily_aggregate, monkeypatch):
+    # The boundary is floored to the hour, 10-10 06:00; the daily bucket holding it
+    # starts at midnight, before the boundary, and still covers the month from there.
+    monkeypatch.setattr(commands, "_retention_boundary", lambda conn, name: _utc(2026, 10, 10, 6))
+    raw = [_utc(2026, 10, 10, 8)]
+    conn = _ProbeConn(raw, [_utc(2026, 10, 10)])
+
+    assert commands._missing_months(conn, "request_counts_daily", _utc(2026, 11, 3, 12)) == []
+    assert conn.windows[0] == (_utc(2026, 10, 10, 6), _utc(2026, 11, 1))

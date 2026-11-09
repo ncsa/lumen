@@ -44,7 +44,7 @@ def test_uvicorn_launch_is_a_serving_process(monkeypatch):
         assert _loaded_by_non_serving_cli() is False
 
 
-@pytest.mark.parametrize("command", ["upgrade", "db", "init-db", "reassign-model", "routes", "shell"])
+@pytest.mark.parametrize("command", ["upgrade", "db", "init-db", "reassign-model", "erase-entity", "routes", "shell", "wait-for-migrations"])
 def test_cli_commands_are_non_serving(command, monkeypatch):
     monkeypatch.setenv("FLASK_RUN_FROM_CLI", "true")
     with click.Context(click.Command(command), info_name=command):
@@ -92,5 +92,112 @@ def test_real_cli_invocation_starts_no_threads(tmp_path):
     )
     assert "THREADS=0" in result.stdout, (
         f"a flask CLI command started background threads.\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr[-2000:]}"
+    )
+
+
+_EXPIRER_PROBE = textwrap.dedent("""
+    import click
+    import lumen.services.key_expiry as key_expiry
+
+    started = []
+    key_expiry.start_key_expirer = lambda app: started.append(app)
+
+    from lumen import create_app
+
+    @click.command("probe")
+    def probe():
+        click.echo(f"EXPIRER={len(started)}")
+
+    app = create_app()
+    app.cli.add_command(probe)
+    if __name__ == "__main__":
+        print(f"EXPIRER={len(started)}")
+""")
+
+
+def _run_expirer_probe(tmp_path, args):
+    (tmp_path / "expirer_probe.py").write_text(_EXPIRER_PROBE)
+    env = {
+        "PATH": __import__("os").environ["PATH"],
+        "HOME": __import__("os").environ.get("HOME", ""),
+        "CONFIG_YAML": str(REPO_ROOT / "tests" / "fixtures" / "test_config.yaml"),
+        "PYTHONPATH": f"{tmp_path}{__import__('os').pathsep}{REPO_ROOT}",
+    }
+    return subprocess.run(
+        [sys.executable, *args], capture_output=True, text=True, timeout=120, cwd=tmp_path, env=env,
+    )
+
+
+def test_cli_invocation_does_not_start_key_expirer(tmp_path):
+    result = _run_expirer_probe(tmp_path, ["-m", "flask", "--app", "expirer_probe", "probe"])
+    assert "EXPIRER=0" in result.stdout, (
+        f"a flask CLI command started the key expirer.\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr[-2000:]}"
+    )
+
+
+def test_serving_process_starts_key_expirer(tmp_path):
+    """Control for the test above: the same probe, loaded with no click context, starts it."""
+    result = _run_expirer_probe(tmp_path, ["expirer_probe.py"])
+    assert "EXPIRER=1" in result.stdout, (
+        f"stdout: {result.stdout}\nstderr: {result.stderr[-2000:]}"
+    )
+
+
+_FOLD_PROBE = textwrap.dedent("""
+    import click
+    import lumen.services.stats_fold as stats_fold
+
+    started = []
+    stats_fold.start_fold_thread = lambda app: started.append(app)
+
+    from lumen import create_app
+
+    @click.command("probe")
+    def probe():
+        click.echo(f"FOLD={len(started)}")
+
+    app = create_app()
+    app.cli.add_command(probe)
+    if __name__ == "__main__":
+        print(f"FOLD={len(started)}")
+""")
+
+
+def _run_fold_probe(tmp_path, args, **extra_env):
+    (tmp_path / "fold_probe.py").write_text(_FOLD_PROBE)
+    env = {
+        "PATH": __import__("os").environ["PATH"],
+        "HOME": __import__("os").environ.get("HOME", ""),
+        "CONFIG_YAML": str(REPO_ROOT / "tests" / "fixtures" / "test_config.yaml"),
+        "PYTHONPATH": f"{tmp_path}{__import__('os').pathsep}{REPO_ROOT}",
+        **extra_env,
+    }
+    return subprocess.run(
+        [sys.executable, *args], capture_output=True, text=True, timeout=120, cwd=tmp_path, env=env,
+    )
+
+
+def test_cli_invocation_does_not_start_stats_fold(tmp_path):
+    result = _run_fold_probe(tmp_path, ["-m", "flask", "--app", "fold_probe", "probe"])
+    assert "FOLD=0" in result.stdout, (
+        f"a flask CLI command started the stats fold thread.\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr[-2000:]}"
+    )
+
+
+def test_serving_process_starts_stats_fold(tmp_path):
+    """Control for the test above: the same probe, loaded with no click context, starts it."""
+    result = _run_fold_probe(tmp_path, ["fold_probe.py"])
+    assert "FOLD=1" in result.stdout, (
+        f"stdout: {result.stdout}\nstderr: {result.stderr[-2000:]}"
+    )
+
+
+def test_background_worker_false_does_not_start_stats_fold(tmp_path):
+    """The test suite's switch: BACKGROUND_WORKER=false keeps the fold off."""
+    result = _run_fold_probe(tmp_path, ["fold_probe.py"], BACKGROUND_WORKER="false")
+    assert "FOLD=0" in result.stdout, (
         f"stdout: {result.stdout}\nstderr: {result.stderr[-2000:]}"
     )

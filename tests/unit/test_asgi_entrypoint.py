@@ -20,8 +20,18 @@ never revisited when the bridge landed, so a 500-user load test measured a 40-sl
 ceiling (4 processes x uvicorn's 10 threads) and recorded NULL for every queue
 column. See lumen/services/wsgi_disconnect.py.
 """
+import importlib
+import logging
 import re
+import sys
 from pathlib import Path
+
+import dotenv
+import pytest
+from flask import Flask
+
+import lumen
+from lumen.services import db_pool, wsgi_disconnect
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -166,3 +176,166 @@ def test_asgi_module_installs_the_bridge():
     assert "DisconnectAwareWSGIMiddleware" in source
     # The thread-pool size must stay operator-controllable rather than hard-coded.
     assert "resolve_wsgi_workers" in source
+
+
+@pytest.fixture
+def import_asgi(monkeypatch):
+    """Import asgi.py against a stub app, returning (module, workers the bridge got)."""
+    flask_app = Flask("asgi")
+    flask_app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_size": 60, "max_overflow": 20}
+    flask_app.logger.setLevel(logging.INFO)
+    bridge_workers = []
+
+    def fake_bridge(app, *, workers, **kwargs):
+        bridge_workers.append(workers)
+        return app
+
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr(lumen, "create_app", lambda: flask_app)
+    monkeypatch.setattr(wsgi_disconnect, "DisconnectAwareWSGIMiddleware", fake_bridge)
+    monkeypatch.setattr(db_pool, "_warned_invalid_wsgi_workers", False)
+    monkeypatch.delitem(sys.modules, "asgi", raising=False)
+
+    def _import():
+        module = importlib.import_module("asgi")
+        return module, bridge_workers
+
+    yield _import
+    sys.modules.pop("asgi", None)
+
+
+@pytest.mark.parametrize(
+    ("setting", "workers", "shown"),
+    [(None, 160, "unset"), ("auto", 160, "auto"), ("32", 32, "32")],
+)
+def test_asgi_logs_resolved_thread_pool_once(import_asgi, monkeypatch, caplog, setting, workers, shown):
+    """asgi.py logs the resolved count once at startup, and hands the bridge that count."""
+    if setting is None:
+        monkeypatch.delenv("LUMEN_WSGI_WORKERS", raising=False)
+    else:
+        monkeypatch.setenv("LUMEN_WSGI_WORKERS", setting)
+
+    with caplog.at_level(logging.INFO):
+        module, bridge_workers = import_asgi()
+
+    records = [r for r in caplog.records if "WSGI thread pool" in r.getMessage()]
+    assert len(records) == 1
+    assert records[0].getMessage() == f"WSGI thread pool: workers={workers} (LUMEN_WSGI_WORKERS={shown})"
+    assert bridge_workers == [workers]
+    assert module.wsgi_workers == workers
+
+
+# --------------------------------------------------------------------------- #
+# entrypoint.sh modes, run against stub `flask` and `uvicorn` on PATH.         #
+# --------------------------------------------------------------------------- #
+
+_STUB = """#!/bin/sh
+echo "$(basename "$0") $* PGCONNECT_TIMEOUT=${PGCONNECT_TIMEOUT:-unset}" >> "$STUB_LOG"
+if [ "$(basename "$0")" = flask ] && [ "$1 $2 $3" = "--app run wait-for-migrations" ]; then
+  exit "${GATE_EXIT:-0}"
+fi
+if [ "$(basename "$0")" = flask ]; then
+  exit "${COMMAND_EXIT:-0}"
+fi
+"""
+
+
+@pytest.fixture
+def run_entrypoint(tmp_path, monkeypatch):
+    """Run entrypoint.sh with ``args``; returns (exit status, the stubs' call log)."""
+    import subprocess
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("bash", "flask", "uvicorn"):
+        stub = bin_dir / name
+        stub.write_text(_STUB)
+        stub.chmod(0o755)
+    log = tmp_path / "calls.log"
+
+    def _run(*args, **env):
+        log.write_text("")
+        full_env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "STUB_LOG": str(log), **env}
+        result = subprocess.run(["sh", str(REPO / "entrypoint.sh"), *args],
+                                env=full_env, cwd=tmp_path, timeout=30)
+        return result.returncode, log.read_text().splitlines()
+
+    return _run
+
+
+def test_entrypoint_upgrade_runs_only_flask_upgrade(run_entrypoint):
+    status, calls = run_entrypoint("upgrade")
+    assert status == 0
+    assert calls == ["flask --app run upgrade PGCONNECT_TIMEOUT=10"]
+
+
+@pytest.mark.parametrize("gate_exit", ["0", "1"])
+def test_entrypoint_wait_for_migrations_runs_only_the_gate(run_entrypoint, gate_exit):
+    status, calls = run_entrypoint("wait-for-migrations", "--timeout", "30", GATE_EXIT=gate_exit)
+    assert status == int(gate_exit), "the gate's exit status must reach the container"
+    assert calls == ["flask --app run wait-for-migrations --timeout 30 PGCONNECT_TIMEOUT=10"]
+
+
+def test_entrypoint_one_shot_modes_keep_an_operator_connect_timeout(run_entrypoint):
+    _, calls = run_entrypoint("upgrade", PGCONNECT_TIMEOUT="45")
+    assert calls == ["flask --app run upgrade PGCONNECT_TIMEOUT=45"]
+    _, calls = run_entrypoint("wait-for-migrations", PGCONNECT_TIMEOUT="45")
+    assert calls == ["flask --app run wait-for-migrations PGCONNECT_TIMEOUT=45"]
+
+
+def test_entrypoint_default_mode_gates_then_serves_with_workers(run_entrypoint):
+    """Serving never migrates: it waits at the gate, then hands --workers to uvicorn."""
+    status, calls = run_entrypoint("--workers", "4")
+    assert status == 0
+    assert calls == [
+        "flask --app run wait-for-migrations PGCONNECT_TIMEOUT=10",
+        "uvicorn asgi:app --host 0.0.0.0 --port 5001 --workers 4 PGCONNECT_TIMEOUT=unset",
+    ]
+    assert not any("db upgrade" in c or "run upgrade" in c for c in calls)
+
+
+def test_entrypoint_default_mode_keeps_an_operator_connect_timeout(run_entrypoint):
+    _, calls = run_entrypoint(PGCONNECT_TIMEOUT="45")
+    assert calls == [
+        "flask --app run wait-for-migrations PGCONNECT_TIMEOUT=45",
+        "uvicorn asgi:app --host 0.0.0.0 --port 5001 PGCONNECT_TIMEOUT=45",
+    ]
+
+
+def test_entrypoint_default_mode_does_not_serve_when_the_gate_fails(run_entrypoint):
+    """A database migrated by a newer image fails the gate; the container must exit."""
+    status, calls = run_entrypoint("--workers", "4", GATE_EXIT="1")
+    assert status == 1
+    assert calls == ["flask --app run wait-for-migrations PGCONNECT_TIMEOUT=10"]
+
+
+def test_entrypoint_bash_opens_only_a_shell(run_entrypoint):
+    """`docker run <image> bash` must give a shell without touching the database.
+
+    `bash` is checked before the generic flask dispatch; if it were not, it would run
+    `flask --app run bash`, or serve after the migration gate, instead of a shell.
+    """
+    status, calls = run_entrypoint("bash")
+    assert status == 0
+    assert calls == ["bash  PGCONNECT_TIMEOUT=unset"]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [("check-stats", "--fix"), ("erase-entity", "42", "--yes"), ("db", "current")],
+)
+def test_entrypoint_runs_any_flask_command(run_entrypoint, args):
+    status, calls = run_entrypoint(*args)
+    assert status == 0
+    assert calls == [f"flask --app run {' '.join(args)} PGCONNECT_TIMEOUT=10"]
+
+
+def test_entrypoint_command_keeps_an_operator_connect_timeout(run_entrypoint):
+    _, calls = run_entrypoint("check-stats", PGCONNECT_TIMEOUT="45")
+    assert calls == ["flask --app run check-stats PGCONNECT_TIMEOUT=45"]
+
+
+def test_entrypoint_command_exit_status_reaches_the_container(run_entrypoint):
+    status, calls = run_entrypoint("check-aggregate", COMMAND_EXIT="3")
+    assert status == 3
+    assert calls == ["flask --app run check-aggregate PGCONNECT_TIMEOUT=10"]

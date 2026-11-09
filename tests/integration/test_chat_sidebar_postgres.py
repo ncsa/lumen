@@ -10,6 +10,7 @@ import uuid
 
 import pytest
 
+from tests.conftest import no_snapshot_refresher
 from tests.integration.conftest import TEST_CONFIG
 from tests.routes.test_chat_routes import (
     sidebar_created_at_tie_takes_highest_id,
@@ -38,7 +39,9 @@ def pg_app(pg_migrated_isolated):
     previous_uri = Config.SQLALCHEMY_DATABASE_URI
     Config.SQLALCHEMY_DATABASE_URI = url
     from lumen import create_app
-    application = create_app()
+    with pytest.MonkeyPatch.context() as mp:
+        no_snapshot_refresher(mp)
+        application = create_app()
     Config.SQLALCHEMY_DATABASE_URI = previous_uri
     application.config["TESTING"] = True
     with application.app_context():

@@ -55,6 +55,12 @@ docker compose up -d
 
 Lumen will be available at `https://your-domain`.
 
+Lumen does not migrate its database on start. The one-shot `lumen-upgrade` service runs first
+(`flask upgrade`: every migration plus the aggregate backfill) and `lumen` starts once it has exited
+successfully. To upgrade, pull the new image and run `docker compose up -d` again; `lumen-upgrade`
+runs again before the new `lumen` starts. Started on its own (`docker compose up --no-deps lumen`),
+`lumen` waits until the database has been upgraded.
+
 ---
 
 ## Local Development
@@ -142,61 +148,13 @@ Visit `http://localhost:5001`, click **Login**, and you'll be auto-logged in as 
 
 ## Operator Commands
 
-Run with `uv run flask --app run <command>` locally, or `flask <command>` inside the container.
-Both commands below need PostgreSQL/TimescaleDB; on SQLite they print a note and exit 0.
-
-**`request_logs` is never pruned.** Lumen ships no retention policy and no command that deletes from it.
-
-### `backfill-aggregate`
-
-Materialises a continuous aggregate's full history, month by month, oldest first.
-
-```bash
-flask backfill-aggregate [--name NAME] [--from YYYY-MM] [--force]
-```
-
-| Flag | Meaning |
-|---|---|
-| `--name` | Aggregate to refresh. Default `request_counts_hourly_by_entity`. |
-| `--from` | First month to refresh. Default: the month of the oldest `request_logs` row. |
-| `--force` | Refresh months before a retention boundary anyway, erasing their *aggregate* rows. Raw rows are never touched. |
-
-Migrations create their aggregates `WITH NO DATA`, and the refresh policy only ever materialises its
-own `start_offset` window — so per-user "All Time" charts stay near-empty until this is run: they read
-only `request_counts_hourly_by_entity` and no longer fall back to raw `request_logs`. **Run it
-right after `flask db upgrade` creates a new aggregate, and check the printed row counts.** It walks
-month by month because one `CALL refresh_continuous_aggregate(NULL, NULL)` over a production
-hypertable is a single long transaction with unbounded memory, and it never refreshes past `now()`,
-which would materialise the current bucket and hide every request logged after the backfill.
-
-The retention refusal only fires if someone added a retention policy to `request_logs` by hand:
-refreshing a window whose raw chunks were dropped recomputes it as **empty and deletes the
-materialised rows, with no error**. The command refuses such a window and prints how many aggregate
-rows it would have erased; `--force` overrides the refusal and erases them.
-
-TimescaleDB refuses an *overlapping* refresh outright rather than queueing behind it, so a month
-landing while a scheduled policy job is mid-refresh fails immediately with `SQLSTATE 55P03`
-(`LockNotAvailable`). `request_metrics_1m`'s policy fires every minute, so a long backfill will meet
-one; each month is retried for up to 60 seconds and the line reports `(after N lock retries)`. Every
-month that succeeds is printed with `OK`, and a month that fails outright prints the exact
-`--from` to resume with. Re-running an already-refreshed month is safe: it recomputes that window
-from the raw rows and overwrites it, so resuming never double-counts.
-
-### `check-aggregate`
-
-Read-only: reports whether `request_counts_hourly_by_entity` covers all of `request_logs`.
-
-```bash
-flask check-aggregate
-```
-
-It prints the aggregate's earliest *materialised* bucket (read from its materialisation hypertable,
-not the view, which answers from raw for anything never refreshed) and the oldest `request_logs`
-row. It exits 1 when the aggregate is empty or starts after the oldest raw row, printing the
-`flask backfill-aggregate --from YYYY-MM` that fixes it; until then the per-user charts are missing
-that history. It also exits 1 if a retention policy exists on `request_logs`, and
-prints the `SELECT remove_retention_policy('request_logs');` that removes it. Run it before
-upgrading.
+Lumen ships `flask` commands for operators: `upgrade`, `wait-for-migrations`, `backfill-aggregate`,
+`check-aggregate`, `check-stats`, `init-db`, `reassign-model` and `erase-entity`. Give the command to
+the image as its argument (`docker run <image> check-stats`), run `flask --app run <command>` in a
+running container, or `uv run flask --app run <command>` locally; see
+[Running commands in a deployment](docs/admin/commands.md#running-commands-in-a-deployment). Each one, and
+the runbook for upgrading TimescaleDB, is documented in the Admin Guide under
+[Operator Commands](docs/admin/commands.md).
 
 ---
 
@@ -340,22 +298,21 @@ rate_limiting:
   # storage_url: redis://localhost:6379/0  # optional; use Redis in multi-worker deployments
 ```
 
-By default, limits are tracked in-memory (per-process). For multi-worker deployments (e.g. gunicorn with multiple workers), set `storage_url` to a shared Redis instance so limits are enforced across all workers. Changing `storage_url` requires a restart; changing `limit` takes effect within ~5 seconds (hot-reloaded).
+By default, limits are tracked in-memory (per-process). For multi-worker deployments (e.g. uvicorn with `--workers` > 1), set `storage_url` to a shared Redis instance so limits are enforced across all workers. Changing `storage_url` requires a restart; changing `limit` takes effect within ~5 seconds (hot-reloaded).
 
 ### Request concurrency
 
-Lumen is a WSGI app served through `a2wsgi` under uvicorn, so each worker process serves requests from a thread pool. That pool holds **10 threads by default** — an 11th concurrent request waits until a thread frees up. Set `LUMEN_WSGI_WORKERS` to change it (Helm: `wsgiWorkers`):
+Lumen is a WSGI app served through `a2wsgi` under uvicorn, so each worker process serves requests from a thread pool. Requests beyond the pool size wait until a thread frees up. `LUMEN_WSGI_WORKERS` sets the pool size (Helm: `wsgiWorkers`) and defaults to `auto`, which derives it from this process's connection pool; a positive integer sets it directly:
 
 ```bash
 LUMEN_WSGI_WORKERS=32 uvicorn asgi:app --host 0.0.0.0 --port 5001
-
-# or derive it from this process's connection pool
-LUMEN_WSGI_WORKERS=auto uvicorn asgi:app --host 0.0.0.0 --port 5001
 ```
 
-A thread inside a database call holds a pooled connection, so `pool_size + max_overflow` (see below) is the point past which extra threads stop adding throughput and just wait out `pool_timeout`. `auto` sets the thread count to that sum, clamped to 10–64: a large `pool_size` costs little (connections open on demand) but the same number of OS threads does, so going above 64 has to be asked for by number. `auto` falls back to 10 when the pool is unsized (SQLite, or `max_connections` unavailable at startup), and because the pool is itself divided across workers × replicas, it scales the thread count down as you add processes or pods.
+`auto` sets the thread count to 2 × (`pool_size + max_overflow`) (see below), clamped to 10–256. Streaming requests release their database connection before the upstream LLM call, so most busy threads hold no connection and the pool can serve twice as many threads as it has connections. If non-streaming database work ever saturates the pool, the extra requests wait up to `pool_timeout` for a connection; set a number to size it yourself. Because the pool is itself divided across workers × replicas, `auto` scales the thread count down as you add processes or pods.
 
-`auto` sizes for the worst case where every thread is in a database call. Streaming paths release their connection before the LLM call, so if your traffic is mostly streaming you can safely set a number well above `pool_size + max_overflow` instead. Either way, raising threads is usually cheaper than adding worker processes (`--workers` / `WEB_CONCURRENCY`), which divide the same connection budget further and duplicate every per-process cache.
+`auto` falls back to 10 only when the pool is unsized: on SQLite, or on PostgreSQL when `max_connections` can't be queried at startup and no `pool_size` is configured. An explicit `pool_size` (and `max_overflow`) is still used in that case. Any value other than a positive integer or `auto` (for example `0` or `many`) logs a warning once and is treated as `auto`. The resolved count is logged at startup.
+
+Raising threads is usually cheaper than adding worker processes (`--workers` / `WEB_CONCURRENCY`), which divide the same connection budget further and duplicate every per-process cache.
 
 A thread handing a response chunk to the server will wait at most `LUMEN_WSGI_SEND_TIMEOUT` seconds (default 300; Helm: `wsgiSendTimeout`) before declaring the client gone, logging a warning, and releasing itself:
 
@@ -436,6 +393,73 @@ api:
     token: "a-long-random-string"   # optional; Bearer token auth for /metrics
     multiproc_dir: "/tmp/prom"      # required for multi-worker aggregation (mount as shared volume)
 ```
+
+On PostgreSQL, `/metrics` also reports TimescaleDB health. Each worker process caches its own
+check and refreshes it on the metrics snapshot thread every `ceil(300 / I) × I` seconds, where
+`I = max(60, 30 × P)` is the snapshot interval and `P` is the number of worker processes per pod
+(`WEB_CONCURRENCY`, or `wsgiProcesses` in the chart; `wsgiWorkers` sets threads and does not count).
+Each sleep is jittered by ±10%, so the gap between checks can reach 1.1 × that interval plus the
+query time:
+
+| Worker processes `P` | Check interval | Longest gap (with jitter) |
+|---|---|---|
+| 1–2 | 300 s | 330 s |
+| 4 | 360 s | 396 s |
+| 8 | 480 s | 528 s |
+| 9 | 540 s | 594 s |
+| 10–20 | `30 × P` (300–600 s) | 660 s at 20 |
+| 64 | 1920 s | 2112 s |
+| 256 | 7680 s | 8448 s |
+
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `lumen_timescaledb_extension_update_available` | `installed`, `available` | 1 when the database runs an older extension than the image ships (see [Upgrading TimescaleDB](docs/admin/commands.md#upgrading-timescaledb)) |
+| `lumen_timescaledb_hypertable_present` | `table` | 1 when `request_logs` is a hypertable |
+| `lumen_timescaledb_aggregate_present` | `view` | 1 when the continuous aggregate exists |
+| `lumen_timescaledb_aggregate_materialized_only` | `view` | 1 when the aggregate has `materialized_only = true` (should be 0) |
+| `lumen_timescaledb_job_present` | `job` | 1 when the expected background job exists |
+| `lumen_timescaledb_job_last_run_failed` | `job` | 1 when the job's last run failed |
+| `lumen_timescaledb_job_failures_total` | `job` | Failed runs of the job (counter) |
+| `lumen_timescaledb_job_last_success_age_seconds` | `job` | Seconds since the job last finished successfully |
+| `lumen_timescaledb_request_logs_retention_policy` | | 1 when `request_logs` has a retention policy (it must never be pruned) |
+| `lumen_timescaledb_health_age_seconds` | | Age of the check these gauges come from |
+
+`job` is one of `refresh:request_counts_hourly`, `refresh:request_counts_hourly_by_entity`,
+`refresh:request_metrics_1m`, `compression:request_logs` and `retention:request_metrics_1m`.
+
+Suggested alert expressions (the chart ships no alert rules). The two age thresholds below are
+sized for **up to 20 worker processes** per pod (longest check gap 660 s), with a margin of
+about 1.8×. For more processes, set them from `T = 2 × max(600, 30 × P)` seconds:
+`health_age_seconds > T` and `job_last_success_age_seconds{job=~"refresh:.*"} > 7200 + T`.
+The job age is computed at scrape time from the cached last success. A stale check can therefore
+make it read too high, by up to one check gap, but never too low. The `+ T` keeps a healthy hourly
+refresh from firing.
+
+```promql
+# Refresh or compression jobs failing. A refresh outage longer than 3 hours leaves a permanent gap in the hourly charts.
+increase(lumen_timescaledb_job_failures_total[1h]) > 0
+lumen_timescaledb_job_last_run_failed == 1
+# Two missed hourly refreshes plus T = 1200 s (up to 20 processes): 7200 + 1200
+lumen_timescaledb_job_last_success_age_seconds{job=~"refresh:.*"} > 8400
+
+# Missing or misconfigured objects
+lumen_timescaledb_job_present == 0
+lumen_timescaledb_hypertable_present == 0
+lumen_timescaledb_aggregate_present == 0
+lumen_timescaledb_aggregate_materialized_only == 1
+lumen_timescaledb_request_logs_retention_policy == 1
+
+# Extension older than the image (warning, not paging)
+lumen_timescaledb_extension_update_available == 1
+
+# The health check itself stopped refreshing. T = 1200 s (up to 20 processes)
+lumen_timescaledb_health_age_seconds > 1200
+```
+
+The failure alerts show a failing job within one check gap. A job that stops running without
+failing shows up only through the age alert. Above 60 worker processes, `7200 + T` passes
+the 3-hour window in which a refresh outage can still be recovered.
 
 ## License
 

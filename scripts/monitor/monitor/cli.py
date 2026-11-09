@@ -30,14 +30,14 @@ def main(argv: list[str] | None = None) -> int:
     col.add_argument("--price", action="store_true", help="record today's Lumen, models.dev and hardware prices")
     srv = sub.add_parser("serve", help="run the probe, models and price loops and the dashboard")
     srv.add_argument("--host", default="0.0.0.0", help="dashboard address (default: 0.0.0.0)")
-    srv.add_argument("--port", type=int, default=5000, help="dashboard port (default: 5000)")
+    srv.add_argument("--port", type=int, default=5002, help="dashboard port (default: 5002)")
     args = parser.parse_args(argv)
     if args.command == "collect" and not (args.probe or args.price):
         parser.error("collect: choose a collector, --probe and/or --price")
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     try:
-        store = ConfigStore(args.config)
+        store = ConfigStore(args.config, require_lumen=args.command != "migrate")
     except ConfigError as exc:
         log.error("%s", exc)
         return 2
@@ -55,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.probe:
                 result = run_probe(store, session_factory)
                 with session_factory() as session:
-                    state = lumen_state(session)
+                    state = lumen_state(session, store.current.down_above)
                 log.info("probe %s in %.0f ms, Lumen is %s", "ok" if result.success else "failed", result.response_time_ms, state)
                 status = 0 if result.success else 1
             if args.price:

@@ -3,9 +3,10 @@
 The run makes no HTTP call. It reads the latest successful probe snapshot
 (skipped when it is older than 2 × `refresh.web`) and adds the traffic since
 the metric's watermark to each model's lumen daily row, then moves the
-watermark to the snapshot time. Requests and tokens are independently
-optional in Lumen's response, so each has its own watermark (`covered_until`
-for requests, `tokens_covered_until` for tokens) and is planned on its own.
+watermark to the snapshot time. Requests and input/output tokens are
+independently optional in Lumen's response, so each metric has its own
+watermark (`covered_until` for requests, `input_tokens_covered_until` and
+`output_tokens_covered_until` for tokens) and is planned on its own.
 With `gap = snapshot time − watermark`:
 
 - `gap ≤ 1h`: add `last_hour × gap/1h`.
@@ -34,14 +35,13 @@ Lumen's windows never describe them more precisely later, so they stay
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
-from datetime import time as dtime
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from monitor.config import ConfigStore
-from monitor.daily import get_daily, local_day, upsert_daily
+from monitor.daily import get_daily, local_day, local_midnight, upsert_daily
 from monitor.db import utcnow
 from monitor.models import DailyStat
 from monitor.probe import LiveSnapshot
@@ -52,7 +52,11 @@ HOUR = timedelta(hours=1)
 DAY = timedelta(days=1)
 MONTH = timedelta(days=30)
 # Each metric and the column holding how far it is counted.
-METRICS = {"requests": "covered_until", "tokens": "tokens_covered_until"}
+METRICS = {
+    "requests": "covered_until",
+    "input_tokens": "input_tokens_covered_until",
+    "output_tokens": "output_tokens_covered_until",
+}
 
 
 @dataclass(frozen=True)
@@ -97,11 +101,6 @@ def plan_span(windows: dict | None, covered_until: datetime, end: datetime) -> S
     return None
 
 
-def local_midnight(day: date, tz) -> datetime:
-    """Local midnight starting `day`, as naive UTC."""
-    return datetime.combine(day, dtime(0), tzinfo=tz).astimezone(timezone.utc).replace(tzinfo=None)
-
-
 def split_by_day(start: datetime, end: datetime, tz) -> list[tuple[date, datetime, datetime]]:
     """`(local day, segment start, segment end)` pieces of `start..end` cut at local midnight."""
     pieces = []
@@ -144,7 +143,7 @@ def _add_model(session: Session, model: dict, end: datetime, tz) -> None:
         covered = _watermark(session, model_id, column) or local_midnight(local_day(end, tz), tz)
         if end <= covered:
             continue
-        span = plan_span(model[metric], covered, end)
+        span = plan_span(model.get(metric), covered, end)
         if span is None:
             continue
         for day, piece_start, piece_end in split_by_day(span.start, end, tz):

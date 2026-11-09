@@ -14,6 +14,8 @@ import threading
 
 import pytest
 
+from tests.conftest import no_snapshot_refresher
+
 # A fresh interpreter per child: prometheus_client picks its value class at
 # import time from PROMETHEUS_MULTIPROC_DIR, so a forked child of this test
 # process would already have the single-process class bound.
@@ -349,6 +351,7 @@ def test_multiple_workers_without_a_multiproc_dir_warns(tmp_path, monkeypatch, c
     monkeypatch.setenv("WEB_CONCURRENCY", "4")
     monkeypatch.delenv("PROMETHEUS_MULTIPROC_DIR", raising=False)
 
+    no_snapshot_refresher(monkeypatch)
     from lumen import create_app
     with caplog.at_level(logging.WARNING):
         create_app()
@@ -374,6 +377,7 @@ def test_a_single_worker_without_a_multiproc_dir_is_silent(tmp_path, monkeypatch
     monkeypatch.setenv("WEB_CONCURRENCY", "1")
     monkeypatch.delenv("PROMETHEUS_MULTIPROC_DIR", raising=False)
 
+    no_snapshot_refresher(monkeypatch)
     from lumen import create_app
     with caplog.at_level(logging.WARNING):
         create_app()

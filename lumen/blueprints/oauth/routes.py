@@ -25,6 +25,7 @@ from flask import Blueprint, jsonify, make_response, redirect, render_template, 
 from sqlalchemy import case, delete, select, update
 from sqlalchemy.exc import IntegrityError
 
+from lumen.blueprints.profile.routes import key_secret_fields, set_key_secret
 from lumen.decorators import login_required
 from lumen.extensions import _chat_entity_id, _chat_limit, db, limiter
 from lumen.models.api_key import APIKey
@@ -32,8 +33,8 @@ from lumen.models.auth_request import AuthRequest
 from lumen.models.entity import Entity
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
-from lumen.services.crypto import hash_api_key
-from lumen.services.llm import _consent_satisfied, bulk_model_access_info, model_notices
+from lumen.services.key_expiry import key_expires_at, key_ttl_choices, resolve_key_ttl
+from lumen.services.llm import _consent_satisfied, bulk_model_access_statuses, model_notices
 from lumen.timeutils import utcnow
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ CLEANUP_GRACE = 300
 
 _LABEL_RE = re.compile(r"[A-Za-z0-9._-]{1,128}")
 _VERIFIER_RE = re.compile(r"[A-Za-z0-9_-]{43,128}")
+_TTL_RE = re.compile(r"[0-9]{1,10}")
 # Ambiguity-free alphabet: no I/O/0/1/L that users mistype from a terminal.
 _USER_CODE_ALPHABET = "BCDFGHJKMPQRTVWXY23456789"
 
@@ -71,6 +73,20 @@ def _normalize_user_code(raw: str) -> str:
     if len(compact) != 8:
         return ""
     return f"{compact[:4]}-{compact[4:]}"
+
+
+def _parse_ttl(raw: str | None) -> int | None:
+    """A key TTL in seconds from a request or form value; None when absent.
+
+    Raises ValueError when it is not a whole number of seconds or not allowed
+    under the api.keys.ttl cap (resolve_key_ttl).
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    if not _TTL_RE.fullmatch(raw):
+        raise ValueError("ttl must be a whole number of seconds, 0 or more")
+    return resolve_key_ttl(int(raw))
 
 
 def _oauth_error(error: str, description: str = "", status: HTTPStatus = HTTPStatus.BAD_REQUEST):
@@ -155,6 +171,10 @@ def device_authorization():
         return _oauth_error("invalid_request", "client_id and name are required, matching [A-Za-z0-9._-]{1,128}")
     if author and (len(author) > 128 or not re.fullmatch(r".{1,128}", author)):
         return _oauth_error("invalid_request", "author must be at most 128 characters")
+    try:
+        ttl = _parse_ttl(request.form.get("ttl"))
+    except ValueError as e:
+        return _oauth_error("invalid_request", str(e))
 
     device_code = secrets.token_urlsafe(32)
     req = None
@@ -164,6 +184,7 @@ def device_authorization():
             client_id=client_id,
             requested_name=name,
             author=author,
+            ttl=ttl,
             expires_at=utcnow() + timedelta(seconds=DEVICE_EXPIRY),
             device_code_hash=_token_hash(device_code),
             user_code=_gen_user_code(),
@@ -236,6 +257,7 @@ def authorize():
     state = request.args.get("state") or ""
     challenge = request.args.get("code_challenge") or ""
     method = request.args.get("code_challenge_method") or ""
+    ttl = None
 
     if request.args.get("response_type") != "code":
         error = "response_type must be 'code'"
@@ -253,6 +275,11 @@ def authorize():
         error = "code_challenge must be 43-128 unreserved characters"
     elif not state or len(state) > 512:
         error = "state is required (at most 512 characters)"
+    else:
+        try:
+            ttl = _parse_ttl(request.args.get("ttl"))
+        except ValueError as e:
+            error = str(e)
     if error:
         return _error_page("Invalid authorization request", error)
 
@@ -265,6 +292,7 @@ def authorize():
         client_id=client_id,
         requested_name=name,
         author=author,
+        ttl=ttl,
         expires_at=utcnow() + timedelta(seconds=AUTHORIZE_EXPIRY),
         redirect_uri=redirect_uri,
         code_challenge=challenge,
@@ -305,6 +333,13 @@ def consent():
         ).scalars().all()
         if existing and not overwrite:
             return _render_consent(req, error='Tick "Overwrite key" to replace your existing key.')
+        # The approver's choice from the dropdown, checked again here; a form
+        # without one keeps what the request asked for (or the cap).
+        try:
+            ttl = _parse_ttl(request.form.get("ttl"))
+            ttl = resolve_key_ttl(req.ttl if ttl is None else ttl)
+        except ValueError as e:
+            return _render_consent(req, error=f"Invalid expiry: {e}.")
 
         now = utcnow()
         extended = now + timedelta(seconds=CLAIM_WINDOW)
@@ -322,6 +357,7 @@ def consent():
                 status="approved",
                 entity_id=entity_id,
                 overwrite=overwrite,
+                ttl=ttl,
                 approved_at=now,
                 expires_at=case(
                     (AuthRequest.expires_at < extended, extended),
@@ -493,29 +529,39 @@ def _mint(req: AuthRequest):
     existing = db.session.execute(
         select(APIKey).where(APIKey.entity_id == req.entity_id, APIKey.name == req.requested_name,
                              APIKey.revoked_at.is_(None))
+        .order_by(APIKey.created_at.desc(), APIKey.id.desc())
     ).scalars().all()
-    if req.overwrite:
-        now = utcnow()
-        for stale in existing:
-            stale.revoked_at = now
-            stale.revoked_by_entity_id = req.entity_id
-    elif existing:
+    if existing and not req.overwrite:
         db.session.rollback()
         return _oauth_error("invalid_grant", "key name now in use, run again")
 
     key = "sk_" + secrets.token_urlsafe(32)
-    api_key = APIKey(
-        entity_id=req.entity_id,
-        created_by_entity_id=req.entity_id,
-        name=req.requested_name,
-        key_hash=hash_api_key(key),
-        key_hint=f"{key[:7]}...{key[-4:]}",
-        client_id=req.client_id,
-        requested_by=req.author,
-    )
-    db.session.add(api_key)
-    db.session.flush()
-    req.api_key_id = api_key.id
+    provenance = {"client_id": req.client_id, "requested_by": req.author}
+    # Both paths count the approved TTL from now; the cap for a row approved before ttl existed.
+    expires_at = key_expires_at(resolve_key_ttl() if req.ttl is None else req.ttl)
+    # Overwrite refreshes the newest key with this name in place (the one the
+    # consent page showed), keeping its id and usage stats. If it was revoked
+    # meanwhile, mint a new row instead. Unlike rotate_key_secret, no
+    # IntegrityError handling: a fresh token_urlsafe(32) secret cannot collide.
+    target, duplicates = (existing[0], existing[1:]) if existing else (None, [])
+    if target is not None and set_key_secret(target.id, key, expires_at=expires_at, **provenance):
+        req.api_key_id = target.id
+    else:
+        api_key = APIKey(
+            entity_id=req.entity_id,
+            created_by_entity_id=req.entity_id,
+            name=req.requested_name,
+            **key_secret_fields(key),
+            **provenance,
+            expires_at=expires_at,
+        )
+        db.session.add(api_key)
+        db.session.flush()
+        req.api_key_id = api_key.id
+    # Manual duplicates with the same name are revoked, leaving one active key.
+    for stale in duplicates:
+        stale.revoked_at = utcnow()
+        stale.revoked_by_entity_id = req.entity_id
     approver_email = db.session.execute(
         select(Entity.email).where(Entity.id == req.entity_id)
     ).scalar_one_or_none()
@@ -527,6 +573,7 @@ def _mint(req: AuthRequest):
         "access_token": key,
         "token_type": "Bearer",
         "approved_by": approver_email,
+        "expires_at": expires_at.strftime("%Y-%m-%dT%H:%M:%SZ") if expires_at else None,
     })), HTTPStatus.OK
 
 
@@ -537,7 +584,7 @@ def _mint(req: AuthRequest):
 def _consent_model_rows(entity_id: int):
     """All active, non-blocked models with their acknowledgement state.
 
-    Same visibility rule as the Models page (``bulk_model_access_info`` minus
+    Same visibility rule as the Models page (``bulk_model_access_statuses`` minus
     blocked) and the same accepted-state semantics as model_detail.html, so the
     ack dialog behaves identically here.
     """
@@ -546,7 +593,7 @@ def _consent_model_rows(entity_id: int):
     ).scalars().all()
     if not configs:
         return []
-    statuses, _ = bulk_model_access_info(entity_id, [c.id for c in configs])
+    statuses = bulk_model_access_statuses(entity_id, [c.id for c in configs])
     consent_rows = {
         r.model_config_id: r
         for r in db.session.execute(
@@ -589,7 +636,8 @@ def _render_consent(req: AuthRequest, error: str | None = None):
     entity_id = session["entity_id"]
     existing_key = db.session.execute(
         select(APIKey).where(APIKey.entity_id == entity_id, APIKey.name == req.requested_name,
-                             APIKey.revoked_at.is_(None)).order_by(APIKey.created_at.desc())
+                             APIKey.revoked_at.is_(None))
+        .order_by(APIKey.created_at.desc(), APIKey.id.desc())
     ).scalars().first()
     session["oauth_consent_request_id"] = req.id
     origin = full_uri = ""
@@ -603,6 +651,7 @@ def _render_consent(req: AuthRequest, error: str | None = None):
         req=req,
         error=error,
         existing_key=existing_key,
+        key_ttl_choices=key_ttl_choices(req.ttl),
         model_rows=_consent_model_rows(entity_id),
         destination_origin=origin,
         destination_uri=full_uri,

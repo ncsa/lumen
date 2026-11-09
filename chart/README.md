@@ -69,13 +69,13 @@ oauth2:
 
 ### PostgreSQL
 
-The bundled PostgreSQL uses `timescale/timescaledb:2.27.2-pg17` to match the production docker-compose setup. Override `postgresql.image` if you need a different version.
+The bundled PostgreSQL uses `timescale/timescaledb:2.31.0-pg17` to match the production docker-compose setup. Override `postgresql.image` if you need a different version, but keep a TimescaleDB image with a pinned tag: TimescaleDB is required, and on a plain `postgres` image the migrations fail and the migration Job fails at `flask db upgrade`. See [Upgrading TimescaleDB](../docs/admin/commands.md#upgrading-timescaledb) in the Admin Guide before changing the tag.
 
 **Bundled (default):**
 ```yaml
 postgresql:
   enabled: true
-  image: "timescale/timescaledb:2.27.2-pg17"  # override to pin a different version
+  image: "timescale/timescaledb:2.31.0-pg17"  # override to pin a different version
   auth:
     username: lumen
     password: strong-password
@@ -88,6 +88,8 @@ postgresql:
   enabled: false
   url: "postgresql://lumen:password@my-postgres.example.com:5432/lumen"
 ```
+
+An external database must also run TimescaleDB (2.31.0 is the tested version): the migrations create the `timescaledb` extension, so the database user needs permission to do that, or a superuser must create it first.
 
 **External via Secret:**
 ```yaml
@@ -174,12 +176,20 @@ models:
 |-----------|---------|-------------|
 | `replicaCount` | `1` | Number of Lumen pods |
 | `wsgiProcesses` | `1` | uvicorn worker processes per pod (wired to `--workers` and `WEB_CONCURRENCY`); >1 requires `api.prometheus.multiprocDir` |
+| `wsgiWorkers` | `"auto"` | Concurrent requests per uvicorn worker process (a2wsgi threads; a pod serves `wsgiWorkers` × `wsgiProcesses`); `"auto"` = 2× the per-process `database.poolSize + database.maxOverflow` (auto-sized from `max_connections` when empty), clamped to 10–256; a number sets it directly |
 | `wsgiSendTimeout` | `300` | Seconds a worker may block handing one response chunk to the server before the client is treated as gone |
-| `startupProbe.periodSeconds` / `failureThreshold` | `5` / `360` | Startup probe budget (30 min by default). Must cover `flask db upgrade` **plus** uvicorn startup — see [Database Migrations](#database-migrations) |
+| `startupProbe.periodSeconds` / `failureThreshold` | `5` / `60` | Startup probe budget (5 min by default). Covers uvicorn startup only; migrations run in the migration Job before the probe starts — see [Database Migrations](#database-migrations) |
 | `startupProbe.initialDelaySeconds` / `timeoutSeconds` | `10` / `5` | Startup probe delay and per-probe timeout |
 | `image.repository` | `ncsa/lumen` | Container image repository |
 | `image.tag` | `""` | Image tag (defaults to chart appVersion) |
 | `image.pullPolicy` | `IfNotPresent` | Image pull policy |
+| `migration.backoffLimit` | `6` | Pod retries of the migration Job before it is marked failed; each retry resumes — see [Database Migrations](#database-migrations) |
+| `migration.ttlSecondsAfterFinished` | `86400` | Seconds a finished migration Job and its pod logs are kept; `0` deletes it as soon as it finishes; `null` (in a values file, or `--set migration.ttlSecondsAfterFinished=null`) keeps it until the next release replaces it |
+| `migration.resources` | `{}` | Resources for the migration container; empty uses the app container's `resources` (by default a 512Mi / 1 CPU limit). Raise it for a large database: an OOM-killed pod uses up a retry, and once `backoffLimit` is spent new pods wait at the gate |
+| `statsCheck.enabled` | `true` | Run `flask check-stats --fix` as a CronJob — see [Scheduled stats check](#scheduled-stats-check) |
+| `statsCheck.schedule` | `"17 3 * * 0"` | Cron schedule of the stats check (weekly, Sunday 03:17 in the controller manager's time zone, usually UTC) |
+| `statsCheck.ttlSecondsAfterFinished` | `null` | Seconds a finished stats-check Job and its pod logs are kept; `null` keeps the last 3 successful and 3 failed runs |
+| `statsCheck.resources` | `{}` | Resources for the stats-check container; empty uses the app container's `resources` |
 | `config.secretKey` | `""` | Flask session signing key |
 | `config.encryptionKey` | `""` | API key hashing secret |
 | `config.debug` | `false` | Flask debug mode |
@@ -193,12 +203,15 @@ models:
 | `config.llm.readTimeout` | `300` | Streaming calls: maximum gap between chunks (not total duration) |
 | `config.llm.requestTimeout` | `600` | Non-streaming calls: bound on the whole generation |
 | `config.llm.maxRetries` | `1` | Retries for non-streaming upstream calls (streaming calls are never retried) |
+| `config.stats.foldInterval` | `60` | Seconds between passes of the job that folds `request_logs` into the usage totals |
+| `config.stats.foldLag` | `300` | Seconds the fold window ends behind now; usage totals lag real time by about `foldLag + foldInterval` |
+| `config.api.keys.ttl` | `"0"` | Maximum and default API key lifetime: `0` (never expire) or e.g. `12h`, `30d`, `8w`; expired keys are revoked |
 | `oauth2.serverMetadataUrl` | CILogon OIDC URL | OIDC provider metadata URL |
 | `existingSecret` | `""` | Name of pre-existing Secret with credentials |
 | `postgresql.enabled` | `true` | Deploy bundled PostgreSQL |
-| `postgresql.image` | `timescale/timescaledb:2.27.2-pg17` | PostgreSQL container image |
-| `postgresql.url` | `""` | External PostgreSQL URL (when enabled=false) |
-| `postgresql.existingSecret` | `""` | Secret containing database URL (when enabled=false) |
+| `postgresql.image` | `timescale/timescaledb:2.31.0-pg17` | PostgreSQL container image |
+| `postgresql.url` | `""` | External PostgreSQL URL (when enabled=false); the database must run TimescaleDB |
+| `postgresql.existingSecret` | `""` | Secret containing database URL (when enabled=false); the database must run TimescaleDB |
 | `redis.enabled` | `false` | Deploy bundled Redis |
 | `redis.url` | `""` | External Redis URL (when enabled=false) |
 | `redis.existingSecret` | `""` | Secret containing redis URL (when enabled=false) |
@@ -214,14 +227,34 @@ models:
 
 ## Database Migrations
 
-Migrations run automatically at container start: `entrypoint.sh` runs `flask db upgrade` inline and only then `exec`s uvicorn. There is no Helm hook Job. A `busybox` initContainer in the Deployment waits for the database to be reachable first, so the migration does not start against a database that is still coming up.
+Every install, upgrade and rollback creates a Job, `<fullname>-migrate-<revision>`, that runs the image's `upgrade` mode (`flask upgrade`) and exits:
 
-Two consequences follow from migrating inside the app container rather than in a Job:
+1. all Alembic migrations up to the image's head, including the automatic usage-stats cutover;
+2. the post-migration data steps — in 2.3.0, a backfill of every month of `request_logs` that is missing from (or only partly in) the `request_counts_hourly_by_entity` continuous aggregate. On a database where the aggregate is complete this is two indexed probes per month and refreshes nothing.
 
-- **Migrations overlap with traffic on the old version.** A Job would finish before any new pod started. Here the new pod migrates, and the Deployment uses the default rolling update — at `replicaCount: 1` that is maxSurge 1 / maxUnavailable 0, so the old pod keeps serving the previous code against the half-migrated schema until the new pod is Ready. Where there is no old pod (a fresh install, a pod restart, an eviction, a drained node) nothing serves until `flask db upgrade` returns.
-- **The startup probe budget must cover the migration**, not just uvicorn startup — `/healthz` cannot answer until `flask db upgrade` returns. If the migration outlasts `startupProbe.periodSeconds x startupProbe.failureThreshold` (default 30 minutes) the kubelet kills the container mid-migration, the interrupted revision reruns from the beginning on restart, and the pod can end up in `CrashLoopBackOff`. Raise `startupProbe.failureThreshold` before deploying a migration you expect to take longer.
+The Job uses the same image, environment, config Secret and `wait-for-db` initContainer as the app. Its name carries the release revision because a Job cannot be changed once created, so a config-only `helm upgrade` also runs a new Job (cheap when there is nothing to migrate or backfill). Helm deletes the previous revision's Job when it creates the new one; if that Job is still running, its pod is stopped mid-run, and the new Job resumes the work. `helm rollback` re-applies the stored manifest of the revision you roll back to, so after a rollback the Job carries that older revision number, not the new one.
 
-A migration that *fails* exits non-zero and the container dies immediately (`entrypoint.sh` runs under `set -e`), so a broken migration surfaces as a crashing pod rather than a blocked rollout. For a migration that is known to be long, run `flask db upgrade` manually against the database before the deploy.
+**Retries resume.** If the Job's pod fails, Kubernetes starts another one, up to `migration.backoffLimit` times. Each attempt skips migrations already applied and probes for missing months again, so it continues where the last one stopped. A finished Job, with its pod logs, stays for `migration.ttlSecondsAfterFinished` seconds (one day by default). The migration container's memory limit defaults to the app's; set `migration.resources` for a large database.
+
+**App pods wait for it.** The Deployment has a second initContainer, `wait-for-migrations`, after `wait-for-db`. It runs the image's `wait-for-migrations` mode, which only reads the database and exits once it is at the migration head this image expects. It has no timeout: a new pod waits as long as the Job takes, then starts. On a `helm upgrade` the old pods keep serving while the Job runs (the default rolling update keeps them until the new pod is Ready). A pod restart with an already migrated database passes the gate immediately. The gate checks the schema only, so new pods can start while the Job is still backfilling; until it finishes, "All Time" usage charts can be incomplete. Each check is bounded by a connect timeout, but a database that accepts connections and never reaches head (a failed Job, or a database that stops answering queries) also keeps new pods in `Init` with no error of their own; the gate's log says what it is waiting for.
+
+**It is a plain Job, not a Helm hook.** A pre-install hook would run before the chart's Secrets and the bundled PostgreSQL exist. So a failed Job does not fail `helm upgrade --wait`: Helm checks Jobs only with `--wait-for-jobs`. Use `helm upgrade --wait --wait-for-jobs` to have a failed migration fail the release. Without it, a failure shows up as a failed Job (`kubectl get jobs`, `kubectl logs job/<fullname>-migrate-<revision>`) and a new pod that stays in `Init` at the gate. The Deployment's `progressDeadlineSeconds` (the Kubernetes default, 600s) then marks the rollout as not progressing, but nothing is rolled back and the old pods keep serving. Fix the cause, then run `helm upgrade` again to get a new Job.
+
+**The chart needs image 2.3.0 or later.** Older images have no `upgrade` or `wait-for-migrations` mode. Until a release sets the chart's `appVersion` to 2.3.0, install from `main` with `image.tag: latest` (or an image built from `main`). Mixed versions fail closed:
+
+- **This chart with an image older than 2.3.0:** the Job fails and the gate initContainer crash-loops, because the image does not know either mode. Nothing new starts; old pods keep serving.
+- **An older chart (no Job) with image 2.3.0 or later:** nothing runs the upgrade, and the image no longer migrates on start, so pods wait at startup (and the older chart's startup probe eventually restarts them).
+- **`helm rollback` to an older image after the database was migrated:** that image does not know the newer revision, so its Job and its gate both fail immediately. Rolling back across a migration needs a database restore.
+
+The app container never migrates. Its entrypoint runs the same gate once more before uvicorn starts, which passes immediately after the initContainer. Because migrations happen before the container starts, the `startupProbe` only has to cover uvicorn startup (5 minutes by default).
+
+**Stats consistency check:** `flask check-stats` reports any difference between the folded usage totals and `request_logs`, and `--fix` repairs it. It scans all of `request_logs` since the stats cutover and pauses the fold meanwhile, so on a large install run it at a quiet time.
+
+## Scheduled stats check
+
+The usage totals (`model_stats` / `entity_stats`) are filled by the stats fold, which counts a request once its billing transaction has committed. A transaction that commits more than `stats.fold_lag` (300 s by default) after its timestamp, for example one stalled on a lock, lands behind the fold and is never counted. `flask check-stats --fix` finds those rows and adds them to the totals; see [`check-stats`](../docs/admin/commands.md#check-stats) in the Admin Guide.
+
+The chart runs it as a CronJob, `<fullname>-stats-check` (the fullname is shortened to 40 characters), every Sunday at 03:17 (`statsCheck.schedule`). Each run scans every `request_logs` row since the stats cutover and pauses the fold while it does, so pick a quiet time on a large install, or set `statsCheck.enabled: false` and run it yourself. The pod is the migration Job's: same image, env, config mount and scheduling settings. A run is not retried (`backoffLimit: 0`) and never overlaps the previous one (`concurrencyPolicy: Forbid`). A run that starts while a `reassign-model` or `erase-entity` is moving `request_logs` prints `Skipped: …` and succeeds; the next run checks. The last 3 successful and 3 failed runs are kept: `kubectl logs job/<job>` lists each repaired row and `Fixed N row(s).`
 
 ## Notes
 

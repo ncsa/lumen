@@ -30,7 +30,7 @@ jobs:
           # deliberately, in step with the deployment.
           - name: lumen
             path: .
-            postgres: timescale/timescaledb:2.27.2-pg17
+            postgres: timescale/timescaledb:2.31.0-pg17
           - name: monitor
             path: scripts/monitor
             postgres: postgres:17
@@ -86,6 +86,11 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24
+
+      # tests/unit/test_chart_migration.py renders the chart and fails without helm.
+      - name: Install Helm
+        if: matrix.project.name == 'lumen'
+        uses: azure/setup-helm@v4
 
       - name: Install dependencies
         run: uv sync --frozen

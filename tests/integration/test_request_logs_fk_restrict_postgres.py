@@ -1,0 +1,414 @@
+"""The request_logs_fk_restrict revision on real PostgreSQL + TimescaleDB.
+
+``request_logs.entity_id``, ``model_config_id``, ``model_endpoint_id`` and
+``api_key_id`` are ``ON DELETE RESTRICT``: a direct ``DELETE`` of a parent that has request
+history must fail rather than rewrite the compressed hypertable. Only a real
+TimescaleDB can show that the action reaches every chunk, that the check sees
+rows that exist only in a compressed chunk, and that the migration's
+drop-and-re-add of each FK survives a compressed chunk in both directions.
+``api_key_id`` came later (``c5d7e9f1a3b6``, ``NOT VALID``); it is held to the
+same RESTRICT checks at head, and the round trip below this revision drops it.
+
+The seeded history row sits in a closed chunk that the module fixture
+compresses once. Its endpoint belongs to a second model, so deleting the
+row's model is refused by the model FK itself and not by the endpoint FK
+behind the ``model_endpoints`` cascade. The round trip steps this module's
+private database back below the revision and up again, so it runs against
+``pg_migrated_isolated`` and leaves it at head. The lock test does the same
+while a billing-style insert holds ``request_logs`` open.
+"""
+import os
+import subprocess
+import time
+
+import pytest
+from alembic.autogenerate import compare_metadata
+from alembic.migration import MigrationContext
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+
+from lumen.models import RequestLog
+from tests.integration.conftest import TEST_CONFIG
+from tests.unit.test_migrations import _script_dir
+
+pytestmark = pytest.mark.postgres
+
+_BEFORE = "b4c6d8e0f2a4"
+_HEAD = _script_dir().get_current_head()
+_SOURCE = "fkrestr"  # request_logs.source is VARCHAR(8)
+
+# FK column -> (constraint name, parent table)
+_FKS = {
+    "entity_id": ("request_logs_entity_id_fkey", "entities"),
+    "model_config_id": ("request_logs_model_config_id_fkey", "model_configs"),
+    "model_endpoint_id": ("request_logs_model_endpoint_id_fkey", "model_endpoints"),
+    "api_key_id": ("fk_request_logs_api_key_id", "api_keys"),
+}
+# The FKs c8d0e2f4a6b8 switches; api_key_id is added by a later revision.
+_REVISION_FKS = ("entity_id", "model_config_id", "model_endpoint_id")
+
+# Every FK on request_logs or one of its chunks, by referenced column.
+# confdeltype: 'r' = RESTRICT, 'n' = SET NULL. convalidated is false for a
+# FK added NOT VALID, which this revision does so that it never scans history.
+_FK_ACTIONS = """
+    SELECT c.conrelid::regclass::text AS rel, a.attname AS col, c.confdeltype AS action,
+           c.convalidated AS validated
+    FROM pg_constraint c
+    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+    WHERE c.contype = 'f'
+      AND (c.conrelid = 'request_logs'::regclass
+           OR c.conrelid IN (SELECT inhrelid FROM pg_inherits WHERE inhparent = 'request_logs'::regclass))
+"""
+
+
+def _flask_db_command(url, *args):
+    return (
+        ["uv", "run", "flask", "--app", "run", "db", *args],
+        {**os.environ, "DATABASE_URL": url, "CONFIG_YAML": TEST_CONFIG, "BACKGROUND_WORKER": "false"},
+    )
+
+
+def _flask_db(url, *args):
+    command, env = _flask_db_command(url, *args)
+    result = subprocess.run(command, capture_output=True, text=True, timeout=300, env=env)
+    assert result.returncode == 0, (
+        f"flask db {' '.join(args)} failed:\n--- stdout ---\n{result.stdout}\n"
+        f"--- stderr ---\n{result.stderr}"
+    )
+
+
+def _fk_actions(conn):
+    """``{relation: {column: confdeltype}}`` for request_logs and every chunk."""
+    actions = {}
+    for rel, col, action, _ in conn.execute(text(_FK_ACTIONS)).all():
+        actions.setdefault(rel, {})[col] = action
+    return actions
+
+
+def _assert_not_validated(conn, columns=_REVISION_FKS):
+    """The FKs on ``columns`` are ``NOT VALID`` on request_logs and every chunk.
+
+    A validating ``ADD FOREIGN KEY`` would leave ``convalidated = true``, so this
+    shows the revision re-added them without scanning the history.
+    """
+    chunks = set(conn.execute(text("SELECT show_chunks('request_logs')::text")).scalars())
+    assert chunks, "request_logs has no chunks, so the chunk half of this check would prove nothing"
+    validated = {}
+    for rel, col, _, is_valid in conn.execute(text(_FK_ACTIONS)).all():
+        if col in columns:
+            validated.setdefault(rel, {})[col] = is_valid
+    assert set(validated) == {"request_logs"} | chunks
+    for rel, by_column in validated.items():
+        assert by_column == dict.fromkeys(columns, False), rel
+
+
+def _assert_all_fks(conn, action, columns=tuple(_FKS)):
+    actions = _fk_actions(conn)
+    chunks = set(conn.execute(text("SELECT show_chunks('request_logs')::text")).scalars())
+    assert chunks, "request_logs has no chunks, so the chunk half of this check would prove nothing"
+    assert set(actions) == {"request_logs"} | chunks
+    for rel, by_column in actions.items():
+        assert by_column == dict.fromkeys(columns, action), rel
+
+
+def _chunk_of_row(conn):
+    """The chunk holding the seeded row, and whether it is compressed."""
+    return conn.execute(text(
+        "SELECT r.tableoid::regclass::text, ch.is_compressed "
+        "FROM request_logs r "
+        "JOIN timescaledb_information.chunks ch "
+        "  ON format('%I.%I', ch.chunk_schema, ch.chunk_name)::regclass = r.tableoid "
+        "WHERE r.source = :s"
+    ), {"s": _SOURCE}).one()
+
+
+def _row_ids(conn, columns=tuple(_FKS)):
+    return conn.execute(text(
+        f"SELECT {', '.join(columns)} FROM request_logs WHERE source = :s"
+    ), {"s": _SOURCE}).all()
+
+
+@pytest.fixture(scope="module")
+def history(pg_migrated_isolated):
+    """One request_logs row in a compressed chunk, referencing all four parents.
+
+    Yields ``{column: parent id}`` for the row's entity, model, endpoint and API key.
+    """
+    _, engine = pg_migrated_isolated
+    with engine.begin() as conn:
+        entity = conn.execute(text(
+            "INSERT INTO entities (entity_type, name, initials, active) "
+            "VALUES ('user', 'fk-restrict-user', 'FR', true) RETURNING id"
+        )).scalar()
+        model, endpoint_model = (
+            conn.execute(text(
+                "INSERT INTO model_configs (model_name, input_cost_per_million, output_cost_per_million) "
+                "VALUES (:n, 1, 1) RETURNING id"
+            ), {"n": f"fk-restrict-{role}"}).scalar()
+            for role in ("logged", "endpoint-owner")
+        )
+        endpoint = conn.execute(text(
+            "INSERT INTO model_endpoints (model_config_id, url, api_key, healthy) "
+            "VALUES (:m, 'https://fk-restrict.example/v1', 'k', true) RETURNING id"
+        ), {"m": endpoint_model}).scalar()
+        api_key = conn.execute(text(
+            "INSERT INTO api_keys (entity_id, name, key_hash, requests, input_tokens,"
+            " output_tokens, audio_seconds, cost, created_at)"
+            " VALUES (:e, 'fk-restrict', 'fk-restrict-logged', 0, 0, 0, 0, 0, now()) RETURNING id"
+        ), {"e": entity}).scalar()
+        # A month back lands in a closed 7-day chunk, which can be compressed.
+        conn.execute(text(
+            "INSERT INTO request_logs (time, entity_id, model_config_id, model_endpoint_id, api_key_id, source) "
+            "VALUES (now() - INTERVAL '30 days', :e, :m, :ep, :k, :s)"
+        ), {"e": entity, "m": model, "ep": endpoint, "k": api_key, "s": _SOURCE})
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.execute(text(
+            "SELECT compress_chunk(c, if_not_compressed => true) "
+            "FROM show_chunks('request_logs', older_than => INTERVAL '7 days') c"
+        ))
+    with engine.connect() as conn:
+        _, compressed = _chunk_of_row(conn)
+    assert compressed, "the seeded row's chunk is not compressed, so this module would prove nothing"
+    return {"entity_id": entity, "model_config_id": model, "model_endpoint_id": endpoint, "api_key_id": api_key}
+
+
+def test_every_request_logs_fk_restricts_at_head(pg_migrated_isolated, history):
+    _, engine = pg_migrated_isolated
+    with engine.connect() as conn:
+        _assert_all_fks(conn, "r")
+
+
+@pytest.mark.parametrize("column", list(_FKS))
+def test_deleting_a_parent_with_compressed_history_is_refused(pg_migrated_isolated, history, column):
+    _, engine = pg_migrated_isolated
+    constraint, parent = _FKS[column]
+    with engine.connect() as conn:
+        chunk_before = _chunk_of_row(conn)
+
+    with pytest.raises(IntegrityError, match=constraint):
+        with engine.begin() as conn:
+            conn.execute(text(f"DELETE FROM {parent} WHERE id = :id"), {"id": history[column]})
+
+    with engine.connect() as conn:
+        assert _chunk_of_row(conn) == chunk_before
+        assert _row_ids(conn) == [tuple(history[c] for c in _FKS)]
+        assert conn.execute(
+            text(f"SELECT count(*) FROM {parent} WHERE id = :id"), {"id": history[column]}
+        ).scalar() == 1
+
+
+def test_parents_without_history_can_still_be_deleted(pg_migrated_isolated, history):
+    """Erasure (#378) relies on this: once the logs are moved, the delete goes
+    through and the entity's conversations and messages cascade away."""
+    _, engine = pg_migrated_isolated
+    with engine.begin() as conn:
+        entity = conn.execute(text(
+            "INSERT INTO entities (entity_type, name, initials, active) "
+            "VALUES ('user', 'fk-restrict-unlogged', 'FU', true) RETURNING id"
+        )).scalar()
+        conversation = conn.execute(text(
+            "INSERT INTO conversations (entity_id) VALUES (:e) RETURNING id"
+        ), {"e": entity}).scalar()
+        conn.execute(text(
+            "INSERT INTO messages (conversation_id, role, content) VALUES (:c, 'user', 'hello')"
+        ), {"c": conversation})
+        model = conn.execute(text(
+            "INSERT INTO model_configs (model_name, input_cost_per_million, output_cost_per_million) "
+            "VALUES ('fk-restrict-unlogged', 1, 1) RETURNING id"
+        )).scalar()
+        endpoint = conn.execute(text(
+            "INSERT INTO model_endpoints (model_config_id, url, api_key, healthy) "
+            "VALUES (:m, 'https://fk-restrict-unlogged.example/v1', 'k', true) RETURNING id"
+        ), {"m": model}).scalar()
+        api_key = conn.execute(text(
+            "INSERT INTO api_keys (entity_id, name, key_hash, requests, input_tokens,"
+            " output_tokens, audio_seconds, cost, created_at)"
+            " VALUES (:e, 'fk-restrict', 'fk-restrict-unlogged', 0, 0, 0, 0, 0, now()) RETURNING id"
+        ), {"e": entity}).scalar()
+
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM api_keys WHERE id = :id"), {"id": api_key})
+        conn.execute(text("DELETE FROM model_endpoints WHERE id = :id"), {"id": endpoint})
+        conn.execute(text("DELETE FROM model_configs WHERE id = :id"), {"id": model})
+        conn.execute(text("DELETE FROM entities WHERE id = :id"), {"id": entity})
+
+    with engine.connect() as conn:
+        for table, id_ in (
+            ("api_keys", api_key),
+            ("model_endpoints", endpoint),
+            ("model_configs", model),
+            ("entities", entity),
+            ("conversations", conversation),
+        ):
+            assert conn.execute(text(f"SELECT count(*) FROM {table} WHERE id = :id"), {"id": id_}).scalar() == 0, table
+        assert conn.execute(
+            text("SELECT count(*) FROM messages WHERE conversation_id = :c"), {"c": conversation}
+        ).scalar() == 0
+        assert _row_ids(conn) == [tuple(history[c] for c in _FKS)]
+
+
+def _fk_and_comment_diffs(conn):
+    """Autogenerate diffs for the request_logs FKs, the FK columns' comments
+    and the table comment.
+
+    Comments on the other columns are left out on purpose: the timing columns
+    (``started_at`` .. ``outcome``) already drift from the model, which is not
+    this revision's concern.
+    """
+    diffs = []
+    for diff in compare_metadata(MigrationContext.configure(conn), RequestLog.metadata):
+        # Column-level diffs arrive as a list of tuples; table-level ones as a tuple.
+        for item in diff if isinstance(diff, list) else [diff]:
+            kind = item[0]
+            if kind in ("add_fk", "remove_fk") and item[1].parent.name == "request_logs":
+                diffs.append(item)
+            elif kind == "modify_comment" and item[2] == "request_logs" and item[3] in _FKS:
+                diffs.append(item)
+            elif kind in ("add_table_comment", "remove_table_comment") and item[1].name == "request_logs":
+                diffs.append(item)
+    return diffs
+
+
+def test_autogenerate_proposes_no_fk_or_comment_changes(pg_migrated_isolated, history):
+    _, engine = pg_migrated_isolated
+    with engine.connect() as conn:
+        assert _fk_and_comment_diffs(conn) == []
+
+
+def test_round_trip_over_a_compressed_chunk(pg_migrated_isolated, history):
+    url, engine = pg_migrated_isolated
+    expected_row = [tuple(history[c] for c in _REVISION_FKS)]
+    engine.dispose()
+
+    # Below this revision api_key_id does not exist yet: the downgrade drops it
+    # (c5d7e9f1a3b6), so only the three FKs this revision switches are compared.
+    _flask_db(url, "downgrade", _BEFORE)
+    with engine.connect() as conn:
+        _assert_all_fks(conn, "n", _REVISION_FKS)
+        _assert_not_validated(conn)
+        # The comparison has teeth: below the revision it sees the old FKs and comments.
+        diffs = _fk_and_comment_diffs(conn)
+        assert {d[0] for d in diffs} >= {"add_fk", "remove_fk", "modify_comment"}
+        assert _row_ids(conn, _REVISION_FKS) == expected_row
+        assert _chunk_of_row(conn)[1]
+    engine.dispose()
+
+    _flask_db(url, "upgrade")
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == _HEAD
+        _assert_all_fks(conn, "r")
+        _assert_not_validated(conn)
+        assert _fk_and_comment_diffs(conn) == []
+        assert _row_ids(conn, _REVISION_FKS) == expected_row
+        # The column came back empty: the downgrade dropped the key ids.
+        assert _row_ids(conn, ("api_key_id",)) == [(None,)]
+        assert _chunk_of_row(conn)[1]
+
+
+# Upper bound for `flask db upgrade` to start and reach the blocker; it is the
+# poll deadline, not a sleep, so a fast machine waits far less.
+_QUEUE_DEADLINE = 120
+# Upper bound for the upgrade to finish once the blocker commits. The revision
+# is catalogue-only, so it needs a fraction of a second on the test database.
+_FINISH_DEADLINE = 60
+_LOCK_SOURCE = "fklock"  # request_logs.source is VARCHAR(8)
+# libpq reports this as application_name, so the watcher finds the upgrade's
+# backend and not a TimescaleDB job that happens to wait on the same insert.
+_UPGRADE_APP = "fk-restrict-lock-upgrade"
+
+# The upgrade's backends that `pid` blocks, with the statement each one runs
+# and whether its wait is a lock on request_logs.
+_BLOCKED_BY = """
+    SELECT a.query,
+           EXISTS (SELECT 1 FROM pg_locks l
+                   WHERE l.pid = a.pid AND NOT l.granted
+                     AND l.relation = 'request_logs'::regclass) AS on_request_logs
+    FROM pg_stat_activity a
+    WHERE a.datname = current_database() AND a.application_name = :app
+      AND :pid = ANY(pg_blocking_pids(a.pid))
+"""
+
+
+def _wait_until_blocked(conn, blocker_pid, upgrade):
+    """Poll until the upgrade waits on ``blocker_pid``; return its rows.
+
+    Fails as soon as the upgrade exits instead, and after ``_QUEUE_DEADLINE``.
+    """
+    deadline = time.monotonic() + _QUEUE_DEADLINE
+    while time.monotonic() < deadline:
+        if upgrade.poll() is not None:
+            out, err = upgrade.communicate()
+            pytest.fail(
+                f"the upgrade exited ({upgrade.returncode}) while the insert still held request_logs:\n"
+                f"--- stdout ---\n{out}\n--- stderr ---\n{err}"
+            )
+        blocked = conn.execute(text(_BLOCKED_BY), {"pid": blocker_pid, "app": _UPGRADE_APP}).all()
+        if blocked:
+            return blocked
+        time.sleep(0.2)
+    pytest.fail(f"the upgrade did not queue behind the insert within {_QUEUE_DEADLINE}s")
+
+
+def test_upgrade_waits_for_an_open_insert_and_then_finishes(pg_migrated_isolated, history):
+    """The upgrade only queues behind billing and finishes once billing commits.
+
+    A second connection inserts a request_logs row and keeps its transaction
+    open, as a billing INSERT on a running pod does, holding ``ROW EXCLUSIVE``.
+    The upgrade to this revision must wait for it, on ``request_logs`` and on
+    nothing else. Once the insert commits the upgrade finishes within a bound,
+    with the FKs switched ``NOT VALID``, and the billed row is kept.
+    """
+    url, engine = pg_migrated_isolated
+    expected = {"entity_id": history["entity_id"], "model_config_id": history["model_config_id"],
+                "model_endpoint_id": history["model_endpoint_id"]}
+    engine.dispose()
+    _flask_db(url, "downgrade", _BEFORE)
+    engine.dispose()
+
+    blocker = engine.connect()
+    upgrade = None
+    try:
+        blocker_pid = blocker.execute(text("SELECT pg_backend_pid()")).scalar_one()
+        blocker.execute(text(
+            "INSERT INTO request_logs (time, entity_id, model_config_id, model_endpoint_id, source) "
+            "VALUES (now(), :entity_id, :model_config_id, :model_endpoint_id, :s)"
+        ), {**expected, "s": _LOCK_SOURCE})
+        assert blocker.in_transaction()
+
+        command, env = _flask_db_command(url, "upgrade", "c8d0e2f4a6b8")
+        upgrade = subprocess.Popen(command, env={**env, "PGAPPNAME": _UPGRADE_APP}, text=True,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as watcher:
+            blocked = _wait_until_blocked(watcher, blocker_pid, upgrade)
+            assert len(blocked) == 1, blocked
+            query, on_request_logs = blocked[0]
+            assert on_request_logs, f"the upgrade waits on something other than request_logs: {query}"
+            assert "request_logs" in query and "DROP CONSTRAINT" in query.upper(), query
+            # Still queued: the migration has not run past the insert.
+            assert watcher.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == _BEFORE
+
+        blocker.commit()
+        out, err = upgrade.communicate(timeout=_FINISH_DEADLINE)
+        assert upgrade.returncode == 0, f"--- stdout ---\n{out}\n--- stderr ---\n{err}"
+    finally:
+        if upgrade is not None and upgrade.poll() is None:
+            upgrade.kill()
+            upgrade.communicate()
+        blocker.close()
+
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "c8d0e2f4a6b8"
+        _assert_all_fks(conn, "r", _REVISION_FKS)
+        _assert_not_validated(conn)
+        assert conn.execute(text(
+            "SELECT entity_id, model_config_id, model_endpoint_id FROM request_logs WHERE source = :s"
+        ), {"s": _LOCK_SOURCE}).all() == [tuple(expected.values())]
+    engine.dispose()
+
+    # Leave the module's database at head, without the extra row.
+    _flask_db(url, "upgrade")
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM request_logs WHERE source = :s"), {"s": _LOCK_SOURCE})
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == _HEAD
+        _assert_all_fks(conn, "r")

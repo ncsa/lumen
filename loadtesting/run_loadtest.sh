@@ -28,7 +28,7 @@ LUMEN_PORT=5001
 DUMMY_PORT=9999
 WORKERS=${WORKERS:-4}
 # Threads per process. Consumed by resolve_wsgi_workers() via LUMEN_WSGI_WORKERS;
-# "auto" derives it from pool_size + max_overflow, clamped to 10..64.
+# "auto" derives it as 2 x (pool_size + max_overflow), clamped to 10..256.
 WSGI_WORKERS=${WSGI_WORKERS:-10}
 MONITORING_TOKEN=$(uv run python -c "import yaml; d=yaml.safe_load(open('$CONFIG_YAML')); print(d.get('api',{}).get('monitoring',{}).get('token',''))" 2>/dev/null || echo "")
 # DB used by all Lumen invocations below. Default to the Postgres container

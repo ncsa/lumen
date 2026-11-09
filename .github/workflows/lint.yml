@@ -43,6 +43,48 @@ jobs:
       - name: Ruff
         run: uv run ruff check --output-format=github
 
+  deps:
+    name: Dependencies (pip-audit, ${{ matrix.project.name }})
+    runs-on: ubuntu-latest
+    # Separate from the ruff job so a newly published CVE never hides lint
+    # results. Audits the frozen, non-dev requirements of each lock file.
+    strategy:
+      fail-fast: false
+      matrix:
+        project:
+          - name: lumen
+            path: .
+          - name: monitor
+            path: scripts/monitor
+    env:
+      # Pinned like gitleaks below; bump deliberately.
+      PIP_AUDIT_VERSION: 2.10.1
+    defaults:
+      run:
+        working-directory: ${{ matrix.project.path }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: ${{ matrix.project.path }}/pyproject.toml
+
+      - name: Export locked requirements
+        run: >-
+          uv export --frozen --no-dev --no-hashes --no-emit-project
+          -o "$RUNNER_TEMP/req.txt"
+
+      # --no-deps: the export already pins the full resolved set.
+      # --strict: fail if any requirement cannot be audited.
+      - name: Pip-audit
+        run: >-
+          uvx "pip-audit==${PIP_AUDIT_VERSION}"
+          -r "$RUNNER_TEMP/req.txt" --no-deps --strict
+
   yaml:
     name: YAML (yamllint)
     runs-on: ubuntu-latest
@@ -55,7 +97,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version-file: pyproject.toml
+          python-version: "3.14"
 
       - name: Install dependencies
         run: uv sync --frozen

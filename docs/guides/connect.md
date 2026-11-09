@@ -6,25 +6,41 @@ Lumen exposes an **OpenAI-compatible API**, so most tools that speak to OpenAI c
 
 ## CLI login (lumen.sh)
 
-`lumen.sh` (from the Lumen repository) logs you in from the terminal and keeps your OpenCode model list current:
+`lumen.sh` (from the Lumen repository) logs you in from the terminal and keeps your OpenCode model list current. You don't need to clone the repository: download and run it straight from GitHub, passing any flags from the table below after `bash -s --`:
 
-1. It uses `$LUMEN_API_KEY` only when it belongs to the target server — that is, when `$LUMEN_BASE_URL` names the same server (or is unset and the default is meant), so a key issued by one Lumen is never sent to another. Otherwise it reuses a key saved for this server in `~/.config/lumen/keys.json`.
-2. Otherwise it starts a **device login**: it prints a one-time code (like `QKRT-M2BX`) and opens Lumen's approval page. Sign in, check what is being requested, and approve — the CLI then receives a fresh API key exactly once.
-3. The key is saved to `~/.config/lumen/keys.json` (mode `600`, keyed by server host) and written into a managed `# >>> lumen >>>` block in your shell's rc file (`~/.zshrc`, `~/.bashrc`, `setenv` for csh), which exports both `LUMEN_API_KEY` and `LUMEN_BASE_URL`. A plain `lumen.sh` therefore targets the server you last logged in to.
-4. Unless you pass `--no-opencode`, the Lumen provider block in `~/.config/opencode/opencode.json` is refreshed with every active model.
+```bash
+curl -fsSL https://raw.githubusercontent.com/ncsa/lumen/main/lumen.sh | bash -s -- --server https://lumen.example.com
+
+# for example, to request a new key even if one is stored
+curl -fsSL https://raw.githubusercontent.com/ncsa/lumen/main/lumen.sh | bash -s -- --server https://lumen.example.com --relogin
+```
+
+Each run works like this:
+
+1. It picks the server. `-s` always wins: the opencode config's `baseURL` and the rc block (step 4) are switched to that server, even when no new login is needed. Without `-s`, it uses the server in the opencode config's `baseURL`. If `$LUMEN_BASE_URL` names a different server, the run stops: pass `-s URL` to choose one. A trailing `/v1` is ignored when comparing, so `https://host` and `https://host/v1` are the same server. If the config has no `baseURL` yet, it uses `$LUMEN_BASE_URL`, else production.
+2. It uses `$LUMEN_API_KEY` only when it belongs to the target server — that is, when `$LUMEN_BASE_URL` names the same server (or is unset and the default is meant), so a key issued by one Lumen is never sent to another. Otherwise it reuses a key saved for this server in `~/.config/lumen/keys.json`, else a key embedded in the opencode config, but only when the config's `baseURL` is this server; that key is then also saved as in step 4. Without `-s`, a key embedded in the config that differs from `$LUMEN_API_KEY` or `keys.json` stops the run; `--relogin` requests a new key that replaces all of them.
+3. Otherwise it starts a **device login**: it prints a one-time code (like `QKRT-M2BX`) and opens Lumen's approval page. Sign in, check what is being requested, pick how long the key stays valid, and approve — the CLI then receives a fresh API key exactly once and prints when it expires (or that it never expires).
+4. The key is saved to `~/.config/lumen/keys.json` (mode `600`, keyed by server host) and written into a managed `# >>> lumen >>>` block in your shell's rc file (`~/.zshrc`, `~/.bashrc`, `setenv` for csh), which exports both `LUMEN_API_KEY` and `LUMEN_BASE_URL`. A plain `lumen.sh` therefore targets the server you last logged in to. With `--embed-key`, the key is also written to the opencode config, for apps that don't read your shell rc. Once a key is embedded, later runs keep it current even without the flag.
+
+   > **Note:** an embedded key is stored in plaintext, so the script sets the config to mode `600`; keep it out of shared or committed dotfiles.
+5. Unless you pass `--no-opencode`, the Lumen provider block in your opencode config is refreshed with every active model that accepts text input. Models without text input (for example audio-only models) are skipped; models whose input modalities are unknown are still added. The config is `$OPENCODE_CONFIG` if set, else `~/.config/opencode/opencode.json`, else `~/.config/opencode/opencode.jsonc`; if none exists, `opencode.jsonc` is created (mode `600`). Comments in the config are not kept when it is rewritten, so the first time the script rewrites a file with comments it saves the original as `<file>.bak` (mode `600`).
 
 | Flag | Purpose |
 |------|---------|
-| `-s`, `--server URL` | Server to log in to (default: `$LUMEN_BASE_URL`, else production; plain `http` only for localhost dev servers) |
+| `-s`, `--server URL` | Server to log in to, also written to the opencode config and rc block (default: the opencode config's server, else `$LUMEN_BASE_URL`, else production; plain `http` only for localhost dev servers) |
 | `-k`, `--keyname NAME` | Name for the requested key (default `opencode`) |
 | `--author LABEL` | Label shown to the approver (default `$USER`) |
 | `--client-id ID` | `client_id` sent to Lumen (default `lumen-cli`) |
-| `--opencode` | Sync the model catalog into `opencode.json` (default) |
+| `--ttl DURATION` | Ask for a key that expires after `DURATION`: `0` (never) or hours, days or weeks such as `12h`, `30d`, `8w` (default: the server's maximum, `api.keys.ttl`). Pre-selects the approval page's **Expires after** choice, which the approver can change; the server rejects a value above its maximum, and `0` when keys must expire. Only used when a new key is requested |
+| `--opencode` | Sync the model catalog into `opencode.json` or `opencode.jsonc` (default) |
 | `--no-opencode` | Only log in and store the key |
+| `--embed-key` | Also write the key itself into the opencode config (`options.apiKey`, mode `600`) instead of `{env:LUMEN_API_KEY}`; can't be combined with `--no-opencode` |
 | `--relogin` | Request a new key even if one is stored; the new key always replaces the stored one |
 | `--no-aliases` | Skip model aliases when syncing |
 
-The approval page shows the requesting application, the destination it will redirect to (for web apps), and the model-consent table, and it requires an explicit overwrite confirmation when you already hold a key with the same name. See [OAuth for client developers](./oauth-clients.md) to implement the same flows in your own tool.
+When a stored key stops working because it expired or was revoked, `lumen.sh` stops with `key expired or revoked — run lumen.sh --relogin`; run that to request a new key.
+
+The approval page shows the requesting application, the destination it will redirect to (for web apps), and the model-consent table, and it requires an explicit replace confirmation when you already hold a key with the same name. Replacing keeps that key, with its name and usage stats, and gives it a new secret. See [OAuth for client developers](./oauth-clients.md) to implement the same flows in your own tool.
 
 ## 1. Create an API key
 
@@ -130,7 +146,7 @@ To have OpenCode only use Lumen's models — and ignore every other installed pr
 
 OpenCode will then list only Lumen's models when you select a model.
 
-Instead of downloading the config by hand, run `./lumen.sh` from a checkout of the Lumen repository: it logs you in (see [CLI login](#cli-login-lumensh)), stores the key, and updates the `lumen` provider block in your `opencode.json` in place, listing added and removed models.
+Instead of downloading the config by hand, run `lumen.sh` (straight from GitHub with the `curl` command under [CLI login](#cli-login-lumensh), or as `./lumen.sh` from a checkout): it logs you in, stores the key, and updates the `lumen` provider block in your `opencode.json` (or `opencode.jsonc`) in place, listing added and removed models. If you have neither file, it creates `opencode.jsonc`.
 
 ## curl
 

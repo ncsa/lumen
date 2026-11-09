@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 
 from flask import Blueprint, abort, jsonify, redirect, render_template, request, session, url_for
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 
@@ -26,9 +26,12 @@ from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
+from lumen.models.request_log import RequestLog
 from lumen.services.crypto import hash_api_key
+from lumen.services.key_expiry import key_expires_at, key_ttl_choices, resolve_key_ttl, revoke_if_expired
 from lumen.services.llm import bulk_model_access_info, get_model_access_status, get_pool_limit, model_notices
-from lumen.timeutils import utcnow
+from lumen.services.stats_cutover import get_fold_state
+from lumen.timeutils import as_utc_aware, as_utc_naive, utcnow
 
 profile_bp = Blueprint("profile", __name__)
 
@@ -148,11 +151,8 @@ def _fetch_chat_stats(eid: int):
     return chat_agg, conversation_count
 
 
-def _build_model_usage(eid: int, all_models, eps_by_model, access_statuses):
-    active_ids = {mc.id for mc in all_models if mc.active}
-    accessible_model_ids = {mid for mid in active_ids if access_statuses.get(mid) != "blocked"}
-
-    usage_rows = db.session.execute(
+def _fetch_model_usage_rows(eid: int):
+    return db.session.execute(
         select(
             ModelStat.model_config_id,
             func.sum(ModelStat.requests),
@@ -164,6 +164,108 @@ def _build_model_usage(eid: int, all_models, eps_by_model, access_statuses):
         .where(ModelStat.entity_id == eid)
         .group_by(ModelStat.model_config_id)
     ).all()
+
+
+def _fetch_live_tail(eid: int, since):
+    """The entity's request_logs from ``since`` on, per (model, source).
+
+    Only rows billing left to the fold (``stats_deferred``) count: an unmarked
+    row was bumped into the tables already, by an older pod or before the
+    cutover. Each row is (model_config_id, source, requests, input_tokens,
+    output_tokens, cost, last time as naive UTC).
+    """
+    rows = db.session.execute(
+        select(
+            RequestLog.model_config_id,
+            RequestLog.source,
+            func.count(),
+            func.coalesce(func.sum(RequestLog.input_tokens), 0),
+            func.coalesce(func.sum(RequestLog.output_tokens), 0),
+            func.coalesce(func.sum(RequestLog.cost), 0),
+            func.max(RequestLog.time),
+        )
+        .where(RequestLog.entity_id == eid, RequestLog.time >= as_utc_aware(since),
+               RequestLog.stats_deferred.is_(True))
+        .group_by(RequestLog.model_config_id, RequestLog.source)
+    ).all()
+    return [(*row[:6], as_utc_naive(row[6])) for row in rows]
+
+
+def _add_usage(row, tail_rows):
+    """``row`` (requests, input tokens, output tokens, cost, last used) plus ``tail_rows``."""
+    requests, input_tokens, output_tokens, cost, last = (
+        (row[0] or 0), (row[1] or 0), (row[2] or 0), (row[3] or 0),
+        as_utc_naive(row[4]) if row[4] is not None else None,
+    )
+    for t in tail_rows:
+        requests += t[2]
+        input_tokens += t[3]
+        output_tokens += t[4]
+        cost += t[5]
+        last = t[6] if last is None or t[6] > last else last
+    return requests, input_tokens, output_tokens, cost, last
+
+
+#: How often a live-tail read is repeated when a fold pass commits in the middle.
+_LIVE_TAIL_ATTEMPTS = 3
+
+
+def _read_with_live_tail(read_folded, read_tail):
+    """``(read_folded(), read_tail(folded_until))``, read as one consistent view.
+
+    The watermark is read before and after: a fold pass committing in between
+    moves rows from the tail into the tables mid-read, so the tail would count
+    them twice or not at all. Such a read is repeated, and the tail of a read
+    that never validates is dropped: the folded tables alone (a few minutes
+    behind) never double count. The tail is None before the stats cutover too,
+    when billing keeps the tables exact.
+    """
+    folded = None
+    for _ in range(_LIVE_TAIL_ATTEMPTS):
+        since = get_fold_state().folded_until
+        folded = read_folded()
+        if since is None:
+            return folded, None
+        tail = read_tail(since)
+        if get_fold_state().folded_until == since:
+            return folded, tail
+    return folded, None
+
+
+def _fetch_usage(eid: int, live_tail: bool):
+    """Chat stats, conversation count and per-model usage rows for ``eid``.
+
+    With ``live_tail``, after the stats cutover, the entity's own request_logs
+    since ``folded_until`` (not folded yet) are added on top of the folded
+    tables, so the totals are exact rather than a few minutes behind.
+    """
+    def read_folded():
+        return (*_fetch_chat_stats(eid), _fetch_model_usage_rows(eid))
+
+    if not live_tail:
+        return read_folded()
+    (chat_agg, conversation_count, usage_rows), tail = _read_with_live_tail(
+        read_folded, lambda since: _fetch_live_tail(eid, since),
+    )
+    if not tail:
+        return chat_agg, conversation_count, usage_rows
+    chat_agg = _add_usage(chat_agg, [t for t in tail if t[1] == "chat"])
+    by_model = {r[0]: r[1:] for r in usage_rows}
+    for mid in {t[0] for t in tail if t[0] is not None}:
+        by_model[mid] = _add_usage(by_model.get(mid, (0, 0, 0, 0, None)), [t for t in tail if t[0] == mid])
+    usage_rows = [(mid, *u) for mid, u in by_model.items()]
+    return chat_agg, conversation_count, usage_rows
+
+
+def _fetch_last_used_at(eid: int):
+    """The entity's folded ``last_used_at`` (a column read, never a cached ORM row)."""
+    return db.session.scalar(select(EntityStat.last_used_at).where(EntityStat.entity_id == eid))
+
+
+def _build_model_usage(usage_rows, all_models, eps_by_model, access_statuses):
+    active_ids = {mc.id for mc in all_models if mc.active}
+    accessible_model_ids = {mid for mid in active_ids if access_statuses.get(mid) != "blocked"}
+
     usage_by_id = {r[0]: r for r in usage_rows}
 
     # all_models is already ordered by name; keep accessible-active models and any
@@ -243,8 +345,13 @@ def _build_project_list(eid: int) -> list:
     ]
 
 
-def _get_profile_data(eid: int) -> dict:
-    chat_agg, conversation_count = _fetch_chat_stats(eid)
+def _get_profile_data(eid: int, live_tail: bool = False) -> dict:
+    """Everything the profile page shows for ``eid``.
+
+    ``live_tail`` adds the requests the stats fold has not reached yet to the
+    chat stats and per-model usage; only the user's own /profile asks for it.
+    """
+    chat_agg, conversation_count, usage_rows = _fetch_usage(eid, live_tail)
     # One query per page view: the creator's and revoker's name/email ride along
     # via outer joins instead of per-key lookups when rendering the key table.
     revoker = aliased(Entity)
@@ -269,7 +376,7 @@ def _get_profile_data(eid: int) -> dict:
     }
     # Fetch model context once and build both the usage list and the access list from it.
     all_models, eps_by_model, access_statuses, consent_map = _fetch_model_context(eid)
-    model_usage, total_tokens_used, total_cost = _build_model_usage(eid, all_models, eps_by_model, access_statuses)
+    model_usage, total_tokens_used, total_cost = _build_model_usage(usage_rows, all_models, eps_by_model, access_statuses)
     usage_by_model = {u["model_name"]: u for u in model_usage}
     model_access_list = _build_model_access_list(usage_by_model, all_models, eps_by_model, access_statuses, consent_map)
     coin_pool = _build_coin_pool(eid)
@@ -292,7 +399,7 @@ def _get_profile_data(eid: int) -> dict:
 @login_required
 def index():
     entity_id = session["entity_id"]
-    data = _get_profile_data(entity_id)
+    data = _get_profile_data(entity_id, live_tail=True)
 
     profile_entity = db.session.get(Entity, entity_id)
     # The user's own limit row (not an inherited group/default pool), used to
@@ -312,6 +419,7 @@ def index():
         user_limit=user_limit,
         all_groups=_all_groups_for_picker() if admin else [],
         user_memberships=_memberships_by_entity([entity_id]).get(entity_id, []) if admin else [],
+        key_ttl_choices=key_ttl_choices(),
     )
 
 
@@ -341,16 +449,55 @@ def _new_key_fields(key: str):
     if not _CLIENT_KEY_RE.fullmatch(key):
         return None, (jsonify({"error": "Invalid key"}), HTTPStatus.BAD_REQUEST)
 
-    key_hash = hash_api_key(key)
-    if db.session.execute(select(APIKey).filter_by(key_hash=key_hash)).scalar_one_or_none():
+    fields = key_secret_fields(key)
+    if db.session.execute(select(APIKey).filter_by(key_hash=fields["key_hash"])).scalar_one_or_none():
         return None, (jsonify({"error": "Key already exists"}), HTTPStatus.CONFLICT)
 
-    return {"key_hash": key_hash, "key_hint": f"{key[:7]}...{key[-4:]}"}, None
+    return fields, None
+
+
+def key_secret_fields(key: str) -> dict:
+    """The stored columns for a raw key: its hash and the hint shown in the UI."""
+    return {"key_hash": hash_api_key(key), "key_hint": f"{key[:7]}...{key[-4:]}"}
+
+
+def set_key_secret(api_key_id: int, key: str, **values) -> bool:
+    """Replace an active key's secret in place, keeping its id, name and usage stats.
+
+    Guarded on the key still being active, so a concurrent revoke wins. Extra
+    column values are set in the same update. Returns False when no active key
+    was updated. Does not commit; raises IntegrityError if the secret is taken.
+    """
+    result = db.session.execute(
+        update(APIKey)
+        .where(APIKey.id == api_key_id, APIKey.revoked_at.is_(None))
+        .values(**key_secret_fields(key), **values)
+    )
+    return result.rowcount > 0
+
+
+def _requested_key_expiry(data: dict):
+    """expires_at for a new key from the request's optional ``ttl`` (seconds).
+
+    Returns (expires_at, None), or (None, error response) when the ttl is not
+    allowed under the api.keys.ttl cap. No ttl gives the cap.
+    """
+    try:
+        ttl = resolve_key_ttl(data.get("ttl"))
+    except ValueError as e:
+        return None, (jsonify({"error": str(e)}), HTTPStatus.BAD_REQUEST)
+    return key_expires_at(ttl), None
+
+
+def _created_key_response(api_key: APIKey, key: str):
+    """201 response for a newly created key, with its expiry (null = never)."""
+    expires_at = api_key.expires_at.strftime("%Y-%m-%dT%H:%M:%SZ") if api_key.expires_at else None
+    return jsonify({"id": api_key.id, "name": api_key.name, "key": key, "expires_at": expires_at}), HTTPStatus.CREATED
 
 
 def rotate_key_secret(api_key: APIKey):
     """Replace api_key's secret with the request's key, keeping usage stats. Commits."""
-    if api_key.revoked_at is not None:
+    if api_key.revoked_at is not None or revoke_if_expired(api_key):
         return jsonify({"error": "Key is revoked"}), HTTPStatus.CONFLICT
 
     data = request.get_json()
@@ -359,19 +506,50 @@ def rotate_key_secret(api_key: APIKey):
         return jsonify({"error": "Invalid key"}), HTTPStatus.BAD_REQUEST
 
     key = key.strip()
-    fields, error = _new_key_fields(key)
+    _, error = _new_key_fields(key)
     if error:
         return error
 
-    api_key.key_hash = fields["key_hash"]
-    api_key.key_hint = fields["key_hint"]
     try:
+        updated = set_key_secret(api_key.id, key)
         db.session.commit()
     except IntegrityError:
         # A concurrent create/rotate committed the same secret after the duplicate check.
         db.session.rollback()
         return jsonify({"error": "Key already exists"}), HTTPStatus.CONFLICT
+    if not updated:
+        return jsonify({"error": "Key is revoked"}), HTTPStatus.CONFLICT
     return jsonify({"id": api_key.id, "name": api_key.name, "key": key}), HTTPStatus.OK
+
+
+def set_key_ttl(api_key: APIKey):
+    """Set api_key's expiry to now + the request's ``ttl`` (seconds; 0 = never). Commits.
+
+    A revoked or overdue key gets 409; a ttl not allowed under the api.keys.ttl
+    cap gets 400.
+    """
+    if api_key.revoked_at is not None or revoke_if_expired(api_key):
+        return jsonify({"error": "Key is revoked"}), HTTPStatus.CONFLICT
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or data.get("ttl") is None:
+        return jsonify({"error": "ttl is required"}), HTTPStatus.BAD_REQUEST
+    try:
+        expires_at = key_expires_at(resolve_key_ttl(data["ttl"]))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), HTTPStatus.BAD_REQUEST
+
+    # Guarded on revoked_at, so a concurrent revoke or the expirer wins.
+    updated = db.session.execute(
+        update(APIKey)
+        .where(APIKey.id == api_key.id, APIKey.revoked_at.is_(None))
+        .values(expires_at=expires_at)
+    ).rowcount
+    db.session.commit()
+    if not updated:
+        return jsonify({"error": "Key is revoked"}), HTTPStatus.CONFLICT
+    expires = expires_at.strftime("%Y-%m-%dT%H:%M:%SZ") if expires_at else None
+    return jsonify({"id": api_key.id, "name": api_key.name, "expires_at": expires}), HTTPStatus.OK
 
 
 @profile_bp.route("/profile/keys", methods=["POST"])
@@ -382,6 +560,9 @@ def create_key():
     name = (data.get("name") or "").strip()
     key = (data.get("key") or "").strip()
 
+    expires_at, error = _requested_key_expiry(data)
+    if error:
+        return error
     fields, error = _new_key_fields(key)
     if error:
         return error
@@ -390,12 +571,13 @@ def create_key():
         entity_id=entity_id,
         created_by_entity_id=entity_id,
         name=name or "Unnamed Key",
+        expires_at=expires_at,
         **fields,
     )
     db.session.add(api_key)
     db.session.commit()
 
-    return jsonify({"id": api_key.id, "name": api_key.name, "key": key}), HTTPStatus.CREATED
+    return _created_key_response(api_key, key)
 
 
 @profile_bp.route("/profile/keys/<int:kid>", methods=["DELETE"])
@@ -431,6 +613,18 @@ def rotate_key(kid):
         return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
 
     return rotate_key_secret(api_key)
+
+
+@profile_bp.route("/profile/keys/<int:kid>/ttl", methods=["POST"])
+@login_required
+def edit_key_ttl(kid):
+    entity_id = session["entity_id"]
+    api_key = db.get_or_404(APIKey, kid)
+
+    if api_key.entity_id != entity_id:
+        return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
+
+    return set_key_ttl(api_key)
 
 
 def _purge_conversations(entity_id: int) -> int:
@@ -526,29 +720,69 @@ _VALID_TRUNC   = frozenset(cfg["trunc"]  for cfg in _USAGE_PERIODS.values())
 
 
 def _usage_period_start(period_str):
-    """Start of the window, **floored to the hour**.
+    """Start of the window, floored to the hour, or to the UTC day for ``year``.
 
     The alignment is load-bearing, not cosmetic. Every aggregate this module
-    reads is hourly: ``bucket`` is ``time_bucket('1 hour', time)``, the hour's
-    start. On an unaligned start the aggregate arms (``bucket >= :start``) and
-    the raw arms (``time >= :start``) are not the same predicate — a request at
-    09:45 has ``bucket = 09:00``, so with ``start = 09:30`` the raw arm counts
-    it and the aggregate arm drops it, along with everything else in the
-    window's first partial hour. Flooring makes the two predicates identical,
-    because for an hour-aligned ``S``, ``time_bucket('1 hour', time) >= S`` is
-    true exactly when ``time >= S``.
+    reads buckets by ``time_bucket(width, time)``, the bucket's start: one hour
+    for ``request_counts_hourly_by_entity``, ``request_counts_hourly`` and
+    ``request_counts_hourly_total``, one day for ``request_counts_daily`` and
+    ``request_counts_daily_by_entity``. On an unaligned start ``bucket >= :start``
+    and the raw ``time >= :start`` are not the same predicate — a request at
+    09:45 has ``bucket = 09:00``, so with ``start = 09:30`` the raw rows count it
+    and the aggregate drops it, along with everything else in the window's first
+    partial bucket. Flooring to the widest bucket a period reads makes the two
+    predicates identical, because for a width-aligned ``S``,
+    ``time_bucket(width, time) >= S`` is true exactly when ``time >= S``.
 
-    The cost is that a window can reach up to 59 minutes further back than its
-    name suggests. That is invisible at the page's coarsest-to-finest bucket
+    ``year`` is floored to the UTC day because both its arms read a daily view:
+    ``request_counts_daily`` org-wide, ``request_counts_daily_by_entity``
+    per entity. The per-entity heatmap reads the hourly entity aggregate but gets
+    the same start, so every chart on the page shows the same window. ``all``
+    has no start.
+
+    The cost is that a window can reach up to 59 minutes (a day, for ``year``)
+    further back than its name suggests. That is invisible at the page's bucket
     widths (1 day / 1 week / 1 month) and is the same widening for every chart
     on the page, per-entity and org-wide alike, which is the point.
     """
     cfg = _USAGE_PERIODS.get(period_str, _USAGE_PERIODS["week"])
     if cfg["offset"] is None:
         return None
-    return (datetime.now(timezone.utc) - cfg["offset"]).replace(
+    start = (datetime.now(timezone.utc) - cfg["offset"]).replace(
         minute=0, second=0, microsecond=0
     )
+    if period_str == "year":
+        start = start.replace(hour=0)
+    return start
+
+
+def _org_usage_view(period_str):
+    """The org-wide aggregate the summary, requests, tokens and models charts read.
+
+    ``year`` and ``all`` read ``request_counts_daily``: their chart buckets (1
+    week, 1 month) are whole UTC days, so re-bucketing daily rows gives the same
+    series as hourly rows at a 24th of the rows. ``week`` and ``month`` read
+    ``request_counts_hourly``, whose start is only hour-aligned. The heatmap
+    does not use this: it needs the hour of day but no model or source, so for
+    every period it reads ``request_counts_hourly_total``, the hourly view
+    summed over models and sources.
+    """
+    if period_str in ("year", "all"):
+        return "request_counts_daily"
+    return "request_counts_hourly"
+
+
+def _entity_usage_view(period_str):
+    """The per-entity aggregate the summary, requests, tokens and models charts read.
+
+    The per-entity twin of ``_org_usage_view``: ``year`` and ``all`` read
+    ``request_counts_daily_by_entity``, ``week`` and ``month`` read
+    ``request_counts_hourly_by_entity``. The per-entity heatmap does not use
+    this: it needs the hour of day, so it always reads the hourly entity view.
+    """
+    if period_str in ("year", "all"):
+        return "request_counts_daily_by_entity"
+    return "request_counts_hourly_by_entity"
 
 
 def _usage_period_bucket(period_str):
@@ -575,19 +809,23 @@ def _usage_entity_id():
 
 # --- Per-entity usage source -------------------------------------------------
 #
-# The five per-entity /usage queries below read only the
-# ``request_counts_hourly_by_entity`` continuous aggregate. History older than
-# the refresh policy's ``start_offset`` is visible through the view only once
+# The five per-entity /usage queries below read only the per-entity continuous
+# aggregates: ``request_counts_daily_by_entity`` for the summary, requests,
+# tokens and models charts over ``year`` and ``all`` (``_entity_usage_view``),
+# ``request_counts_hourly_by_entity`` for the other periods and for the heatmap
+# over every period. History older than a refresh policy's ``start_offset`` is
+# visible through a view only once ``flask upgrade`` or
 # ``flask backfill-aggregate`` has materialised it (``flask check-aggregate``
 # reports whether it has); per-user charts no longer fall back to raw
 # ``request_logs``.
 
 
-# ``request_logs.entity_id`` is ON DELETE SET NULL, so a hard-deleted entity's
-# raw rows answer for nobody. The aggregate materialised the id at refresh time
+# ``request_logs.entity_id`` is now ON DELETE RESTRICT, so an entity with raw
+# rows can no longer be deleted. It used to be SET NULL: an entity deleted then
+# had its raw rows nulled, but the aggregate materialised the id at refresh time
 # and never re-evaluates the foreign key, so it keeps that entity's groups for
-# as long as the view lives. Every per-entity query carries this clause so a
-# deleted entity answers with nothing, the same as its raw rows would, rather
+# as long as the view lives. Every per-entity query carries this clause so such
+# a deleted entity answers with nothing, the same as its raw rows do, rather
 # than with whatever history happened to be materialised before the delete.
 # For an entity that still exists it is one primary-key probe, evaluated once.
 _ENTITY_STILL_EXISTS = " AND EXISTS (SELECT 1 FROM entities WHERE id = :eid)"
@@ -607,6 +845,8 @@ def usage_summary():
     period = request.args.get("period", "week")
     start = _usage_period_start(period)
     eid = _usage_entity_id()
+    view = _org_usage_view(period)
+    entity_view = _entity_usage_view(period)
 
     if eid:
         params = {"eid": eid}
@@ -615,30 +855,27 @@ def usage_summary():
             params["start"] = start
             where += " AND bucket >= :start"
         # `bucket >= :start` selects exactly the raw rows with `time >= :start`
-        # only because ``_usage_period_start`` floors to the hour.
+        # only because ``_usage_period_start`` floors to the hour (the day for year).
         agg_sql = f"""
             SELECT
                 COALESCE(SUM(requests), 0),
                 COALESCE(SUM(input_tokens + output_tokens), 0),
                 COALESCE(SUM(cost), 0.0)
-            FROM request_counts_hourly_by_entity
+            FROM {entity_view}
             {where}
         """
         row = db.session.execute(text(agg_sql), params).one()
-        stat = db.session.execute(
-            select(EntityStat).filter_by(entity_id=eid)
-        ).scalar_one_or_none()
-        last_active = (
-            stat.last_used_at.isoformat() + "Z" if stat and stat.last_used_at else None
-        )
+        # The folded value only: /usage reads no request_logs (see #167).
+        last_used_at = _fetch_last_used_at(eid)
+        last_active = last_used_at.isoformat() + "Z" if last_used_at else None
         new_users = 0
     elif start is not None:
-        row = db.session.execute(text("""
+        row = db.session.execute(text(f"""
             SELECT
                 COALESCE(SUM(requests), 0),
                 COALESCE(SUM(input_tokens + output_tokens), 0),
                 COALESCE(SUM(cost), 0.0)
-            FROM request_counts_hourly
+            FROM {view}
             WHERE bucket >= :start
         """), {"start": start}).one()
         new_users = db.session.scalar(
@@ -649,12 +886,12 @@ def usage_summary():
         )
         last_active = None
     else:
-        row = db.session.execute(text("""
+        row = db.session.execute(text(f"""
             SELECT
                 COALESCE(SUM(requests), 0),
                 COALESCE(SUM(input_tokens + output_tokens), 0),
                 COALESCE(SUM(cost), 0.0)
-            FROM request_counts_hourly
+            FROM {view}
         """)).one()
         new_users = db.session.scalar(
             select(func.count(Entity.id)).where(Entity.entity_type == "user")
@@ -757,6 +994,8 @@ def usage_requests():
     if bucket not in _VALID_BUCKETS:
         abort(HTTPStatus.BAD_REQUEST)
     eid = _usage_entity_id()
+    view = _org_usage_view(period)
+    entity_view = _entity_usage_view(period)
 
     if eid:
         params = {"bucket": bucket, "eid": eid}
@@ -766,22 +1005,22 @@ def usage_requests():
             where += " AND bucket >= :start"
         agg_sql = f"""
             SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period, SUM(requests) AS count
-            FROM request_counts_hourly_by_entity
+            FROM {entity_view}
             {where}
             GROUP BY 1 ORDER BY 1
         """
         rows = db.session.execute(text(agg_sql), params).all()
     elif start is not None:
-        rows = db.session.execute(text("""
+        rows = db.session.execute(text(f"""
             SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period, SUM(requests) AS count
-            FROM request_counts_hourly
+            FROM {view}
             WHERE bucket >= :start
             GROUP BY 1 ORDER BY 1
         """), {"bucket": bucket, "start": start}).all()
     else:
-        rows = db.session.execute(text("""
+        rows = db.session.execute(text(f"""
             SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period, SUM(requests) AS count
-            FROM request_counts_hourly
+            FROM {view}
             GROUP BY 1 ORDER BY 1
         """), {"bucket": bucket}).all()
 
@@ -799,6 +1038,8 @@ def usage_tokens():
     if bucket not in _VALID_BUCKETS:
         abort(HTTPStatus.BAD_REQUEST)
     eid = _usage_entity_id()
+    view = _org_usage_view(period)
+    entity_view = _entity_usage_view(period)
 
     if eid:
         params = {"bucket": bucket, "eid": eid}
@@ -809,24 +1050,24 @@ def usage_tokens():
         agg_sql = f"""
             SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period,
                    SUM(input_tokens + output_tokens) AS tokens
-            FROM request_counts_hourly_by_entity
+            FROM {entity_view}
             {where}
             GROUP BY 1 ORDER BY 1
         """
         rows = db.session.execute(text(agg_sql), params).all()
     elif start is not None:
-        rows = db.session.execute(text("""
+        rows = db.session.execute(text(f"""
             SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period,
                    SUM(input_tokens + output_tokens) AS tokens
-            FROM request_counts_hourly
+            FROM {view}
             WHERE bucket >= :start
             GROUP BY 1 ORDER BY 1
         """), {"bucket": bucket, "start": start}).all()
     else:
-        rows = db.session.execute(text("""
+        rows = db.session.execute(text(f"""
             SELECT time_bucket(CAST(:bucket AS INTERVAL), bucket) AS period,
                    SUM(input_tokens + output_tokens) AS tokens
-            FROM request_counts_hourly
+            FROM {view}
             GROUP BY 1 ORDER BY 1
         """), {"bucket": bucket}).all()
 
@@ -841,6 +1082,8 @@ def usage_models():
     period = request.args.get("period", "week")
     start = _usage_period_start(period)
     eid = _usage_entity_id()
+    view = _org_usage_view(period)
+    entity_view = _entity_usage_view(period)
 
     if eid:
         params = {"eid": eid}
@@ -850,24 +1093,24 @@ def usage_models():
             where += " AND rl.bucket >= :start"
         agg_sql = f"""
             SELECT mc.model_name, SUM(rl.requests) AS requests
-            FROM request_counts_hourly_by_entity rl
+            FROM {entity_view} rl
             JOIN model_configs mc ON rl.model_config_id = mc.id
             {where}
             GROUP BY mc.model_name ORDER BY requests DESC
         """
         rows = db.session.execute(text(agg_sql), params).all()
     elif start is not None:
-        rows = db.session.execute(text("""
+        rows = db.session.execute(text(f"""
             SELECT mc.model_name, SUM(rch.requests) AS requests
-            FROM request_counts_hourly rch
+            FROM {view} rch
             JOIN model_configs mc ON rch.model_config_id = mc.id
             WHERE rch.bucket >= :start
             GROUP BY mc.model_name ORDER BY requests DESC
         """), {"start": start}).all()
     else:
-        rows = db.session.execute(text("""
+        rows = db.session.execute(text(f"""
             SELECT mc.model_name, SUM(rch.requests) AS requests
-            FROM request_counts_hourly rch
+            FROM {view} rch
             JOIN model_configs mc ON rch.model_config_id = mc.id
             GROUP BY mc.model_name ORDER BY requests DESC
         """)).all()
@@ -909,7 +1152,7 @@ def usage_heatmap():
                 EXTRACT(DOW FROM bucket)  AS dow,
                 EXTRACT(HOUR FROM bucket) AS hour,
                 SUM(requests) AS count
-            FROM request_counts_hourly
+            FROM request_counts_hourly_total
             WHERE bucket >= :start
             GROUP BY 1, 2
         """), {"start": start}).all()
@@ -919,7 +1162,7 @@ def usage_heatmap():
                 EXTRACT(DOW FROM bucket)  AS dow,
                 EXTRACT(HOUR FROM bucket) AS hour,
                 SUM(requests) AS count
-            FROM request_counts_hourly
+            FROM request_counts_hourly_total
             GROUP BY 1, 2
         """)).all()
 

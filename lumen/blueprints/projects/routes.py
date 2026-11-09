@@ -6,7 +6,14 @@ from sqlalchemy import case, func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from lumen.blueprints.admin.routes import apply_coin_pool_edit
-from lumen.blueprints.profile.routes import _get_profile_data, _new_key_fields, rotate_key_secret
+from lumen.blueprints.profile.routes import (
+    _created_key_response,
+    _get_profile_data,
+    _new_key_fields,
+    _requested_key_expiry,
+    rotate_key_secret,
+    set_key_ttl,
+)
 from lumen.decorators import admin_required, is_admin, login_required
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
@@ -23,6 +30,7 @@ from lumen.models.entity_manager import (
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.entity_stat import EntityStat
 from lumen.models.model_config import ModelConfig
+from lumen.services.key_expiry import key_ttl_choices
 from lumen.services.llm import entity_has_unlimited_pool, get_model_access_status
 from lumen.timeutils import utcnow
 
@@ -313,7 +321,7 @@ def detail(sid):
         select(EntityLimit).filter_by(entity_id=sid)
     ).scalar_one_or_none()
 
-    # Only a key's creator may rotate it; pass ids, not creator ids, to the page.
+    # Only a key's creator may rotate it or edit its expiry; pass ids, not creator ids, to the page.
     rotatable_key_ids = {k.id for k in data["api_keys"] if k.created_by_entity_id == entity_id}
 
     return render_template(
@@ -330,6 +338,7 @@ def detail(sid):
         gravatar_url=gravatar_url,
         project_limit=project_limit,
         rotatable_key_ids=rotatable_key_ids,
+        key_ttl_choices=key_ttl_choices(),
         **data,
     )
 
@@ -692,6 +701,9 @@ def create_project_key(sid):
     name = (data.get("name") or "").strip()
     key = (data.get("key") or "").strip()
 
+    expires_at, error = _requested_key_expiry(data)
+    if error:
+        return error
     fields, error = _new_key_fields(key)
     if error:
         return error
@@ -700,12 +712,13 @@ def create_project_key(sid):
         entity_id=sid,
         created_by_entity_id=entity_id,
         name=name or "Unnamed Key",
+        expires_at=expires_at,
         **fields,
     )
     db.session.add(api_key)
     db.session.commit()
 
-    return jsonify({"id": api_key.id, "name": api_key.name, "key": key}), HTTPStatus.CREATED
+    return _created_key_response(api_key, key)
 
 
 @projects_bp.route("/projects/<int:sid>/keys/<int:kid>", methods=["DELETE"])
@@ -749,6 +762,22 @@ def rotate_project_key(sid, kid):
         return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
 
     return rotate_key_secret(api_key)
+
+
+@projects_bp.route("/projects/<int:sid>/keys/<int:kid>/ttl", methods=["POST"])
+@login_required
+def edit_project_key_ttl(sid, kid):
+    entity_id = session["entity_id"]
+    _require_project_access(entity_id, sid)
+
+    api_key = db.get_or_404(APIKey, kid)
+    if api_key.entity_id != sid:
+        return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
+    # Same rule as rotation: only the key's creator may change its expiry.
+    if api_key.created_by_entity_id != entity_id:
+        return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
+
+    return set_key_ttl(api_key)
 
 
 @projects_bp.route("/projects/<int:sid>/consent/<path:model_name>", methods=["POST"])

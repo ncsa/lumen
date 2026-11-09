@@ -7,10 +7,10 @@ required. If someone replaces the hypertable with a plain table, at least one
 test here must fail — otherwise this file is decoration.
 """
 
+from datetime import timedelta
+
 import pytest
 from sqlalchemy import text
-
-from .conftest import flask_db
 
 pytestmark = pytest.mark.postgres
 
@@ -18,9 +18,9 @@ pytestmark = pytest.mark.postgres
 def test_timescaledb_extension_is_installed(pg_migrated):
     """The migration runs CREATE EXTENSION unconditionally on PostgreSQL.
 
-    This is not a nice-to-have: ``entrypoint.sh`` runs ``flask db upgrade``
-    before ``exec uvicorn``, so a database without the extension fails the
-    migration and the container never starts.
+    This is not a nice-to-have: the upgrade step runs ``flask db upgrade``
+    before the app may start, so a database without the extension fails the
+    migration and the app never starts.
     """
     with pg_migrated.connect() as conn:
         version = conn.execute(text(
@@ -83,7 +83,7 @@ def test_continuous_aggregate_is_real_time(pg_migrated):
 def test_continuous_aggregate_reflects_inserted_rows(pg_migrated):
     """Insert, refresh, read back — including the bucket that is still open.
 
-    The aggregate's own policy lags real time by at least an hour, so the
+    The aggregate's own policy lags real time by three hours, so the
     refresh has to be explicit — the same reason ``seed_analytics.py`` calls it
     directly. The first two rows are dated well into the past so they fall
     outside the policy's ``end_offset`` window and are eligible for
@@ -108,12 +108,15 @@ def test_continuous_aggregate_reflects_inserted_rows(pg_migrated):
                    (now() - INTERVAL '3 days', 'api', 300, 400, 1.5, 2.5)
         """))
 
-    # refresh_continuous_aggregate cannot run inside a transaction block.
+    # refresh_continuous_aggregate cannot run inside a transaction block. The hourly
+    # view is built on request_counts_hourly_by_entity and reads its materialised
+    # rows, so the child is refreshed first.
     with pg_migrated.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-        conn.execute(text(
-            "CALL refresh_continuous_aggregate('request_counts_hourly', "
-            "now() - INTERVAL '30 days', now() - INTERVAL '1 hour')"
-        ))
+        for view in ("request_counts_hourly_by_entity", "request_counts_hourly"):
+            conn.execute(text(
+                f"CALL refresh_continuous_aggregate('{view}', "
+                "now() - INTERVAL '30 days', now() - INTERVAL '1 hour')"
+            ))
 
     # Returns the row's own timestamp so the bucket can be named exactly rather
     # than by re-reading the clock and racing an hour boundary.
@@ -150,70 +153,31 @@ def test_migration_is_at_a_single_head(pg_migrated):
     assert len(heads) == 1, f"expected one alembic head, got {heads}"
 
 
-def test_model_group_access_dropped_and_downgrade_recreates_it(pg_migrated_isolated):
-    """a9b0c1d2e3f4 drops the table; downgrade recreates it empty with its index.
+def test_migration_cuts_the_stats_fold_over_automatically(pg_migrated):
+    """``f5b6c7d8e9f0`` sets the cutover an hour back, with no operator step.
 
-    Uses a private database so a failed downgrade/upgrade cannot leave the
-    shared session database off head.
+    Old pods bumping mid-rollout are safe: their rows carry no
+    ``stats_deferred`` marker, and the fold adds only marked rows. A cutover
+    already set is kept; ``test_stats_deferred_migration_postgres`` covers that.
     """
-    url, engine = pg_migrated_isolated
-
-    def state():
-        with engine.connect() as conn:
-            return (
-                conn.execute(text("SELECT to_regclass('public.model_group_access')")).scalar(),
-                conn.execute(text("SELECT to_regclass('public.ix_model_group_access_group_id')")).scalar(),
-                conn.execute(text(
-                    "SELECT col_description('model_configs'::regclass, attnum) FROM pg_attribute "
-                    "WHERE attrelid = 'model_configs'::regclass AND attname = 'owner_entity_id'"
-                )).scalar(),
-                conn.execute(text("SELECT obj_description('groups'::regclass, 'pg_class')")).scalar(),
-            )
-
-    table, index, owner_comment, groups_comment = state()
-    assert table is None and index is None, "model_group_access survived the upgrade"
-    assert owner_comment.endswith("only the owner may use the model")
-    assert groups_comment == "Named collections of entities for coin limit policy assignment"
-
-    # An explicit revision: click would parse "-1" as an option.
-    flask_db(url, "downgrade", "f8a9b0c1d2e3")
-    table, index, owner_comment, groups_comment = state()
-    assert table == "model_group_access"
-    assert index == "ix_model_group_access_group_id"
-    assert owner_comment.endswith("only the owner and members of granted groups may use the model")
-    assert groups_comment == "Named collections of entities for bulk model access and coin limit policy assignment"
-
-    flask_db(url, "upgrade")
-    table, index, *_ = state()
-    assert table is None and index is None
+    with pg_migrated.connect() as conn:
+        rows = conn.execute(text("SELECT id, cutover_at, folded_until FROM stats_fold_state")).all()
+        now = conn.execute(text("SELECT now() AT TIME ZONE 'UTC'")).scalar()
+    [(row_id, cutover_at, folded_until)] = rows
+    assert row_id == 1
+    assert cutover_at == folded_until
+    # The session's migration ran at most a few minutes before this test.
+    assert now - timedelta(hours=1, minutes=30) <= cutover_at <= now - timedelta(minutes=59)
 
 
-def test_messages_composite_index_and_downgrade_restores_single_column(pg_migrated_isolated):
-    """c93d4de8245c replaces ix_messages_conversation_id with (conversation_id, created_at).
-
-    Uses a private database so a failed downgrade/upgrade cannot leave the
-    shared session database off head.
-    """
-    url, engine = pg_migrated_isolated
-
-    def indexes():
-        with engine.connect() as conn:
-            rows = conn.execute(text(
-                "SELECT i.relname, array_agg(a.attname ORDER BY k.ord) "
-                "FROM pg_index x "
-                "JOIN pg_class i ON i.oid = x.indexrelid "
-                "JOIN unnest(x.indkey) WITH ORDINALITY AS k(attnum, ord) ON true "
-                "JOIN pg_attribute a ON a.attrelid = x.indrelid AND a.attnum = k.attnum "
-                "WHERE x.indrelid = 'messages'::regclass AND NOT x.indisprimary "
-                "GROUP BY i.relname"
-            )).all()
-        return {name: list(cols) for name, cols in rows}
-
-    assert indexes() == {"ix_messages_conversation_id_created_at": ["conversation_id", "created_at"]}
-
-    # An explicit revision: click would parse "-1" as an option.
-    flask_db(url, "downgrade", "a827b0223638")
-    assert indexes() == {"ix_messages_conversation_id": ["conversation_id"]}
-
-    flask_db(url, "upgrade")
-    assert indexes() == {"ix_messages_conversation_id_created_at": ["conversation_id", "created_at"]}
+def test_request_logs_has_the_stats_deferred_marker(pg_migrated):
+    with pg_migrated.connect() as conn:
+        column = conn.execute(text(
+            "SELECT data_type, is_nullable, column_default, "
+            "col_description('request_logs'::regclass, ordinal_position) "
+            "FROM information_schema.columns "
+            "WHERE table_name = 'request_logs' AND column_name = 'stats_deferred'"
+        )).one()
+    data_type, nullable, default, comment = column
+    assert (data_type, nullable, default) == ("boolean", "YES", None)
+    assert comment.startswith("TRUE when billing left this request out of model_stats/entity_stats")

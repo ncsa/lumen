@@ -108,7 +108,7 @@ const SECTIONS = [
   { id:'app',           label:'App',           desc:'Application settings' },
   { id:'oauth2',        label:'OAuth2',         desc:'Authentication configuration' },
   { id:'admins',        label:'Admins',         desc:'Administrator email addresses' },
-  { id:'api',           label:'API',            desc:'API flags, Prometheus metrics, and monitoring' },
+  { id:'api',           label:'API',            desc:'API keys, Prometheus metrics, and monitoring' },
   { id:'chat',          label:'Chat',           desc:'Chat interface settings' },
   { id:'rate_limiting', label:'Rate Limiting',  desc:'Request rate limits' },
   { id:'defaults',      label:'Defaults',       desc:'Global model & token defaults' },
@@ -206,6 +206,11 @@ function findRemovedPaths(orig, curr) {
 async function saveConfig() {
   if (CONFIG_READONLY) { showToast('Config is read-only and cannot be saved.', 'warning'); return; }
   collectCurrentSection();
+  if (!keyTtlValid(state.data.api?.keys?.ttl)) {
+    showToast('API Keys: the key TTL must be 0 or a duration such as 12h, 30d or 8w.', 'danger');
+    if (state.currentSection === 'api') $('keys-ttl').focus();
+    return;
+  }
   const toSave = JSON.parse(JSON.stringify(state.data));
   const removed = findRemovedPaths(state.original, toSave);
   if (removed.length) {
@@ -464,6 +469,7 @@ function renderApi() {
   const a = state.data.api || {};
   const p = a.prometheus || {};
   const m = a.monitoring || {};
+  const k = a.keys || {};
   $('cfg-body').innerHTML =
     card('Prometheus Metrics', `
       ${cbi('prom-on', !!p.enabled, 'Enable /metrics endpoint')}
@@ -472,14 +478,37 @@ function renderApi() {
     `) +
     card('Monitoring', `
       ${field('mon-tok', 'Bearer Token', ti('mon-tok', m.token), 'for GET /v1/models health checks')}
+    `) +
+    card('API Keys', `
+      ${field('keys-ttl', 'Max / default key TTL',
+        `<input type="text" class="form-control form-control-sm" id="keys-ttl" value="${esc(String(k.ttl ?? ''))}" placeholder="0" aria-describedby="keys-ttl-help keys-ttl-err" oninput="checkKeyTtl()"${CONFIG_READONLY ? ' readonly' : ''}>
+        <div id="keys-ttl-help" class="form-text">0 = never; e.g. 12h, 30d, 8w</div>
+        <div id="keys-ttl-err" class="invalid-feedback" role="alert"></div>`)}
     `);
+  checkKeyTtl();
+}
+// Same format the server accepts (parse_key_ttl); the server stays authoritative.
+const KEY_TTL_RE = /^(0|[0-9]+[hdw])$/;
+function keyTtlValid(v) { return v === undefined || KEY_TTL_RE.test(String(v).trim()); }
+function checkKeyTtl() {
+  const input = $('keys-ttl');
+  if (!input) return;
+  const ok = input.value.trim() === '' || keyTtlValid(input.value);
+  input.classList.toggle('is-invalid', !ok);
+  input.setAttribute('aria-invalid', ok ? 'false' : 'true');
+  $('keys-ttl-err').textContent = ok ? '' : 'Enter 0 or a whole number of hours, days or weeks, such as 12h, 30d or 8w.';
 }
 function collectApi() {
   const prom = { enabled: boolVal('prom-on') || undefined, token: val('prom-tok') || undefined, multiproc_dir: val('prom-dir') || undefined };
   const mon  = val('mon-tok') ? { token: val('mon-tok') } : undefined;
+  const ttl  = val('keys-ttl').trim();
+  // Keep api.* keys this section has no card for.
+  const prev = state.data.api && typeof state.data.api === 'object' ? state.data.api : {};
   state.data.api = {
+    ...prev,
     prometheus: Object.values(prom).some(v => v !== undefined) ? prom : undefined,
     monitoring: mon,
+    keys: ttl ? { ttl } : undefined,
   };
 }
 

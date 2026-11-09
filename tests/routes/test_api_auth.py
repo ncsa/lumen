@@ -1,9 +1,11 @@
 """Tests for the /v1 API key authentication decorator (api_key_required)."""
+from datetime import timedelta
 from http import HTTPStatus
 
 import pytest
 from sqlalchemy import func, select
 
+from lumen.services import model_cache
 from lumen.timeutils import utcnow
 
 
@@ -91,6 +93,35 @@ def test_inactive_api_key_401(client, test_model, inactive_api_key):
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
     assert resp.get_json()["error"]["type"] == "authentication_error"
     assert resp.get_json()["error"]["message"] == "Invalid or revoked API key"
+
+
+def _set_expires_at(app, key_id, expires_at):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        db.session.get(APIKey, key_id).expires_at = expires_at
+        db.session.commit()
+
+
+def test_overdue_api_key_401_and_revoked_before_expirer_runs(app, client, api_key):
+    token, key_id = api_key
+    expires_at = utcnow() - timedelta(seconds=1)
+    _set_expires_at(app, key_id, expires_at)
+
+    resp = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+    assert resp.get_json()["error"]["type"] == "authentication_error"
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        key = db.session.get(APIKey, key_id)
+        assert (key.revoked_at, key.revoked_by_entity_id) == (expires_at, None)
+
+
+def test_api_key_before_expiry_is_accepted(app, client, api_key):
+    token, key_id = api_key
+    _set_expires_at(app, key_id, utcnow() + timedelta(hours=1))
+    assert client.get("/v1/models", headers={"Authorization": f"Bearer {token}"}).status_code == HTTPStatus.OK
 
 
 def test_inactive_entity_403(app, client, test_user, api_key):
@@ -646,6 +677,8 @@ def test_new_requirement_reblocks_api_until_acknowledged(
 
     with app.app_context():
         _set_requirements(test_model["id"], needs_ack=True, early_access=True)
+    # Written behind the app's back: refresh the snapshot as a config sync would.
+    model_cache.refresh(app)
 
     assert _api_allows(auth_client, token, test_model["model_name"], endpoint) is False
     assert auth_client.post(f"/profile/consent/{test_model['model_name']}").status_code == HTTPStatus.OK
@@ -1403,6 +1436,8 @@ def test_chat_completions_unacked_returns_consent_required_code(
     # A genuinely blocked model keeps the generic 403 with no code.
     with app.app_context():
         _make_model_blocked(test_model["id"])
+    # Written behind the app's back: refresh the snapshot as the Access dialog would.
+    model_cache.refresh(app)
     resp = client.post(
         "/v1/chat/completions",
         headers={"Authorization": f"Bearer {token}"},
@@ -1582,6 +1617,27 @@ def test_chat_completions_upstream_5xx_is_generic_500(
     assert "backend exploded" not in err["message"]
 
 
+@pytest.mark.parametrize("status, passes_through", [
+    (HTTPStatus.FOUND, False),
+    (HTTPStatus.BAD_REQUEST, True),
+    (HTTPStatus.NOT_FOUND, True),
+])
+def test_classify_upstream_error_only_4xx_passes_through(status, passes_through):
+    """Only a 4xx is the caller's mistake. An APIStatusError carrying a status
+    below 400 is not, and must become the generic 500 rather than leak through."""
+    import openai
+
+    from lumen.blueprints.api.routes import _classify_upstream_error
+    exc = _make_openai_error(openai.APIStatusError, status,
+                             {"error": {"message": "odd upstream reply", "type": "weird"}})
+    msg, err_type, http_status = _classify_upstream_error(exc, "test")
+    if passes_through:
+        assert (msg, err_type, http_status) == ("odd upstream reply", "weird", status)
+    else:
+        assert (msg, err_type, http_status) == (
+            "Upstream error. Please try again.", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR)
+
+
 def test_chat_completions_streaming_error_emits_done(
     app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
 ):
@@ -1726,6 +1782,7 @@ def test_streaming_error_after_billing_holds_no_connection(
     the life of the process.
     """
     from lumen.blueprints.api import routes
+    from lumen.services import llm as llm_service
     token, _ = api_key
     _allow_model(app, test_user, test_model)
     with app.app_context():
@@ -1736,7 +1793,7 @@ def test_streaming_error_after_billing_holds_no_connection(
         raise RuntimeError("billing blew up")
 
     _fake_openai(monkeypatch, routes, [_UsageChunk()])
-    monkeypatch.setattr(routes, "_record_api_key_usage", boom)
+    monkeypatch.setattr(llm_service, "_record_api_key_usage", boom)
 
     resp = client.post(
         "/v1/chat/completions",
@@ -1775,6 +1832,7 @@ def test_streaming_billing_error_is_not_reported_as_an_upstream_error(
     exist.
     """
     from lumen.blueprints.api import routes
+    from lumen.services import llm as llm_service
     token, _ = api_key
     _allow_model(app, test_user, test_model)
 
@@ -1782,7 +1840,7 @@ def test_streaming_billing_error_is_not_reported_as_an_upstream_error(
         raise RuntimeError("billing blew up")
 
     _fake_openai(monkeypatch, routes, [_UsageChunk()])
-    monkeypatch.setattr(routes, "_record_api_key_usage", boom)
+    monkeypatch.setattr(llm_service, "_record_api_key_usage", boom)
 
     resp = client.post(
         "/v1/chat/completions",

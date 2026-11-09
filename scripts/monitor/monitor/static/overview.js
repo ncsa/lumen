@@ -34,7 +34,7 @@
     return parts;
   }
 
-  function renderRows(models) {
+  function renderRows(models, times) {
     const body = document.getElementById('model-rows');
     body.replaceChildren();
     if (!models.length) {
@@ -43,12 +43,13 @@
     }
     models.forEach(m => {
       // Model ids can contain '/': encode each part and keep the slashes, which the route accepts.
-      const href = urls.model + m.id.split('/').map(encodeURIComponent).join('/');
+      // The model page opens on the range selected here.
+      const href = `${urls.model}${m.id.split('/').map(encodeURIComponent).join('/')}?range=${encodeURIComponent(state.range)}`;
       const name = el('td', {}, [el('a', { href, text: m.id })]);
       if (m.description) name.append(el('div', { class: 'model-desc', text: m.description }));
       const tr = el('tr', {}, [
         name,
-        cell(strip(m.strip)),
+        cell(strip(m.strip, times)),
         cell(fmtPct(m.uptime)),
         cell(`${m.healthy ?? dash}/${m.configured ?? dash}`),
         cell(inOut(fmtFix(m.input_price, 2), fmtFix(m.output_price, 2))),
@@ -135,7 +136,7 @@
       state.dir = ov.direction;
       renderLumen(lumen);
       renderCards(ov.cards);
-      renderRows(ov.models);
+      renderRows(ov.models, ov.strip_times);
       renderSort(ov.sort, ov.direction);
       document.getElementById('updated').textContent = `updated ${fmtTime(ov.generated_at)}`;
       error.classList.add('d-none');

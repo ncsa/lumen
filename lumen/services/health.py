@@ -13,6 +13,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from lumen.extensions import db
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
+from lumen.services import model_cache
 from lumen.timeutils import utcnow
 
 try:
@@ -228,6 +229,7 @@ def check_all_endpoints(heartbeat=_no_heartbeat) -> int:
         # An endpoint was deleted between the SELECT and the commit; discard stale updates.
         db.session.rollback()
         logger.warning("health check: endpoint deleted mid-pass, changes discarded")
+    model_cache.refresh(current_app._get_current_object())
     return len(probes)
 
 
@@ -243,16 +245,29 @@ def run_health_pass() -> int:
         return check_all_endpoints(heartbeat)
 
 
+def _health_tick(app) -> None:
+    """One iteration of the health loop: the pass if elected, then a refresh.
+
+    The refresh runs in every process, elected or not, and even when the pass
+    failed: that is how health written by another process reaches this
+    process's model snapshot. The request and token counts refresh after it,
+    separately, so a failed count query never holds up the snapshot.
+    """
+    try:
+        with app.app_context():
+            run_health_pass()
+    except Exception:
+        logger.exception("health checker error")
+    model_cache.refresh(app)
+    model_cache.refresh_counts(app)
+
+
 def start_health_checker(app):
     """Start a background daemon thread that checks all endpoints every 60s."""
 
     def run():
         while True:
-            try:
-                with app.app_context():
-                    run_health_pass()
-            except Exception:
-                logger.exception("health checker error")
+            _health_tick(app)
             time.sleep(_CHECK_INTERVAL)
 
     t = threading.Thread(target=run, daemon=True)

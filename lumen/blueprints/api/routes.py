@@ -1,9 +1,7 @@
 import hmac
 import json
 import logging
-import threading
 import time as _time
-from decimal import Decimal
 from functools import wraps
 from http import HTTPStatus
 from urllib.parse import quote
@@ -11,9 +9,7 @@ from urllib.parse import quote
 import openai
 from flask import Blueprint, Response, current_app, g, jsonify, request
 from sqlalchemy import select
-from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import selectinload
 
 from lumen.blueprints.metrics.middleware import observe_stream_abort
 from lumen.commands import RESERVED_MODEL_ID_SUFFIX
@@ -22,28 +18,24 @@ from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_model_consent import EntityModelConsent
-from lumen.models.model_config import ModelConfig
-from lumen.models.model_endpoint import ModelEndpoint
-from lumen.services import request_rates
+from lumen.services import model_cache, request_rates
 from lumen.services.cost import calculate_audio_cost, calculate_cost
 from lumen.services.crypto import cache_salt_for_entity, hash_api_key
+from lumen.services.key_expiry import revoke_if_expired
 from lumen.services.live_state import get_live_state
 from lumen.services.llm import (
+    _access_statuses,
     ack_notice_text,
-    bulk_model_access_statuses,
+    bill_request,
     capture_request_timing,
     check_coin_budget,
-    coin_retry_after,
     consent_rows,
     consent_state,
     estimate_abort_usage,
     get_model_access_status,
-    get_next_endpoint,
     get_pool_limit,
     observe_rejection_quietly,
     record_stream_abort,
-    subtract_coins,
-    update_stats,
     upstream_call_bounds,
 )
 from lumen.services.model_resolver import resolve_model_config
@@ -92,11 +84,6 @@ def _cors(resp):
     if request.path.startswith("/v1/"):
         resp.headers.update(_CORS_HEADERS)
     return resp
-
-# Per-worker in-memory cache. Under multi-worker deployments each worker holds its own
-# copy; effective cache lifetime is correct per-worker but not shared across workers.
-_rates_cache: dict = {"data": {}, "expires_at": 0.0}
-_rates_lock = threading.Lock()
 
 # Client request params forwarded to the upstream chat completion, by transport.
 # This is an allowlist: anything a client sends that is not named here is dropped
@@ -156,35 +143,15 @@ def _api_limit():
     return cfg.get("rate_limiting", {}).get("limit", "30 per minute")
 
 
-def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int, cost: float, audio_seconds: int = 0):
-    db.session.execute(
-        sa_update(APIKey)
-        .where(APIKey.id == api_key_id)
-        .values(
-            requests=APIKey.requests + 1,
-            input_tokens=APIKey.input_tokens + input_tokens,
-            output_tokens=APIKey.output_tokens + output_tokens,
-            audio_seconds=APIKey.audio_seconds + audio_seconds,
-            cost=APIKey.cost + Decimal(str(cost)),
-            last_used_at=utcnow(),
-        )
-    )
+def _monitor_tokens() -> dict | None:
+    """Token windows for a monitor-token ``?tokens=true`` request, else None.
 
-
-def _get_request_rates() -> dict:
-    """Return {model_config_id: {last_minute, last_hour, last_day}}, cached 30s per worker."""
-    now = _time.monotonic()
-    if now < _rates_cache["expires_at"]:
-        return _rates_cache["data"]
-
-    with _rates_lock:
-        if now < _rates_cache["expires_at"]:
-            return _rates_cache["data"]
-
-        result = request_rates.rates()
-        _rates_cache["data"] = result
-        _rates_cache["expires_at"] = now + 30.0
-    return result
+    Any other caller, or the monitor token without the parameter, gets None and
+    so the normal response.
+    """
+    if not g.monitor or request.args.get("tokens", "").lower() not in ("1", "true", "yes"):
+        return None
+    return model_cache.token_counts()
 
 
 def _ack_fields(config, row):
@@ -202,11 +169,17 @@ def _ack_fields(config, row):
     return tags, acknowledged_at, ack_notice_text(config)
 
 
-def _model_dict(c, rates: dict, eps: list, ack_fields=None) -> dict:
-    """Serialize a ModelConfig to an OpenAI/vLLM-compatible response dict.
+def _model_dict(c, rates: dict, eps, ack_fields=None, tokens=None) -> dict:
+    """Serialize a ModelSnapshot and its active EndpointSnapshots to an
+    OpenAI/vLLM-compatible response dict.
 
     ``ack_fields`` ((tags, acknowledged_at, notice)) is None for the monitor
     token, which has no entity and sees no consent state.
+
+    ``tokens`` ({model_config_id: {input_tokens, output_tokens}} windows, from
+    ``request_rates.token_windows``) adds ``input_tokens`` and
+    ``output_tokens``; it is None except for the monitor token asking for
+    ``?tokens=true``.
     """
     zero = {"last_minute": 0, "last_hour": 0, "last_day": 0}
     healthy_count = sum(1 for e in eps if e.healthy)
@@ -263,6 +236,12 @@ def _model_dict(c, rates: dict, eps: list, ack_fields=None) -> dict:
         # the caller has not yet acknowledged); once acked it need not be echoed.
         if tags and notice:
             d["notice"] = notice
+
+    if tokens is not None:
+        no_tokens = dict.fromkeys(request_rates.TOKEN_WINDOWS, 0)
+        counts = tokens.get(c.id, {})
+        d["input_tokens"] = counts.get("input_tokens", no_tokens)
+        d["output_tokens"] = counts.get("output_tokens", no_tokens)
 
     return d
 
@@ -332,12 +311,15 @@ def api_key_required(f):
             return f(*args, **kwargs)
 
         g.monitor = False
-        api_key = db.session.execute(select(APIKey).filter_by(key_hash=hash_api_key(token))).scalar_one_or_none()
-        if not api_key or api_key.revoked_at is not None:
+        row = db.session.execute(
+            select(APIKey, Entity).join(Entity, Entity.id == APIKey.entity_id)
+            .where(APIKey.key_hash == hash_api_key(token))
+        ).one_or_none()
+        if not row or row.APIKey.revoked_at is not None or revoke_if_expired(row.APIKey):
             return _err("Invalid or revoked API key", "authentication_error", HTTPStatus.UNAUTHORIZED)
 
-        entity = db.session.get(Entity, api_key.entity_id)
-        if not entity or not entity.active:
+        api_key, entity = row
+        if not entity.active:
             return _err("Account disabled", "authentication_error", HTTPStatus.FORBIDDEN)
 
         g.api_key = api_key
@@ -376,15 +358,14 @@ def get_usage():
 @api_bp.route("/models", methods=["GET"])
 @api_key_required
 def list_models():
-    configs = db.session.execute(
-        select(ModelConfig).where(ModelConfig.active).options(selectinload(ModelConfig.aliases))
-    ).scalars().all()
-    eps_by_model: dict = {}
-    for ep in db.session.execute(
-        select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_([c.id for c in configs]), ModelEndpoint.active.is_(True))
-    ).scalars().all():
-        eps_by_model.setdefault(ep.model_config_id, []).append(ep)
-    rates = _get_request_rates()
+    # Configs, aliases, endpoints and counts come from the per-process snapshot
+    # (model_cache); only the caller's pool and consent rows are read here.
+    try:
+        configs = model_cache.models()
+        rates = model_cache.request_counts()
+        tokens = _monitor_tokens()
+    except model_cache.SnapshotUnavailable:
+        return _snapshot_unavailable()
     if g.monitor:
         # The monitor token has no entity: it sees every active model, with no
         # consent state attached.
@@ -392,7 +373,7 @@ def list_models():
         entity_id = None
     else:
         entity_id = g.entity.id
-        access_statuses = bulk_model_access_statuses(entity_id, [c.id for c in configs])
+        access_statuses = _access_statuses(entity_id, {c.id: c for c in configs})
         pool = get_pool_limit(entity_id)
         permitted = [
             c for c in configs
@@ -409,12 +390,12 @@ def list_models():
         open_tags = ack[0] if ack is not None else []
         if open_tags and not include_unacked:
             continue
-        entry = _model_dict(c, rates, eps_by_model.get(c.id, []), ack)
+        entry = _model_dict(c, rates, model_cache.listed_endpoints(c.id), ack, tokens)
         data.append(entry)
         # Expose each alias as a discoverable ID so clients that validate their
         # configured model against discovery keep working. Aliases inherit the
         # canonical model's visibility and consent, never adding their own grants.
-        for alias in sorted(a.alias for a in c.aliases):
+        for alias in c.aliases:
             alias_entry = dict(entry)
             alias_entry["id"] = alias
             # Advertise the canonical model so clients can tell an alias apart
@@ -431,7 +412,10 @@ def get_model(model_id):
     # reserves that suffix, so it is always the POST-only acknowledge endpoint.
     if model_id.endswith(RESERVED_MODEL_ID_SUFFIX):
         return _err("Method not allowed. Use POST to acknowledge a model.", status=HTTPStatus.METHOD_NOT_ALLOWED, headers={"Allow": "POST"})
-    config = resolve_model_config(model_id)
+    try:
+        config = model_cache.resolve(model_id)
+    except model_cache.SnapshotUnavailable:
+        return _snapshot_unavailable()
     if not config:
         return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
     if not g.monitor:
@@ -439,17 +423,19 @@ def get_model(model_id):
         # Blocked, disabled, expired, deleted, and unknown models stay hidden.
         # A model that merely awaits acknowledgement is visible so the caller can
         # read its notice.
-        if get_model_access_status(entity_id, config.id) == "blocked" or get_pool_limit(entity_id) is None:
+        if _access_statuses(entity_id, {config.id: config})[config.id] == "blocked" or get_pool_limit(entity_id) is None:
             return _err(f"Model '{model_id}' not found", status=HTTPStatus.NOT_FOUND)
-    eps = db.session.execute(
-        select(ModelEndpoint).where(ModelEndpoint.model_config_id == config.id, ModelEndpoint.active.is_(True))
-    ).scalars().all()
-    rates = _get_request_rates()
+    try:
+        eps = model_cache.listed_endpoints(config.id)
+        rates = model_cache.request_counts()
+        tokens = _monitor_tokens()
+    except model_cache.SnapshotUnavailable:
+        return _snapshot_unavailable()
     ack = None
     if not g.monitor:
         row = db.session.execute(select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=config.id)).scalar_one_or_none()
         ack = _ack_fields(config, row)
-    d = _model_dict(config, rates, list(eps), ack)
+    d = _model_dict(config, rates, eps, ack, tokens)
     # Requested via an alias? Return metadata under the requested ID so clients
     # that validate their configured model against discovery keep working.
     if model_id != config.model_name:
@@ -494,7 +480,7 @@ def acknowledge_model(model_id):
         if row is None:
             row = EntityModelConsent(entity_id=entity_id, model_config_id=config.id)
             fill_missing(row)
-            # Race-safe first insert (same pattern as subtract_coins): two
+            # Race-safe first insert (savepoint + IntegrityError): two
             # concurrent first acks — overlapping retries, or two keys of one
             # entity — would otherwise make the loser's commit raise
             # IntegrityError and 500 instead of the promised idempotent 200.
@@ -528,18 +514,36 @@ def acknowledge_model(model_id):
     return jsonify(resp)
 
 
+def _snapshot_unavailable():
+    """503 for a request that arrived while the model snapshot cannot be loaded.
+
+    Never served from an over-age snapshot: that would let a disabled model or
+    a revoked owner change keep authorizing requests for as long as the
+    database stays unreachable.
+    """
+    logger.exception("model snapshot unavailable")
+    return _err("Models are temporarily unavailable, try again shortly", "server_error",
+                HTTPStatus.SERVICE_UNAVAILABLE)
+
+
 def _preflight(model_name: str):
     """Look up model, check coin budget, select endpoint.
+
+    The model and endpoint come from the per-process snapshot (model_cache),
+    so neither is read from the database here.
 
     Returns (model_config, endpoint, effective, None) or (None, None, None, error_response).
     ``effective`` is the resolved coin pool limit, threaded to subtract_coins so the
     billing path does not re-resolve model access and the pool limit.
     """
-    model_config = resolve_model_config(model_name)
+    try:
+        model_config = model_cache.resolve(model_name)
+    except model_cache.SnapshotUnavailable:
+        return None, None, None, _snapshot_unavailable()
     if not model_config:
         return None, None, None, _err(f"Model '{model_name}' not found", status=HTTPStatus.NOT_FOUND)
-    ok, code, msg, effective, reason = check_coin_budget(
-        g.entity.id, model_config.id, source="api", model_name=model_name,
+    ok, code, msg, effective, reason, retry_after = check_coin_budget(
+        g.entity.id, model_config.id, source="api", model_name=model_name, model_config=model_config,
     )
     if not ok:
         if code == HTTPStatus.TOO_MANY_REQUESTS:
@@ -548,7 +552,6 @@ def _preflight(model_name: str):
             # shortly", an exhausted coin budget means "stop until it refills".
             # A bare 429 cannot say which, so use the taxonomy the rest of /v1
             # already follows — the OpenAI SDK branches on `code`.
-            retry_after = coin_retry_after(g.entity.id)
             headers = {"Retry-After": str(retry_after)} if retry_after is not None else None
             return None, None, None, _err(
                 msg, "insufficient_quota", code,
@@ -567,7 +570,10 @@ def _preflight(model_name: str):
                 err_code="consent_required",
             )
         return None, None, None, _err(msg, status=code)
-    endpoint = get_next_endpoint(model_config.id)
+    try:
+        endpoint = model_cache.next_endpoint(model_config.id)
+    except model_cache.SnapshotUnavailable:
+        return None, None, None, _snapshot_unavailable()
     if endpoint is None:
         observe_rejection_quietly("no_healthy_endpoint", "api", model_name)
         return None, None, None, _err(f"No healthy endpoints for model '{model_name}'", "server_error", HTTPStatus.SERVICE_UNAVAILABLE)
@@ -633,15 +639,13 @@ def _complete_and_bill(model_name: str, messages: list, **kwargs):
             usage_prompt, usage_completion = usage.prompt_tokens, usage.completion_tokens
 
         cost = calculate_cost(usage_prompt, usage_completion, mc_in_cost, mc_out_cost)
-        subtract_coins(entity_id, mc_id, cost, effective=effective)
-        update_stats(entity_id, mc_id, "api", usage_prompt, usage_completion, cost,
+        bill_request(entity_id, mc_id, "api", usage_prompt, usage_completion, cost,
+                     effective=effective, api_key_id=ak_id,
                      endpoint_id=ep_id, duration=duration,
                      timing=timing, upstream_t0=t0,
                      # Non-streaming: the whole body arrives in one piece, so the
                      # first chunk is the response and both marks are the duration.
                      ttft=duration, ttft_visible=duration, outcome="ok")
-        _record_api_key_usage(ak_id, usage_prompt, usage_completion, cost)
-        db.session.commit()
         # Report the requested name (which may be an alias), not the backend's.
         response.model = model_name
         return response, None
@@ -744,9 +748,8 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                 app, billed=billed, entity_id=entity_id, model_config_id=mc_id,
                 source="api", endpoint_id=ep_id, stream_t0=t0,
                 input_tokens=input_tokens, output_tokens=output_tokens, cost=cost,
-                effective=effective,
+                effective=effective, api_key_id=ak_id,
                 timing=timing, ttft=t_first_any, ttft_visible=t_first_visible,
-                record_extra=lambda: _record_api_key_usage(ak_id, input_tokens, output_tokens, cost),
             )
 
         # The ``with`` is nested inside the ``try`` (matching llm.py) so that an
@@ -805,14 +808,12 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                         )
                         phase = "billing"
                         with app.app_context():
-                            subtract_coins(entity_id, mc_id, cost, effective=effective)
-                            update_stats(entity_id, mc_id, "api", usage.prompt_tokens, usage.completion_tokens, cost,
+                            bill_request(entity_id, mc_id, "api", usage.prompt_tokens, usage.completion_tokens,
+                                         cost, effective=effective, api_key_id=ak_id,
                                          endpoint_id=ep_id, duration=duration,
                                          timing=timing, upstream_t0=t0,
                                          ttft=t_first_any, ttft_visible=t_first_visible,
                                          outcome="ok")
-                            _record_api_key_usage(ak_id, usage.prompt_tokens, usage.completion_tokens, cost)
-                            db.session.commit()
                         billed = True
                     else:
                         logger.warning(
@@ -979,15 +980,13 @@ def _do_audio(kind: str):
         else:
             logger.warning("Upstream did not return usage data (model=%s, entity_id=%s)", model_name, entity_id)
 
-        subtract_coins(entity_id, mc_id, cost, effective=effective)
-        update_stats(entity_id, mc_id, "api", in_tok, out_tok, cost,
-                     endpoint_id=ep_id, duration=duration, audio_seconds=seconds,
+        bill_request(entity_id, mc_id, "api", in_tok, out_tok, cost,
+                     effective=effective, api_key_id=ak_id, audio_seconds=seconds,
+                     endpoint_id=ep_id, duration=duration,
                      timing=timing, upstream_t0=t0,
                      # Non-streaming: the transcription arrives in one piece, so the
                      # first chunk is the response and both marks are the duration.
                      ttft=duration, ttft_visible=duration, outcome="ok")
-        _record_api_key_usage(ak_id, in_tok, out_tok, cost, audio_seconds=seconds)
-        db.session.commit()
 
         return jsonify(payload)
     finally:

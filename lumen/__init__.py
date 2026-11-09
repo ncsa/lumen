@@ -157,7 +157,7 @@ def _warn_if_request_logs_has_retention(app):
     policy; any other failure is logged at WARNING, because startup must not
     depend on it.
     """
-    from lumen.commands import _retention_job
+    from lumen.commands import REQUEST_LOGS_RETENTION_ERROR, _retention_job
     from lumen.extensions import db
 
     if db.engine.dialect.name != "postgresql":
@@ -168,16 +168,50 @@ def _warn_if_request_logs_has_retention(app):
         db.session.rollback()
         orig = getattr(e, "orig", None)
         # 42P01 undefined_table: no TimescaleDB, so no timescaledb_information.jobs.
-        if (getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)) == "42P01":
+        if getattr(orig, "sqlstate", None) == "42P01":
             return
         app.logger.warning("Could not check request_logs for a retention policy: %s", e)
         return
     if job is not None:
-        app.logger.error(
-            "request_logs has a retention policy (job %s, config %s), but request_logs "
-            "must never be pruned. Remove it with "
-            "SELECT remove_retention_policy('request_logs'); then run 'flask check-aggregate'.",
-            job[0], job[1],
+        app.logger.error(REQUEST_LOGS_RETENTION_ERROR, job[0], job[1])
+
+
+def _log_timescale_health(app):
+    """Log the TimescaleDB health summary once per serving process. Never raises.
+
+    WARNING per problem; ERROR when the extension is missing or ``request_logs``
+    is not a hypertable. Startup carries on either way: this only makes a broken
+    or drifted TimescaleDB setup visible. A retention policy on ``request_logs``
+    is left out, because ``_warn_if_request_logs_has_retention`` has just logged
+    it as an ERROR; it still suppresses the INFO "healthy" summary. Same failure
+    handling as that tripwire.
+    """
+    from lumen.extensions import db
+    from lumen.services import metrics_snapshot, timescale_health
+
+    if db.engine.dialect.name != "postgresql":
+        return
+    try:
+        health = timescale_health.check(db.session)
+    except Exception as e:  # noqa: BLE001 - a health check must never block startup
+        db.session.rollback()
+        orig = getattr(e, "orig", None)
+        # 42P01 undefined_table: a catalog view this check reads does not exist.
+        if getattr(orig, "sqlstate", None) == "42P01":
+            return
+        app.logger.warning("Could not check TimescaleDB health: %s", e)
+        return
+    # The baseline the metrics refresher compares its checks against.
+    metrics_snapshot.publish_timescale_health(health)
+    found = timescale_health.keyed_problems(health)
+    found.pop("retention:request_logs", None)
+    for key, problem in found.items():
+        fatal = key in timescale_health.FATAL_PROBLEMS
+        app.logger.log(logging.ERROR if fatal else logging.WARNING, "TimescaleDB: %s", problem)
+    if not found and not health.request_logs_retention:
+        app.logger.info(
+            "TimescaleDB %s: request_logs hypertable, %d aggregates and %d expected jobs present.",
+            health.installed_version, len(health.aggregates), len(health.jobs),
         )
 
 
@@ -633,11 +667,24 @@ def create_app():
         return render_template("errors/500.html"), HTTPStatus.INTERNAL_SERVER_ERROR
 
     # Register CLI commands
-    from lumen.commands import backfill_aggregate_cmd, check_aggregate_cmd, init_db_cmd, reassign_model_cmd
+    from lumen.commands import (
+        backfill_aggregate_cmd,
+        check_aggregate_cmd,
+        check_stats_cmd,
+        erase_entity_cmd,
+        init_db_cmd,
+        reassign_model_cmd,
+        upgrade_cmd,
+        wait_for_migrations_cmd,
+    )
     app.cli.add_command(init_db_cmd)
     app.cli.add_command(reassign_model_cmd)
+    app.cli.add_command(erase_entity_cmd)
     app.cli.add_command(backfill_aggregate_cmd)
     app.cli.add_command(check_aggregate_cmd)
+    app.cli.add_command(wait_for_migrations_cmd)
+    app.cli.add_command(upgrade_cmd)
+    app.cli.add_command(check_stats_cmd)
 
     # Context processor: inject app_name and nav_projects into all templates
     @app.context_processor
@@ -726,6 +773,7 @@ def create_app():
     from lumen.extensions import db
 
     non_serving_cli = _loaded_by_non_serving_cli()
+    primed = False
     with app.app_context():
         try:
             sync_models_from_yaml(yaml_data)
@@ -738,12 +786,16 @@ def create_app():
                   file=sys.stderr)
         if not non_serving_cli:
             _warn_if_request_logs_has_retention(app)
+            _log_timescale_health(app)
             try:
                 # Prime the metrics snapshot synchronously: without it every rolling
                 # restart serves an empty snapshot for a whole refresh interval, and
-                # a fleet mid-restart mixes primed and unprimed workers.
+                # a fleet mid-restart mixes primed and unprimed workers. Once primed,
+                # the refresher waits one interval before its first pass instead of
+                # repeating this and the TimescaleDB check above straight away.
                 from lumen.services.metrics_snapshot import refresh_snapshot
                 refresh_snapshot()
+                primed = True
             except Exception as e:
                 print(f"WARNING: Could not prime the metrics snapshot: {_startup_db_hint(e)}",
                       file=sys.stderr)
@@ -757,9 +809,10 @@ def create_app():
     #   for one-off `python -c` scripts, which have no click context for
     #   _loaded_by_non_serving_cli to detect. Do not set it on a serving replica:
     #   the config watcher keeps this process's app.config in sync with config.yaml,
-    #   so that pod would stop picking up config changes. Running every replica's
-    #   workers is safe — the coin refill is an atomic guarded UPDATE that a second
-    #   replica no-ops, and health probes converge on the same result.
+    #   so that pod would stop picking up config changes. Every replica runs these
+    #   workers: on PostgreSQL the coin refill takes an advisory lock, so only one
+    #   replica refills at a time and the others skip that pass; health probes
+    #   converge on the same result.
     if os.environ.get("WERKZEUG_RUN_MAIN") is not None:
         _run_background = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
     else:
@@ -783,6 +836,14 @@ def create_app():
         from lumen.blueprints.oauth.routes import start_auth_request_janitor
         start_auth_request_janitor(app)
 
+        from lumen.services.key_expiry import start_key_expirer
+        start_key_expirer(app)
+
+        # Shared work whose result lands in the database, so it belongs behind
+        # this guard; a no-op until the stats cutover.
+        from lumen.services.stats_fold import start_fold_thread
+        start_fold_thread(app)
+
     # Deliberately outside the guard above: BACKGROUND_WORKER=false keeps extra
     # workers from duplicating *shared* work, but the snapshot is per-process
     # in-memory state, so skipping it would leave that worker serving an empty
@@ -790,6 +851,6 @@ def create_app():
     # the application's own cache of its own state, not a Prometheus feature.
     if not non_serving_cli:
         from lumen.services.metrics_snapshot import start_snapshot_refresher
-        start_snapshot_refresher(app)
+        start_snapshot_refresher(app, primed=primed)
 
     return app

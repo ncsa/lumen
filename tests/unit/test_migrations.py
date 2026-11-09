@@ -296,3 +296,234 @@ def test_message_index_names_match_migration(tmp_path):
     migrated = {i["name"]: i["column_names"] for i in sa.inspect(engine).get_indexes("messages")}
     model = {i.name: [c.name for c in i.columns] for i in Message.__table__.indexes}
     assert migrated == model == {"ix_messages_conversation_id_created_at": ["conversation_id", "created_at"]}
+
+
+# ---------------------------------------------------------------------------
+# b7c9d1e3f5a8: drop redundant request_logs/model_stats indexes
+# ---------------------------------------------------------------------------
+
+_REDUNDANT_INDEXES_REVISION_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "migrations" / "versions" / "b7c9d1e3f5a8_drop_redundant_indexes.py"
+)
+
+
+def _redundant_indexes_revision():
+    spec = importlib.util.spec_from_file_location("redundant_indexes_revision", _REDUNDANT_INDEXES_REVISION_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _make_pre_redundant_indexes_db(path):
+    """model_stats/request_logs with the indexes the previous head left on SQLite."""
+    engine = sa.create_engine(f"sqlite:///{path}")
+    with engine.begin() as conn:
+        conn.exec_driver_sql(
+            "CREATE TABLE model_stats (id INTEGER PRIMARY KEY, entity_id INTEGER, model_config_id INTEGER,"
+            " source VARCHAR(8), UNIQUE (entity_id, model_config_id, source))"
+        )
+        conn.exec_driver_sql("CREATE INDEX ix_model_stats_entity_id ON model_stats (entity_id)")
+        conn.exec_driver_sql("CREATE INDEX ix_model_stats_model_config_id ON model_stats (model_config_id)")
+        conn.exec_driver_sql(
+            "CREATE TABLE request_logs (id INTEGER PRIMARY KEY, time DATETIME, entity_id INTEGER, model_config_id INTEGER)"
+        )
+        conn.exec_driver_sql("CREATE INDEX ix_request_logs_time ON request_logs (time)")
+        conn.exec_driver_sql("CREATE INDEX ix_request_logs_entity_id ON request_logs (entity_id)")
+        conn.exec_driver_sql("CREATE INDEX ix_request_logs_model_config_id ON request_logs (model_config_id)")
+    return engine
+
+
+def _index_names(engine, table):
+    return {i["name"] for i in sa.inspect(engine).get_indexes(table)}
+
+
+def test_model_stats_index_names_match_migration(tmp_path):
+    """The upgrade must leave model_stats with the same indexes as the model."""
+    from lumen.models.model_stat import ModelStat
+
+    engine = _make_pre_redundant_indexes_db(tmp_path / "stats.db")
+    _run_revision(engine, _redundant_indexes_revision().upgrade)
+
+    model = {i.name for i in ModelStat.__table__.indexes}
+    assert _index_names(engine, "model_stats") == model == {"ix_model_stats_model_config_id"}
+    engine.dispose()
+
+
+def test_request_log_model_indexes():
+    """request_logs_time_idx replaces ix_request_logs_time; the composite covers model_config_id."""
+    from lumen.models.request_log import RequestLog
+
+    def expr(e):
+        return e.name if isinstance(e, sa.Column) else str(e)
+
+    model = {i.name: [expr(e) for e in i.expressions] for i in RequestLog.__table__.indexes}
+    assert model == {
+        "request_logs_time_idx": ["time DESC"],
+        "ix_request_logs_entity_id": ["entity_id"],
+        "ix_request_logs_model_config_id_time": ["model_config_id", "time DESC"],
+    }
+
+
+def test_redundant_indexes_sqlite_round_trip(tmp_path):
+    """On SQLite the upgrade swaps in request_logs_time_idx, and the downgrade restores the old indexes."""
+    revision = _redundant_indexes_revision()
+    engine = _make_pre_redundant_indexes_db(tmp_path / "round_trip.db")
+    before = {t: _index_names(engine, t) for t in ("model_stats", "request_logs")}
+
+    _run_revision(engine, revision.upgrade)
+    assert _index_names(engine, "request_logs") == {"request_logs_time_idx", "ix_request_logs_entity_id"}
+
+    _run_revision(engine, revision.downgrade)
+    assert {t: _index_names(engine, t) for t in ("model_stats", "request_logs")} == before
+    engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# b4c6d8e0f2a4: 'ghost' entity type and uq_entities_single_ghost
+#
+# The CHECK and the comments are PostgreSQL-only and covered in
+# tests/integration/test_ghost_entity_postgres.py; on SQLite the revision only
+# creates and drops the index.
+# ---------------------------------------------------------------------------
+
+_GHOST_REVISION_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "migrations" / "versions" / "b4c6d8e0f2a4_ghost_entity_type.py"
+)
+
+
+def _ghost_revision():
+    spec = importlib.util.spec_from_file_location("ghost_entity_revision", _GHOST_REVISION_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _insert_ghost(engine):
+    with engine.begin() as conn:
+        conn.exec_driver_sql("INSERT INTO entities (entity_type) VALUES ('ghost')")
+
+
+def test_ghost_upgrade_allows_one_ghost_and_downgrade_drops_index(tmp_path):
+    from lumen.models.entity import Entity
+
+    revision = _ghost_revision()
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'ghost.db'}")
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE entities (id INTEGER PRIMARY KEY, entity_type VARCHAR(8) NOT NULL)")
+        conn.exec_driver_sql("INSERT INTO entities (entity_type) VALUES ('user'), ('user'), ('project')")
+
+    _run_revision(engine, revision.upgrade)
+    migrated = {i["name"]: i for i in sa.inspect(engine).get_indexes("entities")}
+    assert migrated["uq_entities_single_ghost"]["column_names"] == ["entity_type"]
+    assert migrated["uq_entities_single_ghost"]["unique"]
+    # create_all must build the same index from the model.
+    model = {i.name: [c.name for c in i.columns] for i in Entity.__table__.indexes if i.unique}
+    assert model["uq_entities_single_ghost"] == ["entity_type"]
+
+    _insert_ghost(engine)
+    with pytest.raises(sa.exc.IntegrityError):
+        _insert_ghost(engine)
+
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DELETE FROM entities WHERE entity_type = 'ghost'")
+    _run_revision(engine, revision.downgrade)
+    assert "uq_entities_single_ghost" not in {i["name"] for i in sa.inspect(engine).get_indexes("entities")}
+    with engine.begin() as conn:
+        assert conn.exec_driver_sql("SELECT COUNT(*) FROM entities").scalar() == 3
+
+
+# ---------------------------------------------------------------------------
+# c8d0e2f4a6b8: request_logs foreign keys ON DELETE RESTRICT
+#
+# PostgreSQL-only; the RESTRICT behaviour against compressed chunks is covered
+# in tests/integration/test_endpoint_retirement_postgres.py and
+# tests/integration/test_usage_entity_aggregate_postgres.py.
+# ---------------------------------------------------------------------------
+
+_FK_RESTRICT_REVISION_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "migrations" / "versions" / "c8d0e2f4a6b8_request_logs_fk_restrict.py"
+)
+
+
+def _fk_restrict_revision():
+    spec = importlib.util.spec_from_file_location("fk_restrict_revision", _FK_RESTRICT_REVISION_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_request_log_foreign_keys_restrict():
+    from lumen.models.request_log import RequestLog
+
+    fks = {fk.parent.name: (fk.target_fullname, fk.ondelete) for fk in RequestLog.__table__.foreign_keys}
+    assert fks == {
+        "entity_id": ("entities.id", "RESTRICT"),
+        "model_config_id": ("model_configs.id", "RESTRICT"),
+        "model_endpoint_id": ("model_endpoints.id", "RESTRICT"),
+        "api_key_id": ("api_keys.id", "RESTRICT"),
+    }
+
+
+def test_request_log_fk_comments_match_migration():
+    from lumen.models.request_log import RequestLog
+
+    migration = {column: comment for _, column, _, comment, _ in _fk_restrict_revision()._FKS}
+    assert migration == {c: RequestLog.__table__.c[c].comment for c in migration}
+
+
+def test_fk_restrict_is_a_no_op_on_sqlite(tmp_path):
+    revision = _fk_restrict_revision()
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'fk.db'}")
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE entities (id INTEGER PRIMARY KEY)")
+        conn.exec_driver_sql(
+            "CREATE TABLE request_logs (id INTEGER PRIMARY KEY,"
+            " entity_id INTEGER REFERENCES entities(id) ON DELETE SET NULL)"
+        )
+    before = sa.inspect(engine).get_foreign_keys("request_logs")
+
+    _run_revision(engine, revision.upgrade)
+    assert sa.inspect(engine).get_foreign_keys("request_logs") == before
+    _run_revision(engine, revision.downgrade)
+    assert sa.inspect(engine).get_foreign_keys("request_logs") == before
+    engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# f9b1d3e5a7c9: the api_keys table comment says HMAC-SHA256. PostgreSQL-only;
+# the comment as migrated is checked in
+# tests/integration/test_api_keys_table_comment_postgres.py.
+# ---------------------------------------------------------------------------
+
+_API_KEYS_COMMENT_REVISION_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "migrations" / "versions" / "f9b1d3e5a7c9_api_keys_table_comment.py"
+)
+
+
+def _api_keys_comment_revision():
+    spec = importlib.util.spec_from_file_location("api_keys_comment_revision", _API_KEYS_COMMENT_REVISION_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_api_keys_table_comment_matches_migration():
+    from lumen.models.api_key import APIKey
+
+    assert _api_keys_comment_revision()._NEW == APIKey.__table__.comment
+
+
+def test_api_keys_table_comment_is_a_no_op_on_sqlite(tmp_path):
+    revision = _api_keys_comment_revision()
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'comment.db'}")
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE api_keys (id INTEGER PRIMARY KEY)")
+
+    _run_revision(engine, revision.upgrade)
+    _run_revision(engine, revision.downgrade)
+    assert sa.inspect(engine).get_table_names() == ["api_keys"]
+    engine.dispose()

@@ -32,13 +32,21 @@ here is equality, not existence:
    depths.
 
 6. A hard-deleted entity answers nothing, as its nulled raw rows would. The
-   foreign key nulls the raw rows; the aggregate materialised the id and never
-   re-checks it.
+   foreign key is RESTRICT now, so an entity with raw rows cannot be deleted;
+   one deleted while it was SET NULL had its raw rows nulled, but the
+   aggregate materialised the id and never re-checks it.
 
-7. The endpoints read only the aggregate: no ``request_logs`` scan and no
+7. The endpoints read only the aggregates: no ``request_logs`` scan and no
    coverage ``MIN`` query. History older than the refresh policy's window is
    there only because ``flask backfill-aggregate`` materialised it, which the
    fixtures below stand in for with an explicit refresh.
+
+8. Year and All read ``request_counts_daily_by_entity`` (#429), a daily
+   aggregate over the hourly one, for every endpoint but the heatmap; Week and
+   Month, and the heatmap for every period, read the hourly one. The fixtures
+   materialise the daily view after the hourly one, child first, as
+   ``flask upgrade`` does, so the equality tests above compare its materialised
+   rows, not only its real-time half.
 
 This module runs against ``pg_migrated_isolated`` — a database of its own — for
 the reasons that fixture's docstring gives.
@@ -51,10 +59,14 @@ from http import HTTPStatus
 import pytest
 from sqlalchemy import exc, text
 
+from lumen import commands
+from tests.conftest import no_snapshot_refresher
+
 from .conftest import TEST_CONFIG
 
 SOURCE = "ph8q"  # request_logs.source is VARCHAR(8)
 VIEW = "request_counts_hourly_by_entity"
+DAILY_VIEW = "request_counts_daily_by_entity"
 
 # Depths, in days, kept far apart on purpose: each test owns one.
 MAIN_OLD = 200
@@ -195,7 +207,9 @@ def pg_app(pg_migrated, pg_url):
     previous_uri = Config.SQLALCHEMY_DATABASE_URI
     Config.SQLALCHEMY_DATABASE_URI = pg_url
     from lumen import create_app
-    application = create_app()
+    with pytest.MonkeyPatch.context() as mp:
+        no_snapshot_refresher(mp)
+        application = create_app()
     Config.SQLALCHEMY_DATABASE_URI = previous_uri
     application.config["TESTING"] = True
     application.config["WTF_CSRF_ENABLED"] = False
@@ -263,7 +277,13 @@ def entity_usage(pg_app, pg_migrated):
                       f"+ INTERVAL '{hour} hours'"),
             )
 
+    # Child first: the daily view is built on the hourly one's materialised rows.
+    # The daily refresh stops at today's UTC midnight, as its policy's one-day
+    # end_offset does: an unbounded one materialises today's open bucket too, and
+    # rows written into today afterwards would then be invisible through the view.
     _refresh(pg_migrated)
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    _refresh(pg_migrated, DAILY_VIEW, window=(today - timedelta(days=MAIN_OLD + 1), today))
 
     # --- and only now the current hour, above the watermark.
     with pg_migrated.begin() as conn:
@@ -533,6 +553,10 @@ def boundary_usage(pg_app, pg_migrated, entity_usage):
     for probe in probes.values():
         hour = probe.replace(minute=0)
         _refresh(pg_migrated, window=(hour, hour + timedelta(hours=1)))
+    # Then the daily view over each probe's day, which year and all read.
+    for probe in probes.values():
+        day = probe.replace(hour=0, minute=0)
+        _refresh(pg_migrated, DAILY_VIEW, window=(day, day + timedelta(days=1)))
 
     return {"eid": eid, "ref": ref, "probes": probes}
 
@@ -616,15 +640,18 @@ def test_the_windows_first_partial_hour_is_not_dropped(
 def deleted_entity(pg_migrated, entity_usage):
     """History that is materialised in the aggregate, then its entity deleted.
 
-    Nothing in the application does this — deleting a project flips ``active``
-    — so it is the DBA-level ``DELETE FROM entities`` that ``ON DELETE SET
-    NULL`` on ``request_logs.entity_id`` exists to survive. Raw rows drop to
-    NULL; the aggregate materialised the id and never re-evaluates the foreign
-    key, so its rows keep the old id for as long as the view lives.
+    ``request_logs.entity_id`` is ``ON DELETE RESTRICT``, so this cannot happen
+    any more; it simulates an entity deleted while the foreign key was still
+    ``SET NULL``: the raw rows are nulled first (they are two days old, so
+    uncompressed), then the entity is deleted. The aggregates materialised the
+    id and never re-evaluate the foreign key, so their rows keep the old id for
+    as long as the views live. Two days, not two hours: the daily view only
+    materialises closed days.
 
     Yields ``(admin_client_entity_id, deleted_entity_id, hour)``.
     """
-    ts = datetime.now(timezone.utc) - timedelta(hours=2)
+    ts = (datetime.now(timezone.utc) - timedelta(days=2)).replace(
+        hour=10, minute=0, second=0, microsecond=0)
     with pg_migrated.begin() as conn:
         gone = conn.execute(text(
             "INSERT INTO entities (entity_type, name, initials, active) "
@@ -642,8 +669,11 @@ def deleted_entity(pg_migrated, entity_usage):
 
     hour = ts.replace(minute=0, second=0, microsecond=0)
     _refresh(pg_migrated, window=(hour, hour + timedelta(hours=1)))
+    day = hour.replace(hour=0)
+    _refresh(pg_migrated, DAILY_VIEW, window=(day, day + timedelta(days=1)))
 
     with pg_migrated.begin() as conn:
+        conn.execute(text("UPDATE request_logs SET entity_id = NULL WHERE entity_id = :e"), {"e": gone})
         conn.execute(text("DELETE FROM entities WHERE id = :e"), {"e": gone})
 
     yield admin, gone, hour
@@ -657,9 +687,9 @@ def deleted_entity(pg_migrated, entity_usage):
 
 @pytest.mark.postgres
 def test_a_deleted_entitys_history_is_not_resurrected(pg_app, pg_migrated, deleted_entity):
-    """The aggregate must not resurrect what the foreign key nulled out.
+    """The aggregate must not resurrect what the old foreign key nulled out.
 
-    The raw rows were nulled by the foreign key, so the entity has no history
+    The raw rows were nulled, as the old SET NULL action did, so the entity has no history
     left. Without the existence clause the aggregate still returns its full
     materialised history to an admin who asks for it by id.
     """
@@ -668,13 +698,13 @@ def test_a_deleted_entitys_history_is_not_resurrected(pg_app, pg_migrated, delet
         raw_rows = conn.execute(text(
             "SELECT COUNT(*) FROM request_logs WHERE entity_id = :e"
         ), {"e": gone}).scalar()
-        in_view = conn.execute(text(
-            f"SELECT COALESCE(SUM(requests), 0) FROM {VIEW} WHERE entity_id = :e"
-        ), {"e": gone}).scalar()
-    assert raw_rows == 0, "ON DELETE SET NULL did not fire; this test proves nothing"
-    assert int(in_view) == 3, (
-        "the aggregate no longer holds the deleted entity's rows, so there is "
-        "nothing here for the endpoints to leak and this test is vacuous"
+        in_view = {view: conn.execute(text(
+            f"SELECT COALESCE(SUM(requests), 0) FROM {commands._materialization_hypertable(conn, view)} WHERE entity_id = :e"
+        ), {"e": gone}).scalar() for view in (VIEW, DAILY_VIEW)}
+    assert raw_rows == 0, "the raw rows were not nulled; this test proves nothing"
+    assert {view: int(n) for view, n in in_view.items()} == {VIEW: 3, DAILY_VIEW: 3}, (
+        "an aggregate no longer holds the deleted entity's materialised rows, so "
+        "there is nothing there for the endpoints to leak and this test is vacuous"
     )
 
     client = pg_app.test_client()
@@ -682,14 +712,44 @@ def test_a_deleted_entitys_history_is_not_resurrected(pg_app, pg_migrated, delet
         sess["entity_id"] = admin
         sess["admin_mode"] = True
 
-    body = client.get(f"/api/usage/summary?entity_id={gone}&period=week")
-    assert body.status_code == HTTPStatus.OK
-    assert body.get_json()["requests"] == 0
-    assert body.get_json()["tokens"] == 0
-    for path in ("/api/usage/requests", "/api/usage/tokens", "/api/usage/models", "/api/usage/heatmap"):
-        resp = client.get(f"{path}?entity_id={gone}&period=week")
-        assert resp.status_code == HTTPStatus.OK
-        assert resp.get_json() == [], path
+    # week/month read the hourly view, year/all the daily one.
+    for period in PERIODS:
+        body = client.get(f"/api/usage/summary?entity_id={gone}&period={period}")
+        assert body.status_code == HTTPStatus.OK
+        assert body.get_json()["requests"] == 0, period
+        assert body.get_json()["tokens"] == 0, period
+        for path in ("/api/usage/requests", "/api/usage/tokens", "/api/usage/models",
+                     "/api/usage/heatmap"):
+            resp = client.get(f"{path}?entity_id={gone}&period={period}")
+            assert resp.status_code == HTTPStatus.OK
+            assert resp.get_json() == [], (path, period)
+
+
+@pytest.mark.postgres
+def test_deleting_an_entity_with_history_is_refused(pg_migrated, entity_usage):
+    """``ON DELETE RESTRICT``: a direct delete fails and the raw rows keep their id."""
+    ts = datetime.now(timezone.utc) - timedelta(hours=2)
+    with pg_migrated.begin() as conn:
+        kept = conn.execute(text(
+            "INSERT INTO entities (entity_type, name, initials, active) "
+            "VALUES ('user', 'ph8q-kept', 'PQ', true) RETURNING id"
+        )).scalar()
+        for _ in range(3):
+            conn.execute(text(_INSERT.replace(":time", "CAST(:ts AS timestamptz)")), {
+                "ts": ts, "eid": kept, "model": entity_usage["models"][0],
+                "inp": 5, "out": 6, "cost": "0.5", "dur": 1.0, "ttft": 0.5,
+            })
+    try:
+        with pytest.raises(exc.IntegrityError, match="request_logs_entity_id_fkey"):
+            with pg_migrated.begin() as conn:
+                conn.execute(text("DELETE FROM entities WHERE id = :e"), {"e": kept})
+        with pg_migrated.connect() as conn:
+            assert conn.execute(text("SELECT COUNT(*) FROM entities WHERE id = :e"), {"e": kept}).scalar() == 1
+            assert conn.execute(text("SELECT COUNT(*) FROM request_logs WHERE entity_id = :e"), {"e": kept}).scalar() == 3
+    finally:
+        with pg_migrated.begin() as conn:
+            conn.execute(text("DELETE FROM request_logs WHERE entity_id = :e"), {"e": kept})
+            conn.execute(text("DELETE FROM entities WHERE id = :e"), {"e": kept})
 
 
 # --------------------------------------------------------------------------
@@ -697,13 +757,17 @@ def test_a_deleted_entitys_history_is_not_resurrected(pg_app, pg_migrated, delet
 # --------------------------------------------------------------------------
 
 @pytest.mark.postgres
-def test_endpoints_read_only_the_aggregate(pg_app, main_client):
+@pytest.mark.parametrize("period", PERIODS)
+def test_endpoints_read_only_the_aggregate(pg_app, main_client, period):
     """A /usage page load for one user touches neither ``request_logs`` nor ``MIN``.
 
     Chunks older than 7 days are compressed without ``entity_id`` in
     ``segmentby``, so a per-user raw scan decompresses the whole window. The
     coverage ``MIN`` queries that used to pick between the two sources are
     gone with the raw arm.
+
+    Year and All read the daily per-entity view for every endpoint but the
+    heatmap, which needs the hour of day; Week and Month read the hourly one.
     """
     from sqlalchemy import event
 
@@ -720,10 +784,14 @@ def test_endpoints_read_only_the_aggregate(pg_app, main_client):
     try:
         for path in ("/api/usage/summary", "/api/usage/requests", "/api/usage/tokens",
                      "/api/usage/models", "/api/usage/heatmap"):
-            _json(main_client, path, "all")
+            _json(main_client, path, period)
     finally:
         event.remove(engine, "before_cursor_execute", _record)
 
-    assert sum(VIEW in st for st in statements) == 5, statements
+    daily = 4 if period in ("year", "all") else 0
+    assert sum(VIEW in st for st in statements) == 5 - daily, statements
+    assert sum(DAILY_VIEW in st for st in statements) == daily, statements
+    heatmap = [st for st in statements if "EXTRACT(HOUR" in st]
+    assert len(heatmap) == 1 and VIEW in heatmap[0], statements
     assert not [st for st in statements if "request_logs" in st], statements
     assert not [st for st in statements if "MIN(" in st.upper()], statements

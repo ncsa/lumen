@@ -2,8 +2,8 @@
 """Regenerate the help-doc screenshots in docs/img/ from a running dev instance.
 
 Captures Chat, Models, Usage, Projects, Project detail, Profile, and Model detail with the
-footer and skip-to-content link cropped out. The chat shot is the empty new-chat state so
-the quick-interaction notice shows; the model-detail shot is taken as a non-admin user so
+footer and skip-to-content link cropped out. The chat shot opens a seeded conversation so
+the copy buttons show; the model-detail shot is taken as a non-admin user so
 admin-only endpoint URLs are not exposed.
 
 Prerequisites (see scripts/README.md):
@@ -95,19 +95,25 @@ def ensure_demo_data(app):
                                   key_hint=f"{key[:7]}...{key[-4:]}"))
             db.session.flush()
 
-        # An active and a revoked personal key, so the profile shot shows Revoke and the badge.
+        # An active, a revoked and an expired personal key, so the profile shot
+        # shows Revoke, the Expires column and both badges.
         if dev:
             now = utcnow()
-            for name, raw, revoked_at, requests, tokens_in, tokens_out, cost, last_used in (
-                ("my-script", "sk_myscript_0123456789abcd", None, 42, 9800, 3100, "0.84",
-                 now - timedelta(hours=2)),
-                ("old-notebook", "sk_oldnotebook_0123456789ab", now - timedelta(days=3), 17, 4200, 1300, "0.31",
-                 now - timedelta(days=4)),
+            expired_at = now - timedelta(days=1)
+            for name, raw, revoked_at, revoked_by, expires_at, requests, tokens_in, tokens_out, cost, last_used in (
+                ("my-script", "sk_myscript_0123456789abcd", None, None, now + timedelta(days=30),
+                 42, 9800, 3100, "0.84", now - timedelta(hours=2)),
+                ("old-notebook", "sk_oldnotebook_0123456789ab", now - timedelta(days=3), None, None,
+                 17, 4200, 1300, "0.31", now - timedelta(days=4)),
+                # Revoked by the expirer: no revoker, revoked_at == expires_at.
+                ("weekly-report", "sk_weeklyreport_0123456789a", expired_at, None, expired_at,
+                 8, 2100, 700, "0.15", now - timedelta(days=2)),
             ):
                 if not db.session.execute(select(APIKey).filter_by(entity_id=dev.id, name=name)).scalar_one_or_none():
                     db.session.add(APIKey(entity_id=dev.id, created_by_entity_id=dev.id, name=name,
                                           key_hash=hash_api_key(raw), key_hint=f"{raw[:7]}...{raw[-4:]}",
-                                          revoked_at=revoked_at, requests=requests, input_tokens=tokens_in,
+                                          revoked_at=revoked_at, revoked_by_entity_id=revoked_by,
+                                          expires_at=expires_at, requests=requests, input_tokens=tokens_in,
                                           output_tokens=tokens_out, cost=Decimal(cost), last_used_at=last_used))
 
         if dev and not db.session.execute(
@@ -183,13 +189,12 @@ def main():
         page = actx.new_page()
         page.goto(BASE + "/devlogin", wait_until="networkidle")
 
-        # Capture the empty new-chat state so the shot shows the
-        # quick-interaction notice (it disappears once a conversation is opened
-        # or the first message is sent). Seeded conversations still appear in
-        # the sidebar.
+        # Open the seeded conversation so the shot shows a reply with its copy
+        # button and the enabled copy-all button in the message area.
         page.goto(BASE + "/chat", wait_until="networkidle")
-        page.wait_for_selector("#quick-chat-notice")
-        page.wait_for_timeout(800)  # let the conversation sidebar load
+        page.click(".conv-item")
+        page.wait_for_selector(".chat-bubble-assistant")
+        page.evaluate("document.activeElement.blur()")  # no focus ring on the input
         hide_chrome(page)
         page.screenshot(path=f"{OUT}/chat.png")
         print("chat.png")

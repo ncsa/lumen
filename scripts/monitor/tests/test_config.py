@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from monitor.config import ConfigError, ConfigStore, Gpu, load_config, model_key, normalize_base_path, parse_config, parse_duration
+from monitor.config import ConfigError, ConfigStore, Gpu, check_lumen_url, load_config, model_key, normalize_base_path, parse_config, parse_duration
 
 EXAMPLE = Path(__file__).resolve().parent.parent / "config.yaml.example"
 
@@ -25,6 +25,7 @@ def test_defaults():
     assert config.kwh is None
     assert config.gpus == {}
     assert config.models == {}
+    assert config.down_above == 50
     assert config.warnings == []
 
 
@@ -390,3 +391,63 @@ def test_matched_pin_does_not_warn(caplog):
     with caplog.at_level(logging.WARNING, logger="monitor.config"):
         config.match_models(["deepseek-v4-flash"])
     assert caplog.text == ""
+
+
+def test_down_above_parsed():
+    config = parse_config({"lumen": {"down_above": 30}}, env={})
+    assert config.down_above == 30
+    assert config.warnings == []
+
+
+@pytest.mark.parametrize("value", [-1, 101, "abc", True, float("nan")])
+def test_bad_down_above_warns_and_uses_default(value):
+    config = parse_config({"lumen": {"down_above": value}}, env={})
+    assert config.down_above == 50
+    assert any("lumen.down_above" in w for w in config.warnings)
+
+
+def test_reload_picks_up_down_above(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("lumen: {url: https://lumen.test}\n")
+    store = ConfigStore(path, env={})
+    assert store.current.down_above == 50
+    path.write_text("lumen: {url: https://lumen.test, down_above: 30}\n")
+    assert store.reload() is True
+    assert store.current.down_above == 30
+
+
+@pytest.mark.parametrize("url", ["", "lumen.example.edu", "ftp://x", "http://", "https://", "//lumen.example.edu", "http://[::1"])
+def test_check_lumen_url_rejects(url):
+    config = parse_config({"lumen": {"url": url}}, env={})
+    with pytest.raises(ConfigError, match="lumen.url is required"):
+        check_lumen_url(config)
+
+
+@pytest.mark.parametrize("url", ["http://lumen.test", "https://lumen.example.edu", "https://lumen.example.edu/", "http://localhost:5001"])
+def test_check_lumen_url_accepts(url):
+    check_lumen_url(parse_config({"lumen": {"url": url}}, env={}))
+
+
+def test_store_require_lumen_rejects_config_without_url(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("timezone: UTC\n")
+    assert ConfigStore(path, env={}).current.lumen_url == ""
+    with pytest.raises(ConfigError, match="lumen.url is required"):
+        ConfigStore(path, env={}, require_lumen=True)
+
+
+def test_store_require_lumen_rejects_missing_file(tmp_path):
+    with pytest.raises(ConfigError, match="lumen.url is required"):
+        ConfigStore(tmp_path / "missing.yaml", env={}, require_lumen=True)
+
+
+def test_reload_that_empties_lumen_url_keeps_previous(tmp_path, caplog):
+    path = tmp_path / "config.yaml"
+    path.write_text("lumen: {url: https://lumen.test}\n")
+    store = ConfigStore(path, env={}, require_lumen=True)
+    before = store.current
+    path.write_text("lumen: {url: ''}\n")
+    with caplog.at_level(logging.ERROR, logger="monitor.config"):
+        assert store.reload() is False
+    assert store.current is before
+    assert "lumen.url is required" in caplog.text

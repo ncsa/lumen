@@ -807,6 +807,36 @@ models:
         app.config["CONFIG_YAML"] = original
 
 
+def test_config_post_saves_api_key_ttl_and_keeps_other_api_keys(app, admin_client, tmp_path):
+    """Saving api.keys.ttl from the editor keeps the Prometheus and Monitoring settings."""
+    original, cfg = _use_config(app, tmp_path, _FULL_SECRET_CONFIG)
+    try:
+        data = admin_client.get("/admin/api/config").get_json()
+        data["api"]["keys"] = {"ttl": "30d"}
+        resp = admin_client.post("/admin/api/config", json=data)
+        assert resp.status_code == HTTPStatus.OK
+        saved = yaml.safe_load(cfg.read_text())["api"]
+        assert saved["keys"] == {"ttl": "30d"}
+        assert saved["prometheus"] == {"enabled": True, "token": "real-prom-token"}
+        assert saved["monitoring"] == {"token": "real-mon-token"}
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
+def test_config_post_rejects_bad_api_key_ttl(app, admin_client, tmp_path):
+    """The editor cannot save an api.keys.ttl the server cannot parse."""
+    original, cfg = _use_config(app, tmp_path, _FULL_SECRET_CONFIG)
+    try:
+        data = admin_client.get("/admin/api/config").get_json()
+        data["api"]["keys"] = {"ttl": "abc"}
+        resp = admin_client.post("/admin/api/config", json=data)
+        assert resp.status_code == HTTPStatus.BAD_REQUEST
+        assert "api.keys.ttl" in resp.get_json()["error"]
+        assert cfg.read_text() == _FULL_SECRET_CONFIG
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
 def test_config_post_re_enables_legacy_disabled_model(app, admin_client, tmp_path):
     """Clearing the editor's Disabled checkbox re-enables a model that was disabled
     via the legacy ``active: false`` key.

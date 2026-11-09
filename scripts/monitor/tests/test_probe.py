@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import date, datetime, timedelta
 
@@ -56,7 +57,11 @@ class FakeLumen:
         self.status = 200
         self.error = None
         self.data = [
-            lumen_model("qwen", tokens={"last_minute": 1200}),
+            lumen_model(
+                "qwen",
+                input_tokens={"last_minute": 1000},
+                output_tokens={"last_minute": 200},
+            ),
             lumen_model("qwen-alias", parent="qwen"),
             lumen_model("big", status="degraded", configured=2, healthy=1),
             lumen_model("gone", status="down", healthy=0),
@@ -65,8 +70,9 @@ class FakeLumen:
     def clock(self):
         return self.now
 
-    def get(self, url, headers=None, timeout=None):
+    def get(self, url, params=None, headers=None, timeout=None):
         assert url == "https://lumen.test/v1/models"
+        assert params == {"tokens": "true"}
         assert headers == {"Authorization": "Bearer secret"}
         assert timeout == 15
         self.now += self.delay
@@ -105,9 +111,9 @@ def all_rows(session_factory, model):
         return session.execute(select(model).order_by(model.id)).scalars().all()
 
 
-def state(session_factory):
+def state(session_factory, down_above=None):
     with session_factory() as session:
-        return lumen_state(session)
+        return lumen_state(session) if down_above is None else lumen_state(session, down_above)
 
 
 def add_probes(session_factory, *results, start=NOON):
@@ -165,9 +171,24 @@ def test_samples_per_canonical_model(env, lumen):
     assert set(samples) == {"qwen", "big", "gone"}
     qwen = samples["qwen"]
     assert (qwen.sampled_at, qwen.status, qwen.configured, qwen.healthy) == (NOON, "ok", 1, 1)
-    assert (qwen.requests_last_minute, qwen.tokens_last_minute) == (3, 1200)
+    assert qwen.requests_last_minute == 3
+    assert (qwen.input_tokens_last_minute, qwen.output_tokens_last_minute, qwen.tokens_last_minute) == (1000, 200, 1200)
     assert samples["big"].tokens_last_minute is None  # Lumen without token counts
+    assert (samples["big"].input_tokens_last_minute, samples["big"].output_tokens_last_minute) == (None, None)
     assert (samples["big"].status, samples["big"].configured, samples["big"].healthy) == ("degraded", 2, 1)
+
+
+def test_models_up_follows_lumen_model_status(env, lumen):
+    _, session_factory = env
+    lumen.data = [
+        lumen_model("one", status="down", configured=1, healthy=0),
+        lumen_model("two", status="degraded", configured=2, healthy=1),
+    ]
+    probe(env, lumen)
+    [row] = all_rows(session_factory, Probe)
+    assert (row.model_count, row.models_up) == (2, 1)  # only the 1-server model is down
+    samples = {s.model: s.status for s in all_rows(session_factory, Sample)}
+    assert samples == {"one": "down", "two": "degraded"}
 
 
 def test_snapshot_keeps_the_last_success(env, lumen):
@@ -253,6 +274,24 @@ def test_state_degraded_only_from_the_latest_probe(env):
     assert state(env[1]) == UP
 
 
+def test_state_down_when_most_models_are_down(env):
+    add_probes(env[1], True, (3, 1))
+    assert state(env[1]) == DOWN
+
+
+def test_state_follows_down_above(env):
+    add_probes(env[1], (10, 6))  # 4 of 10 down
+    assert state(env[1], 50) == DEGRADED
+    assert state(env[1], 30) == DOWN
+    add_probes(env[1], (10, 7), start=NOON + timedelta(minutes=10))  # 3 of 10 is not above 30%
+    assert state(env[1], 30) == DEGRADED
+
+
+def test_state_up_when_latest_failed_after_most_models_down(env):
+    add_probes(env[1], (3, 1), False)
+    assert state(env[1]) == UP
+
+
 def test_state_down_before_three_probes_when_all_failed(env):
     add_probes(env[1], False)
     assert state(env[1]) == DOWN
@@ -328,6 +367,18 @@ def test_cli_collect_probe(env, lumen):
     assert main(["--config", str(config_path), "collect", "--probe"]) == 0
     assert len(all_rows(session_factory, Probe)) == 1
     assert len(all_rows(session_factory, Sample)) == 3
+
+
+def test_cli_collect_probe_logs_the_state(env, lumen, caplog):
+    config_path, _ = env
+    with caplog.at_level(logging.INFO, logger="monitor"):
+        assert main(["--config", str(config_path), "collect", "--probe"]) == 0
+    assert "Lumen is DEGRADED" in caplog.text  # 1 of 3 models down
+    config_path.write_text(CONFIG.replace("api_key: secret}", "api_key: secret, down_above: 30}"))
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="monitor"):
+        assert main(["--config", str(config_path), "collect", "--probe"]) == 0
+    assert "Lumen is DOWN" in caplog.text  # 1 of 3 is above 30%
 
 
 def test_cli_collect_probe_lumen_down(env, lumen):

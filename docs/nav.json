@@ -49,7 +49,8 @@
       {"slug": "admin/config/apps",     "title": "Application Settings",        "filename": "config-application.md"},
       {"slug": "admin/config/users",    "title": "Users & Access Control",      "filename": "config-users.md"},
       {"slug": "admin/config/projects",  "title": "Configuring Projects",         "filename": "config-projects.md"},
-      {"slug": "admin/config/models",   "title": "Configuring Models",          "filename": "config-models.md"}
+      {"slug": "admin/config/models",   "title": "Configuring Models",          "filename": "config-models.md"},
+      {"slug": "admin/commands",        "title": "Operator Commands",           "filename": "commands.md"}
     ]
   }
 ]

@@ -199,6 +199,41 @@ def test_replay_revokes_minted_key(client, auth_client, app):
         assert key.revoked_by_entity_id is None
 
 
+def test_overwrite_refreshes_key_then_replay_revokes_it(client, auth_client, app, test_user):
+    from lumen.services.crypto import hash_api_key
+
+    old_raw = "sk_" + secrets.token_urlsafe(32)
+    with app.app_context():
+        old = APIKey(entity_id=test_user["id"], name="portal-key", key_hash=hash_api_key(old_raw),
+                     key_hint=f"{old_raw[:7]}...{old_raw[-4:]}", requests=3, input_tokens=40)
+        db.session.add(old)
+        db.session.commit()
+        old_id = old.id
+
+    url, verifier = _authorize_url()
+    assert auth_client.get(url).status_code == HTTPStatus.OK
+    with app.app_context():
+        req_id = db.session.execute(select(AuthRequest)).scalars().one().id
+    resp = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve", "overwrite": "on"})
+    assert resp.status_code == HTTPStatus.FOUND
+    code = parse_qs(urlsplit(resp.headers["Location"]).query)["code"][0]
+
+    key = _redeem(client, code, verifier).get_json()["access_token"]
+    assert client.get("/v1/models", headers={"Authorization": f"Bearer {key}"}).status_code == HTTPStatus.OK
+    assert client.get("/v1/models", headers={"Authorization": f"Bearer {old_raw}"}).status_code == HTTPStatus.UNAUTHORIZED
+    with app.app_context():
+        [row] = db.session.execute(select(APIKey)).scalars().all()
+        assert row.id == old_id and row.revoked_at is None
+
+    # Replaying the code revokes the refreshed key; its row and counters are kept.
+    assert _redeem(client, code, verifier).get_json()["error"] == "invalid_grant"
+    assert client.get("/v1/models", headers={"Authorization": f"Bearer {key}"}).status_code == HTTPStatus.UNAUTHORIZED
+    with app.app_context():
+        [row] = db.session.execute(select(APIKey)).scalars().all()
+        assert row.id == old_id and row.revoked_at is not None
+        assert (row.requests, row.input_tokens) == (3, 40)
+
+
 def test_token_cors_and_no_store(client, auth_client, app):
     pre = client.options("/oauth/token")
     assert pre.status_code == HTTPStatus.NO_CONTENT
@@ -246,3 +281,90 @@ def test_state_never_crosses_concurrent_flows(auth_client, app, action):
     assert resp.status_code == HTTPStatus.FOUND
     query = parse_qs(urlsplit(resp.headers["Location"]).query)
     assert "state" not in query
+
+
+# ---------------------------------------------------------------------------
+# Key TTL requested with the code flow
+# ---------------------------------------------------------------------------
+
+def _authorize_and_consent(app, auth_client, authorize_ttl=None, consent_ttl=None):
+    """GET /oauth/authorize (optionally with ttl), then approve; return (page, approve, verifier)."""
+    overrides = {"ttl": authorize_ttl} if authorize_ttl is not None else {}
+    url, verifier = _authorize_url(**overrides)
+    page = auth_client.get(url)
+    assert page.status_code == HTTPStatus.OK
+    with app.app_context():
+        req_id = db.session.execute(select(AuthRequest)).scalars().one().id
+    data = {"request_id": req_id, "action": "approve"}
+    if consent_ttl is not None:
+        data["ttl"] = consent_ttl
+    return page, auth_client.post("/oauth/consent", data=data), verifier
+
+
+def _code_from(resp):
+    assert resp.status_code == HTTPStatus.FOUND
+    return parse_qs(urlsplit(resp.headers["Location"]).query)["code"][0]
+
+
+def _request_ttl(app):
+    with app.app_context():
+        return db.session.execute(select(AuthRequest.ttl)).scalar_one()
+
+
+def test_code_ttl_passed_through_and_counted_from_mint(client, auth_client, app, restore_config, monkeypatch):
+    app.config["KEY_TTL"] = 30 * 86400
+    page, approve, verifier = _authorize_and_consent(app, auth_client, authorize_ttl="604800",
+                                                    consent_ttl="604800")
+    assert b'<option value="604800" selected>7 days</option>' in page.data
+    assert _request_ttl(app) == 604800
+
+    minted = utcnow().replace(microsecond=0) + timedelta(seconds=20)
+    monkeypatch.setattr("lumen.services.key_expiry.utcnow", lambda: minted)
+    resp = _redeem(client, _code_from(approve), verifier)
+    assert resp.status_code == HTTPStatus.OK
+    with app.app_context():
+        expires_at = db.session.execute(select(APIKey.expires_at)).scalar_one()
+    assert expires_at == minted + timedelta(days=7)
+    assert resp.get_json()["expires_at"] == expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@pytest.mark.parametrize("cap", [0, 86400])
+def test_code_ttl_defaults_to_cap(client, auth_client, app, restore_config, cap):
+    app.config["KEY_TTL"] = cap
+    page, approve, verifier = _authorize_and_consent(app, auth_client)
+    selected = b'<option value="0" selected>Never</option>' if cap == 0 else b'<option value="86400" selected>1 day</option>'
+    assert selected in page.data
+    resp = _redeem(client, _code_from(approve), verifier).get_json()
+    with app.app_context():
+        expires_at = db.session.execute(select(APIKey.expires_at)).scalar_one()
+    if cap:
+        assert abs(expires_at - (utcnow() + timedelta(seconds=cap))) < timedelta(minutes=1)
+        assert resp["expires_at"] == expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    else:
+        assert expires_at is None
+        assert "expires_at" in resp and resp["expires_at"] is None
+
+
+@pytest.mark.parametrize("ttl", ["86401", "0", "-1", "abc"])
+def test_code_ttl_rejected_above_cap_or_malformed(auth_client, app, restore_config, ttl):
+    app.config["KEY_TTL"] = 86400
+    url, _ = _authorize_url(ttl=ttl)
+    resp = auth_client.get(url)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert b"Invalid authorization request" in resp.data
+    assert b"ttl" in resp.data
+    assert "Location" not in resp.headers
+    with app.app_context():
+        assert db.session.execute(select(AuthRequest)).first() is None
+
+
+@pytest.mark.parametrize("ttl", ["86401", "0", "abc"])
+def test_code_tampered_consent_ttl_rejected(auth_client, app, restore_config, ttl):
+    app.config["KEY_TTL"] = 86400
+    _, approve, _ = _authorize_and_consent(app, auth_client, consent_ttl=ttl)
+    assert approve.status_code == HTTPStatus.OK
+    assert b"Invalid expiry" in approve.data
+    with app.app_context():
+        req = db.session.execute(select(AuthRequest)).scalar_one()
+        assert req.status == "pending"
+        assert req.auth_code_hash is None
