@@ -15,15 +15,26 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import anthropic
+import openai
 import pytest
 from flask import has_app_context, has_request_context
 from openai import OpenAI
 from openai.types.chat import ChatCompletionChunk
+from sqlalchemy import select
 from werkzeug.serving import make_server
 
+from lumen.blueprints.api import routes
 from lumen.extensions import db
+from lumen.models.api_key import APIKey
+from lumen.models.entity import Entity
+from lumen.models.entity_balance import EntityBalance
+from lumen.models.entity_limit import EntityLimit
+from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
+from lumen.models.request_log import RequestLog
+from lumen.services import llm as llm_service
 from scripts.anthropic_toolbot import app as toolbot
+from tests.conftest import set_model_owner
 from tests.routes.test_api_auth import (
     _allow_model,
     _capturing_openai,
@@ -67,10 +78,6 @@ def _sse(resp):
 def _request_logs(app):
     """Every RequestLog row, as plain dicts (the session closes with the context)."""
     with app.app_context():
-        from sqlalchemy import select
-
-        from lumen.extensions import db
-        from lumen.models.request_log import RequestLog
         return [
             {"source": log.source, "input_tokens": log.input_tokens,
              "output_tokens": log.output_tokens, "aborted": log.aborted}
@@ -81,9 +88,6 @@ def _request_logs(app):
 def _give_model_to_someone_else(app, test_model):
     """Make the model owned by another entity, so the test user has no access."""
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity import Entity
-        from tests.conftest import set_model_owner
         owner = Entity(entity_type="user", email="owner@example.com", name="Owner", active=True)
         db.session.add(owner)
         db.session.commit()
@@ -160,7 +164,6 @@ def api(app, client, test_user, test_model, test_model_endpoint, api_key, monkey
     opposite of some part of it (no endpoint, no access, an exhausted budget)
     take the underlying fixtures directly instead.
     """
-    from lumen.blueprints.api import routes
     _allow_model(app, test_user, test_model)
     token, key_id = api_key
     _capturing_openai(monkeypatch, routes, lambda **kw: _TextResponse())
@@ -240,8 +243,6 @@ def test_non_ascii_api_key_is_refused_not_crashed(client, api_key, fresh_rate_li
 def test_disabled_entity(app, client, test_user, api_key, fresh_rate_limit):
     token, _ = api_key
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity import Entity
         db.session.get(Entity, test_user["id"]).active = False
         db.session.commit()
 
@@ -351,8 +352,6 @@ def test_consent_required_is_a_permission_error(app, client, test_user, test_mod
                                                 api_key, fresh_rate_limit):
     token, _ = api_key
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.model_config import ModelConfig
         _grant_unlimited_pool(app, test_user["id"])
         db.session.get(ModelConfig, test_model["id"]).needs_ack = True
         db.session.commit()
@@ -367,9 +366,6 @@ def test_exhausted_budget_is_a_rate_limit_error(app, client, test_user, test_mod
                                                 test_model_endpoint, api_key, fresh_rate_limit):
     token, _ = api_key
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.entity_balance import EntityBalance
-        from lumen.models.entity_limit import EntityLimit
         db.session.add(EntityLimit(entity_id=test_user["id"], max_coins=10,
                                    refresh_coins=1, starting_coins=10))
         db.session.add(EntityBalance(entity_id=test_user["id"], coins_left=0))
@@ -429,7 +425,6 @@ def test_upstream_failure_is_an_api_error(api):
 
 
 def test_upstream_429_is_a_rate_limit_error(api):
-    import openai
 
     exc = _make_openai_error(openai.RateLimitError, 429, {"error": {"message": "Rate limit reached"}})
 
@@ -443,7 +438,6 @@ def test_upstream_429_is_a_rate_limit_error(api):
 
 
 def test_upstream_4xx_passes_through_as_an_invalid_request(api):
-    import openai
 
     exc = _make_openai_error(openai.BadRequestError, 400, {
         "error": {"message": "This model's maximum context length is 4096 tokens",
@@ -465,7 +459,6 @@ def test_upstream_4xx_passes_through_as_an_invalid_request(api):
 def test_upstream_auth_failure_is_an_api_error(api, error_cls, status):
     # A 401/403 from the backend is about Lumen's backend credential, not the
     # caller's key: it must not reach the caller as an authentication error.
-    import openai
 
     exc = _make_openai_error(getattr(openai, error_cls), status, {
         "error": {"message": "invalid backend token sk-backend", "type": "authentication_error"}})
@@ -504,8 +497,6 @@ def test_non_streaming_shape_and_billing(app, api):
     assert _request_logs(app) == [
         {"source": "api", "input_tokens": 7, "output_tokens": 3, "aborted": False}]
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.api_key import APIKey
         assert db.session.get(APIKey, api.key_id).requests == 1
 
 
@@ -585,7 +576,6 @@ def test_streaming_chunk_with_a_null_error_field_is_not_an_error(api):
 
 
 def test_streaming_disconnect_bills_an_abort(app, api):
-    import threading
     disconnected = threading.Event()
 
     def chunks():
@@ -646,8 +636,6 @@ def test_count_tokens_counts_a_model_awaiting_acknowledgement(app, client, test_
     # refuses it until it is acknowledged.
     token, _ = api_key
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.model_config import ModelConfig
         _grant_unlimited_pool(app, test_user["id"])
         db.session.get(ModelConfig, test_model["id"]).needs_ack = True
         db.session.commit()
@@ -781,7 +769,7 @@ def test_anthropic_stream_releases_state_and_context(app, api, monkeypatch, exit
     monkeypatch.setattr(api.routes, "get_live_state", lambda: state)
     api.stream(_text_stream())
     if exit_path == "billing_error":
-        monkeypatch.setattr(api.routes, "_record_api_key_usage", Mock(side_effect=RuntimeError("private detail")))
+        monkeypatch.setattr(llm_service, "_record_api_key_usage", Mock(side_effect=RuntimeError("private detail")))
     with app.app_context():
         pool = db.engine.pool
     response = api.post(_body(stream=True))

@@ -25,6 +25,7 @@ import sys
 import tempfile
 
 import anthropic
+import anyio
 
 BASE = os.environ.get("BASE_URL", "http://localhost:5001").rstrip("/")
 KEY = os.environ.get("LUMEN_API_KEY")
@@ -199,7 +200,6 @@ def agent_sdk():
         from claude_agent_sdk import ClaudeAgentOptions, query
     except ImportError:
         return None
-    import anyio
 
     env = _agent_env(MODEL)
     for key in ("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",

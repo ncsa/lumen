@@ -280,7 +280,7 @@ def _classify_upstream_error(exc, context: str):
     already got past with their key and cannot fix. They, and everything else,
     are upstream failures and become a generic 500.
     """
-    if (isinstance(exc, openai.APIStatusError) and 400 <= exc.status_code < 500
+    if (isinstance(exc, openai.APIStatusError) and HTTPStatus.BAD_REQUEST <= exc.status_code < HTTPStatus.INTERNAL_SERVER_ERROR
             and exc.status_code not in (HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN)):
         msg, err_type = _upstream_error_detail(exc)
         logger.warning("%s (upstream %s): %s", context, exc.status_code, msg)

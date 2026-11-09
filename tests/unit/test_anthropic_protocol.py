@@ -390,7 +390,6 @@ def test_strict_tools_are_refused():
 
 def test_a_commonly_refused_beta_explains_what_happens_next():
     """The bare name leaves an operator guessing whether the client recovered."""
-    from lumen.services.anthropic_protocol import check_headers
     with pytest.raises(AnthropicError) as exc:
         check_headers({"anthropic-beta": "structured-outputs-2025-12-15"})
     assert "structured-outputs-2025-12-15" in str(exc.value)
