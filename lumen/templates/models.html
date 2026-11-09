@@ -15,7 +15,7 @@
       <tr>
         <th scope="col" rowspan="2">Model</th>
         <th scope="col" rowspan="2">Input</th>
-        <th scope="colgroup" colspan="2" class="text-center">Coins / 1M tokens</th>
+        <th scope="colgroup" colspan="3" class="text-center">Coins / 1M tokens</th>
         <th scope="col" rowspan="2">Checked</th>
         <th scope="col" rowspan="2">Status</th>
         <th scope="col" rowspan="2" class="text-center">Access</th>
@@ -23,6 +23,7 @@
       <tr>
         <th scope="col" class="text-end">Input</th>
         <th scope="col" class="text-end">Output</th>
+        <th scope="col" class="text-end">Cache read / write</th>
       </tr>
     </thead>
     <tbody>
@@ -42,8 +43,12 @@
             <span class="text-muted">&mdash;</span>
           {% endif %}
         </td>
-        <td class="text-end">{% if config.cached_input_cost_per_million is not none or config.cache_write_cost_per_million is not none %}<span data-bs-toggle="tooltip" data-bs-placement="left" title="{% if config.cached_input_cost_per_million is not none %}Cached input: {{ '%.2f'|format(config.cached_input_cost_per_million | float) }} / 1M tokens{% endif %}{% if config.cached_input_cost_per_million is not none and config.cache_write_cost_per_million is not none %}; {% endif %}{% if config.cache_write_cost_per_million is not none %}Cache write: {{ '%.2f'|format(config.cache_write_cost_per_million | float) }} / 1M tokens{% endif %}">{{ "%.2f"|format(config.input_cost_per_million | float) }}</span>{% else %}{{ "%.2f"|format(config.input_cost_per_million | float) }}{% endif %}</td>
+        <td class="text-end">{{ "%.2f"|format(config.input_cost_per_million | float) }}</td>
         <td class="text-end">{{ "%.2f"|format(config.output_cost_per_million | float) }}</td>
+        {#- A cache rate that is not configured is billed at the input price, so the column shows what is actually charged. -#}
+        {% set cache_read = config.cached_input_cost_per_million if config.cached_input_cost_per_million is not none else config.input_cost_per_million %}
+        {% set cache_write = config.cache_write_cost_per_million if config.cache_write_cost_per_million is not none else config.input_cost_per_million %}
+        <td class="text-end text-nowrap">{{ "%.2f"|format(cache_read | float) }} / {{ "%.2f"|format(cache_write | float) }}</td>
         <td>
           {% set checked_at = endpoints | map(attribute="last_checked_at") | select("ne", None) | list %}
           {% if checked_at %}
@@ -87,7 +92,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="text-center text-muted">No models configured.</td></tr>
+      <tr><td colspan="8" class="text-center text-muted">No models configured.</td></tr>
       {% endfor %}
     </tbody>
   </table>
