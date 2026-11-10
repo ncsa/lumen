@@ -4,7 +4,7 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
-- The Models page links to LLMHub for launching models that are not listed, when `app.llmhub_url` is set (editable in the admin config editor).
+- The Models page links to LLMHub for launching models that are not listed, when `app.llmhub_url` is set (editable in the admin config editor). (#233)
 
 ## [2.3.1] - 2026-11-07
 

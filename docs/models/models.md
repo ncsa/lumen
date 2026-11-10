@@ -4,7 +4,7 @@ The **Models** page (`/models`) shows every AI model available to you in your Lu
 
 ![Models dashboard](../img/models.png)
 
-**Want a model that isn't listed here? Launch your own on [LLMHub](https://llmhub.computes.illinois.edu)!** LLMHub lets University of Illinois researchers run their own language models on NCSA supercomputers. No cluster expertise and no GPUs of your own required: pick a model, launch it, chat with it in your browser or call it from your code through an OpenAI-compatible API, and share the deployment with your group. LLMHub is open source — find the code [on GitHub](https://github.com/Center-for-AI-Innovation/LLMHub): contribute if you're interested, and [open an issue](https://github.com/Center-for-AI-Innovation/LLMHub/issues) if you have a feature idea or run into a problem!
+If a model you need is not listed, tools such as [LLMHub](https://llmhub.computes.illinois.edu) can be used to launch it yourself. If your administrator has configured an LLMHub link for your Lumen instance, it appears at the bottom of this page (see [`llmhub_url`](../admin/config-application.md)).
 
 ## Table Columns
 
