@@ -142,3 +142,92 @@ def test_theme_without_favicon_block_anonymous_pages(client, no_favicon_theme):
 
 def test_theme_without_favicon_block_authenticated_page(auth_client, no_favicon_theme):
     _assert_no_favicon_links(auth_client.get("/chat"), HTTPStatus.OK)
+
+
+# ---------------------------------------------------------------------------
+# /favicon.ico route
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("theme", ["default", "uic", "uis"])
+def test_favicon_ico_serves_local_theme_file(app, client, theme):
+    with _theme(app, theme):
+        resp = client.get("/favicon.ico")
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.mimetype.startswith("image/"), resp.mimetype
+
+
+def test_favicon_ico_redirects_to_absolute_url(app, client):
+    with _theme(app, "illinois"):
+        resp = client.get("/favicon.ico")
+    assert resp.status_code == HTTPStatus.FOUND
+    assert resp.headers["Location"] == f"{ILLINOIS_CDN}/favicon.ico"
+
+
+def test_favicon_ico_redirects_protocol_relative_url(app, client):
+    cache = app.config["THEME_CACHE"]
+    original = cache["default"]
+    cache["default"] = {**original, "favicon": {"ico": "//cdn.example.org/favicon.ico"}}
+    try:
+        with _theme(app, "default"):
+            resp = client.get("/favicon.ico")
+    finally:
+        cache["default"] = original
+    assert resp.status_code == HTTPStatus.FOUND
+    assert resp.headers["Location"] == "//cdn.example.org/favicon.ico"
+
+
+def test_favicon_ico_404_without_favicon_block(client, no_favicon_theme):
+    assert client.get("/favicon.ico").status_code == HTTPStatus.NOT_FOUND
+
+
+def test_favicon_ico_follows_email_theme_override(app, client):
+    """`g.theme` decides, so an `email_themes` override picks the user's theme."""
+    old = app.config.get("EMAIL_THEMES", {})
+    app.config["EMAIL_THEMES"] = {"@illinois.edu": "illinois"}
+    try:
+        with client.session_transaction() as sess:
+            sess["entity_email"] = "someone@illinois.edu"
+        with _theme(app, "default"):
+            resp = client.get("/favicon.ico")
+    finally:
+        app.config["EMAIL_THEMES"] = old
+    assert resp.status_code == HTTPStatus.FOUND
+    assert resp.headers["Location"] == f"{ILLINOIS_CDN}/favicon.ico"
+
+
+def test_favicon_ico_needs_no_login(app, client):
+    """Anonymous fetches are answered directly, never sent to the login page."""
+    with _theme(app, "default"):
+        resp = client.get("/favicon.ico")
+    assert resp.status_code == HTTPStatus.OK
+    assert "Location" not in resp.headers
+
+
+def test_favicon_ico_is_exempt_from_rate_limits(app, client):
+    """With a 1-per-minute default limit active, /favicon.ico still always answers.
+
+    The theme-static control request proves the injected limit is really enforced.
+    """
+    from flask_limiter import Limit
+    from flask_limiter.util import get_remote_address
+
+    from lumen.extensions import limiter
+
+    manager = limiter.limit_manager
+    original = manager._default_limits
+    manager.set_default_limits([
+        Limit(limit_provider="1 per minute", key_function=get_remote_address,
+              finalized=False).bind(limiter),
+    ])
+    try:
+        with app.app_context():
+            limiter.reset()
+        with _theme(app, "default"):
+            control = [client.get("/theme-static/favicon/favicon.ico").status_code for _ in range(2)]
+            favicon = [client.get("/favicon.ico").status_code for _ in range(5)]
+    finally:
+        manager.set_default_limits(original)
+        with app.app_context():
+            limiter.reset()
+    assert control == [HTTPStatus.OK, HTTPStatus.TOO_MANY_REQUESTS]
+    assert favicon == [HTTPStatus.OK] * 5
