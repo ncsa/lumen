@@ -26,6 +26,8 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import event
 
+from lumen.blueprints.api import routes
+from tests.routes.test_api_anthropic import _body, _post, _text_stream, _TextResponse
 from tests.routes.test_api_audio import _audio_data
 from tests.routes.test_api_auth import (
     _capturing_openai,
@@ -196,6 +198,53 @@ def test_api_aborted_stream_bills_hot_locks_last(
         from lumen.extensions import db
         from lumen.models.request_log import RequestLog
         assert db.session.execute(select(RequestLog.aborted)).scalar_one() is True
+
+
+def test_anthropic_non_stream_bills_hot_locks_last(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, fresh_rate_limit, cutover,
+):
+    """/v1/messages bills through the OpenAI route's path, so the order is the same."""
+    token, key_id = api_key
+    _own_limit(app, test_user["id"])
+    with _writes(app) as log:
+        _capturing_openai(monkeypatch, routes, _upstream(log, _TextResponse()))
+        resp = _post(client, token, _body(model=test_model["model_name"]))
+        assert resp.status_code == HTTPStatus.OK
+    assert _billing(log) == (CUTOVER_API_BILLING if cutover else API_BILLING)
+    assert _marker(app) is (True if cutover else None)
+    assert _logged_key(app) == key_id
+
+
+def test_anthropic_stream_bills_hot_locks_last(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, fresh_rate_limit, cutover,
+):
+    token, key_id = api_key
+    _own_limit(app, test_user["id"])
+    with _writes(app) as log:
+        _capturing_openai(monkeypatch, routes, _upstream(log, _text_stream()))
+        resp = _post(client, token, _body(model=test_model["model_name"], stream=True))
+        assert resp.status_code == HTTPStatus.OK
+        resp.get_data()
+    assert _billing(log) == (CUTOVER_API_BILLING if cutover else API_BILLING)
+    assert _marker(app) is (True if cutover else None)
+    assert _logged_key(app) == key_id
+
+
+def test_anthropic_aborted_stream_bills_hot_locks_last(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, fresh_rate_limit, cutover,
+):
+    """A client walking away mid-stream is billed through the same path, key included."""
+    token, key_id = api_key
+    _own_limit(app, test_user["id"])
+    with _writes(app) as log:
+        _capturing_openai(monkeypatch, routes, _upstream(log, _text_stream()))
+        resp = _post(client, token, _body(model=test_model["model_name"], stream=True))
+        assert resp.is_streamed
+        next(iter(resp.response))  # one event, then walk away mid-stream
+        resp.close()
+    assert _billing(log) == (CUTOVER_API_BILLING if cutover else API_BILLING)
+    assert _marker(app) is (True if cutover else None)
+    assert _logged_key(app) == key_id
 
 
 def test_audio_bills_hot_locks_last(

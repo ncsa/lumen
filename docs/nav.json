@@ -13,7 +13,8 @@
       {"slug": "profile", "title": "Profile & API Keys",  "filename": "profile.md"},
       {"slug": "connect", "title": "Connect Your Tools",  "filename": "connect.md"},
       {"slug": "usage", "title": "Usage",            "filename": "usage.md"},
-      {"slug": "api",   "title": "API Reference",     "filename": "api-reference.md"}
+      {"slug": "api",   "title": "API Reference",     "filename": "api-reference.md"},
+      {"slug": "anthropic", "title": "Anthropic API", "filename": "anthropic.md"}
     ]
   },
   {
