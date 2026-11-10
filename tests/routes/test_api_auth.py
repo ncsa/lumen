@@ -1,6 +1,7 @@
 """Tests for the /v1 API key authentication decorator (api_key_required)."""
 from datetime import timedelta
 from http import HTTPStatus
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
@@ -2120,6 +2121,322 @@ def _chat_post(client, token, model_name, stream):
         json={"model": model_name,
               "messages": [{"role": "user", "content": "hi"}], "stream": stream},
     )
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_api_chat_bills_cached_input(app, client, monkeypatch, test_user, test_model,
+                                     test_model_endpoint, api_key, fresh_rate_limit, stream):
+    from lumen.blueprints.api import routes
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    from lumen.models.request_log import RequestLog
+
+    token, _ = api_key
+    _allow_model(app, test_user, test_model)
+    with app.app_context():
+        model = db.session.get(ModelConfig, test_model["id"])
+        model.input_cost_per_million = 2
+        model.output_cost_per_million = 4
+        model.cached_input_cost_per_million = 0.5
+        db.session.commit()
+        model_cache.refresh(app)
+
+    usage = SimpleNamespace(prompt_tokens=1_000_000, completion_tokens=100_000,
+                            prompt_tokens_details=SimpleNamespace(cached_tokens=250_000))
+    if stream:
+        chunk = _UsageChunk()
+        chunk.usage = usage
+        _capturing_openai(monkeypatch, routes, lambda **kw: iter([chunk]))
+    else:
+        response = _NonStreamResponse()
+        response.usage = usage
+        _capturing_openai(monkeypatch, routes, lambda **kw: response)
+
+    result = _chat_post(client, token, test_model["model_name"], stream)
+    assert result.status_code == HTTPStatus.OK
+    if stream:
+        assert "data: [DONE]" in result.get_data(as_text=True)
+    with app.app_context():
+        log = db.session.execute(select(RequestLog).filter_by(entity_id=test_user["id"])).scalar_one()
+        assert float(log.cost) == pytest.approx(2.025)
+        assert log.input_tokens == 1_000_000
+        # The split the cost came from is recorded too, so the stored cost can be
+        # checked against the tokens later.
+        assert log.cached_input_tokens == 250_000
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_api_chat_bills_cache_write(app, client, monkeypatch, test_user, test_model,
+                                    test_model_endpoint, api_key, fresh_rate_limit, stream):
+    from lumen.blueprints.api import routes
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    from lumen.models.request_log import RequestLog
+
+    token, _ = api_key
+    _allow_model(app, test_user, test_model)
+    with app.app_context():
+        model = db.session.get(ModelConfig, test_model["id"])
+        model.input_cost_per_million = 2
+        model.output_cost_per_million = 4
+        model.cached_input_cost_per_million = 0.5
+        model.cache_write_cost_per_million = 0.25
+        db.session.commit()
+        model_cache.refresh(app)
+
+    usage = SimpleNamespace(prompt_tokens=1_000_000, completion_tokens=100_000,
+                            prompt_tokens_details=SimpleNamespace(cached_tokens=250_000,
+                                                                  cache_creation_input_tokens=125_000))
+    if stream:
+        chunk = _UsageChunk()
+        chunk.usage = usage
+        _capturing_openai(monkeypatch, routes, lambda **kw: iter([chunk]))
+    else:
+        response = _NonStreamResponse()
+        response.usage = usage
+        _capturing_openai(monkeypatch, routes, lambda **kw: response)
+
+    result = _chat_post(client, token, test_model["model_name"], stream)
+    assert result.status_code == HTTPStatus.OK
+    if stream:
+        assert "data: [DONE]" in result.get_data(as_text=True)
+    with app.app_context():
+        log = db.session.execute(select(RequestLog).filter_by(entity_id=test_user["id"])).scalar_one()
+        assert float(log.cost) == pytest.approx(1.80625)
+        assert log.input_tokens == 1_000_000
+        assert log.cached_input_tokens == 250_000
+        assert log.cache_write_tokens == 125_000
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_api_chat_records_anthropic_style_usage_at_the_same_totals(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, fresh_rate_limit, stream,
+):
+    """An Anthropic-style usage object leaves the cached parts out of
+    ``input_tokens``. Normalized, it records the same prompt total and the same
+    split an OpenAI-style object would, so the stored metrics (and the stats
+    built from them) mean one thing whatever backend answered."""
+    from lumen.blueprints.api import routes
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    from lumen.models.request_log import RequestLog
+
+    token, _ = api_key
+    _allow_model(app, test_user, test_model)
+    with app.app_context():
+        model = db.session.get(ModelConfig, test_model["id"])
+        model.input_cost_per_million = 2
+        model.output_cost_per_million = 4
+        model.cached_input_cost_per_million = 0.5
+        model.cache_write_cost_per_million = 0.25
+        db.session.commit()
+        model_cache.refresh(app)
+
+    # 625k ordinary + 250k read + 125k written = the 1M prompt the OpenAI-style
+    # object in test_api_chat_bills_cache_write reports as prompt_tokens.
+    usage = SimpleNamespace(input_tokens=625_000, output_tokens=100_000,
+                            cache_read_input_tokens=250_000,
+                            cache_creation_input_tokens=125_000)
+    if stream:
+        chunk = _UsageChunk()
+        chunk.usage = usage
+        _capturing_openai(monkeypatch, routes, lambda **kw: iter([chunk]))
+    else:
+        response = _NonStreamResponse()
+        response.usage = usage
+        _capturing_openai(monkeypatch, routes, lambda **kw: response)
+
+    result = _chat_post(client, token, test_model["model_name"], stream)
+    assert result.status_code == HTTPStatus.OK
+    if stream:
+        assert "data: [DONE]" in result.get_data(as_text=True)
+    with app.app_context():
+        log = db.session.execute(select(RequestLog).filter_by(entity_id=test_user["id"])).scalar_one()
+        assert float(log.cost) == pytest.approx(1.80625)
+        assert log.input_tokens == 1_000_000
+        assert log.cached_input_tokens == 250_000
+        assert log.cache_write_tokens == 125_000
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_api_chat_bills_cache_write_without_a_cached_rate(app, client, monkeypatch, test_user, test_model,
+                                                          test_model_endpoint, api_key, fresh_rate_limit, stream):
+    """A model may price writes only. The unset read rate must bill those tokens
+    at the input price instead of raising after the upstream already served the
+    request, which would leave it unlogged and free."""
+    from lumen.blueprints.api import routes
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    from lumen.models.request_log import RequestLog
+
+    token, _ = api_key
+    _allow_model(app, test_user, test_model)
+    with app.app_context():
+        model = db.session.get(ModelConfig, test_model["id"])
+        model.input_cost_per_million = 2
+        model.output_cost_per_million = 4
+        model.cached_input_cost_per_million = None
+        model.cache_write_cost_per_million = 0.25
+        db.session.commit()
+        model_cache.refresh(app)
+
+    usage = SimpleNamespace(prompt_tokens=1_000_000, completion_tokens=100_000,
+                            prompt_tokens_details=SimpleNamespace(cached_tokens=250_000,
+                                                                  cache_creation_input_tokens=125_000))
+    if stream:
+        chunk = _UsageChunk()
+        chunk.usage = usage
+        _capturing_openai(monkeypatch, routes, lambda **kw: iter([chunk]))
+    else:
+        response = _NonStreamResponse()
+        response.usage = usage
+        _capturing_openai(monkeypatch, routes, lambda **kw: response)
+
+    result = _chat_post(client, token, test_model["model_name"], stream)
+    assert result.status_code == HTTPStatus.OK
+    if stream:
+        # Draining the stream is what runs the billing path for a streamed reply.
+        assert "data: [DONE]" in result.get_data(as_text=True)
+    with app.app_context():
+        log = db.session.execute(select(RequestLog).filter_by(entity_id=test_user["id"])).scalar_one()
+        assert float(log.cost) == pytest.approx(2.18125)
+        assert log.cached_input_tokens == 250_000
+        assert log.cache_write_tokens == 125_000
+
+
+def test_api_completions_reports_and_bills_cached_input(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, fresh_rate_limit,
+):
+    """The legacy endpoint rebuilds its ``usage`` object instead of forwarding
+    the upstream's, so it must restate the cached-prompt breakdown: a
+    cache-aware client prices whatever it is told, and without the breakdown it
+    would charge the whole prompt at the input rate and disagree with the bill."""
+    from lumen.blueprints.api import routes
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    from lumen.models.request_log import RequestLog
+
+    token, _ = api_key
+    _allow_model(app, test_user, test_model)
+    with app.app_context():
+        model = db.session.get(ModelConfig, test_model["id"])
+        model.input_cost_per_million = 2
+        model.output_cost_per_million = 4
+        model.cached_input_cost_per_million = 0.5
+        db.session.commit()
+        model_cache.refresh(app)
+
+    class _CompletionResponse:
+        id = "cmpl-cached"
+        created = 0
+        model = "upstream-name"
+        usage = SimpleNamespace(prompt_tokens=1_000_000, completion_tokens=100_000,
+                                total_tokens=1_100_000,
+                                prompt_tokens_details=SimpleNamespace(cached_tokens=250_000))
+        choices = [SimpleNamespace(message=SimpleNamespace(content="hi"), finish_reason="stop")]
+
+    _capturing_openai(monkeypatch, routes, lambda **kw: _CompletionResponse())
+
+    result = client.post(
+        "/v1/completions", headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"], "prompt": "hi"},
+    )
+    assert result.status_code == HTTPStatus.OK
+    assert result.get_json()["usage"] == {
+        "prompt_tokens": 1_000_000,
+        "completion_tokens": 100_000,
+        "total_tokens": 1_100_000,
+        "prompt_tokens_details": {
+            "cached_tokens": 250_000,
+        },
+    }
+    with app.app_context():
+        log = db.session.execute(select(RequestLog).filter_by(entity_id=test_user["id"])).scalar_one()
+        assert float(log.cost) == pytest.approx(2.025)
+        # Nothing reported a cache write, and the remainder of the prompt is
+        # not one: it bills as ordinary input and stays unrecorded.
+        assert log.cache_write_tokens is None
+
+
+def test_api_completions_reports_and_bills_cache_write(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, fresh_rate_limit,
+):
+    """The legacy endpoint restates the creation count too, priced with the rate."""
+    from lumen.blueprints.api import routes
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    from lumen.models.request_log import RequestLog
+
+    token, _ = api_key
+    _allow_model(app, test_user, test_model)
+    with app.app_context():
+        model = db.session.get(ModelConfig, test_model["id"])
+        model.input_cost_per_million = 2
+        model.output_cost_per_million = 4
+        model.cached_input_cost_per_million = 0.5
+        model.cache_write_cost_per_million = 0.25
+        db.session.commit()
+        model_cache.refresh(app)
+
+    class _CompletionResponse:
+        id = "cmpl-cachewrite"
+        created = 0
+        model = "upstream-name"
+        usage = SimpleNamespace(
+            prompt_tokens=1_000_000, completion_tokens=100_000, total_tokens=1_100_000,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=250_000,
+                                                  cache_creation_input_tokens=125_000))
+        choices = [SimpleNamespace(message=SimpleNamespace(content="hi"), finish_reason="stop")]
+
+    _capturing_openai(monkeypatch, routes, lambda **kw: _CompletionResponse())
+
+    result = client.post(
+        "/v1/completions", headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"], "prompt": "hi"},
+    )
+    assert result.status_code == HTTPStatus.OK
+    assert result.get_json()["usage"] == {
+        "prompt_tokens": 1_000_000,
+        "completion_tokens": 100_000,
+        "total_tokens": 1_100_000,
+        "prompt_tokens_details": {
+            "cached_tokens": 250_000,
+            "cache_creation_input_tokens": 125_000,
+        },
+    }
+    with app.app_context():
+        log = db.session.execute(select(RequestLog).filter_by(entity_id=test_user["id"])).scalar_one()
+        assert float(log.cost) == pytest.approx(1.80625)
+        assert log.cache_write_tokens == 125_000
+
+
+def test_api_completions_omits_the_breakdown_without_cache_fields(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, fresh_rate_limit,
+):
+    """No cache count reported: the rebuilt usage carries no breakdown, because
+    the endpoint only restates what the upstream sent."""
+    from lumen.blueprints.api import routes
+
+    token, _ = api_key
+    _allow_model(app, test_user, test_model)
+
+    class _CompletionResponse:
+        id = "cmpl-plain"
+        created = 0
+        model = "upstream-name"
+        usage = SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+        choices = [SimpleNamespace(message=SimpleNamespace(content="hi"), finish_reason="stop")]
+
+    _capturing_openai(monkeypatch, routes, lambda **kw: _CompletionResponse())
+
+    result = client.post(
+        "/v1/completions", headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"], "prompt": "hi"},
+    )
+    assert result.status_code == HTTPStatus.OK
+    assert result.get_json()["usage"] == {
+        "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15,
+    }
 
 
 def test_non_streaming_chat_client_is_bounded(

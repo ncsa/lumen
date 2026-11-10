@@ -78,7 +78,8 @@ def test_cli_multimodal_enabled_adds_image():
     assert changes["input_modalities"] == (["text"], ["text", "image"])
 
 
-_DEV_PRICED = {"id": "p/m", "cost": {"input": 5.0, "output": 15.0}}
+_DEV_PRICED = {"id": "p/m", "cost": {"input": 5.0, "output": 15.0,
+                              "cache_read": 0.6, "cache_write": 1.2}}
 
 
 def _price_changes(model_def):
@@ -102,6 +103,23 @@ def test_cli_manual_price_untouched(flag):
                               "output_cost_per_million": 2.0, **flag})
     assert "input_cost_per_million" not in changes
     assert "output_cost_per_million" not in changes
+
+
+def test_cli_auto_cache_price_updates_cache_prices():
+    """auto_cache_price: true lets the CLI propose models.dev cache rates too."""
+    changes = _price_changes({"auto_cache_price": True, "cached_input_cost_per_million": None,
+                              "cache_write_cost_per_million": None})
+    assert changes["cached_input_cost_per_million"] == (None, 0.6)
+    assert changes["cache_write_cost_per_million"] == (None, 1.2)
+
+
+@pytest.mark.parametrize("flag", [{}, {"auto_cache_price": False}, {"auto_cache_price": "yes"}, {"auto_cache_price": 1}])
+def test_cli_manual_cache_price_untouched(flag):
+    """Without auto_cache_price: true, the CLI never proposes a cache price change."""
+    changes = _price_changes({"cached_input_cost_per_million": 0.1,
+                              "cache_write_cost_per_million": 0.2, **flag})
+    assert "cached_input_cost_per_million" not in changes
+    assert "cache_write_cost_per_million" not in changes
 
 
 # ── supports_reasoning: models.dev provider consensus ──────────────────────────

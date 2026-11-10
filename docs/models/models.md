@@ -14,6 +14,7 @@ If a model you need is not listed, tools such as [LLMHub](https://llmhub.compute
 | **Input** | What the model accepts, one pill per modality (text, image, audio) — a dash means the instance hasn't published modality info |
 | **Coins / 1M tokens — Input** | Cost per million input tokens |
 | **Coins / 1M tokens — Output** | Cost per million output tokens |
+| **Coins / 1M tokens — Cache read / write** | Cost per million tokens for prompt-cache reads and writes, in that order. A cache rate the model does not configure is billed at the input price, so the column always shows what you are actually charged |
 | **Checked** | How long ago the most recent health check ran (e.g. `5 min. ago`); hover over or tab to it for the full date and time. It updates every minute while the page is open. **Never** means no check has run yet |
 | **Status** | Current availability (see below), followed by how many of the model's backend servers are currently reachable out of the total configured (e.g. **ok** `4/4`, **degraded** `2/4`) |
 | **Access** | Whether you must acknowledge the model's terms before use, or **granted** once you have (see below) |
@@ -35,5 +36,7 @@ In the **Access** column, models that require a one-time acknowledgment show an 
 ## Understanding Pricing
 
 Coins are Lumen's internal currency. See the [Introduction](../introduction.md#tokens-and-coins) for a full explanation of how tokens and coins relate. The prices shown here are per million tokens — typical single messages cost a small fraction of that.
+
+Prompt-cache reads and writes are priced separately when a model configures those rates; with no cache rate, the matching tokens are charged the normal input price, which is the figure the cache column shows.
 
 Models with higher output rates tend to be more capable or larger. If you are cost-sensitive, compare models on the detail page before running a long batch job.

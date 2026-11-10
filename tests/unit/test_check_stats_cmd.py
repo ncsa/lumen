@@ -36,12 +36,14 @@ def ids(app):
 
 
 def _log(app, t, entity_id, model_id, source="api", input_tokens=10, output_tokens=5, audio_seconds=0, cost="0.5",
-         deferred=True):
+         deferred=True, cached_input_tokens=None, cache_write_tokens=None):
     """A request_logs row; ``deferred=False`` is one billing bumped itself (an old pod)."""
     with app.app_context():
         db.session.add(RequestLog(
             time=t.replace(tzinfo=timezone.utc), entity_id=entity_id, model_config_id=model_id, source=source,
             input_tokens=input_tokens, output_tokens=output_tokens, audio_seconds=audio_seconds,
+            cached_input_tokens=cached_input_tokens,
+            cache_write_tokens=cache_write_tokens,
             cost=Decimal(cost), duration=0.0, stats_deferred=True if deferred else None,
         ))
         db.session.commit()
@@ -138,6 +140,60 @@ def test_detects_a_late_commit_and_fix_repairs_it(app, ids):
     # The next pass starts at folded_until, so the repaired row is not counted again.
     _fold_to(app, FOLDED + timedelta(minutes=10))
     assert _totals(app, entity_id) == [model, entity]
+
+
+def test_cached_tokens_take_part_in_the_check_and_its_fix(app, ids):
+    """The cached total is compared and repaired like every other total."""
+    entity_id, model_id = ids
+    _cut_over_with_history(app, entity_id, model_id)
+    _log(app, CUTOVER, entity_id, model_id, cached_input_tokens=250)
+    _fold_to(app, FOLDED)
+
+    with app.app_context():
+        model = db.session.execute(select(ModelStat).filter_by(entity_id=entity_id)).scalar_one()
+        assert (model.cached_input_tokens, model.folded_cached_input_tokens) == (250, 250)
+    assert _check(app).exit_code == 0
+
+    # A row stamped inside the folded window: drift in the cached total too.
+    late = FOLDED - timedelta(seconds=1)
+    _log(app, late, entity_id, model_id, input_tokens=3, cached_input_tokens=2, cost="0.125")
+    result = _check(app)
+    assert result.exit_code == 1, result.output
+    assert "cached_input_tokens +2" in result.output
+
+    result = _check(app, "--fix")
+    assert result.exit_code == 0, result.output
+    with app.app_context():
+        model = db.session.execute(select(ModelStat).filter_by(entity_id=entity_id)).scalar_one()
+        assert (model.cached_input_tokens, model.folded_cached_input_tokens) == (252, 252)
+
+
+def test_cache_write_tokens_take_part_in_the_check_and_its_fix(app, ids):
+    """The write total is compared and repaired like every other total."""
+    entity_id, model_id = ids
+    _cut_over_with_history(app, entity_id, model_id)
+    _log(app, CUTOVER, entity_id, model_id, cached_input_tokens=250, cache_write_tokens=125)
+    _fold_to(app, FOLDED)
+
+    with app.app_context():
+        model = db.session.execute(select(ModelStat).filter_by(entity_id=entity_id)).scalar_one()
+        assert (model.cache_write_tokens, model.folded_cache_write_tokens) == (125, 125)
+    assert _check(app).exit_code == 0
+
+    # A row stamped inside the folded window: drift in the write total too.
+    late = FOLDED - timedelta(seconds=1)
+    _log(app, late, entity_id, model_id, input_tokens=3, cached_input_tokens=2, cache_write_tokens=1, cost="0.125")
+    result = _check(app)
+    assert result.exit_code == 1, result.output
+    assert "cache_write_tokens +1" in result.output
+
+    result = _check(app, "--fix")
+    assert result.exit_code == 0, result.output
+    with app.app_context():
+        model = db.session.execute(select(ModelStat).filter_by(entity_id=entity_id)).scalar_one()
+        assert (model.cache_write_tokens, model.folded_cache_write_tokens) == (126, 126)
+    assert _check(app).exit_code == 0
+    assert _check(app).exit_code == 0
 
 
 def test_fix_creates_a_missing_row_and_removes_an_excess(app, ids):

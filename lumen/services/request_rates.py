@@ -144,3 +144,37 @@ def token_windows(model_config_id: int | None = None) -> dict:
         }
         for model_id, *sums in rows
     }
+
+
+def cache_reporting(model_config_id: int | None = None) -> dict:
+    """Return ``{model_config_id: {"requests": n, "reads": bool, "writes": bool}}``.
+
+    ``reads`` / ``writes`` say whether any request in the last day carried that
+    count, which is how the API separates a backend that reports cache metrics
+    from one that does not. The continuous aggregate has no cache columns, so
+    this reads raw ``request_logs``; only the monitor asks for it, and it is
+    cached in model_cache like the other counts. Models with no request in the
+    window are absent, so a caller can tell "no traffic" from "no cache data".
+    """
+    params = _windows(_now())
+    stmt = (
+        select(
+            RequestLog.model_config_id,
+            func.count(),
+            func.count().filter(RequestLog.cached_input_tokens.isnot(None)),
+            func.count().filter(RequestLog.cache_write_tokens.isnot(None)),
+        )
+        .where(
+            RequestLog.time >= params["day_start"],
+            RequestLog.time < params["next_minute"],
+            RequestLog.model_config_id.isnot(None),
+        )
+        .group_by(RequestLog.model_config_id)
+    )
+    if model_config_id is not None:
+        stmt = stmt.where(RequestLog.model_config_id == model_config_id)
+    rows = db.session.execute(stmt).all()
+    return {
+        model_id: {"requests": int(n), "reads": bool(reads), "writes": bool(writes)}
+        for model_id, n, reads, writes in rows
+    }

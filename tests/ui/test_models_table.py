@@ -36,9 +36,9 @@ def test_coin_columns_grouped_under_one_header(auth_client, test_model):
     top, sub = thead.find_all("tr")
     group = top.find("th", string="Coins / 1M tokens")
     assert group is not None
-    assert group["colspan"] == "2"
+    assert group["colspan"] == "3"
     assert group["scope"] == "colgroup"
-    assert [th.get_text(strip=True) for th in sub.find_all("th")] == ["Input", "Output"]
+    assert [th.get_text(strip=True) for th in sub.find_all("th")] == ["Input", "Output", "Cache read / write"]
     for th in sub.find_all("th"):
         assert th["scope"] == "col"
         assert "text-end" in th["class"]

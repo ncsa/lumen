@@ -101,7 +101,8 @@ def current_models(session: Session, snapshot: LiveSnapshot | None) -> tuple[dat
     rows = session.execute(select(Sample).where(Sample.sampled_at == last).order_by(Sample.model)).scalars().all()
     return last, [
         {"id": s.model, "description": None, "status": s.status, "configured": s.configured, "healthy": s.healthy,
-         "input_price": None, "output_price": None, "requests": None, "tokens": None}
+         "input_price": None, "output_price": None, "cached_input_price": None, "cache_write_price": None,
+         "cache_metrics": None, "requests": None, "tokens": None}
         for s in rows
     ]
 
@@ -202,6 +203,25 @@ def _latest(session: Session, source: str, column, models: list[str]) -> dict[st
     )
     stmt = select(DailyStat).join(newest, (DailyStat.model == newest.c.model) & (DailyStat.day == newest.c.day)).where(DailyStat.source == source)
     return {r.model: r for r in session.execute(stmt).scalars().all()}
+
+
+def _cache_warning(cached_price, write_price, metrics) -> dict | None:
+    """Which configured cache prices the backend has not reported, if any.
+
+    A backend that reports no cache count (SGLang reports reads but no writes)
+    has those tokens billed at the input price, so a price configured for the
+    missing side cannot charge what the admin expects — the table marks it.
+    `metrics` is Lumen's last-day report: no traffic means no verdict, and an
+    older Lumen that does not send the field yields no warning rather than a
+    guess.
+    """
+    if not isinstance(metrics, dict) or not metrics.get("requests"):
+        return None
+    warning = {
+        "reads": cached_price is not None and not metrics.get("reads"),
+        "writes": write_price is not None and not metrics.get("writes"),
+    }
+    return warning if warning["reads"] or warning["writes"] else None
 
 
 def counted_fraction(row: DailyStat, column: str, tz) -> float:
@@ -313,6 +333,8 @@ def model_rows(session: Session, config: Config, rng: Range, now: datetime, mode
     elif stats is None:
         stats = _short_range_stats(session, make_grid(rng, config.refresh.web, now, tz), now - rng.span, now, ids)
     prices = _latest(session, "lumen", DailyStat.input_price, ids)
+    cached_prices = _latest(session, "lumen", DailyStat.cached_input_price, ids)
+    write_prices = _latest(session, "lumen", DailyStat.cache_write_price, ids)
     modelsdev = _latest(session, "models.dev", DailyStat.input_median, ids)
     hardware = _latest(session, "hardware", DailyStat.daily_cost, ids)
 
@@ -320,10 +342,14 @@ def model_rows(session: Session, config: Config, rng: Range, now: datetime, mode
     for m in models:
         model_id = m["id"]
         price = prices.get(model_id)
+        cached_price = cached_prices.get(model_id)
+        write_price = write_prices.get(model_id)
         dev = modelsdev.get(model_id)
         hw = hardware.get(model_id)
         input_price = m.get("input_price") if m.get("input_price") is not None else (price.input_price if price else None)
         output_price = m.get("output_price") if m.get("output_price") is not None else (price.output_price if price else None)
+        cached_input_price = m.get("cached_input_price") if m.get("cached_input_price") is not None else (cached_price.cached_input_price if cached_price else None)
+        cache_write_price = m.get("cache_write_price") if m.get("cache_write_price") is not None else (write_price.cache_write_price if write_price else None)
         table.append({
             "id": model_id,
             "description": m.get("description"),
@@ -333,6 +359,9 @@ def model_rows(session: Session, config: Config, rng: Range, now: datetime, mode
             "configured": m.get("configured"),
             "input_price": input_price,
             "output_price": output_price,
+            "cached_input_price": cached_input_price,
+            "cache_write_price": cache_write_price,
+            "cache_warning": _cache_warning(cached_input_price, cache_write_price, m.get("cache_metrics")),
             "modelsdev_input_median": dev.input_median if dev else None,
             "modelsdev_input_p5": dev.input_p5 if dev else None,
             "modelsdev_input_p95": dev.input_p95 if dev else None,

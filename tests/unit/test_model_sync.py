@@ -219,6 +219,54 @@ def test_no_price_update_when_all_zero(monkeypatch):
     assert "output_cost_per_million" not in result["updates"]
 
 
+def test_cache_prices_filled_by_auto_cache_price(monkeypatch):
+    """auto_cache_price: true pulls the models.dev cache rates in too."""
+    dev_models = [
+        {"id": "openai/gpt-4o", "cost": {"input": 2.5, "output": 10, "cache_read": 0.4, "cache_write": 0.8}},
+        {"id": "azure/gpt-4o", "cost": {"input": 3.5, "output": 12, "cache_read": 0.6, "cache_write": 1.2}},
+    ]
+    _patch_price(monkeypatch, dev_models, dev_models[0])
+    result = model_sync.sync_model({
+        "name": "gpt-4o", "auto_price": True, "auto_cache_price": True,
+        "cached_input_cost_per_million": 0,
+        "cache_write_cost_per_million": 0,
+        "endpoints": [{"url": "http://x"}],
+    })
+    assert result["updates"]["cached_input_cost_per_million"] == 0.5  # mean(0.4, 0.6)
+    assert result["updates"]["cache_write_cost_per_million"] == 1.0  # mean(0.8, 1.2)
+
+
+@pytest.mark.parametrize("flag", [{}, {"auto_cache_price": False}])
+def test_cache_price_kept_without_auto_cache_price(monkeypatch, flag):
+    """Cache rates are a separate opt-in: plain auto_price leaves them alone."""
+    dev_models = [{"id": "p/m", "cost": {"input": 5.0, "output": 15.0,
+                                          "cache_read": 0.5, "cache_write": 1.0}}]
+    _patch_price(monkeypatch, dev_models, dev_models[0])
+    result = model_sync.sync_model({
+        "name": "m", "auto_price": True,
+        "cached_input_cost_per_million": 0.1,
+        "cache_write_cost_per_million": 0.2,
+        "endpoints": [{"url": "http://x"}],
+        **flag,
+    })
+    assert "cached_input_cost_per_million" not in result["updates"]
+    assert "cache_write_cost_per_million" not in result["updates"]
+
+
+def test_cache_price_untouched_without_a_modelsdev_rate(monkeypatch):
+    """No cache rates listed on models.dev → operator values are preserved."""
+    dev_models = [{"id": "p/m", "cost": {"input": 5.0, "output": 15.0}}]
+    _patch_price(monkeypatch, dev_models, dev_models[0])
+    result = model_sync.sync_model({
+        "name": "m", "auto_cache_price": True,
+        "cached_input_cost_per_million": 0.1,
+        "cache_write_cost_per_million": 0.2,
+        "endpoints": [{"url": "http://x"}],
+    })
+    assert "cached_input_cost_per_million" not in result["updates"]
+    assert "cache_write_cost_per_million" not in result["updates"]
+
+
 def test_price_overwrites_stale_operator_value(monkeypatch):
     """With auto_price, a trusted match corrects a stale/zero operator-set price."""
     dev_models = [{"id": "p/m", "cost": {"input": 5.0, "output": 15.0}}]
