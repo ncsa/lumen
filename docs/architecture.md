@@ -109,6 +109,7 @@ lumen/                   # Main Python package
 │   ├── auth/
 │   ├── chat/
 │   ├── api/             # OpenAI-compatible /v1 routes
+│   ├── anthropic/       # Anthropic Messages /v1/messages, translated to the api routes
 │   ├── admin/
 │   ├── projects/
 │   ├── profile/
@@ -171,6 +172,7 @@ The app factory (`create_app`) wires all layers together: it initialises extensi
 | `auth` | `/` | Landing page, OAuth2 login/callback/logout, group auto-assignment |
 | `chat` | `/chat` | Web chat UI (SSE streaming) + conversation management |
 | `api` | `/v1` | OpenAI-compatible completions, models, and embeddings endpoints |
+| `anthropic` | `/v1/messages` | Anthropic Messages API, translated to and from the `api` chat path |
 | `admin` | `/admin` | User/project management, analytics dashboard |
 | `projects` | `/projects` | Service account & API key management |
 | `profile` | `/profile` | Personal API keys, usage stats |
@@ -197,7 +199,16 @@ Every request through `@api_key_required`:
 3. Enforces rate limits (Flask-Limiter, per authenticated entity)
 4. After response: logs to `RequestLog`, deducts coins, updates `ModelStat` and `EntityStat`
 
-A CORS preflight (`OPTIONS`) is answered `204` by the blueprint before any of these steps, and every `/v1` response, errors and streams included, carries `Access-Control-Allow-Origin: *` so browser apps can call the API (see the [API reference](guides/api-reference.md#cors-browser-apps)).
+A CORS preflight (`OPTIONS`) is answered `204` by the blueprint before any of these steps, and every `/v1` response, errors and streams included, carries `Access-Control-Allow-Origin: *` so browser apps can call the API (see the [API reference](guides/api-reference.md#cors-browser-apps)). The preflight and the allowed headers cover the `api` blueprint only, so browsers cannot call `/v1/messages`.
+
+### Anthropic Messages API (`/v1/messages`)
+
+```
+POST /v1/messages              → Anthropic Messages, stream/non-stream
+POST /v1/messages/count_tokens → character-based prompt estimate (not billed)
+```
+
+The `anthropic` blueprint translates each request to an OpenAI chat request (`services/anthropic_protocol.py`) and calls the `api` blueprint's `_complete_and_bill` and `_do_chat`, so access, budget, rate limits, endpoint selection, billing and `RequestLog` are the chat completions path's. The response or SSE stream is translated back. Keys are read from `x-api-key` or `Authorization: Bearer`. User-facing details are in `docs/guides/anthropic.md`.
 
 The chat blueprint's `/chat/<id>/message` SSE endpoint is functionally a web-UI wrapper around the same proxy logic; it reuses access control and coin deduction from `services/llm.py`.
 
@@ -352,9 +363,41 @@ Keys are HMAC-SHA256 hashed (using `LUMEN_ENCRYPTION_KEY`) before storage. The `
 Coins are a virtual currency unit (not 1:1 with tokens or dollars). Cost is computed as:
 
 ```
-cost_usd = (input_tokens / 1_000_000 × input_cost_per_million)
+cost_usd = (uncached_input_tokens / 1_000_000 × input_cost_per_million)
+         + (cached_input_tokens / 1_000_000 × cached_input_cost_per_million)
+         + (cache_write_tokens / 1_000_000 × cache_write_cost_per_million)
          + (output_tokens / 1_000_000 × output_cost_per_million)
 ```
+
+The two input terms split the upstream's prompt total using the counts it reports (`prompt_tokens_details.cached_tokens`, or the top-level `cached_tokens` variant; the write spellings are listed below); a backend that reports neither has no cached or written part, so its whole prompt falls to the input term. Lumen analyzes usage in either API family: OpenAI-style `prompt_tokens` is already the total (ordinary + cached + written), while Anthropic-style `input_tokens` counts only the ordinary part, so Lumen adds `cache_read_input_tokens` and `cache_creation_input_tokens` to recover the same total. Both families therefore record the same `input_tokens`, `cached_input_tokens` and `cache_write_tokens` for the same traffic. When `cached_input_cost_per_million` is unset, cached input is billed at the input rate too, and `cache_write_cost_per_million` does the same for written tokens, so a config without the new keys collapses into the original formula and no existing price changes. The input total recorded in `request_logs` stays the full prompt (cached tokens included): the split is carried by its own columns, not by shrinking the input total.
+
+Cache rates are per-side: `cached_input_cost_per_million` prices the cached part of the prompt and `cache_write_cost_per_million` prices prompt-cache writes (`prompt_tokens_details.cache_creation_input_tokens`, or vLLM's `created_cache_tokens` / `cache_write_tokens` at either level). Lumen bills writes **only** from a count the upstream reports and never infers one from the non-cached remainder: a backend with no cache-write accounting (SGLang today, which reports cache reads but no creation count) leaves `cache_write_tokens` NULL, and its non-cached prompt is billed at the input rate, exactly as if no write price were configured. Both rates default to the input rate when unset, so a config without the new keys keeps the previous price bit for bit. Nothing about other providers' cache semantics is assumed: Lumen prices what the upstream reports against the rates an admin sets.
+
+### Cached-token telemetry
+
+`request_logs.cached_input_tokens` stores the cached part of the prompt and `request_logs.cache_write_tokens` the prompt-cache write part (each NULL when there is nothing to record — an aborted request with no terminal usage object, a row from before the column existed, or a usage object that reported no cache count at all). A reported zero is recorded as 0, because it is the backend's statement that nothing was cached or written; a missing field is recorded as NULL, because it is the absence of a statement. That distinction is what tells the monitor whether a configured cache price is actually billing. `model_stats` and `entity_stats` carry running `cached_input_tokens` and `cache_write_tokens` totals plus their `folded_*` parts, and `flask check-stats` compares the fold's share with `request_logs` like any other total. Recording them is what makes a request's stored cost checkable: before this, `cost` was the only trace of the discount.
+
+One thing is deliberately **not** included, to be raised separately:
+
+* **The continuous aggregates** (`request_metrics_1m`, `request_counts_hourly_by_entity`) and therefore the usage charts and the monitor's `?tokens=true` windows. Adding a field to a continuous aggregate is a `DROP` + `CREATE ... WITH NO DATA` + full `refresh_continuous_aggregate` over the 13-month retention window — a one-time rebuild, but one that belongs to its own change rather than riding along with a schema addition. Until then, anything that recomputes cost from chart tokens × published rates **overstates** a request that had cache reads; `request_logs.cost` and the stats totals are authoritative.
+
+The load numbers behind that deferral (TimescaleDB 2.27/pg17, 2,000,000 request_logs rows in one chunk, ~94 B/row compacted): the `ADD COLUMN` is metadata-only at **2.8 ms** with no size change; NULL costs 0 bytes per row and a recorded count adds ~4 bytes (+2.6% on the compacted table); the fold's per-entity window aggregate over ~1.97M rows went from 199.0 ms to 203.4 ms with an **identical buffer count** (24,713), and the per-model variant stayed at ~247 ms. A backfill, if one were ever wanted, measured 27.4 s plus 4.6 s `VACUUM FULL`. The expensive part is the continuous-aggregate rebuild, not the column.
+
+Measured before/after on one dataset (2,000,000 request rows in a single chunk plus 400,000 appended, 800 `model_stats` / 20 `entity_stats` rows, both schemas measured on the same data):
+
+| Footprint | Before | After |
+|-----------|--------|-------|
+| `request_logs` heap / indexes / total | 214 MB / 176 MB / 390 MB | 214 MB / 176 MB / 390 MB |
+| Compressed chunk (table / index / toast / total) | 5.66 MB / 96 kB / 6.33 MB / 12.53 MB | identical |
+| `flask db upgrade` (whole command) | — | 1.9 s, compressed chunk included |
+| Appended rows, 200k | 8.91 s | 9.07 s with a count recorded (+1.8%) |
+| Row width, `pg_column_size` | 97 B (no count) | 104 B with a count (~+7 B; 0 B while NULL) |
+| `model_stats` / `entity_stats` row width | — | +16 B each (two bigints, ~13 kB over 800 model rows) |
+| Fold pass, 2.8M rows | 417–576 ms, `shared hit` 38,092 / 38,064 | 469–556 ms, **same buffers** |
+| `/metrics` | 18 families, 219 series | identical names, series and values |
+| `/profile` page | 50,326 B | 50,326 B |
+
+So the column costs nothing until a count is actually recorded, and nothing extra in I/O afterwards: the fold scans the same pages, the metrics and payloads are unchanged, and the only real growth is the ~7 bytes per row that carries the number — the price of not losing it.
 
 Coin values use sentinel semantics: `-2` = unlimited, `0` = blocked, positive = budget ceiling.
 

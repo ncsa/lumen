@@ -82,7 +82,8 @@ under `base_path` (restart after changing it). The overview has:
 - status cards: active models, healthy / configured instances, requests and tokens in the last
   hour and today (tokens show "—" until Lumen reports them);
 - the model table (canonical models only): a status strip, uptime (the share of buckets that
-  are ok), instances, our price, the models.dev median (p5–p95), hardware $/day and $/M tokens
+  are ok), instances, our price (input, output, and the cached-input / cache-write rates when
+  configured), the models.dev median (p5–p95), hardware $/day and $/M tokens
   (or $/request without token counts), peak req/min and Lumen's 24h requests and tokens.
   Columns sort on click; a row opens the model's detail page. HW $/day is the latest
   day's cost; HW $/M tok covers the selected range.
@@ -96,7 +97,9 @@ Across the dashboard:
   Hovering a cell that is not ok (degraded, down or no data) shows when its bucket starts, in
   local time (the day on 1y); a screen reader hears the first 5 such periods. `*` marks values
   that include days which are not yet `final` or are `estimated`; `†` marks a model without a
-  `models:` GPU entry.
+  `models:` GPU entry; `!` marks a cache price Lumen could not bill because the backend
+  reported no count for it in the last day (SGLang reports cache reads but no writes) — those
+  tokens were charged at the input price.
 - **1y status**: one bucket per local day. For a model: ok at 99% availability or more,
   degraded above 0%, down otherwise. For Lumen, from the probes still kept: ok when 99% or more
   of the day's probes were ok, down when none was up (failed, or more than `lumen.down_above`

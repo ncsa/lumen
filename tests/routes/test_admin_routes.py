@@ -771,6 +771,76 @@ def test_config_page_renders_auto_price_checkbox(admin_client):
     assert "function syncAutoPriceFields()" in html
 
 
+def test_config_page_renders_cached_input_price_box(admin_client):
+    """The model form has a Cached Input Cost box; unset rates default to the input price."""
+    html = admin_client.get("/admin/config").get_data(as_text=True)
+    assert "field('mdl-cached-in-cost','Cached Input Cost / 1M tokens ($)'," in html
+    assert "defaults to input price when unset" in html
+    assert re.search(r"m\.cached_input_cost_per_million\s*=\s*numVal\('mdl-cached-in-cost'\);", html)
+    # FIELD_LABELS covers the new key in the Update toast; audio pricing stays wired.
+    assert "cached_input_cost_per_million: 'cached input price'," in html
+    assert "syncAudioCostField()" in html
+
+
+def test_config_page_renders_cache_write_price_box(admin_client):
+    """The model form has a Cache Write Cost box, collected and labelled like its
+    cached-input twin."""
+    html = admin_client.get("/admin/config").get_data(as_text=True)
+    assert "field('mdl-cached-write-cost','Cache Write Cost / 1M tokens ($)'," in html
+    assert re.search(r"m\.cache_write_cost_per_million\s*=\s*numVal\('mdl-cached-write-cost'\);", html)
+    assert "cache_write_cost_per_million: 'cache write price'," in html
+
+
+def test_config_page_offers_cache_autofill_without_auto_price(admin_client):
+    """``auto_cache_price`` is its own opt-in: the checkbox is always offered, so
+    a model can keep hand-set plain prices while models.dev maintains the cache
+    rates, and saving cannot drop a stored ``auto_cache_price: true``."""
+    html = admin_client.get("/admin/config").get_data(as_text=True)
+    assert "cbi('mdl-autocacheprice', !!m.auto_cache_price, 'Automatic cache pricing (from models.dev)'" in html
+    assert re.search(r"m\.auto_cache_price\s*=\s*boolVal\('mdl-autocacheprice'\)", html)
+    # No wrapper that hides it, and no code that clears it when auto_price is off.
+    assert "mdl-autocacheprice-wrap" not in html
+    assert "cb.checked = false" not in html
+
+
+def test_config_post_round_trips_auto_cache_price(app, admin_client, tmp_path):
+    """A model ticked for cache autofill keeps that flag on save, even without
+    ``auto_price`` — the two opt-ins are independent."""
+    config = """\
+version: 3
+app:
+  name: Lumen
+  secret_key: real-secret
+models:
+  - name: cache-auto-model
+    input_cost_per_million: 1
+    output_cost_per_million: 2
+    auto_cache_price: true
+    endpoints:
+      - url: https://api.example.com/v1
+        api_key: sk-real
+  - name: manual-model
+    input_cost_per_million: 3
+    output_cost_per_million: 4
+    endpoints:
+      - url: https://api.example.com/v1
+        api_key: sk-real
+"""
+    original, cfg = _use_config(app, tmp_path, config)
+    try:
+        data = admin_client.get("/admin/api/config").get_json()
+        assert data["models"][0]["auto_cache_price"] is True
+        assert "auto_price" not in data["models"][0]
+        resp = admin_client.post("/admin/api/config", json=data)
+        assert resp.status_code == HTTPStatus.OK
+        saved = yaml.safe_load(cfg.read_text())
+        assert saved["models"][0]["auto_cache_price"] is True
+        assert "auto_price" not in saved["models"][0]
+        assert "auto_cache_price" not in saved["models"][1]
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
 def test_config_post_round_trips_auto_price(app, admin_client, tmp_path):
     """Saving writes ``auto_price: true`` for ticked models and omits it for the rest."""
     config = """\
@@ -803,6 +873,42 @@ models:
         saved = yaml.safe_load(cfg.read_text())
         assert saved["models"][0]["auto_price"] is True
         assert "auto_price" not in saved["models"][1]
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
+def test_config_post_round_trips_cached_input_price(app, admin_client, tmp_path):
+    """A model's cached input rate survives a save; unset models stay without the key."""
+    config = """\
+version: 3
+app:
+  name: Lumen
+  secret_key: real-secret
+models:
+  - name: cached-model
+    input_cost_per_million: 1
+    output_cost_per_million: 2
+    cached_input_cost_per_million: 0.1
+    endpoints:
+      - url: https://api.example.com/v1
+        api_key: sk-real
+  - name: plain-model
+    input_cost_per_million: 3
+    output_cost_per_million: 4
+    endpoints:
+      - url: https://api.example.com/v1
+        api_key: sk-real
+"""
+    original, cfg = _use_config(app, tmp_path, config)
+    try:
+        data = admin_client.get("/admin/api/config").get_json()
+        assert data["models"][0]["cached_input_cost_per_million"] == 0.1
+        assert "cached_input_cost_per_million" not in data["models"][1]
+        resp = admin_client.post("/admin/api/config", json=data)
+        assert resp.status_code == HTTPStatus.OK
+        saved = yaml.safe_load(cfg.read_text())
+        assert saved["models"][0]["cached_input_cost_per_million"] == 0.1
+        assert "cached_input_cost_per_million" not in saved["models"][1]
     finally:
         app.config["CONFIG_YAML"] = original
 

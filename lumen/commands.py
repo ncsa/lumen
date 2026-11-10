@@ -184,6 +184,8 @@ def _normalize_knowledge_cutoff(value, model_name=None):
 
 def _apply_model_fields(config, model_def):
     config.input_cost_per_million = model_def["input_cost_per_million"]
+    config.cached_input_cost_per_million = model_def.get("cached_input_cost_per_million")
+    config.cache_write_cost_per_million = model_def.get("cache_write_cost_per_million")
     config.output_cost_per_million = model_def["output_cost_per_million"]
     if "audio_cost_per_hour" in model_def:
         config.audio_cost_per_hour = model_def["audio_cost_per_hour"]
