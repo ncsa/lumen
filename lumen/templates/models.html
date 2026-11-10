@@ -99,6 +99,15 @@
     </tbody>
   </table>
 </div>
+{% if config.LLMHUB_URL %}
+<div class="alert alert-info d-flex flex-wrap align-items-center gap-2 mb-0" role="note">
+  <i class="bi bi-rocket-takeoff-fill fs-5" aria-hidden="true"></i>
+  <span class="me-auto"><strong>Want a model that’s not listed?</strong> Launch your own on LLMHub.</span>
+  <a class="btn btn-outline-primary btn-sm" style="font-size: inherit;" href="{{ config.LLMHUB_URL }}" target="_blank" rel="noopener noreferrer">
+    Go to LLMHub <i class="bi bi-box-arrow-up-right ms-1" style="font-size: .7em;" aria-hidden="true"></i><span class="visually-hidden"> (opens in a new tab)</span>
+  </a>
+</div>
+{% endif %}
 </ilw-content>
 {% include '_ack_modal.html' %}
 {% endblock %}

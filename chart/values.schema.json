@@ -103,6 +103,7 @@
         "name": { "type": "string" },
         "tagline": { "type": "string" },
         "announcement": { "type": "string" },
+        "llmhubUrl": { "type": "string" },
         "emailThemes": { "type": "object" },
         "logs": {
           "type": "object",

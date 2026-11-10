@@ -17,6 +17,7 @@ These are the core settings that make Lumen work: database, authentication, and 
 | `diagnostics` | Optional (default: `true`) — stack-capturing DB/context diagnostics (connection-pool checkout tracking and app-context probes, surfaced via `/metrics/debug`). Set to `false` to remove the per-request capture overhead. Restart required. |
 | `theme` | Institutional theme. Themes live in `themes/<name>/`. Built-in: `default`, `illinois`, `uic`, `uis`. Falls back to `default` if not found. |
 | `github_url` | Optional — overrides the default GitHub link in the navbar |
+| `llmhub_url` | Optional — when set, the Models page links here so users can launch models that are not listed; unset hides the link |
 | `config_editor` | Optional (default: `true`) — when `false`, the `/admin/config` editor is read-only. Set this for git-managed configs that should only change through version control. The Helm chart sets it to `false`. |
 
 > The global acknowledgement message has moved to `defaults.models.ack_message` (see [Admin Configuration](config.md#global-defaults)). The legacy `app.graylist_default_notice` is still accepted as input and feeds `defaults.models.ack_message`.

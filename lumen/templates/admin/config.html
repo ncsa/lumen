@@ -347,6 +347,7 @@ function renderApp() {
       ${row2(field('a-name','App Name',ti('a-name',a.name,'Lumen')),field('a-tagline','Tagline',ti('a-tagline',a.tagline)))}
       ${row2(field('a-theme','Theme',si('a-theme',a.theme,['default','illinois','uic','uis'])),field('a-debug','',cbi('a-debug',!!a.debug,'Enable debug mode')))}
       ${field('a-github','GitHub URL',ti('a-github',a.github_url))}
+      ${field('a-llmhub','LLMHub URL',ti('a-llmhub',a.llmhub_url,'https://llmhub.computes.illinois.edu'),'Models page links here for launching unlisted models; blank hides the link')}
     `)}
     ${card('Content', `
       ${field('a-ann','Announcement',tai('a-ann',a.announcement,3),'raw HTML shown to all users')}
@@ -389,6 +390,7 @@ function collectApp() {
   a.theme            = val('a-theme')  || undefined;
   a.debug            = boolVal('a-debug') || undefined;
   a.github_url       = val('a-github') || undefined;
+  a.llmhub_url       = val('a-llmhub') || undefined;
   a.secret_key       = val('a-secret') || undefined;
   a.encryption_key   = val('a-enc')    || undefined;
   a.announcement     = val('a-ann')    || undefined;

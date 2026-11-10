@@ -24,6 +24,28 @@ def test_models_lists_active_model(app, auth_client, test_model):
     assert test_model["model_name"].encode() in resp.data
 
 
+def test_models_links_to_llmhub_for_unlisted_models(app, auth_client, restore_config):
+    app.config["LLMHUB_URL"] = "https://llmhub.example.edu"
+    resp = auth_client.get("/models")
+    assert resp.status_code == HTTPStatus.OK
+    soup = BeautifulSoup(resp.data, "html.parser")
+    link = soup.find("a", href="https://llmhub.example.edu")
+    assert link is not None
+    assert "Go to LLMHub" in link.get_text(" ", strip=True)
+    assert link["target"] == "_blank"
+    assert "opens in a new tab" in link.get_text(" ", strip=True)
+    assert "Want a model that’s not listed?" in link.parent.get_text(" ", strip=True)
+
+
+def test_models_hides_llmhub_link_when_unconfigured(app, auth_client, restore_config):
+    app.config["LLMHUB_URL"] = ""
+    resp = auth_client.get("/models")
+    assert resp.status_code == HTTPStatus.OK
+    soup = BeautifulSoup(resp.data, "html.parser")
+    assert "LLMHub" not in soup.get_text()
+    assert "Want a model that’s not listed?" not in soup.get_text()
+
+
 def test_models_header_and_input_modality_pills(app, auth_client):
     with app.app_context():
         from lumen.extensions import db

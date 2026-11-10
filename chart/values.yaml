@@ -74,6 +74,8 @@ config:
   tagline: "Illuminating AI"
   # -- Announcement banner text (plain text or markdown)
   announcement: ""
+  # -- LLMHub URL linked from the Models page for launching unlisted models (empty hides the link)
+  llmhubUrl: ""
   # -- List of admin email addresses
   admins: []
   # -- Allow editing config.yaml from the /admin/config UI. The chart manages

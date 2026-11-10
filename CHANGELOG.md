@@ -4,6 +4,7 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+- The Models page links to LLMHub for launching models that are not listed, when `app.llmhub_url` is set (editable in the admin config editor). (#233)
 - Configure a separate cached-input token price per model; unset rates use the normal input price, while zero is free. The rate is published on `/v1/models` and written into the generated OpenCode config (`cost.cache.read`/`write`) so cache-aware clients bill the same figure. `/connect` now offers that config as `opencode.jsonc`: its `cache` block always states both rates, filling an unset one with the input price and explaining why, because OpenCode bills an omitted cache price as free. (#66)
 - Record the cached-input token count per request (`request_logs.cached_input_tokens`, NULL when the upstream reported no such count — a reported zero stays 0) and fold it into the `model_stats` / `entity_stats` totals, so a discounted request's stored cost can be checked against its tokens. The usage charts still show the full prompt: the continuous aggregates behind them do not carry the cached count yet. (#66)
 - The models table shows prompt-cache pricing as a third "Coins / 1M tokens" column, "Cache read / write", instead of hiding it in a hover tip; an unconfigured rate is shown at the input price it is actually charged. (#66)

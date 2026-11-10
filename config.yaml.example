@@ -31,6 +31,7 @@ app:
   #   access: true   # log every HTTP request (werkzeug/uvicorn access log)
   #   model: false   # log model health-probe results
   # github_url: https://github.com/ncsa/lumen  # "source" link shown in the UI
+  # llmhub_url: https://llmhub.computes.illinois.edu  # Models page links here to launch unlisted models; unset hides the link
   # email_themes:    # per-email/domain theme override, checked before app.theme
   #   "@illinois.edu": illinois
   #   someone@example.com: uic
