@@ -72,6 +72,8 @@ Following rules are here to help the AI avoid the same mistakes again:
 - When adding variables to config.yaml, make sure they are hot loaded if possible or print a warning
 - Track changes in the CHANGELOG.md, if no unreleased section exists, then add it, make sure to not add a new subsection.
 - Keep CHANGELOG entries short: one terse bullet per logical change, present tense, user-facing language. Do not write long narrative paragraphs explaining the "why" at length. Where a change has an obvious PR, link it (e.g. `(#123)`), or an issue in GitHub.
+- Every GitHub issue worked on must have a CHANGELOG entry that links it as `(#N)`, and every bullet for that issue carries the link. Before finishing, check that each bullet for the issue ends with `(#N)`.
+- Adding or adjusting a small test on its own does not warrant a CHANGELOG entry.
 - When bumping the version in pyproject.toml, also run `uv lock` to update uv.lock.
 - When bumping the version for a release, also update `version` and `appVersion` in chart/Chart.yaml to match.
 - The monitor in `scripts/monitor` is versioned in lockstep with Lumen: when bumping the version for a release, set the same version in `scripts/monitor/pyproject.toml` and run `uv lock` in `scripts/monitor` too.
