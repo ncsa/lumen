@@ -340,33 +340,40 @@ def _build_price_index(models: list[dict]) -> dict[str, list[dict]]:
     return idx
 
 
-def _average_price(dev_match: dict, price_index: dict[str, list[dict]]) -> tuple[float | None, float | None]:
-    """Average input/output cost (USD per million tokens) across every
-    models.dev provider that lists the same base model, ignoring zero/missing
-    prices (a $0 listing is not a real price and would skew the average down).
+def _average_price(
+    dev_match: dict, price_index: dict[str, list[dict]]
+) -> tuple[float | None, float | None, float | None, float | None]:
+    """Average input/output/cache-read/cache-write cost (USD per million
+    tokens) across every models.dev provider that lists the same base model,
+    ignoring zero/missing prices (a $0 listing is not a real price and would
+    skew the average down).
 
-    Returns (input_avg, output_avg); each component is None when no provider
-    exposes a usable (>0) price for it.
+    Returns (input_avg, output_avg, cache_read_avg, cache_write_avg); each
+    component is None when no provider exposes a usable (>0) price for it.
     """
     needle = _normalize_id(dev_match.get("id", ""))
     if not needle:
-        return None, None
-    inputs: list[float] = []
-    outputs: list[float] = []
+        return None, None, None, None
+    buckets: dict[str, list[float]] = {
+        "input": [], "output": [], "cache_read": [], "cache_write": [],
+    }
     for m in price_index.get(needle, []):
         c = m.get("cost") or {}
-        try:
-            ci = float(c.get("input") or 0)
-            co = float(c.get("output") or 0)
-        except (TypeError, ValueError):
-            continue
-        if ci > 0:
-            inputs.append(ci)
-        if co > 0:
-            outputs.append(co)
-    avg_in = round(sum(inputs) / len(inputs), 6) if inputs else None
-    avg_out = round(sum(outputs) / len(outputs), 6) if outputs else None
-    return avg_in, avg_out
+        row = {}
+        for key in buckets:
+            try:
+                row[key] = float(c.get(key) or 0)
+            except (TypeError, ValueError):
+                row[key] = 0.0
+        for key in buckets:
+            if row[key] > 0:
+                buckets[key].append(row[key])
+    return (
+        round(sum(buckets["input"]) / len(buckets["input"]), 6) if buckets["input"] else None,
+        round(sum(buckets["output"]) / len(buckets["output"]), 6) if buckets["output"] else None,
+        round(sum(buckets["cache_read"]) / len(buckets["cache_read"]), 6) if buckets["cache_read"] else None,
+        round(sum(buckets["cache_write"]) / len(buckets["cache_write"]), 6) if buckets["cache_write"] else None,
+    )
 
 
 def _consensus_bool(dev_match: dict, price_index: dict[str, list[dict]], key: str) -> bool | None:
@@ -493,11 +500,21 @@ def sync_model(model_def: dict) -> dict:
         # models.dev, excluding $0 listings. Only for models that opt in with
         # auto_price: true — otherwise the operator's hand-set price is kept.
         if model_def.get("auto_price") is True:
-            avg_in, avg_out = _average_price(dev_match, price_index)
+            avg_in, avg_out, _, _ = _average_price(dev_match, price_index)
             if avg_in is not None and model_def.get("input_cost_per_million") != avg_in:
                 updates["input_cost_per_million"] = avg_in
             if avg_out is not None and model_def.get("output_cost_per_million") != avg_out:
                 updates["output_cost_per_million"] = avg_out
+
+        # Cache pricing is a separate opt-in (auto_cache_price) so an operator
+        # can keep hand-set plain prices while still letting models.dev manage
+        # the cache rates, or the other way around.
+        if model_def.get("auto_cache_price") is True:
+            _, _, avg_cache_read, avg_cache_write = _average_price(dev_match, price_index)
+            if avg_cache_read is not None and model_def.get("cached_input_cost_per_million") != avg_cache_read:
+                updates["cached_input_cost_per_million"] = avg_cache_read
+            if avg_cache_write is not None and model_def.get("cache_write_cost_per_million") != avg_cache_write:
+                updates["cache_write_cost_per_million"] = avg_cache_write
 
     # A reasoning parser reported by the backend's server info is authoritative
     # over models.dev: Lumen only receives thinking separately when the server

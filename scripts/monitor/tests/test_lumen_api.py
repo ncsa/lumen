@@ -64,6 +64,42 @@ def test_a_combined_tokens_field_is_ignored():
     assert by_id["big"]["tokens"] is None
 
 
+def test_cached_input_price_is_read_when_set_and_none_when_missing():
+    [with_cached] = lumen_api.parse_models({"data": [model_row("qwen", cached_input_cost_per_million=0.05)]})
+    [plain] = lumen_api.parse_models({"data": [model_row("qwen")]})
+    assert with_cached["cached_input_price"] == 0.05
+    assert plain["cached_input_price"] is None
+
+
+def test_cache_write_price_is_read_when_set_and_none_when_missing():
+    [written] = lumen_api.parse_models({"data": [model_row("qwen", cache_write_cost_per_million=0.02)]})
+    [plain] = lumen_api.parse_models({"data": [model_row("qwen")]})
+    assert written["cache_write_price"] == 0.02
+    assert plain["cache_write_price"] is None
+
+
+def test_cache_metrics_are_read_when_reported():
+    [model] = lumen_api.parse_models({"data": [model_row(
+        "qwen", cache_metrics={"requests": 120, "reads": True, "writes": False})]})
+    assert model["cache_metrics"] == {"requests": 120, "reads": True, "writes": False}
+
+
+def test_cache_metrics_are_none_when_absent_or_malformed():
+    absent, junk, empty = lumen_api.parse_models({"data": [
+        model_row("absent"), model_row("junk", cache_metrics="yes"), model_row("empty", cache_metrics={}),
+    ]})
+    assert absent["cache_metrics"] is None
+    assert junk["cache_metrics"] is None
+    assert empty["cache_metrics"] == {"requests": 0, "reads": False, "writes": False}
+
+
+def test_cache_metrics_only_count_a_literal_true_as_reported():
+    """Lumen sends booleans; anything else must not read as a report."""
+    [model] = lumen_api.parse_models({"data": [model_row(
+        "qwen", cache_metrics={"requests": 3, "reads": 1, "writes": "false"})]})
+    assert model["cache_metrics"] == {"requests": 3, "reads": False, "writes": False}
+
+
 def test_not_an_object_is_an_error():
     with pytest.raises(ValueError):
         lumen_api.parse_models([])

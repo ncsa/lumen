@@ -59,6 +59,8 @@ models:
   url: https://huggingface.co/Qwen/Qwen2.5-7B-Instruct
   input_cost_per_million: 0.15
   output_cost_per_million: 0.6
+  cached_input_cost_per_million: 0.075
+  cache_write_cost_per_million: 0
   endpoints:
   - url: http://localhost:9999/v1
     api_key: dummy
@@ -68,6 +70,8 @@ models:
   url: https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct
   input_cost_per_million: 0.15
   output_cost_per_million: 0.6
+  cached_input_cost_per_million: 0.075
+  cache_write_cost_per_million: 0
   endpoints:
   - url: http://localhost:9999/v1
     api_key: dummy
@@ -79,6 +83,8 @@ models:
   url: https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3
   input_cost_per_million: 0.2
   output_cost_per_million: 0.6
+  cached_input_cost_per_million: 0.1
+  cache_write_cost_per_million: 0
   endpoints:
   - url: http://localhost:9999/v1
     api_key: dummy
@@ -88,6 +94,8 @@ models:
   url: https://huggingface.co/Qwen/Qwen2.5-14B-Instruct
   input_cost_per_million: 0.3
   output_cost_per_million: 1.2
+  cached_input_cost_per_million: 0.15
+  cache_write_cost_per_million: 0
   endpoints:
   - url: http://localhost:9999/v1
     api_key: dummy
@@ -97,6 +105,8 @@ models:
   url: https://huggingface.co/microsoft/Phi-3.5-mini-instruct
   input_cost_per_million: 0.05
   output_cost_per_million: 0.1
+  cached_input_cost_per_million: 0.025
+  cache_write_cost_per_million: 0
   endpoints:
   - url: http://localhost:9999/v1
     api_key: dummy

@@ -15,7 +15,7 @@
       <tr>
         <th scope="col" rowspan="2">Model</th>
         <th scope="col" rowspan="2">Input</th>
-        <th scope="colgroup" colspan="2" class="text-center">Coins / 1M tokens</th>
+        <th scope="colgroup" colspan="3" class="text-center">Coins / 1M tokens</th>
         <th scope="col" rowspan="2">Checked</th>
         <th scope="col" rowspan="2">Status</th>
         <th scope="col" rowspan="2" class="text-center">Access</th>
@@ -23,6 +23,9 @@
       <tr>
         <th scope="col" class="text-end">Input</th>
         <th scope="col" class="text-end">Output</th>
+        {# Keep this column as wide as its label: with no width hint the auto layout
+           dumps the table's leftover width into it. #}
+        <th scope="col" class="text-end text-nowrap" style="width: 1%">Cache read / write</th>
       </tr>
     </thead>
     <tbody>
@@ -44,6 +47,10 @@
         </td>
         <td class="text-end">{{ "%.2f"|format(config.input_cost_per_million | float) }}</td>
         <td class="text-end">{{ "%.2f"|format(config.output_cost_per_million | float) }}</td>
+        {#- A cache rate that is not configured is billed at the input price, so the column shows what is actually charged. -#}
+        {% set cache_read = config.cached_input_cost_per_million if config.cached_input_cost_per_million is not none else config.input_cost_per_million %}
+        {% set cache_write = config.cache_write_cost_per_million if config.cache_write_cost_per_million is not none else config.input_cost_per_million %}
+        <td class="text-end text-nowrap">{{ "%.2f"|format(cache_read | float) }} / {{ "%.2f"|format(cache_write | float) }}</td>
         <td>
           {% set checked_at = endpoints | map(attribute="last_checked_at") | select("ne", None) | list %}
           {% if checked_at %}
@@ -87,7 +94,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="text-center text-muted">No models configured.</td></tr>
+      <tr><td colspan="8" class="text-center text-muted">No models configured.</td></tr>
       {% endfor %}
     </tbody>
   </table>

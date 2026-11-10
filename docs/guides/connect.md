@@ -101,13 +101,15 @@ The steps below walk through a concrete example using [ChatWise](https://chatwis
 
 ## OpenCode
 
-[OpenCode](https://opencode.ai) reads the key from `{env:LUMEN_API_KEY}`. Use the **Download config.json** button on the [Connect page](https://lumen.example.com/connect) to get a file pre-filled with every model you can access, then save it as:
+[OpenCode](https://opencode.ai) reads the key from `{env:LUMEN_API_KEY}`. Use the **Download config.jsonc** button on the [Connect page](https://lumen.example.com/connect) to get a file pre-filled with every model you can access, then save it as:
 
-- **macOS / Linux:** `~/.config/opencode/opencode.json`
-- **Windows:** `%USERPROFILE%\.config\opencode\opencode.json`
-- Or `opencode.json` in a project's root directory for per-project settings.
+- **macOS / Linux:** `~/.config/opencode/opencode.jsonc`
+- **Windows:** `%USERPROFILE%\.config\opencode\opencode.jsonc`
+- Or `opencode.jsonc` in a project's root directory for per-project settings.
 
-```json
+OpenCode reads `opencode.json` and `opencode.jsonc` alike. The generated file is JSONC because it comments the cache prices it fills in.
+
+```jsonc
 {
   "$schema": "https://opencode.ai/config.json",
   "provider": {
@@ -122,7 +124,16 @@ The steps below walk through a concrete example using [ChatWise](https://chatwis
         "MODEL": {
           "name": "MODEL via Lumen",
           "limit": { "context": 131072, "output": 32768 },
-          "cost": { "input": 5.0, "output": 15.0 },
+          "cost": {
+            "input": 5.0,
+            "output": 15.0,
+            "cache": {
+              // Filled in at the input price: no cache rate is configured, and
+              // OpenCode charges nothing for a cache price it is not given.
+              "read": 5.0,
+              "write": 5.0
+            }
+          },
           "modalities": { "input": ["text", "image"], "output": ["text"] },
           "attachment": true
         }
@@ -132,7 +143,7 @@ The steps below walk through a concrete example using [ChatWise](https://chatwis
 }
 ```
 
-Each model entry includes `limit` (the context window and max output, in tokens) and `cost` (USD per million input/output tokens), so OpenCode can size the context and track spending. Capability fields describe what the model accepts: `modalities` mirrors the model's input/output types, `attachment` marks models that accept images — models that can attach files and images fail with "this model does not support image input" otherwise. `tool_call` is always set (`true`/`false`) because OpenCode assumes tool calling unless told `false`; `reasoning` appears only for reasoning models. Other fields the instance doesn't publish are omitted. The **Download config.json** button fills these in from the model's configured limits and pricing.
+Each model entry includes `limit` (the context window and max output, in tokens) and `cost` (USD per million input/output tokens), so OpenCode can size the context and track spending. `cost.cache` states both cache rates: `read` is the model's `cached_input_cost_per_million` and `write` its `cache_write_cost_per_million`, and a rate the model does not configure is written as its input price, with a comment on the `cache` block saying so. That comment is the one thing the file does not leave to the client: Lumen bills an unset cache rate at the model's input price, while OpenCode charges nothing for a cache price the config does not state, so stating the input price keeps the client's cost estimate equal to the bill. Capability fields describe what the model accepts: `modalities` mirrors the model's input/output types, `attachment` marks models that accept images — models that can attach files and images fail with "this model does not support image input" otherwise. `tool_call` is always set (`true`/`false`) because OpenCode assumes tool calling unless told `false`; `reasoning` appears only for reasoning models. Other fields the instance doesn't publish are omitted. The **Download config.jsonc** button fills these in from the model's configured limits and pricing.
 
 To have OpenCode only use Lumen's models — and ignore every other installed provider — add an `enabled_providers` array at the top level of your config:
 

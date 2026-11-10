@@ -92,6 +92,23 @@ class RequestLog(db.Model):
     source: Mapped[str] = mapped_column(db.String(8), comment="Origin of the request: chat (web UI) or api (API key)")
     input_tokens: Mapped[int] = mapped_column(db.Integer, default=0, comment="Input token count for this request")
     output_tokens: Mapped[int] = mapped_column(db.Integer, default=0, comment="Output token count for this request")
+    # The part of input_tokens the upstream served from its prompt cache and
+    # billed at the model's cached-input rate. NULL when there is nothing to
+    # record: no upstream usage object at all (the abort estimate) or a row
+    # written before this column existed. A usage object without cache fields
+    # records 0, the same claim the cost makes.
+    cached_input_tokens: Mapped[Optional[int]] = mapped_column(
+        db.Integer, comment="Cached part of input_tokens; NULL when no upstream usage was available"
+    )
+    # The part of input_tokens the upstream wrote into its prompt cache (or the
+    # non-cached remainder when the upstream reports no creation count) and billed
+    # at the model's cache-write rate. NULL when there is nothing to record: no
+    # upstream usage object at all (the abort estimate) or a row written before
+    # this column existed. A usage object without cache fields records 0 just for
+    # the read; the write falls back to the non-cached remainder of the prompt.
+    cache_write_tokens: Mapped[Optional[int]] = mapped_column(
+        db.Integer, comment="Cache-write part of input_tokens; NULL when no upstream usage was available"
+    )
     cost: Mapped[Decimal] = mapped_column(db.Numeric(12, 6), default=0, comment="Cost in USD for this request")
     # Seconds of audio transcribed/translated for speech-to-text requests; 0 for text requests
     audio_seconds: Mapped[int] = mapped_column(db.Integer, default=0, comment="Seconds of audio transcribed/translated; 0 for text requests")

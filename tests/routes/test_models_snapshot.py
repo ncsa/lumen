@@ -127,6 +127,13 @@ def catalog(app, test_user):
             "early", "requirements-removed", "private", "own", "disabled", "missing"]
 
 
+def _metrics(tokens):
+    """The monitor's metrics payload for ?tokens=true, else None."""
+    if not tokens:
+        return None
+    return {"tokens": request_rates.token_windows(), "cache": request_rates.cache_reporting()}
+
+
 def _legacy_list(entity_id, tokens=False, include_unacked=False):
     """The previous ``list_models``, run against live queries."""
     configs = db.session.execute(
@@ -138,7 +145,7 @@ def _legacy_list(entity_id, tokens=False, include_unacked=False):
     ).scalars().all():
         eps_by_model.setdefault(ep.model_config_id, []).append(ep)
     rates = request_rates.rates()
-    tokens = request_rates.token_windows() if tokens else None
+    metrics = _metrics(tokens)
     if entity_id is None:
         permitted = configs
     else:
@@ -156,7 +163,7 @@ def _legacy_list(entity_id, tokens=False, include_unacked=False):
         open_tags = ack[0] if ack is not None else []
         if open_tags and not include_unacked:
             continue
-        entry = _model_dict(c, rates, eps_by_model.get(c.id, []), ack, tokens)
+        entry = _model_dict(c, rates, eps_by_model.get(c.id, []), ack, metrics)
         data.append(entry)
         for alias in sorted(a.alias for a in c.aliases):
             alias_entry = dict(entry)
@@ -182,7 +189,7 @@ def _legacy_get(model_id, entity_id, tokens=False):
     if entity_id is not None:
         row = db.session.execute(select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=config.id)).scalar_one_or_none()
         ack = _ack_fields(config, row)
-    d = _model_dict(config, rates, list(eps), ack, request_rates.token_windows() if tokens else None)
+    d = _model_dict(config, rates, list(eps), ack, _metrics(tokens))
     if model_id != config.model_name:
         d["id"] = model_id
         d["parent"] = config.model_name
@@ -244,6 +251,10 @@ def test_listing_reports_the_cases_it_covers(client, monitor_token, catalog):
     assert listed["no-endpoints"]["instances"] == {"configured": 0, "healthy": 0}
     assert listed["plain"]["root"] == "upstream/plain"
     assert listed["plain"]["input_modalities"] == ["text", "image"]
+    # A model without its own cached-input rate publishes null, not a resolved
+    # number: the fallback to input_cost_per_million is the reader's rule.
+    assert listed["plain"]["cached_input_cost_per_million"] is None
+    assert listed["plain"]["cache_write_cost_per_million"] is None
     assert listed["plain"]["requests"] == {"last_minute": 1, "last_hour": 1, "last_day": 2}
     assert listed["plain-a"]["parent"] == "plain"
     assert listed["requirements-removed"]["acknowledged_at"] == ACKED.isoformat() + "Z"
@@ -252,6 +263,26 @@ def test_listing_reports_the_cases_it_covers(client, monitor_token, catalog):
 
     monitor = {m["id"]: m for m in client.get("/v1/models?tokens=true", headers=_auth(monitor_token)).get_json()["data"]}
     assert monitor["degraded"]["input_tokens"]["last_minute"] == 2
+
+
+def test_listing_publishes_the_configured_cached_input_rate(app, client, monitor_token, catalog):
+    """A consumer that recomputes cost needs every rate Lumen bills with. The
+    rate is served from the snapshot, like the other cost fields."""
+    with app.app_context():
+        mc = db.session.execute(select(ModelConfig).filter_by(model_name="plain")).scalar_one()
+        mc.cached_input_cost_per_million = 0.25
+        mc.cache_write_cost_per_million = 0.5
+        db.session.commit()
+        model_cache.refresh(app)
+
+    listed = {m["id"]: m for m in client.get("/v1/models", headers=_auth(monitor_token)).get_json()["data"]}
+    assert listed["plain"]["cached_input_cost_per_million"] == 0.25
+    assert listed["plain"]["cache_write_cost_per_million"] == 0.5
+    assert listed["plain-a"]["cached_input_cost_per_million"] == 0.25  # alias inherits
+    assert listed["plain-a"]["cache_write_cost_per_million"] == 0.5
+    single = client.get("/v1/models/plain", headers=_auth(monitor_token)).get_json()
+    assert single["cached_input_cost_per_million"] == 0.25
+    assert single["cache_write_cost_per_million"] == 0.5
 
 
 # ── Query counts ─────────────────────────────────────────────────────────────

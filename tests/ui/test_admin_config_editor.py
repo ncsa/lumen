@@ -101,6 +101,59 @@ def test_editor_refuses_to_save_malformed_key_ttl(editor):
     assert cfg.read_text() == _CONFIG
 
 
+MODELS_CONFIG = """\
+version: 3
+app:
+  name: Lumen
+  secret_key: real-secret
+models:
+  - name: cached-model
+    input_cost_per_million: 1
+    output_cost_per_million: 2
+    cached_input_cost_per_million: 0.1
+    endpoints:
+      - url: https://api.example.com/v1
+        api_key: sk-real
+"""
+
+
+def test_editor_saves_cached_input_price(editor):
+    """The Cached Input Cost box collects into the payload; blank removes the key."""
+    page, cfg, posted = editor
+    cfg.write_text(MODELS_CONFIG)
+
+    page.goto(f"{ORIGIN}/admin/config")
+    page.click("#nav-models")
+    page.wait_for_selector("#mdl-sel")
+    page.wait_for_selector("#mdl-cached-in-cost")
+
+    # Pre-filled from config; subtext explains the input-price fallback.
+    assert page.input_value("#mdl-cached-in-cost") == "0.1"
+    label = page.text_content("label[for='mdl-cached-in-cost']")
+    assert "Cached Input Cost / 1M tokens ($)" in label
+    assert "defaults to input price when unset" in label
+
+    # Blank it out: the collector drops the key so the app falls back to input price.
+    page.fill("#mdl-cached-in-cost", "")
+    page.click("#btn-save")
+    page.wait_for_selector("#cfg-toast >> text=Saved successfully")
+
+    assert len(posted) == 1
+    assert "cached_input_cost_per_million" not in posted[0]["models"][0]
+    saved = yaml.safe_load(cfg.read_text())
+    assert "cached_input_cost_per_million" not in saved["models"][0]
+
+    # Set a value: it reaches both the payload and config.yaml.
+    page.fill("#mdl-cached-in-cost", "0.05")
+    page.click("#btn-save")
+    page.wait_for_selector("#cfg-toast >> text=Saved successfully")
+
+    assert len(posted) == 2
+    assert posted[1]["models"][0]["cached_input_cost_per_million"] == 0.05
+    saved = yaml.safe_load(cfg.read_text())
+    assert saved["models"][0]["cached_input_cost_per_million"] == 0.05
+
+
 def test_editor_key_ttl_read_only_when_editor_disabled(app, editor):
     page, cfg, posted = editor
     original = app.config.get("CONFIG_EDITOR", True)
