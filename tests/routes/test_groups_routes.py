@@ -811,6 +811,19 @@ def test_transferring_ownership_reveals_members(admin_client, app, ownerless_gro
     assert row["members"] == 2
 
 
+def test_owned_group_ids_scoped_to_given_ids(app, test_user, second_user):
+    """The groups list asks only about the groups on the current page, so an
+    owned group outside that page must not leak into the answer."""
+    a = _make_group(app, name="owned-a", owner_id=test_user["id"])
+    b = _make_group(app, name="owned-b", owner_id=second_user["id"])
+    c = _make_group(app, name="ownerless-c")
+    with app.app_context():
+        from lumen.blueprints.groups.routes import _owned_group_ids
+        assert _owned_group_ids([a, c]) == {a}
+        assert _owned_group_ids([c]) == set()
+        assert _owned_group_ids() >= {a, b}
+
+
 # ---------------------------------------------------------------------------
 # Review fixes: owner uniqueness, config_managed promotion, coin clamps, guards
 # ---------------------------------------------------------------------------
