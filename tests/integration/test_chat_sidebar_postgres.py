@@ -13,6 +13,7 @@ import pytest
 from tests.conftest import no_snapshot_refresher
 from tests.integration.conftest import TEST_CONFIG
 from tests.routes.test_chat_routes import (
+    conversation_list_caps_limit_at_200,
     sidebar_created_at_tie_takes_highest_id,
     sidebar_empty_conversation,
     sidebar_ignores_conversations_outside_the_page,
@@ -81,6 +82,7 @@ def pg_user_client(pg_app):
     sidebar_empty_conversation,
     sidebar_created_at_tie_takes_highest_id,
     sidebar_ignores_conversations_outside_the_page,
+    conversation_list_caps_limit_at_200,
 ], ids=lambda f: f.__name__)
 def test_sidebar_preview_on_postgres(pg_user_client, scenario):
     scenario(*pg_user_client)
