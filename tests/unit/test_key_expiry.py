@@ -9,6 +9,7 @@ from lumen.extensions import db
 from lumen.models.api_key import APIKey
 from lumen.services.config_watcher import apply_hot_config, validate_config_structure
 from lumen.services.key_expiry import (
+    KEY_TTL_PRESETS,
     MAX_KEY_TTL,
     expire_keys,
     key_expires_at,
@@ -240,6 +241,8 @@ def test_revoke_if_expired_at_exact_expiry(app, test_user, monkeypatch):
                    (56 * DAY, "8 weeks", True)]),
     (12 * 3600, [(12 * 3600, "12 hours", True)]),
     (DAY, [(DAY, "1 day", True)]),
+    # A cap equal to the 7-day preset keeps the preset's own label; _ttl_label() would give "1 week".
+    (7 * DAY, [(DAY, "1 day", False), (7 * DAY, "7 days", True)]),
     (10 * DAY, [(DAY, "1 day", False), (7 * DAY, "7 days", False), (10 * DAY, "10 days", True)]),
     (730 * DAY, [(DAY, "1 day", False), (7 * DAY, "7 days", False), (30 * DAY, "30 days", False),
                  (90 * DAY, "90 days", False), (365 * DAY, "1 year", False), (730 * DAY, "2 years", True)]),
@@ -250,6 +253,18 @@ def test_key_ttl_choices(app, restore_config, cap, expected):
     app.config["KEY_TTL"] = cap
     with app.app_context():
         assert key_ttl_choices() == expected
+
+
+@pytest.mark.parametrize("seconds, label", KEY_TTL_PRESETS)
+def test_key_ttl_choices_cap_equal_to_preset(app, restore_config, seconds, label):
+    """A cap equal to a preset offers that preset, with its own label, as the only selected choice."""
+    app.config["KEY_TTL"] = seconds
+    with app.app_context():
+        choices = key_ttl_choices()
+    assert choices[-1] == (seconds, label, True)
+    assert [c for c in choices if c[2]] == [(seconds, label, True)]
+    offered = [s for s, _, _ in choices]
+    assert offered == sorted(set(offered))
 
 
 @pytest.mark.parametrize("cap, selected, expected", [
