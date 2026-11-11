@@ -105,6 +105,27 @@ def test_token_windows_reader(app, seeded, test_model):
         }
 
 
+def test_last_month_starts_thirty_days_before_the_current_minute(app, test_model):
+    """last_month starts exactly 30 days before the current minute, inclusive.
+
+    Windows are whole minute buckets, so the edge is ``minute - 30d``
+    (2026-09-20 12:00:00), not ``NOW - 30d`` (12:00:15): a row at the edge is
+    inside (``>=``) and a row one second earlier is outside.
+    """
+    minute = NOW.replace(second=0)
+    with app.app_context():
+        from lumen.extensions import db
+        _log(test_model["id"], NOW - minute + timedelta(days=30), 1, 10)                     # 2026-09-20 12:00:00
+        _log(test_model["id"], NOW - minute + timedelta(days=30, seconds=1), 100, 1000)      # 2026-09-20 11:59:59
+        db.session.commit()
+        assert request_rates.token_windows(test_model["id"]) == {
+            test_model["id"]: {
+                "input_tokens": {"last_minute": 0, "last_hour": 0, "last_day": 0, "last_month": 1},
+                "output_tokens": {"last_minute": 0, "last_hour": 0, "last_day": 0, "last_month": 10},
+            },
+        }
+
+
 def test_cache_reporting_reader(app, cache_seeded, test_model):
     with app.app_context():
         assert request_rates.cache_reporting() == {
