@@ -7,6 +7,8 @@ import { test } from 'node:test';
 import { answer, fakeElement, runPage } from './fake_dom.mjs';
 
 const PRICE = { input_price: 0.2, output_price: 0.8, cached_input_price: 0.02, cache_write_price: 0.25, input_median: 0.25, input_p5: 0.1, input_p95: 0.4, output_median: 1, output_p5: 0.5, output_p95: 2 };
+// The models.dev cache band, as /api/series serves it once the monitor collects it.
+const CACHE_BAND = { cached_input_median: 0.03, cached_input_p5: 0.01, cached_input_p95: 0.05, cache_write_median: 0.3, cache_write_p5: 0.2, cache_write_p95: 0.4 };
 const TIMES = ['2026-10-17T04:55:00Z', '2026-10-17T05:00:00Z', '2026-10-17T05:05:00Z'];
 const DAYS = ['2026-10-16', '2026-10-17'];
 
@@ -77,7 +79,7 @@ test('from 7d up the price charts keep one point per local day', async () => {
   }
 });
 
-test('below 7d the cache price charts are a single stepped "ours" line per bucket', async () => {
+test('below 7d the cache price charts without band keys are a single stepped "ours" line per bucket', async () => {
   const { ids, configs } = await renderPage(seriesBody('24h', false, TIMES.map(t => ({ t, ...PRICE }))));
   const [cached, write] = configs.slice(2);
   for (const config of [cached, write]) {
@@ -94,7 +96,7 @@ test('below 7d the cache price charts are a single stepped "ours" line per bucke
   assert.equal(ids['cache-write-price-note'].textContent, '');
 });
 
-test('from 7d up the cache price charts keep one point per local day, with gaps and real zeros', async () => {
+test('from 7d up the cache price charts without band keys keep one point per local day, with gaps and real zeros', async () => {
   const prices = [
     { day: DAYS[0], ...PRICE, cached_input_price: null, cache_write_price: null },
     { day: DAYS[1], ...PRICE, cached_input_price: 0, cache_write_price: 0.3 },
@@ -120,4 +122,34 @@ test('a price chart with no price in the range says so', async () => {
   assert.equal(ids['cached-input-price-note'].textContent, 'no price recorded in this range');
   assert.equal(ids['cache-write-price-note'].textContent, 'no price recorded in this range');
   assert.equal(ids['input-price-note'].textContent, '');
+});
+
+test('below 7d the cache price charts draw the models.dev band and median when the keys are present', async () => {
+  const { configs } = await renderPage(seriesBody('24h', false, TIMES.map(t => ({ t, ...PRICE, ...CACHE_BAND }))));
+  const [cached, write] = configs.slice(2);
+  for (const config of [cached, write]) {
+    assert.deepEqual(config.data.datasets.map(ds => ds.label), ['models.dev p5', 'models.dev p5–p95', 'models.dev median', 'ours']);
+    for (const ds of config.data.datasets) assert.equal(ds.stepped, true, ds.label);
+  }
+  const data = config => config.data.datasets.map(ds => ds.data[0]);
+  assert.deepEqual(data(cached), [0.01, 0.05, 0.03, 0.02]);
+  assert.deepEqual(data(write), [0.2, 0.4, 0.3, 0.25]);
+});
+
+test('from 7d up the cache price charts draw the band per day, with gaps for days without one', async () => {
+  const prices = [
+    { day: DAYS[0], ...PRICE, ...Object.fromEntries(Object.keys(CACHE_BAND).map(k => [k, null])) },
+    { day: DAYS[1], ...PRICE, ...CACHE_BAND },
+  ];
+  const { ids, configs } = await renderPage(seriesBody('7d', true, prices));
+  const [cached, write] = configs.slice(2);
+  for (const config of [cached, write]) {
+    const [p5, p95, median, ours] = config.data.datasets;
+    for (const ds of [p5, p95, median, ours]) assert.equal('stepped' in ds, false, ds.label);
+    assert.equal(p95.fill, '-1');
+    assert.equal(median.pointRadius, 2);
+  }
+  assert.deepEqual(cached.data.datasets.map(ds => ds.data), [[null, 0.01], [null, 0.05], [null, 0.03], [0.02, 0.02]]);
+  assert.deepEqual(write.data.datasets[2].data, [null, 0.3]);
+  assert.equal(ids['cached-input-price-note'].textContent, '');
 });

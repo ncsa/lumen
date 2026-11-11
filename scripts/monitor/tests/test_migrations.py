@@ -49,6 +49,7 @@ def _columns(url, table):
 
 CACHED_INPUT_DAILY = {"cached_input_price"}
 CACHE_WRITE_DAILY = {"cache_write_price"}
+MODELSDEV_CACHE_DAILY = {f"{kind}_{stat}" for kind in ("cache_read", "cache_write") for stat in ("median", "p5", "p95")}
 
 
 SPLIT_DAILY = {"input_tokens", "output_tokens", "input_tokens_covered_until", "output_tokens_covered_until"}
@@ -102,3 +103,14 @@ def test_cache_write_price_revision_adds_and_drops_the_column(tmp_path):
     downgrade(url, "0004")
     assert not CACHE_WRITE_DAILY & _columns(url, "daily_stats")
     assert CACHED_INPUT_DAILY <= _columns(url, "daily_stats")
+
+
+def test_modelsdev_cache_prices_revision_adds_and_drops_the_columns(tmp_path):
+    url = f"sqlite:///{tmp_path / 'monitor.db'}"
+    upgrade(url, "0005")
+    assert not MODELSDEV_CACHE_DAILY & _columns(url, "daily_stats")
+    upgrade(url, "0006")
+    assert MODELSDEV_CACHE_DAILY <= _columns(url, "daily_stats")
+    downgrade(url, "0005")
+    assert not MODELSDEV_CACHE_DAILY & _columns(url, "daily_stats")
+    assert CACHE_WRITE_DAILY <= _columns(url, "daily_stats")

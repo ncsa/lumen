@@ -113,12 +113,14 @@ The model detail page, `/model/<id>?range=` (ids may contain `/`), shows for one
 
 - the status, healthy / configured instances, uptime, peak req/min, the description and the
   status strip over the range;
-- input and output price charts: the models.dev p5–p95 band, the models.dev median and our
-  price, per bucket below 7d (a stepped line, stepping at local midnight when the price
-  changed), one point per local day from 7d up;
-- cached-input and cache-write price charts: our price only, in the same styles. Their history
-  starts when the monitor began storing these prices (migrations 0004 and 0005); a day without
-  a stored cache price is a gap, not 0, and a chart with no price in the range says so;
+- input, output, cached-input and cache-write price charts: the models.dev p5–p95 band, the
+  models.dev median and our price, per bucket below 7d (a stepped line, stepping at local
+  midnight when the price changed), one point per local day from 7d up. The cached-input band
+  comes from the providers' cache-read prices and the cache-write band from their cache-write
+  prices, $0 listings excluded; models no provider lists a cache price for have no band.
+  Our cache price history starts when the monitor began storing these prices (migrations 0004
+  and 0005), and the cache band history on the first price run after migration 0006; a day
+  without a stored price is a gap, not 0, and a chart with no price of ours in the range says so;
 - requests and tokens: below 7d the average req/min and tok/min per bucket from the samples,
   from 7d up the daily totals, with estimated or not yet final days drawn lighter; a dashed
   line marks the range average. Tokens show output above a centred zero line and input below
