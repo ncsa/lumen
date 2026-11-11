@@ -1,8 +1,8 @@
 """The stats_deferred_marker revision on real PostgreSQL + TimescaleDB.
 
-Each test steps this module's database back to ``e4f5a6b7c8d9`` with the same
-``flask db`` command the container runs, sets up the state the revision meets
-in production, and upgrades again:
+Each test steps this module's database back to ``e4f5a6b7c8d9`` with
+``migrate_db`` (the container's ``flask db`` commands, run in-process), sets up
+the state the revision meets in production, and upgrades again:
 
 1. A cutover someone already set is kept, and the downgrade puts PostgreSQL
    back to "not cut over" and drops the column.
@@ -14,31 +14,17 @@ The automatic cutover on a fresh chain is asserted in
 the second leaves a compressed chunk behind, so it goes last.
 """
 
-import os
-import subprocess
 from datetime import datetime
 
 import pytest
 from sqlalchemy import text
 
-from .conftest import TEST_CONFIG
+from .conftest import migrate_db
 
 pytestmark = pytest.mark.postgres
 
 PREVIOUS = "e4f5a6b7c8d9"
 SOURCE = "sdmark"  # request_logs.source is VARCHAR(8)
-
-
-def _flask_db(url, *args):
-    env = {**os.environ, "DATABASE_URL": url, "CONFIG_YAML": TEST_CONFIG, "BACKGROUND_WORKER": "false"}
-    result = subprocess.run(
-        ["uv", "run", "flask", "--app", "run", "db", *args],
-        capture_output=True, text=True, env=env, timeout=300,
-    )
-    assert result.returncode == 0, (
-        f"flask db {' '.join(args)} failed:\n"
-        f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
-    )
 
 
 def _has_column(conn):
@@ -54,7 +40,7 @@ def _fold_state(conn):
 
 def test_downgrade_resets_the_cutover_and_upgrade_keeps_an_existing_one(pg_migrated_isolated):
     url, engine = pg_migrated_isolated
-    _flask_db(url, "downgrade", PREVIOUS)
+    migrate_db(url, "downgrade", PREVIOUS)
     with engine.connect() as conn:
         assert not _has_column(conn)
         assert _fold_state(conn) == (None, None)
@@ -65,7 +51,7 @@ def test_downgrade_resets_the_cutover_and_upgrade_keeps_an_existing_one(pg_migra
         conn.execute(text("UPDATE stats_fold_state SET cutover_at = :c, folded_until = :f WHERE id = 1"),
                      {"c": existing, "f": watermark})
 
-    _flask_db(url, "upgrade")
+    migrate_db(url, "upgrade", "head")
     with engine.connect() as conn:
         assert _has_column(conn)
         assert _fold_state(conn) == (existing, watermark)
@@ -73,7 +59,7 @@ def test_downgrade_resets_the_cutover_and_upgrade_keeps_an_existing_one(pg_migra
 
 def test_upgrade_adds_the_column_over_a_compressed_chunk(pg_migrated_isolated):
     url, engine = pg_migrated_isolated
-    _flask_db(url, "downgrade", PREVIOUS)
+    migrate_db(url, "downgrade", PREVIOUS)
 
     # A row a month back lands in a closed 7-day chunk, which can be compressed.
     with engine.begin() as conn:
@@ -92,7 +78,7 @@ def test_upgrade_adds_the_column_over_a_compressed_chunk(pg_migrated_isolated):
         )).scalar()
     assert compressed >= 1, "no chunk was compressed, so this test would prove nothing"
 
-    _flask_db(url, "upgrade")
+    migrate_db(url, "upgrade", "head")
 
     with engine.begin() as conn:
         assert _has_column(conn)

@@ -17,8 +17,6 @@ Every background job in this module's private database is paused, so no policy
 refresh moves a watermark under a test.
 """
 
-import os
-import subprocess
 from datetime import timedelta
 
 import pytest
@@ -27,7 +25,7 @@ from sqlalchemy import text
 from lumen import commands
 from tests.unit.test_migrations import _script_dir
 
-from .conftest import TEST_CONFIG
+from .conftest import migrate_db
 
 pytestmark = pytest.mark.postgres
 
@@ -124,20 +122,6 @@ def _definition(engine, view):
             "SELECT view_definition FROM timescaledb_information.continuous_aggregates "
             "WHERE view_name = :v"
         ), {"v": view}).scalar()
-
-
-def _flask_db(url, *args):
-    return subprocess.run(
-        ["uv", "run", "flask", "--app", "run", "db", *args],
-        capture_output=True, text=True, timeout=300,
-        env={**os.environ, "DATABASE_URL": url, "CONFIG_YAML": TEST_CONFIG, "BACKGROUND_WORKER": "false"},
-    )
-
-
-def _ok(result, what):
-    assert result.returncode == 0, (
-        f"flask db {what} failed:\n--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
-    )
 
 
 # --- (a), (b), (c): the TimescaleDB behaviour the design depends on --------------------
@@ -355,7 +339,7 @@ def test_downgrade_drops_the_totals_view_and_upgrade_recreates_it(db, engine):
     url = db[0]
     assert _script_dir().get_revision(DAILY_ENTITY_REVISION).down_revision == TOTAL_REVISION
 
-    _ok(_flask_db(url, "downgrade", REVISION), "downgrade")
+    migrate_db(url, "downgrade", REVISION)
     catalog = _catalog(engine)
     assert TOTAL not in catalog
     assert catalog[DAILY] == (HOURLY, timedelta(days=1))
@@ -364,7 +348,7 @@ def test_downgrade_drops_the_totals_view_and_upgrade_recreates_it(db, engine):
             "SELECT COUNT(*) FROM timescaledb_information.jobs WHERE hypertable_name = :v"
         ), {"v": TOTAL}).scalar() == 0
 
-    _ok(_flask_db(url, "upgrade"), "upgrade")
+    migrate_db(url, "upgrade", "head")
     assert _catalog(engine)[TOTAL] == (HOURLY, timedelta(hours=1))
     materialized_only, config, comment = _settings(engine, TOTAL)
     assert materialized_only is False
@@ -378,7 +362,7 @@ def test_downgrade_drops_the_daily_entity_view_and_upgrade_recreates_it(db, engi
     url = db[0]
     assert _script_dir().get_revision(DAILY_ENTITY_REVISION).down_revision == TOTAL_REVISION
 
-    _ok(_flask_db(url, "downgrade", TOTAL_REVISION), "downgrade")
+    migrate_db(url, "downgrade", TOTAL_REVISION)
     catalog = _catalog(engine)
     assert DAILY_ENTITY not in catalog
     assert catalog[TOTAL] == (HOURLY, timedelta(hours=1))
@@ -387,7 +371,7 @@ def test_downgrade_drops_the_daily_entity_view_and_upgrade_recreates_it(db, engi
             "SELECT COUNT(*) FROM timescaledb_information.jobs WHERE hypertable_name = :v"
         ), {"v": DAILY_ENTITY}).scalar() == 0
 
-    _ok(_flask_db(url, "upgrade"), "upgrade")
+    migrate_db(url, "upgrade", "head")
     assert _catalog(engine)[DAILY_ENTITY] == (ENTITY, timedelta(days=1))
     materialized_only, config, comment = _settings(engine, DAILY_ENTITY)
     assert materialized_only is False
@@ -400,7 +384,7 @@ def test_downgrade_drops_the_daily_entity_view_and_upgrade_recreates_it(db, engi
 def test_downgrade_restores_the_raw_hourly_view_and_upgrade_rebuilds_it(db, engine):
     url = db[0]
 
-    _ok(_flask_db(url, "downgrade", BEFORE), "downgrade")
+    migrate_db(url, "downgrade", BEFORE)
     assert DAILY not in _catalog(engine)
     assert DAILY_ENTITY not in _catalog(engine)
     assert _catalog(engine)[HOURLY] == (None, timedelta(hours=1))
@@ -412,7 +396,7 @@ def test_downgrade_restores_the_raw_hourly_view_and_upgrade_rebuilds_it(db, engi
     _insert(engine, "rt-down")
     assert _requests(engine, HOURLY, "rt-down") == 1
 
-    _ok(_flask_db(url, "upgrade"), "upgrade")
+    migrate_db(url, "upgrade", "head")
     catalog = _catalog(engine)
     assert catalog[HOURLY] == (ENTITY, timedelta(hours=1))
     assert catalog[DAILY] == (HOURLY, timedelta(days=1))
