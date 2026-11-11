@@ -16,6 +16,7 @@ from lumen.models.model_alias import ModelAlias
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.services import health, model_cache
+from lumen.services.model_resolver import resolve_model_config
 from lumen.timeutils import utcnow
 
 
@@ -122,6 +123,28 @@ def test_alias_resolves_to_canonical(app, test_model):
         db.session.add(ModelAlias(alias="old-name", model_config_id=test_model["id"]))
         db.session.commit()
         assert model_cache.resolve("old-name").model_name == "test-model"
+
+
+def test_canonical_name_wins_over_colliding_alias(app):
+    """An alias row that equals another model's canonical name (the YAML check
+    rejects this, but the database does not) never shadows the canonical model;
+    the snapshot and the live resolver agree on it."""
+    with app.app_context():
+        x = _add_model("X")
+        y = _add_model("Y")
+        db.session.add(ModelAlias(alias="X", model_config_id=y))
+        db.session.commit()
+        model_cache.refresh(app)
+        assert model_cache.resolve("X").id == x
+        assert resolve_model_config("X").id == x
+
+        # An inactive canonical model is left out before the merge, so its
+        # name falls through to the alias target.
+        db.session.get(ModelConfig, x).disabled = True
+        db.session.commit()
+        model_cache.refresh(app)
+        assert model_cache.resolve("X").id == y
+        assert resolve_model_config("X").id == y
 
 
 def test_only_healthy_active_endpoints_of_active_models(app, test_model):
