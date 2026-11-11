@@ -29,3 +29,7 @@ footer_menus:
 banner_bg_color: "#fff9c4"
 banner_text_color: "#000000"
 banner_border_color: "#000000"
+favicon:
+  ico: https://cdn.brand.illinois.edu/icons/favicon.ico
+  svg: https://cdn.brand.illinois.edu/icons/icon.svg
+  apple_touch: https://cdn.brand.illinois.edu/icons/touch-icon.png
