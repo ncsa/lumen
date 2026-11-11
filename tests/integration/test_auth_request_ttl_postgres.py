@@ -8,7 +8,6 @@ migration test steps this module's private database below the revision and back
 to head before the OAuth tests below use it.
 """
 import os
-import subprocess
 import uuid
 from datetime import datetime, timedelta
 from http import HTTPStatus
@@ -19,7 +18,7 @@ from sqlalchemy import select, text
 from lumen.services.key_expiry import MAX_KEY_TTL
 from tests.conftest import no_snapshot_refresher
 
-from .conftest import TEST_CONFIG
+from .conftest import TEST_CONFIG, migrate_db
 
 pytestmark = pytest.mark.postgres
 
@@ -30,18 +29,6 @@ _TTL_COMMENT = (
     "Key TTL in seconds (0 = never): as requested (null if none was), "
     "replaced by the approver's choice at approval"
 )
-
-
-def _flask_db(url, *args):
-    result = subprocess.run(
-        ["uv", "run", "flask", "--app", "run", "db", *args],
-        capture_output=True, text=True, timeout=300,
-        env={**os.environ, "DATABASE_URL": url, "CONFIG_YAML": TEST_CONFIG, "BACKGROUND_WORKER": "false"},
-    )
-    assert result.returncode == 0, (
-        f"flask db {' '.join(args)} failed:\n--- stdout ---\n{result.stdout}\n"
-        f"--- stderr ---\n{result.stderr}"
-    )
 
 
 def _seed(engine):
@@ -63,11 +50,11 @@ def _ttl_column(conn):
 
 def test_upgrade_leaves_existing_requests_null_and_downgrade_drops_column(pg_migrated_isolated):
     url, engine = pg_migrated_isolated
-    _flask_db(url, "downgrade", _BEFORE)
+    migrate_db(url, "downgrade", _BEFORE)
     _seed(engine)
     engine.dispose()
 
-    _flask_db(url, "upgrade", _REVISION)
+    migrate_db(url, "upgrade", _REVISION)
     with engine.connect() as conn:
         ttls = dict(conn.execute(text("SELECT user_code, ttl FROM auth_requests")).all())
         assert tuple(_ttl_column(conn)) == ("bigint", _TTL_COMMENT)
@@ -79,7 +66,7 @@ def test_upgrade_leaves_existing_requests_null_and_downgrade_drops_column(pg_mig
     assert ttls == {"AAAA-AAAA": None, "BBBB-BBBB": None}
     engine.dispose()
 
-    _flask_db(url, "downgrade", _BEFORE)
+    migrate_db(url, "downgrade", _BEFORE)
     with engine.connect() as conn:
         columns = set(conn.execute(text(
             "SELECT column_name FROM information_schema.columns WHERE table_name = 'auth_requests'"
@@ -88,7 +75,7 @@ def test_upgrade_leaves_existing_requests_null_and_downgrade_drops_column(pg_mig
     assert "ttl" not in columns
     engine.dispose()
 
-    _flask_db(url, "upgrade")
+    migrate_db(url, "upgrade", "head")
 
 
 # ---------------------------------------------------------------------------

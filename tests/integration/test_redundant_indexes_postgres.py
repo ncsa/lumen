@@ -7,8 +7,6 @@ models, is only provable here. The round trip over a compressed chunk steps
 this module's private database back below the revision and up again, so it
 runs against ``pg_migrated_isolated`` and leaves it at head.
 """
-import os
-import subprocess
 
 import pytest
 from alembic.autogenerate import compare_metadata
@@ -16,7 +14,7 @@ from alembic.migration import MigrationContext
 from sqlalchemy import text
 
 from lumen.models import RequestLog
-from tests.integration.conftest import TEST_CONFIG
+from tests.integration.conftest import migrate_db
 from tests.unit.test_migrations import _script_dir
 
 pytestmark = pytest.mark.postgres
@@ -30,18 +28,6 @@ _REQUEST_LOGS_INDEXES = {
     "ix_request_logs_model_config_id_time",
 }
 _SOURCE = "redidx"  # request_logs.source is VARCHAR(8)
-
-
-def _flask_db(url, *args):
-    result = subprocess.run(
-        ["uv", "run", "flask", "--app", "run", "db", *args],
-        capture_output=True, text=True, timeout=300,
-        env={**os.environ, "DATABASE_URL": url, "CONFIG_YAML": TEST_CONFIG, "BACKGROUND_WORKER": "false"},
-    )
-    assert result.returncode == 0, (
-        f"flask db {' '.join(args)} failed:\n--- stdout ---\n{result.stdout}\n"
-        f"--- stderr ---\n{result.stderr}"
-    )
 
 
 def _indexes(conn, table):
@@ -121,13 +107,13 @@ def test_round_trip_over_a_compressed_chunk(pg_migrated_isolated):
     assert compressed >= 1, "no chunk was compressed, so this test would prove nothing"
     engine.dispose()
 
-    _flask_db(url, "downgrade", _BEFORE)
+    migrate_db(url, "downgrade", _BEFORE)
     with engine.connect() as conn:
         assert _DROPPED <= _all_index_names(conn)
         assert "request_logs_time_idx" in _indexes(conn, "request_logs")
     engine.dispose()
 
-    _flask_db(url, "upgrade", _REVISION)
+    migrate_db(url, "upgrade", _REVISION)
     with engine.connect() as conn:
         assert not _DROPPED & _all_index_names(conn)
         assert _REQUEST_LOGS_INDEXES <= set(_indexes(conn, "request_logs"))
@@ -135,6 +121,6 @@ def test_round_trip_over_a_compressed_chunk(pg_migrated_isolated):
     assert rows == 1
     engine.dispose()
 
-    _flask_db(url, "upgrade")
+    migrate_db(url, "upgrade", "head")
     with engine.connect() as conn:
         assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == _script_dir().get_current_head()
