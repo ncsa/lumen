@@ -488,6 +488,25 @@ def create_app():
         theme_dir = os.path.join(app.config["THEMES_ROOT"], g.theme_name, "static")
         return _send_from_directory(theme_dir, filename)
 
+    from flask import abort as _abort
+    from flask import redirect as _redirect
+
+    from .extensions import limiter as _limiter
+
+    # Browsers and crawlers request /favicon.ico on their own, before or without any
+    # page (and so without a session). No login decorator, and exempt from the
+    # limiter so these background fetches never spend anyone's request budget.
+    @app.route("/favicon.ico")
+    @_limiter.exempt
+    def favicon():
+        ico = ((g.theme or {}).get("favicon") or {}).get("ico")
+        if not ico:
+            _abort(HTTPStatus.NOT_FOUND)
+        if ico.startswith(("http://", "https://", "//")):
+            return _redirect(ico)
+        theme_dir = os.path.join(app.config["THEMES_ROOT"], g.theme_name, "static")
+        return _send_from_directory(theme_dir, ico)
+
     oauth2_cfg = yaml_data.get("oauth2", {})
     for key in ("client_id", "client_secret", "server_metadata_url", "scopes"):
         env_val = os.environ.get(f"OAUTH2_{key.upper()}")
