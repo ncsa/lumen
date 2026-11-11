@@ -17,6 +17,11 @@ e3f4a5b6c7d8 had no per-key total, so this adds one for each:
 Both are counters (NOT NULL, default 0) and are backfilled from each key's
 request_logs rows, where a NULL count adds nothing, so the totals match the log
 from the start. bill_request adds every later request to them.
+
+request_logs.api_key_id has no index (see c5d7e9f1a3b6), so the backfill
+aggregates the history once, grouped by key, and joins that result to
+api_keys; a per-key subquery would scan the whole hypertable once per key while
+the api_keys DDL lock is held. Keys with no logged requests keep the default 0.
 """
 
 import sqlalchemy as sa
@@ -37,6 +42,21 @@ _COMMENTS = {
 }
 
 
+# One pass over request_logs, grouped by key. UPDATE ... FROM works on
+# PostgreSQL and on SQLite >= 3.33. A group whose counts are all NULL sums to
+# NULL, which COALESCE turns into 0.
+BACKFILL_SQL = (
+    "UPDATE api_keys SET "
+    "cached_input_tokens = totals.cached_input_tokens, "
+    "cache_write_tokens = totals.cache_write_tokens "
+    "FROM (SELECT api_key_id, "
+    "COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens, "
+    "COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens "
+    "FROM request_logs WHERE api_key_id IS NOT NULL GROUP BY api_key_id) AS totals "
+    "WHERE api_keys.id = totals.api_key_id"
+)
+
+
 def _is_postgresql():
     return op.get_bind().dialect.name == "postgresql"
 
@@ -50,15 +70,7 @@ def upgrade():
         for column, comment in _COMMENTS.items():
             op.execute(f"COMMENT ON COLUMN api_keys.{column} IS $comment${comment}$comment$")
 
-    # Correlated subqueries keep this portable to SQLite and PostgreSQL. Keys
-    # with no logged requests sum to NULL, which COALESCE turns into 0.
-    op.execute(
-        "UPDATE api_keys SET "
-        "cached_input_tokens = COALESCE((SELECT SUM(r.cached_input_tokens) FROM request_logs r "
-        "WHERE r.api_key_id = api_keys.id), 0), "
-        "cache_write_tokens = COALESCE((SELECT SUM(r.cache_write_tokens) FROM request_logs r "
-        "WHERE r.api_key_id = api_keys.id), 0)"
-    )
+    op.execute(BACKFILL_SQL)
 
 
 def downgrade():

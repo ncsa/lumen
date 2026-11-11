@@ -4,16 +4,20 @@ The test steps this module's database back to ``e3f4a5b6c7d8`` with the same
 ``flask db`` command the container runs, seeds request_logs rows for two keys
 (one of them in a compressed chunk) and for no key, upgrades again, and checks
 that each key's totals are the exact sums of its rows with NULL adding nothing,
-and that both columns carry their comment. It then downgrades and checks the
-columns are gone.
+and that both columns carry their comment. Its plan check runs the backfill
+under EXPLAIN ANALYZE and checks every request_logs scan ran once, not once per
+key (a per-key subquery, run as a control, does). It then downgrades and checks
+the columns are gone.
 
 A second test checks that the model and the migrated schema agree on the
 columns, so ``db.create_all`` and an upgraded database build the same thing. It
 runs first, on the untouched upgrade.
 """
 
+import importlib.util
 import os
 import subprocess
+from pathlib import Path
 
 import pytest
 from alembic.autogenerate import compare_metadata
@@ -29,6 +33,49 @@ pytestmark = pytest.mark.postgres
 PREVIOUS = "e3f4a5b6c7d8"
 SOURCE = "ckmark"  # request_logs.source is VARCHAR(8)
 COLUMNS = ("cached_input_tokens", "cache_write_tokens")
+_REVISION_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "migrations" / "versions" / "f4a5b6c7d8e9_add_api_key_cache_tokens.py"
+)
+# The per-key form the backfill replaced: a correlated subquery per column.
+PER_KEY_SQL = (
+    "UPDATE api_keys SET "
+    "cached_input_tokens = COALESCE((SELECT SUM(r.cached_input_tokens) FROM request_logs r "
+    "WHERE r.api_key_id = api_keys.id), 0), "
+    "cache_write_tokens = COALESCE((SELECT SUM(r.cache_write_tokens) FROM request_logs r "
+    "WHERE r.api_key_id = api_keys.id), 0)"
+)
+
+
+def _backfill_sql():
+    spec = importlib.util.spec_from_file_location("api_key_cache_tokens_revision_pg", _REVISION_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.BACKFILL_SQL
+
+
+def _history_scan_loops(engine, sql):
+    """Run ``sql`` under EXPLAIN ANALYZE, rolled back, and return the loop count
+    of every scan of a request_logs chunk (every relation other than api_keys)."""
+    with engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            # Parallel workers would each count as a loop.
+            conn.execute(text("SET LOCAL max_parallel_workers_per_gather = 0"))
+            plan = conn.execute(text(f"EXPLAIN (ANALYZE, FORMAT JSON) {sql}")).scalar()
+        finally:
+            trans.rollback()
+    loops = []
+
+    def walk(node):
+        relation = node.get("Relation Name")
+        if relation and relation != "api_keys":
+            loops.append(node["Actual Loops"])
+        for child in node.get("Plans", []):
+            walk(child)
+
+    walk(plan[0]["Plan"])
+    return loops
 
 
 def _flask_db(url, *args):
@@ -120,6 +167,15 @@ def test_upgrade_backfills_per_key_totals_and_downgrade_drops_them(pg_migrated_i
                 "WHERE attrelid = 'api_keys'::regclass AND attname = :c"
             ), {"c": column}).scalar()
             assert comment and comment.startswith("Cumulative")
+
+    # The history is aggregated in one pass: each chunk is scanned once,
+    # however many keys there are. The per-key form, as a control, scans it
+    # once per key, which shows the check can tell the two apart.
+    keys = len(rows)
+    loops = _history_scan_loops(engine, _backfill_sql())
+    assert loops and set(loops) == {1}, loops
+    per_key = _history_scan_loops(engine, PER_KEY_SQL)
+    assert per_key and max(per_key) >= keys, per_key
 
     _flask_db(url, "downgrade", PREVIOUS)
     with engine.connect() as conn:
