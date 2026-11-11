@@ -1,9 +1,12 @@
-"""``flask wait-for-migrations`` against real PostgreSQL, run as the container runs it.
+"""``flask wait-for-migrations`` against real PostgreSQL.
 
 The SQLite tests in ``tests/unit/test_wait_for_migrations.py`` cover the waiting
 logic with a fake clock; these prove the command reads the head the real migration
-chain leaves behind, and that an empty database holds the gate shut. The command is
-read-only, so the shared migrated database is safe to use.
+chain leaves behind, and that an empty database holds the gate shut. The first two
+run the command as the container runs it, in a subprocess; the search_path test
+invokes it in-process through ``pg_app``, since what it checks is the gate's own
+connection, not the CLI start-up. The command is read-only, so the shared migrated
+database is safe to use.
 """
 
 import os
@@ -13,10 +16,26 @@ import uuid
 import pytest
 from sqlalchemy import text
 
-from tests.integration.conftest import PG_URL_ENV, TEST_CONFIG, _admin_engine
+from lumen.commands import wait_for_migrations_cmd
+from lumen.extensions import db
+from tests.integration.conftest import PG_URL_ENV, TEST_CONFIG, _admin_engine, pg_app
 from tests.unit.test_migrations import _script_dir
 
 pytestmark = pytest.mark.postgres
+
+
+def _invoke(url, *args):
+    """Run ``wait-for-migrations`` in-process against ``url``, as ``flask`` would.
+
+    The app context is pushed here because ``with_appcontext`` reuses one that is
+    already active, and the session ``app`` fixture's (SQLite) one would be. The
+    app's engine is disposed so no connection outlives the call.
+    """
+    with pg_app(url) as app, app.app_context():
+        try:
+            return app.test_cli_runner().invoke(wait_for_migrations_cmd, list(args))
+        finally:
+            db.engine.dispose()
 
 
 def _run(url, *args):
@@ -90,11 +109,12 @@ def test_reads_the_schema_the_url_selects(empty_pg_url):
         conn.execute(text("INSERT INTO tenant.alembic_version VALUES (:r)"), {"r": head})
     engine.dispose()
 
-    result = _run(empty_pg_url + "?options=-c%20search_path%3Dtenant", "--timeout", "3")
-    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
-    assert f"Database is at migration head {head}." in result.stdout
+    result = _invoke(empty_pg_url + "?options=-c%20search_path%3Dtenant", "--timeout", "3")
+    assert result.exit_code == 0, result.output
+    assert f"Database is at migration head {head}." in result.output
 
     # Without the option the same database is unstamped: the test above is not vacuous.
-    result = _run(empty_pg_url, "--timeout", "1")
-    assert result.returncode == 1
-    assert "database is at revision none" in result.stdout
+    # A zero timeout fails on the first check instead of sleeping for a retry.
+    result = _invoke(empty_pg_url, "--timeout", "0")
+    assert result.exit_code == 1, result.output
+    assert "database is at revision none" in result.output
