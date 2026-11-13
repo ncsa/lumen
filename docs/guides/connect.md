@@ -212,7 +212,7 @@ Each model entry is filled in from the model's settings:
 - `thinking` and `reasoning_effort` appear only for reasoning models, which all offer `low`, `medium` and `high`.
 - Models without text input (for example audio-only speech models) are left out. Model aliases are not listed.
 
-Instead of editing the file by hand, run `lumen.sh --copilot` (see [CLI login](#cli-login-lumensh)): it writes the same file with your real key, adds model aliases named `<id> via Lumen (alias of <model>)`, keeps your other providers and models, and keeps the Lumen list current on later runs, even without the flag. Add `--no-opencode` if you don't use OpenCode.
+Instead of editing the file by hand, run `lumen.sh --copilot` (see [CLI login](#cli-login-lumensh)): it writes the same file with your real key, adds model aliases named `<id> via Lumen (alias of <model>)`, keeps your other providers and models, and keeps the Lumen list current on later runs, even without the flag. Add `--no-opencode` if you don't use OpenCode. The script lists the models your key can use now, so a model that is still [awaiting acknowledgment](#models-awaiting-acknowledgment) is on the Connect page's file but not in the script's until you acknowledge it.
 
 Restart the Copilot CLI after the file changes, then pick a Lumen model with `/model`, or start with `copilot --model lumen/<id>`.
 
