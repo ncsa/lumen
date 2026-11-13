@@ -110,6 +110,9 @@ if [[ -z "$COPILOT" ]]; then
     COPILOT=1
   fi
 fi
+if [[ $COPILOT -eq 1 && -z "${COPILOT_HOME:-}${HOME:-}" ]]; then
+  die "--copilot needs \$HOME or \$COPILOT_HOME"
+fi
 
 # --ttl in seconds, the unit the server takes. The digit limit keeps the
 # arithmetic far from overflow; the server enforces its own maximum.
@@ -691,10 +694,17 @@ sync_copilot() {
     die "Lumen returned no models; leaving $config untouched"
   fi
 
-  local current="{}"
+  # Only the shape this script can merge without losing anything: an object
+  # whose providers and models, when present, are arrays. Anything else is
+  # reported before the file or its mode is touched.
+  local current="{}" created=0
   if [[ -s "$config" ]]; then
-    current=$(jq -c 'if type == "object" then . else error("not an object") end' "$config" 2>/dev/null) \
-      || die "cannot parse $config"
+    current=$(jq -c '
+      if type == "object"
+         and ((.providers | type) as $t | $t == "array" or $t == "null")
+         and ((.models | type) as $t | $t == "array" or $t == "null")
+      then . else error("unsupported shape") end' "$config" 2>/dev/null) \
+      || die "cannot parse $config (expected an object with providers and models arrays); leaving it untouched"
   fi
 
   local added removed tmp
@@ -707,20 +717,24 @@ sync_copilot() {
     restrict_to_owner "$config"
   else
     mkdir -p "$(dirname "$config")"
-    echo "Created $config"
+    created=1
   fi
 
   tmp=$(mktemp "$config.tmp.XXXXXX")
   trap 'rm -f "$tmp"' EXIT
   jq --argjson models "$new_models" --arg base "$SERVER" --arg key "$LUMEN_API_KEY" '
-    .providers = ([(.providers // [])[] | select(.name? != "lumen")]
+    # Only the lumen provider and lumen models are replaced; every other
+    # entry, including ones that are not objects, is kept as it is.
+    def other(f): select(type != "object" or (f != "lumen"));
+    .providers = ([(.providers // [])[] | other(.name)]
                   + [{name: "lumen", type: "openai", baseUrl: ($base + "/v1"),
                       wireApi: "completions", apiKey: $key}])
-    | .models = ([(.models // [])[] | select(.provider? != "lumen")] + $models)
+    | .models = ([(.models // [])[] | other(.provider)] + $models)
   ' <<<"$current" > "$tmp" || die "cannot update $config"
   chmod 600 "$tmp"
   mv "$tmp" "$config"
   trap 'rm -rf "$TMPDIR_LUMEN"' EXIT
+  [[ $created -eq 0 ]] || echo "Created $config"
 
   if [[ -n "$removed" ]]; then
     echo "Removed models:"

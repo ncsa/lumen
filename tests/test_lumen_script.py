@@ -1517,3 +1517,73 @@ def test_copilot_unparseable_file_rejected(home, lumen_server):
     assert r.returncode != 0
     assert b"cannot parse" in r.stderr
     assert path.read_text() == "not json"
+
+
+def test_copilot_keeps_non_object_entries(home, lumen_server):
+    """Entries that are not objects are not lumen's, so a rewrite keeps them
+    in place in both arrays instead of dropping them."""
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    path = copilot_file(home)
+    path.parent.mkdir()
+    path.write_text(json.dumps({
+        "providers": ["keep-provider", None, {"name": "lumen", "apiKey": "sk_old_key_0000000"}, 3],
+        "models": [7, "keep-model", [1], {"id": "old", "provider": "lumen"}],
+    }))
+    r = run_script(home, port, args=["--no-opencode"])
+    assert r.returncode == 0, r.stderr
+    cfg = json.loads(path.read_text())
+    assert cfg["providers"][:3] == ["keep-provider", None, 3]
+    assert cfg["providers"][3]["apiKey"] == "sk_stored_key_000"
+    assert cfg["models"][:3] == [7, "keep-model", [1]]
+    assert [m["id"] for m in cfg["models"][3:]] == ["gpt-demo", "gpt-alias"]
+    assert b"- old" in r.stdout
+
+
+@pytest.mark.parametrize("content", [
+    {"providers": {"name": "lumen"}, "models": []},
+    {"providers": [{"name": "lumen"}], "models": {"x": {"provider": "lumen"}}},
+    {"providers": [{"name": "lumen"}], "models": "none"},
+])
+def test_copilot_unsupported_shape_left_untouched(home, lumen_server, content):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    path = copilot_file(home)
+    path.parent.mkdir()
+    path.write_text(json.dumps(content))
+    path.chmod(0o644)
+    before = path.read_bytes()
+    r = run_script(home, port, args=["--copilot", "--no-opencode"])
+    assert r.returncode != 0
+    assert b"cannot parse" in r.stderr
+    assert path.read_bytes() == before
+    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+
+
+def test_copilot_limit_fields_when_partly_or_not_known(home, lumen_server, monkeypatch):
+    """Output cap only: just maxOutputTokens. No limits at all: no limit
+    fields (Copilot then uses its defaults)."""
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    monkeypatch.setitem(MODELS, "data", [
+        {"id": "out-only", "max_output_tokens": 800, "input_modalities": ["text"]},
+        {"id": "no-limits", "input_modalities": ["text"]},
+    ])
+    r = run_script(home, port, args=["--copilot", "--no-opencode"])
+    assert r.returncode == 0, r.stderr
+    _, models = copilot_lumen(json.loads(copilot_file(home).read_text()))
+    assert models["out-only"] == {
+        "id": "out-only", "provider": "lumen", "name": "out-only via Lumen", "maxOutputTokens": 800,
+        "capabilities": {"supports": {"vision": False, "toolCalls": False}}}
+    assert models["no-limits"] == {
+        "id": "no-limits", "provider": "lumen", "name": "no-limits via Lumen",
+        "capabilities": {"supports": {"vision": False, "toolCalls": False}}}
+
+
+def test_copilot_without_home_is_reported(lumen_server):
+    port = lumen_server.server_address[1]
+    r = run_script(None, port, args=["--copilot", "--no-opencode"],
+                   env_extra={"LUMEN_API_KEY": "sk_stored_key_000"})
+    assert r.returncode != 0
+    assert b"--copilot needs $HOME or $COPILOT_HOME" in r.stderr
+    assert not lumen_server.hits
