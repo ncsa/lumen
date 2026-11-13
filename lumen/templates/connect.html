@@ -39,6 +39,10 @@ setx LUMEN_API_KEY "sk_…"        # Windows (new terminals)</code></pre>
               type="button" role="tab" aria-controls="pane-opencode" aria-selected="true">OpenCode</button>
     </li>
     <li class="nav-item" role="presentation">
+      <button class="nav-link" id="tab-copilot" data-bs-toggle="tab" data-bs-target="#pane-copilot"
+              type="button" role="tab" aria-controls="pane-copilot" aria-selected="false">Copilot CLI</button>
+    </li>
+    <li class="nav-item" role="presentation">
       <button class="nav-link" id="tab-curl" data-bs-toggle="tab" data-bs-target="#pane-curl"
               type="button" role="tab" aria-controls="pane-curl" aria-selected="false">curl</button>
     </li>
@@ -68,6 +72,23 @@ setx LUMEN_API_KEY "sk_…"        # Windows (new terminals)</code></pre>
         OpenCode reads <code>opencode.jsonc</code> as well as <code>opencode.json</code>; the generated file carries <code>//</code> comments, so it is named <code>.jsonc</code>.
       </div>
       <div id="examples-opencode"></div>
+    </div>
+
+    <div class="tab-pane fade" id="pane-copilot" role="tabpanel" aria-labelledby="tab-copilot">
+      <p class="text-muted small mb-2">
+        A GitHub Copilot CLI provider file listing every text model you can access. The file holds the key
+        itself: replace <code>YOUR_LUMEN_API_KEY</code> with your API key and keep the file private.
+      </p>
+      <div class="alert alert-secondary small mt-2 mb-2" role="note">
+        <strong>Where to put this file:</strong>
+        <ul class="mb-0">
+          <li><strong>macOS / Linux:</strong> <code>~/.copilot/providers.json</code></li>
+          <li><strong>Windows:</strong> <code>%USERPROFILE%\.copilot\providers.json</code></li>
+        </ul>
+        Or run <code>lumen.sh --copilot</code>: it writes the same file with your real key, adds model aliases
+        and keeps the model list current on later runs.
+      </div>
+      <div id="examples-copilot"></div>
     </div>
 
     <div class="tab-pane fade" id="pane-curl" role="tabpanel" aria-labelledby="tab-curl">
