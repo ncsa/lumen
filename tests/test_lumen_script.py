@@ -1320,3 +1320,200 @@ def test_401_on_stored_key_shows_relogin_hint(home, lumen_server):
     assert r.returncode != 0
     assert "key expired or revoked — run lumen.sh --relogin" in r.stderr.decode()
     assert json.loads((home / ".config" / "opencode" / "opencode.json").read_text()) == {}
+
+
+# --- GitHub Copilot CLI (providers.json) -------------------------------------
+
+def copilot_file(home):
+    return home / ".copilot" / "providers.json"
+
+
+def copilot_lumen(cfg):
+    """The lumen provider block and the lumen models, by id."""
+    provider = [p for p in cfg["providers"] if p["name"] == "lumen"]
+    assert len(provider) == 1
+    return provider[0], {m["id"]: m for m in cfg["models"] if m["provider"] == "lumen"}
+
+
+def write_copilot(home, base_url, api_key, extra_providers=(), extra_models=(), **top):
+    path = copilot_file(home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        **top,
+        "providers": [*extra_providers, {"name": "lumen", "type": "openai", "baseUrl": base_url,
+                                         "wireApi": "completions", "apiKey": api_key}],
+        "models": [*extra_models, {"id": "gone-model", "provider": "lumen", "name": "gone-model via Lumen"}],
+    }))
+    return path
+
+
+def test_copilot_creates_file_with_snippet_shape(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    r = run_script(home, port, args=["--copilot"])
+    assert r.returncode == 0, r.stderr
+    path = copilot_file(home)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    cfg = json.loads(path.read_text())
+    assert list(cfg) == ["providers", "models"]
+    assert cfg["providers"] == [{
+        "name": "lumen", "type": "openai", "baseUrl": f"http://127.0.0.1:{port}/v1",
+        "wireApi": "completions", "apiKey": "sk_stored_key_000",
+    }]
+    # Same key order as the snippet; reasoning model with default efforts and
+    # vision; an alias without output cap, tools or reasoning; no audio-only model.
+    assert cfg["models"] == [
+        {"id": "gpt-demo", "provider": "lumen", "name": "gpt-demo via Lumen",
+         "maxPromptTokens": 3500, "maxContextWindowTokens": 4000, "maxOutputTokens": 500,
+         "capabilities": {"supports": {"vision": True, "toolCalls": True, "thinking": True,
+                                       "reasoning_effort": ["low", "medium", "high"]}}},
+        {"id": "gpt-alias", "provider": "lumen", "name": "gpt-alias via Lumen (alias of gpt-demo)",
+         "maxPromptTokens": 4000, "maxContextWindowTokens": 4000,
+         "capabilities": {"supports": {"vision": False, "toolCalls": False}}},
+    ]
+    assert list(cfg["models"][0]) == ["id", "provider", "name", "maxPromptTokens",
+                                      "maxContextWindowTokens", "maxOutputTokens", "capabilities"]
+    out = r.stdout.decode()
+    assert f"Created {copilot_file(home)}" in out
+    assert "+ gpt-demo" in out and "+ gpt-alias" in out
+    assert f"Updated 2 models in {copilot_file(home)}" in out
+    # The opencode sync still runs alongside, from the same single fetch.
+    assert set(json.loads((home / ".config" / "opencode" / "opencode.json").read_text())
+               ["provider"]["lumen"]["models"]) == {"gpt-demo", "gpt-alias"}
+    assert lumen_server.hits["/v1/models"] == 1
+
+
+def test_copilot_honours_copilot_home(home, lumen_server, tmp_path):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    r = run_script(home, port, args=["--copilot"], env_extra={"COPILOT_HOME": str(tmp_path / "cp")})
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / "cp" / "providers.json").exists()
+    assert not copilot_file(home).exists()
+
+
+def test_copilot_keeps_other_providers_models_and_keys(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    other_provider = {"name": "mine", "type": "anthropic", "baseUrl": "https://x.example", "custom": 1}
+    other_model = {"id": "my-model", "provider": "mine", "name": "mine", "extra": [1, 2]}
+    path = write_copilot(home, f"http://127.0.0.1:{port}/v1", "sk_old_key_0000000",
+                         extra_providers=[other_provider], extra_models=[other_model],
+                         unknownKey={"keep": True})
+    path.chmod(0o644)
+    r = run_script(home, port)  # sticky: no --copilot needed
+    assert r.returncode == 0, r.stderr
+    cfg = json.loads(path.read_text())
+    assert cfg["unknownKey"] == {"keep": True}
+    assert cfg["providers"][0] == other_provider
+    assert other_model in cfg["models"]
+    provider, models = copilot_lumen(cfg)
+    assert provider["apiKey"] == "sk_stored_key_000"
+    assert set(models) == {"gpt-demo", "gpt-alias"}
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert b"readable by other users" in r.stderr
+    out = r.stdout.decode()
+    assert "- gone-model" in out
+    assert "+ gpt-demo" in out
+
+
+def test_copilot_no_aliases(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    r = run_script(home, port, args=["--copilot", "--no-aliases"])
+    assert r.returncode == 0, r.stderr
+    _, models = copilot_lumen(json.loads(copilot_file(home).read_text()))
+    assert set(models) == {"gpt-demo"}
+    assert not any("alias of" in m["name"] for m in models.values())
+
+
+def test_copilot_sticky_with_no_opencode(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    path = write_copilot(home, f"http://127.0.0.1:{port}/v1", "sk_stored_key_000")
+    oc = home / ".config" / "opencode" / "opencode.json"
+    before = oc.read_bytes()
+    r = run_script(home, port, args=["--no-opencode"])
+    assert r.returncode == 0, r.stderr
+    _, models = copilot_lumen(json.loads(path.read_text()))
+    assert set(models) == {"gpt-demo", "gpt-alias"}
+    assert oc.read_bytes() == before
+    assert b"LUMEN_API_KEY=" not in r.stdout
+
+
+def test_copilot_flag_with_no_opencode_writes_only_copilot(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    oc = home / ".config" / "opencode" / "opencode.json"
+    before = oc.read_bytes()
+    r = run_script(home, port, args=["--copilot", "--no-opencode"])
+    assert r.returncode == 0, r.stderr
+    assert copilot_file(home).exists()
+    assert oc.read_bytes() == before
+    assert b"LUMEN_API_KEY=" not in r.stdout
+
+
+def test_no_opencode_without_copilot_provider_only_prints_key(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    # A providers.json without a lumen provider is not sticky.
+    path = copilot_file(home)
+    path.parent.mkdir()
+    path.write_text(json.dumps({"providers": [{"name": "mine"}], "models": []}))
+    before = path.read_bytes()
+    r = run_script(home, port, args=["--no-opencode"])
+    assert r.returncode == 0, r.stderr
+    assert b"LUMEN_API_KEY=sk_stored_key_000" in r.stdout
+    assert path.read_bytes() == before
+    assert not lumen_server.hits
+
+
+@pytest.mark.parametrize("args", [["--no-copilot"], ["--no-copilot", "--no-opencode"]])
+def test_no_copilot_leaves_sticky_file_unchanged(home, lumen_server, args):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    path = write_copilot(home, f"{SERVER_A}/v1", KEY_A)
+    path.chmod(0o644)
+    before = path.read_bytes()
+    r = run_script(home, port, args=args)
+    assert r.returncode == 0, r.stderr
+    assert path.read_bytes() == before
+    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+
+
+def test_copilot_explicit_server_switches_base_url_and_key(home, lumen_server):
+    port = lumen_server.server_address[1]
+    server_b = f"http://127.0.0.1:{port}"
+    store_test_key(home, port)
+    path = write_copilot(home, f"{SERVER_A}/v1", KEY_A)
+    r = run_script(home, None, args=["-s", server_b, "--no-opencode"])
+    assert r.returncode == 0, r.stderr
+    provider, _ = copilot_lumen(json.loads(path.read_text()))
+    assert provider["baseUrl"] == f"{server_b}/v1"
+    assert provider["apiKey"] == "sk_stored_key_000"
+    # The old key was never sent anywhere.
+    assert lumen_server.auths == ["Bearer sk_stored_key_000"]
+
+
+def test_copilot_401_leaves_file_untouched(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    path = write_copilot(home, f"http://127.0.0.1:{port}/v1", "sk_stored_key_000")
+    before = path.read_bytes()
+    lumen_server.models_status = 401
+    r = run_script(home, port)
+    assert r.returncode != 0
+    assert "key expired or revoked" in r.stderr.decode()
+    assert path.read_bytes() == before
+
+
+def test_copilot_unparseable_file_rejected(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    path = copilot_file(home)
+    path.parent.mkdir()
+    path.write_text("not json")
+    r = run_script(home, port, args=["--copilot", "--no-opencode"])
+    assert r.returncode != 0
+    assert b"cannot parse" in r.stderr
+    assert path.read_text() == "not json"
