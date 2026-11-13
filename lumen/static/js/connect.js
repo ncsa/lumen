@@ -1,5 +1,5 @@
-// Builds OpenCode / curl / Python connection snippets for the /connect page.
-// Reads server data from #connect-data; the OpenCode config always covers every
+// Builds OpenCode / Copilot CLI / curl / Python connection snippets for the /connect page.
+// Reads server data from #connect-data; the OpenCode and Copilot CLI configs cover every
 // accessible model, while the curl/Python examples follow the model selector and
 // adapt to the selected model's modalities (image / audio).
 (function () {
@@ -206,6 +206,91 @@
       "Comments are JSONC — OpenCode reads opencode.jsonc as well as opencode.json."));
   }
 
+  // ── GitHub Copilot CLI (~/.copilot/providers.json) ───────────────────────
+  // One "lumen" provider plus one model entry per canonical model, in the shape
+  // lumen.sh --copilot writes. The page has no aliases (connect-data lists
+  // canonical models only); the script adds them.
+  const COPILOT_PROVIDER = "lumen";
+  const COPILOT_EFFORTS = ["low", "medium", "high"];
+
+  function copilotModel(m) {
+    const entry = {
+      id: m.id,
+      provider: COPILOT_PROVIDER,
+      name: m.id + " via Lumen",
+    };
+    const context = m.context_window;
+    const output = m.max_output_tokens;
+    if (context && output) {
+      entry.maxPromptTokens = context - output;
+      entry.maxContextWindowTokens = context;
+      entry.maxOutputTokens = output;
+    } else if (context) {
+      // Without a known output cap the whole window is available to the prompt.
+      entry.maxPromptTokens = context;
+      entry.maxContextWindowTokens = context;
+    } else if (output) {
+      entry.maxOutputTokens = output;
+    }
+    const supports = {
+      vision: !!(m.input_modalities && m.input_modalities.includes("image")),
+      toolCalls: m.supports_function_calling === true,
+    };
+    // Lumen stores no per-model effort levels yet, so every reasoning model
+    // gets Copilot's default three.
+    if (m.supports_reasoning === true) {
+      supports.thinking = true;
+      supports.reasoning_effort = COPILOT_EFFORTS.slice();
+    }
+    entry.capabilities = { supports: supports };
+    return entry;
+  }
+
+  function copilotConfig() {
+    // Skip models without text input (audio-only speech models), as lumen.sh
+    // does for OpenCode; unknown modalities are kept.
+    const usable = data.models.filter((m) =>
+      !(m.input_modalities && m.input_modalities.length) || m.input_modalities.includes("text"));
+    const models = data.models.length
+      ? usable.map(copilotModel)
+      : [{ id: PLACEHOLDER, provider: COPILOT_PROVIDER, name: PLACEHOLDER + " via Lumen" }];
+    return {
+      providers: [{
+        name: COPILOT_PROVIDER,
+        type: "openai",
+        baseUrl: BASE,
+        wireApi: "completions",
+        apiKey: "YOUR_LUMEN_API_KEY",
+      }],
+      models: models,
+    };
+  }
+
+  function renderCopilot() {
+    const container = document.getElementById("examples-copilot");
+    if (!container) return;
+    container.innerHTML = "";
+    const json = JSON.stringify(copilotConfig(), null, 2);
+
+    const download = document.createElement("button");
+    download.type = "button";
+    download.className = "btn btn-sm btn-primary";
+    download.textContent = "Download providers.json";
+    download.setAttribute("aria-label", "Download providers.json");
+    download.addEventListener("click", () => {
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "providers.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    container.appendChild(block("providers.json", json, [download],
+      "Replace YOUR_LUMEN_API_KEY with your API key."));
+  }
+
   // ── curl ─────────────────────────────────────────────────────────────────
   function curlText(id) {
     return "curl " + BASE + "/chat/completions \\\n" +
@@ -323,6 +408,7 @@
 
   function render() {
     renderOpenCode();
+    renderCopilot();
 
     const sel = select ? select.value : "";
     const model = sel ? modelById(sel) : null;
