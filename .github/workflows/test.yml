@@ -56,7 +56,7 @@ jobs:
           - name: monitor
             path: scripts/monitor
             postgres: postgres:17
-            python: "3.14"
+            python: "3.13"
             image: true
             experimental: false
           - name: monitor
