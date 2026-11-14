@@ -161,3 +161,66 @@ def test_detail_reprompts_when_requirement_added_after_consent(app, auth_client,
     resp = auth_client.get(f"/models/{test_model['model_name']}")
     soup = BeautifulSoup(resp.data, "html.parser")
     assert soup.find(id="ack-open-btn") is not None
+
+
+# ---------------------------------------------------------------------------
+# Model notice (left column) vs acknowledgement notice (right sidebar), #492
+# ---------------------------------------------------------------------------
+
+def _detail_soup(auth_client, test_model):
+    resp = auth_client.get(f"/models/{test_model['model_name']}")
+    assert resp.status_code == HTTPStatus.OK
+    return resp, BeautifulSoup(resp.data, "html.parser")
+
+
+def _left_notice(soup):
+    """The model's own notice, which must sit in the main (left) column."""
+    notice = soup.find(id="model-notice")
+    assert notice is not None, "model notice missing"
+    assert notice.find_parent("div", class_="col-lg-8") is not None, "model notice is not in the main column"
+    return notice
+
+
+def test_allowed_model_shows_notice_on_left(app, auth_client, test_model):
+    _set_model(app, test_model["id"], notice="Allowed-model-notice-7f3a")
+    _, soup = _detail_soup(auth_client, test_model)
+    assert "Allowed-model-notice-7f3a" in _left_notice(soup).get_text()
+    assert soup.find(id="model-ack-notice") is None
+
+
+def test_needs_ack_model_shows_notice_left_and_ack_right(app, auth_client, test_model):
+    _set_model(app, test_model["id"], needs_ack=True, notice="Ack-model-notice-2c9e",
+               ack_message="Ack-message-text-5b1d")
+    _, soup = _detail_soup(auth_client, test_model)
+    assert "Ack-model-notice-2c9e" in _left_notice(soup).get_text()
+    right = soup.find(id="model-ack-notice")
+    assert right is not None
+    assert right.find_parent("div", class_="col-lg-4") is not None
+    assert "Ack-message-text-5b1d" in right.get_text()
+    assert "Ack-model-notice-2c9e" not in right.get_text()
+
+
+def test_early_access_only_model_shows_notice_left_without_ack_block(app, auth_client, test_model):
+    _set_model(app, test_model["id"], early_access=True, notice="Early-model-notice-9d4f")
+    _, soup = _detail_soup(auth_client, test_model)
+    assert "Early-model-notice-9d4f" in _left_notice(soup).get_text()
+    assert soup.find(id="model-ack-notice") is None
+
+
+def test_non_needs_ack_status_shows_model_notice_not_ack(app, auth_client, test_model, monkeypatch):
+    """#492: only ``needs_ack`` shows the acknowledgement text; any other
+    non-allowed status keeps the model's own notice and no ack prompt."""
+    monkeypatch.setattr("lumen.blueprints.models_page.routes.get_model_access_status",
+                        lambda *_args, **_kwargs: "pending")
+    _set_model(app, test_model["id"], needs_ack=True, notice="Pending-model-notice-4e8b",
+               ack_message="Pending-ack-text-1a6c")
+    resp, soup = _detail_soup(auth_client, test_model)
+    assert "Pending-model-notice-4e8b" in _left_notice(soup).get_text()
+    assert soup.find(id="model-ack-notice") is None
+    assert b"Pending-ack-text-1a6c" not in resp.data
+    assert soup.find(id="ack-open-btn") is None
+
+
+def test_model_without_notice_has_no_notice_block(auth_client, test_model):
+    _, soup = _detail_soup(auth_client, test_model)
+    assert soup.find(id="model-notice") is None
