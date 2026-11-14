@@ -91,6 +91,8 @@ When running, Lumen watches `config.yaml` for changes and automatically reloads 
 | `chat.remove` | Change conversation soft-delete vs hard-delete mode |
 | `chat.upload` | Adjust upload file size limits and allowed file types |
 | `rate_limiting.limit` | Change request rate limits |
+| `stats.fold_interval` / `stats.fold_lag` | Change how often usage totals are folded and how far behind now they end (next fold pass) |
+| `api.keys.ttl` | Change the max/default API key lifetime (keys created afterwards; existing keys keep their expiry) |
 
 ## Changes That Require a Restart
 
