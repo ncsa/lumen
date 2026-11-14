@@ -1,4 +1,5 @@
 """Tests for the groups blueprint (list, detail, members, ownership)."""
+import re
 from http import HTTPStatus
 
 import pytest
@@ -133,6 +134,56 @@ def test_data_empty_for_non_member(auth_client, app):
     data = auth_client.get("/groups/data").get_json()
     assert data["groups"] == []
     assert data["total"] == 0
+
+
+_SQL_TABLE = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+(\w+)", re.IGNORECASE)
+
+
+def _sql_tables(statement):
+    """Tables a SQL statement reads or writes, in first-seen order."""
+    seen = []
+    for t in _SQL_TABLE.findall(statement):
+        if t not in seen:
+            seen.append(t)
+    return tuple(seen)
+
+
+def test_data_no_groups_skips_listing_queries(auth_client, app, second_user):
+    """A caller in no group gets the empty page without the listing queries running.
+
+    The early return in groups.data saves work; it does not enforce access.
+    Without it, an empty visibility list still filters both queries with an
+    empty IN, which matches nothing, so the response is the same either way
+    (test_data_empty_for_non_member cannot tell them apart). What the guard
+    prevents is the listing SELECT over groups/group_limits, the COUNT(*) over
+    groups and the owner lookup, so this test checks which SQL runs, not just
+    the response.
+    """
+    from sqlalchemy import event
+
+    from lumen.extensions import db
+
+    _make_group(app, name="second-users-group", owner_id=second_user["id"])
+
+    tables = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        tables.append(_sql_tables(statement))
+
+    with app.app_context():
+        engine = db.engine
+    event.listen(engine, "before_cursor_execute", _record)
+    try:
+        resp = auth_client.get("/groups/data?page=2&per_page=50")
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.get_json() == {"groups": [], "total": 0, "page": 2, "per_page": 50}
+    touched = {t for stmt in tables for t in stmt}
+    assert "group_members" in touched, f"visibility lookup not recorded: {tables}"
+    assert "groups" not in touched, f"listing queries ran for a caller in no group: {tables}"
+    assert "group_limits" not in touched, f"listing queries ran for a caller in no group: {tables}"
 
 
 def test_data_lists_member_groups(auth_client, owned_group, member_group):
