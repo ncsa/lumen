@@ -1134,11 +1134,12 @@ def test_server_info_flags_non_dict_is_empty():
 
 
 def test_fetch_endpoint_model_blocked_url_is_none(monkeypatch):
-    def fail(url):
-        raise AssertionError("a blocked URL must not be fetched")
-
-    monkeypatch.setattr(model_sync, "_pinned_get", fail)
+    # Record, don't raise: fetch_endpoint_model swallows exceptions from the
+    # probes, so an assertion inside the stub would never reach pytest.
+    fetched = []
+    monkeypatch.setattr(model_sync, "_pinned_get", lambda url, ip, headers: fetched.append(url))
     assert model_sync.fetch_endpoint_model({"url": "http://127.0.0.1/v1"}) is None
+    assert fetched == []
 
 
 def test_fetch_endpoint_model_all_probes_fail_is_none(monkeypatch):
