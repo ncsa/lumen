@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import time as _time
+from dataclasses import dataclass
 from functools import wraps
 from http import HTTPStatus
 from urllib.parse import quote
@@ -15,12 +16,13 @@ from sqlalchemy.exc import IntegrityError
 from lumen.blueprints.metrics.middleware import observe_stream_abort
 from lumen.commands import RESERVED_MODEL_ID_SUFFIX
 from lumen.extensions import db, limiter
-from lumen.models.api_key import KEY_TYPE_NORMAL
+from lumen.models.api_key import KEY_TYPE_NORMAL, APIKey
+from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import accepts_audio_input, is_embedding_model
 from lumen.services import model_cache, request_rates
-from lumen.services.api_auth import KeyRejected, resolve_api_key
+from lumen.services.api_auth import ACCOUNT_DISABLED, INVALID_KEY, KeyRejected, resolve_api_key
 from lumen.services.cost import calculate_audio_cost, calculate_cost, usage_tokens
 from lumen.services.crypto import cache_salt_for_entity
 from lumen.services.live_state import get_live_state
@@ -326,37 +328,71 @@ def _classify_upstream_error(exc, context: str):
 MONITOR_ENDPOINTS = ("api.list_models", "api.get_model")
 
 
+@dataclass(frozen=True)
+class APIKeyAuthFailure:
+    """Why an ``Authorization: Bearer`` credential did not resolve to a key.
+
+    ``kind`` is one of ``"malformed"`` (missing, non-Bearer or empty header),
+    ``"monitor"`` (the monitoring token, which has no key or entity),
+    ``"invalid"`` (unknown, revoked or expired key, or a key ``resolve_api_key``
+    refuses with 401) or ``"disabled"`` (a normal key whose owner is inactive).
+    ``err_type``, ``status`` and ``message`` are what ``api_key_required``
+    answers with; a caller may answer differently.
+    """
+
+    kind: str
+    status: HTTPStatus
+    message: str
+    err_type: str = "authentication_error"
+
+
+def lookup_api_key() -> tuple[APIKey, Entity] | APIKeyAuthFailure:
+    """Resolve the request's ``Authorization: Bearer <key>`` header.
+
+    Returns the key and its owner from ``resolve_api_key``, or an
+    ``APIKeyAuthFailure``. The key may be of any ``key_type``: the caller
+    decides whether that type may use its route. Bumps no usage counters and
+    sets nothing on ``g``.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return APIKeyAuthFailure("malformed", HTTPStatus.BAD_REQUEST,
+                                 "Missing or malformed Authorization header", "invalid_request_error")
+
+    token = auth_header[7:].strip()
+    if not token:
+        return APIKeyAuthFailure("malformed", HTTPStatus.BAD_REQUEST, "Empty token", "invalid_request_error")
+    # Lumen keys are ASCII; anything else cannot match one.
+    if not token.isascii():
+        return APIKeyAuthFailure("invalid", INVALID_KEY.status, INVALID_KEY.message)
+
+    yaml_data = current_app.config.get("YAML_DATA", {})
+    monitor_token = yaml_data.get("api", {}).get("monitoring", {}).get("token", "")
+    # Compare bytes: compare_digest raises TypeError on a non-ASCII str, and
+    # the configured token is not checked to be ASCII.
+    if monitor_token and hmac.compare_digest(token.encode(), str(monitor_token).encode()):
+        return APIKeyAuthFailure("monitor", HTTPStatus.FORBIDDEN, "Monitor token can only access /v1/models")
+
+    resolved = resolve_api_key(token)
+    if isinstance(resolved, KeyRejected):
+        kind = "disabled" if resolved == ACCOUNT_DISABLED else "invalid"
+        return APIKeyAuthFailure(kind, resolved.status, resolved.message)
+    return resolved
+
+
 def api_key_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            return _err("Missing or malformed Authorization header", status=HTTPStatus.BAD_REQUEST)
+        result = lookup_api_key()
+        if isinstance(result, APIKeyAuthFailure):
+            if result.kind == "monitor" and request.endpoint in MONITOR_ENDPOINTS:
+                g.api_key = None
+                g.entity = None
+                g.monitor = True
+                return f(*args, **kwargs)
+            return _err(result.message, result.err_type, result.status)
 
-        token = auth_header[7:].strip()
-        if not token:
-            return _err("Empty token", status=HTTPStatus.BAD_REQUEST)
-        # Lumen keys are ASCII; anything else cannot match one.
-        if not token.isascii():
-            return _err("Invalid or revoked API key", "authentication_error", HTTPStatus.UNAUTHORIZED)
-
-        yaml_data = current_app.config.get("YAML_DATA", {})
-        monitor_token = yaml_data.get("api", {}).get("monitoring", {}).get("token", "")
-        # Compare bytes: compare_digest raises TypeError on a non-ASCII str, and
-        # the configured token is not checked to be ASCII.
-        if monitor_token and hmac.compare_digest(token.encode(), str(monitor_token).encode()):
-            if request.endpoint not in MONITOR_ENDPOINTS:
-                return _err("Monitor token can only access /v1/models", "authentication_error", HTTPStatus.FORBIDDEN)
-            g.api_key = None
-            g.entity = None
-            g.monitor = True
-            return f(*args, **kwargs)
-
-        resolved = resolve_api_key(token)
-        if isinstance(resolved, KeyRejected):
-            return _err(resolved.message, "authentication_error", resolved.status)
-
-        api_key, entity = resolved
+        api_key, entity = result
         if api_key.key_type != KEY_TYPE_NORMAL:
             # Admin and monitoring keys reach the models endpoints only, on the
             # monitor path (every active model, ?tokens=true, never billed).
