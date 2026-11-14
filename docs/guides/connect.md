@@ -2,7 +2,7 @@
 
 Lumen exposes an **OpenAI-compatible API**, so most tools that speak to OpenAI can talk to Lumen by changing two things: the **base URL** and the **API key**. Clients that speak Anthropic's Messages API, such as the Anthropic SDK and Claude Code, can use the same key; see [Anthropic SDK and Claude Code](#anthropic-sdk-and-claude-code).
 
-> **Tip:** The [Connect page](https://lumen.example.com/connect) generates these snippets for you — including a ready-to-download OpenCode config listing every model your account can use, and curl/Python examples for a specific model. Log in first so it can fill in your models.
+> **Tip:** The [Connect page](https://lumen.example.com/connect) generates these snippets for you — including ready-to-download OpenCode and GitHub Copilot CLI configs listing every model your account can use, and curl/Python examples for a specific model. Log in first so it can fill in your models.
 
 ## CLI login (lumen.sh)
 
@@ -158,6 +158,56 @@ To have OpenCode only use Lumen's models — and ignore every other installed pr
 OpenCode will then list only Lumen's models when you select a model.
 
 Instead of downloading the config by hand, run `lumen.sh` (straight from GitHub with the `curl` command under [CLI login](#cli-login-lumensh), or as `./lumen.sh` from a checkout): it logs you in, stores the key, and updates the `lumen` provider block in your `opencode.json` (or `opencode.jsonc`) in place, listing added and removed models. If you have neither file, it creates `opencode.jsonc`.
+
+## GitHub Copilot CLI
+
+The [GitHub Copilot CLI](https://github.com/github/copilot-cli) can use Lumen's models as a custom provider. Open the **Copilot CLI** tab on the [Connect page](https://lumen.example.com/connect) and use **Download providers.json** to get a file listing every text model you can access, then save it as:
+
+- **macOS / Linux:** `~/.copilot/providers.json`
+- **Windows:** `%USERPROFILE%\.copilot\providers.json`
+
+The file holds the key itself: replace `YOUR_LUMEN_API_KEY` with your [API key](https://lumen.example.com/profile) and keep the file private (for example `chmod 600 ~/.copilot/providers.json`).
+
+```json
+{
+  "providers": [
+    {
+      "name": "lumen",
+      "type": "openai",
+      "baseUrl": "https://lumen.example.com/v1",
+      "wireApi": "completions",
+      "apiKey": "YOUR_LUMEN_API_KEY"
+    }
+  ],
+  "models": [
+    {
+      "id": "MODEL",
+      "provider": "lumen",
+      "name": "MODEL via Lumen",
+      "maxPromptTokens": 98304,
+      "maxContextWindowTokens": 131072,
+      "maxOutputTokens": 32768,
+      "capabilities": {
+        "supports": {
+          "vision": true,
+          "toolCalls": true,
+          "thinking": true,
+          "reasoning_effort": ["low", "medium", "high"]
+        }
+      }
+    }
+  ]
+}
+```
+
+Each model entry is filled in from the model's settings:
+
+- `maxContextWindowTokens` is the context window and `maxOutputTokens` the maximum output; `maxPromptTokens` is what is left for the prompt (context minus output). When a model has no maximum output, `maxPromptTokens` is the whole context window and `maxOutputTokens` is left out.
+- `vision` is `true` for models that accept images, and `toolCalls` for models that support function calling.
+- `thinking` and `reasoning_effort` appear only for reasoning models, which all offer `low`, `medium` and `high`.
+- Models without text input (for example audio-only speech models) are left out. Model aliases are not listed.
+
+Instead of editing the file by hand, `lumen.sh --copilot` writes the same file with your real key, adds model aliases, and keeps the model list current on later runs.
 
 ## curl
 

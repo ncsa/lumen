@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 import pytest
 
 from lumen.extensions import db
+from lumen.models.model_alias import ModelAlias
 from lumen.models.model_config import ModelConfig
 
 ORIGIN = "http://lumen.test"
@@ -122,3 +123,125 @@ def test_generated_file_is_named_jsonc(connect_page):
     assert "OpenCode reads opencode.jsonc as well as opencode.json" in connect_page.text_content(
         "#examples-opencode"
     )
+
+
+# ── GitHub Copilot CLI (providers.json) ──────────────────────────────────────
+
+
+def _copilot(page):
+    """Return the generated providers.json, parsed."""
+    page.goto(f"{ORIGIN}/connect")
+    page.wait_for_selector("#examples-copilot pre code")
+    return json.loads(page.text_content("#examples-copilot pre code"))
+
+
+def _copilot_models(app, page):
+    """Add one model per mapping case (plus an alias and an audio-only model)
+    and return the generated entries by id."""
+    common = {"input_cost_per_million": 1.0, "output_cost_per_million": 2.0}
+    with app.app_context():
+        reasoning = ModelConfig(
+            model_name="cp-reasoning", context_window=524282, max_output_tokens=131072,
+            input_modalities=["text"], supports_function_calling=True,
+            supports_reasoning=True, **common,
+        )
+        db.session.add_all([
+            reasoning,
+            ModelConfig(
+                model_name="cp-vision", context_window=262138, max_output_tokens=65536,
+                input_modalities=["text", "image"], supports_function_calling=True,
+                supports_reasoning=False, **common,
+            ),
+            ModelConfig(
+                model_name="cp-no-tools", context_window=131066, max_output_tokens=32768,
+                input_modalities=["text"], supports_function_calling=False, **common,
+            ),
+            ModelConfig(
+                model_name="cp-no-output", context_window=131072,
+                input_modalities=["text"], supports_function_calling=True, **common,
+            ),
+            ModelConfig(
+                model_name="cp-audio-only", context_window=8192, max_output_tokens=1024,
+                input_modalities=["audio"], **common,
+            ),
+        ])
+        db.session.flush()
+        db.session.add(ModelAlias(alias="cp-reasoning-old", model_config_id=reasoning.id))
+        db.session.commit()
+    config = _copilot(page)
+    return config, {m["id"]: m for m in config["models"]}
+
+
+def test_copilot_provider_block(connect_page):
+    config = _copilot(connect_page)
+    assert config["providers"] == [{
+        "name": "lumen",
+        "type": "openai",
+        # The page is served through the Flask test client, whose root is localhost.
+        "baseUrl": "http://localhost/v1",
+        "wireApi": "completions",
+        "apiKey": "YOUR_LUMEN_API_KEY",
+    }]
+
+
+def test_copilot_reasoning_model_gets_default_efforts(app, connect_page):
+    _, models = _copilot_models(app, connect_page)
+    assert models["cp-reasoning"] == {
+        "id": "cp-reasoning",
+        "provider": "lumen",
+        "name": "cp-reasoning via Lumen",
+        "maxPromptTokens": 524282 - 131072,
+        "maxContextWindowTokens": 524282,
+        "maxOutputTokens": 131072,
+        "capabilities": {"supports": {
+            "vision": False,
+            "toolCalls": True,
+            "thinking": True,
+            "reasoning_effort": ["low", "medium", "high"],
+        }},
+    }
+
+
+def test_copilot_vision_model_without_reasoning(app, connect_page):
+    _, models = _copilot_models(app, connect_page)
+    supports = models["cp-vision"]["capabilities"]["supports"]
+    assert supports == {"vision": True, "toolCalls": True}
+    assert "thinking" not in supports and "reasoning_effort" not in supports
+
+
+def test_copilot_model_without_tools(app, connect_page):
+    _, models = _copilot_models(app, connect_page)
+    assert models["cp-no-tools"]["capabilities"]["supports"] == {"vision": False, "toolCalls": False}
+
+
+def test_copilot_model_without_max_output_tokens(app, connect_page):
+    _, models = _copilot_models(app, connect_page)
+    entry = models["cp-no-output"]
+    assert entry["maxContextWindowTokens"] == 131072
+    assert entry["maxPromptTokens"] == 131072
+    assert "maxOutputTokens" not in entry
+
+
+def test_copilot_lists_canonical_text_models_only(app, connect_page, test_model):
+    _, models = _copilot_models(app, connect_page)
+    assert "cp-audio-only" not in models
+    assert "cp-reasoning-old" not in models
+    with app.app_context():
+        canonical = set(db.session.execute(db.select(ModelConfig.model_name)).scalars())
+    assert set(models) <= canonical
+    assert set(models) == {"cp-reasoning", "cp-vision", "cp-no-tools", "cp-no-output",
+                           test_model["model_name"]}
+    assert all("alias of" not in m["name"] for m in models.values())
+    assert all(m["provider"] == "lumen" for m in models.values())
+
+
+def test_copilot_tab_names_the_file_and_the_script(connect_page):
+    connect_page.goto(f"{ORIGIN}/connect")
+    connect_page.wait_for_selector("#examples-copilot pre code")
+    assert connect_page.text_content("#tab-copilot") == "Copilot CLI"
+    assert connect_page.text_content("#examples-copilot .fw-semibold") == "providers.json"
+    assert connect_page.text_content("#examples-copilot button.btn-primary") == "Download providers.json"
+    pane = connect_page.text_content("#pane-copilot")
+    assert "~/.copilot/providers.json" in pane
+    assert "%USERPROFILE%\\.copilot\\providers.json" in pane
+    assert "lumen.sh --copilot" in pane
