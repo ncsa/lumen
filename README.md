@@ -427,8 +427,7 @@ query time:
 | `lumen_timescaledb_request_logs_retention_policy` | | 1 when `request_logs` has a retention policy (it must never be pruned) |
 | `lumen_timescaledb_health_age_seconds` | | Age of the check these gauges come from |
 
-`job` is one of `refresh:request_counts_hourly`, `refresh:request_counts_hourly_by_entity`,
-`refresh:request_metrics_1m`, `compression:request_logs` and `retention:request_metrics_1m`.
+`job` is `refresh:<view>` for each continuous aggregate (`request_counts_hourly`, `request_counts_hourly_by_entity`, `request_counts_daily_by_entity`, `request_counts_hourly_total`, `request_counts_daily`, `request_metrics_1m`; see [`docs/dbschema.md`](docs/dbschema.md)), plus `compression:request_logs` and `retention:request_metrics_1m`.
 
 Suggested alert expressions (the chart ships no alert rules). The two age thresholds below are
 sized for **up to 20 worker processes** per pod (longest check gap 660 s), with a margin of
