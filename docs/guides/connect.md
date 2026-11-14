@@ -6,7 +6,7 @@ Lumen exposes an **OpenAI-compatible API**, so most tools that speak to OpenAI c
 
 ## CLI login (lumen.sh)
 
-`lumen.sh` (from the Lumen repository) logs you in from the terminal and keeps your OpenCode model list current. You don't need to clone the repository: download and run it straight from GitHub, passing any flags from the table below after `bash -s --`:
+`lumen.sh` (from the Lumen repository) logs you in from the terminal and keeps your OpenCode model list current, and with `--copilot` your GitHub Copilot CLI model list too. You don't need to clone the repository: download and run it straight from GitHub, passing any flags from the table below after `bash -s --`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ncsa/lumen/main/lumen.sh | bash -s -- --server https://lumen.example.com
@@ -24,6 +24,9 @@ Each run works like this:
 
    > **Note:** an embedded key is stored in plaintext, so the script sets the config to mode `600`; keep it out of shared or committed dotfiles.
 5. Unless you pass `--no-opencode`, the Lumen provider block in your opencode config is refreshed with every active model that accepts text input. Models without text input (for example audio-only models) are skipped; models whose input modalities are unknown are still added. The config is `$OPENCODE_CONFIG` if set, else `~/.config/opencode/opencode.json`, else `~/.config/opencode/opencode.jsonc`; if none exists, `opencode.jsonc` is created (mode `600`). Comments in the config are not kept when it is rewritten, so the first time the script rewrites a file with comments it saves the original as `<file>.bak` (mode `600`).
+6. With `--copilot`, or when the Copilot CLI config already has a provider named `lumen`, the `lumen` provider and its models in `$COPILOT_HOME/providers.json` (default `~/.copilot/providers.json`) are refreshed the same way, aliases included (see [GitHub Copilot CLI](#github-copilot-cli)). The file is created if missing. Other providers, their models and any other settings in the file are kept. The Copilot CLI cannot read the key from your environment, so the key itself is written into the file, which is set to mode `600`; the file always follows the server and key of the current run. `--no-copilot` leaves the file untouched for that run.
+
+Both configs are filled from one `/v1/models` request, and the script prints the models it added and removed. With `--no-opencode` and no Copilot sync, the script only logs in, stores the key and prints `LUMEN_API_KEY=…`.
 
 | Flag | Purpose |
 |------|---------|
@@ -33,10 +36,12 @@ Each run works like this:
 | `--client-id ID` | `client_id` sent to Lumen (default `lumen-cli`) |
 | `--ttl DURATION` | Ask for a key that expires after `DURATION`: `0` (never) or hours, days or weeks such as `12h`, `30d`, `8w` (default: the server's maximum, `api.keys.ttl`). Pre-selects the approval page's **Expires after** choice, which the approver can change; the server rejects a value above its maximum, and `0` when keys must expire. Only used when a new key is requested |
 | `--opencode` | Sync the model catalog into `opencode.json` or `opencode.jsonc` (default) |
-| `--no-opencode` | Only log in and store the key |
-| `--embed-key` | Also write the key itself into the opencode config (`options.apiKey`, mode `600`) instead of `{env:LUMEN_API_KEY}`; can't be combined with `--no-opencode` |
+| `--no-opencode` | Leave the opencode config untouched; with no Copilot sync either, only log in and store the key |
+| `--copilot` | Also sync the Lumen provider and models into the Copilot CLI config (`$COPILOT_HOME/providers.json`, default `~/.copilot/providers.json`, key embedded, mode `600`). Once the file holds a `lumen` provider, later runs keep it current without this flag |
+| `--no-copilot` | Leave the Copilot CLI config untouched this run |
+| `--embed-key` | Also write the key itself into the opencode config (`options.apiKey`, mode `600`) instead of `{env:LUMEN_API_KEY}`; can't be combined with `--no-opencode`. The Copilot CLI config always holds the key |
 | `--relogin` | Request a new key even if one is stored; the new key always replaces the stored one |
-| `--no-aliases` | Skip model aliases when syncing |
+| `--no-aliases` | Skip model aliases when syncing (both configs) |
 
 When a stored key stops working because it expired or was revoked, `lumen.sh` stops with `key expired or revoked — run lumen.sh --relogin`; run that to request a new key.
 
@@ -207,7 +212,9 @@ Each model entry is filled in from the model's settings:
 - `thinking` and `reasoning_effort` appear only for reasoning models, which all offer `low`, `medium` and `high`.
 - Models without text input (for example audio-only speech models) are left out. Model aliases are not listed.
 
-Instead of editing the file by hand, `lumen.sh --copilot` writes the same file with your real key, adds model aliases, and keeps the model list current on later runs.
+Instead of editing the file by hand, run `lumen.sh --copilot` (see [CLI login](#cli-login-lumensh)): it writes the same file with your real key, adds model aliases named `<id> via Lumen (alias of <model>)`, keeps your other providers and models, and keeps the Lumen list current on later runs, even without the flag. Add `--no-opencode` if you don't use OpenCode. The script lists the models your key can use now, so a model that is still [awaiting acknowledgment](#models-awaiting-acknowledgment) is on the Connect page's file but not in the script's until you acknowledge it.
+
+Restart the Copilot CLI after the file changes, then pick a Lumen model with `/model`, or start with `copilot --model lumen/<id>`.
 
 ## curl
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Lumen CLI login (OAuth device flow) + model catalog sync into the opencode
-# config (opencode.json or opencode.jsonc).
+# config (opencode.json or opencode.jsonc) and, with --copilot, the GitHub
+# Copilot CLI config (~/.copilot/providers.json).
 set -euo pipefail
 
 RC_BLOCK_BEGIN="# >>> lumen >>>"
@@ -10,7 +11,8 @@ usage() {
   cat <<'EOF'
 usage: lumen.sh [-s SERVER] [-k|--keyname NAME] [--author LABEL]
                 [--client-id ID] [--ttl DURATION] [--opencode | --no-opencode]
-                [--embed-key] [--relogin] [--no-aliases] [-h|--help]
+                [--copilot | --no-copilot] [--embed-key] [--relogin]
+                [--no-aliases] [-h|--help]
 
   -s, --server URL     Lumen base URL (default: $LUMEN_BASE_URL or
                        https://lumen.ncsa.illinois.edu)
@@ -25,7 +27,15 @@ usage: lumen.sh [-s SERVER] [-k|--keyname NAME] [--author LABEL]
                        (default): $OPENCODE_CONFIG, else
                        ~/.config/opencode/opencode.json, else
                        ~/.config/opencode/opencode.jsonc, created if missing
-      --no-opencode    Only authenticate and store the key
+      --no-opencode    Leave the opencode config untouched. With no
+                       Copilot sync either, only authenticate and store
+                       the key
+      --copilot        Also sync the Lumen provider and models into the
+                       Copilot CLI config: $COPILOT_HOME/providers.json,
+                       default ~/.copilot/providers.json (key embedded,
+                       mode 600). Once it holds a "lumen" provider, later
+                       runs keep it up to date without this flag
+      --no-copilot     Leave the Copilot CLI config untouched this run
       --embed-key      Also write the key itself into the opencode config
                        (mode 600), for apps that don't read your shell rc.
                        Once embedded, later runs keep it up to date
@@ -42,7 +52,8 @@ both variables, a plain run targets the server you last logged in to.
 server. Without -s, the server in the opencode config is used; if it, or a
 key embedded there, disagrees with $LUMEN_BASE_URL, $LUMEN_API_KEY or
 keys.json, the run stops (--relogin replaces a mismatching key).
-Environment: LUMEN_API_KEY, LUMEN_BASE_URL, OPENCODE_CONFIG, LUMEN_CONFIG_DIR.
+Environment: LUMEN_API_KEY, LUMEN_BASE_URL, OPENCODE_CONFIG, COPILOT_HOME,
+LUMEN_CONFIG_DIR.
 EOF
 }
 
@@ -62,6 +73,7 @@ AUTHOR="${USER:-$(id -un)}"
 CLIENT_ID="lumen-cli"
 TTL=""
 OPENCODE=1
+COPILOT=""
 RELOGIN=0
 NO_ALIASES=0
 EMBED_KEY=0
@@ -76,6 +88,8 @@ while [[ $# -gt 0 ]]; do
     --ttl)         TTL="${2:?missing value for $1}"; shift 2 ;;
     --opencode)    OPENCODE=1; shift ;;
     --no-opencode) OPENCODE=0; shift ;;
+    --copilot)     COPILOT=1; shift ;;
+    --no-copilot)  COPILOT=0; shift ;;
     --embed-key)   EMBED_KEY=1; shift ;;
     --relogin)     RELOGIN=1; shift ;;
     --no-aliases)  NO_ALIASES=1; shift ;;
@@ -84,6 +98,21 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ $EMBED_KEY -eq 0 || $OPENCODE -eq 1 ]] || die "--embed-key needs the opencode config; drop --no-opencode"
+
+# The Copilot sync is opt-in, then sticky: without --copilot or --no-copilot
+# it runs when the file already holds a provider named "lumen". A file that
+# does not parse is not sticky; --copilot reports it instead.
+COPILOT_FILE="${COPILOT_HOME:-"${HOME:-}/.copilot"}/providers.json"
+if [[ -z "$COPILOT" ]]; then
+  COPILOT=0
+  if [[ -n "${COPILOT_HOME:-}${HOME:-}" && -f "$COPILOT_FILE" ]] \
+      && jq -e 'any(.providers[]?; .name? == "lumen")' "$COPILOT_FILE" >/dev/null 2>&1; then
+    COPILOT=1
+  fi
+fi
+if [[ $COPILOT -eq 1 && -z "${COPILOT_HOME:-}${HOME:-}" ]]; then
+  die "--copilot needs \$HOME or \$COPILOT_HOME"
+fi
 
 # --ttl in seconds, the unit the server takes. The digit limit keeps the
 # arithmetic far from overflow; the server enforces its own maximum.
@@ -99,14 +128,14 @@ if [[ -n "$TTL" ]]; then
   esac
 fi
 
-# With the opencode config, a server is named without the API's /v1, so
-# that https://host and https://host/v1 (the opencode baseURL form) compare
-# equal; the script appends /v1 itself. A --no-opencode run keeps the URL
-# as given (only a trailing / is dropped), so a Lumen mounted at a path
-# ending in /v1 still logs in there.
+# With a config sync (opencode or Copilot), a server is named without the
+# API's /v1, so that https://host and https://host/v1 (the baseURL form)
+# compare equal; the script appends /v1 itself. A run without either sync
+# keeps the URL as given (only a trailing / is dropped), so a Lumen mounted
+# at a path ending in /v1 still logs in there.
 strip_v1() {
   local u="${1%/}"
-  [[ $OPENCODE -eq 1 ]] || { printf '%s' "$u"; return; }
+  [[ $OPENCODE -eq 1 || $COPILOT -eq 1 ]] || { printf '%s' "$u"; return; }
   u="${u%/v1}"
   printf '%s' "${u%/}"
 }
@@ -489,19 +518,24 @@ JSONC_AWK='
 jsonc_to_json() { awk -v check=0 "$JSONC_AWK" "$1"; }
 jsonc_has_comments() { awk -v check=1 "$JSONC_AWK" "$1"; }
 
-sync_models() {
-  local config="$OPENCODE_FILE"
-
-  local models_json code
-  if ! models_json=$(curl -sS -H "Authorization: Bearer $LUMEN_API_KEY" -w $'\n%{http_code}' "$SERVER/v1/models"); then
+# Sets MODELS_JSON to the /v1/models response, fetched once per run and
+# shared by both syncs; any failure stops the run before a file is written.
+fetch_models() {
+  local code
+  if ! MODELS_JSON=$(curl -sS -H "Authorization: Bearer $LUMEN_API_KEY" -w $'\n%{http_code}' "$SERVER/v1/models"); then
     die "failed to fetch $SERVER/v1/models — check the key with: lumen.sh --relogin"
   fi
-  code="${models_json##*$'\n'}"
-  models_json="${models_json%$'\n'*}"
+  code="${MODELS_JSON##*$'\n'}"
+  MODELS_JSON="${MODELS_JSON%$'\n'*}"
   [[ "$code" != "401" ]] || die "key expired or revoked — run lumen.sh --relogin"
   if [[ "$code" != 2?? ]]; then
     die "failed to fetch $SERVER/v1/models ($code) — check the key with: lumen.sh --relogin"
   fi
+}
+
+sync_models() {
+  local config="$OPENCODE_FILE"
+  local models_json="$MODELS_JSON"
 
   local new_models model_count old_models added removed tmp
   local skip_aliases_json="false"
@@ -617,6 +651,103 @@ sync_models() {
   [[ "$embed" == false ]] || echo "The key is embedded in $config"
 }
 
+# Writes the "lumen" provider and its models into the Copilot CLI's
+# providers.json, the same mapping /connect uses (plus aliases): the lumen
+# provider and every model with provider "lumen" are replaced, everything
+# else in the file is kept. Copilot reads no environment reference for the
+# key, so the literal key is written and the file is owner-only. The file
+# always follows this run's server and key.
+sync_copilot() {
+  local config="$COPILOT_FILE"
+  local skip_aliases_json="false"
+  [[ $NO_ALIASES -eq 1 ]] && skip_aliases_json="true"
+
+  local new_models model_count
+  new_models=$(printf '%s' "$MODELS_JSON" | jq --argjson skip_aliases "$skip_aliases_json" '
+    [.data[]
+     | select(($skip_aliases | not) or (.parent == null))
+     # Copilot chats in text: skip models without text input (as for OpenCode).
+     | select(((.input_modalities // []) | length) == 0 or ((.input_modalities | index("text")) != null))
+     | ((.max_model_len // 0) > 0) as $ctx
+     | ((.max_output_tokens // 0) > 0) as $out
+     | {id: .id, provider: "lumen",
+        name: (.id + " via Lumen" + (if .parent then " (alias of " + .parent + ")" else "" end))}
+       + (if $ctx and $out then {maxPromptTokens: (.max_model_len - .max_output_tokens),
+                                 maxContextWindowTokens: .max_model_len,
+                                 maxOutputTokens: .max_output_tokens}
+          # Without a known output cap the whole window is available to the prompt.
+          elif $ctx then {maxPromptTokens: .max_model_len, maxContextWindowTokens: .max_model_len}
+          elif $out then {maxOutputTokens: .max_output_tokens}
+          else {} end)
+       # Lumen stores no per-model effort levels yet: reasoning models get the
+       # default three.
+       + {capabilities: {supports: (
+           {vision: (((.input_modalities // []) | index("image")) != null),
+            toolCalls: (.supports_function_calling == true)}
+           + (if .supports_reasoning == true
+              then {thinking: true, reasoning_effort: ["low", "medium", "high"]}
+              else {} end))}}
+    ]')
+
+  model_count=$(jq 'length' <<<"$new_models")
+  if [[ "$model_count" -eq 0 ]]; then
+    die "Lumen returned no models; leaving $config untouched"
+  fi
+
+  # Only the shape this script can merge without losing anything: an object
+  # whose providers and models, when present, are arrays. Anything else is
+  # reported before the file or its mode is touched.
+  local current="{}" created=0
+  if [[ -s "$config" ]]; then
+    current=$(jq -c '
+      if type == "object"
+         and ((.providers | type) as $t | $t == "array" or $t == "null")
+         and ((.models | type) as $t | $t == "array" or $t == "null")
+      then . else error("unsupported shape") end' "$config" 2>/dev/null) \
+      || die "cannot parse $config (expected an object with providers and models arrays); leaving it untouched"
+  fi
+
+  local added removed tmp
+  added=$(comm -23 <(jq -r '.[].id' <<<"$new_models" | sort) \
+                   <(jq -r '.models[]? | select(.provider? == "lumen") | .id' <<<"$current" | sort))
+  removed=$(comm -13 <(jq -r '.[].id' <<<"$new_models" | sort) \
+                     <(jq -r '.models[]? | select(.provider? == "lumen") | .id' <<<"$current" | sort))
+
+  if [[ -e "$config" ]]; then
+    restrict_to_owner "$config"
+  else
+    mkdir -p "$(dirname "$config")"
+    created=1
+  fi
+
+  tmp=$(mktemp "$config.tmp.XXXXXX")
+  trap 'rm -f "$tmp"' EXIT
+  jq --argjson models "$new_models" --arg base "$SERVER" --arg key "$LUMEN_API_KEY" '
+    # Only the lumen provider and lumen models are replaced; every other
+    # entry, including ones that are not objects, is kept as it is.
+    def other(f): select(type != "object" or (f != "lumen"));
+    .providers = ([(.providers // [])[] | other(.name)]
+                  + [{name: "lumen", type: "openai", baseUrl: ($base + "/v1"),
+                      wireApi: "completions", apiKey: $key}])
+    | .models = ([(.models // [])[] | other(.provider)] + $models)
+  ' <<<"$current" > "$tmp" || die "cannot update $config"
+  chmod 600 "$tmp"
+  mv "$tmp" "$config"
+  trap 'rm -rf "$TMPDIR_LUMEN"' EXIT
+  [[ $created -eq 0 ]] || echo "Created $config"
+
+  if [[ -n "$removed" ]]; then
+    echo "Removed models:"
+    printf '%s\n' "$removed" | sed 's/^/  - /'
+  fi
+  if [[ -n "$added" ]]; then
+    echo "Added models:"
+    printf '%s\n' "$added" | sed 's/^/  + /'
+  fi
+  echo "Updated $model_count models in $config"
+  echo "The key is embedded in $config"
+}
+
 TMPDIR_LUMEN=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_LUMEN"' EXIT
 
@@ -634,12 +765,14 @@ derive_server_vars
 
 resolve_key
 
-if [[ $OPENCODE -eq 0 ]]; then
+if [[ $OPENCODE -eq 0 && $COPILOT -eq 0 ]]; then
   echo "LUMEN_API_KEY=$LUMEN_API_KEY"
   exit 0
 fi
 
-sync_models
+fetch_models
+[[ $OPENCODE -eq 0 ]] || sync_models
+[[ $COPILOT -eq 0 ]] || sync_copilot
 
 # Only now that the server accepted the key: a key taken from the config
 # joins keys.json and the rc block, and with -s the rc block follows the
