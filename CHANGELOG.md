@@ -11,8 +11,13 @@ All notable changes to Lumen will be documented in this file.
 - The models table shows prompt-cache pricing as a third "Coins / 1M tokens" column, "Cache read / write", instead of hiding it in a hover tip; an unconfigured rate is shown at the input price it is actually charged. (#66)
 - Price cache writes like cache reads: a per-model `cache_write_cost_per_million` (default: the input rate) bills the prompt-cache write tokens an upstream reports; a backend that reports no creation count (SGLang, which has no cache-write accounting yet) records NULL and its non-cached prompt is billed at the input rate, never inferred as a write. `request_logs.cache_write_tokens` records the count next to `cached_input_tokens` and the stats fold carries both into the totals, keeping a cached request's stored cost checkable. Usage in either API family is normalized to the same totals (Anthropic-style `input_tokens` excludes the cached parts, OpenAI-style `prompt_tokens` includes them). The rate is published on `/v1/models` and written into the generated OpenCode config (`cost.cache.write`, which repeats the input price with a comment when unset), and models.dev autofill can fill both cache rates (`auto_cache_price: true`; second checkbox in the admin config editor). (#66)
 - Add an Anthropic Messages subset and token estimates for the Python SDK and configured Claude Code, sharing Lumen access controls and billing. (#61)
+- `/v1/usage` reports the key's `cached_input_tokens` and `cache_write_tokens`. (#509)
 - Added: per-theme favicons (default, Illinois, UIC, UIS) and a `/favicon.ico` route (#479).
 - Speed up the slowest PostgreSQL migration tests and the request_logs prune guard (#475).
+- Model detail page: the model's notice now always shows in the main column. The acknowledgement text shows on the right only for models that need acknowledgement. Previously, the acknowledgement text replaced the notice. (#492)
+- Connect the GitHub Copilot CLI: `/connect` generates `~/.copilot/providers.json`, and `lumen.sh --copilot` writes the Lumen provider and models into it and keeps them current. (#530)
+- Add `scripts/monitor/backfill_tokens.py` to backfill the monitor's token counts and history from Lumen's request logs; `--day` redoes a single local day, replacing its estimated rows with exact ones
+- Monitor moves to Python 3.14 (was 3.11) and CI tests both projects on 3.14 (required) and 3.15 (allowed to fail); Lumen's `requires-python` drops its `<3.15` cap so the 3.15 run installs, though 3.15 is still unsupported; monitor dead-code cleanup. (#529)
 - Docs: list every TimescaleDB `job` label on `/metrics`, document `stats.*` and add it and `api.keys.ttl` to the hot-reload table, and drop a stale chart README note. (#528)
 
 ## [2.3.1] - 2026-11-07

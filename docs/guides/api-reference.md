@@ -46,6 +46,8 @@ input and output tokens, their total, audio seconds, coins spent (`cost`), coins
 {
   "requests": 12,
   "input_tokens": 2400,
+  "cached_input_tokens": 1800,
+  "cache_write_tokens": 200,
   "output_tokens": 600,
   "total_tokens": 3000,
   "audio_seconds": 0,
@@ -54,6 +56,11 @@ input and output tokens, their total, audio seconds, coins spent (`cost`), coins
   "last_used_at": "2026-09-28T14:00:00Z"
 }
 ```
+
+`cached_input_tokens` and `cache_write_tokens` are the parts of `input_tokens` that the upstream
+model reported as read from and written to its prompt cache; they are not extra tokens, so
+`total_tokens` is still `input_tokens + output_tokens`. A request whose upstream reported no such
+count adds 0 to them.
 
 `last_used_at` is `null` for a key that has never been used. `coins_available` is the coin balance
 of the account that owns the key, so it is shared with that account's other keys and browser chat;

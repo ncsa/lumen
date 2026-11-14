@@ -121,30 +121,6 @@ def range_days(rng: Range, now: datetime, tz) -> list[date]:
     return [today - timedelta(days=i) for i in range(count - 1, -1, -1)]
 
 
-def worst(statuses) -> str:
-    """The worst of `statuses` by `STATUS_PRIORITY`; `unknown` when there are none.
-
-    A status Lumen reports that is not in `STATUS_PRIORITY` (e.g. `starting`)
-    ranks below ok; a bucket with only such statuses is degraded, so the strip
-    draws what uptime counts: the model reported, but was not ok.
-    """
-    found = list(statuses)
-    if not found:
-        return UNKNOWN
-    result = max(found, key=lambda s: STATUS_PRIORITY.get(s, 0))
-    return result if result in STATUS_PRIORITY else DEGRADED
-
-
-def bucket_statuses(points, grid: Grid | DayGrid) -> list[str]:
-    """Worst status per bucket of `(time, status)` points; points outside the grid are ignored."""
-    buckets: list[list[str]] = [[] for _ in range(grid.count)]
-    for at, status in points:
-        i = grid.index(at)
-        if i is not None:
-            buckets[i].append(status)
-    return [worst(b) for b in buckets]
-
-
 EPOCH = datetime(1970, 1, 1)
 MICROSECOND = timedelta(microseconds=1)
 
@@ -215,9 +191,11 @@ RANK_STATUS = {p: s for s, p in STATUS_PRIORITY.items()}
 
 
 def rank_status(rank: int | None) -> str:
-    """The status for a bucket's `MAX(status_rank())`, the same as `worst()` of its statuses.
+    """The status for a bucket's `MAX(status_rank())`: the worst of its statuses.
 
-    None (no rows) is unknown; 0 (only statuses outside `STATUS_PRIORITY`) is degraded.
+    None (no rows) is unknown; 0 (only statuses outside `STATUS_PRIORITY`) is
+    degraded, so the strip draws what uptime counts: the model reported, but
+    was not ok.
     """
     if rank is None:
         return UNKNOWN

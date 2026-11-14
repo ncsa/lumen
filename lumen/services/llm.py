@@ -996,7 +996,9 @@ def update_stats(
     )
 
 
-def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int, cost: float, audio_seconds: int = 0):
+def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int, cost: float, audio_seconds: int = 0,
+                          cached_input_tokens: int = None, cache_write_tokens: int = None):
+    # A NULL cache count (no upstream usage) adds nothing, as in the stats fold.
     db.session.execute(
         sa_update(APIKey)
         .where(APIKey.id == api_key_id)
@@ -1004,6 +1006,8 @@ def _record_api_key_usage(api_key_id: int, input_tokens: int, output_tokens: int
             requests=APIKey.requests + 1,
             input_tokens=APIKey.input_tokens + input_tokens,
             output_tokens=APIKey.output_tokens + output_tokens,
+            cached_input_tokens=APIKey.cached_input_tokens + (cached_input_tokens or 0),
+            cache_write_tokens=APIKey.cache_write_tokens + (cache_write_tokens or 0),
             audio_seconds=APIKey.audio_seconds + audio_seconds,
             cost=APIKey.cost + Decimal(str(cost)),
             last_used_at=utcnow(),
@@ -1041,7 +1045,9 @@ def bill_request(entity_id: int, model_config_id: int, source: str, input_tokens
     update_stats(entity_id, model_config_id, source, input_tokens, output_tokens, cost,
                  audio_seconds=audio_seconds, api_key_id=api_key_id, **log_fields)
     if api_key_id is not None:
-        _record_api_key_usage(api_key_id, input_tokens, output_tokens, cost, audio_seconds=audio_seconds)
+        _record_api_key_usage(api_key_id, input_tokens, output_tokens, cost, audio_seconds=audio_seconds,
+                              cached_input_tokens=log_fields.get("cached_input_tokens"),
+                              cache_write_tokens=log_fields.get("cache_write_tokens"))
     subtract_coins(entity_id, model_config_id, cost, effective=effective)
     db.session.commit()
 

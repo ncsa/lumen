@@ -10,33 +10,64 @@ jobs:
   # Linting lives in .github/workflows/lint.yml so a lint failure never stops
   # the tests from reporting.
   test:
-    name: Tests (${{ matrix.project.name }})
+    name: Tests (${{ matrix.name }}, py${{ matrix.python }})
     runs-on: ubuntu-latest
     permissions:
       checks: write
       pull-requests: write
+    # Experimental legs may fail without failing the workflow; their job still
+    # shows red in the run.
+    continue-on-error: ${{ matrix.experimental }}
+    env:
+      # uv sync / uv run use the matrix interpreter, not the newest one
+      # requires-python allows.
+      UV_PYTHON: ${{ matrix.python }}
 
     # scripts/monitor has its own pyproject.toml and uv.lock, so each project
     # runs its own suite against its own database image.
+    #
+    # One leg per project and Python version:
+    #   image: true        the version the project's Dockerfile ships; the
+    #                      "Check Dockerfile Python" step keeps the two in step.
+    #   experimental: true allowed to fail; publishes no pytest check.
     strategy:
       fail-fast: false
       matrix:
-        project:
+        include:
           # Pinned to the production version, not `latest-pg17`. A floating tag
           # adopts semantic changes silently, and this schema is sensitive to
           # exactly that class of change: 2.13 flipped the default of
           # `timescaledb.materialized_only` to true, which decides whether a
           # continuous aggregate returns the current bucket at all. Bump this
-          # deliberately, in step with the deployment.
+          # deliberately (in both lumen legs), in step with the deployment.
           - name: lumen
             path: .
             postgres: timescale/timescaledb:2.31.0-pg17
+            python: "3.14"
+            image: true
+            experimental: false
+          # Runs the real suite; Lumen does not support 3.15 yet (see the 2.3.0 CHANGELOG).
+          - name: lumen
+            path: .
+            postgres: timescale/timescaledb:2.31.0-pg17
+            python: "3.15"
+            image: false
+            experimental: true
           - name: monitor
             path: scripts/monitor
             postgres: postgres:17
+            python: "3.14"
+            image: true
+            experimental: false
+          - name: monitor
+            path: scripts/monitor
+            postgres: postgres:17
+            python: "3.15"
+            image: false
+            experimental: true
     defaults:
       run:
-        working-directory: ${{ matrix.project.path }}
+        working-directory: ${{ matrix.path }}
 
     # Lumen's suite is otherwise SQLite-only, which never runs Alembic and so
     # never exercises the request_logs hypertable, its continuous aggregate, or
@@ -46,7 +77,7 @@ jobs:
     # credentials at a real instance.
     services:
       postgres:
-        image: ${{ matrix.project.postgres }}
+        image: ${{ matrix.postgres }}
         env:
           POSTGRES_USER: ci
           POSTGRES_PASSWORD: ci
@@ -78,18 +109,27 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version-file: ${{ matrix.project.path }}/pyproject.toml
+          python-version: ${{ matrix.python }}
+          allow-prereleases: true
+
+      # The image leg must test the Python the project's Dockerfile ships, in
+      # every stage: at least one python FROM, and none on another version.
+      - name: Check Dockerfile Python
+        if: matrix.image
+        run: |
+          grep -q "^FROM python:${{ matrix.python }}-slim" Dockerfile
+          ! grep "^FROM python:" Dockerfile | grep -vF "FROM python:${{ matrix.python }}-slim"
 
       # The monitor dashboard's page JS tests (tests/js) run with Node under pytest.
       - name: Set up Node
-        if: matrix.project.name == 'monitor'
+        if: matrix.name == 'monitor'
         uses: actions/setup-node@v6
         with:
           node-version: 24
 
       # tests/unit/test_chart_migration.py renders the chart and fails without helm.
       - name: Install Helm
-        if: matrix.project.name == 'lumen'
+        if: matrix.name == 'lumen'
         uses: azure/setup-helm@v4
 
       - name: Install dependencies
@@ -102,10 +142,15 @@ jobs:
           LUMEN_TEST_REDIS_URL: redis://localhost:6379/0
           MONITOR_TEST_POSTGRES_URL: postgresql://ci:ci@localhost:5432/ci
 
+      # Skipped on experimental legs: the reporter creates its own check run,
+      # which continue-on-error does not cover. Their job log keeps the failures.
       - name: Publish test results
         uses: dorny/test-reporter@v3
-        if: always()
+        if: always() && !matrix.experimental
         with:
-          name: pytest (${{ matrix.project.name }})
-          path: ${{ matrix.project.path }}/junit.xml
+          name: pytest (${{ matrix.name }}, py${{ matrix.python }})
+          path: ${{ matrix.path }}/junit.xml
           reporter: java-junit
+          # The v3 default (true) writes only a job summary and creates no
+          # check run; the named pytest check needs false.
+          use-actions-summary: false

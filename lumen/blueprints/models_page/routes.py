@@ -86,7 +86,9 @@ def detail(model_name):
     )
 
     ack_notice, early_access_notice = model_notices(config)
-    effective_notice = ack_notice if access_status == "needs_ack" else config.notice
+    # The model's own notice always shows; the acknowledgement text only while
+    # the entity still needs to acknowledge the model (#492).
+    ack_notice = ack_notice if access_status == "needs_ack" else None
     # Consent is satisfied only when every acknowledgement requirement has its
     # timestamp; a requirement added later re-shows the acknowledge button.
     consented = _consent_satisfied(consent, config)
@@ -107,7 +109,8 @@ def detail(model_name):
         access_status=access_status,
         consented=consented,
         consent_display_at=consent_display_at,
-        effective_notice=effective_notice,
+        model_notice=config.notice,
+        ack_notice=ack_notice,
         early_access_notice=early_access_notice if access_status == "needs_ack" else None,
     )
 

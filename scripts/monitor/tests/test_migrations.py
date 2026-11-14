@@ -16,6 +16,14 @@ def _tables(url):
         engine.dispose()
 
 
+def _check_constraints(url, table):
+    engine = make_engine(url)
+    try:
+        return {check["name"] for check in inspect(engine).get_check_constraints(table)}
+    finally:
+        engine.dispose()
+
+
 def _round_trip(url):
     upgrade(url)
     assert _tables(url) == TABLES
@@ -35,6 +43,8 @@ def test_sqlite_upgrade_downgrade(tmp_path):
 def test_postgres_upgrade_downgrade(postgres_url):
     try:
         _round_trip(postgres_url)
+        # `command.check` does not compare CHECK constraints, so name it here.
+        assert "ck_daily_stats_source" in _check_constraints(postgres_url, "daily_stats")
     finally:
         downgrade(postgres_url, "base")
 

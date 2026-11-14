@@ -151,6 +151,44 @@ def test_get_model_by_alias_returns_metadata_under_alias(
     assert data["parent"] == test_model["model_name"]
 
 
+def test_get_model_canonical_name_wins_over_colliding_alias(
+    app, client, test_user, test_model, test_model_endpoint, api_key,
+):
+    """A canonical model_name beats an alias of the same name on another model.
+
+    Config sync rejects such a collision, but nothing in the database does, so a
+    leftover or directly inserted alias can still shadow a canonical name. The
+    snapshot must keep resolving the name to the canonical model.
+    """
+    from lumen.models.model_config import ModelConfig
+    token, _ = api_key
+    with app.app_context():
+        other = ModelConfig(
+            model_name="other-model",
+            input_cost_per_million=7.0,
+            output_cost_per_million=2.0,
+        )
+        db.session.add(other)
+        db.session.commit()
+        _add_alias(app, test_model["model_name"], other.id)
+        _grant_unlimited_pool(app, test_user["id"])
+    model_cache.refresh(app)
+
+    resp = client.get(
+        f"/v1/models/{test_model['model_name']}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.get_json()
+    # Holds under either precedence: the route echoes the requested name.
+    assert data["id"] == test_model["model_name"]
+    # A canonical entry has no parent; the alias target would report "other-model".
+    assert "parent" in data
+    assert data["parent"] is None
+    # test_model's rate, not other-model's 7.0.
+    assert data["input_cost_per_million"] == 1.0
+
+
 def test_get_model_unknown_alias_404(
     app, client, test_user, test_model, test_model_endpoint, api_key,
 ):
