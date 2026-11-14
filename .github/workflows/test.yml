@@ -112,10 +112,13 @@ jobs:
           python-version: ${{ matrix.python }}
           allow-prereleases: true
 
-      # The image leg must test the Python the project's Dockerfile ships.
+      # The image leg must test the Python the project's Dockerfile ships, in
+      # every stage: at least one python FROM, and none on another version.
       - name: Check Dockerfile Python
         if: matrix.image
-        run: grep -q "^FROM python:${{ matrix.python }}-slim" Dockerfile
+        run: |
+          grep -q "^FROM python:${{ matrix.python }}-slim" Dockerfile
+          ! grep "^FROM python:" Dockerfile | grep -vF "FROM python:${{ matrix.python }}-slim"
 
       # The monitor dashboard's page JS tests (tests/js) run with Node under pytest.
       - name: Set up Node
@@ -148,3 +151,6 @@ jobs:
           name: pytest (${{ matrix.name }}, py${{ matrix.python }})
           path: ${{ matrix.path }}/junit.xml
           reporter: java-junit
+          # The v3 default (true) writes only a job summary and creates no
+          # check run; the named pytest check needs false.
+          use-actions-summary: false
