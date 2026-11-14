@@ -35,6 +35,8 @@ class APIKey(db.Model):
     requests: Mapped[int] = mapped_column(db.Integer, default=0, comment="Cumulative request count made with this key")
     input_tokens: Mapped[int] = mapped_column(db.BigInteger, default=0, comment="Cumulative input tokens consumed via this key")
     output_tokens: Mapped[int] = mapped_column(db.BigInteger, default=0, comment="Cumulative output tokens produced via this key")
+    cached_input_tokens: Mapped[int] = mapped_column(db.BigInteger, default=0, server_default="0", comment="Cumulative cached-input part of input_tokens via this key (NULL request_logs counts add nothing)")
+    cache_write_tokens: Mapped[int] = mapped_column(db.BigInteger, default=0, server_default="0", comment="Cumulative cache-write part of input_tokens via this key (NULL request_logs counts add nothing)")
     audio_seconds: Mapped[int] = mapped_column(db.BigInteger, default=0, comment="Cumulative seconds of audio transcribed/translated via this key")
     cost: Mapped[Decimal] = mapped_column(db.Numeric(12, 6), default=0, comment="Cumulative cost in USD charged through this key")
     # Null if the key has never been used
