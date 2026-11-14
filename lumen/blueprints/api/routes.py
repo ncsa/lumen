@@ -369,6 +369,8 @@ def get_usage():
     return jsonify({
         "requests": key.requests,
         "input_tokens": key.input_tokens,
+        "cached_input_tokens": key.cached_input_tokens,
+        "cache_write_tokens": key.cache_write_tokens,
         "output_tokens": key.output_tokens,
         "total_tokens": key.input_tokens + key.output_tokens,
         "audio_seconds": key.audio_seconds,
