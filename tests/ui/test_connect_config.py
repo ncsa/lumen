@@ -26,7 +26,9 @@ def connect_page(auth_client, browser):
             return
         path = url.path + (f"?{url.query}" if url.query else "")
         resp = auth_client.get(path)
-        route.fulfill(status=resp.status_code, content_type=resp.content_type, body=resp.get_data())
+        # Close the response: a static file stays open until it is.
+        with resp:
+            route.fulfill(status=resp.status_code, content_type=resp.content_type, body=resp.get_data())
 
     page = browser.new_page()
     page.set_default_timeout(10_000)

@@ -1,5 +1,6 @@
 import os
 import weakref
+from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 
@@ -139,14 +140,14 @@ def stopped_refresher():
     metrics_snapshot.stop_snapshot_refresher()
 
 
-@pytest.fixture(autouse=True)
-def dispose_throwaway_app_engines():
-    """Close the database engines of any app a test built with create_app().
+@contextmanager
+def _disposing_new_app_engines():
+    """Dispose the engines of every app created inside the block.
 
-    Nothing else disposes them, so their SQLite connections stay open until a
-    later garbage collection, which reports ``ResourceWarning: unclosed
-    database`` inside whichever test happens to be running then. Apps that
-    existed before the test (the session app) keep their engines.
+    Nothing else disposes them, so their connections (SQLite or psycopg) stay
+    open until a later garbage collection, which reports a ResourceWarning
+    inside whichever test happens to be running then. Apps that existed
+    before the block (the session app) keep their engines.
     """
     from lumen.extensions import db
 
@@ -157,6 +158,20 @@ def dispose_throwaway_app_engines():
         if app not in before:
             for engine in engines.values():
                 engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def dispose_test_app_engines():
+    """Apps a test builds with create_app()."""
+    with _disposing_new_app_engines():
+        yield
+
+
+@pytest.fixture(scope="module", autouse=True)
+def dispose_module_app_engines():
+    """Apps a module-scoped fixture builds, e.g. the PostgreSQL modules' ``pg_app``."""
+    with _disposing_new_app_engines():
+        yield
 
 
 @pytest.fixture(autouse=True)

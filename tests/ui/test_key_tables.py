@@ -55,7 +55,9 @@ def open_page(auth_client, browser):
             resp = auth_client.post(path, json=request.post_data_json)
         else:
             resp = auth_client.get(path)
-        route.fulfill(status=resp.status_code, content_type=resp.content_type, body=resp.get_data())
+        # Close the response: a static file stays open until it is.
+        with resp:
+            route.fulfill(status=resp.status_code, content_type=resp.content_type, body=resp.get_data())
 
     def _open(path):
         page = browser.new_page()
