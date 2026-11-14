@@ -14,7 +14,9 @@ there would get past it.
 """
 import ast
 import io
+import os
 import re
+import sys
 import tokenize
 from pathlib import Path
 
@@ -22,6 +24,11 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCANNED = ["lumen", "migrations", "scripts", "entrypoint.sh", "chart"]
+# Directories that only ever hold untracked tool output (``scripts/monitor/.venv``,
+# ``.pytest_cache``, ``node_modules``). They are pruned before the walk enters
+# them: a monitor virtualenv alone holds thousands of files and made this guard
+# take ~10s, and nothing Lumen ships lives there.
+_SKIPPED_DIR = re.compile(r"^\.|^node_modules$|^__pycache__$")
 
 # Each optional part is independent, so ONLY, TABLE, a schema and quotes compose
 # in any combination: DELETE FROM ONLY "public"."request_logs" is caught too.
@@ -67,8 +74,12 @@ def _files():
         path = ROOT / name
         if path.is_file():
             yield path
-        else:
-            yield from (p for p in sorted(path.rglob("*")) if p.is_file() and "__pycache__" not in p.parts)
+            continue
+        found = []
+        for dirpath, dirnames, filenames in os.walk(path):
+            dirnames[:] = [d for d in dirnames if not _SKIPPED_DIR.match(d)]
+            found.extend(Path(dirpath) / f for f in filenames)
+        yield from sorted(found)
 
 
 def test_nothing_prunes_request_logs():
@@ -85,6 +96,31 @@ def test_nothing_prunes_request_logs():
     assert not offenders, (
         "request_logs must never be pruned (#167). Found:\n" + "\n".join(offenders)
     )
+
+
+def test_files_skips_untracked_tool_directories(tmp_path, monkeypatch):
+    banned = 'SQL = "DELETE FROM request_logs"\n'
+    for skipped in [
+        "scripts/monitor/.venv/lib/python3.12/site-packages/pkg/mod.py",
+        "scripts/monitor/.pytest_cache/v/cache/lastfailed",
+        "scripts/monitor/tests/js/node_modules/pkg/index.js",
+        "lumen/__pycache__/mod.py",
+    ]:
+        (tmp_path / skipped).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / skipped).write_text(banned)
+    tracked = tmp_path / "migrations/versions/prune.py"
+    tracked.parent.mkdir(parents=True)
+    tracked.write_text(banned)
+    dotfile = tmp_path / "scripts/monitor/.dockerignore"
+    dotfile.write_text("*.pyc\n")
+    monkeypatch.setattr(sys.modules[__name__], "ROOT", tmp_path)
+
+    assert list(_files()) == [tracked, dotfile]
+    with pytest.raises(AssertionError) as excinfo:
+        test_nothing_prunes_request_logs()
+    message = str(excinfo.value)
+    assert 'migrations/versions/prune.py:1: SQL = "DELETE FROM request_logs"' in message
+    assert ".venv" not in message and "node_modules" not in message and "__pycache__" not in message
 
 
 @pytest.mark.parametrize("sql", [
