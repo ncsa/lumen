@@ -64,7 +64,6 @@ memory/
 logs/
 
 SECURITY_REVIEW.md
-.gitnexus
 .stfolder
 lumen.sql
 restore.sh
