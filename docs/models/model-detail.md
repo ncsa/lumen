@@ -13,12 +13,15 @@ The page is split into two columns.
 ### Left Column
 
 - **Model name** with a link to the model's HuggingFace page (when available). Early-access models show an **early access** badge next to the name. When a model is reachable under alternative names (see [Model aliases](../admin/config-models.md#aliases)), those names appear as badges under the heading — they all refer to the same canonical model and share its usage history.
+- **Notice** — An operator-set notice about the model, shown whenever one is set.
 - **Description** — A short summary of the model.
 - **README** — The model's full documentation, rendered from its HuggingFace repository.
 
 ### Right Column
 
 #### Access Status
+
+When the model needs acknowledgment, its acknowledgment message appears in this column, under the **Use this model** button, as a **Notice** box. It is shown here only while the model needs acknowledgment; the model's own notice always stays in the left column.
 
 This card appears when the model requires acknowledgment before use:
 
