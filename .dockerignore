@@ -47,7 +47,6 @@ tests/
 scripts/
 chart/
 .github/
-.gitnexus/
 docker-compose*.yml
 docker-compose*.yml.example
 /*.md
