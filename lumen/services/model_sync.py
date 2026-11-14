@@ -106,6 +106,7 @@ def _validate_endpoint_url(url: str) -> str:
     for _, _, _, _, sockaddr in infos:
         ip = ipaddress.ip_address(sockaddr[0])
         policy_ip = getattr(ip, "ipv4_mapped", None) or ip
+        # is_loopback is redundant with is_private in CPython; kept as defence in depth.
         if (policy_ip.is_private or policy_ip.is_loopback or policy_ip.is_link_local
                 or policy_ip.is_multicast or policy_ip.is_reserved or policy_ip.is_unspecified
                 or policy_ip in _CGNAT_NETWORK):
