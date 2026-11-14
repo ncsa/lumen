@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
+from oracle import bucket_statuses
 from sqlalchemy import event, select
 
 from monitor import migrate
@@ -19,7 +20,6 @@ from monitor.buckets import (
     OK,
     RANGES,
     Grid,
-    bucket_statuses,
     lumen_daily_status,
     lumen_uptime,
     make_grid,

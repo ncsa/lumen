@@ -8,6 +8,7 @@ import random
 from datetime import datetime, timedelta
 
 import pytest
+from oracle import bucket_statuses, worst
 from sqlalchemy import func, select, text
 
 from monitor import migrate
@@ -17,12 +18,10 @@ from monitor.buckets import (
     UNKNOWN,
     Grid,
     bucket_index,
-    bucket_statuses,
     make_grid,
     model_uptime,
     rank_status,
     status_rank,
-    worst,
 )
 from monitor.db import make_engine, make_session_factory
 from monitor.models import Sample
