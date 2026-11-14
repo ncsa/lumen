@@ -301,6 +301,18 @@ def test_api_users_sort_by_requests(app, admin_client, test_user, admin_user, te
     assert ids.index(test_user["id"]) < ids.index(admin_user["id"])
 
 
+def test_api_users_unknown_per_page_falls_back_to_25(admin_client, test_user):
+    resp = admin_client.get("/admin/api/users?per_page=7")
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.get_json()["per_page"] == 25
+
+
+def test_users_search_needs_two_characters(admin_client, test_user):
+    resp = admin_client.get("/admin/api/users/search?q=a")
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.get_json() == {"users": []}
+
+
 def test_config_post_backs_up_previous_config(app, admin_client, tmp_path):
     """Saving config writes the prior content to <config>.bak so a bad save is recoverable."""
     cfg = tmp_path / "config.yaml"
@@ -443,6 +455,17 @@ def test_config_get_masks_secrets(app, admin_client, tmp_path):
         # Non-secret fields are returned verbatim.
         assert data["app"]["name"] == "Lumen"
         assert data["models"][0]["name"] == "gpt-4o"
+    finally:
+        app.config["CONFIG_YAML"] = original
+
+
+def test_config_get_unreadable_file_returns_500(app, admin_client, tmp_path):
+    original = app.config["CONFIG_YAML"]
+    app.config["CONFIG_YAML"] = str(tmp_path / "missing.yaml")
+    try:
+        resp = admin_client.get("/admin/api/config")
+        assert resp.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+        assert "missing.yaml" in resp.get_json()["error"]
     finally:
         app.config["CONFIG_YAML"] = original
 
