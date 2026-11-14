@@ -56,6 +56,8 @@ addopts = "--cov=lumen --cov-report=term-missing -q --durations=20 --durations-m
 # down) fails with a stack trace naming the culprit instead of stalling CI.
 # Individual tests still carry their own, tighter guards.
 timeout = 300
+# Any warning fails the test that raised it; see "Warnings" in AGENTS.md.
+filterwarnings = ["error"]
 markers = [
     "postgres: needs a real PostgreSQL + TimescaleDB (set LUMEN_TEST_POSTGRES_URL; skipped otherwise)",
 ]

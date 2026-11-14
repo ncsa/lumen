@@ -17,3 +17,4 @@ The root `AGENTS.md` applies here too. Rules specific to the monitor:
   `config.yaml.example`. The config is re-read while the service runs, so read it from the
   `ConfigStore` rather than caching values.
 - Run a single replica: two would double-write probes and double-count totals.
+- Tests run with `filterwarnings = ["error"]`; follow the Warnings rule in the root `AGENTS.md`.

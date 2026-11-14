@@ -61,6 +61,12 @@ _INDEXES = {
 }
 
 
+def _iso(value):
+    # Bind text, as SQLite stores it: sqlite3's default datetime adapter is
+    # deprecated since Python 3.12.
+    return value.isoformat(" ") if value is not None else None
+
+
 def _revision_module():
     spec = importlib.util.spec_from_file_location("auth_request_ttl_revision", _REVISION_PATH)
     module = importlib.util.module_from_spec(spec)
@@ -79,7 +85,7 @@ def pre_migration_sqlite(tmp_path):
             conn.execute(sa.text(
                 "INSERT INTO auth_requests (flow, client_id, requested_name, status, created_at,"
                 " expires_at, user_code) VALUES ('device', 'lumen-cli', 'opencode', :status, :t, :t, :code)"
-            ), {"status": status, "t": _CREATED, "code": code})
+            ), {"status": status, "t": _iso(_CREATED), "code": code})
     yield engine
     engine.dispose()
 

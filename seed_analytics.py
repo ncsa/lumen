@@ -15,12 +15,13 @@ from lumen.extensions import db
 from lumen.models.entity import Entity
 from lumen.models.model_config import ModelConfig
 from lumen.models.request_log import RequestLog
+from lumen.timeutils import utcnow
 
 MONTHS = 6
 NUM_USERS = 100
 NUM_REQUESTS = 5000
 
-NOW = datetime.utcnow()
+NOW = utcnow()
 START = NOW - timedelta(days=MONTHS * 30)
 
 SOURCES = ["chat", "api"]
