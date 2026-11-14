@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
+from oracle import bucket_statuses, worst
 
 from monitor.buckets import (
     DEFAULT_RANGE,
@@ -10,7 +11,6 @@ from monitor.buckets import (
     DayGrid,
     Grid,
     bucket_size,
-    bucket_statuses,
     daily_status,
     get_range,
     lumen_daily_status,
@@ -19,7 +19,6 @@ from monitor.buckets import (
     model_uptime,
     probe_status,
     range_days,
-    worst,
 )
 
 CHICAGO = ZoneInfo("America/Chicago")

@@ -10,10 +10,11 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
+from oracle import bucket_statuses
 from sqlalchemy import event, select
 
 from monitor import migrate
-from monitor.buckets import RANGES, Grid, bucket_statuses, make_grid, model_uptime, range_days
+from monitor.buckets import RANGES, Grid, make_grid, model_uptime, range_days
 from monitor.config import ConfigStore
 from monitor.db import make_engine, make_session_factory
 from monitor.detail import (
