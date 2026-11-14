@@ -174,12 +174,16 @@ def test_redeem_wrong_client_id(client, auth_client, app):
     assert _redeem(client, code, verifier, client_id="impersonator").get_json()["error"] == "invalid_grant"
 
 
-def test_auth_code_ttl(client, auth_client, app):
+def test_auth_code_ttl(client, auth_client, app, monkeypatch):
     code, verifier = _approve_code_flow(app, auth_client)
-    with app.app_context():
-        req = db.session.execute(select(AuthRequest)).scalars().one()
-        req.auth_code_expires_at = utcnow() - timedelta(seconds=1)
-        db.session.commit()
+    # Move the token endpoint's clock past the code's TTL rather than rewriting
+    # auth_code_expires_at from the test's own app context: the token request
+    # can pick up a session whose identity map still holds the row as approved
+    # (sessions are keyed by id(app_ctx), and ids get reused), so a DB edit made
+    # here is not guaranteed to be seen there.
+    from lumen.blueprints.oauth import routes as oauth_routes
+    later = utcnow() + timedelta(seconds=oauth_routes.AUTH_CODE_TTL + 1)
+    monkeypatch.setattr(oauth_routes, "utcnow", lambda: later)
     assert _redeem(client, code, verifier).get_json()["error"] == "invalid_grant"
 
 

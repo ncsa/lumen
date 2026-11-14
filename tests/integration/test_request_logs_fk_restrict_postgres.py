@@ -28,7 +28,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from lumen.models import RequestLog
-from tests.integration.conftest import TEST_CONFIG
+from tests.integration.conftest import TEST_CONFIG, migrate_db
 from tests.unit.test_migrations import _script_dir
 
 pytestmark = pytest.mark.postgres
@@ -62,18 +62,11 @@ _FK_ACTIONS = """
 
 
 def _flask_db_command(url, *args):
+    """The ``flask db`` command line and environment, for the lock test's upgrade:
+    it has to run in a second process to queue behind this one's open insert."""
     return (
         ["uv", "run", "flask", "--app", "run", "db", *args],
         {**os.environ, "DATABASE_URL": url, "CONFIG_YAML": TEST_CONFIG, "BACKGROUND_WORKER": "false"},
-    )
-
-
-def _flask_db(url, *args):
-    command, env = _flask_db_command(url, *args)
-    result = subprocess.run(command, capture_output=True, text=True, timeout=300, env=env)
-    assert result.returncode == 0, (
-        f"flask db {' '.join(args)} failed:\n--- stdout ---\n{result.stdout}\n"
-        f"--- stderr ---\n{result.stderr}"
     )
 
 
@@ -282,7 +275,7 @@ def test_round_trip_over_a_compressed_chunk(pg_migrated_isolated, history):
 
     # Below this revision api_key_id does not exist yet: the downgrade drops it
     # (c5d7e9f1a3b6), so only the three FKs this revision switches are compared.
-    _flask_db(url, "downgrade", _BEFORE)
+    migrate_db(url, "downgrade", _BEFORE)
     with engine.connect() as conn:
         _assert_all_fks(conn, "n", _REVISION_FKS)
         _assert_not_validated(conn)
@@ -293,7 +286,7 @@ def test_round_trip_over_a_compressed_chunk(pg_migrated_isolated, history):
         assert _chunk_of_row(conn)[1]
     engine.dispose()
 
-    _flask_db(url, "upgrade")
+    migrate_db(url, "upgrade", "head")
     with engine.connect() as conn:
         assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == _HEAD
         _assert_all_fks(conn, "r")
@@ -362,7 +355,7 @@ def test_upgrade_waits_for_an_open_insert_and_then_finishes(pg_migrated_isolated
     expected = {"entity_id": history["entity_id"], "model_config_id": history["model_config_id"],
                 "model_endpoint_id": history["model_endpoint_id"]}
     engine.dispose()
-    _flask_db(url, "downgrade", _BEFORE)
+    migrate_db(url, "downgrade", _BEFORE)
     engine.dispose()
 
     blocker = engine.connect()
@@ -406,7 +399,7 @@ def test_upgrade_waits_for_an_open_insert_and_then_finishes(pg_migrated_isolated
     engine.dispose()
 
     # Leave the module's database at head, without the extra row.
-    _flask_db(url, "upgrade")
+    migrate_db(url, "upgrade", "head")
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM request_logs WHERE source = :s"), {"s": _LOCK_SOURCE})
     with engine.connect() as conn:

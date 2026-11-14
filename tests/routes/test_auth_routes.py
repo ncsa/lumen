@@ -1,6 +1,10 @@
 from http import HTTPStatus
 
+import pytest
 from sqlalchemy import select
+
+from lumen.extensions import db
+from lumen.models.entity import Entity
 
 
 def test_landing_unauthenticated(client):
@@ -129,15 +133,30 @@ def _callback_with_userinfo(client, userinfo):
         return client.get("/callback", follow_redirects=False)
 
 
-def test_callback_rejects_explicitly_unverified_email(client):
-    resp = _callback_with_userinfo(client, {"email": "unv@example.com", "email_verified": False, "name": "U"})
+@pytest.mark.parametrize(
+    ("email_verified", "email"),
+    [
+        (False, "unv-bool@example.com"),
+        ("false", "unv-str@example.com"),
+        ("False", "unv-cap@example.com"),
+        (" false ", "unv-pad@example.com"),
+    ],
+)
+def test_callback_rejects_explicitly_unverified_email(app, client, email_verified, email):
+    resp = _callback_with_userinfo(client, {"email": email, "email_verified": email_verified, "name": "U"})
     assert resp.status_code == HTTPStatus.FORBIDDEN
+    with app.app_context():
+        assert db.session.execute(select(Entity).filter_by(email=email)).scalar_one_or_none() is None
 
 
-def test_callback_allows_unverified_email_when_configured(app, client):
+@pytest.mark.parametrize(
+    ("email_verified", "email"),
+    [(False, "unv2-bool@example.com"), ("false", "unv2-str@example.com")],
+)
+def test_callback_allows_unverified_email_when_configured(app, client, email_verified, email):
     app.config["OAUTH2_ALLOW_UNVERIFIED_EMAIL"] = True
     try:
-        resp = _callback_with_userinfo(client, {"email": "unv2@example.com", "email_verified": False, "name": "U"})
+        resp = _callback_with_userinfo(client, {"email": email, "email_verified": email_verified, "name": "U"})
         assert resp.status_code == HTTPStatus.FOUND
         assert "/chat" in resp.headers["Location"]
     finally:
@@ -150,7 +169,11 @@ def test_callback_allows_missing_email_verified_claim(client):
     assert "/chat" in resp.headers["Location"]
 
 
-def test_callback_allows_verified_email(client):
-    resp = _callback_with_userinfo(client, {"email": "ver@example.com", "email_verified": True, "name": "U"})
+@pytest.mark.parametrize(
+    ("email_verified", "email"),
+    [(True, "ver-bool@example.com"), ("true", "ver-str@example.com")],
+)
+def test_callback_allows_verified_email(client, email_verified, email):
+    resp = _callback_with_userinfo(client, {"email": email, "email_verified": email_verified, "name": "U"})
     assert resp.status_code == HTTPStatus.FOUND
     assert "/chat" in resp.headers["Location"]

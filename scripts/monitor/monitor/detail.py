@@ -4,10 +4,15 @@ Every range returns the same series, so the page draws the same charts:
 
 - `header`: the model's overview row (status, strip, uptime, instances, prices, cost)
 - `strip_times`: when each strip cell starts (ISO times, or ISO dates for 1y)
-- `prices`: our input/output price and the models.dev median and p5/p95; below 7d one
+- `prices`: our input/output price and the models.dev median and p5/p95, plus our
+  cached-input and cache-write price (None for a day whose lumen row has no cache price,
+  such as days from before the monitor stored them) and their models.dev median and p5/p95
+  (`cached_input_*` from the providers' cache-read prices; None for a day whose models.dev
+  row has none, such as days from before the monitor collected them); below 7d one
   point per bucket with the prices of the bucket's local day, each source carrying its
   latest earlier day forward when that day has no row (so the line steps at local
-  midnight); from 7d up one point per local day
+  midnight; the cache prices ride on the same carried lumen row); from 7d up one point per
+  local day
 - `traffic`: below 7d one point per bucket with the average req/min and tok/min of
   the samples; from 7d up one point per local day with the day's requests and tokens,
   flagged `estimated` when the day is not exact (`estimated` or not yet `final`).
@@ -65,7 +70,10 @@ def _rows_by_source(session: Session, model_id: str, days: list[date]) -> dict[t
 
 
 # The price columns of each price source. The probe creates today's lumen row before
-# the price run fills these, so a row with none of them set has no price yet.
+# the price run fills these, so a row with none of them set has no price yet. The cache
+# prices are left out: the price run writes them with input and output, so they ride on the
+# same row, and a row with only a cache price does not count as priced. The models.dev cache
+# stats likewise only ride on a row that has an input or output price.
 PRICE_COLUMNS = {
     "lumen": ("input_price", "output_price"),
     "models.dev": tuple(f"{side}_{stat}" for side in ("input", "output") for stat in ("median", "p5", "p95")),
@@ -73,10 +81,12 @@ PRICE_COLUMNS = {
 
 
 def _price_values(ours: DailyStat | None, dev: DailyStat | None) -> dict:
-    values = {"input_price": ours.input_price if ours else None, "output_price": ours.output_price if ours else None}
-    for side in ("input", "output"):
+    values = {key: getattr(ours, key) if ours is not None else None
+              for key in ("input_price", "output_price", "cached_input_price", "cache_write_price")}
+    # The chart key, then the models.dev column it reads: the cached-input band is the cache-read price.
+    for key, column in (("input", "input"), ("output", "output"), ("cached_input", "cache_read"), ("cache_write", "cache_write")):
         for stat in ("median", "p5", "p95"):
-            values[f"{side}_{stat}"] = getattr(dev, f"{side}_{stat}") if dev else None
+            values[f"{key}_{stat}"] = getattr(dev, f"{column}_{stat}") if dev else None
     return values
 
 

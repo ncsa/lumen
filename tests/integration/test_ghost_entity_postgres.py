@@ -7,14 +7,11 @@ comments, and that its downgrade restores them and refuses while a ghost row
 exists. The module steps its private database below the revision and back up,
 so it runs against ``pg_migrated_isolated`` and leaves it at head.
 """
-import os
-import subprocess
-
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
-from tests.integration.conftest import TEST_CONFIG
+from tests.integration.conftest import migrate_db
 
 pytestmark = pytest.mark.postgres
 
@@ -33,20 +30,6 @@ _INSERT_GHOST = text(
     "INSERT INTO entities (entity_type, name, initials, active, store_conversations)"
     " VALUES ('ghost', 'Erased user', '', false, false)"
 )
-
-
-def _flask_db(url, *args):
-    return subprocess.run(
-        ["uv", "run", "flask", "--app", "run", "db", *args],
-        capture_output=True, text=True, timeout=300,
-        env={**os.environ, "DATABASE_URL": url, "CONFIG_YAML": TEST_CONFIG, "BACKGROUND_WORKER": "false"},
-    )
-
-
-def _ok(result, what):
-    assert result.returncode == 0, (
-        f"flask db {what} failed:\n--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
-    )
 
 
 def _comments(engine):
@@ -87,14 +70,13 @@ def test_head_allows_exactly_one_ghost_and_downgrade_restores_two_types(pg_migra
 
     # The downgrade refuses while the ghost exists.
     engine.dispose()
-    result = _flask_db(url, "downgrade", _BEFORE)
-    assert result.returncode != 0
-    assert "ck_entities_type" in result.stdout + result.stderr
+    with pytest.raises(IntegrityError, match="ck_entities_type"):
+        migrate_db(url, "downgrade", _BEFORE)
 
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM entities WHERE entity_type = 'ghost'"))
     engine.dispose()
-    _ok(_flask_db(url, "downgrade", _BEFORE), "downgrade")
+    migrate_db(url, "downgrade", _BEFORE)
     assert _comments(engine) == _OLD_COMMENTS
     assert _has_ghost_index(engine) is None
     with pytest.raises(IntegrityError, match="ck_entities_type"):
@@ -102,7 +84,7 @@ def test_head_allows_exactly_one_ghost_and_downgrade_restores_two_types(pg_migra
             conn.execute(_INSERT_GHOST)
     engine.dispose()
 
-    _ok(_flask_db(url, "upgrade", _REVISION), "upgrade")
+    migrate_db(url, "upgrade", _REVISION)
     assert _comments(engine) == _NEW_COMMENTS
     assert _has_ghost_index(engine)
     engine.dispose()

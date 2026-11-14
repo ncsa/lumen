@@ -845,10 +845,16 @@ def test_sync_model_truncates_dev_knowledge_date(monkeypatch):
 # _validate_endpoint_url — SSRF guard
 # ---------------------------------------------------------------------------
 
-def _fake_addrinfo(ip):
-    """Minimal getaddrinfo result resolving to the given IP."""
+def _fake_addrinfo(ip, family=None):
+    """Minimal getaddrinfo result resolving to the given IP.
+
+    ``family`` defaults to AF_INET; pass ``socket.AF_INET6`` to get the IPv6
+    entry shape, whose sockaddr is the 4-tuple ``(ip, port, flowinfo, scope_id)``.
+    """
     import socket
-    return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (ip, 443))]
+    family = family or socket.AF_INET
+    sockaddr = (ip, 443, 0, 0) if family == socket.AF_INET6 else (ip, 443)
+    return [(family, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", sockaddr)]
 
 
 def test_validate_url_rejects_non_http_schemes():
@@ -887,6 +893,47 @@ def test_validate_url_rejects_hostname_resolving_to_private_ip(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: _fake_addrinfo("127.0.0.1"))
     with pytest.raises(ValueError, match="private/reserved"):
         model_sync._validate_endpoint_url("http://internal.example.com/v1")
+
+
+def _echo_literal_addrinfo(host, port, *a, **k):
+    """getaddrinfo stand-in for IP-literal URLs: echo the literal back, no host IPv6 needed."""
+    import socket
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    return _fake_addrinfo(host, family)
+
+
+@pytest.mark.parametrize("url, resolves_to", [
+    # IP literals across IPv4 127.0.0.0/8, IPv6 ::1 and IPv4-mapped IPv6.
+    ("http://127.0.0.1/v1", None),
+    ("http://127.1.2.3/v1", None),
+    ("http://[::1]/v1", None),
+    ("http://[::ffff:127.0.0.1]/v1", None),
+    # Hostnames that resolve to loopback over AF_INET and AF_INET6.
+    ("http://internal.example.com/v1", ("127.0.0.1", "AF_INET")),
+    ("http://internal.example.com/v1", ("::1", "AF_INET6")),
+], ids=["v4-literal", "v4-literal-127/8", "v6-literal", "v4-mapped-v6-literal",
+        "hostname-to-v4", "hostname-to-v6"])
+def test_validate_url_rejects_loopback(monkeypatch, url, resolves_to):
+    import socket
+
+    if resolves_to is None:
+        monkeypatch.setattr(socket, "getaddrinfo", _echo_literal_addrinfo)
+    else:
+        ip, family = resolves_to
+        monkeypatch.setattr(socket, "getaddrinfo",
+                            lambda *a, **k: _fake_addrinfo(ip, getattr(socket, family)))
+    with pytest.raises(ValueError, match="private/reserved"):
+        model_sync._validate_endpoint_url(url)
+
+
+def test_validate_url_rejects_loopback_after_public_ip(monkeypatch):
+    """Every resolved IP is checked, not only the first (pinned) one."""
+    import socket
+
+    infos = _fake_addrinfo("93.184.216.34") + _fake_addrinfo("::1", socket.AF_INET6)
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: infos)
+    with pytest.raises(ValueError, match="private/reserved"):
+        model_sync._validate_endpoint_url("https://api.example.com/v1")
 
 
 def test_validate_url_allows_public_ip_and_returns_pinned_ip(monkeypatch):

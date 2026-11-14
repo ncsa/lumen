@@ -1,0 +1,20 @@
+{#- Favicon links from the active theme's optional `favicon:` block (ico, svg,
+    apple_touch). A value starting with http://, https:// or // is used as-is;
+    anything else is a path relative to the theme's static/ directory. -#}
+{%- macro _favicon_href(value) -%}
+  {%- if value.startswith(('http://', 'https://', '//')) -%}
+    {{ value }}
+  {%- else -%}
+    {{ url_for('theme_static', filename=value) }}
+  {%- endif -%}
+{%- endmacro -%}
+{%- set favicon = (g.theme or {}).get('favicon') or {} -%}
+{%- if favicon.ico %}
+  <link rel="icon" href="{{ _favicon_href(favicon.ico) }}" sizes="32x32">
+{%- endif %}
+{%- if favicon.svg %}
+  <link rel="icon" href="{{ _favicon_href(favicon.svg) }}" type="image/svg+xml">
+{%- endif %}
+{%- if favicon.apple_touch %}
+  <link rel="apple-touch-icon" href="{{ _favicon_href(favicon.apple_touch) }}">
+{%- endif %}

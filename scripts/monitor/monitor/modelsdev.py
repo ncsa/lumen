@@ -159,25 +159,24 @@ def _price(value) -> float:
 
 
 def provider_stats(dev_match: dict, price_index: dict[str, list[dict]]) -> dict | None:
-    """Median, p5 and p95 of the non-zero input and output prices ($/M tokens) of
-    every provider listing the matched model, plus how many listings had a price.
-    None when no provider lists a price above $0."""
-    inputs: list[float] = []
-    outputs: list[float] = []
+    """Median, p5 and p95 of the non-zero input, output, cache-read and cache-write prices
+    ($/M tokens) of every provider listing the matched model, plus how many listings had an
+    input or output price. A side no listing prices above $0 has None stats. None when no
+    provider lists an input or output price above $0 (cache prices alone give no row)."""
+    values: dict[str, list[float]] = {"input": [], "output": [], "cache_read": [], "cache_write": []}
     providers = 0
     for m in price_index.get(_normalize_id(dev_match.get("id", "")), []):
         cost = m.get("cost") or {}
-        ci, co = _price(cost.get("input")), _price(cost.get("output"))
-        if ci > 0:
-            inputs.append(ci)
-        if co > 0:
-            outputs.append(co)
-        if ci > 0 or co > 0:
+        prices = {kind: _price(cost.get(kind)) for kind in values}
+        for kind, price in prices.items():
+            if price > 0:
+                values[kind].append(price)
+        if prices["input"] > 0 or prices["output"] > 0:
             providers += 1
     if not providers:
         return None
     stats = {"modelsdev_id": dev_match.get("id"), "providers": providers}
-    for kind, values in (("input", inputs), ("output", outputs)):
-        median, p5, p95 = price_range(values) or (None, None, None)
+    for kind, kind_values in values.items():
+        median, p5, p95 = price_range(kind_values) or (None, None, None)
         stats.update({f"{kind}_median": median, f"{kind}_p5": p5, f"{kind}_p95": p95})
     return stats

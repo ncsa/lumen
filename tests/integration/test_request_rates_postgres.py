@@ -18,6 +18,9 @@ here:
 5. ``?tokens=true`` with the monitoring token sums input/output tokens from
    the aggregate over the same windows, plus ``last_month``, and carries
    those cache flags.
+6. A bucket holding several requests counts each of them: the aggregate keeps
+   one row per minute, model and source, so the windows sum its ``requests``
+   column rather than counting its rows.
 
 The clock is pinned to the database's ``now()`` (``request_rates._now``) so the
 row ages below are exact. This module runs against ``pg_migrated_isolated`` —
@@ -121,6 +124,9 @@ def seeded(pg_app, now):
     minute, 30 minutes ago and 5 hours ago, plus one 2 days ago; model ``b``
     has one row 30 minutes ago; one row has no model. Model ``t`` carries
     token counts in both sources, from the previous whole minute to 40 days ago.
+    Model ``s`` has five ``api`` rows sharing one timestamp in each of the
+    previous whole minute, 30 minutes ago and 5 hours ago, so each group is one
+    ``(bucket, model, source)`` row in the aggregate holding five requests.
     """
     previous_minute = now.replace(second=0, microsecond=0) - timedelta(seconds=30)
     with pg_app.app_context():
@@ -130,8 +136,9 @@ def seeded(pg_app, now):
         a = ModelConfig(model_name="rates-a", input_cost_per_million=1, output_cost_per_million=2)
         b = ModelConfig(model_name="rates-b", input_cost_per_million=1, output_cost_per_million=2)
         t = ModelConfig(model_name="rates-t", input_cost_per_million=1, output_cost_per_million=2)
+        s = ModelConfig(model_name="rates-s", input_cost_per_million=1, output_cost_per_million=2)
         user = Entity(entity_type="user", email="rates@example.com", name="Rates", initials="RA", active=True)
-        db.session.add_all([a, b, t, user])
+        db.session.add_all([a, b, t, s, user])
         db.session.flush()
         for when, source in [
             (previous_minute, "api"),
@@ -154,8 +161,11 @@ def seeded(pg_app, now):
             (now - timedelta(days=40), "api", 32, 320),
         ]:
             _log(t.id, when, source, inputs, outputs)
+        for when in [previous_minute, now - timedelta(minutes=30), now - timedelta(hours=5)]:
+            for _ in range(5):
+                _log(s.id, when, "api")
         db.session.commit()
-        return {"a": a.id, "b": b.id, "t": t.id, "user": user.id}
+        return {"a": a.id, "b": b.id, "t": t.id, "s": s.id, "user": user.id}
 
 
 def _rates(pg_app, model_config_id=None):
@@ -170,8 +180,22 @@ def test_rates_sum_sources_and_honour_the_windows(pg_app, seeded):
         seeded["a"]: {"last_minute": 2, "last_hour": 5, "last_day": 6},
         seeded["b"]: {"last_minute": 0, "last_hour": 1, "last_day": 1},
         seeded["t"]: {"last_minute": 2, "last_hour": 3, "last_day": 4},
+        seeded["s"]: {"last_minute": 5, "last_hour": 10, "last_day": 15},
     }
     assert _rates(pg_app, seeded["b"]) == {seeded["b"]: {"last_minute": 0, "last_hour": 1, "last_day": 1}}
+
+
+@pytest.mark.postgres
+def test_rates_sum_requests_within_a_bucket(pg_app, seeded):
+    """Five requests in one minute are five, not one.
+
+    The aggregate holds one row per minute, model and source, so each group of
+    five same-timestamp rows is a single row with ``requests = 5``. The total
+    must be ``SUM(requests)``, not the number of aggregate rows.
+    """
+    assert _rates(pg_app, seeded["s"]) == {
+        seeded["s"]: {"last_minute": 5, "last_hour": 10, "last_day": 15},
+    }
 
 
 @pytest.mark.postgres

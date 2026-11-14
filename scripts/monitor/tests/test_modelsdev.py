@@ -4,8 +4,16 @@ import requests
 from monitor import modelsdev
 
 
-def listing(model_id, input_cost, output_cost, name=""):
-    return {"id": model_id, "name": name or model_id, "cost": {"input": input_cost, "output": output_cost}}
+def listing(model_id, input_cost, output_cost, name="", cache_read=None, cache_write=None):
+    cost = {"input": input_cost, "output": output_cost}
+    if cache_read is not None:
+        cost["cache_read"] = cache_read
+    if cache_write is not None:
+        cost["cache_write"] = cache_write
+    return {"id": model_id, "name": name or model_id, "cost": cost}
+
+
+NO_CACHE = {f"{kind}_{stat}": None for kind in ("cache_read", "cache_write") for stat in ("median", "p5", "p95")}
 
 
 def stats_for(listings, model_id="glm-4.6", root=None, pin=None):
@@ -56,7 +64,41 @@ def test_one_provider():
         "modelsdev_id": "glm-4.6", "providers": 1,
         "input_median": 0.6, "input_p5": 0.6, "input_p95": 0.6,
         "output_median": 2.2, "output_p5": 2.2, "output_p95": 2.2,
+        **NO_CACHE,
     }
+
+
+def test_cache_stats_come_from_non_zero_cache_prices():
+    listings = [
+        listing("glm-4.6", 0.6, 2.2, cache_read=0.1, cache_write=0.75),
+        listing("glm-4.6", 0.5, 2.0, cache_read=0.3),
+        listing("glm-4.6", 0.4, 1.8, cache_read=0, cache_write="0"),  # $0 cache prices are dropped
+        listing("glm-4.6", 0.7, 2.4, cache_read=None, cache_write=None),
+    ]
+    stats = stats_for(listings)
+    assert stats["providers"] == 4
+    assert stats["cache_read_median"] == pytest.approx(0.2)
+    assert stats["cache_read_p5"] == pytest.approx(0.11)
+    assert stats["cache_read_p95"] == pytest.approx(0.29)
+    assert (stats["cache_write_median"], stats["cache_write_p5"], stats["cache_write_p95"]) == (0.75, 0.75, 0.75)
+
+
+def test_cache_stats_are_none_without_a_cache_price():
+    stats = stats_for([listing("glm-4.6", 0.6, 2.2, cache_read=0, cache_write=0)])
+    assert {key: stats[key] for key in NO_CACHE} == NO_CACHE
+
+
+def test_cache_prices_alone_neither_count_nor_give_stats():
+    listings = [
+        listing("glm-4.6", 0.6, 2.2, cache_read=0.1),
+        listing("glm-4.6", 0, 0, cache_read=0.3, cache_write=0.5),  # only cache prices: not a provider
+    ]
+    stats = stats_for(listings)
+    assert stats["providers"] == 1
+    # Its cache prices still join the stats of the listings that are counted.
+    assert stats["cache_read_median"] == pytest.approx(0.2)
+    assert stats["cache_write_median"] == 0.5
+    assert stats_for([listing("glm-4.6", 0, None, cache_read=0.1, cache_write=0.2)]) is None
 
 
 def test_many_providers():

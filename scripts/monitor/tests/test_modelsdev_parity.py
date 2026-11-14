@@ -77,3 +77,21 @@ def test_versions_ignore_sizes_and_precisions():
     assert modelsdev._versions("DeepSeek-V4.1-Flash-FP8") == {"4"}
     assert modelsdev._versions("Qwen3-Coder-30B-A3B-Instruct-FP8") == {"3"}
     assert modelsdev._versions("mixtral-8x7b-bf16-int4-q5_k_m") == set()
+
+
+def test_cache_prices_come_from_the_same_listings_as_lumen(model_sync):
+    """The monitor's cache-price band reads the listings Lumen averages for its cache prices:
+    each side on its own, $0 and missing prices dropped. The values are chosen so the median
+    equals the mean, so the two numbers can be compared."""
+    listings = [
+        {"id": "glm-4.6", "cost": {"input": 0.6, "output": 2.2, "cache_read": 0.1, "cache_write": 0.75}},
+        {"id": "glm-4.6", "cost": {"input": 0.5, "output": 2.0, "cache_read": 0.3, "cache_write": 0}},
+        {"id": "glm-4.6", "cost": {"input": 0.4, "output": 1.8, "cache_read": "0"}},
+        {"id": "glm-4.6", "cost": {"input": 0, "output": 0, "cache_read": 0.2}},
+        {"id": "glm-4.5", "cost": {"input": 9.0, "output": 9.0, "cache_read": 9.0, "cache_write": 9.0}},
+    ]
+    dev_match = listings[0]
+    _, _, lumen_read, lumen_write = model_sync._average_price(dev_match, model_sync._build_price_index(listings))
+    stats = modelsdev.provider_stats(dev_match, modelsdev.build_price_index(listings))
+    assert stats["cache_read_median"] == pytest.approx(lumen_read) == pytest.approx(0.2)
+    assert stats["cache_write_median"] == pytest.approx(lumen_write) == pytest.approx(0.75)

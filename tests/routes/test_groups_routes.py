@@ -1,4 +1,5 @@
 """Tests for the groups blueprint (list, detail, members, ownership)."""
+import re
 from http import HTTPStatus
 
 import pytest
@@ -128,11 +129,73 @@ def test_index_shows_new_group_for_admin(admin_client):
     assert b"New Group" in resp.data
 
 
+def test_summary_cards_admin_counts_all_groups(admin_client, app, owned_group, member_group):
+    """In admin mode the cards count every group, including ones the admin is not in."""
+    _make_group(app, name="unrelated")
+    # 3 groups; memberships: owned-group 1 + member-group 2 + unrelated 0 = 3, none the admin's.
+    assert _summary_cards(admin_client) == {"Total Groups": 3, "Total Members": 3}
+
+
+def test_summary_cards_admin_without_admin_mode_counts_only_memberships(admin_client_no_mode, owned_group):
+    """With admin mode off, an admin who belongs to no group sees empty cards."""
+    assert _summary_cards(admin_client_no_mode) == {"Groups": 0, "Total Members": 0}
+
+
 def test_data_empty_for_non_member(auth_client, app):
     _make_group(app, name="someone-elses")
     data = auth_client.get("/groups/data").get_json()
     assert data["groups"] == []
     assert data["total"] == 0
+
+
+_SQL_TABLE = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+(\w+)", re.IGNORECASE)
+
+
+def _sql_tables(statement):
+    """Tables a SQL statement reads or writes, in first-seen order."""
+    seen = []
+    for t in _SQL_TABLE.findall(statement):
+        if t not in seen:
+            seen.append(t)
+    return tuple(seen)
+
+
+def test_data_no_groups_skips_listing_queries(auth_client, app, second_user):
+    """A caller in no group gets the empty page without the listing queries running.
+
+    The early return in groups.data saves work; it does not enforce access.
+    Without it, an empty visibility list still filters both queries with an
+    empty IN, which matches nothing, so the response is the same either way
+    (test_data_empty_for_non_member cannot tell them apart). What the guard
+    prevents is the listing SELECT over groups/group_limits, the COUNT(*) over
+    groups and the owner lookup, so this test checks which SQL runs, not just
+    the response.
+    """
+    from sqlalchemy import event
+
+    from lumen.extensions import db
+
+    _make_group(app, name="second-users-group", owner_id=second_user["id"])
+
+    tables = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        tables.append(_sql_tables(statement))
+
+    with app.app_context():
+        engine = db.engine
+    event.listen(engine, "before_cursor_execute", _record)
+    try:
+        resp = auth_client.get("/groups/data?page=2&per_page=50")
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.get_json() == {"groups": [], "total": 0, "page": 2, "per_page": 50}
+    touched = {t for stmt in tables for t in stmt}
+    assert "group_members" in touched, f"visibility lookup not recorded: {tables}"
+    assert "groups" not in touched, f"listing queries ran for a caller in no group: {tables}"
+    assert "group_limits" not in touched, f"listing queries ran for a caller in no group: {tables}"
 
 
 def test_data_lists_member_groups(auth_client, owned_group, member_group):
@@ -809,6 +872,19 @@ def test_transferring_ownership_reveals_members(admin_client, app, ownerless_gro
                if g["id"] == ownerless_group)
     assert row["has_owner"] is True
     assert row["members"] == 2
+
+
+def test_owned_group_ids_scoped_to_given_ids(app, test_user, second_user):
+    """The groups list asks only about the groups on the current page, so an
+    owned group outside that page must not leak into the answer."""
+    a = _make_group(app, name="owned-a", owner_id=test_user["id"])
+    b = _make_group(app, name="owned-b", owner_id=second_user["id"])
+    c = _make_group(app, name="ownerless-c")
+    with app.app_context():
+        from lumen.blueprints.groups.routes import _owned_group_ids
+        assert _owned_group_ids([a, c]) == {a}
+        assert _owned_group_ids([c]) == set()
+        assert _owned_group_ids() >= {a, b}
 
 
 # ---------------------------------------------------------------------------

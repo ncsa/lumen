@@ -6,14 +6,12 @@ provable here, on a database the real chain migrated over existing rows. The
 module steps its private database back below the revision and up again, so it
 runs against ``pg_migrated_isolated`` and leaves it at head.
 """
-import os
-import subprocess
 from datetime import datetime
 
 import pytest
 from sqlalchemy import text
 
-from tests.integration.conftest import TEST_CONFIG
+from tests.integration.conftest import migrate_db
 
 pytestmark = pytest.mark.postgres
 
@@ -32,18 +30,6 @@ _OLD_REVOKED_BY_COMMENT = (
     "Entity (user) that revoked this key; null while usable, for keys revoked before "
     "this column existed, for system revocations (OAuth code replay), or if the revoker was deleted"
 )
-
-
-def _flask_db(url, *args):
-    result = subprocess.run(
-        ["uv", "run", "flask", "--app", "run", "db", *args],
-        capture_output=True, text=True, timeout=300,
-        env={**os.environ, "DATABASE_URL": url, "CONFIG_YAML": TEST_CONFIG, "BACKGROUND_WORKER": "false"},
-    )
-    assert result.returncode == 0, (
-        f"flask db {' '.join(args)} failed:\n--- stdout ---\n{result.stdout}\n"
-        f"--- stderr ---\n{result.stderr}"
-    )
 
 
 def _seed(engine):
@@ -76,11 +62,11 @@ def _has_index(conn):
 
 def test_upgrade_keeps_existing_keys_unexpiring_and_downgrade_drops_column(pg_migrated_isolated):
     url, engine = pg_migrated_isolated
-    _flask_db(url, "downgrade", _BEFORE)
+    migrate_db(url, "downgrade", _BEFORE)
     _seed(engine)
     engine.dispose()
 
-    _flask_db(url, "upgrade", _REVISION)
+    migrate_db(url, "upgrade", _REVISION)
     with engine.connect() as conn:
         expires = dict(conn.execute(text("SELECT name, expires_at FROM api_keys")).all())
         assert _comments(conn) == {"expires_at": _EXPIRES_AT_COMMENT, "revoked_by_entity_id": _REVOKED_BY_COMMENT}
@@ -88,7 +74,7 @@ def test_upgrade_keeps_existing_keys_unexpiring_and_downgrade_drops_column(pg_mi
     assert expires == {"live": None, "revoked": None}
     engine.dispose()
 
-    _flask_db(url, "downgrade", _BEFORE)
+    migrate_db(url, "downgrade", _BEFORE)
     with engine.connect() as conn:
         columns = set(conn.execute(text(
             "SELECT column_name FROM information_schema.columns WHERE table_name = 'api_keys'"
@@ -98,4 +84,4 @@ def test_upgrade_keeps_existing_keys_unexpiring_and_downgrade_drops_column(pg_mi
     assert "expires_at" not in columns
     engine.dispose()
 
-    _flask_db(url, "upgrade")
+    migrate_db(url, "upgrade", "head")

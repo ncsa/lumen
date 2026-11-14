@@ -130,7 +130,7 @@ These fields tell the UI what the model can do and help users pick the right one
 | `supports_function_calling` | Whether the model supports tool/function calling via the API |
 | `input_modalities` | What the model accepts: `["text"]`, `["text", "image"]`, `["text", "image", "video"]`, `["text", "image", "video", "audio"]` |
 | `output_modalities` | What the model produces: typically `["text"]` |
-| `notice` | Optional admin note shown to users on the model detail page |
+| `notice` | Optional admin note, always shown in the main column of the model detail page. Rendered as Markdown: use plain text or `###` and lower headings (a `#` heading would add a second page title) |
 
 On Update, `supports_reasoning` comes from the serving backend's reasoning parser when its `/server_info` is reachable (SGLang always; vLLM only in dev mode), and otherwise from the models.dev provider consensus.
 

@@ -460,7 +460,7 @@ Configuration and metadata for each AI model that Lumen can proxy. One row per l
 | `max_output_tokens` | Integer | YES | Maximum tokens the model can generate in a single response |
 | `supports_reasoning` | Boolean | YES | Whether the model exposes chain-of-thought / reasoning tokens |
 | `knowledge_cutoff` | String(7) | YES | Training data cutoff in `YYYY-MM` format |
-| `notice` | Text | YES | Optional admin notice displayed to users on the model detail page |
+| `notice` | Text | YES | Optional admin notice, always shown in the main column of the model detail page (Markdown; use plain text or `###` and lower headings) |
 | `created_at` | DateTime | NO | UTC timestamp when the model was registered |
 
 **Notes:**

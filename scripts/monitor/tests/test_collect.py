@@ -65,8 +65,8 @@ class FakeHttp:
         ]}
         self.lumen_status = 200
         self.modelsdev = {
-            "a": {"models": {"qwen": {"id": "qwen", "cost": {"input": 0.1, "output": 0.4}}}},
-            "b": {"models": {"qwen": {"id": "qwen", "cost": {"input": 0.3, "output": 0.0}}}},
+            "a": {"models": {"qwen": {"id": "qwen", "cost": {"input": 0.1, "output": 0.4, "cache_read": 0.01, "cache_write": 0.125}}}},
+            "b": {"models": {"qwen": {"id": "qwen", "cost": {"input": 0.3, "output": 0.0, "cache_read": 0.03}}}},
             "c": {"models": {"glm-4.5-air": {"id": "glm-4.5-air", "cost": {"input": 0.2, "output": 1.1}}}},
         }
 
@@ -125,6 +125,10 @@ def test_price_run_writes_every_source(env, http):
 
     dev = stored["qwen", "models.dev"]
     assert (dev.providers, dev.input_median, dev.output_median, dev.output_p5) == (2, pytest.approx(0.2), 0.4, 0.4)
+    assert dev.cache_read_median == pytest.approx(0.02)
+    assert (dev.cache_write_median, dev.cache_write_p5, dev.cache_write_p95) == (0.125, 0.125, 0.125)
+    big_dev = stored["big", "models.dev"]
+    assert (big_dev.cache_read_median, big_dev.cache_write_median) == (None, None)  # no provider lists a cache price
     assert stored["big", "models.dev"].modelsdev_id == "glm-4.5-air"  # pinned
 
     hw = stored["qwen", "hardware"]

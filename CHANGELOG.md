@@ -4,12 +4,17 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+- The monitor's model detail page charts the cached-input and cache-write prices over time, with the models.dev comparison band where providers publish cache prices. (#510)
 - The Models page links to LLMHub for launching models that are not listed, when `app.llmhub_url` is set (editable in the admin config editor). (#233)
 - Configure a separate cached-input token price per model; unset rates use the normal input price, while zero is free. The rate is published on `/v1/models` and written into the generated OpenCode config (`cost.cache.read`/`write`) so cache-aware clients bill the same figure. `/connect` now offers that config as `opencode.jsonc`: its `cache` block always states both rates, filling an unset one with the input price and explaining why, because OpenCode bills an omitted cache price as free. (#66)
 - Record the cached-input token count per request (`request_logs.cached_input_tokens`, NULL when the upstream reported no such count — a reported zero stays 0) and fold it into the `model_stats` / `entity_stats` totals, so a discounted request's stored cost can be checked against its tokens. The usage charts still show the full prompt: the continuous aggregates behind them do not carry the cached count yet. (#66)
 - The models table shows prompt-cache pricing as a third "Coins / 1M tokens" column, "Cache read / write", instead of hiding it in a hover tip; an unconfigured rate is shown at the input price it is actually charged. (#66)
 - Price cache writes like cache reads: a per-model `cache_write_cost_per_million` (default: the input rate) bills the prompt-cache write tokens an upstream reports; a backend that reports no creation count (SGLang, which has no cache-write accounting yet) records NULL and its non-cached prompt is billed at the input rate, never inferred as a write. `request_logs.cache_write_tokens` records the count next to `cached_input_tokens` and the stats fold carries both into the totals, keeping a cached request's stored cost checkable. Usage in either API family is normalized to the same totals (Anthropic-style `input_tokens` excludes the cached parts, OpenAI-style `prompt_tokens` includes them). The rate is published on `/v1/models` and written into the generated OpenCode config (`cost.cache.write`, which repeats the input price with a comment when unset), and models.dev autofill can fill both cache rates (`auto_cache_price: true`; second checkbox in the admin config editor). (#66)
 - Add an Anthropic Messages subset and token estimates for the Python SDK and configured Claude Code, sharing Lumen access controls and billing. (#61)
+- Added: per-theme favicons (default, Illinois, UIC, UIS) and a `/favicon.ico` route (#479).
+- Speed up the slowest PostgreSQL migration tests and the request_logs prune guard (#475).
+- Model detail page: the model's notice now always shows in the main column. The acknowledgement text shows on the right only for models that need acknowledgement. Previously, the acknowledgement text replaced the notice. (#492)
+- Connect the GitHub Copilot CLI: `/connect` generates `~/.copilot/providers.json`, and `lumen.sh --copilot` writes the Lumen provider and models into it and keeps them current. (#530)
 - Add `scripts/monitor/backfill_tokens.py` to backfill the monitor's token counts and history from Lumen's request logs; `--day` redoes a single local day, replacing its estimated rows with exact ones
 
 ## [2.3.1] - 2026-11-07

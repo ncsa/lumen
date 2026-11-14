@@ -39,6 +39,7 @@ BASE = os.environ.get("BASE_URL", "http://localhost:5001").rstrip("/")
 OUT = os.environ.get("OUTPUT_DIR", "docs/img")
 DEMO_USER = "screenshot-demo@example.com"
 DEMO_MANAGER = "screenshot-manager@example.com"
+DEMO_NOTICE = "Responses may be logged for quality review."
 
 HIDE_CSS = """
 ilw-footer, footer, [slot='footer'] { display:none !important; }
@@ -55,6 +56,14 @@ def ensure_demo_data(app):
                 select(ModelConfig).where(ModelConfig.active).order_by(ModelConfig.model_name)
             ).scalars().first()
             model = mc.model_name if mc else ""
+
+        # A plain notice (no acknowledgement) so model-detail.png shows the
+        # left-column Notice block. Set after create_app()'s config sync.
+        captured = db.session.execute(
+            select(ModelConfig).filter_by(model_name=model)
+        ).scalar_one_or_none()
+        if captured:
+            captured.notice = DEMO_NOTICE
 
         user = db.session.execute(
             select(Entity).filter_by(email=DEMO_USER, entity_type="user")

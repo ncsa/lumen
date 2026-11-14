@@ -9,3 +9,7 @@ footer_links: []
 banner_bg_color: "#fff9c4"
 banner_text_color: "#000000"
 banner_border_color: "#000000"
+favicon:
+  ico: favicon/favicon.ico
+  svg: favicon/icon.svg
+  apple_touch: favicon/apple-touch-icon.png

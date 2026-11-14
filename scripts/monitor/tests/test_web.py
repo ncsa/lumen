@@ -126,11 +126,19 @@ def test_detail_page_accessibility_markup(make_client):
     assert markup.find("div", id="load-error")[0]["role"] == "alert"
     assert markup.find("div", role="group")[0]["aria-label"] == "Time range"
     canvases = markup.find("canvas")
-    assert len(canvases) == 6 and all(c["role"] == "img" and c["aria-label"] for c in canvases)
+    assert len(canvases) == 8 and all(c["role"] == "img" and c["aria-label"] for c in canvases)
     # Every chart card is a section named by its heading.
     for section in markup.find("section"):
         assert markup.find("h2", id=section["aria-labelledby"])
     assert "skipto" in html
+
+
+def test_detail_page_shows_the_cache_price_cards_for_a_model_without_cache_prices(make_client):
+    # MODEL has no cache prices; the cards still show, and detail.js fills their note.
+    markup = parse(make_client().get("/model/org/qwen").get_data(as_text=True))
+    ids = [c["id"] for c in markup.find("canvas")]
+    assert ids[:4] == ["chart-input-price", "chart-output-price", "chart-cached-input-price", "chart-cache-write-price"]
+    assert markup.find("span", id="cached-input-price-note") and markup.find("span", id="cache-write-price-note")
 
 
 def test_page_marks_the_selected_range(make_client):

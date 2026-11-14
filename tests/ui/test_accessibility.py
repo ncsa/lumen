@@ -206,6 +206,38 @@ def test_models_page_with_granted_pill(app, auth_client, test_user, test_model):
     _run_all_checks(resp.data, "/models")
 
 
+def test_model_detail_page_accessibility(app, auth_client, test_model):
+    with app.app_context():
+        db.session.get(ModelConfig, test_model["id"]).notice = "Responses may be logged for quality review."
+        db.session.commit()
+    url = f"/models/{test_model['model_name']}"
+    resp = auth_client.get(url)
+    assert resp.status_code == HTTPStatus.OK
+    _run_all_checks(resp.data, url)
+
+
+def test_model_detail_page_with_notices_accessibility(app, auth_client, test_model):
+    with app.app_context():
+        model = db.session.get(ModelConfig, test_model["id"])
+        model.needs_ack = True
+        model.early_access = True
+        model.notice = "Read the [usage policy](https://example.com/policy) first."
+        model.ack_message = "Before use:\n\n- do not upload personal data\n- see the [terms](https://example.com/terms)"
+        db.session.commit()
+    url = f"/models/{test_model['model_name']}"
+    resp = auth_client.get(url)
+    assert resp.status_code == HTTPStatus.OK
+    _run_all_checks(resp.data, url)
+    soup = _soup(resp.data)
+    notice = soup.find(id="model-notice")
+    assert notice is not None and notice.get("role") == "note"
+    label = notice.find(id=notice.get("aria-labelledby"))
+    assert label is not None and label.get_text(strip=True) == "Notice"
+    assert "visually-hidden" not in (label.get("class") or [])
+    ack = soup.find(id="model-ack-notice")
+    assert ack is not None and ack.find("li") is not None and ack.find("a", href="https://example.com/terms")
+
+
 def test_connect_page_logged_out(client):
     resp = client.get("/connect")
     assert resp.status_code == HTTPStatus.OK

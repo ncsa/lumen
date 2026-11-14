@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy import update as sa_update
 
+from lumen.blueprints.oauth.routes import POLL_INTERVAL
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
 from lumen.models.auth_request import AuthRequest
@@ -51,6 +52,15 @@ def _set_expiry(app, user_code, when):
             select(AuthRequest).where(AuthRequest.user_code == user_code)
         ).scalar_one()
         req.expires_at = when
+        db.session.commit()
+
+
+def _set_last_polled(app, user_code, when):
+    with app.app_context():
+        req = db.session.execute(
+            select(AuthRequest).where(AuthRequest.user_code == user_code)
+        ).scalar_one()
+        req.last_polled_at = when
         db.session.commit()
 
 
@@ -135,6 +145,22 @@ def test_poll_pending_then_slow_down(client):
     assert resp.status_code == HTTPStatus.BAD_REQUEST
     assert resp.get_json()["error"] == "authorization_pending"
     assert _poll(client, body).get_json()["error"] == "slow_down"
+
+
+def test_poll_inside_interval_is_slow_down(client, app):
+    body = _issue(client).get_json()
+    assert _poll(client, body).get_json()["error"] == "authorization_pending"
+    _set_last_polled(app, body["user_code"], utcnow() - timedelta(seconds=POLL_INTERVAL - 1))
+    assert _poll(client, body).get_json()["error"] == "slow_down"
+
+
+def test_poll_after_interval_proceeds(client, app):
+    body = _issue(client).get_json()
+    assert _poll(client, body).get_json()["error"] == "authorization_pending"
+    last_polled = utcnow() - timedelta(seconds=POLL_INTERVAL)
+    _set_last_polled(app, body["user_code"], last_polled)
+    assert _poll(client, body).get_json()["error"] == "authorization_pending"
+    assert _request_row(app, body["user_code"]).last_polled_at > last_polled
 
 
 def test_poll_client_id_mismatch(client):
