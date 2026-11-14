@@ -103,7 +103,9 @@ def test_every_series_for_every_range(env, range_key):
         assert [p["t"] for p in data["prices"]] == [p["t"] for p in data["traffic"]["points"]]
     assert set(data["prices"][0]) == {"day" if data["daily"] else "t", "input_price", "output_price",
                                       "cached_input_price", "cache_write_price", "input_median",
-                                      "input_p5", "input_p95", "output_median", "output_p5", "output_p95"}
+                                      "input_p5", "input_p95", "output_median", "output_p5", "output_p95",
+                                      "cached_input_median", "cached_input_p5", "cached_input_p95",
+                                      "cache_write_median", "cache_write_p5", "cache_write_p95"}
     assert set(data["hardware"]["range"]) == {"benefit", "cost", "partial", "days"}
     assert data["header"]["description"] == "Qwen 80B" and data["header"]["status"] == "ok"
 
@@ -189,7 +191,7 @@ def test_price_band_median_and_ours_per_day(env):
     prices = get(env, "7d")["prices"]
     assert prices[-2] == {"day": "2026-10-16", "input_price": 0.2, "output_price": 0.8,
                           "cached_input_price": None, "cache_write_price": None, "input_median": 0.25, "input_p5": 0.12, "input_p95": 0.4,
-                          "output_median": 1.0, "output_p5": 0.5, "output_p95": 2.0}
+                          "output_median": 1.0, "output_p5": 0.5, "output_p95": 2.0, **NO_DEV_CACHE}
     assert prices[-1]["input_price"] == 0.3 and prices[-1]["input_median"] is None
     assert prices[0]["input_price"] is None
     store, sf, _ = env
@@ -206,6 +208,18 @@ DEV_TODAY = {"input_median": 0.35, "input_p5": 0.2, "input_p95": 0.5, "output_me
 CACHE = {"cached_input_price": 0.02, "cache_write_price": 0.25}
 CACHE_TODAY = {"cached_input_price": 0.03, "cache_write_price": 0.3}
 NO_CACHE = {"cached_input_price": None, "cache_write_price": None}
+# The models.dev cache columns, and the price keys /api/series serves them as.
+DEV_CACHE = {"cache_read_median": 0.05, "cache_read_p5": 0.02, "cache_read_p95": 0.1,
+             "cache_write_median": 0.3, "cache_write_p5": 0.25, "cache_write_p95": 0.4}
+DEV_CACHE_TODAY = {"cache_read_median": 0.06, "cache_read_p5": 0.03, "cache_read_p95": 0.12,
+                   "cache_write_median": 0.35, "cache_write_p5": 0.3, "cache_write_p95": 0.45}
+
+
+def served(dev_cache):
+    return {key.replace("cache_read_", "cached_input_"): value for key, value in dev_cache.items()}
+
+
+NO_DEV_CACHE = served(dict.fromkeys(DEV_CACHE))
 
 
 def test_short_range_prices_step_at_local_midnight(env):
@@ -213,7 +227,8 @@ def test_short_range_prices_step_at_local_midnight(env):
     yesterday = TODAY - timedelta(days=1)
     add(sf, daily(yesterday, "lumen", input_price=0.2, output_price=0.8, **CACHE),
         daily(TODAY, "lumen", input_price=0.3, output_price=0.9, **CACHE_TODAY),
-        daily(yesterday, "models.dev", providers=5, **DEV), daily(TODAY, "models.dev", providers=5, **DEV_TODAY))
+        daily(yesterday, "models.dev", providers=5, **DEV, **DEV_CACHE),
+        daily(TODAY, "models.dev", providers=5, **DEV_TODAY, **DEV_CACHE_TODAY))
     prices = get(env, "24h")["prices"]
     step = 144
     assert prices[step]["t"] == "2026-10-17T05:00:00Z"  # MIDNIGHT
@@ -234,7 +249,7 @@ def test_short_range_prices_carry_the_latest_earlier_day_forward(env):
     prices = get(env, "1h")["prices"]
     assert len(prices) == 60
     assert all(p == {"t": p["t"], "input_price": 0.2, "output_price": 0.8,
-                     "cached_input_price": None, "cache_write_price": None, **DEV} for p in prices)
+                     "cached_input_price": None, "cache_write_price": None, **DEV, **NO_DEV_CACHE} for p in prices)
 
 
 def test_short_range_prices_skip_rows_without_a_price(env):
@@ -419,3 +434,28 @@ def test_model_with_history_only_and_unknown_model(env):
     assert data["header"]["id"] == "gone" and data["header"]["status"] == "unknown"
     assert data["header"]["strip"][-5] == "ok"
     assert get(env, "1h", "never-seen") is None
+
+
+def test_cache_price_band_per_day(env):
+    _, sf, _ = env
+    # The earlier models.dev row is from before the monitor collected cache prices.
+    add(sf, daily(TODAY - timedelta(days=2), "models.dev", providers=5, **DEV),
+        daily(TODAY - timedelta(days=1), "models.dev", providers=5, **DEV, **DEV_CACHE))
+    prices = get(env, "7d")["prices"]
+    assert {k: prices[-3][k] for k in NO_DEV_CACHE} == NO_DEV_CACHE
+    assert {k: prices[-2][k] for k in NO_DEV_CACHE} == served(DEV_CACHE)
+    assert {k: prices[-1][k] for k in NO_DEV_CACHE} == NO_DEV_CACHE  # no row today
+
+
+def test_short_range_cache_price_band_steps_and_carries_forward(env):
+    _, sf, _ = env
+    yesterday = TODAY - timedelta(days=1)
+    add(sf, daily(TODAY - timedelta(days=3), "models.dev", providers=5, **DEV, **DEV_CACHE),
+        daily(TODAY, "models.dev", providers=5, **DEV_TODAY, **DEV_CACHE_TODAY),
+        # Yesterday's row has no input/output stats, so it is not priced and does not interrupt the carry.
+        daily(yesterday, "models.dev", providers=1))
+    prices = get(env, "24h")["prices"]
+    step = 144
+    assert prices[step]["t"] == "2026-10-17T05:00:00Z"  # MIDNIGHT
+    assert all({k: p[k] for k in NO_DEV_CACHE} == served(DEV_CACHE) for p in prices[:step])
+    assert all({k: p[k] for k in NO_DEV_CACHE} == served(DEV_CACHE_TODAY) for p in prices[step:])

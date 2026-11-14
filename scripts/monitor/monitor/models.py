@@ -48,6 +48,12 @@ class DailyStat(Base):
     output_median: Mapped[Optional[float]] = mapped_column(Float, comment="Median provider output price, $/M tokens")
     output_p5: Mapped[Optional[float]] = mapped_column(Float, comment="5th percentile provider output price, $/M tokens")
     output_p95: Mapped[Optional[float]] = mapped_column(Float, comment="95th percentile provider output price, $/M tokens")
+    cache_read_median: Mapped[Optional[float]] = mapped_column(Float, comment="Median provider cache-read price, $/M tokens")
+    cache_read_p5: Mapped[Optional[float]] = mapped_column(Float, comment="5th percentile provider cache-read price, $/M tokens")
+    cache_read_p95: Mapped[Optional[float]] = mapped_column(Float, comment="95th percentile provider cache-read price, $/M tokens")
+    cache_write_median: Mapped[Optional[float]] = mapped_column(Float, comment="Median provider cache-write price, $/M tokens")
+    cache_write_p5: Mapped[Optional[float]] = mapped_column(Float, comment="5th percentile provider cache-write price, $/M tokens")
+    cache_write_p95: Mapped[Optional[float]] = mapped_column(Float, comment="95th percentile provider cache-write price, $/M tokens")
     providers: Mapped[Optional[int]] = mapped_column(Integer, comment="Number of non-zero provider listings")
 
     # source = lumen: what Lumen charges, its traffic and availability for the day
