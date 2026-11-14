@@ -195,6 +195,16 @@ def test_monitor_list_models_with_cache_metrics(client, monitor_token, cache_see
     assert row[CACHE_FIELD] == cache_seeded
 
 
+def test_monitor_list_models_cache_metrics_writes_only(app, client, monitor_token, test_model):
+    """A backend that only reports cache writes must not be listed as reporting reads."""
+    with app.app_context():
+        from lumen.extensions import db
+        _log(test_model["id"], timedelta(minutes=5), 10, 1, cached=None, write=2)
+        db.session.commit()
+    row = _listed(client, monitor_token, "?tokens=true")[test_model["model_name"]]
+    assert row[CACHE_FIELD] == {"requests": 1, "reads": False, "writes": True}
+
+
 def test_monitor_get_model_with_cache_metrics(client, monitor_token, cache_seeded, test_model):
     resp = client.get(f"/v1/models/{test_model['model_name']}?tokens=true", headers=_auth(monitor_token))
     assert resp.status_code == HTTPStatus.OK
