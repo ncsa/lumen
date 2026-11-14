@@ -12,6 +12,7 @@ All notable changes to Lumen will be documented in this file.
 - Price cache writes like cache reads: a per-model `cache_write_cost_per_million` (default: the input rate) bills the prompt-cache write tokens an upstream reports; a backend that reports no creation count (SGLang, which has no cache-write accounting yet) records NULL and its non-cached prompt is billed at the input rate, never inferred as a write. `request_logs.cache_write_tokens` records the count next to `cached_input_tokens` and the stats fold carries both into the totals, keeping a cached request's stored cost checkable. Usage in either API family is normalized to the same totals (Anthropic-style `input_tokens` excludes the cached parts, OpenAI-style `prompt_tokens` includes them). The rate is published on `/v1/models` and written into the generated OpenCode config (`cost.cache.write`, which repeats the input price with a comment when unset), and models.dev autofill can fill both cache rates (`auto_cache_price: true`; second checkbox in the admin config editor). (#66)
 - Add an Anthropic Messages subset and token estimates for the Python SDK and configured Claude Code, sharing Lumen access controls and billing. (#61)
 - Added: per-theme favicons (default, Illinois, UIC, UIS) and a `/favicon.ico` route (#479).
+- Speed up the slowest PostgreSQL migration tests and the request_logs prune guard (#475).
 
 ## [2.3.1] - 2026-11-07
 
