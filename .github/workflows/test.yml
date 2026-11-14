@@ -46,7 +46,7 @@ jobs:
             python: "3.14"
             image: true
             experimental: false
-          # Fails at `uv sync` until Lumen lifts its requires-python <3.15 cap.
+          # Runs the real suite; Lumen does not support 3.15 yet (see the 2.3.0 CHANGELOG).
           - name: lumen
             path: .
             postgres: timescale/timescaledb:2.31.0-pg17
