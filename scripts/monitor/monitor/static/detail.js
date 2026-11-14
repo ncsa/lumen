@@ -30,26 +30,29 @@
   }
 
   // From 7d up one point per local day; below that one point per bucket, drawn as a stepped line.
-  function priceChart(id, side, prices, daily) {
+  // `key` names the series: our price is `${key}_price`; the models.dev p5/p95 band and median
+  // (`${key}_p5`, `_p95`, `_median`) are drawn only when the points carry them.
+  function priceChart(id, key, prices, daily) {
     const labels = prices.map(p => daily ? dayLabel(p.day) : timeLabel(p.t));
-    const pick = key => prices.map(p => p[`${side}_${key}`]);
+    const pick = stat => prices.map(p => p[`${key}_${stat}`]);
     const line = daily ? { pointRadius: 2 } : { stepped: true, pointRadius: 0 };
     const band = daily ? {} : { stepped: true };
     const scales = { y: { beginAtZero: true } };
     if (!daily) scales.x = { ticks: { maxTicksLimit: 8, maxRotation: 0 } };
+    const ours = prices.map(p => p[`${key}_price`] ?? null);
+    const datasets = prices.some(p => `${key}_median` in p) ? [
+      { label: 'models.dev p5', data: pick('p5'), borderWidth: 0, pointRadius: 0, fill: false, ...band },
+      { label: 'models.dev p5–p95', data: pick('p95'), borderWidth: 0, pointRadius: 0, backgroundColor: COLOR.band, fill: '-1', ...band },
+      { label: 'models.dev median', data: pick('median'), borderColor: COLOR.median, borderDash: [6, 4], ...line },
+    ] : [];
+    datasets.push({ label: 'ours', data: ours, borderColor: COLOR.ours, borderWidth: 3, ...line });
     draw(id, {
       type: 'line',
-      data: {
-        labels,
-        datasets: [
-          { label: 'models.dev p5', data: pick('p5'), borderWidth: 0, pointRadius: 0, fill: false, ...band },
-          { label: 'models.dev p5–p95', data: pick('p95'), borderWidth: 0, pointRadius: 0, backgroundColor: COLOR.band, fill: '-1', ...band },
-          { label: 'models.dev median', data: pick('median'), borderColor: COLOR.median, borderDash: [6, 4], ...line },
-          { label: 'ours', data: prices.map(p => p[`${side}_price`]), borderColor: COLOR.ours, borderWidth: 3, ...line },
-        ],
-      },
+      data: { labels, datasets },
       options: { plugins: { legend: { labels: { filter: item => item.text !== 'models.dev p5' } } }, scales },
     });
+    // An empty chart must not read as a price of $0.
+    document.getElementById(`${id}-note`).textContent = ours.some(isNum) ? '' : 'no price recorded in this range';
   }
 
   function trafficChart(id, key, traffic, fmt) {
@@ -232,6 +235,8 @@
     renderHeader(s.header, s.strip_times);
     priceChart('input-price', 'input', s.prices, s.daily);
     priceChart('output-price', 'output', s.prices, s.daily);
+    priceChart('cached-input-price', 'cached_input', s.prices, s.daily);
+    priceChart('cache-write-price', 'cache_write', s.prices, s.daily);
     trafficChart('requests', 'requests', s.traffic, fmtInt);
     tokensChart(s.traffic);
     hardwareChart(s.hardware);

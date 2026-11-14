@@ -6,11 +6,11 @@ import { test } from 'node:test';
 
 import { answer, fakeElement, runPage } from './fake_dom.mjs';
 
-const PRICE = { input_price: 0.2, output_price: 0.8, input_median: 0.25, input_p5: 0.1, input_p95: 0.4, output_median: 1, output_p5: 0.5, output_p95: 2 };
+const PRICE = { input_price: 0.2, output_price: 0.8, cached_input_price: 0.02, cache_write_price: 0.25, input_median: 0.25, input_p5: 0.1, input_p95: 0.4, output_median: 1, output_p5: 0.5, output_p95: 2 };
 const TIMES = ['2026-10-17T04:55:00Z', '2026-10-17T05:00:00Z', '2026-10-17T05:05:00Z'];
 const DAYS = ['2026-10-16', '2026-10-17'];
 
-async function priceCharts(body) {
+async function renderPage(body) {
   const ids = {};
   ids.detail = fakeElement({ dataset: { seriesUrl: '/monitor/api/series', overviewUrl: '/monitor/', model: 'org/qwen', refreshMs: '300000', range: body.range } });
   const document = {
@@ -21,9 +21,13 @@ async function priceCharts(body) {
   const { requests, charts } = runPage('detail.js', document);
   await answer(requests[0], body);
   assert.equal(ids['load-error'].textContent, '', 'the series must render');
-  // render() draws the input then the output price chart first.
+  // render() draws the input, output, cached-input and cache-write price charts first, in that order.
   // A JSON copy: objects built inside the page's vm context have that context's prototypes.
-  return charts.slice(0, 2).map(c => JSON.parse(JSON.stringify(c.config)));
+  return { ids, configs: charts.slice(0, 4).map(c => JSON.parse(JSON.stringify(c.config))) };
+}
+
+async function priceCharts(body) {
+  return (await renderPage(body)).configs.slice(0, 2);
 }
 
 function seriesBody(range, daily, prices) {
@@ -71,4 +75,49 @@ test('from 7d up the price charts keep one point per local day', async () => {
     assert.equal(ours.pointRadius, 2);
     assert.deepEqual(config.options.scales, { y: { beginAtZero: true } });
   }
+});
+
+test('below 7d the cache price charts are a single stepped "ours" line per bucket', async () => {
+  const { ids, configs } = await renderPage(seriesBody('24h', false, TIMES.map(t => ({ t, ...PRICE }))));
+  const [cached, write] = configs.slice(2);
+  for (const config of [cached, write]) {
+    assert.deepEqual(config.data.labels, TIMES.map(timeLabel));
+    assert.equal(config.data.datasets.length, 1);
+    const [ours] = config.data.datasets;
+    assert.equal(ours.label, 'ours');
+    assert.equal(ours.stepped, true);
+    assert.equal(ours.pointRadius, 0);
+  }
+  assert.deepEqual(cached.data.datasets[0].data, [0.02, 0.02, 0.02]);
+  assert.deepEqual(write.data.datasets[0].data, [0.25, 0.25, 0.25]);
+  assert.equal(ids['cached-input-price-note'].textContent, '');
+  assert.equal(ids['cache-write-price-note'].textContent, '');
+});
+
+test('from 7d up the cache price charts keep one point per local day, with gaps and real zeros', async () => {
+  const prices = [
+    { day: DAYS[0], ...PRICE, cached_input_price: null, cache_write_price: null },
+    { day: DAYS[1], ...PRICE, cached_input_price: 0, cache_write_price: 0.3 },
+  ];
+  const { ids, configs } = await renderPage(seriesBody('7d', true, prices));
+  const [cached, write] = configs.slice(2);
+  for (const config of [cached, write]) {
+    assert.deepEqual(config.data.labels, DAYS.map(dayLabel));
+    assert.equal(config.data.datasets.length, 1);
+    assert.equal('stepped' in config.data.datasets[0], false);
+    assert.equal(config.data.datasets[0].pointRadius, 2);
+    assert.deepEqual(config.options.scales, { y: { beginAtZero: true } });
+  }
+  assert.deepEqual(cached.data.datasets[0].data, [null, 0]);
+  assert.deepEqual(write.data.datasets[0].data, [null, 0.3]);
+  assert.equal(ids['cached-input-price-note'].textContent, '');
+});
+
+test('a price chart with no price in the range says so', async () => {
+  const prices = DAYS.map(day => ({ day, ...PRICE, cached_input_price: null, cache_write_price: null }));
+  const { ids, configs } = await renderPage(seriesBody('30d', true, prices));
+  assert.deepEqual(configs[2].data.datasets[0].data, [null, null]);
+  assert.equal(ids['cached-input-price-note'].textContent, 'no price recorded in this range');
+  assert.equal(ids['cache-write-price-note'].textContent, 'no price recorded in this range');
+  assert.equal(ids['input-price-note'].textContent, '');
 });

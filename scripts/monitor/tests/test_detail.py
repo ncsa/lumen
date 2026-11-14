@@ -101,7 +101,8 @@ def test_every_series_for_every_range(env, range_key):
     else:
         assert len(data["prices"]) == TRAFFIC_POINTS[range_key]
         assert [p["t"] for p in data["prices"]] == [p["t"] for p in data["traffic"]["points"]]
-    assert set(data["prices"][0]) == {"day" if data["daily"] else "t", "input_price", "output_price", "input_median",
+    assert set(data["prices"][0]) == {"day" if data["daily"] else "t", "input_price", "output_price",
+                                      "cached_input_price", "cache_write_price", "input_median",
                                       "input_p5", "input_p95", "output_median", "output_p5", "output_p95"}
     assert set(data["hardware"]["range"]) == {"benefit", "cost", "partial", "days"}
     assert data["header"]["description"] == "Qwen 80B" and data["header"]["status"] == "ok"
@@ -187,7 +188,7 @@ def test_price_band_median_and_ours_per_day(env):
         daily(TODAY, "lumen", input_price=0.3, output_price=0.9))
     prices = get(env, "7d")["prices"]
     assert prices[-2] == {"day": "2026-10-16", "input_price": 0.2, "output_price": 0.8,
-                          "input_median": 0.25, "input_p5": 0.12, "input_p95": 0.4,
+                          "cached_input_price": None, "cache_write_price": None, "input_median": 0.25, "input_p5": 0.12, "input_p95": 0.4,
                           "output_median": 1.0, "output_p5": 0.5, "output_p95": 2.0}
     assert prices[-1]["input_price"] == 0.3 and prices[-1]["input_median"] is None
     assert prices[0]["input_price"] is None
@@ -202,17 +203,23 @@ def test_price_band_median_and_ours_per_day(env):
 
 DEV = {"input_median": 0.25, "input_p5": 0.12, "input_p95": 0.4, "output_median": 1.0, "output_p5": 0.5, "output_p95": 2.0}
 DEV_TODAY = {"input_median": 0.35, "input_p5": 0.2, "input_p95": 0.5, "output_median": 1.1, "output_p5": 0.6, "output_p95": 2.2}
+CACHE = {"cached_input_price": 0.02, "cache_write_price": 0.25}
+CACHE_TODAY = {"cached_input_price": 0.03, "cache_write_price": 0.3}
+NO_CACHE = {"cached_input_price": None, "cache_write_price": None}
 
 
 def test_short_range_prices_step_at_local_midnight(env):
     _, sf, _ = env
     yesterday = TODAY - timedelta(days=1)
-    add(sf, daily(yesterday, "lumen", input_price=0.2, output_price=0.8), daily(TODAY, "lumen", input_price=0.3, output_price=0.9),
+    add(sf, daily(yesterday, "lumen", input_price=0.2, output_price=0.8, **CACHE),
+        daily(TODAY, "lumen", input_price=0.3, output_price=0.9, **CACHE_TODAY),
         daily(yesterday, "models.dev", providers=5, **DEV), daily(TODAY, "models.dev", providers=5, **DEV_TODAY))
     prices = get(env, "24h")["prices"]
     step = 144
     assert prices[step]["t"] == "2026-10-17T05:00:00Z"  # MIDNIGHT
     assert all(v is not None for p in prices for v in p.values())
+    assert all({k: p[k] for k in CACHE} == CACHE for p in prices[:step])
+    assert all({k: p[k] for k in CACHE} == CACHE_TODAY for p in prices[step:])
     assert {(p["input_price"], p["output_price"]) for p in prices[:step]} == {(0.2, 0.8)}
     assert {(p["input_price"], p["output_price"]) for p in prices[step:]} == {(0.3, 0.9)}
     assert all({k: p[k] for k in DEV} == DEV for p in prices[:step])
@@ -226,7 +233,8 @@ def test_short_range_prices_carry_the_latest_earlier_day_forward(env):
         daily(TODAY - timedelta(days=3), "lumen", input_price=0.1, output_price=0.4))
     prices = get(env, "1h")["prices"]
     assert len(prices) == 60
-    assert all(p == {"t": p["t"], "input_price": 0.2, "output_price": 0.8, **DEV} for p in prices)
+    assert all(p == {"t": p["t"], "input_price": 0.2, "output_price": 0.8,
+                     "cached_input_price": None, "cache_write_price": None, **DEV} for p in prices)
 
 
 def test_short_range_prices_skip_rows_without_a_price(env):
@@ -243,6 +251,56 @@ def test_short_range_prices_without_rows_are_none(env):
     for range_key in ("1h", "12h", "24h"):
         prices = get(env, range_key)["prices"]
         assert all(v is None for p in prices for k, v in p.items() if k != "t")
+
+
+def test_cache_prices_per_day(env):
+    _, sf, _ = env
+    # The earlier row is from before the monitor stored cache prices: its cache columns are NULL.
+    add(sf, daily(TODAY - timedelta(days=2), "lumen", input_price=0.1, output_price=0.4),
+        daily(TODAY - timedelta(days=1), "lumen", input_price=0.2, output_price=0.8, **CACHE))
+    prices = get(env, "7d")["prices"]
+    assert {k: prices[-3][k] for k in CACHE} == NO_CACHE
+    assert {k: prices[-2][k] for k in CACHE} == CACHE
+    assert {k: prices[-1][k] for k in CACHE} == NO_CACHE  # no row today
+    assert prices[-3]["input_price"] == 0.1
+
+
+def test_cache_price_of_zero_stays_zero(env):
+    _, sf, _ = env
+    add(sf, daily(TODAY, "lumen", input_price=0.2, output_price=0.8, cached_input_price=0.0, cache_write_price=0.0))
+    for range_key in ("1h", "7d"):
+        point = get(env, range_key)["prices"][-1]
+        assert point["cached_input_price"] == 0.0 and point["cached_input_price"] is not None
+        assert point["cache_write_price"] == 0.0 and point["cache_write_price"] is not None
+
+
+def test_short_range_cache_prices_from_a_row_before_the_columns_are_none(env):
+    _, sf, _ = env
+    add(sf, daily(TODAY - timedelta(days=3), "lumen", input_price=0.1, output_price=0.4),
+        daily(TODAY, "lumen", input_price=0.3, output_price=0.9, **CACHE_TODAY))
+    prices = get(env, "24h")["prices"]
+    step = 144
+    assert prices[step]["t"] == "2026-10-17T05:00:00Z"  # MIDNIGHT
+    # Yesterday carries the row from three days ago forward: its input price, no cache price.
+    assert all(p["input_price"] == 0.1 and {k: p[k] for k in CACHE} == NO_CACHE for p in prices[:step])
+    assert all(p["input_price"] == 0.3 and {k: p[k] for k in CACHE} == CACHE_TODAY for p in prices[step:])
+
+
+def test_cache_prices_without_rows_are_none(env):
+    for range_key in RANGES:
+        prices = get(env, range_key)["prices"]
+        assert all(p[k] is None for p in prices for k in CACHE)
+
+
+def test_a_row_with_only_cache_prices_does_not_seed_the_carry_forward(env):
+    _, sf, _ = env
+    yesterday = TODAY - timedelta(days=1)
+    add(sf, daily(TODAY - timedelta(days=2), "lumen", input_price=0.1, output_price=0.4, **CACHE),
+        daily(yesterday, "lumen", **CACHE_TODAY))  # cache prices but no input/output price
+    for range_key in ("12h", "24h"):
+        prices = get(env, range_key)["prices"]
+        assert all((p["input_price"], p["output_price"]) == (0.1, 0.4) for p in prices)
+        assert all({k: p[k] for k in CACHE} == CACHE for p in prices)
 
 
 def split(day, **values):
