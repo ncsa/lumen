@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Optional
+from uuid import UUID, uuid4
 
 from sqlalchemy.orm import DynamicMapped, Mapped, mapped_column, relationship
 
@@ -20,6 +21,7 @@ class Group(db.Model):
     __table_args__ = {"comment": "Named collections of entities for coin limit policy assignment"}
 
     id: Mapped[int] = mapped_column(db.Integer, primary_key=True, comment="Primary key")
+    uuid: Mapped[UUID] = mapped_column(db.Uuid, unique=True, index=True, nullable=False, default=uuid4, comment="Opaque public identifier for external use only (URLs, API payloads, CLI, session); never used as a key or join column")
     name: Mapped[str] = mapped_column(db.String(128), unique=True, comment="Unique group identifier")
     description: Mapped[Optional[str]] = mapped_column(db.Text, comment="Optional description shown in the admin UI")
     active: Mapped[bool] = mapped_column(db.Boolean, default=True, comment="Inactive groups have no effect on member access")

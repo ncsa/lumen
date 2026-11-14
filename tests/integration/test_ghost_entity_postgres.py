@@ -30,6 +30,11 @@ _INSERT_GHOST = text(
     "INSERT INTO entities (entity_type, name, initials, active, store_conversations)"
     " VALUES ('ghost', 'Erased user', '', false, false)"
 )
+# At head every entity also carries its public uuid (7456ebd042ef).
+_INSERT_GHOST_AT_HEAD = text(
+    "INSERT INTO entities (uuid, entity_type, name, initials, active, store_conversations)"
+    " VALUES (gen_random_uuid(), 'ghost', 'Erased user', '', false, false)"
+)
 
 
 def _comments(engine):
@@ -63,10 +68,10 @@ def test_head_allows_exactly_one_ghost_and_downgrade_restores_two_types(pg_migra
     indexdef = _has_ghost_index(engine)
     assert "UNIQUE" in indexdef and "WHERE" in indexdef and "ghost" in indexdef
     with engine.begin() as conn:
-        conn.execute(_INSERT_GHOST)
+        conn.execute(_INSERT_GHOST_AT_HEAD)
     with pytest.raises(IntegrityError, match="uq_entities_single_ghost"):
         with engine.begin() as conn:
-            conn.execute(_INSERT_GHOST)
+            conn.execute(_INSERT_GHOST_AT_HEAD)
 
     # The downgrade refuses while the ghost exists.
     engine.dispose()

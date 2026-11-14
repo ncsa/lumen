@@ -253,8 +253,8 @@ def entity_usage(pg_app, pg_migrated):
         ents = {}
         for key in ("main", "heat"):
             ents[key] = conn.execute(text(
-                "INSERT INTO entities (entity_type, name, initials, active) "
-                "VALUES ('user', :n, 'PQ', true) RETURNING id"
+                "INSERT INTO entities (uuid, entity_type, name, initials, active) "
+                "VALUES (gen_random_uuid(), 'user', :n, 'PQ', true) RETURNING id"
             ), {"n": f"ph8q-{key}"}).scalar()
 
         # --- history for the equality tests: one row per period boundary it
@@ -539,8 +539,8 @@ def boundary_usage(pg_app, pg_migrated, entity_usage):
     probes = {}
     with pg_migrated.begin() as conn:
         eid = conn.execute(text(
-            "INSERT INTO entities (entity_type, name, initials, active) "
-            "VALUES ('user', 'ph8q-edge', 'PQ', true) RETURNING id"
+            "INSERT INTO entities (uuid, entity_type, name, initials, active) "
+            "VALUES (gen_random_uuid(), 'user', 'ph8q-edge', 'PQ', true) RETURNING id"
         )).scalar()
         for period, days in BOUNDARY_PERIODS.items():
             probe = (ref - timedelta(days=days)).replace(minute=_PROBE_MINUTE)
@@ -654,12 +654,12 @@ def deleted_entity(pg_migrated, entity_usage):
         hour=10, minute=0, second=0, microsecond=0)
     with pg_migrated.begin() as conn:
         gone = conn.execute(text(
-            "INSERT INTO entities (entity_type, name, initials, active) "
-            "VALUES ('user', 'ph8q-gone', 'PQ', true) RETURNING id"
+            "INSERT INTO entities (uuid, entity_type, name, initials, active) "
+            "VALUES (gen_random_uuid(), 'user', 'ph8q-gone', 'PQ', true) RETURNING id"
         )).scalar()
         admin = conn.execute(text(
-            "INSERT INTO entities (entity_type, name, email, initials, active) "
-            "VALUES ('user', 'ph8q-admin', 'admin@example.com', 'PQ', true) RETURNING id"
+            "INSERT INTO entities (uuid, entity_type, name, email, initials, active) "
+            "VALUES (gen_random_uuid(), 'user', 'ph8q-admin', 'admin@example.com', 'PQ', true) RETURNING id"
         )).scalar()
         for _ in range(3):
             conn.execute(text(_INSERT.replace(":time", "CAST(:ts AS timestamptz)")), {
@@ -731,8 +731,8 @@ def test_deleting_an_entity_with_history_is_refused(pg_migrated, entity_usage):
     ts = datetime.now(timezone.utc) - timedelta(hours=2)
     with pg_migrated.begin() as conn:
         kept = conn.execute(text(
-            "INSERT INTO entities (entity_type, name, initials, active) "
-            "VALUES ('user', 'ph8q-kept', 'PQ', true) RETURNING id"
+            "INSERT INTO entities (uuid, entity_type, name, initials, active) "
+            "VALUES (gen_random_uuid(), 'user', 'ph8q-kept', 'PQ', true) RETURNING id"
         )).scalar()
         for _ in range(3):
             conn.execute(text(_INSERT.replace(":time", "CAST(:ts AS timestamptz)")), {

@@ -8,6 +8,7 @@ All timestamps are stored as UTC without timezone info. Coin values use `Numeric
 erDiagram
     entities {
         int id PK
+        uuid uuid UK
         string entity_type
         string email
         string name
@@ -21,6 +22,7 @@ erDiagram
 
     api_keys {
         int id PK
+        uuid uuid UK
         int entity_id FK
         string name
         string key_hash
@@ -44,6 +46,7 @@ erDiagram
 
     auth_requests {
         int id PK
+        uuid uuid UK
         string flow
         string client_id
         string requested_name
@@ -137,6 +140,7 @@ erDiagram
 
     groups {
         int id PK
+        uuid uuid UK
         string name
         text description
         bool active
@@ -226,6 +230,7 @@ erDiagram
 
     conversations {
         int id PK
+        uuid uuid UK
         int entity_id FK
         string title
         string model
@@ -346,6 +351,7 @@ Unified table for both human users (authenticated via OAuth) and programmatic pr
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `id` | Integer | NO | Primary key |
+| `uuid` | Uuid | NO | Opaque public identifier, random (`uuid4`) per row. The only id a user ever sees (URLs, API payloads, CLI, session); for external use only, never a key or join column. Unique index `ix_entities_uuid`. |
 | `entity_type` | String(8) | NO | `'user'` for human users, `'project'` for API projects, `'ghost'` for the single shared erased-user entity |
 | `email` | String(256) | YES | Email address; populated for users, null for projects. Unique across users. |
 | `name` | String(256) | NO | Display name |
@@ -377,6 +383,7 @@ API keys that entities (users or projects) use to authenticate against the proxy
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `id` | Integer | NO | Primary key |
+| `uuid` | Uuid | NO | Opaque public identifier, random (`uuid4`) per row. The only id a user ever sees (URLs, API payloads, CLI, session); for external use only, never a key or join column. Unique index `ix_api_keys_uuid`. |
 | `entity_id` | Integer (FK → entities) | NO | The entity that owns this key. Cascades on delete. |
 | `name` | String(128) | NO | Human-readable label for the key (e.g., "Production bot") |
 | `key_hash` | String(64) | NO | HMAC-SHA256 of the raw key, keyed on `ENCRYPTION_KEY`; finding a key from its raw value takes the server secret. Unique. Erasure replaces it with 64 random hex characters. |
@@ -408,6 +415,7 @@ Pending or handled API-key requests created by the OAuth device flow (`/oauth/de
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `id` | Integer | NO | Primary key |
+| `uuid` | Uuid | NO | Opaque public identifier, random (`uuid4`) per row. The only id a user ever sees (URLs, API payloads, CLI, session); for external use only, never a key or join column. Unique index `ix_auth_requests_uuid`. |
 | `flow` | String(16) | NO | Request flow: `device` or `code` |
 | `client_id` | String(128) | NO | Free-form application label supplied by the requester (unverified) |
 | `requested_name` | String(128) | NO | Name the requester wants for the API key |
@@ -557,6 +565,7 @@ Named collections of entities used for bulk policy assignment. Groups are manage
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `id` | Integer | NO | Primary key |
+| `uuid` | Uuid | NO | Opaque public identifier, random (`uuid4`) per row. The only id a user ever sees (URLs, API payloads, CLI, session); for external use only, never a key or join column. Unique index `ix_groups_uuid`. |
 | `name` | String(128) | NO | Unique group identifier (e.g., `faculty`, `students`) |
 | `description` | Text | YES | Optional human-readable description shown in the admin UI |
 | `active` | Boolean | NO | Whether the group is currently in effect |
@@ -716,6 +725,7 @@ Chat sessions created through the Lumen web UI. Each conversation belongs to a s
 | Column | Type | Nullable | Description |
 |--------|------|----------|-------------|
 | `id` | Integer | NO | Primary key |
+| `uuid` | Uuid | NO | Opaque public identifier, random (`uuid4`) per row. The only id a user ever sees (URLs, API payloads, CLI, session); for external use only, never a key or join column. Unique index `ix_conversations_uuid`. |
 | `entity_id` | Integer (FK → entities) | NO | The entity (user) who owns the conversation. Cascades on delete. |
 | `title` | String(40) | NO | Short auto-generated or user-edited title |
 | `model` | String(128) | NO | Model name used in this conversation (snapshot at creation time) |

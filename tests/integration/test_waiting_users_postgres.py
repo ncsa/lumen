@@ -55,8 +55,8 @@ def _seed_refs(conn):
     conn.execute(text("DELETE FROM request_logs"))
     for eid in (1, 2, 3, 4, 9):
         conn.execute(text("""
-            INSERT INTO entities (id, entity_type, name, initials, active)
-            VALUES (:id, 'user', :name, 'XX', true)
+            INSERT INTO entities (id, uuid, entity_type, name, initials, active)
+            VALUES (:id, gen_random_uuid(), 'user', :name, 'XX', true)
             ON CONFLICT (id) DO NOTHING
         """), {"id": eid, "name": f"user{eid}"})
     for mid in (1, 2):

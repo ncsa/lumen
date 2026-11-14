@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Optional
+from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -55,6 +56,7 @@ class Entity(db.Model):
     # autoincrement is explicit: id is also part of fk_entities_owner_membership,
     # and SQLAlchemy does not auto-increment a primary key that is in a FK.
     id: Mapped[int] = mapped_column(db.Integer, primary_key=True, autoincrement=True, comment="Primary key")
+    uuid: Mapped[UUID] = mapped_column(db.Uuid, unique=True, index=True, nullable=False, default=uuid4, comment="Opaque public identifier for external use only (URLs, API payloads, CLI, session); never used as a key or join column")
     # 'user' for human users authenticated via OAuth; 'project' for API projects;
     # 'ghost' for the single shared entity that erased users are merged into
     entity_type: Mapped[str] = mapped_column(db.String(8), comment="'user' for OAuth users, 'project' for API projects, 'ghost' for the single shared erased-user entity")
