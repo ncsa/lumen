@@ -1,3 +1,4 @@
+# CI tests this version: keep the `image: true` leg in `.github/workflows/test.yml` in step
 FROM python:3.14-slim AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /bin/uv
@@ -14,6 +15,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY . .
 RUN uv sync --frozen --no-dev
 
+# CI tests this version: keep the `image: true` leg in `.github/workflows/test.yml` in step
 FROM python:3.14-slim
 
 WORKDIR /app
