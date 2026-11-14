@@ -242,3 +242,41 @@ def test_bill_request_advances_api_key_counters(app, test_user, test_model):
         assert (b.requests, b.input_tokens, b.output_tokens, b.audio_seconds) == (0, 0, 0, 0)
         assert b.cost == Decimal("0")
         assert b.last_used_at is None
+
+
+def test_bill_request_advances_api_key_cache_token_totals(app, test_user, test_model):
+    entity_id, model_id = test_user["id"], test_model["id"]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        from lumen.services.crypto import hash_api_key
+        from lumen.services.llm import bill_request
+        _seed(entity_id)
+        key = APIKey(entity_id=entity_id, name="cached", key_hash=hash_api_key("lk_cached_key"))
+        bystander = APIKey(entity_id=entity_id, name="bystander", key_hash=hash_api_key("lk_cache_bystander"))
+        db.session.add_all([key, bystander])
+        db.session.commit()
+        key_id, bystander_id = key.id, bystander.id
+        k = _key(key_id)
+        assert (k.cached_input_tokens, k.cache_write_tokens) == (0, 0)
+
+        bill_request(entity_id, model_id, "api", 100, 5, 0.5, effective=None, api_key_id=key_id,
+                     cached_input_tokens=60, cache_write_tokens=30)
+        k = _key(key_id)
+        assert (k.cached_input_tokens, k.cache_write_tokens) == (60, 30)
+
+        bill_request(entity_id, model_id, "api", 100, 5, 0.5, effective=None, api_key_id=key_id,
+                     cached_input_tokens=7, cache_write_tokens=0)
+        k = _key(key_id)
+        assert (k.cached_input_tokens, k.cache_write_tokens) == (67, 30)
+
+        # No upstream counts (NULL in request_logs) add nothing, but the request
+        # itself is still counted.
+        bill_request(entity_id, model_id, "api", 100, 5, 0.5, effective=None, api_key_id=key_id,
+                     cached_input_tokens=None, cache_write_tokens=None)
+        bill_request(entity_id, model_id, "api", 100, 5, 0.5, effective=None, api_key_id=key_id)
+        k = _key(key_id)
+        assert (k.requests, k.cached_input_tokens, k.cache_write_tokens) == (4, 67, 30)
+
+        b = _key(bystander_id)
+        assert (b.cached_input_tokens, b.cache_write_tokens) == (0, 0)

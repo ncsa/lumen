@@ -30,6 +30,8 @@ erDiagram
         int requests
         bigint input_tokens
         bigint output_tokens
+        bigint cached_input_tokens
+        bigint cache_write_tokens
         bigint audio_seconds
         numeric cost
         datetime last_used_at
