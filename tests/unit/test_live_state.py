@@ -143,6 +143,20 @@ def test_a_ticket_expires_at_exactly_its_deadline_in_snapshot(frozen_clock):
     assert state.snapshot() == {}
 
 
+def test_a_ticket_expires_at_exactly_its_deadline_on_record(frozen_clock):
+    """Recording a new ticket prunes one whose deadline is exactly now."""
+    deadline = 1_000_000.0
+    state = LocalLiveState()
+    frozen_clock[0] = deadline - 0.001
+    a = LiveTicket("gpt-4o", 7, "a", deadline=deadline)
+    state.record(a)
+
+    frozen_clock[0] = deadline
+    b = LiveTicket("gpt-4o", 8, "b", deadline=deadline + 600.0)
+    state.record(b)
+    assert set(state._tickets) == {b.request_id}
+
+
 def test_release_needs_no_app_or_request_context(app):
     """``release`` runs on whichever thread iterates the response body, outside
     any Flask context, so it must not touch ``current_app`` or ``db.session``."""
