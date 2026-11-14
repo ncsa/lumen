@@ -458,7 +458,6 @@ def create_project():
 @admin_required
 def delete_project(sid):
     project = _project_or_404(sid)
-    sid = project.id
     project.active = False
     db.session.commit()
     return "", HTTPStatus.NO_CONTENT

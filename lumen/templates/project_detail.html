@@ -34,12 +34,12 @@
         {% if can_manage %}
         {% if project.active %}
         <button class="btn btn-sm btn-outline-danger"
-                onclick="toggleProject({{ project.uuid | string | tojson }}, true)">
+                onclick='toggleProject({{ project.uuid | string | tojson }}, true)'>
           <i class="bi bi-pause-circle" aria-hidden="true"></i> Deactivate
         </button>
         {% else %}
         <button class="btn btn-sm btn-outline-success"
-                onclick="toggleProject({{ project.uuid | string | tojson }}, false)">
+                onclick='toggleProject({{ project.uuid | string | tojson }}, false)'>
           <i class="bi bi-play-circle" aria-hidden="true"></i> Activate
         </button>
         {% endif %}

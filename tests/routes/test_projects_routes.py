@@ -278,14 +278,18 @@ def test_old_integer_project_urls_404(admin_client, service_project, method, suf
 
 def test_member_routes_404_for_integer_user_id(admin_client, managed_project, test_user):
     url = f"/projects/{managed_project['uuid']}/users/{test_user['id']}"
-    assert admin_client.delete(url).status_code == HTTPStatus.NOT_FOUND
-    assert admin_client.patch(url, json={"role": "manager"}).status_code == HTTPStatus.NOT_FOUND
+    deleted = admin_client.delete(url)
+    patched = admin_client.patch(url, json={"role": "manager"})
+    assert deleted.status_code == HTTPStatus.NOT_FOUND
+    assert patched.status_code == HTTPStatus.NOT_FOUND
 
 
 def test_member_routes_404_for_unknown_user_uuid(admin_client, managed_project):
     url = f"/projects/{managed_project['uuid']}/users/{uuid.uuid4()}"
-    assert admin_client.delete(url).status_code == HTTPStatus.NOT_FOUND
-    assert admin_client.patch(url, json={"role": "manager"}).status_code == HTTPStatus.NOT_FOUND
+    deleted = admin_client.delete(url)
+    patched = admin_client.patch(url, json={"role": "manager"})
+    assert deleted.status_code == HTTPStatus.NOT_FOUND
+    assert patched.status_code == HTTPStatus.NOT_FOUND
 
 
 def test_other_users_project_uuid_still_forbidden(auth_client, service_project):

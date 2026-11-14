@@ -47,14 +47,34 @@ def test_project_page_embeds_no_integer_project_id(auth_client, project):
     pid, puuid = project
     html = auth_client.get(f"/projects/{puuid}").get_data(as_text=True)
     assert f'const PROJECT_ID = "{puuid}";' in html
-    assert f'toggleProject("{puuid}"' in html
     assert f"/projects/{pid}" not in html
     assert f"PROJECT_ID = {pid};" not in html
+
+
+def _set_active(app, pid, active):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        db.session.get(Entity, pid).active = active
+        db.session.commit()
+
+
+@pytest.mark.parametrize("active,label", [(True, "Deactivate"), (False, "Activate")])
+def test_toggle_button_handler_parses_with_the_uuid(app, auth_client, project, active, label):
+    """The parsed onclick holds the whole call; double quotes inside a
+    double-quoted attribute would cut it off at toggleProject(."""
+    pid, puuid = project
+    _set_active(app, pid, active)
+    soup = BeautifulSoup(auth_client.get(f"/projects/{puuid}").data, "html.parser")
+    btn = next(b for b in soup.select(".profile-col-identity button") if b.get_text(strip=True) == label)
+    assert btn["onclick"] == f'toggleProject("{puuid}", {str(active).lower()})'
+    assert len(btn.attrs) == 2  # class and onclick: no stray attributes from broken quoting
 
 
 @pytest.fixture
 def open_project(auth_client, browser, project):
     pages = []
+    posted = []
 
     def handle(route, request):
         url = urlsplit(request.url)
@@ -65,7 +85,12 @@ def open_project(auth_client, browser, project):
         if f"{url.scheme}://{url.netloc}" != ORIGIN:
             route.abort()
             return
-        resp = auth_client.get(url.path + (f"?{url.query}" if url.query else ""))
+        path = url.path + (f"?{url.query}" if url.query else "")
+        if request.method == "POST":
+            posted.append(url.path)
+            resp = auth_client.post(path, json=request.post_data_json)
+        else:
+            resp = auth_client.get(path)
         route.fulfill(status=resp.status_code, content_type=resp.content_type, body=resp.get_data())
 
     def _open():
@@ -79,6 +104,7 @@ def open_project(auth_client, browser, project):
         page.wait_for_selector("button.copy-id-avatar")
         return page
 
+    _open.posted = posted
     yield _open
     for page in pages:
         page.close()
@@ -126,3 +152,23 @@ def test_copy_failure_is_announced(open_project):
     page.evaluate("window.__clipboardFails = true")
     page.click("button.copy-id-avatar")
     page.wait_for_function("document.querySelector('.copy-id-status').textContent === 'Copy failed'")
+
+
+def test_toggle_buttons_deactivate_and_reactivate(app, open_project, project):
+    """Clicking Deactivate, then Activate, posts to the uuid toggle URL each time."""
+    pid, puuid = project
+    errors = []
+    page = open_project()
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    with page.expect_navigation():
+        page.get_by_role("button", name="Deactivate").click()
+    page.get_by_role("button", name="Activate").wait_for()
+    with page.expect_navigation():
+        page.get_by_role("button", name="Activate").click()
+    page.get_by_role("button", name="Deactivate").wait_for()
+    assert open_project.posted == [f"/projects/{puuid}/toggle"] * 2
+    assert errors == []
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+        assert db.session.get(Entity, pid).active is True
