@@ -1,12 +1,14 @@
 """API key expiry: api.keys.ttl parsing, resolve_key_ttl, and the expirer."""
 import logging
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select, update
 
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
+from lumen.services import key_expiry
 from lumen.services.config_watcher import apply_hot_config, validate_config_structure
 from lumen.services.key_expiry import (
     KEY_TTL_PRESETS,
@@ -321,3 +323,72 @@ def test_revoke_if_expired_keeps_a_manual_revoke_committed_after_it_was_loaded(a
         assert revoke_if_expired(key) is True
         db.session.refresh(key)
         assert (key.revoked_at, key.revoked_by_entity_id) == (revoked_at, uid)
+
+
+def test_key_ttl_choices_offers_an_odd_selected_ttl_in_seconds(app, restore_config):
+    """A selected TTL that is not a whole number of hours is labelled in seconds."""
+    app.config["KEY_TTL"] = 0
+    with app.app_context():
+        choices = key_ttl_choices(5400)
+    assert (5400, "5400 seconds", True) in choices
+    assert [s for s, _, _ in choices] == sorted(s for s, _, _ in choices if s) + [0]
+
+
+# ── start_key_expirer: the background loop, one tick at a time ────────────────
+
+class _StopLoop(Exception):
+    """Raised from the patched sleep to end the loop."""
+
+
+def _run_expirer(app, monkeypatch, ticks):
+    """Start the expirer with a fake thread, run its loop for ``ticks`` ticks; return the sleeps."""
+    threads, sleeps = [], []
+
+    class FakeThread:
+        def __init__(self, target, daemon):
+            self.target, self.daemon, self.started = target, daemon, False
+            threads.append(self)
+
+        def start(self):
+            self.started = True
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == ticks:
+            raise _StopLoop
+
+    monkeypatch.setattr(key_expiry, "threading", SimpleNamespace(Thread=FakeThread))
+    monkeypatch.setattr(key_expiry, "time", SimpleNamespace(sleep=sleep))
+    key_expiry.start_key_expirer(app)
+    (thread,) = threads
+    assert thread.daemon is True and thread.started is True
+    with pytest.raises(_StopLoop):
+        thread.target()
+    return sleeps
+
+
+def test_start_key_expirer_revokes_overdue_keys_each_tick(app, test_user, monkeypatch):
+    overdue_at = utcnow() - timedelta(hours=1)
+    with app.app_context():
+        _add_key("overdue", test_user["id"], expires_at=overdue_at)
+        db.session.commit()
+
+    assert _run_expirer(app, monkeypatch, ticks=1) == [key_expiry.EXPIRE_INTERVAL]
+
+    with app.app_context():
+        assert _state("overdue") == (overdue_at, None)
+
+
+def test_start_key_expirer_logs_a_failed_tick_and_keeps_running(app, monkeypatch, caplog):
+    calls = []
+
+    def expire():
+        calls.append(1)
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(key_expiry, "expire_keys", expire)
+    with caplog.at_level(logging.ERROR, logger="lumen.services.key_expiry"):
+        sleeps = _run_expirer(app, monkeypatch, ticks=2)
+    assert len(calls) == 2
+    assert sleeps == [key_expiry.EXPIRE_INTERVAL] * 2
+    assert caplog.text.count("key expirer error") == 2

@@ -28,11 +28,11 @@ os.environ["CONFIG_YAML"] = TEST_CONFIG
 
 # Suite stand-in for the health loop. The real start_health_checker spins a
 # daemon that probes every endpoint and re-publishes the process-wide model
-# snapshot on a 60s schedule; a test that exercises it (test_health.py,
-# test_start_health_checker_starts_daemon_thread) starts the real daemon,
-# which then races every later test's clean_db teardown and snapshot reads -
-# the sporadic 404/503/audio failures. Satisfy that test's contract (exactly
-# one daemon thread started) with a thread that never wakes up.
+# snapshot on a 60s schedule; a running copy races every later test's clean_db
+# teardown and snapshot reads - the sporadic 404/503/audio failures. Any code
+# path that calls it gets a thread that never wakes up instead. test_health.py
+# tests the real function through the real_start_health_checker fixture, with
+# threading replaced so no daemon runs.
 def _dormant_health_checker(app):
     import threading
     def _sleep():
@@ -40,7 +40,14 @@ def _dormant_health_checker(app):
     t = threading.Thread(target=_sleep, daemon=True)
     t.start()
 
+_real_start_health_checker = _health.start_health_checker
 _health.start_health_checker = _dormant_health_checker
+
+
+@pytest.fixture
+def real_start_health_checker():
+    """The real start_health_checker, for a test that replaces threading so no daemon runs."""
+    return _real_start_health_checker
 
 
 @pytest.fixture(scope="session")

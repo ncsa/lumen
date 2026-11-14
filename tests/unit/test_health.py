@@ -377,27 +377,153 @@ def test_check_all_endpoints_calls_heartbeat_per_endpoint(app, test_model, test_
         assert beats == [1]
 
 
-def test_start_health_checker_starts_daemon_thread(app):
-    """start_health_checker must start exactly one daemon thread (covers lines 45-55)."""
-    import threading
-    from unittest.mock import patch
+class _StopLoop(Exception):
+    """Raised from the patched sleep to end a background loop after one tick."""
 
-    from lumen.services.health import start_health_checker
 
-    captured = []
+def _capture_thread(monkeypatch, module):
+    """Replace module.threading with one whose Thread records itself instead of running."""
+    from types import SimpleNamespace
+    threads = []
 
-    original_thread = threading.Thread
+    class FakeThread:
+        def __init__(self, target, daemon):
+            self.target, self.daemon, self.started = target, daemon, False
+            threads.append(self)
 
-    def fake_thread(*args, **kwargs):
-        t = original_thread(*args, **kwargs)
-        captured.append(t)
-        return t
+        def start(self):
+            self.started = True
 
-    with patch("lumen.services.health.threading.Thread", side_effect=fake_thread):
-        start_health_checker(app)
+    monkeypatch.setattr(module, "threading", SimpleNamespace(Thread=FakeThread))
+    return threads
 
-    assert len(captured) == 1
-    assert captured[0].daemon is True
+
+def test_start_health_checker_runs_ticks_then_sleeps(app, monkeypatch, real_start_health_checker):
+    """The checker is one started daemon thread that ticks, then sleeps _CHECK_INTERVAL."""
+    from types import SimpleNamespace
+
+    from lumen.services import health
+
+    threads = _capture_thread(monkeypatch, health)
+    ticks, sleeps = [], []
+    monkeypatch.setattr(health, "_health_tick", ticks.append)
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            raise _StopLoop
+
+    monkeypatch.setattr(health, "time", SimpleNamespace(sleep=sleep))
+    real_start_health_checker(app)
+
+    (thread,) = threads
+    assert thread.daemon is True and thread.started is True
+    with pytest.raises(_StopLoop):
+        thread.target()
+    assert ticks == [app, app]
+    assert sleeps == [health._CHECK_INTERVAL, health._CHECK_INTERVAL]
+
+
+def test_health_tick_runs_pass_then_refreshes(app, monkeypatch):
+    from lumen.services import health
+
+    calls = []
+    monkeypatch.setattr(health, "run_health_pass", lambda: calls.append(("pass", bool(health.current_app))))
+    monkeypatch.setattr(health.model_cache, "refresh", lambda a: calls.append(("refresh", a)))
+    monkeypatch.setattr(health.model_cache, "refresh_counts", lambda a: calls.append(("counts", a)))
+    health._health_tick(app)
+    assert calls == [("pass", True), ("refresh", app), ("counts", app)]
+
+
+def test_health_tick_logs_a_failed_pass_and_still_refreshes(app, monkeypatch, caplog):
+    from lumen.services import health
+
+    def boom():
+        raise RuntimeError("db down")
+
+    calls = []
+    monkeypatch.setattr(health, "run_health_pass", boom)
+    monkeypatch.setattr(health.model_cache, "refresh", lambda a: calls.append("refresh"))
+    monkeypatch.setattr(health.model_cache, "refresh_counts", lambda a: calls.append("counts"))
+    with caplog.at_level(logging.ERROR, logger="lumen.services.health"):
+        health._health_tick(app)
+    assert "health checker error" in caplog.text
+    assert "db down" in caplog.text
+    assert calls == ["refresh", "counts"]
+
+
+def test_heartbeat_ignores_utime_failure(monkeypatch):
+    from types import SimpleNamespace
+
+    from lumen.services import health
+
+    def fail(fd):
+        raise OSError("read-only")
+
+    monkeypatch.setattr(health, "os", SimpleNamespace(utime=fail))
+    health._heartbeat(123)  # best effort: must not raise
+
+
+def test_heartbeat_is_not_stale_when_fstat_fails(monkeypatch):
+    from types import SimpleNamespace
+
+    from lumen.services import health
+
+    def fail(fd):
+        raise OSError("bad fd")
+
+    monkeypatch.setattr(health, "os", SimpleNamespace(fstat=fail))
+    assert health._heartbeat_is_stale(123) is False
+
+
+def test_timed_out_probe_is_logged_and_marked_down(app, test_model, test_model_endpoint, monkeypatch):
+    import concurrent.futures
+
+    from lumen.services import health
+
+    class TimedOut:
+        def result(self, timeout):
+            raise concurrent.futures.TimeoutError
+
+    monkeypatch.setattr(health._probe_executor, "submit", lambda *a, **k: TimedOut())
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_endpoint import ModelEndpoint
+
+        app.config["LOG_MODEL_HEALTH"] = True
+        try:
+            with patch.object(app.logger, "info") as mock_log:
+                assert health.check_all_endpoints() == 1
+        finally:
+            app.config["LOG_MODEL_HEALTH"] = False
+        assert "probe exceeded" in mock_log.call_args[0][0]
+        db.session.expire_all()
+        assert db.session.get(ModelEndpoint, test_model_endpoint["id"]).healthy is False
+
+
+def test_endpoint_deleted_mid_pass_discards_changes(app, test_model, test_model_endpoint, monkeypatch, caplog):
+    """A StaleDataError on commit is rolled back and logged; the pass still refreshes the cache."""
+    from sqlalchemy.orm.exc import StaleDataError
+
+    from lumen.services import health
+
+    with app.app_context():
+        from lumen.extensions import db
+
+        def stale_commit():
+            raise StaleDataError("row vanished")
+
+        rollbacks, refreshes = [], []
+        real_rollback = db.session.rollback
+        monkeypatch.setattr(health.model_cache, "refresh", refreshes.append)
+        with patch.object(db.session, "commit", stale_commit), \
+                patch.object(db.session, "rollback", lambda: (rollbacks.append(1), real_rollback())[1]), \
+                patch("lumen.services.health.openai.OpenAI", return_value=_make_openai_mock(["dummy"])), \
+                caplog.at_level(logging.WARNING, logger="lumen.services.health"):
+            assert health.check_all_endpoints() == 1
+        assert len(rollbacks) == 2  # the read transaction, then the stale commit
+        assert "endpoint deleted mid-pass" in caplog.text
+        assert len(refreshes) == 1
 
 
 def test_fresh_heartbeat_holder_is_skipped_quietly(lock_path):
