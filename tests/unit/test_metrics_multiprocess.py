@@ -320,7 +320,8 @@ def _config_with_prometheus(tmp_path):
 
     from tests.conftest import TEST_CONFIG
 
-    data = yaml.safe_load(open(TEST_CONFIG))
+    with open(TEST_CONFIG) as f:
+        data = yaml.safe_load(f)
     api = dict(data.get("api", {}))
     api["prometheus"] = {"enabled": True, "token": "t" * 32}
     data["api"] = api

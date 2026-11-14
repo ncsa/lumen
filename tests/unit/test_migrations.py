@@ -296,6 +296,7 @@ def test_message_index_names_match_migration(tmp_path):
     migrated = {i["name"]: i["column_names"] for i in sa.inspect(engine).get_indexes("messages")}
     model = {i.name: [c.name for c in i.columns] for i in Message.__table__.indexes}
     assert migrated == model == {"ix_messages_conversation_id_created_at": ["conversation_id", "created_at"]}
+    engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +433,7 @@ def test_ghost_upgrade_allows_one_ghost_and_downgrade_drops_index(tmp_path):
     assert "uq_entities_single_ghost" not in {i["name"] for i in sa.inspect(engine).get_indexes("entities")}
     with engine.begin() as conn:
         assert conn.exec_driver_sql("SELECT COUNT(*) FROM entities").scalar() == 3
+    engine.dispose()
 
 
 # ---------------------------------------------------------------------------

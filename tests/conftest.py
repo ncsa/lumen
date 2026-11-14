@@ -1,4 +1,5 @@
 import os
+import weakref
 from datetime import timedelta
 from pathlib import Path
 
@@ -136,6 +137,26 @@ def stopped_refresher():
     metrics_snapshot.stop_snapshot_refresher()
     yield
     metrics_snapshot.stop_snapshot_refresher()
+
+
+@pytest.fixture(autouse=True)
+def dispose_throwaway_app_engines():
+    """Close the database engines of any app a test built with create_app().
+
+    Nothing else disposes them, so their SQLite connections stay open until a
+    later garbage collection, which reports ``ResourceWarning: unclosed
+    database`` inside whichever test happens to be running then. Apps that
+    existed before the test (the session app) keep their engines.
+    """
+    from lumen.extensions import db
+
+    # Flask-SQLAlchemy keeps no public list of the apps it is bound to.
+    before = weakref.WeakSet(db._app_engines.keys())
+    yield
+    for app, engines in list(db._app_engines.items()):
+        if app not in before:
+            for engine in engines.values():
+                engine.dispose()
 
 
 @pytest.fixture(autouse=True)

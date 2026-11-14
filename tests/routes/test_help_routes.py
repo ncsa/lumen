@@ -83,9 +83,9 @@ def test_help_unknown_slug_returns_404(client):
 
 
 def test_help_img_serves_file(client):
-    resp = client.get("/help/img/chat.png")
-    assert resp.status_code == HTTPStatus.OK
-    assert resp.content_type.startswith("image/")
+    with client.get("/help/img/chat.png") as resp:
+        assert resp.status_code == HTTPStatus.OK
+        assert resp.content_type.startswith("image/")
 
 
 
