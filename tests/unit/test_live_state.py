@@ -9,6 +9,7 @@ import logging
 import socket
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 import redis
@@ -115,6 +116,31 @@ def test_expired_tickets_are_pruned_on_admit(monkeypatch):
     monkeypatch.setattr(live_state, "_request_budget", lambda: 600.0)
     state.admit("gpt-4o", 8)
     assert len(state._tickets) == 1
+
+
+@pytest.fixture
+def frozen_clock(monkeypatch):
+    """Freeze the clock ``live_state`` reads; set ``now[0]`` to move it.
+
+    Only the module's own ``time`` binding is replaced, never the global
+    ``time.time``, so pytest-timeout and other threads keep real time.
+    """
+    now = [1_000_000.0]
+    monkeypatch.setattr(live_state, "time", SimpleNamespace(time=lambda: now[0]))
+    return now
+
+
+def test_a_ticket_expires_at_exactly_its_deadline_in_snapshot(frozen_clock):
+    """The deadline is inclusive: a ticket is counted one tick before it and
+    gone, user included, at exactly ``deadline == now``."""
+    deadline = 1_000_000.0
+    state = LocalLiveState()
+    frozen_clock[0] = deadline - 0.001
+    state.record(LiveTicket("gpt-4o", 7, "r1", deadline=deadline))
+    assert state.snapshot() == {"gpt-4o": ModelLive(inflight=1, unique_users=1)}
+
+    frozen_clock[0] = deadline
+    assert state.snapshot() == {}
 
 
 def test_release_needs_no_app_or_request_context(app):
