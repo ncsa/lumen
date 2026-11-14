@@ -442,3 +442,110 @@ def test_timescale_gauges_execute_no_sql(app, client):
     finally:
         unsubscribe()
     assert statements == []
+
+
+def test_metrics_exports_per_model_usage_and_endpoint_health(app, client, monkeypatch):
+    """A primed snapshot's usage rows and endpoint health become labelled samples."""
+    from lumen.services import metrics_snapshot
+    from lumen.services.metrics_snapshot import MetricsSnapshot, ModelUsage
+    from lumen.timeutils import utcnow
+
+    snapshot = MetricsSnapshot(
+        primed=True,
+        captured_at=time.monotonic(),
+        captured_wall=utcnow(),
+        model_usage={("m1", "api"): ModelUsage(requests=3, input_tokens=40, output_tokens=50, cost=1.5)},
+        endpoint_health=(("m1", "http://up.example", True), ("m1", "http://down.example", False)),
+        users_active=2,
+        users_total=5,
+    )
+    monkeypatch.setattr(metrics_snapshot, "_snapshot", snapshot)
+    original = _set_prometheus(app, {"enabled": True, "token": "secret"})
+    try:
+        body = client.get("/metrics", headers={"Authorization": "Bearer secret"}).get_data(as_text=True)
+    finally:
+        app.config["YAML_DATA"] = original
+
+    assert 'lumen_model_requests_total{model="m1",source="api"} 3.0' in body
+    assert 'lumen_model_input_tokens_total{model="m1",source="api"} 40.0' in body
+    assert 'lumen_model_output_tokens_total{model="m1",source="api"} 50.0' in body
+    assert 'lumen_model_cost_coins_total{model="m1",source="api"} 1.5' in body
+    assert 'lumen_model_endpoint_healthy{endpoint_url="http://up.example",model="m1"} 1.0' in body
+    assert 'lumen_model_endpoint_healthy{endpoint_url="http://down.example",model="m1"} 0.0' in body
+    assert 'lumen_users{status="active"} 2.0' in body
+    assert 'lumen_users{status="total"} 5.0' in body
+
+
+_MP_CHILD = """
+from prometheus_client import Counter
+Counter("lumen_mp_route_probe", "probe counter").inc(7)
+"""
+
+
+def test_metrics_aggregates_the_multiprocess_dir(app, client, tmp_path, monkeypatch):
+    """With PROMETHEUS_MULTIPROC_DIR set, /metrics serves what every worker wrote there."""
+    import os
+    import subprocess
+    import sys
+
+    # Imported before the env var is set, so this process's own metric objects
+    # are not created in multiprocess mode inside tmp_path.
+    import lumen.blueprints.metrics.middleware  # noqa: F401
+
+    # A separate worker process writes its counter into the shared directory.
+    subprocess.run(
+        [sys.executable, "-c", _MP_CHILD],
+        env={**os.environ, "PROMETHEUS_MULTIPROC_DIR": str(tmp_path)},
+        check=True,
+    )
+    monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", str(tmp_path))
+    original = _set_prometheus(app, {"enabled": True, "token": "secret"})
+    try:
+        resp = client.get("/metrics", headers={"Authorization": "Bearer secret"})
+    finally:
+        app.config["YAML_DATA"] = original
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.get_data(as_text=True)
+    assert "lumen_mp_route_probe_total 7.0" in body
+    # The DB collector is still served alongside the aggregate.
+    assert "lumen_metrics_snapshot_age_seconds" in body
+
+
+def _debug_body(app, client):
+    original = _set_prometheus(app, {"enabled": True, "token": "secret"})
+    try:
+        resp = client.get("/metrics/debug", headers={"Authorization": "Bearer secret"})
+    finally:
+        app.config["YAML_DATA"] = original
+    assert resp.status_code == HTTPStatus.OK
+    return resp.get_data(as_text=True)
+
+
+def test_metrics_debug_reports_an_unreachable_postgres(app, client, monkeypatch):
+    """A failing max_connections query is reported in the capture, not a 500."""
+    from lumen.services import db_pool
+
+    def unreachable(uri):
+        raise ConnectionRefusedError("no server")
+
+    monkeypatch.setitem(app.config, "SQLALCHEMY_DATABASE_URI", "postgresql://u:p@db.invalid/x")
+    monkeypatch.setattr(db_pool, "query_max_connections", unreachable)
+
+    body = _debug_body(app, client)
+    assert "postgres max_connections: unavailable (ConnectionRefusedError)" in body
+    assert "pool budget:" not in body
+
+
+def test_metrics_debug_reports_the_pool_budget(app, client, monkeypatch):
+    """With max_connections known and a sized pool, the capture states the budget."""
+    from lumen.services import db_pool
+
+    monkeypatch.setitem(app.config, "SQLALCHEMY_DATABASE_URI", "postgresql://u:p@db.invalid/x")
+    monkeypatch.setitem(app.config, "SQLALCHEMY_ENGINE_OPTIONS", {"pool_size": 5, "max_overflow": 2})
+    monkeypatch.setitem(app.config, "POOL_TOPOLOGY", {"workers": 2, "replicas": 3})
+    monkeypatch.setattr(db_pool, "query_max_connections", lambda uri: 100)
+
+    body = _debug_body(app, client)
+    assert "postgres max_connections: 100" in body
+    assert "pool budget: (pool_size+max_overflow) x workers x replicas = 42 of 100" in body

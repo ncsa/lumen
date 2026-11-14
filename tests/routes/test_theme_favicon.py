@@ -234,3 +234,18 @@ def test_favicon_ico_is_exempt_from_rate_limits(app, client):
             limiter.reset()
     assert control == [HTTPStatus.OK, HTTPStatus.TOO_MANY_REQUESTS]
     assert favicon == [HTTPStatus.OK] * 5
+
+
+def test_favicon_ico_follows_an_exact_email_theme_override(app, client):
+    """An `email_themes` key without a leading "@" matches one address exactly."""
+    old = app.config.get("EMAIL_THEMES", {})
+    app.config["EMAIL_THEMES"] = {"Someone@Example.com": "illinois"}
+    try:
+        with client.session_transaction() as sess:
+            sess["entity_email"] = "someone@example.com"
+        with _theme(app, "default"):
+            resp = client.get("/favicon.ico")
+    finally:
+        app.config["EMAIL_THEMES"] = old
+    assert resp.status_code == HTTPStatus.FOUND
+    assert resp.headers["Location"] == f"{ILLINOIS_CDN}/favicon.ico"
