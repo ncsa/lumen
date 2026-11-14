@@ -3,8 +3,7 @@ from pathlib import Path
 
 from sqlalchemy import CheckConstraint
 
-import monitor.models
-from monitor.models import DailyStat
+from monitor import models
 
 # The literal migration 0001 creates; migrations never import the live models.
 # This guards one direction only: editing the CHECK in migration 0001 leaves it
@@ -19,12 +18,12 @@ def _source_check(model) -> str:
 
 
 def test_source_check_matches_migration_0001():
-    assert _source_check(DailyStat) == MIGRATION_0001_SOURCE_CHECK
+    assert _source_check(models.DailyStat) == MIGRATION_0001_SOURCE_CHECK
 
 
 def test_source_check_is_built_from_sources():
     # Load models.py with a different SOURCES; a hardcoded CHECK would not follow it.
-    path = Path(monitor.models.__file__)
+    path = Path(models.__file__)
     code = path.read_text()
     assert code.count(SOURCES_LINE) == 1
     module = types.ModuleType("models_with_other_sources")
