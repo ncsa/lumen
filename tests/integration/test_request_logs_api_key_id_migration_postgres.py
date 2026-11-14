@@ -1,7 +1,7 @@
 """The request_logs_api_key_id revision on real PostgreSQL + TimescaleDB.
 
-The test steps this module's database back to ``c8d0e2f4a6b8`` with the same
-``flask db`` command the container runs, seeds a compressed chunk, upgrades
+The test steps this module's database back to ``c8d0e2f4a6b8`` with the
+migration commands ``flask db`` runs, seeds a compressed chunk, upgrades
 again, and checks what the revision relies on: the foreign key exists but was
 added ``NOT VALID`` (so the upgrade never scanned the history), new rows are
 still checked against ``api_keys``, and every older row reads NULL. It then
@@ -12,9 +12,6 @@ column, its foreign key and its comment, so ``db.create_all`` and an upgraded
 database build the same thing. It runs first, on the untouched upgrade.
 """
 
-import os
-import subprocess
-
 import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
@@ -23,25 +20,13 @@ from sqlalchemy.exc import IntegrityError
 
 from lumen.models.request_log import RequestLog
 
-from .conftest import TEST_CONFIG
+from .conftest import migrate_db
 
 pytestmark = pytest.mark.postgres
 
 PREVIOUS = "c8d0e2f4a6b8"
 SOURCE = "akmark"  # request_logs.source is VARCHAR(8)
 FK = "fk_request_logs_api_key_id"
-
-
-def _flask_db(url, *args):
-    env = {**os.environ, "DATABASE_URL": url, "CONFIG_YAML": TEST_CONFIG, "BACKGROUND_WORKER": "false"}
-    result = subprocess.run(
-        ["uv", "run", "flask", "--app", "run", "db", *args],
-        capture_output=True, text=True, env=env, timeout=300,
-    )
-    assert result.returncode == 0, (
-        f"flask db {' '.join(args)} failed:\n"
-        f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
-    )
 
 
 def _has_column(conn):
@@ -78,7 +63,7 @@ def test_autogenerate_proposes_no_api_key_id_changes(pg_migrated_isolated):
 
 def test_upgrade_adds_a_not_valid_fk_over_a_compressed_chunk(pg_migrated_isolated):
     url, engine = pg_migrated_isolated
-    _flask_db(url, "downgrade", PREVIOUS)
+    migrate_db(url, "downgrade", PREVIOUS)
     with engine.connect() as conn:
         assert not _has_column(conn)
 
@@ -108,7 +93,7 @@ def test_upgrade_adds_a_not_valid_fk_over_a_compressed_chunk(pg_migrated_isolate
         )).scalar()
     assert compressed >= 1, "no chunk was compressed, so this test would prove nothing"
 
-    _flask_db(url, "upgrade")
+    migrate_db(url, "upgrade", "head")
 
     with engine.connect() as conn:
         assert _has_column(conn)
@@ -143,7 +128,7 @@ def test_upgrade_adds_a_not_valid_fk_over_a_compressed_chunk(pg_migrated_isolate
             "WHERE hypertable_name = 'request_logs' AND is_compressed AND range_end > now()"
         )).scalar() == 0
 
-    _flask_db(url, "downgrade", PREVIOUS)
+    migrate_db(url, "downgrade", PREVIOUS)
     with engine.connect() as conn:
         assert _constraint(conn) is None
         assert not _has_column(conn)

@@ -9,25 +9,111 @@ reaching a query. Anything Timescale-shaped is untested without this.
 Migrations run through ``flask db upgrade`` in a subprocess rather than through
 Alembic's Python API, because that is verbatim what ``entrypoint.sh`` does in
 production: the thing under test is the command the container actually runs.
+Tests that step a database down and back up use ``migrate_db`` instead, which
+runs the same Alembic commands in-process, as ``flask upgrade`` does, and so
+skips a CLI start-up per step.
 """
 
+import io
+import logging
 import os
 import subprocess
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
 
 import pytest
+from alembic import command
+from flask import current_app
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
 
+from lumen import create_app
 from lumen.commands import STATS_WALK_LOCK_KEY
+from lumen.extensions import db
+from tests.conftest import no_snapshot_refresher
 
 # Set by CI (see .github/workflows/test.yml). Absent locally unless a developer
 # exports it, in which case these tests skip rather than fail.
 PG_URL_ENV = "LUMEN_TEST_POSTGRES_URL"
 
 TEST_CONFIG = str(Path(__file__).resolve().parents[1] / "fixtures" / "test_config.yaml")
+
+
+# The loggers ``fileConfig`` in ``migrations/env.py`` configures from alembic.ini.
+_MIGRATION_LOGGERS = ("", "sqlalchemy.engine", "alembic", "flask_migrate")
+
+
+@contextmanager
+def pg_app(url):
+    """A Flask app bound to ``url``, built the way the ``flask`` CLI builds it.
+
+    ``Config.SQLALCHEMY_DATABASE_URI`` is read from ``DATABASE_URL`` once, at
+    import, so it is overridden for ``create_app`` and put back straight after.
+    The environment stays set while the app is in use and is restored on exit.
+    """
+    names = ("DATABASE_URL", "CONFIG_YAML", "BACKGROUND_WORKER")
+    previous_env = {k: os.environ.get(k) for k in names}
+    os.environ.update({"DATABASE_URL": url, "CONFIG_YAML": TEST_CONFIG, "BACKGROUND_WORKER": "false"})
+    # Not at the top: importing ``config`` at collection time would freeze its URI
+    # before the session ``app`` fixture sets DATABASE_URL (``create_app`` defers
+    # the same import for the same reason).
+    from config import Config
+
+    previous_uri = Config.SQLALCHEMY_DATABASE_URI
+    Config.SQLALCHEMY_DATABASE_URI = url
+    try:
+        with pytest.MonkeyPatch.context() as mp:
+            no_snapshot_refresher(mp)
+            application = create_app()
+        Config.SQLALCHEMY_DATABASE_URI = previous_uri
+        yield application
+    finally:
+        Config.SQLALCHEMY_DATABASE_URI = previous_uri
+        for key, value in previous_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def migrate_db(url, direction, revision, sql=False):
+    """Run ``flask db upgrade|downgrade <revision> [--sql]`` against ``url`` in-process.
+
+    Calls Alembic with the config Flask-Migrate builds, which is what
+    ``flask_migrate.upgrade``/``downgrade`` do, minus their wrapper that turns
+    a failure into ``sys.exit(1)``: a failing migration raises its own error.
+    With ``sql=True`` the migration runs offline and the emitted SQL, which
+    Alembic writes to stdout, is returned.
+
+    ``migrations/env.py`` calls ``fileConfig``, which replaces the root
+    logger's handlers, so the loggers it touches are restored afterwards; the
+    app's engine is disposed so no connection outlives the call.
+    """
+    run = {"upgrade": command.upgrade, "downgrade": command.downgrade}[direction]
+    saved = [
+        (lg, lg.handlers[:], lg.level, lg.propagate, lg.disabled)
+        for lg in map(logging.getLogger, _MIGRATION_LOGGERS)
+    ]
+    try:
+        with pg_app(url) as app, app.app_context():
+            try:
+                config = current_app.extensions["migrate"].migrate.get_config()
+                if not sql:
+                    run(config, revision)
+                    return None
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    run(config, revision, sql=True)
+                return out.getvalue()
+            finally:
+                db.engine.dispose()
+    finally:
+        for lg, handlers, level, propagate, disabled in saved:
+            lg.handlers[:] = handlers
+            lg.setLevel(level)
+            lg.propagate = propagate
+            lg.disabled = disabled
 
 
 def _admin_engine(url: str):
