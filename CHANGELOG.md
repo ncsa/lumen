@@ -14,6 +14,7 @@ All notable changes to Lumen will be documented in this file.
 - Added: per-theme favicons (default, Illinois, UIC, UIS) and a `/favicon.ico` route (#479).
 - Speed up the slowest PostgreSQL migration tests and the request_logs prune guard (#475).
 - Model detail page: the model's notice now always shows in the main column. The acknowledgement text shows on the right only for models that need acknowledgement. Previously, the acknowledgement text replaced the notice. (#492)
+- Monitor moves to Python 3.14 (was 3.11) and CI tests both projects on 3.14 (required) and 3.15 (allowed to fail); monitor dead-code cleanup. (#529)
 
 ## [2.3.1] - 2026-11-07
 
