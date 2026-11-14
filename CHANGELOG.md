@@ -14,6 +14,7 @@ All notable changes to Lumen will be documented in this file.
 - Added: per-theme favicons (default, Illinois, UIC, UIS) and a `/favicon.ico` route (#479).
 - Speed up the slowest PostgreSQL migration tests and the request_logs prune guard (#475).
 - Model detail page: the model's notice now always shows in the main column. The acknowledgement text shows on the right only for models that need acknowledgement. Previously, the acknowledgement text replaced the notice. (#492)
+- Connect the GitHub Copilot CLI: `/connect` generates `~/.copilot/providers.json`, and `lumen.sh --copilot` writes the Lumen provider and models into it and keeps them current. (#530)
 
 ## [2.3.1] - 2026-11-07
 
