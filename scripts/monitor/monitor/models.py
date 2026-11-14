@@ -30,7 +30,7 @@ class DailyStat(Base):
     __tablename__ = "daily_stats"
     __table_args__ = (
         UniqueConstraint("day", "model", "source", name="uq_daily_stats_day_model_source"),
-        CheckConstraint("source IN ('models.dev', 'lumen', 'hardware')", name="ck_daily_stats_source"),
+        CheckConstraint("source IN (" + ", ".join(f"'{s}'" for s in SOURCES) + ")", name="ck_daily_stats_source"),
         {"comment": "One row per local day, Lumen model and price source; kept forever"},
     )
 
