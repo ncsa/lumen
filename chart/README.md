@@ -240,7 +240,7 @@ The Job uses the same image, environment, config Secret and `wait-for-db` initCo
 
 **It is a plain Job, not a Helm hook.** A pre-install hook would run before the chart's Secrets and the bundled PostgreSQL exist. So a failed Job does not fail `helm upgrade --wait`: Helm checks Jobs only with `--wait-for-jobs`. Use `helm upgrade --wait --wait-for-jobs` to have a failed migration fail the release. Without it, a failure shows up as a failed Job (`kubectl get jobs`, `kubectl logs job/<fullname>-migrate-<revision>`) and a new pod that stays in `Init` at the gate. The Deployment's `progressDeadlineSeconds` (the Kubernetes default, 600s) then marks the rollout as not progressing, but nothing is rolled back and the old pods keep serving. Fix the cause, then run `helm upgrade` again to get a new Job.
 
-**The chart needs image 2.3.0 or later.** Older images have no `upgrade` or `wait-for-migrations` mode. Until a release sets the chart's `appVersion` to 2.3.0, install from `main` with `image.tag: latest` (or an image built from `main`). Mixed versions fail closed:
+**The chart needs image 2.3.0 or later.** Older images have no `upgrade` or `wait-for-migrations` mode. Mixed versions fail closed:
 
 - **This chart with an image older than 2.3.0:** the Job fails and the gate initContainer crash-loops, because the image does not know either mode. Nothing new starts; old pods keep serving.
 - **An older chart (no Job) with image 2.3.0 or later:** nothing runs the upgrade, and the image no longer migrates on start, so pods wait at startup (and the older chart's startup probe eventually restarts them).
