@@ -136,11 +136,17 @@ jobs:
         run: uv sync --frozen
 
       - name: Run tests
-        run: uv run pytest -rs --junitxml=junit.xml
+        run: uv run pytest -rs --junitxml=junit.xml --cov-report=json
         env:
           LUMEN_TEST_POSTGRES_URL: postgresql://ci:ci@localhost:5432/ci
           LUMEN_TEST_REDIS_URL: redis://localhost:6379/0
           MONITOR_TEST_POSTGRES_URL: postgresql://ci:ci@localhost:5432/ci
+
+      # coverage.py's fail_under checks only the total; this fails on any file
+      # below 90%. It runs here and not in addopts because Lumen's numbers
+      # need the PostgreSQL and Redis tests, which a plain local run skips.
+      - name: Check per-file coverage
+        run: uv run python ${{ matrix.name == 'monitor' && '../check_coverage.py' || 'scripts/check_coverage.py' }} --min 90 coverage.json
 
       # Skipped on experimental legs: the reporter creates its own check run,
       # which continue-on-error does not cover. Their job log keeps the failures.
