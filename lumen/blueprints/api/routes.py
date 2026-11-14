@@ -9,11 +9,12 @@ from http import HTTPStatus
 from urllib.parse import quote
 
 import openai
-from flask import Blueprint, Response, current_app, g, jsonify, request
+from flask import Blueprint, Response, current_app, g, jsonify, request, session
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from lumen.blueprints.metrics.middleware import observe_stream_abort
+from lumen.blueprints.profile.routes import profile_json
 from lumen.commands import RESERVED_MODEL_ID_SUFFIX
 from lumen.extensions import db, limiter
 from lumen.models.api_key import KEY_TYPE_NORMAL, APIKey
@@ -410,6 +411,63 @@ def api_key_required(f):
         return f(*args, **kwargs)
 
     return decorated
+
+
+_ME_MALFORMED = "Missing or malformed Authorization header; expected 'Bearer <key>'"
+_ME_UNAUTHENTICATED = "Authentication required: sign in or send 'Authorization: Bearer <key>'"
+_ME_PROJECT_KEY = "Project keys cannot access /v1/me; use the web session or a personal API key"
+_ME_OAUTH_KEY = ("Keys issued through OAuth cannot access /v1/me; "
+                 "create a personal API key on your profile page")
+
+
+def me_auth_required(f):
+    """Authenticate a ``/v1/me`` call by a personal API key or the web session.
+
+    With an ``Authorization`` header the key decides, even when a session
+    cookie is also sent: a malformed header or an unknown, revoked or expired
+    key is 401, and the monitor token, an inactive entity, a project's key and
+    a key minted through OAuth (``client_id`` set, even after a UI rotation)
+    are 403. Without the header the session must name an active entity, or the
+    answer is 401; never a redirect. Sets ``g.entity`` and ``g.me_via_session``
+    and bumps no usage counters.
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if "Authorization" in request.headers:
+            result = lookup_api_key()
+            if isinstance(result, APIKeyAuthFailure):
+                if result.kind == "malformed":
+                    return _err(_ME_MALFORMED, "authentication_error", HTTPStatus.UNAUTHORIZED)
+                if result.kind == "monitor":
+                    return _err(result.message, "permission_error", HTTPStatus.FORBIDDEN)
+                return _err(result.message, result.err_type, result.status)
+            api_key, entity = result
+            if entity.entity_type != "user":
+                return _err(_ME_PROJECT_KEY, "permission_error", HTTPStatus.FORBIDDEN)
+            if api_key.client_id is not None:
+                return _err(_ME_OAUTH_KEY, "permission_error", HTTPStatus.FORBIDDEN)
+            g.me_via_session = False
+        else:
+            eid = session.get("entity_id")
+            entity = db.session.get(Entity, eid) if eid else None
+            if entity is None or not entity.active:
+                return _err(_ME_UNAUTHENTICATED, "authentication_error", HTTPStatus.UNAUTHORIZED)
+            g.me_via_session = True
+        g.entity = entity
+        return f(*args, **kwargs)
+
+    return decorated
+
+
+@api_bp.route("/me", methods=["GET"])
+@me_auth_required
+def get_me():
+    admin_mode = bool(session.get("admin_mode")) if g.me_via_session else None
+    try:
+        body = profile_json(g.entity, request.args.get("period"), session_admin_mode=admin_mode)
+    except ValueError:
+        return _err("Invalid period; expected 'YYYY-MM' (a UTC calendar month) or 'all'")
+    return jsonify(body)
 
 
 @api_bp.route("/usage", methods=["GET"])
