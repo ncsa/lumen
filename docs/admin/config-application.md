@@ -183,6 +183,25 @@ rate_limiting:
 
 > **Restart required:** Changing `storage_url` requires a restart because the Redis client is initialized at startup.
 
+## stats
+
+Usage totals (`entity_stats` / `model_stats`) are folded from `request_logs` by a background job:
+
+```yaml
+stats:
+  fold_interval: 60  # seconds between fold passes
+  fold_lag: 300      # seconds the fold window ends behind now
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `fold_interval` | `60` | Seconds between fold passes |
+| `fold_lag` | `300` | How many seconds behind now the fold window ends; leaves room for billing transactions that commit after their request's timestamp |
+
+Totals lag real time by about `fold_lag + fold_interval`. Rows that commit more than `fold_lag` after their timestamp are added later by [`flask check-stats --fix`](commands.md#check-stats).
+
+Changes take effect without a restart, from the next fold pass. An invalid value (not a positive number of seconds) is logged as a warning and the default (`60` / `300`) is used; the rest of the reload still applies. In the Helm chart these are `config.stats.foldInterval` and `config.stats.foldLag`. The keys are not in the config editor.
+
 ## api
 
 Settings for the OpenAI-compatible API and operational endpoints. **Note:** monitoring and Prometheus
