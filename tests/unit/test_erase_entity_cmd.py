@@ -310,6 +310,29 @@ def test_erasure_revokes_anonymises_and_moves_keys(app, world):
             assert db.session.execute(select(APIKey).where(APIKey.key_hash == hash_api_key(raw))).first() is None
 
 
+def test_erasure_clears_another_revokers_id_on_moved_keys(app, world):
+    """A moved key loses revoked_by_entity_id even when someone else revoked it.
+
+    The revoker must not be the erased user: the bulk update that clears every key
+    revoked by the user would also clear a self-revoked key and hide the regression.
+    """
+    with app.app_context():
+        key_id = _key(world["user"], "sk-erin-admin-revoked", revoked_at=REVOKED,
+                      revoked_by_entity_id=world["other"]).id
+        db.session.commit()
+
+    result = _erase(app, world["user"], "--yes")
+
+    assert result.exit_code == 0, result.output
+    with app.app_context():
+        key = db.session.get(APIKey, key_id)
+        assert key.entity_id == _ghost_id()
+        assert key.revoked_by_entity_id is None
+        assert key.revoked_at == REVOKED
+        # The revoker still exists, so the None comes from erasure, not a cascade.
+        assert db.session.get(Entity, world["other"]) is not None
+
+
 def test_old_raw_key_gets_401(app, client, world):
     headers = {"Authorization": "Bearer sk-erin-active"}
     assert client.get("/v1/models", headers=headers).status_code == HTTPStatus.OK
