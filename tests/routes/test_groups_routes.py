@@ -129,6 +129,18 @@ def test_index_shows_new_group_for_admin(admin_client):
     assert b"New Group" in resp.data
 
 
+def test_summary_cards_admin_counts_all_groups(admin_client, app, owned_group, member_group):
+    """In admin mode the cards count every group, including ones the admin is not in."""
+    _make_group(app, name="unrelated")
+    # 3 groups; memberships: owned-group 1 + member-group 2 + unrelated 0 = 3, none the admin's.
+    assert _summary_cards(admin_client) == {"Total Groups": 3, "Total Members": 3}
+
+
+def test_summary_cards_admin_without_admin_mode_counts_only_memberships(admin_client_no_mode, owned_group):
+    """With admin mode off, an admin who belongs to no group sees empty cards."""
+    assert _summary_cards(admin_client_no_mode) == {"Groups": 0, "Total Members": 0}
+
+
 def test_data_empty_for_non_member(auth_client, app):
     _make_group(app, name="someone-elses")
     data = auth_client.get("/groups/data").get_json()
