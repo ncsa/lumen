@@ -1,5 +1,6 @@
 import hashlib
 from http import HTTPStatus
+from uuid import UUID
 
 from flask import Blueprint, abort, jsonify, render_template, request, session, url_for
 from sqlalchemy import case, func, select, update
@@ -29,6 +30,7 @@ from lumen.models.entity_manager import (
 )
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.entity_stat import EntityStat
+from lumen.models.lookups import entity_by_uuid_or_404
 from lumen.models.model_config import ModelConfig
 from lumen.services.key_expiry import key_ttl_choices
 from lumen.services.llm import entity_has_unlimited_pool, get_model_access_status
@@ -103,6 +105,16 @@ def _scoped_project_ids(entity_id, entity):
             select(Entity.id).where(Entity.entity_type == "project")
         ).scalars().all()
     return [c.id for c in get_managed_projects(entity_id)]
+
+
+def _project_or_404(sid: UUID) -> Entity:
+    """The project with this public uuid, else 404."""
+    return entity_by_uuid_or_404(sid, "project")
+
+
+def _member_user_id(uid: UUID) -> int | None:
+    """Integer id of the user with this public uuid, or None."""
+    return db.session.scalar(select(Entity.id).where(Entity.uuid == uid, Entity.entity_type == "user"))
 
 
 @projects_bp.route("/projects", methods=["GET"])
@@ -238,7 +250,7 @@ def data():
     return jsonify({
         "projects": [
             {
-                "id": c.id,
+                "id": str(c.uuid),
                 "name": c.name,
                 "managers": int(managers),
                 "active": c.active,
@@ -248,7 +260,7 @@ def data():
                 "coins_available": -2 if float(coins_available) >= _BIGINT_MAX else float(coins_available),
                 "cost": float(cost),
                 "created": c.created_at.strftime("%Y-%m-%dT%H:%M:%SZ") if c.created_at else None,
-                "detail_url": url_for("projects.detail", sid=c.id),
+                "detail_url": url_for("projects.detail", sid=c.uuid),
                 "is_owner": c.owner_entity_id == entity_id,
                 "max_coins": float(limits[c.id].max_coins) if c.id in limits else None,
                 "refresh_coins": float(limits[c.id].refresh_coins) if c.id in limits else None,
@@ -261,11 +273,12 @@ def data():
     })
 
 
-@projects_bp.route("/projects/<int:sid>")
+@projects_bp.route("/projects/<uuid:sid>")
 @login_required
 def detail(sid):
     entity_id = session["entity_id"]
-    project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
+    project = _project_or_404(sid)
+    sid = project.id
     _require_project_access(entity_id, sid)
 
     entity = db.session.get(Entity, entity_id)
@@ -343,12 +356,13 @@ def detail(sid):
     )
 
 
-@projects_bp.route("/projects/<int:sid>", methods=["PATCH"])
+@projects_bp.route("/projects/<uuid:sid>", methods=["PATCH"])
 @login_required
 def update_project(sid):
     """Edit a project's name/active (owner or admin) and coin pool (admin only)."""
     entity_id = session["entity_id"]
-    project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
+    project = _project_or_404(sid)
+    sid = project.id
     _require_project_admin(entity_id, sid)
 
     data = request.get_json() or {}
@@ -381,11 +395,12 @@ def update_project(sid):
     return jsonify({"ok": True, "name": project.name, "active": project.active})
 
 
-@projects_bp.route("/projects/<int:sid>/toggle", methods=["POST"])
+@projects_bp.route("/projects/<uuid:sid>/toggle", methods=["POST"])
 @login_required
 def toggle_project(sid):
     entity_id = session["entity_id"]
-    project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
+    project = _project_or_404(sid)
+    sid = project.id
     _require_project_admin(entity_id, sid)
     project.active = not project.active
     db.session.commit()
@@ -436,29 +451,29 @@ def create_project():
 
     db.session.commit()
 
-    return jsonify({"id": project.id, "name": project.name}), HTTPStatus.CREATED
+    return jsonify({"id": str(project.uuid), "name": project.name}), HTTPStatus.CREATED
 
 
-@projects_bp.route("/projects/<int:sid>", methods=["DELETE"])
+@projects_bp.route("/projects/<uuid:sid>", methods=["DELETE"])
 @admin_required
 def delete_project(sid):
-    project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
+    project = _project_or_404(sid)
+    sid = project.id
     project.active = False
     db.session.commit()
     return "", HTTPStatus.NO_CONTENT
 
 
-@projects_bp.route("/projects/<int:sid>/users/search")
+@projects_bp.route("/projects/<uuid:sid>/users/search")
 @login_required
 def search_project_users(sid):
     entity_id = session["entity_id"]
+    sid = _project_or_404(sid).id
     _require_project_manager(entity_id, sid)
 
     q = (request.args.get("q") or "").strip()
     if len(q) < 2:
         return jsonify({"users": []})
-
-    db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
 
     existing_ids = {
         a.user_entity_id
@@ -479,13 +494,14 @@ def search_project_users(sid):
         stmt = stmt.where(~Entity.id.in_(existing_ids))
 
     users = db.session.execute(stmt).scalars().all()
-    return jsonify({"users": [{"id": u.id, "name": u.name, "email": u.email} for u in users]})
+    return jsonify({"users": [{"id": str(u.uuid), "name": u.name, "email": u.email} for u in users]})
 
 
-@projects_bp.route("/projects/<int:sid>/users", methods=["POST"])
+@projects_bp.route("/projects/<uuid:sid>/users", methods=["POST"])
 @login_required
 def add_project_member(sid):
     entity_id = session["entity_id"]
+    sid = _project_or_404(sid).id
     _require_project_manager(entity_id, sid)
 
     data = request.get_json() or {}
@@ -498,8 +514,6 @@ def add_project_member(sid):
         return jsonify({"error": "Role must be 'user' or 'manager'"}), HTTPStatus.BAD_REQUEST
     if role == "manager" and not _can_administer(entity_id, sid):
         return jsonify({"error": "Only the owner can add managers"}), HTTPStatus.FORBIDDEN
-
-    db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
 
     user = db.session.execute(select(Entity).filter_by(email=email, entity_type="user")).scalar_one_or_none()
     if not user:
@@ -516,17 +530,21 @@ def add_project_member(sid):
     db.session.commit()
 
     return jsonify(
-        {"user_id": user.id, "name": user.name, "email": user.email, "role": role}
+        {"user_id": str(user.uuid), "name": user.name, "email": user.email, "role": role}
     ), HTTPStatus.CREATED
 
 
-@projects_bp.route("/projects/<int:sid>/users/<int:uid>", methods=["DELETE"])
+@projects_bp.route("/projects/<uuid:sid>/users/<uuid:uid>", methods=["DELETE"])
 @login_required
 def remove_project_member(sid, uid):
     entity_id = session["entity_id"]
+    project = _project_or_404(sid)
+    sid = project.id
     _require_project_manager(entity_id, sid)
 
-    project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
+    uid = _member_user_id(uid)
+    if uid is None:
+        return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
 
     # Lock the target's membership row so the role checked below cannot change
     # under a concurrent promotion (no-op on SQLite).
@@ -558,14 +576,19 @@ def remove_project_member(sid, uid):
     return "", HTTPStatus.NO_CONTENT
 
 
-@projects_bp.route("/projects/<int:sid>/users/<int:uid>", methods=["PATCH"])
+@projects_bp.route("/projects/<uuid:sid>/users/<uuid:uid>", methods=["PATCH"])
 @login_required
 def update_project_member(sid, uid):
     """Promote a user to manager or demote a manager to user (owner or admin)."""
     entity_id = session["entity_id"]
+    project = _project_or_404(sid)
+    sid = project.id
     _require_project_admin(entity_id, sid)
 
-    project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
+    member_uuid = uid
+    uid = _member_user_id(uid)
+    if uid is None:
+        return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
 
     data = request.get_json() or {}
     role = data.get("role")
@@ -606,23 +629,28 @@ def update_project_member(sid, uid):
 
     target_assoc.role = role
     db.session.commit()
-    return jsonify({"user_id": uid, "role": role}), HTTPStatus.OK
+    return jsonify({"user_id": str(member_uuid), "role": role}), HTTPStatus.OK
 
 
-@projects_bp.route("/projects/<int:sid>/owner", methods=["POST"])
+@projects_bp.route("/projects/<uuid:sid>/owner", methods=["POST"])
 @login_required
 def transfer_ownership(sid):
     entity_id = session["entity_id"]
+    project = _project_or_404(sid)
+    sid = project.id
     _require_project_admin(entity_id, sid)
 
     data = request.get_json() or {}
-    new_owner_id = data.get("user_id")
-    if not new_owner_id:
+    new_owner_uuid = data.get("user_id")
+    if not new_owner_uuid:
         return jsonify({"error": "user_id required"}), HTTPStatus.BAD_REQUEST
+    try:
+        new_owner_uuid = UUID(str(new_owner_uuid))
+    except ValueError:
+        return jsonify({"error": "User not found"}), HTTPStatus.NOT_FOUND
 
-    project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
     new_owner = db.session.execute(
-        select(Entity).filter_by(id=new_owner_id, entity_type="user")
+        select(Entity).where(Entity.uuid == new_owner_uuid, Entity.entity_type == "user")
     ).scalar_one_or_none()
     if not new_owner:
         return jsonify({"error": "User not found"}), HTTPStatus.NOT_FOUND
@@ -662,14 +690,15 @@ def transfer_ownership(sid):
         # fk_entities_owner_membership: the new owner was removed concurrently.
         db.session.rollback()
         return jsonify({"error": "Ownership changed concurrently; reload and try again"}), HTTPStatus.CONFLICT
-    return jsonify({"owner_id": new_owner_id}), HTTPStatus.OK
+    return jsonify({"owner_id": str(new_owner.uuid)}), HTTPStatus.OK
 
 
-@projects_bp.route("/projects/<int:sid>/keys", methods=["POST"])
+@projects_bp.route("/projects/<uuid:sid>/keys", methods=["POST"])
 @login_required
 def create_project_key(sid):
     entity_id = session["entity_id"]
-    project = db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
+    project = _project_or_404(sid)
+    sid = project.id
     admin = is_admin(db.session.get(Entity, entity_id))
 
     # Authorize from the caller's locked membership row, not an earlier read:
@@ -721,17 +750,18 @@ def create_project_key(sid):
     return _created_key_response(api_key, key)
 
 
-@projects_bp.route("/projects/<int:sid>/keys/<int:kid>", methods=["DELETE"])
+@projects_bp.route("/projects/<uuid:sid>/keys/<int:kid>", methods=["DELETE"])
 @login_required
 def delete_project_key_removed(sid, kid):
     # Keys are revoked, not deleted; answer the old URL with 405 instead of 404.
     return jsonify({"error": "Use POST /projects/<sid>/keys/<id>/revoke"}), HTTPStatus.METHOD_NOT_ALLOWED
 
 
-@projects_bp.route("/projects/<int:sid>/keys/<int:kid>/revoke", methods=["POST"])
+@projects_bp.route("/projects/<uuid:sid>/keys/<int:kid>/revoke", methods=["POST"])
 @login_required
 def revoke_project_key(sid, kid):
     entity_id = session["entity_id"]
+    sid = _project_or_404(sid).id
     _require_project_access(entity_id, sid)
 
     api_key = db.get_or_404(APIKey, kid)
@@ -748,10 +778,11 @@ def revoke_project_key(sid, kid):
     return "", HTTPStatus.NO_CONTENT
 
 
-@projects_bp.route("/projects/<int:sid>/keys/<int:kid>/rotate", methods=["POST"])
+@projects_bp.route("/projects/<uuid:sid>/keys/<int:kid>/rotate", methods=["POST"])
 @login_required
 def rotate_project_key(sid, kid):
     entity_id = session["entity_id"]
+    sid = _project_or_404(sid).id
     _require_project_access(entity_id, sid)
 
     api_key = db.get_or_404(APIKey, kid)
@@ -764,10 +795,11 @@ def rotate_project_key(sid, kid):
     return rotate_key_secret(api_key)
 
 
-@projects_bp.route("/projects/<int:sid>/keys/<int:kid>/ttl", methods=["POST"])
+@projects_bp.route("/projects/<uuid:sid>/keys/<int:kid>/ttl", methods=["POST"])
 @login_required
 def edit_project_key_ttl(sid, kid):
     entity_id = session["entity_id"]
+    sid = _project_or_404(sid).id
     _require_project_access(entity_id, sid)
 
     api_key = db.get_or_404(APIKey, kid)
@@ -780,11 +812,11 @@ def edit_project_key_ttl(sid, kid):
     return set_key_ttl(api_key)
 
 
-@projects_bp.route("/projects/<int:sid>/consent/<path:model_name>", methods=["POST"])
+@projects_bp.route("/projects/<uuid:sid>/consent/<path:model_name>", methods=["POST"])
 @login_required
 def project_consent(sid, model_name):
     entity_id = session["entity_id"]
-    db.first_or_404(select(Entity).filter_by(id=sid, entity_type="project"))
+    sid = _project_or_404(sid).id
     # Acknowledging a model binds the whole project, so plain users cannot.
     _require_project_manager(entity_id, sid)
 

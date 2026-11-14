@@ -284,7 +284,7 @@
           const nameEsc = escHtml(c.name);
           let actions = '';
           if (IS_ADMIN) {
-            actions += `<a href="/usage?entity_id=${c.id}&user_name=${encodeURIComponent(c.name)}" class="btn btn-sm btn-outline-primary" title="View usage" aria-label="View usage for ${nameEsc}"><i class="bi bi-bar-chart" aria-hidden="true"></i></a> `;
+            actions += `<a href="/usage?entity=${c.id}&user_name=${encodeURIComponent(c.name)}" class="btn btn-sm btn-outline-primary" title="View usage" aria-label="View usage for ${nameEsc}"><i class="bi bi-bar-chart" aria-hidden="true"></i></a> `;
           }
           if (IS_ADMIN || c.is_owner) {
             actions += `<button class="btn btn-sm btn-outline-primary edit-btn" data-id="${c.id}" title="Edit" aria-label="Edit ${nameEsc}"><i class="bi bi-pencil" aria-hidden="true"></i></button>`;

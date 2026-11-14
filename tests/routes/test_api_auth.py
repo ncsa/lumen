@@ -651,13 +651,14 @@ def test_project_manager_acknowledgment_enables_api(
     token = "lk_project_manager_grant"
     with app.app_context():
         from tests.conftest import make_project
-        project_id = make_project("Granted Project", owner_id=test_user["id"]).id
+        project = make_project("Granted Project", owner_id=test_user["id"])
+        project_id, project_uuid = project.id, project.uuid
         _add_api_key(project_id, token)
         _grant_unlimited_pool(app, project_id)
         _set_requirements(test_model["id"], **_REQUIREMENTS[requirement])
 
     assert _api_allows(auth_client, token, test_model["model_name"], "chat") is False
-    resp = auth_client.post(f"/projects/{project_id}/consent/{test_model['model_name']}")
+    resp = auth_client.post(f"/projects/{project_uuid}/consent/{test_model['model_name']}")
     assert resp.status_code == HTTPStatus.OK
     assert _api_allows(auth_client, token, test_model["model_name"], "chat") is True
 

@@ -3,6 +3,7 @@ import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
+from uuid import UUID
 
 from flask import Blueprint, abort, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy import delete, func, select, text, update
@@ -333,9 +334,9 @@ def _build_project_list(eid: int) -> list:
     stats = {r.eid: r for r in stat_rows}
     return [
         {
-            "id": p.id,
+            "id": str(p.uuid),
             "name": p.name,
-            "detail_url": url_for("projects.detail", sid=p.id),
+            "detail_url": url_for("projects.detail", sid=p.uuid),
             "requests": int(getattr(stats.get(p.id), "requests", 0)),
             "tokens": int(getattr(stats.get(p.id), "tokens", 0)),
             "cost": float(getattr(stats.get(p.id), "cost", 0)),
@@ -423,7 +424,7 @@ def index():
     )
 
 
-@profile_bp.route("/profile/project/<int:sid>")
+@profile_bp.route("/profile/project/<uuid:sid>")
 @login_required
 def project_profile_page(sid):
     return redirect(url_for("projects.detail", sid=sid), HTTPStatus.MOVED_PERMANENTLY)
@@ -794,11 +795,20 @@ def _usage_entity_id():
     """Return entity_id to filter by.
 
     Non-admins always see their own data (backend enforcement).
-    Admins: entity_id param > mine=1 param > None (all users).
+    Admins: entity param (a user or project uuid) > entity_id param > mine=1
+    param > None (all users). A malformed or unknown entity uuid is a 404, not
+    a silent fallback to all users.
     """
     entity = db.session.get(Entity, session["entity_id"])
     if not _is_admin(entity):
         return session["entity_id"]
+    public_id = request.args.get("entity")
+    if public_id:
+        try:
+            u = UUID(public_id)
+        except ValueError:
+            abort(HTTPStatus.NOT_FOUND)
+        return db.first_or_404(select(Entity.id).where(Entity.uuid == u))
     eid = request.args.get("entity_id", type=int)
     if eid:
         return eid

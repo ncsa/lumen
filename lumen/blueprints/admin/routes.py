@@ -24,6 +24,7 @@ from lumen.models.entity_stat import EntityStat
 from lumen.models.group import Group
 from lumen.models.group_limit import GroupLimit
 from lumen.models.group_member import GroupMember
+from lumen.models.lookups import entity_by_uuid_or_404
 from lumen.models.model_config import ModelConfig
 from lumen.services import model_cache
 from lumen.services.config_watcher import (
@@ -371,11 +372,22 @@ def update_user(eid):
 
 
 @admin_bp.route("/users/<int:eid>/reset-tokens", methods=["POST"])
-@admin_bp.route("/entities/<int:eid>/reset-tokens", methods=["POST"])
 @admin_required
 def reset_user_tokens(eid):
+    """Refill a user's balance to its starting coins."""
+    return _reset_tokens(db.get_or_404(Entity, eid))
+
+
+@admin_bp.route("/entities/<uuid:eid>/reset-tokens", methods=["POST"])
+@admin_required
+def reset_entity_tokens(eid):
+    """Refill a project's balance to its starting coins (the projects Reset coins button)."""
+    return _reset_tokens(entity_by_uuid_or_404(eid, "project"))
+
+
+def _reset_tokens(entity):
     """Refill an entity's (user or project) balance to its starting coins."""
-    entity = db.get_or_404(Entity, eid)
+    eid = entity.id
     pool = get_pool_limit(entity.id)
     if pool is None:
         return jsonify({"error": "No coin pool configured"}), HTTPStatus.BAD_REQUEST

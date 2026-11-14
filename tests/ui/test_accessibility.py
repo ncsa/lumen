@@ -282,7 +282,7 @@ def test_own_profile_page_as_admin_accessibility(admin_client):
 def test_project_detail_page_accessibility(app, admin_client):
     with app.app_context():
         from tests.conftest import make_project
-        sid = make_project("a11y-svc", initials="AS").id
+        sid = make_project("a11y-svc", initials="AS").uuid
     url = f"/projects/{sid}"
     resp = admin_client.get(url)
     assert resp.status_code == HTTPStatus.OK
@@ -318,7 +318,7 @@ def _project_with_members(app, member_id, member_role):
         else:
             db.session.add(EntityManager(user_entity_id=member_id, project_entity_id=project.id, role=member_role))
         db.session.commit()
-        return project.id
+        return project.uuid
 
 
 @pytest.mark.parametrize("role", ["owner", "manager", "user"])

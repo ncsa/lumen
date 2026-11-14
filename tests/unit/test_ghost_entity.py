@@ -129,10 +129,11 @@ def test_ghost_absent_from_group_member_search(app, auth_client, test_user, ghos
 
 def test_ghost_absent_from_project_member_search(app, auth_client, test_user, ghost_id, control_user):
     with app.app_context():
-        pid = make_project("Lab", owner_id=test_user["id"]).id
+        pid = make_project("Lab", owner_id=test_user["id"]).uuid
+        control_uuid = str(db.session.get(Entity, control_user).uuid)
 
     users = auth_client.get(f"/projects/{pid}/users/search?q=Erased").get_json()["users"]
-    assert [u["id"] for u in users] == [control_user]
+    assert [u["id"] for u in users] == [control_uuid]
 
 
 def test_login_required_redirects_a_ghost_session(client, ghost_id):

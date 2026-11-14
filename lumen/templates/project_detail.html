@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_user_search_modal.html" import user_search_modal %}
+{% from "_copy_id_avatar.html" import copy_id_avatar %}
 {% block title %}{{ project.name }} — {{ app_name }}{% endblock %}
 
 {% block content %}
@@ -22,8 +23,7 @@
 
       <!-- Col 1: avatar + name + status, centred -->
       <div class="col-12 col-md-3 text-center profile-col-identity">
-        <img src="{{ gravatar_url }}" width="115" height="115"
-             class="rounded-circle profile-avatar-img" alt="Avatar for {{ project.name }}">
+        {{ copy_id_avatar(gravatar_url, project.name, project.uuid, "project") }}
         <h2 class="profile-name mt-0 mb-0">{{ project.name }}</h2>
         <p class="text-muted small mt-0 mb-0">
           Created:
@@ -34,12 +34,12 @@
         {% if can_manage %}
         {% if project.active %}
         <button class="btn btn-sm btn-outline-danger"
-                onclick="toggleProject({{ project.id }}, true)">
+                onclick="toggleProject({{ project.uuid | string | tojson }}, true)">
           <i class="bi bi-pause-circle" aria-hidden="true"></i> Deactivate
         </button>
         {% else %}
         <button class="btn btn-sm btn-outline-success"
-                onclick="toggleProject({{ project.id }}, false)">
+                onclick="toggleProject({{ project.uuid | string | tojson }}, false)">
           <i class="bi bi-play-circle" aria-hidden="true"></i> Activate
         </button>
         {% endif %}
@@ -181,22 +181,22 @@
             {% endif %}
             {% elif role == "manager" and can_manage %}
             <button class="btn btn-sm btn-outline-primary"
-                    onclick='makeOwner({{ member.id }}, {{ member.name | tojson }})'
+                    onclick='makeOwner({{ member.uuid | string | tojson }}, {{ member.name | tojson }})'
                     aria-label="Make {{ member.name }} owner">Make Owner</button>
             <button class="btn btn-sm btn-outline-secondary"
-                    onclick='setMemberRole({{ member.id }}, {{ member.name | tojson }}, "user")'
+                    onclick='setMemberRole({{ member.uuid | string | tojson }}, {{ member.name | tojson }}, "user")'
                     aria-label="Demote {{ member.name }} to user">Demote</button>
             <button class="btn btn-sm btn-outline-danger"
-                    onclick='removeMember({{ member.id }}, {{ member.name | tojson }})'
+                    onclick='removeMember({{ member.uuid | string | tojson }}, {{ member.name | tojson }})'
                     aria-label="Remove {{ member.name }}">Remove</button>
             {% elif role == "user" %}
             {% if can_manage %}
             <button class="btn btn-sm btn-outline-secondary"
-                    onclick='setMemberRole({{ member.id }}, {{ member.name | tojson }}, "manager")'
+                    onclick='setMemberRole({{ member.uuid | string | tojson }}, {{ member.name | tojson }}, "manager")'
                     aria-label="Promote {{ member.name }} to manager">Promote</button>
             {% endif %}
             <button class="btn btn-sm btn-outline-danger"
-                    onclick='removeMember({{ member.id }}, {{ member.name | tojson }})'
+                    onclick='removeMember({{ member.uuid | string | tojson }}, {{ member.name | tojson }})'
                     aria-label="Remove {{ member.name }}">Remove</button>
             {% endif %}
           </div>
@@ -425,8 +425,9 @@
 {% if can_acknowledge %}<script src="{{ url_for('static', filename='js/ack-consent.js') }}"></script>{% endif %}
 <script src="{{ url_for('static', filename='js/key-rotate.js') }}"></script>
 <script src="{{ url_for('static', filename='js/key-ttl-edit.js') }}"></script>
+<script src="{{ url_for('static', filename='js/copy-id.js') }}"></script>
 <script>
-const PROJECT_ID = {{ project.id }};
+const PROJECT_ID = {{ project.uuid | string | tojson }};
 
 // Bootstrap tooltips
 document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
