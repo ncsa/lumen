@@ -394,6 +394,8 @@ def _get_profile_data(eid: int, live_tail: bool = False) -> dict:
         "coin_pool": coin_pool,
         "project_list": project_list,
         "status": {"total_tokens_used": total_tokens_used, "total_cost": total_cost},
+        # The per-model rows behind status and model_usage, for profile_json's totals.
+        "usage_rows": usage_rows,
     }
 
 
@@ -837,6 +839,194 @@ def _usage_entity_id():
 # than with whatever history happened to be materialised before the delete.
 # For an entity that still exists it is one primary-key probe, evaluated once.
 _ENTITY_STILL_EXISTS = " AND EXISTS (SELECT 1 FROM entities WHERE id = :eid)"
+
+
+# --- /v1/me ------------------------------------------------------------------
+
+_MONTH_RE = re.compile(r"(\d{4})-(\d{2})")
+
+
+def _month_period(value):
+    """``(name, start, end)`` of the UTC calendar month ``value`` (``YYYY-MM``).
+
+    ``None`` is the current UTC month. ``start`` and ``end`` are aware UTC
+    datetimes, ``[1st 00:00, 1st of the next month 00:00)``. Anything else
+    raises ValueError.
+    """
+    if value is None:
+        now = utcnow()
+        year, month = now.year, now.month
+    else:
+        m = _MONTH_RE.fullmatch(value)
+        if not m:
+            raise ValueError(value)
+        year, month = int(m[1]), int(m[2])
+    # datetime() raises ValueError for month 0 or 13, year 0 and a 9999-12 end.
+    start = datetime(year, month, 1, tzinfo=timezone.utc)
+    end = datetime(year + month // 12, month % 12 + 1, 1, tzinfo=timezone.utc)
+    return f"{year:04d}-{month:02d}", start, end
+
+
+def _fetch_month_usage_rows(eid: int, start, end):
+    """Per-model usage rows of ``eid`` in ``[start, end)``, shaped like ``_fetch_model_usage_rows``.
+
+    Reads ``request_counts_hourly_by_entity`` (PostgreSQL only). The month's
+    boundaries are hour-aligned, so ``bucket >= :start AND bucket < :end``
+    selects exactly the raw rows with ``start <= time < end``; the view is
+    real-time, so the current hour is included. Older months are there once
+    ``flask upgrade`` has backfilled them. No last-used time (None).
+    """
+    return db.session.execute(text(
+        "SELECT model_config_id, COALESCE(SUM(requests), 0), COALESCE(SUM(input_tokens), 0), "
+        "COALESCE(SUM(output_tokens), 0), COALESCE(SUM(cost), 0), NULL "
+        "FROM request_counts_hourly_by_entity "
+        "WHERE entity_id = :eid AND bucket >= :start AND bucket < :end" + _ENTITY_STILL_EXISTS +
+        " GROUP BY model_config_id"
+    ), {"eid": eid, "start": start, "end": end}).all()
+
+
+def _iso(dt):
+    """A datetime as ISO-8601 UTC with a trailing ``Z``; None stays None."""
+    return None if dt is None else as_utc_naive(dt).isoformat() + "Z"
+
+
+def _usage_totals(usage_rows) -> dict:
+    input_tokens = sum(int(r[2] or 0) for r in usage_rows)
+    output_tokens = sum(int(r[3] or 0) for r in usage_rows)
+    return {
+        "requests": sum(int(r[1] or 0) for r in usage_rows),
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+        "cost": sum(float(r[4] or 0) for r in usage_rows),
+    }
+
+
+def profile_json(entity: Entity, period=None, session_admin_mode=None) -> dict:
+    """The ``/v1/me`` body: ``entity``'s profile, with usage for ``period``.
+
+    ``period`` is ``"YYYY-MM"`` (a UTC calendar month), ``None`` (the current
+    one) or ``"all"`` (lifetime, the figures ``/profile`` shows); anything else
+    raises ValueError. A month needs PostgreSQL: elsewhere its ``model_usage``
+    and ``totals`` are None and ``usage_available`` is false. Every lifetime
+    counter sits under a ``lifetime`` key. ``session_admin_mode`` is the
+    session's admin mode, reported for admin-eligible users on session calls;
+    leave it None for a key call.
+    """
+    eid = entity.id
+    if period == "all":
+        period_obj = {"name": "all", "start": None, "end": None, "usage_available": True}
+    else:
+        name, start, end = _month_period(period)
+        period_obj = {"name": name, "start": _iso(start), "end": _iso(end),
+                      "usage_available": db.engine.dialect.name == "postgresql"}
+
+    data = _get_profile_data(eid, live_tail=True)
+    if period == "all":
+        usage_rows, model_usage = data["usage_rows"], data["model_usage"]
+    elif period_obj["usage_available"]:
+        usage_rows = _fetch_month_usage_rows(eid, start, end)
+        all_models, eps_by_model, access_statuses, _ = _fetch_model_context(eid)
+        model_usage, _, _ = _build_model_usage(usage_rows, all_models, eps_by_model, access_statuses)
+    else:
+        usage_rows = model_usage = None
+
+    admin_eligible = is_admin_eligible(entity)
+    user = {
+        "id": eid,
+        "name": entity.name,
+        "email": entity.email,
+        "active": entity.active,
+        "store_conversations": entity.store_conversations,
+        "gravatar_url": _gravatar_url(entity.email or "", size=230),
+        "groups": [g.name for g in _entity_groups(eid)],
+        "admin_eligible": admin_eligible,
+    }
+    if session_admin_mode is not None and admin_eligible:
+        user["admin_mode"] = bool(session_admin_mode)
+
+    coin_pool = data["coin_pool"]
+    chat_agg = data["chat_agg"]
+    return {
+        "user": user,
+        "period": period_obj,
+        "totals": None if usage_rows is None else _usage_totals(usage_rows),
+        "model_usage": None if model_usage is None else [
+            {
+                "model_name": u["model_name"],
+                "requests": u["requests"],
+                "input_tokens": u["input_tokens"],
+                "output_tokens": u["output_tokens"],
+                "total_tokens": u["input_tokens"] + u["output_tokens"],
+                "cost": u["cost"],
+                "status": u["status"],
+            }
+            for u in model_usage
+        ],
+        "model_access": [
+            {
+                "model_name": row["model_name"],
+                "model_url": row["model_url"],
+                "access_status": row["access_status"],
+                "consented": row["consented"],
+                "consent_at": _iso(row["consent_at"]),
+                "notice": row["notice"],
+                "early_notice": row["early_notice"],
+                "model_status": row["model_status"],
+                "lifetime": {"last_used_at": _iso(row["last_used_at"])},
+            }
+            for row in data["model_access_list"]
+        ],
+        "coin_pool": None if coin_pool is None else {
+            "coin_limit": coin_pool["coin_limit"],
+            "coins_left": coin_pool["coins_left"],
+            "coins_per_hour": coin_pool["coins_per_hour"],
+            "next_refill": _iso(coin_pool["next_refill"]),
+        },
+        "projects": [
+            {
+                "id": p["id"],
+                "name": p["name"],
+                "detail_url": p["detail_url"],
+                "created_at": _iso(p["created_at"]),
+                "lifetime": {"requests": p["requests"], "tokens": p["tokens"], "cost": p["cost"]},
+            }
+            for p in data["project_list"]
+        ],
+        "api_keys": [
+            {
+                "id": k.id,
+                "name": k.name,
+                "key_hint": k.key_hint,
+                "created_at": _iso(k.created_at),
+                "last_used_at": _iso(k.last_used_at),
+                "expires_at": _iso(k.expires_at),
+                "revoked_at": _iso(k.revoked_at),
+                "created_by": data["key_creators"].get(k.id),
+                "revoked_by": data["key_revokers"].get(k.id),
+                "client_id": k.client_id,
+                "requested_by": k.requested_by,
+                "lifetime": {
+                    "requests": k.requests or 0,
+                    "input_tokens": k.input_tokens or 0,
+                    "output_tokens": k.output_tokens or 0,
+                    "total_tokens": (k.input_tokens or 0) + (k.output_tokens or 0),
+                    "cost": float(k.cost or 0),
+                },
+            }
+            for k in data["api_keys"]
+        ],
+        "lifetime": {
+            "conversation_count": int(data["conversation_count"]),
+            "chat": {
+                "requests": int(chat_agg[0] or 0),
+                "input_tokens": int(chat_agg[1] or 0),
+                "output_tokens": int(chat_agg[2] or 0),
+                "cost": float(chat_agg[3] or 0),
+                "last_used_at": _iso(chat_agg[4]),
+            },
+        },
+    }
 
 
 @profile_bp.route("/usage")

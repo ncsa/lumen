@@ -22,6 +22,7 @@ See [Profile → API Keys](../guides/profile.md#api-keys) to create a key.
 | `GET` | `/v1/models/<id>` | Retrieve details for a single model |
 | `POST` | `/v1/models/<id>/acknowledge` | Acknowledge a model that requires consent |
 | `GET` | `/v1/usage` | Get cumulative usage for the bearer API key |
+| `GET` | `/v1/me` | Get your own profile and usage (session or personal API key), see [Your Profile](#your-profile-v1me) |
 | `POST` | `/v1/chat/completions` | Send a chat message and receive a reply |
 | `POST` | `/v1/completions` | Legacy text-completion endpoint (prefer `/v1/chat/completions`) |
 | `POST` | `/v1/audio/transcriptions` | Transcribe audio to text (speech-to-text) |
@@ -68,6 +69,113 @@ of the account that owns the key, so it is shared with that account's other keys
 `-2` means the account has an unlimited coin pool and `null` that the account has no coin pool
 (none configured for it, its groups or the global default) or a blocked one (Max Coins `0`). This endpoint does not add to the request count. It does not include
 usage from other keys, browser chat, or earlier periods before the key was created.
+
+---
+
+## Your Profile (`/v1/me`)
+
+```bash
+curl https://lumen.example.com/v1/me?period=2026-11 \
+  -H "Authorization: Bearer sk_your_api_key_here"
+```
+
+Returns what your [profile page](profile.md) shows, as JSON: your account, your per-model usage and
+totals for a period, the models you can use (with acknowledgment status), your coin pool, the
+projects you manage, and your API keys. Key secrets and their hashes are never returned; revoked
+keys are listed, with `revoked_at` set. Every timestamp is UTC, in ISO-8601 with a trailing `Z`.
+
+### Authentication
+
+`/v1/me` accepts either credential:
+
+- **A personal API key**, in `Authorization: Bearer <key>`.
+- **The web session cookie**, the one your browser has after signing in. Send no `Authorization`
+  header to use it.
+
+When both are sent, the key wins. Calls never add to the key's request count or `last_used_at`.
+
+| Status | `type` | When |
+|--------|--------|------|
+| 401 | `authentication_error` | The `Authorization` header is not `Bearer <key>`, or the key is empty: "Missing or malformed Authorization header; expected 'Bearer &lt;key&gt;'". **Unlike the 400 the other `/v1` endpoints answer for a malformed header.** |
+| 401 | `authentication_error` | The key is unknown, revoked or expired: "Invalid or revoked API key". |
+| 401 | `authentication_error` | No header and no signed-in session: "Authentication required: …". Never a redirect to the sign-in page. |
+| 403 | `permission_error` | The monitoring token. |
+| 403 | `authentication_error` | The account is disabled: "Account disabled". |
+| 403 | `permission_error` | A [project](../projects/projects.md)'s key: it belongs to the project, not to you. Use the web session or a personal key. |
+| 403 | `permission_error` | A key minted through OAuth (the `lumen.sh` device flow, or an app's sign-in), including a personal key that an OAuth request overwrote, and an OAuth key later rotated on your profile page. Create a personal API key on your [profile page](profile.md#creating-a-key) instead. |
+
+### Periods
+
+`period` selects the window for `model_usage` and `totals`:
+
+| `period` | Window |
+|----------|--------|
+| *(none)* | The current UTC calendar month. |
+| `YYYY-MM` | That UTC calendar month, from the 1st 00:00 UTC up to the 1st of the next month 00:00 UTC. A request at the month's end belongs to the next month. |
+| `all` | Lifetime: the same figures as your profile page. |
+
+Anything else, such as `2026-13` or `2026-1`, answers 400 `invalid_request_error`. The current
+hour is included. Older months are included too: the upgrade step (`flask upgrade`) fills every
+month of the usage history, so no operator step is needed.
+
+Monthly usage needs PostgreSQL with TimescaleDB. On other databases a month answers
+`"usage_available": false` in `period`, with `model_usage` and `totals` set to `null`; `all` works
+everywhere.
+
+### Lifetime values
+
+Period values and lifetime values never share an object: `totals` and `model_usage` hold the
+period's figures, and every lifetime counter sits under a `lifetime` key. Lifetime values are
+each key's and each project's counters, each model's `last_used_at` in `model_access`, your
+conversation count and your web-chat totals. Lumen does not record key or project usage per month.
+
+`admin_mode` appears only for administrators, on session calls.
+
+### Example response
+
+```json
+{
+  "user": {
+    "id": 42, "name": "Ada Lovelace", "email": "ada@example.edu", "active": true,
+    "store_conversations": true,
+    "gravatar_url": "https://www.gravatar.com/avatar/…?s=230&d=mp",
+    "groups": ["physics"], "admin_eligible": false
+  },
+  "period": {"name": "2026-11", "start": "2026-11-01T00:00:00Z", "end": "2026-12-01T00:00:00Z",
+             "usage_available": true},
+  "totals": {"requests": 12, "input_tokens": 2400, "output_tokens": 600, "total_tokens": 3000,
+             "cost": 0.012345},
+  "model_usage": [
+    {"model_name": "llama-3-70b", "requests": 12, "input_tokens": 2400, "output_tokens": 600,
+     "total_tokens": 3000, "cost": 0.012345, "status": "ok"}
+  ],
+  "model_access": [
+    {"model_name": "llama-3-70b", "model_url": "/models/llama-3-70b", "access_status": "allowed",
+     "consented": null, "consent_at": null, "notice": null, "early_notice": null,
+     "model_status": "ok", "lifetime": {"last_used_at": "2026-11-14T15:02:11Z"}}
+  ],
+  "coin_pool": {"coin_limit": 100, "coins_left": 83.25, "coins_per_hour": 10,
+                "next_refill": "2026-11-14T16:00:00Z"},
+  "projects": [
+    {"id": 7, "name": "Physics Lab", "detail_url": "/projects/7", "created_at": "2026-09-01T12:00:00Z",
+     "lifetime": {"requests": 340, "tokens": 120000, "cost": 0.42}}
+  ],
+  "api_keys": [
+    {"id": 3, "name": "laptop", "key_hint": "sk_AbCd...wxyz", "created_at": "2026-10-01T09:00:00Z",
+     "last_used_at": "2026-11-14T15:02:11Z", "expires_at": null, "revoked_at": null,
+     "created_by": "Ada Lovelace", "revoked_by": null, "client_id": null, "requested_by": null,
+     "lifetime": {"requests": 80, "input_tokens": 16000, "output_tokens": 4000,
+                  "total_tokens": 20000, "cost": 0.08}}
+  ],
+  "lifetime": {
+    "conversation_count": 25,
+    "chat": {"requests": 140, "input_tokens": 50000, "output_tokens": 20000, "cost": 0.07,
+             "last_used_at": "2026-11-13T18:20:00Z"}
+  }
+}
+```
+
+`coin_pool` is `null` when you have no coin pool; `coin_limit` `-2` means unlimited.
 
 ---
 
