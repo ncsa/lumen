@@ -373,7 +373,7 @@ def test_group_detail_page_accessibility(app, admin_client, admin_user):
         db.session.flush()
         db.session.add(GroupMember(group_id=group.id, entity_id=admin_user["id"], is_owner=True))
         db.session.commit()
-        gid = group.id
+        gid = group.uuid
     url = f"/groups/{gid}"
     resp = admin_client.get(url)
     assert resp.status_code == HTTPStatus.OK

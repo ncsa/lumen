@@ -35,7 +35,7 @@ def _group_url(app, admin_user, test_model):
         db.session.flush()
         db.session.add(GroupMember(group_id=group.id, entity_id=admin_user["id"], is_owner=True))
         db.session.commit()
-        return f"/groups/{group.id}"
+        return f"/groups/{group.uuid}"
 
 
 def _consent_url(app, admin_user, test_model):

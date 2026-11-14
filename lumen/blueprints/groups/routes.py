@@ -1,5 +1,6 @@
 import hashlib
 from http import HTTPStatus
+from uuid import UUID
 
 from flask import Blueprint, abort, jsonify, render_template, request, session, url_for
 from sqlalchemy import func, select
@@ -18,11 +19,23 @@ from lumen.models.group_member import (
     is_group_owner,
 )
 from lumen.models.group_rule import GroupRule
+from lumen.models.lookups import group_by_uuid_or_404
 
 groups_bp = Blueprint("groups", __name__)
 
 # Must match the options rendered by the frontend per-page selector.
 _VALID_PER_PAGE = {25, 50, 100, 200}
+
+
+def _member_entity(raw) -> Entity | None:
+    """The user or project whose public uuid is raw (a request-body value), else None."""
+    try:
+        u = UUID(str(raw))
+    except ValueError:
+        return None
+    return db.session.execute(
+        select(Entity).where(Entity.uuid == u, Entity.entity_type.in_(("user", "project")))
+    ).scalar_one_or_none()
 
 
 def _require_group_access(entity_id: int, gid: int):
@@ -226,7 +239,7 @@ def data():
     return jsonify({
         "groups": [
             {
-                "id": g.id,
+                "id": str(g.uuid),
                 "name": g.name,
                 "description": g.description,
                 "members": int(members or 0),
@@ -236,7 +249,7 @@ def data():
                 "max_coins": float(max_coins) if max_coins is not None else None,
                 "refresh_coins": float(refresh_coins) if refresh_coins is not None else None,
                 "created": g.created_at.strftime("%Y-%m-%dT%H:%M:%SZ") if g.created_at else None,
-                "detail_url": url_for("groups.detail", gid=g.id),
+                "detail_url": url_for("groups.detail", gid=g.uuid),
                 "is_owner": g.id in owner_ids,
             }
             for g, members, max_coins, refresh_coins in rows
@@ -247,11 +260,12 @@ def data():
     })
 
 
-@groups_bp.route("/groups/<int:gid>")
+@groups_bp.route("/groups/<uuid:gid>")
 @login_required
 def detail(gid):
     entity_id = session["entity_id"]
-    group = db.get_or_404(Group, gid)
+    group = group_by_uuid_or_404(gid)
+    gid = group.id
     _require_group_access(entity_id, gid)
 
     owner = get_group_owner(gid)
@@ -278,7 +292,8 @@ def detail(gid):
     return render_template(
         "group_detail.html",
         group=group,
-        owner_id=owner_id,
+        owner_uuid=str(owner.uuid) if owner else None,
+        caller_uuid=str(entity.uuid),
         can_manage=can_manage,
         gravatar_url=gravatar_url,
         group_limit=group_limit,
@@ -287,12 +302,13 @@ def detail(gid):
     )
 
 
-@groups_bp.route("/groups/<int:gid>", methods=["PATCH"])
+@groups_bp.route("/groups/<uuid:gid>", methods=["PATCH"])
 @login_required
 def update_group(gid):
     """Edit a group's name/description/active (owner or admin) and coin pool (admin only)."""
     entity_id = session["entity_id"]
-    group = db.get_or_404(Group, gid)
+    group = group_by_uuid_or_404(gid)
+    gid = group.id
     _require_group_admin(entity_id, gid)
 
     data = request.get_json() or {}
@@ -325,11 +341,12 @@ def update_group(gid):
     return jsonify({"ok": True, "name": group.name, "active": group.active})
 
 
-@groups_bp.route("/groups/<int:gid>/toggle", methods=["POST"])
+@groups_bp.route("/groups/<uuid:gid>/toggle", methods=["POST"])
 @login_required
 def toggle_group(gid):
     entity_id = session["entity_id"]
-    group = db.get_or_404(Group, gid)
+    group = group_by_uuid_or_404(gid)
+    gid = group.id
     _require_group_admin(entity_id, gid)
     group.active = not group.active
     db.session.commit()
@@ -396,10 +413,10 @@ def create_group():
         # create; the unique constraint on groups.name then fires here.
         db.session.rollback()
         return jsonify({"error": "A group with this name already exists"}), HTTPStatus.CONFLICT
-    return jsonify({"id": group.id, "name": group.name}), HTTPStatus.CREATED
+    return jsonify({"id": str(group.uuid), "name": group.name}), HTTPStatus.CREATED
 
 
-@groups_bp.route("/groups/<int:gid>/rules", methods=["PUT"])
+@groups_bp.route("/groups/<uuid:gid>/rules", methods=["PUT"])
 @admin_required
 def set_group_rules(gid):
     """Replace a group's auto-join rules. Admin only.
@@ -410,7 +427,8 @@ def set_group_rules(gid):
     least one rule (matching fails closed on an empty set, so an auto group
     without rules would just be misleading UI).
     """
-    group = db.get_or_404(Group, gid)
+    group = group_by_uuid_or_404(gid)
+    gid = group.id
     data = request.get_json() or {}
 
     auto_join = bool(data.get("auto_join"))
@@ -458,12 +476,13 @@ def set_group_rules(gid):
     })
 
 
-@groups_bp.route("/groups/<int:gid>", methods=["DELETE"])
+@groups_bp.route("/groups/<uuid:gid>", methods=["DELETE"])
 @login_required
 def delete_group(gid):
     """Soft-delete: deactivate. Unlike projects, the owner may do this too."""
     entity_id = session["entity_id"]
-    group = db.get_or_404(Group, gid)
+    group = group_by_uuid_or_404(gid)
+    gid = group.id
     _require_group_admin(entity_id, gid)
     group.active = False
     db.session.commit()
@@ -474,12 +493,12 @@ def delete_group(gid):
 # Members
 # ---------------------------------------------------------------------------
 
-@groups_bp.route("/groups/<int:gid>/members/data")
+@groups_bp.route("/groups/<uuid:gid>/members/data")
 @login_required
 def members_data(gid):
     """Paginated member rows for the Members tab."""
     entity_id = session["entity_id"]
-    db.get_or_404(Group, gid)
+    gid = group_by_uuid_or_404(gid).id
     _require_group_access(entity_id, gid)
     # The member list of an ownerless group is admin-only: without this the
     # UI restriction would be trivially bypassable by calling the API directly.
@@ -537,7 +556,7 @@ def members_data(gid):
     return jsonify({
         "members": [
             {
-                "id": e.id,
+                "id": str(e.uuid),
                 "name": e.name,
                 "email": e.email,
                 "type": e.entity_type,
@@ -555,18 +574,17 @@ def members_data(gid):
     })
 
 
-@groups_bp.route("/groups/<int:gid>/members/search")
+@groups_bp.route("/groups/<uuid:gid>/members/search")
 @login_required
 def search_group_members(gid):
     """Users and projects matching q that are not already members."""
     entity_id = session["entity_id"]
+    gid = group_by_uuid_or_404(gid).id
     _require_group_admin(entity_id, gid)
 
     q = (request.args.get("q") or "").strip()
     if len(q) < 2:
         return jsonify({"entities": []})
-
-    db.get_or_404(Group, gid)
 
     existing_ids = db.session.execute(
         select(GroupMember.entity_id).where(GroupMember.group_id == gid)
@@ -587,28 +605,29 @@ def search_group_members(gid):
     entities = db.session.execute(stmt).scalars().all()
     return jsonify({
         "entities": [
-            {"id": e.id, "name": e.name, "email": e.email, "type": e.entity_type}
+            {"id": str(e.uuid), "name": e.name, "email": e.email, "type": e.entity_type}
             for e in entities
         ]
     })
 
 
-@groups_bp.route("/groups/<int:gid>/members", methods=["POST"])
+@groups_bp.route("/groups/<uuid:gid>/members", methods=["POST"])
 @login_required
 def add_group_member(gid):
     entity_id = session["entity_id"]
-    group = db.get_or_404(Group, gid)
+    group = group_by_uuid_or_404(gid)
+    gid = group.id
     _require_group_admin(entity_id, gid)
     error = _reject_auto_membership(group)
     if error:
         return error
 
     data = request.get_json() or {}
-    member_id = data.get("entity_id")
-    if not member_id:
+    member_uuid = data.get("entity_id")
+    if not member_uuid:
         return jsonify({"error": "entity_id required"}), HTTPStatus.BAD_REQUEST
 
-    member = db.session.get(Entity, member_id)
+    member = _member_entity(member_uuid)
     if not member:
         return jsonify({"error": "Entity not found"}), HTTPStatus.NOT_FOUND
     # The typeahead only offers active entities; enforce the same rule here so
@@ -632,11 +651,11 @@ def add_group_member(gid):
         return jsonify({"error": "Already a member of this group"}), HTTPStatus.CONFLICT
 
     return jsonify({
-        "entity_id": member.id, "name": member.name, "email": member.email, "type": member.entity_type,
+        "entity_id": str(member.uuid), "name": member.name, "email": member.email, "type": member.entity_type,
     }), HTTPStatus.CREATED
 
 
-@groups_bp.route("/groups/<int:gid>/members/<int:eid>", methods=["DELETE"])
+@groups_bp.route("/groups/<uuid:gid>/members/<uuid:eid>", methods=["DELETE"])
 @login_required
 def remove_group_member(gid, eid):
     """Remove a member.
@@ -646,14 +665,17 @@ def remove_group_member(gid, eid):
     still matches, the membership is re-added at that user's next login.
     """
     entity_id = session["entity_id"]
-    group = db.get_or_404(Group, gid)
+    group = group_by_uuid_or_404(gid)
+    gid = group.id
     _require_group_admin(entity_id, gid)
     error = _reject_auto_membership(group)
     if error:
         return error
 
     target = db.session.execute(
-        select(GroupMember).filter_by(entity_id=eid, group_id=gid)
+        select(GroupMember)
+        .join(Entity, Entity.id == GroupMember.entity_id)
+        .where(Entity.uuid == eid, GroupMember.group_id == gid)
     ).scalar_one_or_none()
     if not target:
         return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
@@ -666,7 +688,7 @@ def remove_group_member(gid, eid):
     return "", HTTPStatus.NO_CONTENT
 
 
-@groups_bp.route("/groups/<int:gid>/owner/search")
+@groups_bp.route("/groups/<uuid:gid>/owner/search")
 @login_required
 def search_owner_candidates(gid):
     """User members of the group who could become its owner.
@@ -676,7 +698,8 @@ def search_owner_candidates(gid):
     group, and the current owner is excluded.
     """
     entity_id = session["entity_id"]
-    group = db.get_or_404(Group, gid)
+    group = group_by_uuid_or_404(gid)
+    gid = group.id
     _require_group_admin(entity_id, gid)
     error = _reject_auto_membership(group)
     if error:
@@ -701,28 +724,29 @@ def search_owner_candidates(gid):
     ).scalars().all()
     return jsonify({
         "entities": [
-            {"id": e.id, "name": e.name, "email": e.email, "type": e.entity_type}
+            {"id": str(e.uuid), "name": e.name, "email": e.email, "type": e.entity_type}
             for e in entities
         ]
     })
 
 
-@groups_bp.route("/groups/<int:gid>/owner", methods=["POST"])
+@groups_bp.route("/groups/<uuid:gid>/owner", methods=["POST"])
 @login_required
 def transfer_ownership(gid):
     entity_id = session["entity_id"]
-    group = db.get_or_404(Group, gid)
+    group = group_by_uuid_or_404(gid)
+    gid = group.id
     _require_group_admin(entity_id, gid)
     error = _reject_auto_membership(group)
     if error:
         return error
 
     data = request.get_json() or {}
-    new_owner_id = data.get("entity_id")
-    if not new_owner_id:
+    new_owner_uuid = data.get("entity_id")
+    if not new_owner_uuid:
         return jsonify({"error": "entity_id required"}), HTTPStatus.BAD_REQUEST
 
-    new_owner = db.session.get(Entity, new_owner_id)
+    new_owner = _member_entity(new_owner_uuid)
     if not new_owner:
         return jsonify({"error": "User not found"}), HTTPStatus.NOT_FOUND
     if new_owner.entity_type != "user":
@@ -735,7 +759,7 @@ def transfer_ownership(gid):
     ).scalar_one_or_none()
 
     new_assoc = db.session.execute(
-        select(GroupMember).filter_by(entity_id=new_owner_id, group_id=gid)
+        select(GroupMember).filter_by(entity_id=new_owner.id, group_id=gid)
     ).scalar_one_or_none()
     if new_assoc is None:
         return jsonify(
@@ -764,4 +788,4 @@ def transfer_ownership(gid):
         # uq_group_members_owner: a concurrent transfer committed first.
         db.session.rollback()
         return jsonify({"error": "Ownership changed concurrently; reload and try again"}), HTTPStatus.CONFLICT
-    return jsonify({"owner_id": new_owner_id}), HTTPStatus.OK
+    return jsonify({"owner_id": str(new_owner.uuid)}), HTTPStatus.OK

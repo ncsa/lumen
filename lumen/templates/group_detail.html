@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_entity_search_modal.html" import entity_search_modal %}
+{% from "_copy_id_avatar.html" import copy_id_avatar %}
 {% block title %}{{ group.name }} — {{ app_name }}{% endblock %}
 
 {% block content %}
@@ -20,8 +21,7 @@
 
       <!-- Col 1: avatar + name + status, centred -->
       <div class="col-12 col-md-3 text-center profile-col-identity">
-        <img src="{{ gravatar_url }}" width="115" height="115"
-             class="rounded-circle profile-avatar-img" alt="Avatar for {{ group.name }}">
+        {{ copy_id_avatar(gravatar_url, group.name, group.uuid, "group") }}
         <h2 class="profile-name mt-0 mb-0">{{ group.name }}</h2>
         {% if group.description %}<p class="text-muted small mt-1 mb-0">{{ group.description }}</p>{% endif %}
         <p class="text-muted small mt-0 mb-0">
@@ -285,13 +285,14 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/entity-search.js') }}"></script>
+<script src="{{ url_for('static', filename='js/copy-id.js') }}"></script>
 <script>
-const GROUP_ID = {{ group.id }};
+const GROUP_ID = {{ group.uuid | string | tojson }};
 const CAN_MANAGE = {{ can_manage | tojson }};
 // Auto-join groups are rule-driven: no manual member actions, even for admins.
 const MEMBER_ACTIONS = CAN_MANAGE && !{{ group.auto_join | tojson }};
-const OWNER_ID = {{ owner_id | tojson }};
-const CALLER_IS_OWNER = {{ (owner_id == session['entity_id']) | tojson }};
+const OWNER_ID = {{ owner_uuid | tojson }};
+const CALLER_IS_OWNER = {{ (owner_uuid is not none and owner_uuid == caller_uuid) | tojson }};
 
 function escHtml(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -534,7 +535,7 @@ async function addMember() {
   const resp = await fetch(`/groups/${GROUP_ID}/members`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
-    body: JSON.stringify({ entity_id: parseInt(entityId) }),
+    body: JSON.stringify({ entity_id: entityId }),
   });
   const data = await resp.json().catch(() => ({}));
   if (resp.ok) {
@@ -578,7 +579,7 @@ async function changeOwner() {
   const resp = await fetch(`/groups/${GROUP_ID}/owner`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
-    body: JSON.stringify({ entity_id: parseInt(entityId) }),
+    body: JSON.stringify({ entity_id: entityId }),
   });
   if (resp.ok) { location.reload(); return; }
   const d = await resp.json().catch(() => ({}));

@@ -121,10 +121,11 @@ def test_ghost_absent_from_group_member_search(app, auth_client, test_user, ghos
         db.session.flush()
         db.session.add(GroupMember(group_id=group.id, entity_id=test_user["id"], is_owner=True))
         db.session.commit()
-        gid = group.id
+        gid = group.uuid
+        control_uuid = str(db.session.get(Entity, control_user).uuid)
 
     entities = auth_client.get(f"/groups/{gid}/members/search?q=Erased").get_json()["entities"]
-    assert [e["id"] for e in entities] == [control_user]
+    assert [e["id"] for e in entities] == [control_uuid]
 
 
 def test_ghost_absent_from_project_member_search(app, auth_client, test_user, ghost_id, control_user):
