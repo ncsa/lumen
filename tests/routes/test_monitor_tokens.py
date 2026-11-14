@@ -153,6 +153,43 @@ def test_cache_reporting_reads_the_last_day_only(app, test_model):
         assert request_rates.cache_reporting() == {}
 
 
+@pytest.mark.parametrize("cached,write,expected", [
+    (3, None, {"requests": 1, "reads": True, "writes": False}),
+    (None, 2, {"requests": 1, "reads": False, "writes": True}),
+], ids=["reads-only", "writes-only"])
+def test_cache_reporting_reports_each_side_on_its_own(app, test_model, cached, write, expected):
+    """A backend that sends only one of the two cache counts gets exactly that
+    side reported, so cache reads and cache writes are never confused."""
+    with app.app_context():
+        from lumen.extensions import db
+        _log(test_model["id"], timedelta(minutes=5), 10, 1, cached=cached, write=write)
+        db.session.commit()
+        assert request_rates.cache_reporting() == {test_model["id"]: expected}
+
+
+def test_cache_reporting_combines_rows_per_model(app, test_model):
+    """Each side is true if any row in the day carried it, per model: a reads row
+    and a writes row add up to both, while a writes-only model stays writes-only."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        other = ModelConfig(model_name="other-model", input_cost_per_million=1.0, output_cost_per_million=2.0)
+        db.session.add(other)
+        db.session.flush()
+        a, b = test_model["id"], other.id
+        _log(a, timedelta(minutes=5), 10, 1, cached=4)
+        _log(a, timedelta(minutes=10), 10, 1, write=2)
+        _log(b, timedelta(minutes=5), 10, 1, write=2)
+        _log(b, timedelta(minutes=10), 10, 1, write=5)
+        db.session.commit()
+        writes_only = {"requests": 2, "reads": False, "writes": True}
+        assert request_rates.cache_reporting() == {
+            a: {"requests": 2, "reads": True, "writes": True},
+            b: writes_only,
+        }
+        assert request_rates.cache_reporting(model_config_id=b) == {b: writes_only}
+
+
 def test_monitor_list_models_with_cache_metrics(client, monitor_token, cache_seeded, test_model):
     row = _listed(client, monitor_token, "?tokens=true")[test_model["model_name"]]
     assert row[CACHE_FIELD] == cache_seeded
