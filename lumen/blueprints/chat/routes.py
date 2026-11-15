@@ -7,7 +7,7 @@ from uuid import UUID
 
 import filetype
 import pypdf
-from flask import Blueprint, Response, current_app, jsonify, render_template, request, session
+from flask import Blueprint, Response, current_app, g, jsonify, render_template, request
 from sqlalchemy import and_, func, or_, select
 from werkzeug.utils import secure_filename
 
@@ -88,7 +88,7 @@ def _count_conversation_started(entity_id):
 @login_required
 @limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def chat_page():
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     all_models = db.session.execute(select(ModelConfig).where(ModelConfig.active).order_by(ModelConfig.model_name)).scalars().all()
     healthy_counts = dict(
         db.session.execute(
@@ -216,7 +216,7 @@ def chat_stream():
     if total_chars > _MAX_CHARS:
         return jsonify({"error": f"Message payload too large (max {_MAX_CHARS:,} characters)"}), HTTPStatus.BAD_REQUEST
 
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
 
     try:
         model_config = model_cache.resolve(model)
@@ -424,7 +424,7 @@ def chat_stream():
 @login_required
 @limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def list_conversations():
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     limit = min(request.args.get("limit", 50, type=int), 200)
     # Paging anchor: the uuid of the last conversation already shown; malformed is ignored.
     before_uuid = request.args.get("before", type=UUID)
@@ -487,7 +487,7 @@ def list_conversations():
 @login_required
 @limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def get_conversation_messages(cid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     conv = db.session.execute(
         select(Conversation).filter_by(uuid=cid, entity_id=entity_id)
     ).scalar_one_or_none()
@@ -523,7 +523,7 @@ def get_conversation_messages(cid):
 @login_required
 @limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def delete_conversation(cid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     conv = db.session.execute(select(Conversation).filter_by(uuid=cid, entity_id=entity_id)).scalar_one_or_none()
     if not conv:
         return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
