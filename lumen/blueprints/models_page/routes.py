@@ -2,7 +2,7 @@ from http import HTTPStatus
 from urllib.parse import urlparse
 
 import requests as http_requests
-from flask import Blueprint, abort, render_template, session
+from flask import Blueprint, abort, g, render_template
 from sqlalchemy import select
 
 from lumen.decorators import login_required
@@ -25,7 +25,7 @@ def _visible_model_or_404(model_name):
     shows the (renamed/upgraded) model it points at.
     """
     config = resolve_model_config(model_name) or abort(HTTPStatus.NOT_FOUND)
-    access_status = get_model_access_status(session["entity_id"], config.id)
+    access_status = get_model_access_status(g.entity_id, config.id)
     if access_status == "blocked":
         abort(HTTPStatus.NOT_FOUND)
     return config, access_status
@@ -34,7 +34,7 @@ def _visible_model_or_404(model_name):
 @models_page_bp.route("/models")
 @login_required
 def index():
-    entity_id = session.get("entity_id")
+    entity_id = g.get("entity_id")
     all_configs = db.session.execute(select(ModelConfig).where(ModelConfig.active).order_by(ModelConfig.model_name)).scalars().all()
     access_statuses, consent_map = bulk_model_access_info(entity_id, [c.id for c in all_configs])
     configs = [c for c in all_configs if access_statuses.get(c.id, "allowed") != "blocked"]
@@ -76,7 +76,7 @@ def detail(model_name):
     requests_last_hour = counts.get("last_hour", 0)
     requests_last_day = counts.get("last_day", 0)
 
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     consent = (
         db.session.execute(
             select(EntityModelConsent).filter_by(entity_id=entity_id, model_config_id=config.id)
