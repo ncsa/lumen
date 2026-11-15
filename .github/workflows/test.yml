@@ -130,7 +130,7 @@ jobs:
       # tests/unit/test_chart_migration.py renders the chart and fails without helm.
       - name: Install Helm
         if: matrix.name == 'lumen'
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
 
       - name: Install dependencies
         run: uv sync --frozen
