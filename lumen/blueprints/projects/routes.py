@@ -2,7 +2,7 @@ import hashlib
 from http import HTTPStatus
 from uuid import UUID
 
-from flask import Blueprint, abort, jsonify, render_template, request, session, url_for
+from flask import Blueprint, abort, g, jsonify, render_template, request, url_for
 from sqlalchemy import case, func, select, update
 from sqlalchemy.exc import IntegrityError
 
@@ -120,7 +120,7 @@ def _member_user_id(uid: UUID) -> int | None:
 @projects_bp.route("/projects", methods=["GET"])
 @login_required
 def index():
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     entity = db.session.get(Entity, entity_id)
 
     # Summary cards reflect the full visible set, independent of the paginated table.
@@ -151,7 +151,7 @@ def index():
 @login_required
 def data():
     """Paginated project rows for the projects table (mirrors the admin users API)."""
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     entity = db.session.get(Entity, entity_id)
     admin = is_admin(entity)
 
@@ -276,7 +276,7 @@ def data():
 @projects_bp.route("/projects/<uuid:sid>")
 @login_required
 def detail(sid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     project = _project_or_404(sid)
     sid = project.id
     _require_project_access(entity_id, sid)
@@ -360,7 +360,7 @@ def detail(sid):
 @login_required
 def update_project(sid):
     """Edit a project's name/active (owner or admin) and coin pool (admin only)."""
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     project = _project_or_404(sid)
     sid = project.id
     _require_project_admin(entity_id, sid)
@@ -398,7 +398,7 @@ def update_project(sid):
 @projects_bp.route("/projects/<uuid:sid>/toggle", methods=["POST"])
 @login_required
 def toggle_project(sid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     project = _project_or_404(sid)
     sid = project.id
     _require_project_admin(entity_id, sid)
@@ -466,7 +466,7 @@ def delete_project(sid):
 @projects_bp.route("/projects/<uuid:sid>/users/search")
 @login_required
 def search_project_users(sid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     sid = _project_or_404(sid).id
     _require_project_manager(entity_id, sid)
 
@@ -499,7 +499,7 @@ def search_project_users(sid):
 @projects_bp.route("/projects/<uuid:sid>/users", methods=["POST"])
 @login_required
 def add_project_member(sid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     sid = _project_or_404(sid).id
     _require_project_manager(entity_id, sid)
 
@@ -536,7 +536,7 @@ def add_project_member(sid):
 @projects_bp.route("/projects/<uuid:sid>/users/<uuid:uid>", methods=["DELETE"])
 @login_required
 def remove_project_member(sid, uid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     project = _project_or_404(sid)
     sid = project.id
     _require_project_manager(entity_id, sid)
@@ -579,7 +579,7 @@ def remove_project_member(sid, uid):
 @login_required
 def update_project_member(sid, uid):
     """Promote a user to manager or demote a manager to user (owner or admin)."""
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     project = _project_or_404(sid)
     sid = project.id
     _require_project_admin(entity_id, sid)
@@ -634,7 +634,7 @@ def update_project_member(sid, uid):
 @projects_bp.route("/projects/<uuid:sid>/owner", methods=["POST"])
 @login_required
 def transfer_ownership(sid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     project = _project_or_404(sid)
     sid = project.id
     _require_project_admin(entity_id, sid)
@@ -695,7 +695,7 @@ def transfer_ownership(sid):
 @projects_bp.route("/projects/<uuid:sid>/keys", methods=["POST"])
 @login_required
 def create_project_key(sid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     project = _project_or_404(sid)
     sid = project.id
     admin = is_admin(db.session.get(Entity, entity_id))
@@ -759,7 +759,7 @@ def delete_project_key_removed(sid, kid):
 @projects_bp.route("/projects/<uuid:sid>/keys/<uuid:kid>/revoke", methods=["POST"])
 @login_required
 def revoke_project_key(sid, kid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     sid = _project_or_404(sid).id
     _require_project_access(entity_id, sid)
 
@@ -780,7 +780,7 @@ def revoke_project_key(sid, kid):
 @projects_bp.route("/projects/<uuid:sid>/keys/<uuid:kid>/rotate", methods=["POST"])
 @login_required
 def rotate_project_key(sid, kid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     sid = _project_or_404(sid).id
     _require_project_access(entity_id, sid)
 
@@ -797,7 +797,7 @@ def rotate_project_key(sid, kid):
 @projects_bp.route("/projects/<uuid:sid>/keys/<uuid:kid>/ttl", methods=["POST"])
 @login_required
 def edit_project_key_ttl(sid, kid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     sid = _project_or_404(sid).id
     _require_project_access(entity_id, sid)
 
@@ -814,7 +814,7 @@ def edit_project_key_ttl(sid, kid):
 @projects_bp.route("/projects/<uuid:sid>/consent/<path:model_name>", methods=["POST"])
 @login_required
 def project_consent(sid, model_name):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     sid = _project_or_404(sid).id
     # Acknowledging a model binds the whole project, so plain users cannot.
     _require_project_manager(entity_id, sid)
