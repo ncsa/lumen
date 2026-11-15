@@ -3,6 +3,7 @@ import io
 import json
 import logging
 from http import HTTPStatus
+from uuid import UUID
 
 import filetype
 import pypdf
@@ -200,6 +201,12 @@ def chat_stream():
 
     if not messages or not model:
         return jsonify({"error": "Missing messages or model"}), HTTPStatus.BAD_REQUEST
+    # The client continues a conversation by its opaque uuid, never the integer id.
+    if conversation_id is not None:
+        try:
+            conversation_id = UUID(conversation_id)
+        except (TypeError, ValueError, AttributeError):
+            return jsonify({"error": "Invalid conversation_id"}), HTTPStatus.BAD_REQUEST
 
     _MAX_MESSAGES = 500
     _MAX_CHARS = 500_000
@@ -327,7 +334,7 @@ def chat_stream():
                     started = False
                     if conversation_id:
                         conv = db.session.execute(
-                            select(Conversation).filter_by(id=conversation_id, entity_id=entity_id)
+                            select(Conversation).filter_by(uuid=conversation_id, entity_id=entity_id)
                         ).scalar_one_or_none()
 
                     if conv is None:
@@ -360,10 +367,10 @@ def chat_stream():
                     ))
 
                     conv.updated_at = utcnow()
-                    # Read conv.id before commit: expire_on_commit would otherwise
+                    # Read conv.uuid before commit: expire_on_commit would otherwise
                     # check out a fresh connection to refresh it, and that connection
                     # would still be held during the final yield below.
-                    conv_id = conv.id
+                    conv_uuid = str(conv.uuid)
                     if started:
                         # The entity_stats row lock is the one every request of
                         # this entity takes, so it goes last: flush everything
@@ -372,7 +379,7 @@ def chat_stream():
                         _count_conversation_started(entity_id)
                     db.session.commit()
 
-                result["conversation_id"] = conv_id
+                result["conversation_id"] = conv_uuid
             elif is_new_conversation:
                 # Storage is off, but the lifetime conversation counter still
                 # counts the chat that just started.
@@ -419,16 +426,17 @@ def chat_stream():
 def list_conversations():
     entity_id = session["entity_id"]
     limit = min(request.args.get("limit", 50, type=int), 200)
-    before_id = request.args.get("before", type=int)
+    # Paging anchor: the uuid of the last conversation already shown; malformed is ignored.
+    before_uuid = request.args.get("before", type=UUID)
 
     stmt = (
         select(Conversation)
         .filter_by(entity_id=entity_id)
         .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
     )
-    if before_id is not None:
+    if before_uuid is not None:
         anchor = db.session.execute(
-            select(Conversation).filter_by(id=before_id, entity_id=entity_id)
+            select(Conversation).filter_by(uuid=before_uuid, entity_id=entity_id)
         ).scalar_one_or_none()
         if anchor and anchor.updated_at is not None:
             stmt = stmt.where(
@@ -466,7 +474,7 @@ def list_conversations():
     result = []
     for conv in convs:
         result.append({
-            "id": conv.id,
+            "id": str(conv.uuid),
             "title": conv.title,
             "model": conv.model,
             "updated_at": conv.updated_at.strftime('%Y-%m-%dT%H:%M:%SZ') if conv.updated_at else None,
@@ -475,19 +483,19 @@ def list_conversations():
     return jsonify({"conversations": result, "has_more": has_more})
 
 
-@chat_bp.route("/chat/conversations/<int:cid>/messages")
+@chat_bp.route("/chat/conversations/<uuid:cid>/messages")
 @login_required
 @limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def get_conversation_messages(cid):
     entity_id = session["entity_id"]
     conv = db.session.execute(
-        select(Conversation).filter_by(id=cid, entity_id=entity_id)
+        select(Conversation).filter_by(uuid=cid, entity_id=entity_id)
     ).scalar_one_or_none()
     if not conv:
         return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
 
     msgs = db.session.execute(
-        select(Message).filter_by(conversation_id=cid).order_by(Message.created_at)
+        select(Message).filter_by(conversation_id=conv.id).order_by(Message.created_at)
     ).scalars().all()
     result = []
     for msg in msgs:
@@ -511,12 +519,12 @@ def get_conversation_messages(cid):
     return jsonify({"messages": result})
 
 
-@chat_bp.route("/chat/conversations/<int:cid>", methods=["DELETE"])
+@chat_bp.route("/chat/conversations/<uuid:cid>", methods=["DELETE"])
 @login_required
 @limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def delete_conversation(cid):
     entity_id = session["entity_id"]
-    conv = db.session.execute(select(Conversation).filter_by(id=cid, entity_id=entity_id)).scalar_one_or_none()
+    conv = db.session.execute(select(Conversation).filter_by(uuid=cid, entity_id=entity_id)).scalar_one_or_none()
     if not conv:
         return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
 

@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import func, select
 
 from lumen.timeutils import utcnow
-from tests.conftest import make_project
+from tests.conftest import key_by_public_id, key_uuid, make_project
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -956,9 +956,7 @@ def test_create_key_expires_at_from_cap(app, managed_auth_client, managed_projec
     )
     assert resp.status_code == HTTPStatus.CREATED
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.api_key import APIKey
-        expires_at = db.session.get(APIKey, resp.get_json()["id"]).expires_at
+        expires_at = key_by_public_id(resp.get_json()["id"]).expires_at
     if cap:
         assert abs(expires_at - (utcnow() + timedelta(seconds=cap))) < timedelta(minutes=1)
     else:
@@ -981,9 +979,7 @@ def test_create_key_with_ttl(app, managed_auth_client, managed_project, restore_
     resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys", json=body)
     assert resp.status_code == HTTPStatus.CREATED
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.api_key import APIKey
-        expires_at = db.session.get(APIKey, resp.get_json()["id"]).expires_at
+        expires_at = key_by_public_id(resp.get_json()["id"]).expires_at
     if expected:
         assert abs(expires_at - (utcnow() + timedelta(seconds=expected))) < timedelta(minutes=1)
         assert resp.get_json()["expires_at"] == expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1155,9 +1151,9 @@ def test_detail_key_table_has_sortable_created_by_column(managed_auth_client, ma
     assert "'requests','tokens','cost','last_used'" in html  # created_by not numeric → asc first click
 
 
-def test_revoke_key_forbidden_for_non_manager(auth_client, service_project, make_api_key):
+def test_revoke_key_forbidden_for_non_manager(app, auth_client, service_project, make_api_key):
     key_id, _ = make_api_key(service_project["id"], raw_key="sk_revk0000000000000000ey1234567890", name="k")
-    resp = auth_client.post(f"/projects/{service_project['uuid']}/keys/{key_id}/revoke")
+    resp = auth_client.post(f"/projects/{service_project['uuid']}/keys/{key_uuid(app, key_id)}/revoke")
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
@@ -1172,7 +1168,7 @@ def _key_state(app, key_id):
 
 def test_revoke_key_sets_revoked_at(app, managed_auth_client, managed_project, test_user, make_created_key):
     key_id = make_created_key(managed_project["id"], test_user["id"], "sk_tore0000000000000000voke12345678")
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_id}/revoke")
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, key_id)}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     revoked_at, revoked_by, *counters = _key_state(app, key_id)
     assert abs(utcnow() - revoked_at) < timedelta(minutes=1)
@@ -1183,7 +1179,7 @@ def test_revoke_key_sets_revoked_at(app, managed_auth_client, managed_project, t
 def test_manager_revoking_member_key_records_revoker(app, managed_auth_client, managed_project, test_user,
                                                      second_user, make_created_key):
     key_id = make_created_key(managed_project["id"], second_user["id"], "sk_memb0000000000000000erkey1234567")
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_id}/revoke")
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, key_id)}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     _, revoked_by, *_ = _key_state(app, key_id)
     assert revoked_by == test_user["id"]
@@ -1192,7 +1188,7 @@ def test_manager_revoking_member_key_records_revoker(app, managed_auth_client, m
 def test_deleting_revoker_keeps_key_with_null_revoker(app, managed_auth_client, managed_project, test_user,
                                                       second_user, make_created_key):
     key_id = make_created_key(managed_project["id"], second_user["id"], "sk_orph00000000000000000revoker1234")
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_id}/revoke")
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, key_id)}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     _delete_entity_enforcing_fks(app, test_user["id"])
     with app.app_context():
@@ -1203,12 +1199,12 @@ def test_deleting_revoker_keeps_key_with_null_revoker(app, managed_auth_client, 
         assert key.revoked_by_entity_id is None
 
 
-def test_revoked_project_key_is_rejected(client, managed_auth_client, managed_project, test_user, make_created_key):
+def test_revoked_project_key_is_rejected(app, client, managed_auth_client, managed_project, test_user, make_created_key):
     raw = "sk_revo0000000000000000ked401key123"
     key_id = make_created_key(managed_project["id"], test_user["id"], raw)
     headers = {"Authorization": f"Bearer {raw}"}
     assert client.get("/v1/models", headers=headers).status_code == HTTPStatus.OK
-    managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_id}/revoke")
+    managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, key_id)}/revoke")
     assert client.get("/v1/models", headers=headers).status_code == HTTPStatus.UNAUTHORIZED
 
 
@@ -1216,14 +1212,44 @@ def test_revoke_revoked_key_is_noop(app, managed_auth_client, managed_project, t
     key_id = make_created_key(managed_project["id"], test_user["id"], "sk_inac0000000000000000tive12345678",
                               revoked_at=datetime(2026, 9, 3, 8, 0))
     before = _key_state(app, key_id)
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_id}/revoke")
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, key_id)}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     assert _key_state(app, key_id) == before
 
 
-def test_project_page_uses_revoke_wording(managed_auth_client, managed_project, make_api_key):
+def test_revoke_key_from_other_project_returns_404(app, managed_auth_client, managed_project, test_user,
+                                                  make_created_key):
+    with app.app_context():
+        other_id = make_project("other-rev", initials="OR").id
+    kid = make_created_key(other_id, test_user["id"], "sk_othe00000000000000000rrevoke1234")
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/revoke")
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert _key_state(app, kid)[0] is None
+
+
+def test_project_key_routes_refuse_integer_ids(app, managed_auth_client, managed_project, test_user, make_created_key):
+    """Keys are addressed by uuid only: the integer id of a key the caller may manage 404s."""
+    kid = make_created_key(managed_project["id"], test_user["id"], "sk_intk00000000000000000eyid1234567")
+    base = f"/projects/{managed_project['uuid']}/keys/{kid}"
+    assert managed_auth_client.post(f"{base}/revoke").status_code == HTTPStatus.NOT_FOUND
+    assert managed_auth_client.post(f"{base}/rotate", json={"key": "sk_intk0000000000000000eyidnew12345"}).status_code \
+        == HTTPStatus.NOT_FOUND
+    assert managed_auth_client.post(f"{base}/ttl", json={"ttl": 86400}).status_code == HTTPStatus.NOT_FOUND
+    assert managed_auth_client.delete(base).status_code == HTTPStatus.NOT_FOUND
+    assert _key_state(app, kid)[0] is None
+
+
+def test_project_page_shows_key_uuids_not_integer_ids(app, managed_auth_client, managed_project, test_user,
+                                                      make_created_key):
+    kid = make_created_key(managed_project["id"], test_user["id"], "sk_page00000000000000000uuid1234567")
+    html = managed_auth_client.get(f"/projects/{managed_project['uuid']}").get_data(as_text=True)
+    assert f'id: "{key_uuid(app, kid)}",' in html
+    assert not re.search(r"\bid: \d+,", html)
+
+
+def test_project_page_uses_revoke_wording(app, managed_auth_client, managed_project, make_api_key):
     key_id, _ = make_api_key(managed_project["id"], raw_key="sk_word00000000000000000ing12345678", name="k")
-    managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_id}/revoke")
+    managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, key_id)}/revoke")
     html = managed_auth_client.get(f"/projects/{managed_project['uuid']}").get_data(as_text=True)
     assert "Show revoked keys" in html
     assert 'revoke-key-btn' in html and '>Revoke</button>' in html
@@ -1232,26 +1258,26 @@ def test_project_page_uses_revoke_wording(managed_auth_client, managed_project, 
     assert "delete-key-btn" not in html and ">Delete</button>" not in html
 
 
-def _key_row(client, project_id, key_id):
+def _key_row(app, client, project_id, key_id):
     html = client.get(f"/projects/{project_id}").get_data(as_text=True)
-    row = re.search(r"\{\s*id: " + str(key_id) + r",.*?\}", html, re.S)
+    row = re.search(r"\{\s*id: \"" + key_uuid(app, key_id) + r"\",.*?\}", html, re.S)
     assert row is not None
     return html, row.group(0)
 
 
-def test_revoked_badge_names_manager_revoker(managed_auth_client, managed_project, second_user, make_created_key):
+def test_revoked_badge_names_manager_revoker(app, managed_auth_client, managed_project, second_user, make_created_key):
     key_id = make_created_key(managed_project["id"], second_user["id"], "sk_badg0000000000000000erevoker1234")
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_id}/revoke")
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, key_id)}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
-    html, row = _key_row(managed_auth_client, managed_project["uuid"], key_id)
+    html, row = _key_row(app, managed_auth_client, managed_project["uuid"], key_id)
     assert 'revoked_by: "Test User"' in row
     assert "${k.revoked_by ? ' by ' + escHtml(k.revoked_by) : ''}" in html
 
 
-def test_revoked_badge_without_revoker_has_no_name(managed_auth_client, managed_project, second_user, make_created_key):
+def test_revoked_badge_without_revoker_has_no_name(app, managed_auth_client, managed_project, second_user, make_created_key):
     key_id = make_created_key(managed_project["id"], second_user["id"], "sk_badg00000000000000000enobody1234",
                               revoked_at=datetime(2026, 9, 3, 8, 0))
-    _, row = _key_row(managed_auth_client, managed_project["uuid"], key_id)
+    _, row = _key_row(app, managed_auth_client, managed_project["uuid"], key_id)
     assert "revoked_by: null" in row
 
 
@@ -1260,17 +1286,17 @@ def test_repeat_revoke_keeps_first_revoker(app, managed_auth_client, managed_pro
     key_id = make_created_key(managed_project["id"], test_user["id"], "sk_repe0000000000000000atrevoke1234",
                               revoked_at=datetime(2026, 9, 3, 8, 0), revoked_by=second_user["id"])
     before = _key_state(app, key_id)
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_id}/revoke")
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, key_id)}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     assert _key_state(app, key_id) == before
     assert before[:2] == (datetime(2026, 9, 3, 8, 0), second_user["id"])
 
 
-def test_revoked_key_still_listed(managed_auth_client, managed_project, make_api_key):
+def test_revoked_key_still_listed(app, managed_auth_client, managed_project, make_api_key):
     key_id, _ = make_api_key(managed_project["id"], raw_key="sk_list000000000000000000ed12345678", name="gone-key")
-    managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_id}/revoke")
+    managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, key_id)}/revoke")
     html = managed_auth_client.get(f"/projects/{managed_project['uuid']}").get_data(as_text=True)
-    row = re.search(r"\{\s*id: " + str(key_id) + r",.*?\}", html, re.S)
+    row = re.search(r"\{\s*id: \"" + key_uuid(app, key_id) + r"\",.*?\}", html, re.S)
     assert row is not None
     assert '"gone-key"' in row.group(0)
     assert re.search(r'revoked_at: "\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ"', row.group(0))
@@ -1320,9 +1346,9 @@ def test_rotate_project_key_by_creator_keeps_stats(app, client, managed_auth_cli
             return {f: getattr(k, f) for f in fields}, k.key_hint
 
     before, _ = snapshot()
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{kid}/rotate", json={"key": new})
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/rotate", json={"key": new})
     assert resp.status_code == HTTPStatus.OK
-    assert resp.get_json() == {"id": kid, "name": "rot-key", "key": new}
+    assert resp.get_json() == {"id": key_uuid(app, kid), "name": "rot-key", "key": new}
     after, hint = snapshot()
     assert after == before
     assert hint == f"{new[:7]}...{new[-4:]}"
@@ -1338,7 +1364,7 @@ def test_rotate_project_key_forbidden_for_other_manager(app, managed_auth_client
                                                         make_created_key):
     _add_manager(app, managed_project["id"], second_user["id"])
     kid = make_created_key(managed_project["id"], second_user["id"], "sk_othe00000000000000000rmgr1234567")
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{kid}/rotate",
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/rotate",
                                     json={"key": "sk_othe00000000000000000rmgrnew1234"})
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
@@ -1347,14 +1373,14 @@ def test_rotate_project_key_forbidden_for_owner(app, owner_auth_client, owned_pr
                                                 make_created_key):
     _add_manager(app, owned_project["id"], second_user["id"])
     kid = make_created_key(owned_project["id"], second_user["id"], "sk_owne00000000000000000rrot1234567")
-    resp = owner_auth_client.post(f"/projects/{owned_project['uuid']}/keys/{kid}/rotate",
+    resp = owner_auth_client.post(f"/projects/{owned_project['uuid']}/keys/{key_uuid(app, kid)}/rotate",
                                   json={"key": "sk_owne00000000000000000rrotnew1234"})
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_rotate_project_key_forbidden_for_legacy_null_creator(managed_auth_client, managed_project, make_created_key):
+def test_rotate_project_key_forbidden_for_legacy_null_creator(app, managed_auth_client, managed_project, make_created_key):
     kid = make_created_key(managed_project["id"], None, "sk_lega00000000000000000cyrot123456")
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{kid}/rotate",
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/rotate",
                                     json={"key": "sk_lega00000000000000000cyrotnew123"})
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
@@ -1363,7 +1389,7 @@ def test_rotate_project_key_forbidden_for_non_manager(app, auth_client, service_
                                                       make_created_key):
     _add_manager(app, service_project["id"], second_user["id"])
     kid = make_created_key(service_project["id"], second_user["id"], "sk_nonm00000000000000000grrot123456")
-    resp = auth_client.post(f"/projects/{service_project['uuid']}/keys/{kid}/rotate",
+    resp = auth_client.post(f"/projects/{service_project['uuid']}/keys/{key_uuid(app, kid)}/rotate",
                             json={"key": "sk_nonm00000000000000000grrotnew123"})
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
@@ -1373,15 +1399,15 @@ def test_rotate_project_key_from_other_project_returns_404(app, managed_auth_cli
     with app.app_context():
         other_id = make_project("other-svc", initials="OS").id
     kid = make_created_key(other_id, test_user["id"], "sk_othe00000000000000000rproj123456")
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{kid}/rotate",
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/rotate",
                                     json={"key": "sk_othe00000000000000000rprojnew123"})
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
-def test_rotate_project_key_inactive_returns_409(managed_auth_client, managed_project, test_user, make_created_key):
+def test_rotate_project_key_inactive_returns_409(app, managed_auth_client, managed_project, test_user, make_created_key):
     kid = make_created_key(managed_project["id"], test_user["id"], "sk_inac00000000000000000tiverot1234",
                            revoked_at=datetime(2026, 9, 3, 8, 0))
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{kid}/rotate",
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/rotate",
                                     json={"key": "sk_inac00000000000000000tiverotnew1"})
     assert resp.status_code == HTTPStatus.CONFLICT
 
@@ -1395,7 +1421,7 @@ def test_rotate_project_key_overdue_returns_409_and_revokes(app, managed_auth_cl
         from lumen.models.api_key import APIKey
         db.session.get(APIKey, kid).expires_at = expires_at
         db.session.commit()
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{kid}/rotate",
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/rotate",
                                     json={"key": "sk_over00000000000000000duerotnew12"})
     assert resp.status_code == HTTPStatus.CONFLICT
     with app.app_context():
@@ -1406,23 +1432,23 @@ def test_rotate_project_key_overdue_returns_409_and_revokes(app, managed_auth_cl
 @pytest.mark.parametrize("payload", [
     {}, {"key": "bad-key-no-prefix"}, {"key": 123}, {"key": ["sk_inva00000000000000000lidrotnew12"]}, ["sk_inva00000000000000000lidrotnew12"],
 ])
-def test_rotate_project_key_invalid_key_returns_400(managed_auth_client, managed_project, test_user,
+def test_rotate_project_key_invalid_key_returns_400(app, managed_auth_client, managed_project, test_user,
                                                     make_created_key, payload):
     kid = make_created_key(managed_project["id"], test_user["id"], "sk_inva00000000000000000lidrot12345")
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{kid}/rotate", json=payload)
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/rotate", json=payload)
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
-def test_rotate_project_key_duplicate_returns_409(managed_auth_client, managed_project, test_user,
+def test_rotate_project_key_duplicate_returns_409(app, managed_auth_client, managed_project, test_user,
                                                   make_created_key):
     kid = make_created_key(managed_project["id"], test_user["id"], "sk_dupe000000000000000000rot1234567")
     make_created_key(managed_project["id"], test_user["id"], "sk_dupe00000000000000000taken123456")
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{kid}/rotate",
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/rotate",
                                     json={"key": "sk_dupe00000000000000000taken123456"})
     assert resp.status_code == HTTPStatus.CONFLICT
 
 
-def test_rotate_project_key_concurrent_duplicate_returns_409(managed_auth_client, managed_project, test_user,
+def test_rotate_project_key_concurrent_duplicate_returns_409(app, managed_auth_client, managed_project, test_user,
                                                              make_created_key, monkeypatch):
     """A secret committed by another request after the duplicate check yields 409, not 500."""
     from lumen.blueprints.profile import routes as profile_routes
@@ -1433,15 +1459,15 @@ def test_rotate_project_key_concurrent_duplicate_returns_409(managed_auth_client
     monkeypatch.setattr(profile_routes, "_new_key_fields",
                         lambda key: ({"key_hash": hash_api_key(key), "key_hint": "sk_race...3456"}, None))
 
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{kid}/rotate",
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/rotate",
                                     json={"key": "sk_race00000000000000000taken123456"})
     assert resp.status_code == HTTPStatus.CONFLICT
 
 
 def _key_rows_can_rotate(html):
-    """Map key id -> can_rotate from the KEY_ROWS literal the project page renders."""
-    return {int(kid): flag == "true"
-            for kid, flag in re.findall(r"id: (\d+),.*?can_rotate: (true|false),", html, re.S)}
+    """Map key uuid -> can_rotate from the KEY_ROWS literal the project page renders."""
+    return {kid: flag == "true"
+            for kid, flag in re.findall(r"id: \"([0-9a-f-]{36})\",.*?can_rotate: (true|false),", html, re.S)}
 
 
 def test_detail_rotate_only_on_own_active_keys(app, managed_auth_client, managed_project, test_user, second_user,
@@ -1455,7 +1481,8 @@ def test_detail_rotate_only_on_own_active_keys(app, managed_auth_client, managed
     legacy = make_created_key(sid, None, "sk_lega00000000000000000cyrotui1234")
 
     html = managed_auth_client.get(f"/projects/{managed_project['uuid']}").get_data(as_text=True)
-    assert _key_rows_can_rotate(html) == {own: True, own_inactive: True, other: False, legacy: False}
+    assert _key_rows_can_rotate(html) == {key_uuid(app, own): True, key_uuid(app, own_inactive): True,
+                                           key_uuid(app, other): False, key_uuid(app, legacy): False}
     # The JS only renders Rotate for active rows with can_rotate.
     assert "${rotate}<button" in html and "k.can_rotate" in html
     assert 'id="rotatedKeyModal"' in html
@@ -1464,14 +1491,14 @@ def test_detail_rotate_only_on_own_active_keys(app, managed_auth_client, managed
     assert "created_by_entity_id" not in html
 
 
-def test_detail_admin_cannot_rotate_others_keys(admin_client, service_project, test_user, make_created_key):
+def test_detail_admin_cannot_rotate_others_keys(app, admin_client, service_project, test_user, make_created_key):
     kid = make_created_key(service_project["id"], test_user["id"], "sk_admi00000000000000000nrotui12345")
     html = admin_client.get(f"/projects/{service_project['uuid']}").get_data(as_text=True)
-    assert _key_rows_can_rotate(html) == {kid: False}
+    assert _key_rows_can_rotate(html) == {key_uuid(app, kid): False}
 
 
 def test_rotate_project_key_requires_login(client, service_project):
-    resp = client.post(f"/projects/{service_project['uuid']}/keys/1/rotate",
+    resp = client.post(f"/projects/{service_project['uuid']}/keys/{uuid.uuid4()}/rotate",
                        json={"key": "sk_nolo00000000000000000gin12345678"}, follow_redirects=False)
     assert resp.status_code == HTTPStatus.FOUND
 
@@ -1507,16 +1534,16 @@ def test_edit_project_key_ttl_counts_from_now(app, managed_auth_client, managed_
     app.config["KEY_TTL"] = cap
     kid = make_created_key(managed_project["id"], test_user["id"], "sk_ttle00000000000000000dit1234567")
     _set_project_key_expiry(app, kid, utcnow() + timedelta(hours=1))
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{kid}/ttl", json={"ttl": ttl})
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/ttl", json={"ttl": ttl})
     assert resp.status_code == HTTPStatus.OK
     expires_at, revoked_at, _ = _project_key_expiry(app, kid)
     assert revoked_at is None
     if ttl:
         assert abs(expires_at - (utcnow() + timedelta(seconds=ttl))) < timedelta(minutes=1)
-        assert resp.get_json() == {"id": kid, "name": "rot-key", "expires_at": expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")}
+        assert resp.get_json() == {"id": key_uuid(app, kid), "name": "rot-key", "expires_at": expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")}
     else:
         assert expires_at is None
-        assert resp.get_json() == {"id": kid, "name": "rot-key", "expires_at": None}
+        assert resp.get_json() == {"id": key_uuid(app, kid), "name": "rot-key", "expires_at": None}
 
 
 @pytest.mark.parametrize("payload", [
@@ -1529,7 +1556,7 @@ def test_edit_project_key_ttl_invalid_returns_400(app, managed_auth_client, mana
                                                   make_created_key, restore_config, payload):
     app.config["KEY_TTL"] = 30 * 86400
     kid = make_created_key(managed_project["id"], test_user["id"], "sk_ttlb00000000000000000adt1234567")
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{kid}/ttl", json=payload)
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/ttl", json=payload)
     assert resp.status_code == HTTPStatus.BAD_REQUEST
     assert _project_key_expiry(app, kid)[0] is None
 
@@ -1539,7 +1566,7 @@ def test_edit_project_key_ttl_checks_cap_at_edit_time(app, managed_auth_client, 
     app.config["KEY_TTL"] = 0
     kid = make_created_key(managed_project["id"], test_user["id"], "sk_ttlc00000000000000000ap01234567")
     app.config["KEY_TTL"] = 7 * 86400
-    url = f"/projects/{managed_project['uuid']}/keys/{kid}/ttl"
+    url = f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/ttl"
     assert managed_auth_client.post(url, json={"ttl": 30 * 86400}).status_code == HTTPStatus.BAD_REQUEST
     assert managed_auth_client.post(url, json={"ttl": 0}).status_code == HTTPStatus.BAD_REQUEST
     assert _project_key_expiry(app, kid)[0] is None
@@ -1559,7 +1586,7 @@ def test_edit_project_key_ttl_concurrent_revoke_returns_409(app, managed_auth_cl
         return real_resolve(requested)
 
     monkeypatch.setattr(profile_routes, "resolve_key_ttl", resolve_then_revoke)
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{kid}/ttl", json={"ttl": 86400})
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/ttl", json={"ttl": 86400})
     assert resp.status_code == HTTPStatus.CONFLICT
     assert _project_key_expiry(app, kid)[0] is None
 
@@ -1569,7 +1596,7 @@ def test_edit_project_key_ttl_overdue_returns_409_and_revokes(app, managed_auth_
     kid = make_created_key(managed_project["id"], test_user["id"], "sk_ttlo00000000000000000ver1234567")
     expires_at = utcnow() - timedelta(minutes=1)
     _set_project_key_expiry(app, kid, expires_at)
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{kid}/ttl", json={"ttl": 86400})
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/ttl", json={"ttl": 86400})
     assert resp.status_code == HTTPStatus.CONFLICT
     assert _project_key_expiry(app, kid) == (expires_at, expires_at, None)
 
@@ -1578,7 +1605,7 @@ def test_edit_project_key_ttl_revoked_returns_409(app, managed_auth_client, mana
                                                   make_created_key):
     kid = make_created_key(managed_project["id"], test_user["id"], "sk_ttlr00000000000000000evk1234567",
                            revoked_at=datetime(2026, 9, 3, 8, 0))
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{kid}/ttl", json={"ttl": 86400})
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/ttl", json={"ttl": 86400})
     assert resp.status_code == HTTPStatus.CONFLICT
     assert _project_key_expiry(app, kid)[0] is None
 
@@ -1587,7 +1614,7 @@ def test_edit_project_key_ttl_forbidden_for_other_manager(app, managed_auth_clie
                                                           make_created_key):
     _add_manager(app, managed_project["id"], second_user["id"])
     kid = make_created_key(managed_project["id"], second_user["id"], "sk_ttlm00000000000000000gr01234567")
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{kid}/ttl", json={"ttl": 86400})
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/ttl", json={"ttl": 86400})
     assert resp.status_code == HTTPStatus.FORBIDDEN
     assert _project_key_expiry(app, kid)[0] is None
 
@@ -1596,14 +1623,14 @@ def test_edit_project_key_ttl_forbidden_for_owner(app, owner_auth_client, owned_
                                                   make_created_key):
     _add_manager(app, owned_project["id"], second_user["id"])
     kid = make_created_key(owned_project["id"], second_user["id"], "sk_ttlw00000000000000000nr01234567")
-    resp = owner_auth_client.post(f"/projects/{owned_project['uuid']}/keys/{kid}/ttl", json={"ttl": 86400})
+    resp = owner_auth_client.post(f"/projects/{owned_project['uuid']}/keys/{key_uuid(app, kid)}/ttl", json={"ttl": 86400})
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_edit_project_key_ttl_forbidden_for_legacy_null_creator(managed_auth_client, managed_project,
+def test_edit_project_key_ttl_forbidden_for_legacy_null_creator(app, managed_auth_client, managed_project,
                                                                 make_created_key):
     kid = make_created_key(managed_project["id"], None, "sk_ttll00000000000000000eg01234567")
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{kid}/ttl", json={"ttl": 86400})
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/ttl", json={"ttl": 86400})
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
@@ -1611,7 +1638,7 @@ def test_edit_project_key_ttl_forbidden_for_non_member(app, auth_client, service
                                                        make_created_key):
     _add_manager(app, service_project["id"], second_user["id"])
     kid = make_created_key(service_project["id"], second_user["id"], "sk_ttln00000000000000000on01234567")
-    resp = auth_client.post(f"/projects/{service_project['uuid']}/keys/{kid}/ttl", json={"ttl": 86400})
+    resp = auth_client.post(f"/projects/{service_project['uuid']}/keys/{key_uuid(app, kid)}/ttl", json={"ttl": 86400})
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
@@ -1620,12 +1647,12 @@ def test_edit_project_key_ttl_from_other_project_returns_404(app, managed_auth_c
     with app.app_context():
         other_id = make_project("other-ttl", initials="OT").id
     kid = make_created_key(other_id, test_user["id"], "sk_ttlx00000000000000000pr01234567")
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{kid}/ttl", json={"ttl": 86400})
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/ttl", json={"ttl": 86400})
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 def test_edit_project_key_ttl_requires_login(client, service_project):
-    resp = client.post(f"/projects/{service_project['uuid']}/keys/1/ttl", json={"ttl": 86400}, follow_redirects=False)
+    resp = client.post(f"/projects/{service_project['uuid']}/keys/{uuid.uuid4()}/ttl", json={"ttl": 86400}, follow_redirects=False)
     assert resp.status_code == HTTPStatus.FOUND
 
 
@@ -2038,9 +2065,7 @@ def test_user_can_have_only_one_active_key(app, user_auth_client, user_project):
     resp = user_auth_client.post(f"{url}/{first.get_json()['id']}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     with app.app_context():
-        from lumen.extensions import db
-        from lumen.models.api_key import APIKey
-        assert db.session.get(APIKey, first.get_json()["id"]).revoked_at is not None
+        assert key_by_public_id(first.get_json()["id"]).revoked_at is not None
 
     third = user_auth_client.post(url, json={"name": "three", "key": "sk_user00000000000000key_three_1234"})
     assert third.status_code == HTTPStatus.CREATED
@@ -2069,9 +2094,8 @@ def test_user_key_limit_ignores_key_revoked_by_expirer(app, user_auth_client, us
     assert first.status_code == HTTPStatus.CREATED
     with app.app_context():
         from lumen.extensions import db
-        from lumen.models.api_key import APIKey
         from lumen.services.key_expiry import expire_keys
-        db.session.get(APIKey, first.get_json()["id"]).expires_at = utcnow() - timedelta(minutes=1)
+        key_by_public_id(first.get_json()["id"]).expires_at = utcnow() - timedelta(minutes=1)
         db.session.commit()
         # Overdue but not yet expired by the job: it still counts.
         assert user_auth_client.post(
@@ -2093,7 +2117,7 @@ def test_manager_can_create_many_keys(managed_auth_client, managed_project):
 
 def test_user_revoking_another_members_key_returns_404(app, user_auth_client, user_project, make_api_key):
     kid, _ = make_api_key(user_project["id"], raw_key="sk_owne00000000000000000rkey_abcdef", name="owner-key")
-    resp = user_auth_client.post(f"/projects/{user_project['uuid']}/keys/{kid}/revoke")
+    resp = user_auth_client.post(f"/projects/{user_project['uuid']}/keys/{key_uuid(app, kid)}/revoke")
     assert resp.status_code == HTTPStatus.NOT_FOUND
     with app.app_context():
         from lumen.extensions import db
@@ -2103,19 +2127,19 @@ def test_user_revoking_another_members_key_returns_404(app, user_auth_client, us
 
 def test_manager_can_revoke_any_key(app, managed_auth_client, managed_project, make_api_key):
     kid, _ = make_api_key(managed_project["id"], raw_key="sk_owne00000000000000000rkey_abcdef", name="owner-key")
-    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{kid}/revoke")
+    resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
 
 
 def test_old_delete_key_url_returns_405(app, managed_auth_client, managed_project, make_api_key):
     kid, _ = make_api_key(managed_project["id"], raw_key="sk_oldd0000000000000000elete_abcdef", name="old-url-key")
-    resp = managed_auth_client.delete(f"/projects/{managed_project['uuid']}/keys/{kid}")
+    resp = managed_auth_client.delete(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}")
     assert resp.status_code == HTTPStatus.METHOD_NOT_ALLOWED
     assert _key_state(app, kid)[0] is None
 
 
 def test_old_delete_key_url_requires_login(client):
-    resp = client.delete(f"/projects/{uuid.uuid4()}/keys/1", follow_redirects=False)
+    resp = client.delete(f"/projects/{uuid.uuid4()}/keys/{uuid.uuid4()}", follow_redirects=False)
     assert resp.status_code == HTTPStatus.FOUND
 
 

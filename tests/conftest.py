@@ -327,6 +327,25 @@ def make_group_with_member(entity_id, name="test-group", active=True):
     return g.id
 
 
+def key_uuid(app, key_id):
+    """The public uuid string of the API key with this integer id, for building key URLs."""
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    with app.app_context():
+        return str(db.session.get(APIKey, key_id).uuid)
+
+
+def key_by_public_id(public_id):
+    """The APIKey row a route returned as JSON ``id`` (its uuid string). Call inside an app context."""
+    import uuid
+
+    from sqlalchemy import select
+
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    return db.session.execute(select(APIKey).where(APIKey.uuid == uuid.UUID(public_id))).scalar_one()
+
+
 def make_project(name, owner_id=None, **fields):
     """Create a project with its required owner; returns the Entity. Call inside an app context; commits.
 

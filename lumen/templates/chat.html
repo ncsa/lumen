@@ -321,7 +321,7 @@
   async function loadConversations(append = false) {
     try {
       const url = append && _lastConvId
-        ? `/chat/conversations?before=${_lastConvId}`
+        ? `/chat/conversations?before=${encodeURIComponent(_lastConvId)}`
         : "/chat/conversations";
       const resp = await fetch(url);
       if (!resp.ok) return;
@@ -421,7 +421,7 @@
       updateCopyChatBtn();
       container.scrollTop = container.scrollHeight;
       document.querySelectorAll(".conv-item").forEach(el => {
-        const match = parseInt(el.dataset.id) === id;
+        const match = el.dataset.id === id;
         el.classList.toggle("active", match);
         if (match) el.setAttribute("aria-current", "true");
         else el.removeAttribute("aria-current");
