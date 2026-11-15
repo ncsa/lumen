@@ -2,7 +2,7 @@ import hashlib
 from http import HTTPStatus
 from uuid import UUID
 
-from flask import Blueprint, abort, jsonify, render_template, request, session, url_for
+from flask import Blueprint, abort, g, jsonify, render_template, request, url_for
 from sqlalchemy import func, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
@@ -142,7 +142,7 @@ def _member_count_sq(group_ids=None):
 @groups_bp.route("/groups", methods=["GET"])
 @login_required
 def index():
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     entity = db.session.get(Entity, entity_id)
 
     # Summary cards reflect the full visible set, independent of the paginated table.
@@ -162,7 +162,7 @@ def index():
 @login_required
 def data():
     """Paginated group rows for the groups table (mirrors /projects/data)."""
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     entity = db.session.get(Entity, entity_id)
     admin = is_admin(entity)
 
@@ -233,26 +233,26 @@ def data():
             select(GroupMember).filter_by(entity_id=entity_id, is_owner=True)
         ).scalars().all()
     }
-    page_ids = [g.id for g, *_ in rows]
+    page_ids = [grp.id for grp, *_ in rows]
     has_owner = _owned_group_ids(page_ids) if page_ids else set()
 
     return jsonify({
         "groups": [
             {
-                "id": str(g.uuid),
-                "name": g.name,
-                "description": g.description,
+                "id": str(grp.uuid),
+                "name": grp.name,
+                "description": grp.description,
                 "members": int(members or 0),
-                "active": g.active,
-                "auto_join": g.auto_join,
-                "has_owner": g.id in has_owner,
+                "active": grp.active,
+                "auto_join": grp.auto_join,
+                "has_owner": grp.id in has_owner,
                 "max_coins": float(max_coins) if max_coins is not None else None,
                 "refresh_coins": float(refresh_coins) if refresh_coins is not None else None,
-                "created": g.created_at.strftime("%Y-%m-%dT%H:%M:%SZ") if g.created_at else None,
-                "detail_url": url_for("groups.detail", gid=g.uuid),
-                "is_owner": g.id in owner_ids,
+                "created": grp.created_at.strftime("%Y-%m-%dT%H:%M:%SZ") if grp.created_at else None,
+                "detail_url": url_for("groups.detail", gid=grp.uuid),
+                "is_owner": grp.id in owner_ids,
             }
-            for g, members, max_coins, refresh_coins in rows
+            for grp, members, max_coins, refresh_coins in rows
         ],
         "total": total,
         "page": page,
@@ -263,7 +263,7 @@ def data():
 @groups_bp.route("/groups/<uuid:gid>")
 @login_required
 def detail(gid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     group = group_by_uuid_or_404(gid)
     gid = group.id
     _require_group_access(entity_id, gid)
@@ -306,7 +306,7 @@ def detail(gid):
 @login_required
 def update_group(gid):
     """Edit a group's name/description/active (owner or admin) and coin pool (admin only)."""
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     group = group_by_uuid_or_404(gid)
     gid = group.id
     _require_group_admin(entity_id, gid)
@@ -344,7 +344,7 @@ def update_group(gid):
 @groups_bp.route("/groups/<uuid:gid>/toggle", methods=["POST"])
 @login_required
 def toggle_group(gid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     group = group_by_uuid_or_404(gid)
     gid = group.id
     _require_group_admin(entity_id, gid)
@@ -480,7 +480,7 @@ def set_group_rules(gid):
 @login_required
 def delete_group(gid):
     """Soft-delete: deactivate. Unlike projects, the owner may do this too."""
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     group = group_by_uuid_or_404(gid)
     gid = group.id
     _require_group_admin(entity_id, gid)
@@ -497,7 +497,7 @@ def delete_group(gid):
 @login_required
 def members_data(gid):
     """Paginated member rows for the Members tab."""
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     gid = group_by_uuid_or_404(gid).id
     _require_group_access(entity_id, gid)
     # The member list of an ownerless group is admin-only: without this the
@@ -578,7 +578,7 @@ def members_data(gid):
 @login_required
 def search_group_members(gid):
     """Users and projects matching q that are not already members."""
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     gid = group_by_uuid_or_404(gid).id
     _require_group_admin(entity_id, gid)
 
@@ -614,7 +614,7 @@ def search_group_members(gid):
 @groups_bp.route("/groups/<uuid:gid>/members", methods=["POST"])
 @login_required
 def add_group_member(gid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     group = group_by_uuid_or_404(gid)
     gid = group.id
     _require_group_admin(entity_id, gid)
@@ -664,7 +664,7 @@ def remove_group_member(gid, eid):
     too — an owner must be able to curate their own group. If the group rule
     still matches, the membership is re-added at that user's next login.
     """
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     group = group_by_uuid_or_404(gid)
     gid = group.id
     _require_group_admin(entity_id, gid)
@@ -697,7 +697,7 @@ def search_owner_candidates(gid):
     (ownership is a promotion, not an invitation), only users can own a
     group, and the current owner is excluded.
     """
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     group = group_by_uuid_or_404(gid)
     gid = group.id
     _require_group_admin(entity_id, gid)
@@ -733,7 +733,7 @@ def search_owner_candidates(gid):
 @groups_bp.route("/groups/<uuid:gid>/owner", methods=["POST"])
 @login_required
 def transfer_ownership(gid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     group = group_by_uuid_or_404(gid)
     gid = group.id
     _require_group_admin(entity_id, gid)
