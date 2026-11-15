@@ -1,5 +1,5 @@
 from authlib.integrations.flask_client import OAuth
-from flask import current_app, request, session
+from flask import current_app, g, request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_migrate import Migrate
@@ -14,8 +14,9 @@ limiter = Limiter(key_func=get_remote_address)
 
 
 def _chat_entity_id():
-    entity_id = session.get("entity_id")
-    return str(entity_id) if entity_id else (request.remote_addr or "unknown")
+    # Keyed on the public UUID: rate-limit keys can surface in Redis and logs.
+    entity = g.get("entity")
+    return str(entity.uuid) if entity is not None else (request.remote_addr or "unknown")
 
 
 def _chat_limit():

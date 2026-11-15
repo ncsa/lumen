@@ -708,6 +708,18 @@ def create_app():
     app.cli.add_command(upgrade_cmd)
     app.cli.add_command(check_stats_cmd)
 
+    # Resolve the session's entity_uuid into g.entity / g.entity_id once per
+    # request. Static files skip the lookup; g still gets the None defaults.
+    from .decorators import load_logged_in_entity as _load_logged_in_entity
+
+    @app.before_request
+    def _resolve_logged_in_entity():
+        if request.endpoint in ("static", "theme_static"):
+            g.entity = None
+            g.entity_id = None
+            return
+        _load_logged_in_entity()
+
     # Context processor: inject app_name and nav_projects into all templates
     @app.context_processor
     def inject_nav():
@@ -720,19 +732,21 @@ def create_app():
             "github_url": app.config.get("GITHUB_URL", ""),
             "app_version": app.config.get("APP_VERSION", "develop"),
             "git_commit": app.config.get("GIT_COMMIT", "N/A"),
-            "is_logged_in": bool(session.get("entity_id")),
+            "is_logged_in": g.get("entity") is not None,
             "theme": g.theme,
         }
-        if not session.get("entity_id"):
+        entity = g.get("entity")
+        if entity is None:
             result["nav_projects"] = []
             return result
 
         # Cache is_admin and project membership in the session to avoid 3 DB queries per request.
         # Cache is populated on first request after login and cleared on logout.
         # "v" invalidates caches written by older code (bump when the cached shape
-        # or the membership query changes, e.g. inactive projects now included).
+        # or the membership query changes, e.g. inactive projects now included,
+        # or project ids becoming UUIDs).
         nav_cache = session.get("_nav")
-        if nav_cache is not None and nav_cache.get("v") == 2:
+        if nav_cache is not None and nav_cache.get("v") == 3:
             result["is_admin"] = nav_cache["is_admin"]
             result["nav_projects"] = nav_cache["project_ids"]
             return result
@@ -743,12 +757,11 @@ def create_app():
         from lumen.extensions import db
         from lumen.models.entity import Entity
         from lumen.models.entity_manager import EntityManager
-        entity = db.session.get(Entity, session["entity_id"])
-        is_admin_val = _is_admin(entity) if entity else False
+        is_admin_val = _is_admin(entity)
         result["is_admin"] = is_admin_val
 
         assocs = db.session.execute(
-            select(EntityManager).filter_by(user_entity_id=session["entity_id"])
+            select(EntityManager).filter_by(user_entity_id=entity.id)
         ).scalars().all()
         project_ids = [a.project_entity_id for a in assocs]
         if project_ids:
@@ -762,11 +775,12 @@ def create_app():
                 )
                 .order_by(Entity.name)
             ).scalars().all()
-            managed_project_ids = [c.id for c in projects]
+            # The cookie is readable, so it holds the public UUIDs, never integer ids.
+            managed_project_ids = [str(c.uuid) for c in projects]
         else:
             managed_project_ids = []
 
-        session["_nav"] = {"v": 2, "is_admin": is_admin_val, "project_ids": managed_project_ids}
+        session["_nav"] = {"v": 3, "is_admin": is_admin_val, "project_ids": managed_project_ids}
         result["nav_projects"] = managed_project_ids
         return result
 
