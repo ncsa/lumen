@@ -172,6 +172,20 @@ function heatmapColor(t) {
   return `rgb(${r},${g},${b})`;
 }
 
+// Same rules as the Jinja filter lumen/__init__.py:compact_number, which the
+// profile page uses: full number below a million, else "5.2 million" etc.
+// halfEven matches Python's rounding of an exact tie (2.25 -> "2.2").
+function compactNumber(n) {
+  n = n || 0;
+  for (const [size, word] of [[1e12, 'trillion'], [1e9, 'billion'], [1e6, 'million']]) {
+    if (Math.abs(n) >= size) {
+      const v = (n / size).toLocaleString('en-US', {minimumFractionDigits: 1, maximumFractionDigits: 1, roundingMode: 'halfEven'});
+      return `${v} ${word}`;
+    }
+  }
+  return n.toLocaleString('en-US');
+}
+
 function makeLineChart(id, label) {
   const ctx = document.getElementById(id).getContext('2d');
   return new Chart(ctx, {
@@ -317,8 +331,8 @@ async function refresh(period, showAll) {
     fetchJSON('heatmap', period, showAll),
   ]);
 
-  document.getElementById('stat-requests').textContent = summary.requests.toLocaleString();
-  document.getElementById('stat-tokens').textContent = summary.tokens.toLocaleString();
+  document.getElementById('stat-requests').textContent = compactNumber(summary.requests);
+  document.getElementById('stat-tokens').textContent = compactNumber(summary.tokens);
   document.getElementById('stat-cost').textContent = summary.cost.toFixed(2);
   if (!isFiltered) {
     document.getElementById('stat-users').textContent = summary.new_users.toLocaleString();
