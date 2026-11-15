@@ -1,8 +1,12 @@
 """Tests for refill_coin_balances — the per-tick logic of the coin refiller."""
+import logging
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
+
+from lumen.timeutils import utcnow
 
 
 def _add_balance(db, entity_id, coins_left, last_refill_at):
@@ -516,22 +520,198 @@ def test_sqlite_pass_takes_no_advisory_lock(app, test_user):
         assert not [s for s in statements if "advisory" in s]
 
 
-def test_start_coin_refiller_starts_daemon_thread(app):
-    """start_coin_refiller must start exactly one daemon thread (covers lines 41-51)."""
-    import threading
-    from unittest.mock import patch
+class _StopLoop(Exception):
+    """Raised from the patched sleep to end the loop."""
 
-    captured = []
-    original_thread = threading.Thread
 
-    def fake_thread(*args, **kwargs):
-        t = original_thread(*args, **kwargs)
-        captured.append(t)
-        return t
+def _run_refiller(app, monkeypatch, ticks):
+    """Start the refiller with a fake thread, run its loop for ``ticks`` ticks; return the sleeps."""
+    from lumen.services import token_refill
 
-    with patch("lumen.services.token_refill.threading.Thread", side_effect=fake_thread):
-        from lumen.services.token_refill import start_coin_refiller
-        start_coin_refiller(app)
+    threads, sleeps = [], []
 
-    assert len(captured) == 1
-    assert captured[0].daemon is True
+    class FakeThread:
+        def __init__(self, target, daemon):
+            self.target, self.daemon, self.started = target, daemon, False
+            threads.append(self)
+
+        def start(self):
+            self.started = True
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == ticks:
+            raise _StopLoop
+
+    monkeypatch.setattr(token_refill, "threading", SimpleNamespace(Thread=FakeThread))
+    monkeypatch.setattr(token_refill, "time", SimpleNamespace(sleep=sleep))
+    token_refill.start_coin_refiller(app)
+    (thread,) = threads
+    assert thread.daemon is True and thread.started is True
+    with pytest.raises(_StopLoop):
+        thread.target()
+    return sleeps
+
+
+def test_start_coin_refiller_refills_each_tick(app, test_user, monkeypatch):
+    from lumen.extensions import db
+    from lumen.models.entity_balance import EntityBalance
+
+    with app.app_context():
+        _add_limit(db, test_user["id"], max_coins=100, refresh_coins=10)
+        _add_balance(db, test_user["id"], coins_left=0, last_refill_at=utcnow() - timedelta(hours=2))
+        db.session.commit()
+
+    assert _run_refiller(app, monkeypatch, ticks=1) == [60]
+
+    with app.app_context():
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one()
+        assert float(bal.coins_left) == pytest.approx(20.0, abs=0.01)
+
+
+def test_start_coin_refiller_logs_a_failed_tick_and_keeps_running(app, monkeypatch, caplog):
+    from lumen.services import token_refill
+
+    calls = []
+
+    def refill():
+        calls.append(1)
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(token_refill, "refill_coin_balances", refill)
+    with caplog.at_level(logging.ERROR, logger="lumen.services.token_refill"):
+        assert _run_refiller(app, monkeypatch, ticks=2) == [60, 60]
+    assert len(calls) == 2
+    assert caplog.text.count("coin refill error") == 2
+
+
+def test_aware_now_is_normalized_to_naive_utc(app, test_user):
+    """A tz-aware ``now`` in another zone is converted to UTC, not stripped of its offset."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.services.token_refill import refill_coin_balances
+
+        utc_now = utcnow().replace(microsecond=0)
+        _add_limit(db, test_user["id"], max_coins=100, refresh_coins=10)
+        _add_balance(db, test_user["id"], coins_left=0, last_refill_at=utc_now - timedelta(hours=2))
+        db.session.commit()
+
+        plus_five = timezone(timedelta(hours=5))
+        assert refill_coin_balances(now=utc_now.replace(tzinfo=timezone.utc).astimezone(plus_five)) == 1
+        db.session.expire_all()
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one()
+        assert float(bal.coins_left) == 20.0  # 2 hours, not 7
+        assert bal.last_refill_at == utc_now
+
+
+def test_group_limit_pool_is_refilled(app, test_user):
+    """An entity with no limit of its own is refilled from its best active group's pool."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.group import Group
+        from lumen.models.group_limit import GroupLimit
+        from lumen.models.group_member import GroupMember
+        from lumen.services.token_refill import refill_coin_balances
+
+        now = utcnow()
+        small, big, off = Group(name="small"), Group(name="big"), Group(name="off", active=False)
+        db.session.add_all([small, big, off])
+        db.session.flush()
+        for group, max_coins, refresh in ((small, 10, 1), (big, 100, 5), (off, 1000, 500)):
+            db.session.add(GroupMember(group_id=group.id, entity_id=test_user["id"]))
+            db.session.add(GroupLimit(group_id=group.id, max_coins=max_coins, refresh_coins=refresh))
+        _add_balance(db, test_user["id"], coins_left=0, last_refill_at=now - timedelta(hours=3))
+        db.session.commit()
+
+        assert refill_coin_balances(now=now) == 1
+        db.session.expire_all()
+        bal = db.session.execute(select(EntityBalance).filter_by(entity_id=test_user["id"])).scalar_one()
+        assert float(bal.coins_left) == 15.0  # the "big" pool: 3 hours x 5, inactive group ignored
+
+
+# ── refill_coin_balances on PostgreSQL: the advisory lock, with a fake engine ──
+
+class _FakeConn:
+    def __init__(self, acquired=True, lock_error=None, unlock_error=None):
+        self.acquired, self.lock_error, self.unlock_error = acquired, lock_error, unlock_error
+        self.statements, self.events = [], []
+
+    def execute(self, stmt, params):
+        sql = str(stmt)
+        self.statements.append((sql, params))
+        if "pg_try_advisory_lock" in sql:
+            if self.lock_error:
+                raise self.lock_error
+            return SimpleNamespace(scalar_one=lambda: self.acquired)
+        if self.unlock_error:
+            raise self.unlock_error
+        return None
+
+    def commit(self):
+        self.events.append("commit")
+
+    def invalidate(self):
+        self.events.append("invalidate")
+
+    def close(self):
+        self.events.append("close")
+
+
+@pytest.fixture
+def pg_engine(monkeypatch):
+    """Make refill_coin_balances see a PostgreSQL engine whose connection is a _FakeConn."""
+    from lumen.services import token_refill
+
+    state = SimpleNamespace(conn=_FakeConn(), passes=[])
+    engine = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"), connect=lambda: state.conn)
+    monkeypatch.setattr(token_refill, "db", SimpleNamespace(engine=engine))
+
+    def fake_pass(now=None):
+        state.passes.append(now)
+        return 3
+
+    monkeypatch.setattr(token_refill, "_refill_pass", fake_pass)
+    return state
+
+
+def test_postgres_pass_runs_under_the_advisory_lock(pg_engine):
+    from lumen.services.token_refill import _REFILL_LOCK_KEY, refill_coin_balances
+
+    now = utcnow()
+    assert refill_coin_balances(now=now) == 3
+    assert pg_engine.passes == [now]
+    sqls = [sql for sql, _ in pg_engine.conn.statements]
+    assert "pg_try_advisory_lock" in sqls[0] and "pg_advisory_unlock" in sqls[1]
+    assert all(params == {"key": _REFILL_LOCK_KEY} for _, params in pg_engine.conn.statements)
+    assert pg_engine.conn.events == ["commit", "commit", "close"]
+
+
+def test_postgres_pass_skipped_when_another_replica_holds_the_lock(pg_engine):
+    from lumen.services.token_refill import refill_coin_balances
+
+    pg_engine.conn = _FakeConn(acquired=False)
+    assert refill_coin_balances() == 0
+    assert pg_engine.passes == []
+    assert pg_engine.conn.events == ["commit", "close"]
+
+
+def test_postgres_lock_failure_drops_the_connection_and_raises(pg_engine):
+    from lumen.services.token_refill import refill_coin_balances
+
+    pg_engine.conn = _FakeConn(lock_error=RuntimeError("connection lost"))
+    with pytest.raises(RuntimeError, match="connection lost"):
+        refill_coin_balances()
+    assert pg_engine.passes == []
+    assert pg_engine.conn.events == ["invalidate", "close"]
+
+
+def test_postgres_unlock_failure_is_logged_and_drops_the_connection(pg_engine, caplog):
+    from lumen.services.token_refill import refill_coin_balances
+
+    pg_engine.conn = _FakeConn(unlock_error=RuntimeError("connection lost"))
+    with caplog.at_level(logging.ERROR, logger="lumen.services.token_refill"):
+        assert refill_coin_balances() == 3
+    assert "coin refill lock release failed" in caplog.text
+    assert pg_engine.conn.events == ["commit", "invalidate", "close"]

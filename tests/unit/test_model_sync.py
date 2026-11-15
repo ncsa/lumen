@@ -957,3 +957,252 @@ def test_validate_url_dns_failure_rejected(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", boom)
     with pytest.raises(ValueError, match="does not resolve"):
         model_sync._validate_endpoint_url("https://does-not-resolve.example/v1")
+
+
+# ---------------------------------------------------------------------------
+# get_modelsdev — TTL cache
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def modelsdev_clock(monkeypatch):
+    """A fresh, empty cache, a controllable clock and a counting _fetch_modelsdev."""
+    from types import SimpleNamespace
+    monkeypatch.setattr(model_sync, "_cache", {"data": None, "ts": 0.0, "index": {}})
+    clock = SimpleNamespace(now=1000.0, fetches=0, payload=[{"id": "m-1"}])
+    monkeypatch.setattr(model_sync, "time", SimpleNamespace(monotonic=lambda: clock.now))
+
+    def fetch():
+        clock.fetches += 1
+        return list(clock.payload)
+
+    monkeypatch.setattr(model_sync, "_fetch_modelsdev", fetch)
+    return clock
+
+
+def test_get_modelsdev_first_call_fetches_and_indexes(modelsdev_clock):
+    models, index = model_sync.get_modelsdev()
+    assert modelsdev_clock.fetches == 1
+    assert models == [{"id": "m-1"}]
+    assert index == {"m1": [{"id": "m-1"}]}
+
+
+def test_get_modelsdev_reuses_cache_within_ttl(modelsdev_clock):
+    first = model_sync.get_modelsdev()
+    modelsdev_clock.payload = [{"id": "other"}]
+    modelsdev_clock.now += model_sync._TTL  # exactly at the TTL is still fresh
+    assert model_sync.get_modelsdev() == first
+    assert modelsdev_clock.fetches == 1
+
+
+def test_get_modelsdev_refetches_after_ttl(modelsdev_clock):
+    model_sync.get_modelsdev()
+    modelsdev_clock.payload = [{"id": "other"}]
+    modelsdev_clock.now += model_sync._TTL + 1
+    models, index = model_sync.get_modelsdev()
+    assert modelsdev_clock.fetches == 2
+    assert models == [{"id": "other"}]
+    assert index == {"other": [{"id": "other"}]}
+
+
+def test_get_modelsdev_empty_fetch_returns_empty_list(modelsdev_clock):
+    """A failed fetch caches [] and the caller still gets a list."""
+    modelsdev_clock.payload = []
+    assert model_sync.get_modelsdev() == ([], {})
+
+
+# ---------------------------------------------------------------------------
+# _fetch_modelsdev
+# ---------------------------------------------------------------------------
+
+class _JsonResp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+def test_fetch_modelsdev_flattens_providers_and_skips_non_dicts(monkeypatch):
+    calls = []
+    payload = {
+        "acme": {"models": {"a": {"id": "a"}, "junk": "not-a-model", "b": {"id": "b"}}},
+        "no-models": {},
+        "bad-provider": ["not", "a", "dict"],
+        "other": {"models": {"c": {"id": "c"}}},
+    }
+
+    def fake_get(url, timeout):
+        calls.append((url, timeout))
+        return _JsonResp(payload)
+
+    monkeypatch.setattr(model_sync.requests, "get", fake_get)
+    assert model_sync._fetch_modelsdev() == [{"id": "a"}, {"id": "b"}, {"id": "c"}]
+    assert calls == [(model_sync.MODELSDEV_URL, model_sync.MODELSDEV_TIMEOUT)]
+
+
+@pytest.mark.parametrize("failure", ["network", "bad-json"])
+def test_fetch_modelsdev_failure_returns_empty(monkeypatch, failure):
+    import requests
+
+    def fake_get(url, timeout):
+        if failure == "network":
+            raise requests.ConnectionError("down")
+        resp = _JsonResp(None)
+        resp.json = lambda: (_ for _ in ()).throw(ValueError("not json"))
+        return resp
+
+    monkeypatch.setattr(model_sync.requests, "get", fake_get)
+    assert model_sync._fetch_modelsdev() == []
+
+
+# ---------------------------------------------------------------------------
+# _pinned_get — connects to the validated IP, never re-resolves
+# ---------------------------------------------------------------------------
+
+class _FakePool:
+    instances: list = []
+    fail = False
+
+    def __init__(self, host, port, **kwargs):
+        self.host, self.port, self.kwargs = host, port, kwargs
+        self.requests = []
+        self.closed = False
+        _FakePool.instances.append(self)
+
+    def request(self, method, path, headers, redirect):
+        self.requests.append((method, path, headers, redirect))
+        if self.fail:
+            raise ConnectionError("refused")
+        return "response"
+
+    def close(self):
+        self.closed = True
+
+
+@pytest.fixture
+def fake_pools(monkeypatch):
+    _FakePool.instances = []
+    http = type("HTTPPool", (_FakePool,), {})
+    https = type("HTTPSPool", (_FakePool,), {})
+    monkeypatch.setattr(model_sync.urllib3, "HTTPConnectionPool", http)
+    monkeypatch.setattr(model_sync.urllib3, "HTTPSConnectionPool", https)
+    return http, https
+
+
+def test_pinned_get_https_verifies_against_hostname(fake_pools):
+    _, https = fake_pools
+    resp = model_sync._pinned_get("https://api.example.com/v1/models?x=1", "93.184.216.34", {"Authorization": "Bearer k"})
+    assert resp == "response"
+    (pool,) = _FakePool.instances
+    assert type(pool) is https
+    assert (pool.host, pool.port) == ("93.184.216.34", 443)
+    assert pool.kwargs["server_hostname"] == "api.example.com"
+    assert pool.kwargs["assert_hostname"] == "api.example.com"
+    assert pool.kwargs["ca_certs"]
+    assert pool.kwargs["retries"] is False
+    assert pool.requests == [(
+        "GET", "/v1/models?x=1", {"Authorization": "Bearer k", "Host": "api.example.com"}, False,
+    )]
+    assert pool.closed
+
+
+def test_pinned_get_http_with_explicit_port_and_no_path(fake_pools):
+    http, _ = fake_pools
+    model_sync._pinned_get("http://api.example.com:8000", "93.184.216.34", {})
+    (pool,) = _FakePool.instances
+    assert type(pool) is http
+    assert (pool.host, pool.port) == ("93.184.216.34", 8000)
+    assert pool.kwargs == {"timeout": model_sync.ENDPOINT_TIMEOUT, "retries": False}
+    assert pool.requests == [("GET", "/", {"Host": "api.example.com:8000"}, False)]
+    assert pool.closed
+
+
+def test_pinned_get_closes_pool_when_request_fails(fake_pools, monkeypatch):
+    monkeypatch.setattr(_FakePool, "fail", True)
+    with pytest.raises(ConnectionError):
+        model_sync._pinned_get("http://api.example.com/v1/models", "93.184.216.34", {})
+    (pool,) = _FakePool.instances
+    assert pool.closed
+
+
+# ---------------------------------------------------------------------------
+# Remaining fetch_endpoint_model / matching / pricing branches
+# ---------------------------------------------------------------------------
+
+def test_server_info_flags_non_dict_is_empty():
+    assert model_sync._server_info_flags(["not", "a", "dict"]) == {}
+
+
+def test_fetch_endpoint_model_blocked_url_is_none(monkeypatch):
+    # Record, don't raise: fetch_endpoint_model swallows exceptions from the
+    # probes, so an assertion inside the stub would never reach pytest.
+    fetched = []
+    monkeypatch.setattr(model_sync, "_pinned_get", lambda url, ip, headers: fetched.append(url))
+    assert model_sync.fetch_endpoint_model({"url": "http://127.0.0.1/v1"}) is None
+    assert fetched == []
+
+
+def test_fetch_endpoint_model_all_probes_fail_is_none(monkeypatch):
+    seen = []
+
+    def fake_get(url):
+        seen.append(url)
+        raise ConnectionError("refused")
+
+    _patch_probe(monkeypatch, fake_get)
+    assert model_sync.fetch_endpoint_model({"url": "http://api.example.com/v1"}) is None
+    assert seen == [
+        "http://api.example.com/server_info?config_format=json",
+        "http://api.example.com/get_server_info",
+        "http://api.example.com/v1/models",
+        "http://api.example.com/get_model_info",
+    ]
+
+
+def test_fetch_endpoint_model_v1_models_error_falls_back_to_get_model_info(monkeypatch):
+    def fake_get(url):
+        if url.endswith("/get_model_info"):
+            return _Resp({"model_path": "org/m", "context_length": 4096})
+        if url.endswith("/models"):
+            raise ConnectionError("refused")
+        return _Resp({}, ok=False)
+
+    _patch_probe(monkeypatch, fake_get)
+    assert model_sync.fetch_endpoint_model({"url": "http://api.example.com/v1"}) == {
+        "id": "org/m", "max_model_len": 4096,
+    }
+
+
+def test_find_in_modelsdev_config_name_exact_match_wins():
+    models = [{"id": "acme/llama-3.1-8b", "name": "Llama"}, {"id": "Llama_3.1-70B", "name": "Llama 70"}]
+    assert model_sync.find_in_modelsdev("whatever", models, config_name="llama-3.1-70b") is models[1]
+
+
+def test_find_in_modelsdev_only_noise_tokens_is_none():
+    assert model_sync.find_in_modelsdev("org/70b-instruct", [{"id": "70b-instruct"}]) is None
+
+
+def test_average_price_without_id_is_all_none():
+    assert model_sync._average_price({}, {"x": [{"cost": {"input": 1}}]}) == (None, None, None, None)
+
+
+def test_average_price_ignores_non_numeric_costs():
+    index = {"m": [
+        {"id": "m", "cost": {"input": "n/a", "output": 4, "cache_read": [1], "cache_write": None}},
+        {"id": "m", "cost": {"input": 2, "output": 6}},
+    ]}
+    assert model_sync._average_price({"id": "m"}, index) == (2.0, 5.0, None, None)
+
+
+def test_server_modalities_matching_operator_drop_dev_updates(monkeypatch):
+    """When the server's authoritative modalities equal the operator's values, the
+    models.dev proposals for both fields are withdrawn instead of applied."""
+    _patch_ep(monkeypatch,
+              ep_model={"id": "m", "max_model_len": 8192, "backend": "sglang", "is_embedding": True},
+              dev_match={"modalities": {"input": ["text", "image"], "output": ["text"]}})
+    result = model_sync.sync_model({
+        "name": "m", "input_modalities": ["text"], "output_modalities": [],
+        "endpoints": [{"url": "http://x"}],
+    })
+    assert "input_modalities" not in result["updates"]
+    assert "output_modalities" not in result["updates"]
