@@ -374,6 +374,9 @@ def create_app():
     if rl_url := rl_cfg.get("storage_url"):
         app.config["RATELIMIT_STORAGE_URI"] = rl_url
     else:
+        # Same in-memory storage Flask-Limiter would pick, set explicitly so it
+        # does not warn on every app start; the log warning below still fires.
+        app.config["RATELIMIT_STORAGE_URI"] = "memory://"
         app.logger.warning(
             "rate_limiting.storage_url is not set; rate limits are per-worker and ineffective "
             "in multi-worker deployments. Set to a Redis URL for shared rate limiting."

@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import sys
 import zipfile
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -60,6 +61,7 @@ def test_installed_wheel_migrates_outside_checkout(wheel, tmp_path):
     where = subprocess.run([str(python), "-I", "-c", "import monitor; print(monitor.__file__)"], cwd=run_dir, env=env, capture_output=True, text=True, check=True)
     assert str(PROJECT) not in where.stdout
 
-    with sqlite3.connect(db) as conn:
+    # sqlite3's own context manager only commits; closing() closes.
+    with closing(sqlite3.connect(db)) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {"daily_stats", "probes", "samples", "alembic_version"} <= tables

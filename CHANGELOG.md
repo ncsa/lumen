@@ -4,6 +4,7 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+- Tests now fail on any warning, and CI enforces at least 90% line coverage per file for Lumen and the monitor (#557)
 - The monitor's model detail page charts the cached-input and cache-write prices over time, with the models.dev comparison band where providers publish cache prices. (#510)
 - The Models page links to LLMHub for launching models that are not listed, when `app.llmhub_url` is set (editable in the admin config editor). (#233)
 - Configure a separate cached-input token price per model; unset rates use the normal input price, while zero is free. The rate is published on `/v1/models` and written into the generated OpenCode config (`cost.cache.read`/`write`) so cache-aware clients bill the same figure. `/connect` now offers that config as `opencode.jsonc`: its `cache` block always states both rates, filling an unset one with the input price and explaining why, because OpenCode bills an omitted cache price as free. (#66)

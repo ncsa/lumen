@@ -47,6 +47,12 @@ def _favicon_links(html):
     return _LINK_RE.findall(html)
 
 
+def _status(client, url):
+    """GET *url* and close the response, which may hold an open static file."""
+    with client.get(url) as resp:
+        return resp.status_code
+
+
 @pytest.mark.parametrize("theme", sorted(EXPECTED_LINKS))
 @pytest.mark.parametrize("path,status", [("/", HTTPStatus.OK), ("/does-not-exist", HTTPStatus.NOT_FOUND)])
 def test_anonymous_pages_render_favicon_links(app, client, theme, path, status):
@@ -69,17 +75,16 @@ def test_local_favicon_files_are_served_as_images(app, client, theme):
     local = [href for _, href in EXPECTED_LINKS[theme] if href.startswith("/")]
     with _theme(app, theme):
         for href in local:
-            resp = client.get(href)
-            assert resp.status_code == HTTPStatus.OK, href
-            assert resp.mimetype.startswith("image/"), (href, resp.mimetype)
+            with client.get(href) as resp:
+                assert resp.status_code == HTTPStatus.OK, href
+                assert resp.mimetype.startswith("image/"), (href, resp.mimetype)
 
 
 def test_default_svg_has_single_svg_root(app, client):
-    with _theme(app, "default"):
-        resp = client.get("/theme-static/favicon/icon.svg")
-    assert resp.status_code == HTTPStatus.OK
-    assert resp.mimetype == "image/svg+xml"
-    root = ET.fromstring(resp.data)
+    with _theme(app, "default"), client.get("/theme-static/favicon/icon.svg") as resp:
+        assert resp.status_code == HTTPStatus.OK
+        assert resp.mimetype == "image/svg+xml"
+        root = ET.fromstring(resp.data)
     assert root.tag == "{http://www.w3.org/2000/svg}svg"
     assert not root.findall(".//{http://www.w3.org/2000/svg}svg")
 
@@ -150,10 +155,9 @@ def test_theme_without_favicon_block_authenticated_page(auth_client, no_favicon_
 
 @pytest.mark.parametrize("theme", ["default", "uic", "uis"])
 def test_favicon_ico_serves_local_theme_file(app, client, theme):
-    with _theme(app, theme):
-        resp = client.get("/favicon.ico")
-    assert resp.status_code == HTTPStatus.OK
-    assert resp.mimetype.startswith("image/"), resp.mimetype
+    with _theme(app, theme), client.get("/favicon.ico") as resp:
+        assert resp.status_code == HTTPStatus.OK
+        assert resp.mimetype.startswith("image/"), resp.mimetype
 
 
 def test_favicon_ico_redirects_to_absolute_url(app, client):
@@ -197,10 +201,9 @@ def test_favicon_ico_follows_email_theme_override(app, client):
 
 def test_favicon_ico_needs_no_login(app, client):
     """Anonymous fetches are answered directly, never sent to the login page."""
-    with _theme(app, "default"):
-        resp = client.get("/favicon.ico")
-    assert resp.status_code == HTTPStatus.OK
-    assert "Location" not in resp.headers
+    with _theme(app, "default"), client.get("/favicon.ico") as resp:
+        assert resp.status_code == HTTPStatus.OK
+        assert "Location" not in resp.headers
 
 
 def test_favicon_ico_is_exempt_from_rate_limits(app, client):
@@ -223,8 +226,8 @@ def test_favicon_ico_is_exempt_from_rate_limits(app, client):
         with app.app_context():
             limiter.reset()
         with _theme(app, "default"):
-            control = [client.get("/theme-static/favicon/favicon.ico").status_code for _ in range(2)]
-            favicon = [client.get("/favicon.ico").status_code for _ in range(5)]
+            control = [_status(client, "/theme-static/favicon/favicon.ico") for _ in range(2)]
+            favicon = [_status(client, "/favicon.ico") for _ in range(5)]
     finally:
         manager.set_default_limits(original)
         with app.app_context():

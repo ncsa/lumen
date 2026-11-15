@@ -34,7 +34,9 @@ def usage_page(admin_client, browser):
         if url.path.startswith("/api/usage/"):
             requested.append(url.path)
         resp = admin_client.get(url.path + (f"?{url.query}" if url.query else ""))
-        route.fulfill(status=resp.status_code, content_type=resp.content_type, body=resp.get_data())
+        # Close the response: a static file stays open until it is.
+        with resp:
+            route.fulfill(status=resp.status_code, content_type=resp.content_type, body=resp.get_data())
 
     page = browser.new_page()
     page.set_default_timeout(10_000)

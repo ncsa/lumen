@@ -49,6 +49,12 @@ _CREATED = datetime(2026, 1, 1, 12, 0, 0)
 _USED = datetime(2026, 2, 1, 12, 0, 0)
 
 
+def _iso(value):
+    # Bind text, as SQLite stores it: sqlite3's default datetime adapter is
+    # deprecated since Python 3.12.
+    return value.isoformat(" ") if value is not None else None
+
+
 def _revision_module():
     spec = importlib.util.spec_from_file_location("revoked_at_revision", _REVISION_PATH)
     module = importlib.util.module_from_spec(spec)
@@ -72,7 +78,7 @@ def pre_migration_sqlite(tmp_path):
                 "INSERT INTO api_keys (entity_id, name, key_hash, active, requests,"
                 " input_tokens, output_tokens, audio_seconds, cost, last_used_at, created_at)"
                 " VALUES (1, :name, :name, :active, 0, 0, 0, 0, 0, :last_used, :created)"
-            ), {"name": name, "active": active, "last_used": last_used, "created": _CREATED})
+            ), {"name": name, "active": active, "last_used": _iso(last_used), "created": _iso(_CREATED)})
     yield engine
     engine.dispose()
 

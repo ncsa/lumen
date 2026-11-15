@@ -75,7 +75,8 @@ def test_every_route_and_asset_works_under_base_path(make_client, base_path, pre
     assets = [a["href"] for a in markup.find("link") if a["href"].startswith("/")] + [a["src"] for a in markup.find("script") if a.get("src", "").startswith("/")]
     assert sorted(assets) == [f"{prefix}/static/common.js", f"{prefix}/static/monitor.css", f"{prefix}/static/overview.js"]
     for asset in assets:
-        assert client.get(asset).status_code == HTTPStatus.OK
+        with client.get(asset) as r:
+            assert r.status_code == HTTPStatus.OK
     assert client.get(f"{prefix}/api/overview").status_code == HTTPStatus.OK
     assert client.get(f"{prefix}/api/lumen?range=1h").status_code == HTTPStatus.OK
     if prefix:
@@ -101,7 +102,8 @@ def test_detail_page_and_series_work_under_base_path(make_client, base_path, pre
     assets = [a["href"] for a in markup.find("link") if a["href"].startswith("/")] + [a["src"] for a in markup.find("script") if a.get("src", "").startswith("/")]
     assert sorted(assets) == [f"{prefix}/static/common.js", f"{prefix}/static/detail.js", f"{prefix}/static/monitor.css"]
     for asset in assets:
-        assert client.get(asset).status_code == HTTPStatus.OK
+        with client.get(asset) as r:
+            assert r.status_code == HTTPStatus.OK
     data = client.get(f"{prefix}/api/series?model=org/qwen&range=7d").get_json()
     assert data["model"] == "org/qwen" and data["daily"] is True and len(data["traffic"]["points"]) == 7
     if prefix:

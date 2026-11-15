@@ -51,6 +51,12 @@ _OLD_API_KEYS = """
 _CREATED = datetime(2026, 1, 1, 12, 0, 0)
 
 
+def _iso(value):
+    # Bind text, as SQLite stores it: sqlite3's default datetime adapter is
+    # deprecated since Python 3.12.
+    return value.isoformat(" ") if value is not None else None
+
+
 def _revision_module():
     spec = importlib.util.spec_from_file_location("expires_at_revision", _REVISION_PATH)
     module = importlib.util.module_from_spec(spec)
@@ -70,7 +76,7 @@ def pre_migration_sqlite(tmp_path):
                 "INSERT INTO api_keys (entity_id, name, key_hash, requests, input_tokens,"
                 " output_tokens, audio_seconds, cost, created_at, revoked_at)"
                 " VALUES (1, :name, :name, 0, 0, 0, 0, 0, :created, :revoked_at)"
-            ), {"name": name, "created": _CREATED, "revoked_at": revoked_at})
+            ), {"name": name, "created": _iso(_CREATED), "revoked_at": _iso(revoked_at)})
     yield engine
     engine.dispose()
 

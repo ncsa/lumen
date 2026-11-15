@@ -48,6 +48,9 @@ def test_upload_oversized_400(app, auth_client):
     # Default max is 10MB; fabricate 11MB of zeros under the .txt extension.
     big = b"\x00" * (11 * 1024 * 1024)
     resp = _post_upload(auth_client, "big.txt", big)
+    # The test client spools a body this large to a temp file and, without
+    # follow_redirects, never closes it.
+    resp.request.input_stream.close()
     assert resp.status_code == HTTPStatus.BAD_REQUEST
     assert "exceeds" in resp.get_json()["error"]
 
