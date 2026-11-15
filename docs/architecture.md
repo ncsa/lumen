@@ -325,7 +325,7 @@ All three workers are daemon threads started inside `create_app`. A `SERVER_IS_M
 User → /login → CILogon OIDC → /callback → group auto-assignment → session cookie
 ```
 
-Session stores: `entity_id`, `entity_type`, `userinfo` (OAuth claims).
+Session stores the user's public `entity_uuid` (never the integer id) plus display fields (`entity_name`, `entity_email`, `initials`, `gravatar_hash`). A `before_request` hook resolves it once per request into `g.entity` / `g.entity_id`; a cookie without `entity_uuid` counts as logged out.
 
 For local development, set `app.dev_user.email` in `config.yaml` to bypass OAuth entirely.
 
