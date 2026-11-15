@@ -1,6 +1,6 @@
 import re
 
-from flask import Blueprint, current_app, render_template, request, session
+from flask import Blueprint, current_app, g, render_template, request
 from sqlalchemy import select
 
 from lumen.extensions import db
@@ -62,7 +62,7 @@ def _accessible_models(entity_id):
 
 @connect_bp.route("/connect")
 def index():
-    models = _accessible_models(session.get("entity_id"))
+    models = _accessible_models(g.get("entity_id"))
 
     requested = request.args.get("model")
     selected = requested if any(m["id"] == requested for m in models) else ""
