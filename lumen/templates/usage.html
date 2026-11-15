@@ -174,13 +174,21 @@ function heatmapColor(t) {
 
 // Same rules as the Jinja filter lumen/__init__.py:compact_number, which the
 // profile page uses: full number below a million, else "5.2 million" etc.
-// halfEven matches Python's rounding of an exact tie (2.25 -> "2.2").
+// Python rounds the exact binary value of n / size and breaks exact ties to
+// even. toFixed also rounds the exact value (so 2,150,000 -> 2.15 -> "2.1"),
+// but breaks exact ties upward. With one decimal the only exact ties are
+// x.25 and x.75, which Python rounds to x.2 and x.8.
 function compactNumber(n) {
   n = n || 0;
   for (const [size, word] of [[1e12, 'trillion'], [1e9, 'billion'], [1e6, 'million']]) {
     if (Math.abs(n) >= size) {
-      const v = (n / size).toLocaleString('en-US', {minimumFractionDigits: 1, maximumFractionDigits: 1, roundingMode: 'halfEven'});
-      return `${v} ${word}`;
+      const x = Math.abs(n / size);
+      let s = x.toFixed(1);
+      if (Number.isInteger(x * 4) && !Number.isInteger(x * 2)) {
+        s = x.toFixed(2).replace(/25$/, '2').replace(/75$/, '8');
+      }
+      s = s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      return `${n < 0 ? '-' : ''}${s} ${word}`;
     }
   }
   return n.toLocaleString('en-US');

@@ -52,8 +52,22 @@ def test_summary_cards_use_human_readable_counts(usage_page):
 
 @pytest.mark.parametrize(
     "value",
-    [None, 0, 499, 999_999, 1_000_000, 2_250_000, 2_350_000, 5_224_879, 999_950_000,
-     16_058_634_931, 2_500_000_000_000, 1_234_567_000_000_000, -5_224_879],
+    [None, 0, 499, 999_999, 1_000_000, 5_224_879, 999_950_000, 16_058_634_931,
+     2_500_000_000_000, 1_234_567_000_000_000, -5_224_879,
+     # Ties exact in binary: Python rounds them to even.
+     2_250_000, 2_750_000, -2_250_000, 2_250_000_000, 2_750_000_000_000,
+     # Ties that are not exact in binary: the double sits just above or below.
+     1_150_000, 2_150_000, 2_350_000, 4_150_000, -2_150_000,
+     1_150_000_000, 2_150_000_000, 1_150_000_000_000, 2_150_000_000_000,
+     1_234_550_000_000_000],
 )
 def test_compact_number_matches_the_python_filter(usage_page, value):
     assert usage_page.evaluate("compactNumber", value) == compact_number(value)
+
+
+def test_compact_number_matches_the_python_filter_on_every_tie(usage_page):
+    """Every x.x5 tie from 1.05 to 999.95 million, billion and trillion."""
+    values = [k * 50_000 * scale for scale in (1, 1_000, 1_000_000) for k in range(21, 20_000, 2)]
+    got = usage_page.evaluate("values => values.map(compactNumber)", values)
+    mismatches = [(v, g, compact_number(v)) for v, g in zip(values, got) if g != compact_number(v)]
+    assert not mismatches[:10]
