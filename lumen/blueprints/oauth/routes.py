@@ -20,8 +20,9 @@ import time
 from datetime import timedelta
 from http import HTTPStatus
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from uuid import UUID
 
-from flask import Blueprint, jsonify, make_response, redirect, render_template, request, session, url_for
+from flask import Blueprint, g, jsonify, make_response, redirect, render_template, request, session, url_for
 from sqlalchemy import case, delete, select, update
 from sqlalchemy.exc import IntegrityError
 
@@ -217,7 +218,7 @@ def device_authorization():
 @oauth_bp.route("/device")
 @limiter.limit(_chat_limit, key_func=_chat_entity_id)
 def device_page():
-    if not session.get("entity_id"):
+    if not g.get("entity_id"):
         # Stash where we came from so the login round trip lands back here;
         # auth.callback / auth.devlogin / landing honour the fixed destination.
         code = request.args.get("code")
@@ -283,7 +284,7 @@ def authorize():
     if error:
         return _error_page("Invalid authorization request", error)
 
-    if not session.get("entity_id"):
+    if not g.get("entity_id"):
         session["oauth_return_to"] = request.full_path
         return redirect(url_for("auth.landing"))
 
@@ -299,9 +300,9 @@ def authorize():
     )
     db.session.add(req)
     db.session.commit()
-    # Keyed by request id so a later flow in the same browser never hands its
+    # Keyed by the request's public UUID so a later flow in the same browser never hands its
     # state to an earlier one.
-    session["oauth_consent_state"] = {"request_id": req.id, "state": state}
+    session["oauth_consent_state"] = {"request_id": str(req.uuid), "state": state}
     return _render_consent(req)
 
 
@@ -309,18 +310,20 @@ def authorize():
 @limiter.limit(_chat_limit, key_func=_chat_entity_id)
 @login_required
 def consent():
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     try:
-        request_id = int(request.form.get("request_id", ""))
+        request_uuid = UUID(request.form.get("request_id", ""))
     except ValueError:
-        request_id = -1
+        request_uuid = None
     # Approve/deny only a request whose consent page was rendered to *this*
     # session — ids cannot be burned blind by a forged form.
-    if request_id != session.get("oauth_consent_request_id"):
+    if request_uuid is None or str(request_uuid) != session.get("oauth_consent_request_id"):
         return _error_page("Unknown request", "This key request was not shown to your session.")
     action = request.form.get("action")
 
-    req = db.session.get(AuthRequest, request_id)
+    req = db.session.execute(
+        select(AuthRequest).where(AuthRequest.uuid == request_uuid)
+    ).scalar_one_or_none()
     if req is None or req.status != "pending":
         return _result_page("Already handled",
                             "This request was already approved, denied, or has expired.")
@@ -376,7 +379,7 @@ def consent():
             req.auth_code_expires_at = now + timedelta(seconds=AUTH_CODE_TTL)
             db.session.commit()
             query = {"code": auth_code}
-            state = _pop_consent_state(req.id)
+            state = _pop_consent_state(req.uuid)
             if state:
                 query["state"] = state
             return _append_query_redirect(req.redirect_uri, query)
@@ -401,7 +404,7 @@ def consent():
     db.session.commit()
     if req.flow == "code":
         query = {"error": "access_denied"}
-        state = _pop_consent_state(req.id)
+        state = _pop_consent_state(req.uuid)
         if state:
             query["state"] = state
         return _append_query_redirect(req.redirect_uri, query)
@@ -624,22 +627,22 @@ def _consent_model_rows(entity_id: int):
     return rows
 
 
-def _pop_consent_state(request_id: int) -> str | None:
-    """Pop the code-flow state stored by authorize(), only if it belongs to request_id."""
+def _pop_consent_state(request_uuid: UUID) -> str | None:
+    """Pop the code-flow state stored by authorize(), only if it belongs to request_uuid."""
     saved = session.pop("oauth_consent_state", None)
-    if isinstance(saved, dict) and saved.get("request_id") == request_id:
+    if isinstance(saved, dict) and saved.get("request_id") == str(request_uuid):
         return saved.get("state")
     return None
 
 
 def _render_consent(req: AuthRequest, error: str | None = None):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     existing_key = db.session.execute(
         select(APIKey).where(APIKey.entity_id == entity_id, APIKey.name == req.requested_name,
                              APIKey.revoked_at.is_(None))
         .order_by(APIKey.created_at.desc(), APIKey.id.desc())
     ).scalars().first()
-    session["oauth_consent_request_id"] = req.id
+    session["oauth_consent_request_id"] = str(req.uuid)
     origin = full_uri = ""
     if req.flow == "code" and req.redirect_uri:
         parts = urlsplit(req.redirect_uri)
