@@ -36,8 +36,16 @@ def load_logged_in_entity():
 
 
 def login_session(entity):
-    """Write the session for a user who just signed in; the cookie holds only the UUID."""
-    session.pop("entity_id", None)
+    """Write the session for a user who just signed in; the cookie holds only the UUID.
+
+    Drops the old integer ``entity_id`` and any OAuth consent binding left in the
+    cookie: a consent page rendered before this login belonged to an earlier
+    session (and, from before the UUID switch, holds integer request ids). The
+    consent page is rendered again after login, which binds it afresh;
+    ``oauth_return_to`` stays so the login round trip still lands there.
+    """
+    for key in ("entity_id", "oauth_consent_request_id", "oauth_consent_state"):
+        session.pop(key, None)
     session["entity_uuid"] = str(entity.uuid)
     session["entity_name"] = entity.name
     session["initials"] = entity.initials
