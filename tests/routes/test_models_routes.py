@@ -294,3 +294,149 @@ def test_model_detail_needs_ack_remains_visible(app, auth_client, test_model):
     resp = auth_client.get(f"/models/{test_model['model_name']}")
     assert resp.status_code == HTTPStatus.OK
     assert test_model["model_name"].encode() in resp.data
+
+
+def _set_model_url(app, model_id, url):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        db.session.get(ModelConfig, model_id).url = url
+        db.session.commit()
+
+
+class _FakeReadme:
+    def __init__(self, text="", error=None):
+        self.text = text
+        self._error = error
+
+    def raise_for_status(self):
+        if self._error is not None:
+            raise self._error
+
+
+def _fetches(monkeypatch, response):
+    """Replace the HF fetch; return the list of URLs it was asked for."""
+    from lumen.blueprints.models_page import routes
+
+    urls = []
+
+    def fake_get(url, timeout):
+        urls.append(url)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    monkeypatch.setattr(routes.http_requests, "get", fake_get)
+    return urls
+
+
+def test_model_readme_non_huggingface_url_returns_not_found(app, auth_client, test_model, monkeypatch):
+    _set_model_url(app, test_model["id"], "https://example.com/org/model")
+    urls = _fetches(monkeypatch, AssertionError("must not fetch"))
+
+    resp = auth_client.get(f"/models/{test_model['model_name']}/readme")
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert urls == []
+
+
+def test_model_readme_huggingface_url_without_repo_returns_not_found(app, auth_client, test_model, monkeypatch):
+    _set_model_url(app, test_model["id"], "https://huggingface.co/org")
+    urls = _fetches(monkeypatch, AssertionError("must not fetch"))
+
+    resp = auth_client.get(f"/models/{test_model['model_name']}/readme")
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert urls == []
+
+
+def test_model_readme_strips_front_matter(app, auth_client, test_model, monkeypatch):
+    _set_model_url(app, test_model["id"], "https://huggingface.co/org/Some-Model/tree/main")
+    urls = _fetches(monkeypatch, _FakeReadme("---\nlicense: mit\n---\n\n# Some Model\nBody\n"))
+
+    resp = auth_client.get(f"/models/{test_model['model_name']}/readme")
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.headers["Content-Type"] == "text/plain; charset=utf-8"
+    assert resp.get_data(as_text=True) == "# Some Model\nBody\n"
+    # Only the org/repo part of the model URL is kept.
+    assert urls == ["https://huggingface.co/org/Some-Model/raw/main/README.md"]
+
+
+def test_model_readme_without_front_matter_is_returned_unchanged(app, auth_client, test_model, monkeypatch):
+    _set_model_url(app, test_model["id"], "https://huggingface.co/org/Some-Model")
+    # Starts with "---" but never closes it: nothing is stripped.
+    _fetches(monkeypatch, _FakeReadme("--- not front matter\n# Title\n"))
+
+    resp = auth_client.get(f"/models/{test_model['model_name']}/readme")
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.get_data(as_text=True) == "--- not front matter\n# Title\n"
+
+
+def test_model_readme_upstream_http_error_returns_bad_gateway(app, auth_client, test_model, monkeypatch):
+    import requests
+
+    _set_model_url(app, test_model["id"], "https://huggingface.co/org/Some-Model")
+    _fetches(monkeypatch, _FakeReadme(error=requests.HTTPError("404 Client Error")))
+
+    resp = auth_client.get(f"/models/{test_model['model_name']}/readme")
+    assert resp.status_code == HTTPStatus.BAD_GATEWAY
+    assert resp.data == b""
+
+
+def test_model_readme_connection_error_returns_bad_gateway(app, auth_client, test_model, monkeypatch):
+    import requests
+
+    _set_model_url(app, test_model["id"], "https://huggingface.co/org/Some-Model")
+    _fetches(monkeypatch, requests.ConnectionError("unreachable"))
+
+    resp = auth_client.get(f"/models/{test_model['model_name']}/readme")
+    assert resp.status_code == HTTPStatus.BAD_GATEWAY
+
+
+def _add_endpoints(app, model_id, *healthy_flags):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_endpoint import ModelEndpoint
+        for i, healthy in enumerate(healthy_flags):
+            db.session.add(ModelEndpoint(
+                model_config_id=model_id, url=f"http://ep{i}.example", api_key="k", healthy=healthy,
+            ))
+        db.session.commit()
+
+
+def _status_badge_text(html_bytes):
+    soup = BeautifulSoup(html_bytes, "html.parser")
+    row = soup.find("th", string="Status").find_parent("tr")
+    return row.find("span", class_="badge").get_text(strip=True)
+
+
+def test_model_detail_some_endpoints_unhealthy_is_degraded(app, auth_client, test_model):
+    _add_endpoints(app, test_model["id"], True, False)
+    resp = auth_client.get(f"/models/{test_model['model_name']}")
+    assert resp.status_code == HTTPStatus.OK
+    assert _status_badge_text(resp.data) == "degraded"
+
+
+def test_model_detail_all_endpoints_healthy_is_ok(app, auth_client, test_model):
+    _add_endpoints(app, test_model["id"], True, True)
+    resp = auth_client.get(f"/models/{test_model['model_name']}")
+    assert resp.status_code == HTTPStatus.OK
+    assert _status_badge_text(resp.data) == "ok"
+
+
+def test_model_detail_shows_when_the_acknowledgement_was_given(app, auth_client, test_model, test_user):
+    from datetime import datetime
+
+    acked_at = datetime(2026, 3, 4, 5, 6, 7)
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_model_consent import EntityModelConsent
+        from lumen.models.model_config import ModelConfig
+
+        db.session.get(ModelConfig, test_model["id"]).needs_ack = True
+        db.session.add(EntityModelConsent(
+            entity_id=test_user["id"], model_config_id=test_model["id"], consented_at=acked_at,
+        ))
+        db.session.commit()
+
+    resp = auth_client.get(f"/models/{test_model['model_name']}")
+    assert resp.status_code == HTTPStatus.OK
+    assert b'data-utc="2026-03-04T05:06:07Z"' in resp.data
