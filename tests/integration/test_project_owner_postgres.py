@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import create_engine, delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 
-from tests.conftest import no_snapshot_refresher
+from tests.conftest import entity_uuid, no_snapshot_refresher
 
 from .conftest import TEST_CONFIG
 
@@ -82,7 +82,7 @@ def _project(owner, *managers):
 def _client_as(app, user_id, admin=False):
     client = app.test_client()
     with client.session_transaction() as sess:
-        sess["entity_id"] = user_id
+        sess["entity_uuid"] = entity_uuid(app, user_id)
         sess["entity_name"] = "User"
         sess["initials"] = "US"
         sess["gravatar_hash"] = ""

@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import func, select
 
 from lumen.timeutils import utcnow
-from tests.conftest import key_by_public_id, key_uuid, make_project
+from tests.conftest import entity_uuid, key_by_public_id, key_uuid, make_project
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1878,7 +1878,7 @@ def test_transfer_by_stale_owner_conflicts(app, owner_auth_client, owned_project
 
 def _login_as(client, entity_id):
     with client.session_transaction() as sess:
-        sess["entity_id"] = entity_id
+        sess["entity_uuid"] = entity_uuid(client.application, entity_id)
         sess.pop("admin_mode", None)
     return client
 

@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from lumen.extensions import db
 from lumen.models.entity import Entity
 from lumen.services.erasure import get_or_create_ghost
-from tests.conftest import make_project
+from tests.conftest import entity_uuid, make_project
 
 
 @pytest.fixture
@@ -147,8 +147,8 @@ def test_ghost_absent_from_project_member_search(app, auth_client, test_user, gh
 
 def test_login_required_redirects_a_ghost_session(client, ghost_id):
     with client.session_transaction() as sess:
-        sess["entity_id"] = ghost_id
+        sess["entity_uuid"] = entity_uuid(client.application, ghost_id)
     resp = client.get("/profile")
     assert resp.status_code == HTTPStatus.FOUND
     with client.session_transaction() as sess:
-        assert "entity_id" not in sess
+        assert "entity_uuid" not in sess

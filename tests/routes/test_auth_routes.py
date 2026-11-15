@@ -34,22 +34,22 @@ def test_devlogin_creates_user(app, client):
 
 def test_devlogin_sets_session(client):
     with client.session_transaction() as sess:
-        assert "entity_id" not in sess
+        assert "entity_uuid" not in sess
     client.get("/devlogin")
     with client.session_transaction() as sess:
-        assert "entity_id" in sess
+        assert "entity_uuid" in sess
 
 
 def test_devlogin_reuses_existing_user(app, client):
     client.get("/devlogin")
     with client.session_transaction() as sess:
-        first_id = sess["entity_id"]
+        first_id = sess["entity_uuid"]
 
     # Second login should reuse same entity
     client.get("/logout")
     client.get("/devlogin")
     with client.session_transaction() as sess:
-        second_id = sess["entity_id"]
+        second_id = sess["entity_uuid"]
 
     assert first_id == second_id
 
@@ -83,13 +83,13 @@ def test_devlogin_assigns_dev_groups(app, client):
 
 def test_logout_clears_session(auth_client):
     with auth_client.session_transaction() as sess:
-        assert "entity_id" in sess
+        assert "entity_uuid" in sess
 
     resp = auth_client.get("/logout", follow_redirects=False)
     assert resp.status_code == HTTPStatus.FOUND
 
     with auth_client.session_transaction() as sess:
-        assert "entity_id" not in sess
+        assert "entity_uuid" not in sess
 
 
 def test_logout_redirects_to_landing(auth_client):

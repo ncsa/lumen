@@ -977,7 +977,7 @@ def test_transferring_ownership_reveals_members(admin_client, app, ownerless_gro
     assert resp.status_code == HTTPStatus.OK
     # test_user is the owner now, so as a plain member they see the group as owned.
     with client.session_transaction() as sess:
-        sess["entity_id"] = test_user["id"]
+        sess["entity_uuid"] = test_user["uuid"]
         sess.pop("admin_mode", None)
     row = next(g for g in client.get("/groups/data").get_json()["groups"]
                if g["id"] == str(ownerless_group.uuid))

@@ -283,7 +283,7 @@ def test_user(app):
 @pytest.fixture
 def auth_client(client, test_user):
     with client.session_transaction() as sess:
-        sess["entity_id"] = test_user["id"]
+        sess["entity_uuid"] = test_user["uuid"]
         sess["entity_name"] = test_user["name"]
         sess["initials"] = test_user["initials"]
         sess["gravatar_hash"] = test_user["gravatar_hash"]
@@ -325,6 +325,14 @@ def make_group_with_member(entity_id, name="test-group", active=True):
     db.session.add(GroupMember(entity_id=entity_id, group_id=g.id))
     db.session.commit()
     return g.id
+
+
+def entity_uuid(app, entity_id):
+    """The public uuid string of the entity with this integer id, for the session cookie and URLs."""
+    from lumen.extensions import db
+    from lumen.models.entity import Entity
+    with app.app_context():
+        return str(db.session.get(Entity, entity_id).uuid)
 
 
 def key_uuid(app, key_id):
@@ -394,7 +402,7 @@ def admin_user(app):
 @pytest.fixture
 def admin_client(client, admin_user):
     with client.session_transaction() as sess:
-        sess["entity_id"] = admin_user["id"]
+        sess["entity_uuid"] = admin_user["uuid"]
         sess["entity_name"] = admin_user["name"]
         sess["initials"] = admin_user["initials"]
         sess["gravatar_hash"] = admin_user["gravatar_hash"]
@@ -406,7 +414,7 @@ def admin_client(client, admin_user):
 def admin_client_no_mode(client, admin_user):
     """Admin-eligible user with admin mode off (the default after login)."""
     with client.session_transaction() as sess:
-        sess["entity_id"] = admin_user["id"]
+        sess["entity_uuid"] = admin_user["uuid"]
         sess["entity_name"] = admin_user["name"]
         sess["initials"] = admin_user["initials"]
         sess["gravatar_hash"] = admin_user["gravatar_hash"]

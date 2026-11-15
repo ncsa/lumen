@@ -164,7 +164,7 @@ def ensure_demo_data(app):
         owned_name = owned.model_name if owned else None
 
         cookie = app.session_interface.get_signing_serializer(app).dumps({
-            "entity_id": user.id, "entity_name": user.name, "initials": user.initials,
+            "entity_uuid": str(user.uuid), "entity_name": user.name, "initials": user.initials,
             "entity_email": DEMO_USER, "gravatar_hash": ""})
         return model, cookie, owned_name
 

@@ -38,10 +38,10 @@ def test_inactive_user_redirected(app, client):
         )
         db.session.add(entity)
         db.session.commit()
-        entity_id = entity.id
+        public_id = str(entity.uuid)
 
     with client.session_transaction() as sess:
-        sess["entity_id"] = entity_id
+        sess["entity_uuid"] = public_id
 
     resp = client.get("/chat", follow_redirects=False)
     assert resp.status_code == HTTPStatus.FOUND
@@ -71,5 +71,5 @@ def test_admin_required_rejects_inactive_admin(app, admin_client, admin_user):
     assert urlparse(resp.headers["Location"]).path == "/"
 
     with admin_client.session_transaction() as sess:
-        assert "entity_id" not in sess
+        assert "entity_uuid" not in sess
         assert "admin_mode" not in sess

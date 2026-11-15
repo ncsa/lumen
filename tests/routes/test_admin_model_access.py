@@ -178,7 +178,7 @@ def test_patch_access_rejected_without_csrf_token(app, admin_user, test_model):
     try:
         client = app.test_client(use_cookies=True)
         with client.session_transaction() as sess:
-            sess["entity_id"] = admin_user["id"]
+            sess["entity_uuid"] = admin_user["uuid"]
             sess["entity_name"] = admin_user["name"]
             sess["initials"] = admin_user["initials"]
             sess["gravatar_hash"] = admin_user["gravatar_hash"]
