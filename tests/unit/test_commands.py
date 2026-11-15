@@ -376,7 +376,7 @@ def _stats(db, model_config_id):
 
 def test_reassign_model_moves_everything_on_sqlite(app, reassign_data):
     src, dst = reassign_data["src"], reassign_data["dst"]
-    result = app.test_cli_runner().invoke(reassign_model_cmd, [str(src), str(dst)])
+    result = app.test_cli_runner().invoke(reassign_model_cmd, ["old-model", "new-model"])
     assert result.exit_code == 0, result.output
     assert "conversations updated: 1" in result.output
     assert "model_stats moved: 1, merged: 1" in result.output
@@ -403,14 +403,14 @@ def test_reassign_model_moves_everything_on_sqlite(app, reassign_data):
 
 
 def test_reassign_model_second_run_is_a_noop(app, reassign_data):
-    src, dst = reassign_data["src"], reassign_data["dst"]
+    dst = reassign_data["dst"]
     runner = app.test_cli_runner()
-    assert runner.invoke(reassign_model_cmd, [str(src), str(dst)]).exit_code == 0
+    assert runner.invoke(reassign_model_cmd, ["old-model", "new-model"]).exit_code == 0
     with app.app_context():
         from lumen.extensions import db
         after_first = _stats(db, dst)
 
-    result = runner.invoke(reassign_model_cmd, [str(src), str(dst)])
+    result = runner.invoke(reassign_model_cmd, ["old-model", "new-model"])
     assert result.exit_code == 0, result.output
     assert "conversations updated: 0" in result.output
     assert "model_stats moved: 0, merged: 0" in result.output
@@ -420,14 +420,29 @@ def test_reassign_model_second_run_is_a_noop(app, reassign_data):
         assert _stats(db, dst) == after_first
 
 
-def test_reassign_model_unknown_id_exits_1(app, reassign_data):
+def test_reassign_model_unknown_name_exits_1(app, reassign_data):
     runner = app.test_cli_runner()
-    result = runner.invoke(reassign_model_cmd, ["999999", str(reassign_data["dst"])])
+    result = runner.invoke(reassign_model_cmd, ["no-such-model", "new-model"])
     assert result.exit_code == 1
-    assert "model_config id 999999 not found" in result.output
-    result = runner.invoke(reassign_model_cmd, [str(reassign_data["src"]), "999999"])
+    assert "model 'no-such-model' not found" in result.output
+    result = runner.invoke(reassign_model_cmd, ["old-model", "no-such-model"])
     assert result.exit_code == 1
-    assert "model_config id 999999 not found" in result.output
+    assert "model 'no-such-model' not found" in result.output
+
+
+def test_reassign_model_refuses_integer_ids(app, reassign_data):
+    """model_configs.id is not a model name: an old FROM_ID TO_ID call changes nothing."""
+    before = _stats_by_id(app, reassign_data)
+    result = app.test_cli_runner().invoke(reassign_model_cmd, [str(reassign_data["src"]), str(reassign_data["dst"])])
+    assert result.exit_code == 1
+    assert f"model '{reassign_data['src']}' not found" in result.output
+    assert _stats_by_id(app, reassign_data) == before
+
+
+def _stats_by_id(app, reassign_data):
+    with app.app_context():
+        from lumen.extensions import db
+        return _stats(db, reassign_data["src"]), _stats(db, reassign_data["dst"])
 
 
 def test_reassign_model_to_itself_exits_1_and_keeps_stats(app, reassign_data):
@@ -437,10 +452,10 @@ def test_reassign_model_to_itself_exits_1_and_keeps_stats(app, reassign_data):
         from lumen.extensions import db
         before = _stats(db, src)
 
-    result = app.test_cli_runner().invoke(reassign_model_cmd, [str(src), str(src)])
+    result = app.test_cli_runner().invoke(reassign_model_cmd, ["old-model", "old-model"])
 
     assert result.exit_code == 1
-    assert "same model_config id" in result.output
+    assert "same model" in result.output
     with app.app_context():
         from lumen.extensions import db
         assert _stats(db, src) == before

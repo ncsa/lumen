@@ -161,7 +161,7 @@
       {% for member, role in members %}
       <tr>
         <td>
-          {% if is_admin %}<a href="{{ url_for('admin.user_profile', eid=member.id) }}">{{ member.name }}</a>{% else %}{{ member.name }}{% endif %}
+          {% if is_admin %}<a href="{{ url_for('admin.user_profile', eid=member.uuid) }}">{{ member.name }}</a>{% else %}{{ member.name }}{% endif %}
         </td>
         <td>{{ member.email or "—" }}</td>
         <td>

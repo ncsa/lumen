@@ -60,7 +60,9 @@ def _model_stats(app):
 
 
 def _reassign(app, src, dst):
-    result = app.test_cli_runner().invoke(reassign_model_cmd, [str(src), str(dst)])
+    with app.app_context():
+        names = [db.session.get(ModelConfig, mid).model_name for mid in (src, dst)]
+    result = app.test_cli_runner().invoke(reassign_model_cmd, names)
     assert result.exit_code == 0, result.output
     return result
 

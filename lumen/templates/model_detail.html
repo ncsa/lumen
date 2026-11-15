@@ -331,7 +331,7 @@
 <script src="{{ url_for('static', filename='js/user-search.js') }}"></script>
 <script>
 (function () {
-  const ACCESS_URL = {{ url_for('admin.model_access_api_get', mid=config.id) | tojson }};
+  const ACCESS_URL = {{ url_for('admin.model_access_api_get', model_name=config.model_name) | tojson }};
   const editBtn = document.getElementById('model-access-edit-btn');
   const modalEl = document.getElementById('editAccessModal');
   const ownerInput = document.getElementById('access-owner-input');

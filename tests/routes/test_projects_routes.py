@@ -250,6 +250,12 @@ def test_detail_loads_for_admin(admin_client, service_project):
     assert resp.status_code == HTTPStatus.OK
 
 
+def test_detail_links_members_to_admin_profile_by_uuid(admin_client, service_project):
+    html = admin_client.get(f"/projects/{service_project['uuid']}").get_data(as_text=True)
+    assert f'href="/admin/users/{service_project["owner_uuid"]}/profile"' in html
+    assert f"/admin/users/{service_project['owner_id']}/" not in html
+
+
 def test_detail_404_for_unknown(admin_client):
     resp = admin_client.get(f"/projects/{uuid.uuid4()}")
     assert resp.status_code == HTTPStatus.NOT_FOUND

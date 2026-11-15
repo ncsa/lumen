@@ -5,6 +5,7 @@ SQLite never enforces foreign keys here, so every check below is on rows the
 command itself deleted or moved, exactly as it does on PostgreSQL.
 """
 import re
+import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from http import HTTPStatus
@@ -133,15 +134,24 @@ def world(app):
         db.session.commit()
         bill_request(other.id, model_id, "chat", 7, 3, 0.125, effective=None)
         return {
-            "user": user_id, "active_key": active_id, "revoked_key": revoked_id,
+            "user": user_id, "user_uuid": db.session.get(Entity, user_id).uuid, "active_key": active_id, "revoked_key": revoked_id,
             "other": other.id, "project": project.id, "project_key": project_key.id,
             "other_key": other_key.id, "other_conv": other_conv.id, "model": model_id,
             "owned_group": owned.id, "member_group": member.id,
         }
 
 
-def _erase(app, entity_id, *args, input=None):
-    return app.test_cli_runner().invoke(erase_entity_cmd, [str(entity_id), *args], input=input)
+def _uuid(app, entity_id):
+    """The public uuid of the entity with this integer id (as the operator would copy it)."""
+    with app.app_context():
+        return db.session.execute(select(Entity.uuid).where(Entity.id == entity_id)).scalar_one()
+
+
+def _erase(app, entity, *args, input=None):
+    """Run erase-entity on ``entity``: an integer id, resolved to its uuid, or a uuid."""
+    if not isinstance(entity, uuid.UUID):
+        entity = _uuid(app, entity)
+    return app.test_cli_runner().invoke(erase_entity_cmd, [str(entity), *args], input=input)
 
 
 def _sum(model, *columns):
@@ -181,6 +191,22 @@ def _ghost_id():
 # Refusals                                                                     #
 # --------------------------------------------------------------------------- #
 
+def test_refuses_an_integer_id(app, world):
+    result = app.test_cli_runner().invoke(erase_entity_cmd, [str(world["user"]), "--yes"])
+    assert result.exit_code != 0
+    assert "is not a valid UUID" in result.output
+    with app.app_context():
+        assert db.session.get(Entity, world["user"]).active is True
+
+
+def test_unknown_uuid_has_nothing_to_do(app, world):
+    result = app.test_cli_runner().invoke(erase_entity_cmd, [str(uuid.uuid4()), "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "nothing to do" in result.output
+    with app.app_context():
+        assert db.session.get(Entity, world["user"]).active is True
+
+
 def test_refuses_a_project(app, world):
     result = _erase(app, world["project"], "--yes")
     assert result.exit_code == 1
@@ -211,7 +237,7 @@ def test_refuses_a_project_owner(app, world):
 def test_refuses_without_confirmation(app, world):
     result = _erase(app, world["user"], input="n\n")
     assert result.exit_code == 1
-    assert f"Erase user {world['user']}: Erin <erin" in result.output
+    assert f"Erase user {world['user_uuid']}: Erin <erin" in result.output
     assert "groups that will be left without an owner: erin-owned" in result.output
     assert "Aborted." in result.output
     with app.app_context():
@@ -226,7 +252,7 @@ def test_yes_does_not_print_name_or_email(app, world):
         name, email = user.name, user.email
     result = _erase(app, world["user"], "--yes")
     assert result.exit_code == 0, result.output
-    assert f"Erasing user {world['user']}\n" in result.output
+    assert f"Erasing user {world['user_uuid']}\n" in result.output
     assert name not in result.output
     assert email not in result.output
 
@@ -253,7 +279,7 @@ def test_erasure_deletes_every_personal_row(app, world):
     for line in ("messages deleted: 2", "conversations deleted: 1", "auth_requests deleted: 1",
                  "entity_balances deleted: 1", "entity_limits deleted: 1",
                  "entity_model_consents deleted: 1", "group_members deleted: 2",
-                 "entity_managers deleted: 1", f"user {world['user']} deleted"):
+                 "entity_managers deleted: 1", f"user {world['user_uuid']} deleted"):
         assert line in result.output
     u = world["user"]
     with app.app_context():
@@ -390,23 +416,23 @@ def test_usage_readers_after_erasure(app, admin_client, world):
         users_total = metrics_snapshot.refresh_snapshot().users_total
     header = _users_header(admin_client)
     listed = [u["id"] for u in admin_client.get("/admin/api/users").get_json()["users"]]
-    assert world["user"] in listed
+    assert str(world["user_uuid"]) in listed
 
     assert _erase(app, world["user"], "--yes").exit_code == 0
 
     with app.app_context():
         assert _per_model_metrics() == metrics
         assert metrics_snapshot.refresh_snapshot().users_total == users_total - 1
-        ghost_id = _ghost_id()
+        ghost_uuid = str(db.session.get(Entity, _ghost_id()).uuid)
     after = _users_header(admin_client)
     assert after["total_users"] == header["total_users"] - 1
     assert (after["total_requests"], after["total_tokens"], after["total_cost"]) == \
         (header["total_requests"], header["total_tokens"], header["total_cost"])
     listed = [u["id"] for u in admin_client.get("/admin/api/users").get_json()["users"]]
-    assert world["user"] not in listed
-    assert ghost_id not in listed
+    assert str(world["user_uuid"]) not in listed
+    assert ghost_uuid not in listed
     listed = [u["id"] for u in admin_client.get("/admin/api/users?sort=requests&order=desc").get_json()["users"]]
-    assert ghost_id not in listed
+    assert ghost_uuid not in listed
 
 
 def test_owned_group_survives_without_an_owner(app, world):
@@ -477,10 +503,10 @@ def test_second_erasure_merges_into_the_same_ghost(app, world):
         assert owned == ["erin-private", "sam-private"]
 
 
-def test_rerun_with_a_deleted_id_has_nothing_to_do(app, world):
+def test_rerun_with_a_deleted_uuid_has_nothing_to_do(app, world):
     assert _erase(app, world["user"], "--yes").exit_code == 0
 
-    result = _erase(app, world["user"], "--yes")
+    result = _erase(app, world["user_uuid"], "--yes")
 
     assert result.exit_code == 0, result.output
     assert "nothing to do" in result.output

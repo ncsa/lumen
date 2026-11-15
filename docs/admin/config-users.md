@@ -58,7 +58,7 @@ Config version 3 removed the `groups:` and `users:` sections. What they used to 
 
 - **Group coin pools** (`max`/`refresh`/`starting`) — an admin sets a group's Max Coins and Refill Rate from the group's Edit dialog. Entities without their own pool fall back to their best group pool and then the top-level `defaults.tokens` block (see [Admin Configuration](config.md)).
 - **Group memberships** — owners and admins manage members on the group detail page; auto-join rules add members at login. Admins can also edit a user's groups from the Edit User dialog (see below).
-- **Per-user coin pools** — an admin sets a user's Max Coins and Refill Rate (and can enable/disable the account) from the Edit User dialog, opened from the pencil button on the Users page or the **Edit** button on the user's profile page (`/admin/users/<id>/profile`, or the admin's own `/profile` in admin mode).
+- **Per-user coin pools** — an admin sets a user's Max Coins and Refill Rate (and can enable/disable the account) from the Edit User dialog, opened from the pencil button on the Users page or the **Edit** button on the user's profile page (`/admin/users/<id>/profile`, where `<id>` is the user's random ID, a UUID; or the admin's own `/profile` in admin mode).
 
 The Edit User dialog's **Groups** field shows the user's groups as pills. Type part of a group name to get suggestions, then add one with a click or with the arrow keys and Enter. Remove a group with its ✕, or press Backspace in the empty field to remove the last one. Changes take effect only when you click **Save**. A pill with a lock icon can't be removed here: auto-join groups are managed by their rules, and a group's owner has to transfer ownership first. Auto-join groups are never offered as suggestions.
 

@@ -23,6 +23,12 @@ def ghost_id(app):
 
 
 @pytest.fixture
+def ghost_uuid(app, ghost_id):
+    with app.app_context():
+        return str(db.session.get(Entity, ghost_id).uuid)
+
+
+@pytest.fixture
 def control_user(app):
     """An active user whose name also matches a search for 'Erased'."""
     with app.app_context():
@@ -93,13 +99,15 @@ def test_get_or_create_ghost_rereads_after_losing_the_race(app, monkeypatch):
         assert _ghost_count() == 1
 
 
-def test_ghost_absent_from_admin_users_list(admin_client, ghost_id, control_user):
+def test_ghost_absent_from_admin_users_list(app, admin_client, ghost_uuid, control_user):
+    with app.app_context():
+        control_uuid = str(db.session.get(Entity, control_user).uuid)
     ids = [u["id"] for u in admin_client.get("/admin/api/users").get_json()["users"]]
-    assert control_user in ids
-    assert ghost_id not in ids
+    assert control_uuid in ids
+    assert ghost_uuid not in ids
 
     ids = [u["id"] for u in admin_client.get("/admin/api/users?search=Erased").get_json()["users"]]
-    assert ids == [control_user]
+    assert ids == [control_uuid]
 
 
 def test_ghost_absent_from_admin_typeahead(admin_client, ghost_id, control_user):
@@ -107,8 +115,8 @@ def test_ghost_absent_from_admin_typeahead(admin_client, ghost_id, control_user)
     assert [u["name"] for u in users] == ["Erased Smith"]
 
 
-def test_admin_user_edit_404s_for_ghost(admin_client, ghost_id):
-    resp = admin_client.patch(f"/admin/users/{ghost_id}", json={"active": True})
+def test_admin_user_edit_404s_for_ghost(admin_client, ghost_uuid):
+    resp = admin_client.patch(f"/admin/users/{ghost_uuid}", json={"active": True})
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 

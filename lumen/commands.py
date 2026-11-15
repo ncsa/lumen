@@ -455,14 +455,14 @@ def _release_stats_walk_lock(conn):
 
 
 @click.command("reassign-model")
-@click.argument("from_id", type=int)
-@click.argument("to_id", type=int)
+@click.argument("from_model")
+@click.argument("to_model")
 @with_appcontext
-def reassign_model_cmd(from_id, to_id):
+def reassign_model_cmd(from_model, to_model):
     """Move all conversations, stats and request history from one model to another.
 
-    FROM_ID and TO_ID are model_configs.id values. The FROM row in model_configs is
-    left as it is.
+    FROM_MODEL and TO_MODEL are model names (model_configs.model_name). The FROM
+    row in model_configs is left as it is.
 
     Not atomic on PostgreSQL: request_logs moves one chunk per transaction, so a
     failure partway leaves its history split between FROM and TO. It is safe to
@@ -477,32 +477,32 @@ def reassign_model_cmd(from_id, to_id):
         if not acquired:
             click.echo(WALK_LOCK_HELD)
             raise SystemExit(1)
-        _reassign_model(from_id, to_id)
+        _reassign_model(from_model, to_model)
 
 
-def _reassign_model(from_id, to_id):
+def _reassign_model(from_name, to_name):
     """reassign-model itself, run under stats_walk_lock."""
     from lumen.models.conversation import Conversation
     from lumen.models.request_log import RequestLog
 
-    if from_id == to_id:
-        click.echo(f"Error: FROM and TO are the same model_config id ({from_id}).")
+    if from_name == to_name:
+        click.echo(f"Error: FROM and TO are the same model ('{from_name}').")
         raise SystemExit(1)
-    src = db.session.get(ModelConfig, from_id)
-    dst = db.session.get(ModelConfig, to_id)
-    if not src:
-        click.echo(f"Error: model_config id {from_id} not found.")
+    by_name = select(ModelConfig.id)
+    from_id = db.session.execute(by_name.where(ModelConfig.model_name == from_name)).scalar_one_or_none()
+    to_id = db.session.execute(by_name.where(ModelConfig.model_name == to_name)).scalar_one_or_none()
+    if from_id is None:
+        click.echo(f"Error: model '{from_name}' not found.")
         raise SystemExit(1)
-    if not dst:
-        click.echo(f"Error: model_config id {to_id} not found.")
+    if to_id is None:
+        click.echo(f"Error: model '{to_name}' not found.")
         raise SystemExit(1)
-    from_name, to_name = src.model_name, dst.model_name
     # End the read transaction: on PostgreSQL the chunk walk below can run for hours,
     # and a session left idle in transaction that long is reaped by the server's
     # idle_in_transaction_session_timeout before the conversations step uses it.
     db.session.commit()
 
-    click.echo(f"Reassigning from '{from_name}' (id={from_id}) to '{to_name}' (id={to_id})")
+    click.echo(f"Reassigning from '{from_name}' to '{to_name}'")
 
     postgres = db.engine.dialect.name == "postgresql"
     if postgres:
@@ -706,8 +706,12 @@ def _reassign_start(conn, column, from_id, boundaries):
     return min(found) if found else None
 
 
-def _refresh_reassigned(start, boundaries):
+def _refresh_reassigned(start, boundaries, rerun=True):
     """Refresh every aggregate month by month from the month of ``start`` to now.
+
+    On a failure it tells the operator how to finish: re-run the same command, or,
+    with ``rerun=False`` (erase-entity, whose user is already deleted), run
+    backfill-aggregate for the failed aggregate and each one after it.
 
     In the order of ``boundaries``, which ``_aggregates_with_column`` gives in refresh
     order, so a hierarchical aggregate is refreshed after the child it is built on.
@@ -718,15 +722,22 @@ def _refresh_reassigned(start, boundaries):
     """
     month = start.astimezone(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     now = datetime.now(timezone.utc)
+    firsts = {name: max(month, boundary) if boundary is not None else month
+              for name, boundary in boundaries.items()}
     with _autocommit_connection() as conn:
-        for name, boundary in boundaries.items():
-            first = max(month, boundary) if boundary is not None else month
+        for i, (name, first) in enumerate(firsts.items()):
             click.echo(f"  refreshing '{name}' from {first:%Y-%m-%d} to {now:%Y-%m-%d}, month by month")
             try:
                 _refresh_months(conn, name, first, now)
             except _RefreshFailed as failed:
                 click.echo(f"Error: refreshing '{name}' for {failed.month:%Y-%m} failed: {failed.error.orig}")
-                click.echo("  request_logs is moved; re-run the same command to finish the refresh.")
+                if rerun:
+                    click.echo("  request_logs is moved; re-run the same command to finish the refresh.")
+                else:
+                    click.echo("  request_logs is moved; finish the refresh with, in this order:")
+                    click.echo(f"    flask backfill-aggregate --name {name} --from {failed.month:%Y-%m}")
+                    for later, later_first in list(firsts.items())[i + 1:]:
+                        click.echo(f"    flask backfill-aggregate --name {later} --from {later_first:%Y-%m}")
                 raise SystemExit(1)
 
 
@@ -836,11 +847,14 @@ def _check_stats(fix):
 
 
 @click.command("erase-entity")
-@click.argument("entity_id", type=int)
+@click.argument("entity_uuid", type=click.UUID)
 @click.option("--yes", is_flag=True, help="Erase without asking for confirmation.")
 @with_appcontext
-def erase_entity_cmd(entity_id, yes):
+def erase_entity_cmd(entity_uuid, yes):
     """Hard-delete a user for GDPR erasure. Cannot be undone; run it off-hours.
+
+    ENTITY_UUID is the user's public uuid (click the avatar on the user's profile
+    page to copy it); an integer database id is refused.
 
     Deletes the user's conversations, messages, auth requests, balance, limits, model
     consents, group and project memberships. Moves the user's request history, usage
@@ -849,8 +863,10 @@ def erase_entity_cmd(entity_id, yes):
 
     On PostgreSQL request_logs moves one chunk per transaction, and each UPDATE can
     decompress a whole chunk, hence off-hours. Safe to re-run: an interrupted run
-    leaves every row owned by the user or the ghost, and re-running with the same id,
-    even after the user is deleted, finishes the aggregate refresh.
+    leaves every row owned by the user or the ghost, and re-running with the same uuid
+    finishes it. If only the aggregate refresh fails, after the user is deleted, the
+    uuid no longer resolves: the error prints the backfill-aggregate commands that
+    finish it.
 
     On PostgreSQL reassign-model, erase-entity and check-stats do not run at the
     same time: check-stats skips, the other two exit with an error.
@@ -859,11 +875,19 @@ def erase_entity_cmd(entity_id, yes):
         if not acquired:
             click.echo(WALK_LOCK_HELD)
             raise SystemExit(1)
-        _erase_entity(entity_id, yes)
+        _erase_entity(entity_uuid, yes)
 
 
-def _erase_entity(entity_id, yes):
+def _erase_entity(entity_uuid, yes):
     """erase-entity itself, run under stats_walk_lock."""
+    user = db.session.execute(select(Entity).where(Entity.uuid == entity_uuid)).scalar_one_or_none()
+    if user is None:
+        click.echo(f"No entity with UUID {entity_uuid}: nothing to do.")
+        return
+    if user.entity_type != "user":
+        click.echo(f"Error: entity {entity_uuid} is a {user.entity_type}, not a user; only users can be erased.")
+        raise SystemExit(1)
+    entity_id = user.id
     postgres = db.engine.dialect.name == "postgresql"
     if postgres:
         with db.engine.connect() as conn:
@@ -880,40 +904,22 @@ def _erase_entity(entity_id, yes):
             boundaries = {name: _retention_boundary(conn, name)
                           for name in _aggregates_with_column(conn, "entity_id")}
 
-    user = db.session.get(Entity, entity_id)
-    if user is None:
-        # Either never existed, or erased by a run whose aggregate refresh did not
-        # finish: buckets materialised under the id are all that can be left.
-        start = None
-        if postgres:
-            with db.engine.connect() as conn:
-                start = _reassign_start(conn, "entity_id", entity_id, boundaries)
-        if start is None:
-            click.echo(f"Entity {entity_id} does not exist and nothing is left under it: nothing to do.")
-            return
-        click.echo(f"Entity {entity_id} is already deleted; finishing its aggregate refresh.")
-        _refresh_reassigned(start, boundaries)
-        click.echo("Done.")
-        return
-    if user.entity_type != "user":
-        click.echo(f"Error: entity {entity_id} is a {user.entity_type}, not a user; only users can be erased.")
-        raise SystemExit(1)
     owned = db.session.execute(
         select(Entity.name).where(Entity.entity_type == "project", Entity.owner_entity_id == entity_id)
         .order_by(Entity.name)
     ).scalars().all()
     if owned:
-        click.echo(f"Error: user {entity_id} owns these projects: {', '.join(owned)}.\n"
+        click.echo(f"Error: user {entity_uuid} owns these projects: {', '.join(owned)}.\n"
                    f"  Transfer their ownership first.")
         raise SystemExit(1)
 
     orphaned = groups_losing_owner(entity_id)
     # The name and email go only into the prompt, which --yes skips: stdout of a scripted
     # run ends up in docker logs or log aggregation, and must not keep the erased person.
-    click.echo(f"Erasing user {entity_id}")
+    click.echo(f"Erasing user {entity_uuid}")
     if orphaned:
         click.echo(f"  groups that will be left without an owner: {', '.join(orphaned)}")
-    if not yes and not click.confirm(f"Erase user {entity_id}: {user.name} <{user.email}>? "
+    if not yes and not click.confirm(f"Erase user {entity_uuid}: {user.name} <{user.email}>? "
                                      f"This deletes the user and cannot be undone. Continue?"):
         click.echo("Aborted.")
         raise SystemExit(1)
@@ -983,7 +989,7 @@ def _erase_entity(entity_id, yes):
         }
         if any(left.values()):
             db.session.rollback()
-            click.echo(f"Error: rows still reference user {entity_id}: {left}. Nothing was deleted.")
+            click.echo(f"Error: rows still reference user {entity_uuid}: {left}. Nothing was deleted.")
             raise SystemExit(1)
 
     try:
@@ -993,17 +999,18 @@ def _erase_entity(entity_id, yes):
         # On PostgreSQL the RESTRICT foreign keys from request_logs refuse the delete
         # while a row still references the user: one logged after the sweep above.
         db.session.rollback()
-        click.echo(f"Error: deleting user {entity_id} failed: {exc.orig}")
+        click.echo(f"Error: deleting user {entity_uuid} failed: {exc.orig}")
         click.echo("  Nothing in this last step was kept; the user is still there, inactive.\n"
                    "  Most likely a request_logs row was logged after the move: re-run the same command.")
         raise SystemExit(1)
-    click.echo(f"  user {entity_id} deleted")
+    click.echo(f"  user {entity_uuid} deleted")
 
     if postgres:
         if start is None:
             click.echo("  no request_logs rows for the user; aggregates unchanged")
         else:
-            _refresh_reassigned(start, boundaries)
+            # The user row is gone, so a re-run cannot find what is left to refresh.
+            _refresh_reassigned(start, boundaries, rerun=False)
     click.echo("Done.")
 
 

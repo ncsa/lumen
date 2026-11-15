@@ -69,7 +69,7 @@ def profile_page(admin_client, browser, test_user, groups):
     page = browser.new_page()
     page.set_default_timeout(10_000)
     page.route("**/*", handle)
-    resp = page.goto(f"{ORIGIN}/admin/users/{test_user['id']}/profile")
+    resp = page.goto(f"{ORIGIN}/admin/users/{test_user['uuid']}/profile")
     assert resp.status == HTTPStatus.OK
     page.patched = patched
     yield page
@@ -77,7 +77,7 @@ def profile_page(admin_client, browser, test_user, groups):
 
 
 def test_picker_embeds_group_uuids_not_integer_ids(admin_client, test_user, groups):
-    html = admin_client.get(f"/admin/users/{test_user['id']}/profile").get_data(as_text=True)
+    html = admin_client.get(f"/admin/users/{test_user['uuid']}/profile").get_data(as_text=True)
     for guuid in groups.values():
         assert json.dumps(guuid) in html
 

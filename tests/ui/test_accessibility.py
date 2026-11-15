@@ -265,7 +265,7 @@ def test_admin_config_page_accessibility(admin_client):
 
 
 def test_admin_user_profile_page_accessibility(admin_client, test_user):
-    url = f"/admin/users/{test_user['id']}/profile"
+    url = f"/admin/users/{test_user['uuid']}/profile"
     resp = admin_client.get(url)
     assert resp.status_code == HTTPStatus.OK
     _run_all_checks(resp.data, url)

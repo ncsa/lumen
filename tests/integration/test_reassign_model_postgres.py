@@ -183,8 +183,16 @@ def _bucket_totals(engine, view):
     return {bucket: (int(requests), cost) for bucket, requests, cost in rows}
 
 
+def _name(pg_app, model_config_id):
+    """The model_name the operator passes for this model_configs row."""
+    from lumen.extensions import db
+    with pg_app.app_context():
+        return db.session.execute(text("SELECT model_name FROM model_configs WHERE id = :i"),
+                                  {"i": model_config_id}).scalar_one()
+
+
 def _run(pg_app, from_id, to_id):
-    return pg_app.test_cli_runner().invoke(reassign_model_cmd, [str(from_id), str(to_id)])
+    return pg_app.test_cli_runner().invoke(reassign_model_cmd, [_name(pg_app, from_id), _name(pg_app, to_id)])
 
 
 def _assert_fully_moved(engine, from_id, to_id):

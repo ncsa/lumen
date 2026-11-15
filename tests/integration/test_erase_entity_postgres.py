@@ -210,7 +210,7 @@ def _seed_world(pg_app):
         ])
         db.session.commit()
         return {
-            "tag": tag, "user": user.id, "other": other.id, "model": model.id, "private": private.id,
+            "tag": tag, "user": user.id, "user_uuid": user.uuid, "other": other.id, "model": model.id, "private": private.id,
             "active_key": active.id, "revoked_key": revoked.id, "project": project.id,
             "project_key": project_key.id, "conv": conv.id, "other_conv": other_conv.id,
             "owned_group": owned.id, "member_group": member.id,
@@ -340,8 +340,19 @@ def _all_users_summary(pg_app):
     return body["requests"], body["tokens"], body["cost"]
 
 
-def _run(pg_app, entity_id):
-    return pg_app.test_cli_runner().invoke(erase_entity_cmd, [str(entity_id), "--yes"])
+def _uuid(pg_app, entity_id):
+    """The public uuid of the entity with this integer id (as the operator would copy it)."""
+    from lumen.extensions import db
+    with pg_app.app_context():
+        return db.session.execute(
+            select(commands.Entity.uuid).where(commands.Entity.id == entity_id)).scalar_one()
+
+
+def _run(pg_app, entity):
+    """Run erase-entity --yes on ``entity``: an integer id, resolved to its uuid, or a uuid."""
+    if not isinstance(entity, uuid.UUID):
+        entity = _uuid(pg_app, entity)
+    return pg_app.test_cli_runner().invoke(erase_entity_cmd, [str(entity), "--yes"])
 
 
 def _assert_history_moved(engine, world, ghost_raw_before):
@@ -461,7 +472,7 @@ def test_no_dependent_row_remains_and_keys_are_anonymised(pg_app, engine):
                  "entity_balances deleted: 1", "entity_limits deleted: 1",
                  "entity_model_consents deleted: 1", "group_members deleted: 2",
                  "entity_managers deleted: 1", "api_keys revoked, anonymised and moved to the ghost: 2",
-                 f"group left without an owner: erin-owned-{world['tag']}", f"user {world['user']} deleted"):
+                 f"group left without an owner: erin-owned-{world['tag']}", f"user {world['user_uuid']} deleted"):
         assert line in result.output
 
     u = world["user"]
@@ -556,9 +567,9 @@ def test_resumes_after_a_chunk_fails(pg_app, engine):
     _assert_history_moved(engine, world, ghost_raw)
 
 
-def test_resumes_after_the_refresh_fails(pg_app, engine):
-    """The user is deleted but no bucket refreshed: re-running with the deleted id finds
-    the id only in the materialised buckets and refreshes from the oldest of them."""
+def test_finishes_with_backfill_after_the_refresh_fails(pg_app, engine):
+    """The user is deleted but no bucket refreshed: the uuid no longer resolves, so the
+    error prints the backfill-aggregate commands, in order, that finish the refresh."""
     world = _seed_world(pg_app)
     _seed_history(engine, world)
     ghost_raw = _ghost_raw(engine)
@@ -569,19 +580,25 @@ def test_resumes_after_the_refresh_fails(pg_app, engine):
     with patch.object(commands, "_refresh_months", side_effect=fail):
         result = _run(pg_app, world["user"])
     assert result.exit_code == 1, result.output
-    assert f"user {world['user']} deleted" in result.output
+    assert f"user {world['user_uuid']} deleted" in result.output
+    assert "re-run" not in result.output
     assert _raw(engine, world["user"]) == 0
     assert _materialised(engine, world["user"]) == SEEDED
     assert _materialised(engine, world["user"], DAILY_ENTITY) == SEEDED
 
-    result = _run(pg_app, world["user"])
-    assert result.exit_code == 0, result.output
-    assert "already deleted; finishing its aggregate refresh" in result.output
-    _assert_history_moved(engine, world, ghost_raw)
+    backfills = re.findall(r"^    flask (backfill-aggregate --name (\S+) --from (\S+))$", result.output, re.M)
+    names = [name for _, name, _ in backfills]
+    assert names[:2] == [ENTITY_AGGREGATE, DAILY_ENTITY], result.output
 
-    result = _run(pg_app, world["user"])
+    result = _run(pg_app, world["user_uuid"])
     assert result.exit_code == 0, result.output
-    assert "nothing is left under it: nothing to do" in result.output
+    assert "nothing to do" in result.output
+
+    runner = pg_app.test_cli_runner()
+    for _, name, month in backfills:
+        result = runner.invoke(commands.backfill_aggregate_cmd, ["--name", name, "--from", month])
+        assert result.exit_code == 0, result.output
+    _assert_history_moved(engine, world, ghost_raw)
 
 
 def test_a_row_the_walk_missed_fails_restrict_and_rolls_back(pg_app, engine):
@@ -611,7 +628,7 @@ def test_a_row_the_walk_missed_fails_restrict_and_rolls_back(pg_app, engine):
 
     assert result.exit_code == 1, result.output
     assert "request_logs" in result.output and "re-run" in result.output
-    assert f"user {world['user']} deleted" not in result.output
+    assert f"user {world['user_uuid']} deleted" not in result.output
     u = world["user"]
     with pg_app.app_context():
         assert db.session.get(commands.Entity, u) is not None

@@ -795,9 +795,9 @@ def _usage_entity_id():
     """Return entity_id to filter by.
 
     Non-admins always see their own data (backend enforcement).
-    Admins: entity param (a user or project uuid) > entity_id param > mine=1
-    param > None (all users). A malformed or unknown entity uuid is a 404, not
-    a silent fallback to all users.
+    Admins: entity param (a user or project uuid) > mine=1 param > None (all
+    users). A malformed or unknown entity uuid is a 404, not a silent fallback
+    to all users.
     """
     entity = db.session.get(Entity, session["entity_id"])
     if not _is_admin(entity):
@@ -809,9 +809,6 @@ def _usage_entity_id():
         except ValueError:
             abort(HTTPStatus.NOT_FOUND)
         return db.first_or_404(select(Entity.id).where(Entity.uuid == u))
-    eid = request.args.get("entity_id", type=int)
-    if eid:
-        return eid
     if request.args.get("mine") == "1":
         return session.get("entity_id")
     return None

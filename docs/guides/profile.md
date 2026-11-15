@@ -10,6 +10,10 @@ At the top of the page, a card shows your identity and a summary of your account
 
 The left side displays your avatar (pulled from [Gravatar](https://gravatar.com) based on your email), your display name, and email address.
 
+### Copying the User ID
+
+Every user has a random ID (a UUID) that Lumen uses in links and API calls instead of a sequential number. To copy it, click the avatar: a hint, **Click to copy ID**, appears when you hover over the avatar or move to it with the keyboard (Tab), and clicking it — or pressing Enter or Space — copies the ID to the clipboard and shows **User ID copied to clipboard**. Press Escape to hide the hint. This works on your own profile and, for admins, on another user's profile opened from the Users page (`/admin/users/<id>/profile`, where `<id>` is that UUID). Admins need this ID to erase a user with [`flask erase-entity`](../admin/commands.md#erase-entity).
+
 ### Admin Mode
 
 If your account is listed as an administrator, an **Admin mode** switch appears under your email address. Administrators act as normal users by default: admin pages and navigation links (Users, Config, all projects) are hidden until you turn the switch on, and turning it off returns you to normal-user permissions. The setting lasts only for your current session — logging out (or being logged out) always resets you to normal-user mode.

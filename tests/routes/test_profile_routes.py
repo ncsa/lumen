@@ -944,7 +944,7 @@ def test_profile_key_table_has_rotate_button(auth_client):
 
 def test_admin_user_profile_has_no_rotate(admin_client, test_user):
     """The admin view of another user's profile stays read-only: no rotate flow is loaded."""
-    resp = admin_client.get(f"/admin/users/{test_user['id']}/profile")
+    resp = admin_client.get(f"/admin/users/{test_user['uuid']}/profile")
     assert resp.status_code == HTTPStatus.OK
     html = resp.get_data(as_text=True)
     assert 'id="rotatedKeyModal"' not in html
@@ -954,7 +954,7 @@ def test_admin_user_profile_has_no_rotate(admin_client, test_user):
 def test_admin_user_profile_shows_projects_section(app, admin_client, test_user):
     """Admin viewing another user's profile also sees that user's Projects section."""
     _make_managed_project(app, test_user["id"], name="user-client")
-    resp = admin_client.get(f"/admin/users/{test_user['id']}/profile")
+    resp = admin_client.get(f"/admin/users/{test_user['uuid']}/profile")
     assert resp.status_code == HTTPStatus.OK
     body = resp.get_data(as_text=True)
     assert 'id="project-table"' in body
@@ -1006,7 +1006,7 @@ def test_profile_page_projects_tab_with_project(app, auth_client, test_user):
 
 def test_admin_user_profile_renders_tabs(admin_client, test_user):
     """Admin read-only profile view uses the same tab layout."""
-    resp = admin_client.get(f"/admin/users/{test_user['id']}/profile")
+    resp = admin_client.get(f"/admin/users/{test_user['uuid']}/profile")
     assert resp.status_code == HTTPStatus.OK
     body = resp.get_data(as_text=True)
     assert 'id="profile-tabs"' in body
@@ -1074,7 +1074,7 @@ def test_admin_mode_toggle_hidden_for_regular_user(auth_client):
 
 
 def test_admin_mode_toggle_absent_on_admin_view_of_other_user(admin_client, test_user):
-    body = admin_client.get(f"/admin/users/{test_user['id']}/profile").get_data(as_text=True)
+    body = admin_client.get(f"/admin/users/{test_user['uuid']}/profile").get_data(as_text=True)
     assert 'id="admin-mode-toggle"' not in body
 
 
@@ -1326,8 +1326,14 @@ def test_usage_filter_by_project_uuid(app, admin_user, test_user):
     assert _usage_filter(app, admin_user["id"], f"entity={test_user['uuid']}") == test_user["id"]
 
 
-def test_usage_filter_still_accepts_integer_entity_id(app, admin_user, test_user):
-    assert _usage_filter(app, admin_user["id"], f"entity_id={test_user['id']}") == test_user["id"]
+def test_usage_filter_ignores_integer_entity_id(app, admin_user, test_user):
+    """The old ?entity_id=<int> is ignored: an admin gets everyone's usage, not that user's."""
+    assert _usage_filter(app, admin_user["id"], f"entity_id={test_user['id']}") is None
+    assert _usage_filter(app, admin_user["id"], f"entity_id={test_user['id']}&mine=1") == admin_user["id"]
+
+
+def test_usage_filter_integer_entity_id_ignored_for_non_admin(app, admin_user, test_user):
+    assert _usage_filter(app, test_user["id"], f"entity_id={admin_user['id']}") == test_user["id"]
 
 
 @pytest.mark.parametrize("value", ["not-a-uuid", "12", "00000000-0000-4000-8000-000000000000"])

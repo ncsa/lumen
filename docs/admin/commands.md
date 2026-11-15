@@ -58,7 +58,7 @@ How the entrypoint reads its arguments:
 | Argument | What runs |
 |---|---|
 | `bash` | A shell. |
-| A command, e.g. `upgrade`, `check-stats --fix`, `erase-entity 42 --yes`, `db current` | `flask --app run` with those arguments. `PGCONNECT_TIMEOUT` defaults to `10` (a value you set is kept), so a database host that never answers cannot hang it. |
+| A command, e.g. `upgrade`, `check-stats --fix`, `erase-entity 7f3c2a9e-0b1d-4c55-9a8e-2d6f1e4b7c30 --yes`, `db current` | `flask --app run` with those arguments. `PGCONNECT_TIMEOUT` defaults to `10` (a value you set is kept), so a database host that never answers cannot hang it. |
 | Nothing, or options such as `--workers 4` | The server: [`wait-for-migrations`](#wait-for-migrations), then uvicorn with those options. |
 
 ## `upgrade`
@@ -305,12 +305,14 @@ picks up the change or the app restarts.
 Moves all conversations, stats and request history from one model to another.
 
 ```bash
-flask reassign-model FROM_ID TO_ID
+flask reassign-model FROM_MODEL TO_MODEL
 ```
 
-`FROM_ID` and `TO_ID` are `model_configs.id` values. It refuses, with exit 1, when `FROM_ID` and
-`TO_ID` are the same model_config id or either id does not exist. The `FROM` row in `model_configs`
-is left as it is. The command moves:
+`FROM_MODEL` and `TO_MODEL` are model names, as in `config.yaml` and on the Models page (for example
+`flask reassign-model llama-3-8b org/llama-3.1-8b`). It refuses, with exit 1, when they are the same
+model or either name does not exist (`Error: model '<name>' not found.`); an old numeric
+`model_configs.id` is not a name and is refused the same way. The `FROM` row in `model_configs` is
+left as it is. The command moves:
 
 - the conversations that use `FROM`,
 - its `request_logs` rows,
@@ -334,28 +336,33 @@ or check-stats is already running; retry when it finishes.` and changes nothing.
 Hard-deletes a user for GDPR erasure. It cannot be undone; run it off-hours.
 
 ```bash
-flask erase-entity ENTITY_ID [--yes]
+flask erase-entity ENTITY_UUID [--yes]
 ```
 
 | Flag | Meaning |
 |---|---|
 | `--yes` | Erase without asking for confirmation. Only for scripts. |
 
-`ENTITY_ID` is the user's `entities.id`. Run it without `--yes` first: it prints which groups will
-be left without an owner, then names the user and asks before it changes anything:
+`ENTITY_UUID` is the user's random ID (`entities.uuid`). To find it, open the user's profile from the
+admin Users page and click the avatar, which copies the ID (see
+[Copying the User ID](../guides/profile.md#copying-the-user-id)). A number such as the old
+`entities.id` is refused (`'42' is not a valid UUID.`, exit 2), and a UUID that matches nobody prints
+`No entity with UUID <uuid>: nothing to do.` and exits 0. Run it without `--yes` first: it prints
+which groups will be left without an owner, then names the user and asks before it changes anything:
 
 ```text
-Erasing user 42
+Erasing user 7f3c2a9e-0b1d-4c55-9a8e-2d6f1e4b7c30
   groups that will be left without an owner: physics-lab
-Erase user 42: Jane Doe <jane@example.edu>? This deletes the user and cannot be undone. Continue? [y/N]:
+Erase user 7f3c2a9e-0b1d-4c55-9a8e-2d6f1e4b7c30: Jane Doe <jane@example.edu>? This deletes the user and cannot be undone. Continue? [y/N]:
 ```
 
-The name and email are shown only in the confirmation prompt, so a `--yes` run logs only the id;
+Check that the name and email are the user you mean before you answer. They are shown only in the
+confirmation prompt, so a `--yes` run logs only the UUID;
 run it interactively with `docker run --rm -it` so the container, and the prompt in its log, is
 removed afterwards.
 
 `y` or `yes` (any case) continues; `n`, `no` or Enter prints `Aborted.` and exits 1 with nothing
-changed; any other answer asks again. Use `--yes` only in a script that has already checked the id.
+changed; any other answer asks again. Use `--yes` only in a script that has already checked the UUID.
 
 It deletes the user's conversations, messages, auth requests, balance, limits, model consents,
 group and project memberships. It moves the user's request history, usage stats and models
@@ -366,8 +373,17 @@ retention policy.
 
 On PostgreSQL `request_logs` moves one chunk per transaction, and each UPDATE can decompress a whole
 chunk, hence off-hours. It is safe to re-run: an interrupted run leaves every row owned by the user
-or the ghost, and re-running with the same id, even after the user is deleted, finishes the
-aggregate refresh.
+or the ghost, and re-running with the same UUID finishes it. The one exception is a failure in the
+last step, the aggregate refresh, which runs after the user is deleted: the UUID no longer resolves,
+so the error prints the [`backfill-aggregate`](#backfill-aggregate) commands, in order, that finish
+the refresh:
+
+```text
+Error: refreshing 'request_counts_daily_by_entity' for 2026-03 failed: ...
+  request_logs is moved; finish the refresh with, in this order:
+    flask backfill-aggregate --name request_counts_daily_by_entity --from 2026-03
+    flask backfill-aggregate --name request_counts_hourly --from 2026-01
+```
 
 On PostgreSQL `erase-entity`, [`reassign-model`](#reassign-model) and [`check-stats`](#check-stats)
 do not run at the same time: `check-stats` skips, the other two exit with an error. An
