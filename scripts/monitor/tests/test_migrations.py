@@ -1,9 +1,12 @@
+import io
+
 import pytest
 from alembic import command
+from alembic.config import Config as AlembicConfig
 from sqlalchemy import inspect, text
 
 from monitor.db import make_engine
-from monitor.migrate import alembic_config, downgrade, upgrade
+from monitor.migrate import ALEMBIC_INI, alembic_config, downgrade, upgrade
 
 TABLES = {"daily_stats", "probes", "samples"}
 
@@ -124,3 +127,25 @@ def test_modelsdev_cache_prices_revision_adds_and_drops_the_columns(tmp_path):
     downgrade(url, "0005")
     assert not MODELSDEV_CACHE_DAILY & _columns(url, "daily_stats")
     assert CACHE_WRITE_DAILY <= _columns(url, "daily_stats")
+
+
+def _offline_sql(cfg):
+    cfg.output_buffer = io.StringIO()
+    command.upgrade(cfg, "head", sql=True)
+    return cfg.output_buffer.getvalue()
+
+
+def test_offline_upgrade_renders_the_schema_without_a_database():
+    # `alembic upgrade --sql` never connects, so an unreachable URL is fine.
+    sql = _offline_sql(alembic_config("postgresql://monitor:secret@127.0.0.1:1/monitor"))
+    for table in ("alembic_version", *TABLES):
+        assert f"CREATE TABLE {table} (" in sql
+
+
+def test_offline_upgrade_falls_back_to_the_monitor_config(tmp_path, monkeypatch):
+    # Run directly, Alembic has no sqlalchemy.url and env.py reads the monitor config.
+    monkeypatch.setenv("MONITOR_CONFIG", str(tmp_path / "missing.yaml"))
+    monkeypatch.setenv("MONITOR_DATABASE_URL", "postgresql://monitor:secret@127.0.0.1:1/monitor")
+    cfg = AlembicConfig(str(ALEMBIC_INI))
+    assert cfg.get_main_option("sqlalchemy.url") is None
+    assert "CREATE TABLE probes (" in _offline_sql(cfg)

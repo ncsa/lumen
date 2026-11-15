@@ -21,6 +21,7 @@ monitor = "monitor.cli:main"
 [dependency-groups]
 dev = [
     "pytest>=9",
+    "pytest-cov>=7",
     "pytest-timeout>=2.4",
     "ruff>=0.14",
 ]
@@ -34,7 +35,7 @@ packages = ["monitor"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q -m 'not bench'"
+addopts = "--cov=monitor --cov-report=term-missing -q -m 'not bench'"
 timeout = 120
 # Any warning fails the test that raised it; see "Warnings" in the root AGENTS.md.
 filterwarnings = ["error"]

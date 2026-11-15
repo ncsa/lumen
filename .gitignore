@@ -30,6 +30,7 @@ lumen.yaml
 
 # Coverage
 .coverage
+coverage.json
 htmlcov/
 
 # MkDocs build output
