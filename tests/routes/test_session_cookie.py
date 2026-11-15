@@ -93,6 +93,26 @@ def test_cookie_after_login_holds_uuid_and_no_integer(client, app, test_user):
         UUID(value)
 
 
+def test_login_drops_legacy_integer_ids_from_an_old_cookie(client, app, test_user):
+    """A pre-switch cookie carries integer ids in entity_id and the OAuth consent
+    binding; none of them survive the next login, and the OAuth return
+    destination does."""
+    with client.session_transaction() as sess:
+        sess["entity_id"] = test_user["id"]
+        sess["oauth_consent_request_id"] = 7
+        sess["oauth_consent_state"] = {"request_id": 7, "state": "s1"}
+        sess["oauth_return_to"] = "/device?code=ABCD-EFGH"
+    assert client.get("/", follow_redirects=False).status_code == HTTPStatus.OK
+    resp = client.get("/devlogin", follow_redirects=False)
+    assert resp.status_code == HTTPStatus.FOUND
+    assert resp.headers["Location"].endswith("/device?code=ABCD-EFGH")
+    cookie = _decoded_cookie(app, client)
+    assert cookie["entity_uuid"] == test_user["uuid"]
+    for key in ("entity_id", "oauth_consent_request_id", "oauth_consent_state"):
+        assert key not in cookie
+    assert _integers(cookie) == []
+
+
 def test_stale_nav_cache_is_rebuilt_with_uuids(auth_client, app, test_user):
     """A v2 nav cache from before the switch holds integer project ids; it is replaced."""
     with app.app_context():
