@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy import select, text
 
 from lumen.services.key_expiry import MAX_KEY_TTL
-from tests.conftest import no_snapshot_refresher
+from tests.conftest import entity_uuid, no_snapshot_refresher
 
 from .conftest import TEST_CONFIG, migrate_db
 
@@ -128,7 +128,7 @@ def approver(pg_app):
         user_id = user.id
     client = pg_app.test_client()
     with client.session_transaction() as sess:
-        sess["entity_id"] = user_id
+        sess["entity_uuid"] = entity_uuid(pg_app, user_id)
         sess["entity_name"] = "User"
         sess["initials"] = "US"
         sess["gravatar_hash"] = ""
@@ -171,14 +171,14 @@ def test_device_flow_stores_and_mints_large_ttl(pg_app, approver, cap, requested
 
     assert approver.get(f"/device?code={body['user_code']}").status_code == HTTPStatus.OK
     with pg_app.app_context():
-        req_id = db.session.execute(
-            select(AuthRequest.id).where(AuthRequest.user_code == body["user_code"])
-        ).scalar_one()
+        req_id = str(db.session.execute(
+            select(AuthRequest.uuid).where(AuthRequest.user_code == body["user_code"])
+        ).scalar_one())
     approve = approver.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
     assert b"Key approved" in approve.data
     ttl = requested if requested is not None else cap
     with pg_app.app_context():
-        assert db.session.get(AuthRequest, req_id).ttl == ttl
+        assert db.session.execute(select(AuthRequest).where(AuthRequest.uuid == uuid.UUID(req_id))).scalar_one().ttl == ttl
 
     token = pg_app.test_client().post("/oauth/token", data={
         "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
@@ -211,7 +211,7 @@ def test_code_flow_stores_and_mints_ttl_past_32_bits(pg_app, approver):
     with pg_app.app_context():
         req = db.session.execute(select(AuthRequest).where(AuthRequest.requested_name == name)).scalar_one()
         assert req.ttl == 2**31
-        req_id = req.id
+        req_id = str(req.uuid)
     approve = approver.post("/oauth/consent", data={"request_id": req_id, "action": "approve", "ttl": str(2**31)})
     assert approve.status_code == HTTPStatus.FOUND
     code = parse_qs(urlsplit(approve.headers["Location"]).query)["code"][0]

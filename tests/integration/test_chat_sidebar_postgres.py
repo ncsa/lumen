@@ -10,7 +10,7 @@ import uuid
 
 import pytest
 
-from tests.conftest import no_snapshot_refresher
+from tests.conftest import entity_uuid, no_snapshot_refresher
 from tests.integration.conftest import TEST_CONFIG
 from tests.routes.test_chat_routes import (
     conversation_list_caps_limit_at_200,
@@ -69,7 +69,7 @@ def pg_user_client(pg_app):
         eid = entity.id
     client = pg_app.test_client()
     with client.session_transaction() as sess:
-        sess["entity_id"] = eid
+        sess["entity_uuid"] = entity_uuid(pg_app, eid)
         sess["entity_name"] = f"Sidebar {tag}"
         sess["initials"] = "SB"
         sess["gravatar_hash"] = ""

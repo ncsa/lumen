@@ -35,6 +35,8 @@ from http import HTTPStatus
 import pytest
 from sqlalchemy import event, exc, text
 
+from tests.conftest import entity_uuid
+
 from .conftest import TEST_CONFIG
 
 VIEW = "request_metrics_1m"
@@ -224,7 +226,7 @@ def test_call_sites_never_select_from_request_logs(pg_app, seeded):
 
     client = pg_app.test_client()
     with client.session_transaction() as sess:
-        sess["entity_id"] = seeded["user"]
+        sess["entity_uuid"] = entity_uuid(pg_app, seeded["user"])
         sess["entity_name"] = "Rates"
         sess["initials"] = "RA"
 

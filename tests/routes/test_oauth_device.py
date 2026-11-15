@@ -68,7 +68,7 @@ def _approve(app, auth_client, user_code, action="approve", overwrite=None):
     # Render the consent page first: the approve POST must reference a request
     # id that was actually shown to this session.
     auth_client.get(f"/device?code={user_code}")
-    data = {"request_id": _request_row(app, user_code).id, "action": action}
+    data = {"request_id": str(_request_row(app, user_code).uuid), "action": action}
     if overwrite is not None:
         data["overwrite"] = "on" if overwrite else "off"
     return auth_client.post("/oauth/consent", data=data)
@@ -219,7 +219,7 @@ def test_device_page_requires_login_stashes_destination(client):
 
 def test_post_login_redirect_honours_stash(client, test_user):
     with client.session_transaction() as sess:
-        sess["entity_id"] = test_user["id"]
+        sess["entity_uuid"] = test_user["uuid"]
         sess["oauth_return_to"] = "/device?code=ABCD-EFGH"
     resp = client.get("/")
     assert resp.status_code == HTTPStatus.FOUND
@@ -256,7 +256,7 @@ def test_login_page_limits_are_per_user_not_ip(app, auth_client, admin_user):
     # needs its own test client; both still present as one IP to the app.
     user_b = app.test_client()
     with user_b.session_transaction() as sess:
-        sess["entity_id"] = admin_user["id"]
+        sess["entity_uuid"] = admin_user["uuid"]
     app.config["YAML_DATA"].setdefault("rate_limiting", {})["limit"] = "3 per minute"
     try:
         for _ in range(3):  # exhaust each user's bucket separately; same IP
@@ -266,9 +266,17 @@ def test_login_page_limits_are_per_user_not_ip(app, auth_client, admin_user):
         assert auth_client.get("/device?code=ZZZZ-ZZZZ").status_code == HTTPStatus.TOO_MANY_REQUESTS
         assert user_b.get("/device?code=YYYY-YYYY").status_code == HTTPStatus.TOO_MANY_REQUESTS
         # ...and a third user behind the same IP is untouched.
+        with app.app_context():
+            from lumen.extensions import db
+            from lumen.models.entity import Entity
+            third = Entity(entity_type="user", email="third@example.com", name="Third",
+                           initials="TH", active=True)
+            db.session.add(third)
+            db.session.commit()
+            third_uuid = str(third.uuid)
         user_c = app.test_client()
         with user_c.session_transaction() as sess:
-            sess["entity_id"] = admin_user["id"] + 999
+            sess["entity_uuid"] = third_uuid
         assert user_c.get("/device?code=XXXX-XXXX").status_code == HTTPStatus.FOUND
     finally:
         app.config["YAML_DATA"]["rate_limiting"]["limit"] = "30 per minute"
@@ -279,7 +287,7 @@ def test_full_flow_two_users_same_ip_no_429(app, auth_client, admin_user):
     approval for their own request without being rate-limited."""
     user_b = app.test_client()
     with user_b.session_transaction() as sess:
-        sess["entity_id"] = admin_user["id"]
+        sess["entity_uuid"] = admin_user["uuid"]
     app.config["YAML_DATA"].setdefault("rate_limiting", {})["limit"] = "3 per minute"
     try:
         for _ in range(2):
@@ -333,7 +341,7 @@ def test_janitor_deletes_only_past_grace(app):
 
 def _approve_with_ttl(app, auth_client, user_code, ttl=None):
     page = auth_client.get(f"/device?code={user_code}")
-    data = {"request_id": _request_row(app, user_code).id, "action": "approve"}
+    data = {"request_id": str(_request_row(app, user_code).uuid), "action": "approve"}
     if ttl is not None:
         data["ttl"] = ttl
     return page, auth_client.post("/oauth/consent", data=data)

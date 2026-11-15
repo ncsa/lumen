@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from lumen.blueprints.profile.routes import _endpoint_status
 from lumen.timeutils import utcnow
-from tests.conftest import key_by_public_id, key_uuid
+from tests.conftest import entity_uuid, key_by_public_id, key_uuid
 
 # A well-formed uuid that names no row.
 UNKNOWN_UUID = "00000000-0000-4000-8000-000000000000"
@@ -1328,9 +1328,11 @@ def _usage_filter(app, caller_id, query, admin_mode=True):
     from flask import session
 
     from lumen.blueprints.profile.routes import _usage_entity_id
+    from lumen.decorators import load_logged_in_entity
     with app.test_request_context(f"/api/usage/summary?{query}"):
-        session["entity_id"] = caller_id
+        session["entity_uuid"] = entity_uuid(app, caller_id)
         session["admin_mode"] = admin_mode
+        load_logged_in_entity()  # the before_request hook, not run by test_request_context
         return _usage_entity_id()
 
 

@@ -314,7 +314,7 @@ def session_cookie(app, test_user):
     """A real signed session cookie, so the raw socket can log in like a browser."""
     serializer = app.session_interface.get_signing_serializer(app)
     value = serializer.dumps({
-        "entity_id": test_user["id"],
+        "entity_uuid": test_user["uuid"],
         "entity_name": test_user["name"],
         "initials": test_user["initials"],
         "gravatar_hash": test_user["gravatar_hash"],

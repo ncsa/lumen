@@ -61,7 +61,7 @@ import pytest
 from sqlalchemy import exc, text
 
 from lumen import commands
-from tests.conftest import no_snapshot_refresher
+from tests.conftest import entity_uuid, no_snapshot_refresher
 
 from .conftest import TEST_CONFIG
 
@@ -303,7 +303,7 @@ def entity_usage(pg_app, pg_migrated):
 def _client(pg_app, eid):
     client = pg_app.test_client()
     with client.session_transaction() as sess:
-        sess["entity_id"] = eid
+        sess["entity_uuid"] = entity_uuid(pg_app, eid)
     return client
 
 
@@ -713,7 +713,7 @@ def test_a_deleted_entitys_history_is_not_resurrected(pg_app, pg_migrated, delet
 
     client = pg_app.test_client()
     with client.session_transaction() as sess:
-        sess["entity_id"] = admin
+        sess["entity_uuid"] = entity_uuid(pg_app, admin)
         sess["admin_mode"] = True
 
     assert client.get(f"/api/usage/summary?entity={gone_uuid}&period=all").status_code == HTTPStatus.NOT_FOUND
