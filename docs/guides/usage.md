@@ -30,6 +30,8 @@ that was 7 days ago rather than from this exact minute. Numbers can therefore in
 | **New Users** | New user accounts created in the period (admin "Show all users" view only) |
 | **Last Active** | When the selected user most recently sent a request (shown only when filtered to one user) |
 
+Requests and Tokens show the exact count below a million and a rounded figure above it (for example "5.2 million" or "16.1 billion"), the same as the profile page.
+
 ## Charts
 
 - **Requests Over Time** — request volume across the selected period.
