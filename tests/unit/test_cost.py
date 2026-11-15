@@ -106,6 +106,9 @@ def test_no_cache_rates_is_the_legacy_formula():
     # and this request read and wrote nothing.
     ({"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 0, "created_cache_tokens": 0}},
      (100, 0, 0, 0)),
+    # A zero echoed as a float is still a reported zero.
+    ({"prompt_tokens": 100.0, "prompt_tokens_details": {"cached_tokens": 0.0, "created_cache_tokens": 0.0}},
+     (100, 0, 0, 0)),
     # No cache fields at all: neither count is reported, so nothing is
     # recorded for them (NULL in request_logs, billed at the input price).
     ({"prompt_tokens": 100, "completion_tokens": 7}, (100, None, 7, None)),
@@ -126,6 +129,8 @@ def test_usage_tokens_reads_openai_style_usage(usage, expected):
                      cache_creation_input_tokens=20, output_tokens=7), (100, 60, 7, 20)),
     # Only one side reported: the other stays unreported rather than 0.
     ({"input_tokens": 40, "cache_read_input_tokens": 60, "output_tokens": 7}, (100, 60, 7, None)),
+    # A zero echoed as a float is still a reported zero.
+    ({"input_tokens": 100.0, "cache_read_input_tokens": 0.0, "output_tokens": 7.0}, (100, 0, 7, None)),
     ({"input_tokens": 80, "cache_creation_input_tokens": 20}, (100, None, 0, 20)),
     # No cache fields: 'input_tokens' is the whole prompt.
     ({"input_tokens": 60, "output_tokens": 7}, (60, None, 7, None)),
