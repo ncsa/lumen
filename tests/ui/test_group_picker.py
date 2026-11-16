@@ -62,7 +62,9 @@ def profile_page(admin_client, browser, test_user, groups):
             resp = admin_client.patch(path, json=request.post_data_json)
         else:
             resp = admin_client.get(path)
-        route.fulfill(status=resp.status_code, content_type=resp.content_type, body=resp.get_data())
+        # Close the response: a static file stays open until it is.
+        with resp:
+            route.fulfill(status=resp.status_code, content_type=resp.content_type, body=resp.get_data())
 
     page = browser.new_page()
     page.set_default_timeout(10_000)
