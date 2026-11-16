@@ -193,8 +193,8 @@ def _ghost_id():
 
 def test_refuses_an_integer_id(app, world):
     result = app.test_cli_runner().invoke(erase_entity_cmd, [str(world["user"]), "--yes"])
-    assert result.exit_code != 0
-    assert "is not a valid UUID" in result.output
+    assert result.exit_code == 2
+    assert f"'{world['user']}' is neither a user UUID nor an email address." in result.output
     with app.app_context():
         assert db.session.get(Entity, world["user"]).active is True
 
@@ -262,6 +262,123 @@ def test_confirmation_yes_erases(app, world):
     assert result.exit_code == 0, result.output
     with app.app_context():
         assert db.session.get(Entity, world["user"]) is None
+
+
+# --------------------------------------------------------------------------- #
+# By email                                                                     #
+# --------------------------------------------------------------------------- #
+
+def _email(app, entity_id):
+    with app.app_context():
+        return db.session.get(Entity, entity_id).email
+
+
+def _invoke(app, *args, input=None):
+    return app.test_cli_runner().invoke(erase_entity_cmd, list(args), input=input)
+
+
+def _no_ghost():
+    return db.session.execute(select(Entity).where(Entity.entity_type == "ghost")).first() is None
+
+
+def test_erases_by_exact_email_after_the_prompt(app, world):
+    email = _email(app, world["user"])
+    result = _invoke(app, email, input="y\n")
+    assert result.exit_code == 0, result.output
+    assert f"Erasing user {world['user_uuid']}\n" in result.output
+    assert f"Erase user {world['user_uuid']}: Erin <{email}>? " in result.output
+    assert f"user {world['user_uuid']} deleted" in result.output
+    with app.app_context():
+        assert db.session.get(Entity, world["user"]) is None
+
+
+@pytest.mark.parametrize("variant", [str.upper, lambda e: f"  {e.title()}\t"])
+def test_erases_by_email_ignoring_case_and_surrounding_spaces(app, world, variant):
+    email = _email(app, world["user"])
+    result = _invoke(app, variant(email), input="y\n")
+    assert result.exit_code == 0, result.output
+    # The prompt shows the stored email, not what the operator typed.
+    assert f"Erase user {world['user_uuid']}: Erin <{email}>? " in result.output
+    with app.app_context():
+        assert db.session.get(Entity, world["user"]) is None
+        assert db.session.get(Entity, world["other"]) is not None
+
+
+def test_email_prompt_answered_no_changes_nothing(app, world):
+    result = _invoke(app, _email(app, world["user"]), input="n\n")
+    assert result.exit_code == 1
+    assert "Aborted." in result.output
+    with app.app_context():
+        assert db.session.get(Entity, world["user"]).active is True
+        assert _no_ghost()
+
+
+def test_yes_with_an_email_is_refused_before_any_lookup(app, world, monkeypatch):
+    def no_lookup():
+        raise AssertionError("--yes with an email must not reach the database")
+
+    monkeypatch.setattr("lumen.commands.stats_walk_lock", no_lookup)
+    monkeypatch.setattr("lumen.commands._user_uuid_by_email", no_lookup)
+    result = _invoke(app, _email(app, world["user"]), "--yes")
+    assert result.exit_code == 2
+    assert "--yes needs the user's UUID" in result.output
+    assert "leave out --yes and confirm the prompt" in result.output
+    with app.app_context():
+        assert db.session.get(Entity, world["user"]).active is True
+        assert _no_ghost()
+
+
+def test_unknown_email_exits_1_without_echoing_it(app, world):
+    result = _invoke(app, "nobody@example.com", input="y\n")
+    assert result.exit_code == 1
+    assert "Error: no user with that email; nothing was erased." in result.output
+    assert "nobody@example.com" not in result.output
+    assert "Erase user" not in result.output
+    with app.app_context():
+        assert db.session.get(Entity, world["user"]).active is True
+        assert _no_ghost()
+
+
+def test_email_matching_several_users_ignoring_case_lists_their_uuids(app, world):
+    with app.app_context():
+        twin = _user("Twin")
+        twin.email = db.session.get(Entity, world["user"]).email.upper()
+        db.session.commit()
+        twin_id, twin_uuid = twin.id, twin.uuid
+    result = _invoke(app, _email(app, world["user"]), input="y\n")
+    assert result.exit_code == 1
+    assert "Error: 2 users match that email ignoring case; erase by UUID instead:\n" in result.output
+    assert f"  {world['user_uuid']}\n" in result.output
+    assert f"  {twin_uuid}\n" in result.output
+    assert "Erase user" not in result.output
+    with app.app_context():
+        assert db.session.get(Entity, world["user"]).active is True
+        assert db.session.get(Entity, twin_id).active is True
+        assert _no_ghost()
+
+
+def test_email_lookup_skips_entities_without_an_email(app, world):
+    """Projects and the ghost have a null email; only users are matched."""
+    with app.app_context():
+        ghost_id = get_or_create_ghost().id
+        db.session.commit()
+    result = _invoke(app, _email(app, world["user"]), input="y\n")
+    assert result.exit_code == 0, result.output
+    with app.app_context():
+        assert db.session.get(Entity, world["user"]) is None
+        assert db.session.get(Entity, world["project"]) is not None
+        assert db.session.get(Entity, ghost_id) is not None
+
+
+def test_email_lookup_ignores_a_project_with_that_email(app, world):
+    with app.app_context():
+        db.session.get(Entity, world["project"]).email = "lab@example.com"
+        db.session.commit()
+    result = _invoke(app, "lab@example.com", input="y\n")
+    assert result.exit_code == 1
+    assert "no user with that email" in result.output
+    with app.app_context():
+        assert db.session.get(Entity, world["project"]).active is True
 
 
 # --------------------------------------------------------------------------- #

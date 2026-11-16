@@ -5,6 +5,7 @@ import shlex
 import shutil
 import tempfile
 import time
+import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -846,15 +847,37 @@ def _check_stats(fix):
         raise SystemExit(1)
 
 
+class _UserArg(click.ParamType):
+    """erase-entity's USER: a user's uuid (a ``uuid.UUID``) or email (a stripped ``str``)."""
+
+    name = "user"
+
+    def convert(self, value, param, ctx):
+        text = value.strip()
+        try:
+            return uuid.UUID(text)
+        except ValueError:
+            pass
+        if "@" not in text:
+            self.fail(f"{value!r} is neither a user UUID nor an email address.", param, ctx)
+            # self.fail always raises click.BadParameter; this line is unreachable and only
+            # makes the no-fall-through explicit to static analysis.
+            raise AssertionError("unreachable")  # pragma: no cover
+        return text
+
+
 @click.command("erase-entity")
-@click.argument("entity_uuid", type=click.UUID)
-@click.option("--yes", is_flag=True, help="Erase without asking for confirmation.")
+@click.argument("user", type=_UserArg())
+@click.option("--yes", is_flag=True, help="Erase without asking for confirmation. Requires the UUID.")
 @with_appcontext
-def erase_entity_cmd(entity_uuid, yes):
+def erase_entity_cmd(user, yes):
     """Hard-delete a user for GDPR erasure. Cannot be undone; run it off-hours.
 
-    ENTITY_UUID is the user's public uuid (click the avatar on the user's profile
-    page to copy it); an integer database id is refused.
+    USER is the user's public uuid (click the avatar on the user's profile page to
+    copy it) or the user's email, matched ignoring case; an integer database id is
+    refused. Erasing by email always asks for confirmation, so --yes needs the uuid.
+    An email that matches no user, or several users ignoring case, fails without
+    erasing anything.
 
     Deletes the user's conversations, messages, auth requests, balance, limits, model
     consents, group and project memberships. Moves the user's request history, usage
@@ -871,11 +894,37 @@ def erase_entity_cmd(entity_uuid, yes):
     On PostgreSQL reassign-model, erase-entity and check-stats do not run at the
     same time: check-stats skips, the other two exit with an error.
     """
+    by_email = isinstance(user, str)
+    if by_email and yes:
+        # Checked before any lookup: an email alone is too easy to get wrong, so the
+        # operator always sees the resolved name and email in the prompt.
+        raise click.UsageError("--yes needs the user's UUID; to erase by email, "
+                               "leave out --yes and confirm the prompt.")
     with stats_walk_lock() as acquired:
         if not acquired:
             click.echo(WALK_LOCK_HELD)
             raise SystemExit(1)
-        _erase_entity(entity_uuid, yes)
+        _erase_entity(_user_uuid_by_email(user) if by_email else user, yes)
+
+
+def _user_uuid_by_email(email):
+    """The uuid of the one user whose email is ``email`` ignoring case, or exit 1.
+
+    The messages do not echo the email: stdout may end up in logs.
+    """
+    matches = db.session.execute(
+        select(Entity.uuid).where(Entity.entity_type == "user", func.lower(Entity.email) == email.lower())
+        .order_by(Entity.id)
+    ).scalars().all()
+    if not matches:
+        click.echo("Error: no user with that email; nothing was erased.")
+        raise SystemExit(1)
+    if len(matches) > 1:
+        click.echo(f"Error: {len(matches)} users match that email ignoring case; erase by UUID instead:")
+        for match in matches:
+            click.echo(f"  {match}")
+        raise SystemExit(1)
+    return matches[0]
 
 
 def _erase_entity(entity_uuid, yes):
