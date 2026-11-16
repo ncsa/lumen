@@ -5,6 +5,7 @@ All notable changes to Lumen will be documented in this file.
 ## [Unreleased]
 
 - **Behaviour change:** `/v1` chat, completions, messages and audio requests now share one per-key rate-limit budget instead of one each; `count_tokens` keeps its own (#601)
+- Docs: fix small inaccuracies in the Anthropic guide, API reference, README, hot-reload table, chart values, favicon route and LLMHub text. (#613)
 - `flask erase-entity` also takes the user's email (matched ignoring case, interactive only); an email that matches no user or several users fails without erasing anything. (#587)
 - Users, projects, groups, API keys, conversations and OAuth requests are addressed by random UUIDs instead of sequential database ids; models by name; click an avatar to copy its ID (#560)
 - **Upgrade:** everyone is logged out of the web UI once; `flask erase-entity` takes a user UUID and `flask reassign-model` takes model names (#560)

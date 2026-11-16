@@ -5,6 +5,8 @@ Lumen is a self-hosted AI gateway. It provides a web chat interface and an OpenA
 **Key features:**
 - Web chat interface for AI models (OpenAI-compatible endpoints, Ollama, vLLM, etc.)
 - OpenAI-compatible API proxy — use Lumen as a drop-in endpoint from any tool or script
+- Anthropic Messages API subset (`/v1/messages`) for the Anthropic SDKs and Claude Code
+- `/connect` and `lumen.sh` generate ready-made OpenCode and GitHub Copilot CLI configs
 - Projects (machine-to-machine accounts) with their own coin pools
 - File and document uploads in chat (text, PDF, images — configurable per deployment)
 - Login via your institution's identity provider through CILogon

@@ -194,6 +194,7 @@ models:
 | `config.encryptionKey` | `""` | API key hashing secret |
 | `config.debug` | `false` | Flask debug mode |
 | `config.diagnostics` | `true` | Stack-capturing DB/context diagnostics surfaced via `/metrics/debug`; set `false` to remove the per-request capture overhead |
+| `config.llmhubUrl` | `""` | LLMHub URL linked from the Models page for launching unlisted models; empty hides the link |
 | `config.admins` | `[]` | Admin email addresses |
 | `config.configEditor` | `false` | Allow editing config.yaml from the `/admin/config` UI (read-only by default since the chart manages the config) |
 | `config.defaults.models.ackMessage` | `""` | Global acknowledgement message for `needsAck` models without their own |
