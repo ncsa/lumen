@@ -858,9 +858,9 @@ class _UserArg(click.ParamType):
             return uuid.UUID(text)
         except ValueError:
             pass
-        if "@" in text:
-            return text
-        self.fail(f"{value!r} is neither a user UUID nor an email address.", param, ctx)
+        if "@" not in text:
+            self.fail(f"{value!r} is neither a user UUID nor an email address.", param, ctx)
+        return text
 
 
 @click.command("erase-entity")
