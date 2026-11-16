@@ -217,8 +217,8 @@ def world(pg_app, engine):
             "VALUES (:n, 1, 2) RETURNING id"
         ), {"n": f"orgq-model-{i}"}).scalar() for i in range(3)]
         entities = {key: conn.execute(text(
-            "INSERT INTO entities (entity_type, name, initials, active) "
-            "VALUES ('user', :n, 'OQ', true) RETURNING id"
+            "INSERT INTO entities (uuid, entity_type, name, initials, active) "
+            "VALUES (gen_random_uuid(), 'user', :n, 'OQ', true) RETURNING id"
         ), {"n": f"orgq-{key}"}).scalar() for key in ("a", "b", "c")}
         # What an entity deleted under the old ON DELETE SET NULL left behind.
         entities[DELETED] = None

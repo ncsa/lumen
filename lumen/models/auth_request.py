@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Optional
+from uuid import UUID, uuid4
 
 from sqlalchemy import CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column
@@ -44,6 +45,7 @@ class AuthRequest(db.Model):
     )
 
     id: Mapped[int] = mapped_column(db.Integer, primary_key=True, comment="Primary key")
+    uuid: Mapped[UUID] = mapped_column(db.Uuid, unique=True, index=True, nullable=False, default=uuid4, comment="Opaque public identifier for external use only (URLs, API payloads, CLI, session); never used as a key or join column")
     flow: Mapped[str] = mapped_column(db.String(16), comment="Request flow: device or code")
     client_id: Mapped[str] = mapped_column(db.String(128), comment="Free-form application label supplied by the requester (unverified)")
     requested_name: Mapped[str] = mapped_column(db.String(128), comment="Name the requester wants for the API key")

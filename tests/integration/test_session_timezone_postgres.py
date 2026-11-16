@@ -162,8 +162,8 @@ def _seed(engine, name, when):
             "output_cost_per_million) VALUES (:n, 1, 2) RETURNING id"
         ), {"n": f"tzq-model-{name}"}).scalar()
         eid = conn.execute(text(
-            "INSERT INTO entities (entity_type, name, initials, active) "
-            "VALUES ('user', :n, 'TZ', true) RETURNING id"
+            "INSERT INTO entities (uuid, entity_type, name, initials, active) "
+            "VALUES (gen_random_uuid(), 'user', :n, 'TZ', true) RETURNING id"
         ), {"n": f"tzq-{name}"}).scalar()
         conn.execute(text(_INSERT), {"time": when, "eid": eid, "model": model})
     return eid

@@ -130,8 +130,8 @@ def history(pg_migrated_isolated):
     _, engine = pg_migrated_isolated
     with engine.begin() as conn:
         entity = conn.execute(text(
-            "INSERT INTO entities (entity_type, name, initials, active) "
-            "VALUES ('user', 'fk-restrict-user', 'FR', true) RETURNING id"
+            "INSERT INTO entities (uuid, entity_type, name, initials, active) "
+            "VALUES (gen_random_uuid(), 'user', 'fk-restrict-user', 'FR', true) RETURNING id"
         )).scalar()
         model, endpoint_model = (
             conn.execute(text(
@@ -145,9 +145,9 @@ def history(pg_migrated_isolated):
             "VALUES (:m, 'https://fk-restrict.example/v1', 'k', true) RETURNING id"
         ), {"m": endpoint_model}).scalar()
         api_key = conn.execute(text(
-            "INSERT INTO api_keys (entity_id, name, key_hash, requests, input_tokens,"
+            "INSERT INTO api_keys (uuid, entity_id, name, key_hash, requests, input_tokens,"
             " output_tokens, audio_seconds, cost, created_at)"
-            " VALUES (:e, 'fk-restrict', 'fk-restrict-logged', 0, 0, 0, 0, 0, now()) RETURNING id"
+            " VALUES (gen_random_uuid(), :e, 'fk-restrict', 'fk-restrict-logged', 0, 0, 0, 0, 0, now()) RETURNING id"
         ), {"e": entity}).scalar()
         # A month back lands in a closed 7-day chunk, which can be compressed.
         conn.execute(text(
@@ -196,11 +196,11 @@ def test_parents_without_history_can_still_be_deleted(pg_migrated_isolated, hist
     _, engine = pg_migrated_isolated
     with engine.begin() as conn:
         entity = conn.execute(text(
-            "INSERT INTO entities (entity_type, name, initials, active) "
-            "VALUES ('user', 'fk-restrict-unlogged', 'FU', true) RETURNING id"
+            "INSERT INTO entities (uuid, entity_type, name, initials, active) "
+            "VALUES (gen_random_uuid(), 'user', 'fk-restrict-unlogged', 'FU', true) RETURNING id"
         )).scalar()
         conversation = conn.execute(text(
-            "INSERT INTO conversations (entity_id) VALUES (:e) RETURNING id"
+            "INSERT INTO conversations (uuid, entity_id) VALUES (gen_random_uuid(), :e) RETURNING id"
         ), {"e": entity}).scalar()
         conn.execute(text(
             "INSERT INTO messages (conversation_id, role, content) VALUES (:c, 'user', 'hello')"
@@ -214,9 +214,9 @@ def test_parents_without_history_can_still_be_deleted(pg_migrated_isolated, hist
             "VALUES (:m, 'https://fk-restrict-unlogged.example/v1', 'k', true) RETURNING id"
         ), {"m": model}).scalar()
         api_key = conn.execute(text(
-            "INSERT INTO api_keys (entity_id, name, key_hash, requests, input_tokens,"
+            "INSERT INTO api_keys (uuid, entity_id, name, key_hash, requests, input_tokens,"
             " output_tokens, audio_seconds, cost, created_at)"
-            " VALUES (:e, 'fk-restrict', 'fk-restrict-unlogged', 0, 0, 0, 0, 0, now()) RETURNING id"
+            " VALUES (gen_random_uuid(), :e, 'fk-restrict', 'fk-restrict-unlogged', 0, 0, 0, 0, 0, now()) RETURNING id"
         ), {"e": entity}).scalar()
 
     with engine.begin() as conn:

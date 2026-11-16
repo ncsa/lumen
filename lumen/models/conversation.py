@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Optional
+from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -21,6 +22,7 @@ class Conversation(db.Model):
     )
 
     id: Mapped[int] = mapped_column(db.Integer, primary_key=True, comment="Primary key")
+    uuid: Mapped[UUID] = mapped_column(db.Uuid, unique=True, index=True, nullable=False, default=uuid4, comment="Opaque public identifier for external use only (URLs, API payloads, CLI, session); never used as a key or join column")
     entity_id: Mapped[int] = mapped_column(db.Integer, db.ForeignKey("entities.id", ondelete="CASCADE"), comment="The owning user entity")
     title: Mapped[str] = mapped_column(db.String(40), default="", comment="Short auto-generated or user-edited title")
     model: Mapped[str] = mapped_column(db.String(128), default="", comment="Snapshot of the model name at conversation creation time")
