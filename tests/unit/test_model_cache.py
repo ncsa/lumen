@@ -378,7 +378,7 @@ def test_admin_access_edit_refreshes_after_commit(app, admin_client, test_model,
     with app.app_context():
         assert model_cache.resolve("test-model").owner_entity_id is None
     resp = admin_client.patch(
-        f"/admin/api/models/{test_model['id']}/access",
+        f"/admin/api/models/{test_model['model_name']}/access",
         json={"owner_email": "testuser@example.com"},
     )
     assert resp.status_code == 200
@@ -389,7 +389,7 @@ def test_admin_access_edit_refreshes_after_commit(app, admin_client, test_model,
 def test_admin_access_edit_error_does_not_refresh(app, admin_client, test_model):
     with patch("lumen.blueprints.admin.routes.model_cache.refresh") as refresh:
         resp = admin_client.patch(
-            f"/admin/api/models/{test_model['id']}/access",
+            f"/admin/api/models/{test_model['model_name']}/access",
             json={"owner_email": "nobody@example.com"},
         )
     assert resp.status_code == 400

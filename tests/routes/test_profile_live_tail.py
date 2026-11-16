@@ -136,10 +136,10 @@ def test_profile_has_no_tail_before_the_cutover(app, auth_client, test_user, mod
 
 def test_admin_view_of_a_user_stays_on_the_folded_tables(app, admin_client, post_cutover, test_user, model_id):
     _bill(app, test_user["id"], model_id, "api")
-    _, usage, total_tokens = _profile(app, admin_client, f"/admin/users/{test_user['id']}/profile")
+    _, usage, total_tokens = _profile(app, admin_client, f"/admin/users/{test_user['uuid']}/profile")
     assert usage == {} and total_tokens == 0
     fold(app)
-    _, usage, total_tokens = _profile(app, admin_client, f"/admin/users/{test_user['id']}/profile")
+    _, usage, total_tokens = _profile(app, admin_client, f"/admin/users/{test_user['uuid']}/profile")
     assert total_tokens == 15
 
 

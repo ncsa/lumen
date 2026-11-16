@@ -143,14 +143,16 @@ def test_admin_users_after_cutover(app, client, admin_client, monkeypatch, test_
     assert (context["total_requests"], context["total_tokens"]) == (requests, tokens)
     assert context["total_cost"] == pytest.approx(cost)
 
+    with app.app_context():
+        other_uuid = str(db.session.get(Entity, other).uuid)
     by_cost = admin_client.get("/admin/api/users?sort=cost&order=desc").get_json()["users"]
-    assert [u["id"] for u in by_cost[:2]] == [test_user["id"], other]
+    assert [u["id"] for u in by_cost[:2]] == [test_user["uuid"], other_uuid]
     busy = by_cost[0]
     assert (busy["requests"], busy["tokens_used"]) == _logged(app, test_user["id"])[:2]
     assert busy["cost"] == pytest.approx(_logged(app, test_user["id"])[2])
 
     by_last_used = admin_client.get("/admin/api/users?sort=last_used&order=desc").get_json()["users"]
-    assert [u["id"] for u in by_last_used[:2]] == [other, test_user["id"]]
+    assert [u["id"] for u in by_last_used[:2]] == [other_uuid, test_user["uuid"]]
     assert by_last_used[0]["last_used"] == _logged(app, other)[3].strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

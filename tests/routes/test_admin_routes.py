@@ -14,7 +14,7 @@ def test_valid_buckets_matches_periods():
 
 
 def test_toggle_user_flips_active(app, admin_client, test_user):
-    resp = admin_client.post(f"/admin/users/{test_user['id']}/toggle")
+    resp = admin_client.post(f"/admin/users/{test_user['uuid']}/toggle")
     assert resp.status_code == HTTPStatus.OK
     assert resp.get_json()["active"] is False
     with app.app_context():
@@ -24,7 +24,7 @@ def test_toggle_user_flips_active(app, admin_client, test_user):
 
 
 def test_reset_tokens_no_pool_returns_400(admin_client, test_user):
-    resp = admin_client.post(f"/admin/users/{test_user['id']}/reset-tokens")
+    resp = admin_client.post(f"/admin/users/{test_user['uuid']}/reset-tokens")
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
@@ -37,7 +37,7 @@ def test_reset_tokens_unlimited_returns_400(app, admin_client, test_user):
             max_coins=-2, refresh_coins=0, starting_coins=0,
         ))
         db.session.commit()
-    resp = admin_client.post(f"/admin/users/{test_user['id']}/reset-tokens")
+    resp = admin_client.post(f"/admin/users/{test_user['uuid']}/reset-tokens")
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
@@ -53,7 +53,7 @@ def test_reset_tokens_resets_balance(app, admin_client, test_user):
         db.session.add(EntityBalance(entity_id=test_user["id"], coins_left=3))
         db.session.commit()
 
-    resp = admin_client.post(f"/admin/users/{test_user['id']}/reset-tokens")
+    resp = admin_client.post(f"/admin/users/{test_user['uuid']}/reset-tokens")
     assert resp.status_code == HTTPStatus.OK
     assert resp.get_json()["coins_available"] == 500
     with app.app_context():
@@ -64,13 +64,13 @@ def test_reset_tokens_resets_balance(app, admin_client, test_user):
 
 
 def test_update_user_requires_admin(auth_client, test_user):
-    resp = auth_client.patch(f"/admin/users/{test_user['id']}", json={"active": False})
+    resp = auth_client.patch(f"/admin/users/{test_user['uuid']}", json={"active": False})
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
 def test_update_user_sets_active_and_coins(app, admin_client, test_user):
     resp = admin_client.patch(
-        f"/admin/users/{test_user['id']}", json={"active": False, "max_coins": 200, "refresh_coins": 5}
+        f"/admin/users/{test_user['uuid']}", json={"active": False, "max_coins": 200, "refresh_coins": 5}
     )
     assert resp.status_code == HTTPStatus.OK
     assert resp.get_json()["active"] is False
@@ -96,7 +96,7 @@ def test_update_user_updates_existing_limit(app, admin_client, test_user):
             config_managed=True,
         ))
         db.session.commit()
-    resp = admin_client.patch(f"/admin/users/{test_user['id']}", json={"refresh_coins": 3})
+    resp = admin_client.patch(f"/admin/users/{test_user['uuid']}", json={"refresh_coins": 3})
     assert resp.status_code == HTTPStatus.OK
     with app.app_context():
         from lumen.extensions import db
@@ -120,10 +120,10 @@ def test_update_user_max_updates_starting_for_reset(app, admin_client, test_user
             entity_id=test_user["id"], max_coins=100, refresh_coins=1, starting_coins=100,
         ))
         db.session.commit()
-    resp = admin_client.patch(f"/admin/users/{test_user['id']}", json={"max_coins": 500})
+    resp = admin_client.patch(f"/admin/users/{test_user['uuid']}", json={"max_coins": 500})
     assert resp.status_code == HTTPStatus.OK
 
-    resp = admin_client.post(f"/admin/users/{test_user['id']}/reset-tokens")
+    resp = admin_client.post(f"/admin/users/{test_user['uuid']}/reset-tokens")
     assert resp.status_code == HTTPStatus.OK
     assert float(resp.get_json()["coins_available"]) == 500.0
 
@@ -138,7 +138,7 @@ def test_update_user_blank_coins_clears_limit(app, admin_client, test_user):
         ))
         db.session.commit()
     resp = admin_client.patch(
-        f"/admin/users/{test_user['id']}", json={"max_coins": "", "refresh_coins": ""}
+        f"/admin/users/{test_user['uuid']}", json={"max_coins": "", "refresh_coins": ""}
     )
     assert resp.status_code == HTTPStatus.OK
     with app.app_context():
@@ -160,7 +160,7 @@ def test_update_user_blank_max_alone_clears_limit(app, admin_client, test_user):
         ))
         db.session.commit()
     resp = admin_client.patch(
-        f"/admin/users/{test_user['id']}", json={"max_coins": "", "refresh_coins": 5}
+        f"/admin/users/{test_user['uuid']}", json={"max_coins": "", "refresh_coins": 5}
     )
     assert resp.status_code == HTTPStatus.OK
     with app.app_context():
@@ -178,12 +178,12 @@ def test_update_user_invalid_coins_return_400(admin_client, test_user):
         {"max_coins": 10, "refresh_coins": -1},
         {"max_coins": "abc", "refresh_coins": 1},
     ):
-        resp = admin_client.patch(f"/admin/users/{test_user['id']}", json=payload)
+        resp = admin_client.patch(f"/admin/users/{test_user['uuid']}", json=payload)
         assert resp.status_code == HTTPStatus.BAD_REQUEST, payload
 
 
 def test_update_user_ignores_name(app, admin_client, test_user):
-    resp = admin_client.patch(f"/admin/users/{test_user['id']}", json={"name": "New Name", "active": True})
+    resp = admin_client.patch(f"/admin/users/{test_user['uuid']}", json={"name": "New Name", "active": True})
     assert resp.status_code == HTTPStatus.OK
     with app.app_context():
         from lumen.extensions import db
@@ -192,7 +192,7 @@ def test_update_user_ignores_name(app, admin_client, test_user):
 
 
 def test_admin_user_profile_page(admin_client, test_user):
-    resp = admin_client.get(f"/admin/users/{test_user['id']}/profile")
+    resp = admin_client.get(f"/admin/users/{test_user['uuid']}/profile")
     assert resp.status_code == HTTPStatus.OK
     assert test_user["name"].encode() in resp.data
 
@@ -210,7 +210,7 @@ def test_api_users_includes_limit_fields(app, admin_client, test_user):
         ))
         db.session.commit()
     resp = admin_client.get("/admin/api/users")
-    row = next(u for u in resp.get_json()["users"] if u["id"] == test_user["id"])
+    row = next(u for u in resp.get_json()["users"] if u["id"] == test_user["uuid"])
     assert row["max_coins"] == 300.0
     assert row["refresh_coins"] == 2.0
 
@@ -232,7 +232,7 @@ def test_api_users_shows_group_inherited_unlimited_pool(app, admin_client, test_
         db.session.commit()
 
     resp = admin_client.get("/admin/api/users")
-    row = next(u for u in resp.get_json()["users"] if u["id"] == test_user["id"])
+    row = next(u for u in resp.get_json()["users"] if u["id"] == test_user["uuid"])
     assert row["max_coins"] is None
     assert row["coins_available"] == -2
 
@@ -256,7 +256,7 @@ def test_api_users_own_pool_overrides_group_unlimited(app, admin_client, test_us
         db.session.commit()
 
     resp = admin_client.get("/admin/api/users")
-    row = next(u for u in resp.get_json()["users"] if u["id"] == test_user["id"])
+    row = next(u for u in resp.get_json()["users"] if u["id"] == test_user["uuid"])
     assert row["max_coins"] == 100
     assert row["coins_available"] == 0
 
@@ -265,7 +265,7 @@ def test_api_users_returns_zeros_without_usage(admin_client, test_user):
     resp = admin_client.get("/admin/api/users")
     assert resp.status_code == HTTPStatus.OK
     data = resp.get_json()
-    user = next(u for u in data["users"] if u["id"] == test_user["id"])
+    user = next(u for u in data["users"] if u["id"] == test_user["uuid"])
     assert user["requests"] == 0
     assert user["tokens_used"] == 0
     assert float(user["cost"]) == pytest.approx(0.0)
@@ -282,7 +282,7 @@ def test_api_users_reflects_entity_stats(app, admin_client, test_user, test_mode
     resp = admin_client.get("/admin/api/users")
     assert resp.status_code == HTTPStatus.OK
     data = resp.get_json()
-    user = next(u for u in data["users"] if u["id"] == test_user["id"])
+    user = next(u for u in data["users"] if u["id"] == test_user["uuid"])
     assert user["requests"] == 1
     assert user["tokens_used"] == 150
     assert float(user["cost"]) == pytest.approx(0.03)
@@ -299,7 +299,7 @@ def test_api_users_sort_by_requests(app, admin_client, test_user, admin_user, te
     resp = admin_client.get("/admin/api/users?sort=requests&order=desc")
     assert resp.status_code == HTTPStatus.OK
     ids = [u["id"] for u in resp.get_json()["users"]]
-    assert ids.index(test_user["id"]) < ids.index(admin_user["id"])
+    assert ids.index(test_user["uuid"]) < ids.index(admin_user["uuid"])
 
 
 def test_api_users_unknown_per_page_falls_back_to_25(admin_client, test_user):
@@ -1245,7 +1245,7 @@ def test_update_user_add_and_remove_group_ids(app, admin_client, test_user):
         ("join", False, False, False, False),
     ])
     resp = admin_client.patch(
-        f"/admin/users/{test_user['id']}",
+        f"/admin/users/{test_user['uuid']}",
         json={"add_group_ids": [ids["join"]], "remove_group_ids": [ids["drop"]]},
     )
     assert resp.status_code == HTTPStatus.OK
@@ -1259,7 +1259,7 @@ def test_update_user_leaves_untouched_groups_alone(app, admin_client, test_user)
         ("added-elsewhere", False, True, False, False),
         ("auto-at-login", True, True, False, True),
     ])
-    resp = admin_client.patch(f"/admin/users/{test_user['id']}", json={"max_coins": 50})
+    resp = admin_client.patch(f"/admin/users/{test_user['uuid']}", json={"max_coins": 50})
     assert resp.status_code == HTTPStatus.OK
     assert _member_group_ids(app, test_user["id"]) == {ids["added-elsewhere"], ids["auto-at-login"]}
 
@@ -1271,7 +1271,7 @@ def test_update_user_group_changes_are_idempotent(app, admin_client, test_user):
         ("already-out", False, False, False, False),
     ])
     resp = admin_client.patch(
-        f"/admin/users/{test_user['id']}",
+        f"/admin/users/{test_user['uuid']}",
         json={"add_group_ids": [ids["already-in"]], "remove_group_ids": [ids["already-out"]]},
     )
     assert resp.status_code == HTTPStatus.OK
@@ -1287,7 +1287,7 @@ def test_update_user_group_changes_are_idempotent(app, admin_client, test_user):
     {"remove_group_ids": [1.5]},
 ])
 def test_update_user_group_ids_invalid_returns_400(admin_client, test_user, payload):
-    resp = admin_client.patch(f"/admin/users/{test_user['id']}", json=payload)
+    resp = admin_client.patch(f"/admin/users/{test_user['uuid']}", json=payload)
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
@@ -1298,7 +1298,7 @@ def test_update_user_group_ids_rejects_integer_group_id(app, admin_client, test_
         from lumen.extensions import db
         from lumen.models.group import Group
         gid = db.session.execute(select(Group.id).filter_by(name="int-id")).scalar_one()
-    resp = admin_client.patch(f"/admin/users/{test_user['id']}", json={"add_group_ids": [gid]})
+    resp = admin_client.patch(f"/admin/users/{test_user['uuid']}", json={"add_group_ids": [gid]})
     assert resp.status_code == HTTPStatus.BAD_REQUEST
     assert _member_group_ids(app, test_user["id"]) == set()
 
@@ -1306,7 +1306,7 @@ def test_update_user_group_ids_rejects_integer_group_id(app, admin_client, test_
 def test_update_user_group_ids_add_and_remove_same_group_returns_400(app, admin_client, test_user):
     ids = _make_groups(app, test_user["id"], [("both", False, False, False, False)])
     resp = admin_client.patch(
-        f"/admin/users/{test_user['id']}", json={"add_group_ids": [ids["both"]], "remove_group_ids": [ids["both"]]},
+        f"/admin/users/{test_user['uuid']}", json={"add_group_ids": [ids["both"]], "remove_group_ids": [ids["both"]]},
     )
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
@@ -1316,9 +1316,9 @@ def test_update_user_group_ids_auto_join_returns_409(app, admin_client, test_use
         ("auto-in", True, True, False, True),
         ("auto-out", True, False, False, False),
     ])
-    resp = admin_client.patch(f"/admin/users/{test_user['id']}", json={"add_group_ids": [ids["auto-out"]]})
+    resp = admin_client.patch(f"/admin/users/{test_user['uuid']}", json={"add_group_ids": [ids["auto-out"]]})
     assert resp.status_code == HTTPStatus.CONFLICT
-    resp = admin_client.patch(f"/admin/users/{test_user['id']}", json={"remove_group_ids": [ids["auto-in"]]})
+    resp = admin_client.patch(f"/admin/users/{test_user['uuid']}", json={"remove_group_ids": [ids["auto-in"]]})
     assert resp.status_code == HTTPStatus.CONFLICT
     assert _member_group_ids(app, test_user["id"]) == {ids["auto-in"]}
 
@@ -1326,7 +1326,7 @@ def test_update_user_group_ids_auto_join_returns_409(app, admin_client, test_use
 def test_update_user_group_ids_owner_removal_returns_409_atomically(app, admin_client, test_user):
     ids = _make_groups(app, test_user["id"], [("owned", False, True, True, False)])
     resp = admin_client.patch(
-        f"/admin/users/{test_user['id']}",
+        f"/admin/users/{test_user['uuid']}",
         json={"remove_group_ids": [ids["owned"]], "active": False, "max_coins": 50},
     )
     assert resp.status_code == HTTPStatus.CONFLICT
@@ -1344,13 +1344,13 @@ def test_update_user_group_ids_owner_removal_returns_409_atomically(app, admin_c
 
 def test_update_user_group_ids_removes_config_managed_membership(app, admin_client, test_user):
     ids = _make_groups(app, test_user["id"], [("stamped", False, True, False, True)])
-    resp = admin_client.patch(f"/admin/users/{test_user['id']}", json={"remove_group_ids": [ids["stamped"]]})
+    resp = admin_client.patch(f"/admin/users/{test_user['uuid']}", json={"remove_group_ids": [ids["stamped"]]})
     assert resp.status_code == HTTPStatus.OK
     assert _member_group_ids(app, test_user["id"]) == set()
 
 
 def test_update_user_group_ids_requires_admin(auth_client, test_user):
-    resp = auth_client.patch(f"/admin/users/{test_user['id']}", json={"remove_group_ids": []})
+    resp = auth_client.patch(f"/admin/users/{test_user['uuid']}", json={"remove_group_ids": []})
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
@@ -1366,9 +1366,9 @@ def _set_pool(app, user_id, coins_left):
 
 def test_profile_reset_coins_button_shown_to_admin(app, admin_client, test_user):
     _set_pool(app, test_user["id"], 20)
-    page = admin_client.get(f"/admin/users/{test_user['id']}/profile").get_data(as_text=True)
+    page = admin_client.get(f"/admin/users/{test_user['uuid']}/profile").get_data(as_text=True)
     assert 'id="reset-coins-btn"' in page
-    assert f"/admin/users/{test_user['id']}/reset-tokens" in page
+    assert f"/admin/users/{test_user['uuid']}/reset-tokens" in page
 
 
 def test_profile_reset_coins_button_hidden_from_regular_user(app, auth_client, test_user):
@@ -1384,7 +1384,7 @@ def test_profile_reset_coins_button_hidden_for_unlimited_pool(app, admin_client,
         from lumen.models.entity_limit import EntityLimit
         db.session.add(EntityLimit(entity_id=test_user["id"], max_coins=-2, refresh_coins=0, starting_coins=0))
         db.session.commit()
-    page = admin_client.get(f"/admin/users/{test_user['id']}/profile").get_data(as_text=True)
+    page = admin_client.get(f"/admin/users/{test_user['uuid']}/profile").get_data(as_text=True)
     assert 'id="reset-coins-btn"' not in page
 
 
@@ -1394,8 +1394,75 @@ def test_api_users_includes_groups(app, admin_client, test_user):
         ("alpha", False, True, True, False),
     ])
     resp = admin_client.get("/admin/api/users?search=testuser")
-    user = next(u for u in resp.get_json()["users"] if u["id"] == test_user["id"])
+    user = next(u for u in resp.get_json()["users"] if u["id"] == test_user["uuid"])
     assert user["groups"] == [
         {"id": ids["alpha"], "name": "alpha", "auto_join": False, "is_owner": True},
         {"id": ids["beta"], "name": "beta", "auto_join": True, "is_owner": False},
     ]
+
+
+# ---------------------------------------------------------------------------
+# Admin user routes address users by uuid
+# ---------------------------------------------------------------------------
+
+_USER_ROUTES = [
+    ("post", "/admin/users/{}/toggle"),
+    ("post", "/admin/users/{}/reset-tokens"),
+    ("patch", "/admin/users/{}"),
+    ("get", "/admin/users/{}/profile"),
+]
+
+
+@pytest.mark.parametrize(("method", "path"), _USER_ROUTES)
+def test_admin_user_route_integer_id_404(admin_client, test_user, method, path):
+    resp = getattr(admin_client, method)(path.format(test_user["id"]), json={})
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+@pytest.mark.parametrize(("method", "path"), _USER_ROUTES)
+def test_admin_user_route_unknown_uuid_404(admin_client, method, path):
+    resp = getattr(admin_client, method)(path.format(uuid.uuid4()), json={})
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+@pytest.mark.parametrize(("method", "path"), _USER_ROUTES)
+def test_admin_user_route_project_uuid_404(app, admin_client, test_user, method, path):
+    """A project's uuid is not a user: the user routes refuse it."""
+    with app.app_context():
+        from tests.conftest import make_project
+        project_uuid = make_project("not-a-user", owner_id=test_user["id"]).uuid
+    resp = getattr(admin_client, method)(path.format(project_uuid), json={})
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+@pytest.mark.parametrize(("method", "path"), _USER_ROUTES)
+def test_admin_user_route_requires_admin(auth_client, test_user, method, path):
+    resp = getattr(auth_client, method)(path.format(test_user["uuid"]), json={})
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_api_users_ids_are_uuids(admin_client, test_user, admin_user):
+    users = admin_client.get("/admin/api/users").get_json()["users"]
+    assert {u["id"] for u in users} == {test_user["uuid"], admin_user["uuid"]}
+
+
+def test_users_page_links_by_uuid(admin_client):
+    """The rows are built client side from /admin/api/users; the page sends ?entity= for usage."""
+    page = admin_client.get("/admin/users").get_data(as_text=True)
+    assert "/usage?entity=${u.id}" in page
+    assert "entity_id" not in page
+
+
+def test_admin_profile_uses_the_user_uuid(admin_client, test_user):
+    page = admin_client.get(f"/admin/users/{test_user['uuid']}/profile").get_data(as_text=True)
+    assert f'const EDIT_USER_ID = "{test_user["uuid"]}";' in page
+    assert f'data-copy-id="{test_user["uuid"]}"' in page
+    assert f"/admin/users/{test_user['id']}/" not in page
+    assert f"EDIT_USER_ID = {test_user['id']};" not in page
+
+
+def test_own_profile_avatar_copies_own_uuid(auth_client, test_user):
+    page = auth_client.get("/profile").get_data(as_text=True)
+    assert f'data-copy-id="{test_user["uuid"]}"' in page
+    assert 'data-copy-kind="user"' in page
+    assert "js/copy-id.js" in page

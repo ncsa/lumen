@@ -244,7 +244,7 @@
             <td class="text-end">${coinsAvail}</td>
             <td class="text-end">${fmtCoins(u.cost)}</td>
             <td class="text-nowrap">
-              <a href="/usage?entity_id=${u.id}&user_name=${encodeURIComponent(u.name)}" class="btn btn-sm btn-outline-primary" title="View usage" aria-label="View usage for ${nameEsc}"><i class="bi bi-bar-chart" aria-hidden="true"></i></a>
+              <a href="/usage?entity=${u.id}&user_name=${encodeURIComponent(u.name)}" class="btn btn-sm btn-outline-primary" title="View usage" aria-label="View usage for ${nameEsc}"><i class="bi bi-bar-chart" aria-hidden="true"></i></a>
               <button class="btn btn-sm btn-outline-primary edit-btn" data-id="${u.id}" title="Edit" aria-label="Edit ${nameEsc}"><i class="bi bi-pencil" aria-hidden="true"></i></button>
               <button class="btn btn-sm btn-outline-secondary reset-btn" data-id="${u.id}" data-unlimited="${u.coins_available === -2}" title="Reset coins" aria-label="Reset coins for ${nameEsc}"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i></button>
               <button class="btn btn-sm ${toggleClass} toggle-btn" data-id="${u.id}" data-active="${u.active}" title="${toggleLabel}" aria-label="${toggleLabel} ${nameEsc}"><i class="bi ${u.active ? 'bi-pause-circle' : 'bi-play-circle'}" aria-hidden="true"></i></button>

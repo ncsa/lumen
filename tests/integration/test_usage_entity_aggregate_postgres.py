@@ -55,6 +55,7 @@ the reasons that fixture's docstring gives.
 import os
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import exc, text
@@ -648,15 +649,15 @@ def deleted_entity(pg_migrated, entity_usage):
     as long as the views live. Two days, not two hours: the daily view only
     materialises closed days.
 
-    Yields ``(admin_client_entity_id, deleted_entity_id, hour)``.
+    Yields ``(admin_client_entity_id, deleted_entity_id, deleted_entity_uuid, hour)``.
     """
     ts = (datetime.now(timezone.utc) - timedelta(days=2)).replace(
         hour=10, minute=0, second=0, microsecond=0)
     with pg_migrated.begin() as conn:
-        gone = conn.execute(text(
+        gone, gone_uuid = conn.execute(text(
             "INSERT INTO entities (uuid, entity_type, name, initials, active) "
-            "VALUES (gen_random_uuid(), 'user', 'ph8q-gone', 'PQ', true) RETURNING id"
-        )).scalar()
+            "VALUES (gen_random_uuid(), 'user', 'ph8q-gone', 'PQ', true) RETURNING id, uuid"
+        )).one()
         admin = conn.execute(text(
             "INSERT INTO entities (uuid, entity_type, name, email, initials, active) "
             "VALUES (gen_random_uuid(), 'user', 'ph8q-admin', 'admin@example.com', 'PQ', true) RETURNING id"
@@ -676,7 +677,7 @@ def deleted_entity(pg_migrated, entity_usage):
         conn.execute(text("UPDATE request_logs SET entity_id = NULL WHERE entity_id = :e"), {"e": gone})
         conn.execute(text("DELETE FROM entities WHERE id = :e"), {"e": gone})
 
-    yield admin, gone, hour
+    yield admin, gone, gone_uuid, hour
 
     with pg_migrated.begin() as conn:
         conn.execute(text(
@@ -692,8 +693,11 @@ def test_a_deleted_entitys_history_is_not_resurrected(pg_app, pg_migrated, delet
     The raw rows were nulled, as the old SET NULL action did, so the entity has no history
     left. Without the existence clause the aggregate still returns its full
     materialised history to an admin who asks for it by id.
+
+    A deleted entity's uuid no longer resolves, so ?entity= cannot reach it (404);
+    the existence clause is exercised by making the filter resolve to the old id.
     """
-    admin, gone, hour = deleted_entity
+    admin, gone, gone_uuid, hour = deleted_entity
     with pg_migrated.connect() as conn:
         raw_rows = conn.execute(text(
             "SELECT COUNT(*) FROM request_logs WHERE entity_id = :e"
@@ -712,17 +716,20 @@ def test_a_deleted_entitys_history_is_not_resurrected(pg_app, pg_migrated, delet
         sess["entity_id"] = admin
         sess["admin_mode"] = True
 
+    assert client.get(f"/api/usage/summary?entity={gone_uuid}&period=all").status_code == HTTPStatus.NOT_FOUND
+
     # week/month read the hourly view, year/all the daily one.
-    for period in PERIODS:
-        body = client.get(f"/api/usage/summary?entity_id={gone}&period={period}")
-        assert body.status_code == HTTPStatus.OK
-        assert body.get_json()["requests"] == 0, period
-        assert body.get_json()["tokens"] == 0, period
-        for path in ("/api/usage/requests", "/api/usage/tokens", "/api/usage/models",
-                     "/api/usage/heatmap"):
-            resp = client.get(f"{path}?entity_id={gone}&period={period}")
-            assert resp.status_code == HTTPStatus.OK
-            assert resp.get_json() == [], (path, period)
+    with patch("lumen.blueprints.profile.routes._usage_entity_id", return_value=gone):
+        for period in PERIODS:
+            body = client.get(f"/api/usage/summary?period={period}")
+            assert body.status_code == HTTPStatus.OK
+            assert body.get_json()["requests"] == 0, period
+            assert body.get_json()["tokens"] == 0, period
+            for path in ("/api/usage/requests", "/api/usage/tokens", "/api/usage/models",
+                         "/api/usage/heatmap"):
+                resp = client.get(f"{path}?period={period}")
+                assert resp.status_code == HTTPStatus.OK
+                assert resp.get_json() == [], (path, period)
 
 
 @pytest.mark.postgres

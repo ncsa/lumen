@@ -123,7 +123,7 @@ def test_update_project_rejected_without_csrf_token(app, csrf_client, test_user)
 
 
 def test_update_user_rejected_without_csrf_token(csrf_client, test_user):
-    resp = csrf_client.patch(f"/admin/users/{test_user['id']}", json={"active": True})
+    resp = csrf_client.patch(f"/admin/users/{test_user['uuid']}", json={"active": True})
     assert resp.status_code == HTTPStatus.BAD_REQUEST
     assert b"CSRF" in resp.data
 

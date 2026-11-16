@@ -284,10 +284,10 @@ def users():
     )
 
 
-@admin_bp.route("/users/<int:eid>/toggle", methods=["POST"])
+@admin_bp.route("/users/<uuid:eid>/toggle", methods=["POST"])
 @admin_required
 def toggle_user(eid):
-    entity = db.get_or_404(Entity, eid)
+    entity = entity_by_uuid_or_404(eid, "user")
     entity.active = not entity.active
     db.session.commit()
     return jsonify({"active": entity.active})
@@ -360,16 +360,16 @@ def apply_group_membership_edit(entity_id, data):
     return None, None
 
 
-@admin_bp.route("/users/<int:eid>", methods=["PATCH"])
+@admin_bp.route("/users/<uuid:eid>", methods=["PATCH"])
 @admin_required
 def update_user(eid):
     """Edit a user's active flag, coin pool and groups from the Edit User dialog."""
-    entity = db.first_or_404(select(Entity).filter_by(id=eid, entity_type="user"))
+    entity = entity_by_uuid_or_404(eid, "user")
     data = request.get_json() or {}
-    error = apply_coin_pool_edit(eid, data)
+    error = apply_coin_pool_edit(entity.id, data)
     if error:
         return jsonify({"error": error}), HTTPStatus.BAD_REQUEST
-    error, status = apply_group_membership_edit(eid, data)
+    error, status = apply_group_membership_edit(entity.id, data)
     if error:
         db.session.rollback()
         return jsonify({"error": error}), status
@@ -384,11 +384,11 @@ def update_user(eid):
     return jsonify({"ok": True, "active": entity.active})
 
 
-@admin_bp.route("/users/<int:eid>/reset-tokens", methods=["POST"])
+@admin_bp.route("/users/<uuid:eid>/reset-tokens", methods=["POST"])
 @admin_required
 def reset_user_tokens(eid):
     """Refill a user's balance to its starting coins."""
-    return _reset_tokens(db.get_or_404(Entity, eid))
+    return _reset_tokens(entity_by_uuid_or_404(eid, "user"))
 
 
 @admin_bp.route("/entities/<uuid:eid>/reset-tokens", methods=["POST"])
@@ -421,10 +421,11 @@ def _reset_tokens(entity):
     return jsonify({"coins_available": new_balance})
 
 
-@admin_bp.route("/users/<int:eid>/profile")
+@admin_bp.route("/users/<uuid:eid>/profile")
 @admin_required
 def user_profile(eid):
-    entity = db.get_or_404(Entity, eid)
+    entity = entity_by_uuid_or_404(eid, "user")
+    eid = entity.id
     data = _get_profile_data(eid)
     # The user's own limit row (not an inherited group/default pool), used to
     # prefill the edit dialog without materializing inherited values.
@@ -525,7 +526,7 @@ def api_users():
     return jsonify({
         "users": [
             {
-                "id": entity.id,
+                "id": str(entity.uuid),
                 "name": entity.name,
                 "active": entity.active,
                 "max_coins": float(limits[entity.id].max_coins) if entity.id in limits else None,
@@ -605,7 +606,7 @@ def _model_access_payload(mc):
     """JSON payload describing a model's owner for the Access dialog."""
     owner = db.session.get(Entity, mc.owner_entity_id) if mc.owner_entity_id else None
     return {
-        "owner": {"id": owner.id, "name": owner.name, "email": owner.email} if owner else None,
+        "owner": {"name": owner.name, "email": owner.email} if owner else None,
     }
 
 
@@ -634,19 +635,23 @@ def apply_model_access_edit(mc, data):
     return None
 
 
-@admin_bp.route("/api/models/<int:mid>/access")
+def _model_by_name_or_404(model_name):
+    return db.first_or_404(select(ModelConfig).where(ModelConfig.model_name == model_name))
+
+
+@admin_bp.route("/api/models/<path:model_name>/access")
 @admin_required
-def model_access_api_get(mid):
+def model_access_api_get(model_name):
     """Owner for the model detail Access dialog."""
-    mc = db.get_or_404(ModelConfig, mid)
+    mc = _model_by_name_or_404(model_name)
     return jsonify(_model_access_payload(mc))
 
 
-@admin_bp.route("/api/models/<int:mid>/access", methods=["PATCH"])
+@admin_bp.route("/api/models/<path:model_name>/access", methods=["PATCH"])
 @admin_required
-def model_access_api_patch(mid):
+def model_access_api_patch(model_name):
     """Update a model's owner from the Access dialog."""
-    mc = db.get_or_404(ModelConfig, mid)
+    mc = _model_by_name_or_404(model_name)
     data = request.get_json(force=True, silent=True)
     if not isinstance(data, dict):
         return jsonify({"error": "Expected a JSON object"}), HTTPStatus.BAD_REQUEST

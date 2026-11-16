@@ -567,7 +567,7 @@ def test_members_data_user_profile_url_for_admin(admin_client, owned_group, test
     user's profile page."""
     rows = admin_client.get(f"/groups/{owned_group.uuid}/members/data").get_json()["members"]
     assert rows[0]["id"] == test_user["uuid"]
-    assert rows[0]["profile_url"] == f"/admin/users/{test_user['id']}/profile"
+    assert rows[0]["profile_url"] == f"/admin/users/{test_user['uuid']}/profile"
 
 
 def test_members_data_profile_url_hidden_from_member(auth_client, owned_group, test_user, test_project):

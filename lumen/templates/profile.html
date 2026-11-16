@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_copy_id_avatar.html" import copy_id_avatar %}
 {% block title %}Profile — {{ app_name }}{% endblock %}
 
 {% block content %}
@@ -26,8 +27,7 @@
 
       <!-- Col 1: avatar + name + email, centred -->
       <div class="col-12 col-md-3 text-center profile-col-identity">
-        <img src="{{ gravatar_url }}" alt="Profile photo for {{ profile_entity.name }}"
-             width="115" height="115" class="rounded-circle profile-avatar-img">
+        {{ copy_id_avatar(gravatar_url, profile_entity.name, profile_entity.uuid, "user") }}
         <h2 class="profile-name mt-0 mb-0">{{ profile_entity.name }}</h2>
         <p class="text-muted small mt-0 mb-0">{{ profile_entity.email }}</p>
         {% if not viewing_user and admin_eligible %}
@@ -429,6 +429,7 @@
 <script src="https://cdn.jsdelivr.net/npm/marked@18.1.2/lib/marked.umd.js" integrity="sha384-nCN5FOaVTXXYilftBH/VQuC9ypBYOxrctAZn2x7ggYClXaporWSzM0y+ODhb8MTi" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.17/dist/purify.min.js" integrity="sha384-P0JNneQf81HOl9VwNXK76cQ9VMD6Nfsnepxb0cCOg8+UzEdzgPHAPV4wVQrvYQSx" crossorigin="anonymous"></script>
 <script src="{{ url_for('static', filename='js/ack-consent.js') }}"></script>
+{% if profile_entity %}<script src="{{ url_for('static', filename='js/copy-id.js') }}"></script>{% endif %}
 {% if is_admin and profile_entity %}<script src="{{ url_for('static', filename='js/group-pills.js') }}"></script>{% endif %}
 {% if not viewing_user %}<script src="{{ url_for('static', filename='js/key-rotate.js') }}"></script>{% endif %}
 {% if not viewing_user %}<script src="{{ url_for('static', filename='js/key-ttl-edit.js') }}"></script>{% endif %}
@@ -459,7 +460,7 @@ document.querySelectorAll('#profile-tabs [data-bs-toggle="tab"]').forEach(btn =>
 // ── Edit user modal (rendered only for admins)
 {
   const editUserModal = document.getElementById("editUserModal");
-  const EDIT_USER_ID = {{ profile_entity.id }};
+  const EDIT_USER_ID = {{ profile_entity.uuid | string | tojson }};
   editUserModal.addEventListener("shown.bs.modal", () => document.getElementById("edit-user-active").focus());
   const groupPills = initGroupPills({
     boxId: "edit-user-groups-box", pillsId: "edit-user-groups-pills", inputId: "edit-user-groups",
@@ -506,7 +507,7 @@ if (resetCoinsBtn) {
     const statusEl = document.getElementById("reset-coins-status");
     resetCoinsBtn.disabled = true;
     try {
-      const resp = await fetch("/admin/users/{{ profile_entity.id }}/reset-tokens", {
+      const resp = await fetch({{ url_for('admin.reset_user_tokens', eid=profile_entity.uuid) | tojson }}, {
         method: "POST", headers: { "X-CSRFToken": csrfToken },
       });
       const data = await resp.json().catch(() => ({}));

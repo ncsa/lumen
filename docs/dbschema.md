@@ -1057,7 +1057,7 @@ test allows. `flask check-aggregate` exits 1 if a retention policy was added to 
 
 ## Erasing a user (GDPR)
 
-`flask erase-entity <id> [--yes]` hard-deletes a user for GDPR erasure. It cannot be undone, and
+`flask erase-entity <uuid> [--yes]` (the user's `entities.uuid`) hard-deletes a user for GDPR erasure. It cannot be undone, and
 on PostgreSQL it is off-hours operator work. Only users can be erased; it refuses a project, the
 ghost, a user who still owns a project (transfer ownership first), and, like `reassign-model`, runs
 only while `request_logs` has no retention policy.
@@ -1110,8 +1110,9 @@ pickers.
 user still exists, inactive, and every row belongs to the user or the ghost. The final transaction
 (sweep, stats merge, models, keys, deletes, entity delete) is one commit: if the entity delete fails,
 for example on a `request_logs` row logged after the sweep, everything in it rolls back and the
-command says to re-run. Interrupted during the aggregate refresh, the user is gone; re-running with
-the same id refreshes from the buckets still materialised under it, or reports nothing to do.
+command says to re-run with the same uuid. If the aggregate refresh fails, the user is gone and its
+uuid no longer resolves, so the command prints the `flask backfill-aggregate` runs, in refresh
+order, that finish it.
 
 **`RESTRICT` is the safety net:** `request_logs.entity_id` is `ON DELETE RESTRICT`, so a row the walk
 and sweep both missed fails the final delete instead of being left pointing at nobody.

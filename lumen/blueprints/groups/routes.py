@@ -551,7 +551,7 @@ def members_data(gid):
     admin = is_admin(entity)
 
     def member_url(e: Entity) -> str | None:
-        return url_for("admin.user_profile", eid=e.id) if (admin and e.entity_type == "user") else None
+        return url_for("admin.user_profile", eid=e.uuid) if (admin and e.entity_type == "user") else None
 
     return jsonify({
         "members": [

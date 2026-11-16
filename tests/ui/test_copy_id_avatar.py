@@ -1,6 +1,6 @@
 """The copy-ID avatar (templates/_copy_id_avatar.html, static/js/copy-id.js).
 
-Markup checks run on the rendered project page; the behaviour runs in a real
+Markup checks run on the rendered project, group and profile pages; the behaviour runs in a real
 browser, served by the Flask test client at http://lumen.test like
 test_key_tables.py. That origin is not a secure context, so an init script
 stubs navigator.clipboard and records what was written in window.__copied.
@@ -258,3 +258,64 @@ def test_group_avatar_enter_key_copies_uuid(open_group, group):
     page.keyboard.press("Enter")
     page.wait_for_function("window.__copied.length === 1")
     assert page.evaluate("window.__copied") == [group[1]]
+
+
+# --- User avatar (own profile and the admin view of a user) ---------------
+
+def test_own_profile_avatar_is_a_labelled_copy_button(auth_client, test_user):
+    soup = BeautifulSoup(auth_client.get("/profile").data, "html.parser")
+    btn = _avatar(soup)
+    assert btn is not None and btn["type"] == "button"
+    assert btn["data-copy-id"] == test_user["uuid"]
+    assert btn["aria-label"] == f"Copy user ID of {test_user['name']}"
+    assert btn.find("img")["alt"] == f"Avatar for {test_user['name']}"
+    status = btn.find_next_sibling("span")
+    assert status["role"] == "status" and status["aria-live"] == "polite"
+    assert soup.find("script", src="/static/js/copy-id.js") is not None
+
+
+def test_admin_view_of_a_user_avatar_copies_that_users_uuid(admin_client, test_user):
+    html = admin_client.get(f"/admin/users/{test_user['uuid']}/profile").get_data(as_text=True)
+    btn = _avatar(BeautifulSoup(html, "html.parser"))
+    assert btn["data-copy-id"] == test_user["uuid"]
+    assert btn["aria-label"] == f"Copy user ID of {test_user['name']}"
+    assert f"/admin/users/{test_user['id']}/" not in html
+    assert f"EDIT_USER_ID = {test_user['id']};" not in html
+
+
+@pytest.fixture
+def open_user_profile(admin_client, browser, test_user):
+    _open, pages = _page_opener(admin_client, browser, f"/admin/users/{test_user['uuid']}/profile")
+    yield _open
+    for page in pages:
+        page.close()
+
+
+def test_user_avatar_keyboard_focus_shows_hint(open_user_profile):
+    page = open_user_profile()
+    page.focus("button.copy-id-avatar")
+    assert _popover_text(page) == "Click to copy ID"
+
+
+def test_user_avatar_hover_shows_hint(open_user_profile):
+    page = open_user_profile()
+    page.hover("button.copy-id-avatar")
+    assert _popover_text(page) == "Click to copy ID"
+
+
+def test_user_avatar_click_copies_uuid_and_confirms(open_user_profile, test_user):
+    page = open_user_profile()
+    page.click("button.copy-id-avatar")
+    page.wait_for_function("window.__copied.length === 1")
+    assert page.evaluate("window.__copied") == [test_user["uuid"]]
+    page.wait_for_function(
+        "document.querySelector('.copy-id-status').textContent === 'User ID copied to clipboard'")
+    assert _popover_text(page) == "User ID copied to clipboard"
+
+
+def test_user_avatar_enter_key_copies_uuid(open_user_profile, test_user):
+    page = open_user_profile()
+    page.focus("button.copy-id-avatar")
+    page.keyboard.press("Enter")
+    page.wait_for_function("window.__copied.length === 1")
+    assert page.evaluate("window.__copied") == [test_user["uuid"]]

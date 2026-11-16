@@ -251,8 +251,10 @@ def world(pg_app, engine):
             db.session.commit()
         admin_id = admin.id
 
-    live = [eid for key, eid in entities.items() if key != DELETED]
-    return {"models": models, "live": live, "admin": admin_id, "rng": rng}
+        live = [eid for key, eid in entities.items() if key != DELETED]
+        # The usage filter takes an entity's public uuid, not its id.
+        uuids = dict(db.session.execute(select(Entity.id, Entity.uuid).where(Entity.id.in_(live))).all())
+    return {"models": models, "live": live, "uuids": uuids, "admin": admin_id, "rng": rng}
 
 
 def _watermark(conn, view):
@@ -299,10 +301,10 @@ def _client(pg_app, admin_id):
     return client
 
 
-def _get(client, endpoint, period, eid=None):
+def _get(client, endpoint, period, entity_uuid=None):
     path = f"/api/usage/{endpoint}?period={period}"
-    if eid is not None:
-        path += f"&entity_id={eid}"
+    if entity_uuid is not None:
+        path += f"&entity={entity_uuid}"
     resp = client.get(path)
     assert resp.status_code == HTTPStatus.OK, resp.data
     return resp.get_json()
@@ -339,7 +341,7 @@ def test_org_wide_equals_raw_and_the_per_entity_sum(pg_app, engine, world, phase
     assert (deleted["requests"] if endpoint == "summary" else sum(deleted.values())) > 0
     total = deleted
     for eid in world["live"]:
-        total = _add(endpoint, total, _normalise(endpoint, _get(client, endpoint, period, eid)))
+        total = _add(endpoint, total, _normalise(endpoint, _get(client, endpoint, period, world["uuids"][eid])))
     assert org == total
 
 
