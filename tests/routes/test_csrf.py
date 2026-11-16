@@ -11,7 +11,7 @@ def csrf_client(app, test_user):
     app.config["WTF_CSRF_ENABLED"] = True
     client = app.test_client(use_cookies=True)
     with client.session_transaction() as sess:
-        sess["entity_id"] = test_user["id"]
+        sess["entity_uuid"] = test_user["uuid"]
         sess["entity_name"] = test_user["name"]
         sess["initials"] = test_user["initials"]
         sess["gravatar_hash"] = test_user["gravatar_hash"]

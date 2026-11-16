@@ -2,11 +2,12 @@ import hashlib
 import logging
 from http import HTTPStatus
 
-from flask import Blueprint, abort, current_app, jsonify, redirect, render_template, session, url_for
+from flask import Blueprint, abort, current_app, g, jsonify, redirect, render_template, session, url_for
 from flask_wtf.csrf import generate_csrf
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from lumen.decorators import login_session
 from lumen.extensions import db, oauth
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
@@ -131,7 +132,7 @@ def sync_auto_memberships(entity: Entity, userinfo=None, extra_groups=None):
 
 @auth_bp.route("/")
 def landing():
-    if session.get("entity_id"):
+    if g.get("entity") is not None:
         return _post_login_redirect()
     has_provider = hasattr(oauth, "provider")
     has_dev = bool(current_app.config.get("DEV_USER"))
@@ -186,11 +187,7 @@ def devlogin():
     sync_auto_memberships(entity, extra_groups=dev_groups)
     db.session.commit()
 
-    session["entity_id"] = entity.id
-    session["entity_name"] = entity.name
-    session["initials"] = entity.initials
-    session["gravatar_hash"] = entity.gravatar_hash or ""
-    session["entity_email"] = email
+    login_session(entity)
     return _post_login_redirect()
 
 
@@ -233,11 +230,7 @@ def callback():
     sync_auto_memberships(entity, userinfo=userinfo)
     db.session.commit()
 
-    session["entity_id"] = entity.id
-    session["entity_name"] = entity.name
-    session["initials"] = entity.initials
-    session["gravatar_hash"] = entity.gravatar_hash or ""
-    session["entity_email"] = email
+    login_session(entity)
     return _post_login_redirect()
 
 

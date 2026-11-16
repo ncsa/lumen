@@ -39,7 +39,7 @@ from sqlalchemy import create_engine, exc, func, select, text
 
 from lumen import commands
 from lumen.commands import WALK_LOCK_HELD, erase_entity_cmd
-from tests.conftest import no_snapshot_refresher
+from tests.conftest import entity_uuid, no_snapshot_refresher
 
 from .conftest import TEST_CONFIG, holding_stats_walk_lock, stats_walk_lock_is_free
 
@@ -332,7 +332,7 @@ def _all_users_summary(pg_app):
         admin_id = admin.id
     client = pg_app.test_client()
     with client.session_transaction() as sess:
-        sess["entity_id"] = admin_id
+        sess["entity_uuid"] = entity_uuid(pg_app, admin_id)
         sess["admin_mode"] = True
     resp = client.get("/api/usage/summary?period=all")
     assert resp.status_code == HTTPStatus.OK, resp.data

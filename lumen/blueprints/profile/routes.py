@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from uuid import UUID
 
-from flask import Blueprint, abort, jsonify, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, g, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
@@ -400,7 +400,7 @@ def _get_profile_data(eid: int, live_tail: bool = False) -> dict:
 @profile_bp.route("/profile")
 @login_required
 def index():
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     data = _get_profile_data(entity_id, live_tail=True)
 
     profile_entity = db.session.get(Entity, entity_id)
@@ -557,7 +557,7 @@ def set_key_ttl(api_key: APIKey):
 @profile_bp.route("/profile/keys", methods=["POST"])
 @login_required
 def create_key():
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     data = request.get_json() or {}
     name = (data.get("name") or "").strip()
     key = (data.get("key") or "").strip()
@@ -592,7 +592,7 @@ def delete_key_removed(kid):
 @profile_bp.route("/profile/keys/<uuid:kid>/revoke", methods=["POST"])
 @login_required
 def revoke_key(kid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     api_key = key_by_uuid_or_404(kid)
 
     if api_key.entity_id != entity_id:
@@ -608,7 +608,7 @@ def revoke_key(kid):
 @profile_bp.route("/profile/keys/<uuid:kid>/rotate", methods=["POST"])
 @login_required
 def rotate_key(kid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     api_key = key_by_uuid_or_404(kid)
 
     if api_key.entity_id != entity_id:
@@ -620,7 +620,7 @@ def rotate_key(kid):
 @profile_bp.route("/profile/keys/<uuid:kid>/ttl", methods=["POST"])
 @login_required
 def edit_key_ttl(kid):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     api_key = key_by_uuid_or_404(kid)
 
     if api_key.entity_id != entity_id:
@@ -641,7 +641,7 @@ def _purge_conversations(entity_id: int) -> int:
 @profile_bp.route("/profile/conversations", methods=["DELETE"])
 @login_required
 def purge_conversations():
-    deleted = _purge_conversations(session["entity_id"])
+    deleted = _purge_conversations(g.entity_id)
     db.session.commit()
     return jsonify({"deleted": deleted})
 
@@ -654,7 +654,7 @@ def set_store_conversations():
     if not isinstance(enabled, bool):
         return jsonify({"error": "'enabled' must be a boolean"}), HTTPStatus.BAD_REQUEST
 
-    entity = db.session.get(Entity, session["entity_id"])
+    entity = db.session.get(Entity, g.entity_id)
     entity.store_conversations = enabled
     deleted = 0 if enabled else _purge_conversations(entity.id)
     db.session.commit()
@@ -664,7 +664,7 @@ def set_store_conversations():
 @profile_bp.route("/profile/settings/admin-mode", methods=["POST"])
 @login_required
 def set_admin_mode():
-    entity = db.session.get(Entity, session["entity_id"])
+    entity = db.session.get(Entity, g.entity_id)
     if not is_admin_eligible(entity):
         return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
 
@@ -682,7 +682,7 @@ def set_admin_mode():
 @profile_bp.route("/profile/consent/<path:model_name>", methods=["POST"])
 @login_required
 def user_consent(model_name):
-    entity_id = session["entity_id"]
+    entity_id = g.entity_id
     config = db.first_or_404(select(ModelConfig).where(ModelConfig.model_name == model_name, ModelConfig.active))
 
     access_status = get_model_access_status(entity_id, config.id)
@@ -800,9 +800,9 @@ def _usage_entity_id():
     users). A malformed or unknown entity uuid is a 404, not a silent fallback
     to all users.
     """
-    entity = db.session.get(Entity, session["entity_id"])
+    entity = db.session.get(Entity, g.entity_id)
     if not _is_admin(entity):
-        return session["entity_id"]
+        return g.entity_id
     public_id = request.args.get("entity")
     if public_id:
         try:
@@ -811,7 +811,7 @@ def _usage_entity_id():
             abort(HTTPStatus.NOT_FOUND)
         return db.first_or_404(select(Entity.id).where(Entity.uuid == u))
     if request.args.get("mine") == "1":
-        return session.get("entity_id")
+        return g.get("entity_id")
     return None
 
 

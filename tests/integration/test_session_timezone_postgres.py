@@ -41,7 +41,7 @@ import pytest
 from sqlalchemy import create_engine, exc, text
 from sqlalchemy.pool import NullPool
 
-from tests.conftest import no_snapshot_refresher
+from tests.conftest import entity_uuid, no_snapshot_refresher
 
 from .conftest import TEST_CONFIG
 
@@ -150,7 +150,7 @@ def pg_app(pg_migrated_isolated):
 def _client(pg_app, eid):
     client = pg_app.test_client()
     with client.session_transaction() as sess:
-        sess["entity_id"] = eid
+        sess["entity_uuid"] = entity_uuid(pg_app, eid)
     return client
 
 

@@ -66,7 +66,7 @@ def test_consent_requires_session_rendered_request_id(auth_client, client):
     body = _issue(client)
     req = _request_row(auth_client.application, body["user_code"])
     # A request id never rendered to this session cannot be approved.
-    resp = auth_client.post("/oauth/consent", data={"request_id": req.id, "action": "approve"})
+    resp = auth_client.post("/oauth/consent", data={"request_id": str(req.uuid), "action": "approve"})
     assert resp.status_code == HTTPStatus.BAD_REQUEST
     assert b"Unknown request" in resp.data
 
@@ -76,10 +76,10 @@ def test_consent_csrf_enforced(client, test_user, app):
     client.application.config["WTF_CSRF_ENABLED"] = True
     try:
         with client.session_transaction() as sess:
-            sess["entity_id"] = test_user["id"]
+            sess["entity_uuid"] = test_user["uuid"]
         body = _issue(client)
         with client.session_transaction() as sess:
-            req_id = _request_row(app, body["user_code"]).id
+            req_id = str(_request_row(app, body["user_code"]).uuid)
             sess["oauth_consent_request_id"] = req_id
         resp = client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
         assert resp.status_code == HTTPStatus.BAD_REQUEST
@@ -104,7 +104,7 @@ def test_existing_key_requires_overwrite(client, auth_client, app, test_user):
     assert b"Replace the secret of key" in page.data
     assert b'disabled' in page.data  # Approve rendered disabled until ticked
 
-    req_id = _request_row(app, body["user_code"]).id
+    req_id = str(_request_row(app, body["user_code"]).uuid)
     no_ow = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
     assert no_ow.status_code == HTTPStatus.OK
     assert b"Tick" in no_ow.data
@@ -128,7 +128,7 @@ def _approve_overwrite(client, auth_client, app, name="opencode"):
     """Issue a device request for name and approve it with overwrite ticked."""
     body = _issue(client, name=name)
     auth_client.get(f"/device?code={body['user_code']}")
-    req_id = _request_row(app, body["user_code"]).id
+    req_id = str(_request_row(app, body["user_code"]).uuid)
     assert auth_client.post("/oauth/consent", data={
         "request_id": req_id, "action": "approve", "overwrite": "on",
     }).status_code == HTTPStatus.OK
@@ -257,7 +257,7 @@ def test_key_revoked_by_expirer_no_longer_blocks_same_name(client, auth_client, 
     body = _issue(client, name="opencode")
     page = auth_client.get(f"/device?code={body['user_code']}")
     assert b"Overwrite key" not in page.data
-    req_id = _request_row(app, body["user_code"]).id
+    req_id = str(_request_row(app, body["user_code"]).uuid)
     assert auth_client.post("/oauth/consent", data={
         "request_id": req_id, "action": "approve",
     }).status_code == HTTPStatus.OK
@@ -273,7 +273,7 @@ def test_minted_key_expires_at_from_cap(client, auth_client, app, restore_config
     app.config["KEY_TTL"] = cap
     body = _issue(client, name="capped")
     auth_client.get(f"/device?code={body['user_code']}")
-    req_id = _request_row(app, body["user_code"]).id
+    req_id = str(_request_row(app, body["user_code"]).uuid)
     auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
     assert _poll(client, body).status_code == HTTPStatus.OK
     with app.app_context():
@@ -309,7 +309,7 @@ def test_overwrite_refresh_resets_expires_at_from_cap(client, auth_client, app, 
 def test_name_conflict_between_approval_and_mint(client, auth_client, app, test_user):
     body = _issue(client, name="opencode")
     auth_client.get(f"/device?code={body['user_code']}")
-    req_id = _request_row(app, body["user_code"]).id
+    req_id = str(_request_row(app, body["user_code"]).uuid)
     assert auth_client.post("/oauth/consent", data={
         "request_id": req_id, "action": "approve",
     }).status_code == HTTPStatus.OK
@@ -336,10 +336,10 @@ def test_name_conflict_between_approval_and_mint(client, auth_client, app, test_
 def test_abandoned_approval_leaves_old_key_working(client, auth_client, app, test_user):
     body = _issue(client, name="opencode")
     auth_client.get(f"/device?code={body['user_code']}")
-    req_id = _request_row(app, body["user_code"]).id
+    req_id = str(_request_row(app, body["user_code"]).uuid)
     auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
     with app.app_context():
-        req = db.session.get(AuthRequest, req_id)
+        req = db.session.execute(select(AuthRequest).where(AuthRequest.user_code == body["user_code"])).scalar_one()
         req.expires_at = utcnow() - timedelta(seconds=1)
         db.session.commit()
     assert _poll(client, body).get_json()["error"] == "expired_token"
@@ -431,7 +431,7 @@ def test_consent_ack_button_carries_notice_verbatim(client, auth_client, app):
 def test_consent_approve_second_time_is_already_handled(client, auth_client, app):
     body = _issue(client)
     auth_client.get(f"/device?code={body['user_code']}")
-    req_id = _request_row(app, body["user_code"]).id
+    req_id = str(_request_row(app, body["user_code"]).uuid)
     first = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
     assert first.status_code == HTTPStatus.OK
     second = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})

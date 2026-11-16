@@ -63,7 +63,7 @@ def _approve_code_flow(app, auth_client):
     assert page.status_code == HTTPStatus.OK
     assert b"portal.example.org" in page.data  # destination origin shown large
     with app.app_context():
-        req_id = db.session.execute(select(AuthRequest)).scalars().one().id
+        req_id = str(db.session.execute(select(AuthRequest)).scalars().one().uuid)
     resp = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
     assert resp.status_code == HTTPStatus.FOUND
     query = parse_qs(urlsplit(resp.headers["Location"]).query)
@@ -79,7 +79,7 @@ def test_consent_redirect_preserves_existing_query(app, auth_client):
     url, _verifier = _authorize_url(redirect_uri=quote(redirect, safe=""))
     assert auth_client.get(url).status_code == HTTPStatus.OK
     with app.app_context():
-        req_id = db.session.execute(select(AuthRequest)).scalars().one().id
+        req_id = str(db.session.execute(select(AuthRequest)).scalars().one().uuid)
     resp = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
     assert resp.status_code == HTTPStatus.FOUND
     loc = resp.headers["Location"]
@@ -217,7 +217,7 @@ def test_overwrite_refreshes_key_then_replay_revokes_it(client, auth_client, app
     url, verifier = _authorize_url()
     assert auth_client.get(url).status_code == HTTPStatus.OK
     with app.app_context():
-        req_id = db.session.execute(select(AuthRequest)).scalars().one().id
+        req_id = str(db.session.execute(select(AuthRequest)).scalars().one().uuid)
     resp = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve", "overwrite": "on"})
     assert resp.status_code == HTTPStatus.FOUND
     code = parse_qs(urlsplit(resp.headers["Location"]).query)["code"][0]
@@ -261,7 +261,7 @@ def test_deny_redirects_after_consent_with_error(auth_client, app):
     url, _ = _authorize_url()
     auth_client.get(url)
     with app.app_context():
-        req_id = db.session.execute(select(AuthRequest)).scalars().one().id
+        req_id = str(db.session.execute(select(AuthRequest)).scalars().one().uuid)
     resp = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "deny"})
     assert resp.status_code == HTTPStatus.FOUND
     query = parse_qs(urlsplit(resp.headers["Location"]).query)
@@ -277,7 +277,7 @@ def test_state_never_crosses_concurrent_flows(auth_client, app, action):
     auth_client.get(_authorize_url(state="first")[0])
     auth_client.get(_authorize_url(state="second")[0])
     with app.app_context():
-        first_id, _second_id = db.session.execute(select(AuthRequest.id).order_by(AuthRequest.id)).scalars().all()
+        first_id, _second_id = [str(u) for u in db.session.execute(select(AuthRequest.uuid).order_by(AuthRequest.id)).scalars().all()]
     # Consent page for the first request shown again in this session.
     with auth_client.session_transaction() as sess:
         sess["oauth_consent_request_id"] = first_id
@@ -298,7 +298,7 @@ def _authorize_and_consent(app, auth_client, authorize_ttl=None, consent_ttl=Non
     page = auth_client.get(url)
     assert page.status_code == HTTPStatus.OK
     with app.app_context():
-        req_id = db.session.execute(select(AuthRequest)).scalars().one().id
+        req_id = str(db.session.execute(select(AuthRequest)).scalars().one().uuid)
     data = {"request_id": req_id, "action": "approve"}
     if consent_ttl is not None:
         data["ttl"] = consent_ttl

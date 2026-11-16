@@ -38,7 +38,7 @@ import pytest
 from sqlalchemy import create_engine, event, select, text
 
 from lumen.commands import USAGE_AGGREGATES, upgrade_cmd
-from tests.conftest import no_snapshot_refresher
+from tests.conftest import entity_uuid, no_snapshot_refresher
 
 from .conftest import TEST_CONFIG
 
@@ -296,7 +296,7 @@ def phase(request, world, engine):
 def _client(pg_app, admin_id):
     client = pg_app.test_client()
     with client.session_transaction() as sess:
-        sess["entity_id"] = admin_id
+        sess["entity_uuid"] = entity_uuid(pg_app, admin_id)
         sess["admin_mode"] = True
     return client
 
