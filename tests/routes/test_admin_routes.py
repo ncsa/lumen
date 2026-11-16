@@ -128,6 +128,34 @@ def test_update_user_max_updates_starting_for_reset(app, admin_client, test_user
     assert float(resp.get_json()["coins_available"]) == 500.0
 
 
+def test_update_user_max_zero_tracks_starting_and_clamps_balance(app, admin_client, test_user):
+    """starting_coins tracks any finite Max Coins, including 0, and the balance is clamped."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
+        db.session.add(EntityLimit(
+            entity_id=test_user["id"], max_coins=100, refresh_coins=1, starting_coins=100,
+        ))
+        db.session.add(EntityBalance(entity_id=test_user["id"], coins_left=80))
+        db.session.commit()
+    resp = admin_client.patch(f"/admin/users/{test_user['uuid']}", json={"max_coins": 0})
+    assert resp.status_code == HTTPStatus.OK
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
+        limit = db.session.execute(
+            select(EntityLimit).filter_by(entity_id=test_user["id"])
+        ).scalar_one_or_none()
+        balance = db.session.execute(
+            select(EntityBalance).filter_by(entity_id=test_user["id"])
+        ).scalar_one_or_none()
+        assert float(limit.max_coins) == 0.0
+        assert float(limit.starting_coins) == 0.0
+        assert float(balance.coins_left) == 0.0
+
+
 def test_update_user_blank_coins_clears_limit(app, admin_client, test_user):
     """Blanking both coin fields removes the user's own pool (falls back to defaults)."""
     with app.app_context():
