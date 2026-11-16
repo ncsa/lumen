@@ -51,15 +51,15 @@ def _entity_groups(eid: int) -> list:
 
 
 def _all_groups_for_picker() -> list[dict]:
-    """Every group, for the Edit User dialog's group picker suggestions."""
+    """Every group, for the Edit User dialog's group picker suggestions (id is the group's uuid)."""
     return [
-        {"id": g.id, "name": g.name, "active": g.active, "auto_join": g.auto_join}
+        {"id": str(g.uuid), "name": g.name, "active": g.active, "auto_join": g.auto_join}
         for g in db.session.execute(select(Group).order_by(Group.name)).scalars().all()
     ]
 
 
 def _memberships_by_entity(entity_ids: list[int]) -> dict[int, list[dict]]:
-    """Each entity's groups as picker pills ({id, name, auto_join, is_owner}), keyed by entity id."""
+    """Each entity's groups as picker pills ({id, name, auto_join, is_owner}, id the group's uuid), keyed by entity id."""
     result: dict[int, list[dict]] = {}
     if not entity_ids:
         return result
@@ -70,7 +70,7 @@ def _memberships_by_entity(entity_ids: list[int]) -> dict[int, list[dict]]:
         .order_by(Group.name)
     ).all():
         result.setdefault(eid, []).append(
-            {"id": group.id, "name": group.name, "auto_join": group.auto_join, "is_owner": is_owner}
+            {"id": str(group.uuid), "name": group.name, "auto_join": group.auto_join, "is_owner": is_owner}
         )
     return result
 

@@ -71,8 +71,8 @@ def test_toggle_button_handler_parses_with_the_uuid(app, auth_client, project, a
     assert len(btn.attrs) == 2  # class and onclick: no stray attributes from broken quoting
 
 
-@pytest.fixture
-def open_project(auth_client, browser, project):
+def _page_opener(auth_client, browser, path):
+    """Open path in the browser, served by the Flask test client; returns (open, pages)."""
     pages = []
     posted = []
 
@@ -85,12 +85,12 @@ def open_project(auth_client, browser, project):
         if f"{url.scheme}://{url.netloc}" != ORIGIN:
             route.abort()
             return
-        path = url.path + (f"?{url.query}" if url.query else "")
+        req_path = url.path + (f"?{url.query}" if url.query else "")
         if request.method == "POST":
             posted.append(url.path)
-            resp = auth_client.post(path, json=request.post_data_json)
+            resp = auth_client.post(req_path, json=request.post_data_json)
         else:
-            resp = auth_client.get(path)
+            resp = auth_client.get(req_path)
         # Close the response: a static file stays open until it is.
         with resp:
             route.fulfill(status=resp.status_code, content_type=resp.content_type, body=resp.get_data())
@@ -101,12 +101,18 @@ def open_project(auth_client, browser, project):
         page.set_default_timeout(10_000)
         page.add_init_script(CLIPBOARD_STUB)
         page.route("**/*", handle)
-        resp = page.goto(f"{ORIGIN}/projects/{project[1]}")
+        resp = page.goto(f"{ORIGIN}{path}")
         assert resp.status == HTTPStatus.OK
         page.wait_for_selector("button.copy-id-avatar")
         return page
 
     _open.posted = posted
+    return _open, pages
+
+
+@pytest.fixture
+def open_project(auth_client, browser, project):
+    _open, pages = _page_opener(auth_client, browser, f"/projects/{project[1]}")
     yield _open
     for page in pages:
         page.close()
@@ -174,3 +180,81 @@ def test_toggle_buttons_deactivate_and_reactivate(app, open_project, project):
         from lumen.extensions import db
         from lumen.models.entity import Entity
         assert db.session.get(Entity, pid).active is True
+
+
+# --- Group avatar ----------------------------------------------------------
+
+@pytest.fixture
+def group(app, test_user):
+    """A group owned by test_user; returns (id, uuid)."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.group import Group
+        from lumen.models.group_member import GroupMember
+        g = Group(name="copy-group", active=True)
+        db.session.add(g)
+        db.session.flush()
+        db.session.add(GroupMember(group_id=g.id, entity_id=test_user["id"], is_owner=True))
+        db.session.commit()
+        return g.id, str(g.uuid)
+
+
+def test_group_avatar_is_a_labelled_copy_button(auth_client, group):
+    gid, guuid = group
+    soup = BeautifulSoup(auth_client.get(f"/groups/{guuid}").data, "html.parser")
+    btn = _avatar(soup)
+    assert btn is not None and btn["type"] == "button"
+    assert btn["data-copy-id"] == guuid
+    assert btn["aria-label"] == "Copy group ID of copy-group"
+    assert btn.find("img")["alt"] == "Avatar for copy-group"
+    status = btn.find_next_sibling("span")
+    assert status["role"] == "status" and status["aria-live"] == "polite"
+    assert soup.find("script", src="/static/js/copy-id.js") is not None
+
+
+def test_group_page_embeds_no_integer_group_id(auth_client, group):
+    gid, guuid = group
+    html = auth_client.get(f"/groups/{guuid}").get_data(as_text=True)
+    assert f'const GROUP_ID = "{guuid}";' in html
+    assert f"/groups/{gid}" not in html
+    assert f"GROUP_ID = {gid};" not in html
+
+
+@pytest.fixture
+def open_group(auth_client, browser, group):
+    _open, pages = _page_opener(auth_client, browser, f"/groups/{group[1]}")
+    yield _open
+    for page in pages:
+        page.close()
+
+
+def test_group_avatar_keyboard_focus_shows_hint(open_group):
+    page = open_group()
+    page.focus("button.copy-id-avatar")
+    assert _popover_text(page) == "Click to copy ID"
+    page.keyboard.press("Escape")
+    page.wait_for_selector(".popover", state="detached")
+
+
+def test_group_avatar_hover_shows_hint(open_group):
+    page = open_group()
+    page.hover("button.copy-id-avatar")
+    assert _popover_text(page) == "Click to copy ID"
+
+
+def test_group_avatar_click_copies_uuid_and_confirms(open_group, group):
+    page = open_group()
+    page.click("button.copy-id-avatar")
+    page.wait_for_function("window.__copied.length === 1")
+    assert page.evaluate("window.__copied") == [group[1]]
+    page.wait_for_function(
+        "document.querySelector('.copy-id-status').textContent === 'Group ID copied to clipboard'")
+    assert _popover_text(page) == "Group ID copied to clipboard"
+
+
+def test_group_avatar_enter_key_copies_uuid(open_group, group):
+    page = open_group()
+    page.focus("button.copy-id-avatar")
+    page.keyboard.press("Enter")
+    page.wait_for_function("window.__copied.length === 1")
+    assert page.evaluate("window.__copied") == [group[1]]

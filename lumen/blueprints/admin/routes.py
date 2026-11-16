@@ -1,6 +1,7 @@
 import os
 from decimal import Decimal, InvalidOperation
 from http import HTTPStatus
+from uuid import UUID
 
 import yaml
 from flask import Blueprint, current_app, jsonify, redirect, render_template, request, session, url_for
@@ -293,12 +294,24 @@ def toggle_user(eid):
 
 
 def _parse_group_ids(raw, key):
-    """Validate a list of group ids from the edit payload; returns (ids, error)."""
+    """Resolve a list of group uuids from the edit payload to group ids; returns (ids, error).
+
+    A malformed or unknown uuid is an error (the caller answers 400).
+    """
     if raw is None:
         return set(), None
-    if not isinstance(raw, list) or not all(isinstance(g, int) and not isinstance(g, bool) for g in raw):
+    if not isinstance(raw, list) or not all(isinstance(g, str) for g in raw):
         return None, f"{key} must be a list of group ids"
-    return set(raw), None
+    try:
+        uuids = {UUID(g) for g in raw}
+    except ValueError:
+        return None, "Unknown group id"
+    if not uuids:
+        return set(), None
+    ids = set(db.session.execute(select(Group.id).where(Group.uuid.in_(uuids))).scalars().all())
+    if len(ids) != len(uuids):
+        return None, "Unknown group id"
+    return ids, None
 
 
 def apply_group_membership_edit(entity_id, data):

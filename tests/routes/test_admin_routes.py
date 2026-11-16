@@ -1,5 +1,6 @@
 """Admin route tests — focus on user management happy paths."""
 import re
+import uuid
 from http import HTTPStatus
 
 import pytest
@@ -1207,7 +1208,7 @@ models:
 
 
 def _make_groups(app, user_id, specs):
-    """Create groups from (name, auto_join, member, is_owner, config_managed) tuples; return {name: id}."""
+    """Create groups from (name, auto_join, member, is_owner, config_managed) tuples; return {name: uuid string}."""
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.group import Group
@@ -1221,18 +1222,20 @@ def _make_groups(app, user_id, specs):
                 db.session.add(GroupMember(
                     group_id=group.id, entity_id=user_id, is_owner=is_owner, config_managed=config_managed,
                 ))
-            ids[name] = group.id
+            ids[name] = str(group.uuid)
         db.session.commit()
         return ids
 
 
 def _member_group_ids(app, user_id):
+    """The uuid strings of the user's groups."""
     with app.app_context():
         from lumen.extensions import db
+        from lumen.models.group import Group
         from lumen.models.group_member import GroupMember
-        return set(db.session.execute(
-            select(GroupMember.group_id).filter_by(entity_id=user_id)
-        ).scalars().all())
+        return {str(u) for u in db.session.execute(
+            select(Group.uuid).join(GroupMember, GroupMember.group_id == Group.id).filter_by(entity_id=user_id)
+        ).scalars().all()}
 
 
 def test_update_user_add_and_remove_group_ids(app, admin_client, test_user):
@@ -1276,15 +1279,35 @@ def test_update_user_group_changes_are_idempotent(app, admin_client, test_user):
 
 
 @pytest.mark.parametrize("payload", [
-    {"add_group_ids": [999999]},
-    {"remove_group_ids": [999999]},
+    {"add_group_ids": [str(uuid.uuid4())]},
+    {"remove_group_ids": [str(uuid.uuid4())]},
+    {"add_group_ids": ["not-a-uuid"]},
     {"add_group_ids": "1"},
     {"add_group_ids": [True]},
     {"remove_group_ids": [1.5]},
-    {"add_group_ids": [1], "remove_group_ids": [1]},
 ])
 def test_update_user_group_ids_invalid_returns_400(admin_client, test_user, payload):
     resp = admin_client.patch(f"/admin/users/{test_user['id']}", json=payload)
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+
+
+def test_update_user_group_ids_rejects_integer_group_id(app, admin_client, test_user):
+    # The integer primary key of a real group is no longer accepted.
+    _make_groups(app, test_user["id"], [("int-id", False, False, False, False)])
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.group import Group
+        gid = db.session.execute(select(Group.id).filter_by(name="int-id")).scalar_one()
+    resp = admin_client.patch(f"/admin/users/{test_user['id']}", json={"add_group_ids": [gid]})
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert _member_group_ids(app, test_user["id"]) == set()
+
+
+def test_update_user_group_ids_add_and_remove_same_group_returns_400(app, admin_client, test_user):
+    ids = _make_groups(app, test_user["id"], [("both", False, False, False, False)])
+    resp = admin_client.patch(
+        f"/admin/users/{test_user['id']}", json={"add_group_ids": [ids["both"]], "remove_group_ids": [ids["both"]]},
+    )
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 

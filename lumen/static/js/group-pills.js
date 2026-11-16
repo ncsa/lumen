@@ -3,7 +3,8 @@
 // Changes are staged locally; the caller reads changes() on Save and sends
 // only the groups that were added or removed since set().
 // opts: { boxId, pillsId, inputId, listId, liveId, allGroups }
-//   allGroups: [{id, name, active, auto_join}] — every group, for suggestions.
+//   allGroups: [{id, name, active, auto_join}] — every group, for suggestions;
+//   id is the group's public uuid (a string).
 // Pills are {id, name, auto_join, is_owner}; auto-join and owned groups are
 // locked (no remove button), matching the group membership rules on the server.
 // Returns { set(groups), changes() } or null if the elements are missing.
@@ -93,7 +94,7 @@ function initGroupPills(opts) {
 
   pillsEl.addEventListener('click', e => {
     const btn = e.target.closest('.btn-remove-group');
-    if (btn) remove(Number(btn.dataset.groupId));
+    if (btn) remove(btn.dataset.groupId);
   });
   box.addEventListener('click', e => { if (e.target === box) input.focus(); });
   list.addEventListener('mousedown', e => {
