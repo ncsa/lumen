@@ -172,6 +172,28 @@ function heatmapColor(t) {
   return `rgb(${r},${g},${b})`;
 }
 
+// Same rules as the Jinja filter lumen/__init__.py:compact_number, which the
+// profile page uses: full number below a million, else "5.2 million" etc.
+// Python rounds the exact binary value of n / size and breaks exact ties to
+// even. toFixed also rounds the exact value (so 2,150,000 -> 2.15 -> "2.1"),
+// but breaks exact ties upward. With one decimal the only exact ties are
+// x.25 and x.75, which Python rounds to x.2 and x.8.
+function compactNumber(n) {
+  n = n || 0;
+  for (const [size, word] of [[1e12, 'trillion'], [1e9, 'billion'], [1e6, 'million']]) {
+    if (Math.abs(n) >= size) {
+      const x = Math.abs(n / size);
+      let s = x.toFixed(1);
+      if (Number.isInteger(x * 4) && !Number.isInteger(x * 2)) {
+        s = x.toFixed(2).replace(/25$/, '2').replace(/75$/, '8');
+      }
+      s = s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      return `${n < 0 ? '-' : ''}${s} ${word}`;
+    }
+  }
+  return n.toLocaleString('en-US');
+}
+
 function makeLineChart(id, label) {
   const ctx = document.getElementById(id).getContext('2d');
   return new Chart(ctx, {
@@ -317,8 +339,8 @@ async function refresh(period, showAll) {
     fetchJSON('heatmap', period, showAll),
   ]);
 
-  document.getElementById('stat-requests').textContent = summary.requests.toLocaleString();
-  document.getElementById('stat-tokens').textContent = summary.tokens.toLocaleString();
+  document.getElementById('stat-requests').textContent = compactNumber(summary.requests);
+  document.getElementById('stat-tokens').textContent = compactNumber(summary.tokens);
   document.getElementById('stat-cost').textContent = summary.cost.toFixed(2);
   if (!isFiltered) {
     document.getElementById('stat-users').textContent = summary.new_users.toLocaleString();

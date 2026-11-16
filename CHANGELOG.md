@@ -6,6 +6,7 @@ All notable changes to Lumen will be documented in this file.
 
 - Users, projects, groups, API keys, conversations and OAuth requests are addressed by random UUIDs instead of sequential database ids; models by name; click an avatar to copy its ID (#560)
 - **Upgrade:** everyone is logged out of the web UI once; `flask erase-entity` takes a user UUID and `flask reassign-model` takes model names (#560)
+- The usage page shows request and token totals in human-readable form, like the profile page. (#579)
 - Tests now fail on any warning, and CI enforces at least 90% line coverage per file for Lumen and the monitor (#557)
 - The monitor's model detail page charts the cached-input and cache-write prices over time, with the models.dev comparison band where providers publish cache prices. (#510)
 - The Models page links to LLMHub for launching models that are not listed, when `app.llmhub_url` is set (editable in the admin config editor). (#233)
