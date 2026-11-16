@@ -1057,7 +1057,7 @@ test allows. `flask check-aggregate` exits 1 if a retention policy was added to 
 
 ## Erasing a user (GDPR)
 
-`flask erase-entity <uuid> [--yes]` (the user's `entities.uuid`) hard-deletes a user for GDPR erasure. It cannot be undone, and
+`flask erase-entity <uuid> [--yes]` (the user's `entities.uuid`; the user's email, matched ignoring case, also works but always asks for confirmation, see [`erase-entity`](admin/commands.md#erase-entity)) hard-deletes a user for GDPR erasure. It cannot be undone, and
 on PostgreSQL it is off-hours operator work. Only users can be erased; it refuses a project, the
 ghost, a user who still owns a project (transfer ownership first), and, like `reassign-model`, runs
 only while `request_logs` has no retention policy.
