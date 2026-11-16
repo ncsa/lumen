@@ -860,6 +860,9 @@ class _UserArg(click.ParamType):
             pass
         if "@" not in text:
             self.fail(f"{value!r} is neither a user UUID nor an email address.", param, ctx)
+            # self.fail always raises click.BadParameter; this line is unreachable and only
+            # makes the no-fall-through explicit to static analysis.
+            raise AssertionError("unreachable")  # pragma: no cover
         return text
 
 
