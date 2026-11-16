@@ -498,6 +498,23 @@ def test_admin_unlimited_keeps_starting_coins(admin_client, app, owned_group):
     assert float(limit.starting_coins) == 0.0
 
 
+def test_admin_max_zero_tracks_starting_coins(admin_client, app, owned_group):
+    """starting_coins tracks a finite max, including 0.
+
+    A state assertion: best_group_pool_limit skips max-0 group pools, so no
+    member balance is clamped through this pool.
+    """
+    resp = admin_client.patch(f"/groups/{owned_group.uuid}", json={"max_coins": "100", "refresh_coins": "1"})
+    assert resp.status_code == HTTPStatus.OK
+    assert float(_group_limit(app, owned_group.id).starting_coins) == 100.0
+
+    resp = admin_client.patch(f"/groups/{owned_group.uuid}", json={"max_coins": "0"})
+    assert resp.status_code == HTTPStatus.OK
+    limit = _group_limit(app, owned_group.id)
+    assert float(limit.max_coins) == 0.0
+    assert float(limit.starting_coins) == 0.0
+
+
 def test_admin_invalid_coins_400(admin_client, owned_group):
     resp = admin_client.patch(f"/groups/{owned_group.uuid}", json={"max_coins": "abc"})
     assert resp.status_code == HTTPStatus.BAD_REQUEST
