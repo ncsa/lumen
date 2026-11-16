@@ -153,16 +153,18 @@ const CHART_COLOR = '#13294b';
 
 const charts = {};
 
-// Detect ?entity_id and ?user_name in URL
+// Detect ?entity (a user or project uuid) and ?user_name in URL. The integer
+// ?entity_id form is still read until every link sends ?entity.
 const _urlParams = new URLSearchParams(location.search);
-const FILTER_ENTITY_ID = _urlParams.get('entity_id') ? parseInt(_urlParams.get('entity_id')) : null;
+const FILTER_ENTITY = _urlParams.get('entity') || null;
+const FILTER_ENTITY_ID = FILTER_ENTITY || (_urlParams.get('entity_id') ? parseInt(_urlParams.get('entity_id')) : null);
 const FILTER_USER_NAME = _urlParams.get('user_name') || '';
 
 if (FILTER_ENTITY_ID) {
   const wrap = document.getElementById('all-users-wrap');
   if (wrap) wrap.classList.add('d-none');
   document.getElementById('user-filter-banner').classList.remove('d-none');
-  document.getElementById('user-filter-name').textContent = FILTER_USER_NAME || `User #${FILTER_ENTITY_ID}`;
+  document.getElementById('user-filter-name').textContent = FILTER_USER_NAME || (FILTER_ENTITY ? 'Selected user' : `User #${FILTER_ENTITY_ID}`);
 }
 
 function heatmapColor(t) {
@@ -288,7 +290,7 @@ function renderHeatmap(rows) {
 async function fetchJSON(endpoint, period, showAll) {
   const params = new URLSearchParams({period});
   if (FILTER_ENTITY_ID) {
-    params.set('entity_id', FILTER_ENTITY_ID);
+    params.set(FILTER_ENTITY ? 'entity' : 'entity_id', FILTER_ENTITY_ID);
   } else if (!showAll) {
     params.set('mine', '1');
   }

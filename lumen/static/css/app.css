@@ -700,3 +700,17 @@ ilw-content .btn-primary:active {
    its .table-responsive container, which clips the bottom border line and
    shows a stray vertical scrollbar; give the wrapper that pixel back. */
 .table-responsive { padding-bottom: 1px; }
+
+/* Copy-ID avatar (templates/_copy_id_avatar.html): the avatar is a button. */
+.copy-id-avatar {
+    display: inline-block;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: copy;
+}
+
+.copy-id-avatar:focus-visible {
+    outline: 3px solid #13294b;
+    outline-offset: 3px;
+}

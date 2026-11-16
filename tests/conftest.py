@@ -277,7 +277,7 @@ def test_user(app):
         db.session.commit()
         db.session.refresh(entity)
         # Capture scalar values before context closes
-        return {"id": entity.id, "name": entity.name, "initials": entity.initials, "gravatar_hash": entity.gravatar_hash or ""}
+        return {"id": entity.id, "uuid": str(entity.uuid), "name": entity.name, "initials": entity.initials, "gravatar_hash": entity.gravatar_hash or ""}
 
 
 @pytest.fixture
@@ -369,7 +369,7 @@ def admin_user(app):
         db.session.add(entity)
         db.session.commit()
         db.session.refresh(entity)
-        return {"id": entity.id, "name": entity.name, "initials": entity.initials, "gravatar_hash": entity.gravatar_hash or ""}
+        return {"id": entity.id, "uuid": str(entity.uuid), "name": entity.name, "initials": entity.initials, "gravatar_hash": entity.gravatar_hash or ""}
 
 
 @pytest.fixture

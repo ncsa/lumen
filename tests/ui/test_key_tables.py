@@ -107,7 +107,8 @@ def _row_cells(page, name):
 
 def _project_for(app, owner_id):
     with app.app_context():
-        return make_project("ttl-ui", owner_id=owner_id).id
+        project = make_project("ttl-ui", owner_id=owner_id)
+        return project.id, project.uuid
 
 
 @pytest.fixture(params=["profile", "project"])
@@ -116,10 +117,10 @@ def key_page(request, app, test_user):
     if request.param == "profile":
         _seed_keys(app, test_user["id"], test_user["id"])
         return "/profile", "/profile/keys", 5
-    sid = _project_for(app, test_user["id"])
+    sid, sid_uuid = _project_for(app, test_user["id"])
     _seed_keys(app, sid, test_user["id"])
     # The owner sees the Created By column, so Expires moves one to the right.
-    return f"/projects/{sid}#keys", f"/projects/{sid}/keys", 6
+    return f"/projects/{sid_uuid}#keys", f"/projects/{sid_uuid}/keys", 6
 
 
 def test_key_table_expires_column_and_badges(open_page, key_page):

@@ -115,7 +115,7 @@ def test_set_admin_mode_rejected_without_csrf_token(csrf_client):
 def test_update_project_rejected_without_csrf_token(app, csrf_client, test_user):
     with app.app_context():
         from tests.conftest import make_project
-        sid = make_project("csrf-svc", owner_id=test_user["id"], initials="CS").id
+        sid = make_project("csrf-svc", owner_id=test_user["id"], initials="CS").uuid
 
     resp = csrf_client.patch(f"/projects/{sid}", json={"name": "x"})
     assert resp.status_code == HTTPStatus.BAD_REQUEST

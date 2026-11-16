@@ -163,7 +163,9 @@ def test_create_project_route_inserts_project_and_owner_in_one_transaction(pg_ap
     assert resp.status_code == HTTPStatus.CREATED, resp.get_data(as_text=True)
 
     with pg_app.app_context():
-        project = db.session.get(Entity, resp.get_json()["id"])
+        project = db.session.execute(
+            select(Entity).where(Entity.uuid == uuid.UUID(resp.get_json()["id"]))
+        ).scalar_one()
         assert project.owner_entity_id == owner_id
         assert db.session.execute(select(EntityManager).filter_by(
             user_entity_id=owner_id, project_entity_id=project.id,
@@ -181,7 +183,8 @@ def test_concurrent_transfers_one_succeeds_one_conflicts(pg_app, pg_migrated_iso
         owner = _user()
         first, second = _user(), _user()
         project = _project(owner, first, second)
-        sid, owner_id, first_id, second_id = project.id, owner.id, first.id, second.id
+        sid, owner_id, first_id = project.id, owner.id, first.id
+        sid_uuid, second_uuid = str(project.uuid), str(second.uuid)
 
     other = create_engine(url)
     try:
@@ -195,7 +198,7 @@ def test_concurrent_transfers_one_succeeds_one_conflicts(pg_app, pg_migrated_iso
 
             def transfer():
                 client = _client_as(pg_app, owner_id)
-                result["resp"] = client.post(f"/projects/{sid}/owner", json={"user_id": second_id})
+                result["resp"] = client.post(f"/projects/{sid_uuid}/owner", json={"user_id": second_uuid})
 
             thread = threading.Thread(target=transfer)
             thread.start()
@@ -232,7 +235,7 @@ def test_member_removed_while_creating_key_gets_403(pg_app, pg_migrated_isolated
         owner = _user()
         member = _user()
         project = _project(owner, member)
-        sid, member_id = project.id, member.id
+        sid, member_id, sid_uuid = project.id, member.id, str(project.uuid)
 
     other = create_engine(url)
     try:
@@ -247,7 +250,7 @@ def test_member_removed_while_creating_key_gets_403(pg_app, pg_migrated_isolated
             def create_key():
                 client = _client_as(pg_app, member_id)
                 result["resp"] = client.post(
-                    f"/projects/{sid}/keys", json={"name": "late", "key": f"sk_{uuid.uuid4().hex}"},
+                    f"/projects/{sid_uuid}/keys", json={"name": "late", "key": f"sk_{uuid.uuid4().hex}"},
                 )
 
             thread = threading.Thread(target=create_key)

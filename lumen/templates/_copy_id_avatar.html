@@ -1,0 +1,15 @@
+{# Avatar that copies the row's public uuid to the clipboard.
+
+   A native button, so it is focusable and Enter/Space click it. The hint
+   "Click to copy ID" shows as a popover on hover and on keyboard focus;
+   after a click the popover and the live region confirm the copy. Load
+   static/js/copy-id.js on any page that uses it. #}
+{% macro copy_id_avatar(src, name, public_id, kind) %}
+<button type="button" class="copy-id-avatar rounded-circle"
+        data-copy-id="{{ public_id }}" data-copy-kind="{{ kind }}"
+        aria-label="Copy {{ kind }} ID of {{ name }}">
+  <img src="{{ src }}" width="115" height="115"
+       class="rounded-circle profile-avatar-img" alt="Avatar for {{ name }}">
+</button>
+<span class="visually-hidden copy-id-status" role="status" aria-live="polite"></span>
+{% endmacro %}

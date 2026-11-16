@@ -157,7 +157,9 @@ def test_admin_users_after_cutover(app, client, admin_client, monkeypatch, test_
 def test_projects_list_after_cutover(app, client, admin_client, monkeypatch, test_model, test_model_endpoint):
     """The /projects summary cards and the /projects/data table."""
     with app.app_context():
-        busy, quiet = make_project("cutover-busy").id, make_project("cutover-quiet").id
+        busy_project, quiet_project = make_project("cutover-busy"), make_project("cutover-quiet")
+        busy, quiet = busy_project.id, quiet_project.id
+        uuids = {busy: str(busy_project.uuid), quiet: str(quiet_project.uuid)}
     busy_token = _key(app, busy, "lk_cutover_project_busy")
     quiet_token = _key(app, quiet, "lk_cutover_project_quiet")
     before = _stats(app)
@@ -173,7 +175,7 @@ def test_projects_list_after_cutover(app, client, admin_client, monkeypatch, tes
     assert context["total_cost"] == pytest.approx(cost)
 
     rows = admin_client.get("/projects/data?sort=requests&order=desc").get_json()["projects"]
-    assert [r["id"] for r in rows] == [busy, quiet]
+    assert [r["id"] for r in rows] == [uuids[busy], uuids[quiet]]
     for row, project in zip(rows, (busy, quiet)):
         assert row["requests"] == _logged(app, project)[0]
         assert row["cost"] == pytest.approx(_logged(app, project)[2])

@@ -122,11 +122,18 @@ def test_endpoint_status(healthy, expected):
 def test_project_profile_page_redirects(app, auth_client):
     with app.app_context():
         from tests.conftest import make_project
-        sid = make_project("svc", initials="SV").id
+        sid = make_project("svc", initials="SV").uuid
 
     resp = auth_client.get(f"/profile/project/{sid}", follow_redirects=False)
     assert resp.status_code == HTTPStatus.MOVED_PERMANENTLY
-    assert "/projects/" in resp.headers["Location"]
+    assert resp.headers["Location"].endswith(f"/projects/{sid}")
+
+
+def test_project_profile_page_404_for_integer_id(app, auth_client):
+    with app.app_context():
+        from tests.conftest import make_project
+        sid = make_project("svc", initials="SV").id
+    assert auth_client.get(f"/profile/project/{sid}").status_code == HTTPStatus.NOT_FOUND
 
 
 # ---------------------------------------------------------------------------
@@ -886,10 +893,10 @@ def test_profile_page_shows_needs_ack_model(app, auth_client, test_user):
 # ---------------------------------------------------------------------------
 
 def _make_managed_project(app, user_id, name="managed-svc"):
-    """Create an active project entity owned (and so managed) by user_id; return its id."""
+    """Create an active project entity owned (and so managed) by user_id; return its uuid."""
     with app.app_context():
         from tests.conftest import make_project
-        return make_project(name, owner_id=user_id, initials="MS").id
+        return make_project(name, owner_id=user_id, initials="MS").uuid
 
 
 def test_profile_projects_section_hidden_when_none(auth_client):
@@ -1293,3 +1300,59 @@ def test_user_consent_expired_model_404(app, auth_client, test_user):
                         end_date=utcnow() - timedelta(days=1))
     resp = auth_client.post(f"/profile/consent/{m['model_name']}")
     assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+# ---------------------------------------------------------------------------
+# /usage entity filter: ?entity=<uuid>, with ?entity_id=<int> still accepted
+# ---------------------------------------------------------------------------
+
+def _usage_filter(app, caller_id, query, admin_mode=True):
+    """What _usage_entity_id returns for caller_id with this query string."""
+    from flask import session
+
+    from lumen.blueprints.profile.routes import _usage_entity_id
+    with app.test_request_context(f"/api/usage/summary?{query}"):
+        session["entity_id"] = caller_id
+        session["admin_mode"] = admin_mode
+        return _usage_entity_id()
+
+
+def test_usage_filter_by_project_uuid(app, admin_user, test_user):
+    with app.app_context():
+        from tests.conftest import make_project
+        project = make_project("usage-svc", owner_id=test_user["id"], initials="US")
+        pid, puuid = project.id, project.uuid
+    assert _usage_filter(app, admin_user["id"], f"entity={puuid}") == pid
+    assert _usage_filter(app, admin_user["id"], f"entity={test_user['uuid']}") == test_user["id"]
+
+
+def test_usage_filter_still_accepts_integer_entity_id(app, admin_user, test_user):
+    assert _usage_filter(app, admin_user["id"], f"entity_id={test_user['id']}") == test_user["id"]
+
+
+@pytest.mark.parametrize("value", ["not-a-uuid", "12", "00000000-0000-4000-8000-000000000000"])
+def test_usage_filter_unknown_or_malformed_uuid_is_404(app, admin_user, value):
+    from werkzeug.exceptions import NotFound
+    with pytest.raises(NotFound):
+        _usage_filter(app, admin_user["id"], f"entity={value}")
+
+
+def test_usage_filter_ignored_for_non_admin(app, admin_user, test_user):
+    """A non-admin always gets their own usage, whatever the query says."""
+    assert _usage_filter(app, test_user["id"], f"entity={admin_user['uuid']}") == test_user["id"]
+
+
+def test_profile_projects_tab_uses_uuids(app, auth_client, test_user):
+    """The Projects tab links by uuid and the payload carries no integer id."""
+    from lumen.blueprints.profile.routes import _build_project_list
+    with app.app_context():
+        from tests.conftest import make_project
+        project = make_project("tab-svc", owner_id=test_user["id"], initials="TS")
+        pid, puuid = project.id, str(project.uuid)
+    with app.test_request_context():
+        rows = _build_project_list(test_user["id"])
+    assert [(r["id"], r["detail_url"]) for r in rows] == [(puuid, f"/projects/{puuid}")]
+    assert auth_client.get(rows[0]["detail_url"]).status_code == HTTPStatus.OK
+    body = auth_client.get("/profile").get_data(as_text=True)
+    assert f'"/projects/{puuid}"' in body
+    assert f"/projects/{pid}\"" not in body

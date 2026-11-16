@@ -25,7 +25,7 @@ def _project_url(app, admin_user, test_model):
     with app.app_context():
         # Every project needs an owner (ck_entities_project_owner); the admin owns it.
         project = make_project("resp-svc", owner_id=admin_user["id"], initials="RS")
-        return f"/projects/{project.id}"
+        return f"/projects/{project.uuid}"
 
 
 def _group_url(app, admin_user, test_model):

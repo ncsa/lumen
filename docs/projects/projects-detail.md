@@ -2,7 +2,7 @@
 
 This page is for people managing Lumen-based services and tools. For details on what a project is, start with the [Projects overview](./projects.md).
 
-The project detail page (`/projects/<id>`) is where you manage a specific project: view usage, add members, create API keys, and check model access. It is laid out like the [Profile page](../guides/profile.md): a header card at the top, followed by **Members**, **API Keys**, and **Models** tabs.
+The project detail page (`/projects/<id>`, where `<id>` is the project's random ID, a UUID) is where you manage a specific project: view usage, add members, create API keys, and check model access. It is laid out like the [Profile page](../guides/profile.md): a header card at the top, followed by **Members**, **API Keys**, and **Models** tabs.
 
 ![Project detail page](../img/project-detail.png)
 
@@ -18,6 +18,10 @@ The left side of the card shows the project's auto-generated avatar, its name, t
 | **Favorite Model** | The model this project has sent the most requests to |
 | **Coins Available** | Current balance (or **Unlimited** / not configured) |
 | **Refill Rate** | Auto-refill rate and countdown to next refill |
+
+### Copying the Project ID
+
+Every project has a random ID (a UUID) that Lumen uses in links and API calls instead of a sequential number. To copy it, click the project's avatar: a hint, **Click to copy ID**, appears when you hover over the avatar or move to it with the keyboard (Tab), and clicking it — or pressing Enter or Space — copies the ID to the clipboard and shows **Project ID copied to clipboard**. Press Escape to hide the hint.
 
 ### Editing the Project
 
