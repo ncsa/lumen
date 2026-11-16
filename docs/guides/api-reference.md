@@ -99,7 +99,7 @@ curl https://lumen.example.com/v1/me?period=2026-11 \
 Returns what your [profile page](profile.md) shows, as JSON: your account, your per-model usage and
 totals for a period, the models you can use (with acknowledgment status), your coin pool, the
 projects you manage, and your API keys. Key secrets and their hashes are never returned; revoked
-keys are listed, with `revoked_at` set. Every timestamp is UTC, in ISO-8601 with a trailing `Z`.
+keys are listed, with `revoked_at` set. Every `id` is the row's opaque uuid. Every timestamp is UTC, in ISO-8601 with a trailing `Z`.
 
 ### Authentication
 
@@ -153,7 +153,7 @@ conversation count and your web-chat totals. Lumen does not record key or projec
 ```json
 {
   "user": {
-    "id": 42, "name": "Ada Lovelace", "email": "ada@example.edu", "active": true,
+    "id": "8f14e45f-ceea-4672-9a6c-3e1d2b7c4a10", "name": "Ada Lovelace", "email": "ada@example.edu", "active": true,
     "store_conversations": true,
     "gravatar_url": "https://www.gravatar.com/avatar/…?s=230&d=mp",
     "groups": ["physics"], "admin_eligible": false
@@ -174,11 +174,11 @@ conversation count and your web-chat totals. Lumen does not record key or projec
   "coin_pool": {"coin_limit": 100, "coins_left": 83.25, "coins_per_hour": 10,
                 "next_refill": "2026-11-14T16:00:00Z"},
   "projects": [
-    {"id": 7, "name": "Physics Lab", "detail_url": "/projects/7", "created_at": "2026-09-01T12:00:00Z",
+    {"id": "c9f0f895-fb98-4b91-9e5f-6a1b2c3d4e5f", "name": "Physics Lab", "detail_url": "/projects/7", "created_at": "2026-09-01T12:00:00Z",
      "lifetime": {"requests": 340, "tokens": 120000, "cost": 0.42}}
   ],
   "api_keys": [
-    {"id": 3, "name": "laptop", "key_hint": "sk_AbCd...wxyz", "created_at": "2026-10-01T09:00:00Z",
+    {"id": "45c48cce-2e2d-4fbd-8a3f-7b6c5d4e3f21", "name": "laptop", "key_hint": "sk_AbCd...wxyz", "created_at": "2026-10-01T09:00:00Z",
      "last_used_at": "2026-11-14T15:02:11Z", "expires_at": null, "revoked_at": null,
      "created_by": "Ada Lovelace", "revoked_by": null, "client_id": null, "requested_by": null,
      "lifetime": {"requests": 80, "input_tokens": 16000, "output_tokens": 4000,
