@@ -15,7 +15,9 @@ and enforces no foreign key here. This module checks the PostgreSQL-only half:
   remains" and key checks as the unit tests must hold here too;
 - a run interrupted in the chunk walk or in the refresh resumes, and a row the walk
   missed makes the final delete fail on the RESTRICT foreign key, rolling the whole
-  final transaction back.
+  final transaction back;
+- erasing by email matches with ``lower()`` on PostgreSQL, inside the stats walk lock,
+  and refuses two users whose emails differ only in case, changing nothing.
 
 ``request_logs.entity_id`` is ``ON DELETE RESTRICT`` from migration
 ``c8d0e2f4a6b8``; ``pg_app`` asserts it, so the rollback test checks the command's
@@ -703,3 +705,85 @@ def test_refuses_while_the_stats_walk_lock_is_held(pg_app, engine):
     assert result.exit_code == 0, result.output
     assert _owners(engine, logs) == [(_ghost_id(engine), 2)]
     assert stats_walk_lock_is_free(engine), "the successful run kept the advisory lock"
+
+
+def _email(pg_app, entity_id):
+    from lumen.extensions import db
+    with pg_app.app_context():
+        return db.session.execute(
+            select(commands.Entity.email).where(commands.Entity.id == entity_id)).scalar_one()
+
+
+def test_erases_by_email_in_another_case_through_the_prompt(pg_app, engine):
+    """The email lookup uses lower() on PostgreSQL, under the stats walk lock, and the
+    prompt shows the stored email; the erase then runs as by UUID."""
+    world = _seed_world(pg_app)
+    _seed_history(engine, world)
+    ghost_raw = _ghost_raw(engine)
+    email = _email(pg_app, world["user"])
+    typed = f" {email.upper()} "
+    assert typed.strip() != email
+
+    with holding_stats_walk_lock(engine):
+        result = pg_app.test_cli_runner().invoke(erase_entity_cmd, [typed], input="y\n")
+    assert result.exit_code == 1, result.output
+    assert WALK_LOCK_HELD in result.output
+    assert "Erase user" not in result.output
+
+    result = pg_app.test_cli_runner().invoke(erase_entity_cmd, [typed], input="y\n")
+
+    assert result.exit_code == 0, result.output
+    assert f"Erase user {world['user_uuid']}: Erin {world['tag']} <{email}>? " in result.output
+    assert f"user {world['user_uuid']} deleted" in result.output
+    _assert_history_moved(engine, world, ghost_raw)
+    assert stats_walk_lock_is_free(engine), "the email erase kept the advisory lock"
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM entities WHERE id = :u"), {"u": world["user"]}).scalar() == 0
+        assert conn.execute(text("SELECT count(*) FROM entities WHERE id = :o"), {"o": world["other"]}).scalar() == 1
+
+
+def test_yes_with_an_email_is_refused(pg_app, engine):
+    world = _seed_world(pg_app)
+    logs = _seed(engine, world["user"], world["model"], "2 days", 1)
+
+    result = pg_app.test_cli_runner().invoke(erase_entity_cmd, [_email(pg_app, world["user"]), "--yes"])
+
+    assert result.exit_code == 2, result.output
+    assert "--yes needs the user's UUID" in result.output
+    assert _owners(engine, logs) == [(world["user"], 1)]
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT active FROM entities WHERE id = :u"), {"u": world["user"]}).scalar() is True
+
+
+def test_two_users_differing_only_in_email_case_change_nothing(pg_app, engine):
+    """PostgreSQL compares case-sensitively, so the unique email constraint lets both
+    rows exist; lower() matches both and the command refuses to pick one."""
+    from lumen.extensions import db
+    from lumen.models.entity import Entity
+
+    world = _seed_world(pg_app)
+    logs = _seed(engine, world["user"], world["model"], "2 days", 1)
+    email = _email(pg_app, world["user"])
+    with pg_app.app_context():
+        twin = Entity(entity_type="user", email=email.upper(), name="Twin", initials="TW", active=True)
+        db.session.add(twin)
+        db.session.commit()
+        twin_id, twin_uuid = twin.id, twin.uuid
+    ghost_raw = _ghost_raw(engine)
+    totals = _stat_totals(engine)
+
+    result = pg_app.test_cli_runner().invoke(erase_entity_cmd, [email.title()], input="y\n")
+
+    assert result.exit_code == 1, result.output
+    assert "Error: 2 users match that email ignoring case; erase by UUID instead:\n" in result.output
+    assert f"  {world['user_uuid']}\n" in result.output and f"  {twin_uuid}\n" in result.output
+    assert "Erase user" not in result.output
+    assert stats_walk_lock_is_free(engine), "the refused run kept the advisory lock"
+    assert _owners(engine, logs) == [(world["user"], 1)]
+    assert _ghost_raw(engine) == ghost_raw
+    assert _stat_totals(engine) == totals
+    with engine.connect() as conn:
+        for entity_id in (world["user"], twin_id):
+            assert conn.execute(text("SELECT active FROM entities WHERE id = :u"), {"u": entity_id}).scalar() is True
+        assert conn.execute(text("SELECT count(*) FROM conversations WHERE entity_id = :u"),
+                            {"u": world["user"]}).scalar() == 1
