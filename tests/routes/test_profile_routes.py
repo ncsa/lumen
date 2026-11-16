@@ -11,6 +11,10 @@ from sqlalchemy import select
 
 from lumen.blueprints.profile.routes import _endpoint_status
 from lumen.timeutils import utcnow
+from tests.conftest import key_by_public_id, key_uuid
+
+# A well-formed uuid that names no row.
+UNKNOWN_UUID = "00000000-0000-4000-8000-000000000000"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -174,10 +178,8 @@ def test_create_key_expires_at_from_cap(app, auth_client, restore_config, cap):
     app.config["KEY_TTL"] = cap
     resp = auth_client.post("/profile/keys", json={"name": "ttl", "key": "sk_" + "t" * 32})
     assert resp.status_code == HTTPStatus.CREATED
-    from lumen.extensions import db
-    from lumen.models.api_key import APIKey
     with app.app_context():
-        expires_at = db.session.get(APIKey, resp.get_json()["id"]).expires_at
+        expires_at = key_by_public_id(resp.get_json()["id"]).expires_at
     if cap:
         assert abs(expires_at - (utcnow() + timedelta(seconds=cap))) < timedelta(minutes=1)
     else:
@@ -199,10 +201,8 @@ def test_create_key_with_ttl(app, auth_client, restore_config, cap, ttl, expecte
         body["ttl"] = ttl
     resp = auth_client.post("/profile/keys", json=body)
     assert resp.status_code == HTTPStatus.CREATED
-    from lumen.extensions import db
-    from lumen.models.api_key import APIKey
     with app.app_context():
-        expires_at = db.session.get(APIKey, resp.get_json()["id"]).expires_at
+        expires_at = key_by_public_id(resp.get_json()["id"]).expires_at
     if expected:
         assert abs(expires_at - (utcnow() + timedelta(seconds=expected))) < timedelta(minutes=1)
         assert resp.get_json()["expires_at"] == expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -335,7 +335,7 @@ def _personal_key_state(app, kid):
 
 def test_revoke_key_sets_revoked_at(app, auth_client, test_user):
     kid = _make_personal_key(app, test_user["id"], "sk_" + "s" * 32)
-    resp = auth_client.post(f"/profile/keys/{kid}/revoke")
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     revoked_at, revoked_by, *counters = _personal_key_state(app, kid)
     assert abs(utcnow() - revoked_at) < timedelta(minutes=1)
@@ -346,7 +346,7 @@ def test_revoke_key_sets_revoked_at(app, auth_client, test_user):
 def test_revoke_revoked_key_is_noop(app, auth_client, test_user):
     kid = _make_personal_key(app, test_user["id"], "sk_" + "i" * 32, revoked_at=datetime(2026, 9, 2, 8, 0))
     before = _personal_key_state(app, kid)
-    resp = auth_client.post(f"/profile/keys/{kid}/revoke")
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     assert _personal_key_state(app, kid) == before
 
@@ -364,16 +364,16 @@ def test_profile_page_uses_revoke_wording(app, auth_client, test_user):
 
 def test_profile_badge_names_revoker(app, auth_client, test_user):
     kid = _make_personal_key(app, test_user["id"], "sk_" + "n" * 32)
-    assert auth_client.post(f"/profile/keys/{kid}/revoke").status_code == HTTPStatus.NO_CONTENT
+    assert auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/revoke").status_code == HTTPStatus.NO_CONTENT
     html = auth_client.get("/profile").get_data(as_text=True)
-    assert re.search(r"id: " + str(kid) + r",.*?revoked_by: \"Test User\"", html, re.S)
+    assert re.search(r"id: \"" + key_uuid(app, kid) + r"\",.*?revoked_by: \"Test User\"", html, re.S)
     assert "${k.revoked_by ? ' by ' + escHtml(k.revoked_by) : ''}" in html
 
 
 def test_profile_badge_without_revoker_has_no_name(app, auth_client, test_user):
     kid = _make_personal_key(app, test_user["id"], "sk_" + "m" * 32, revoked_at=datetime(2026, 9, 2, 8, 0))
     html = auth_client.get("/profile").get_data(as_text=True)
-    row = re.search(r"\{\s*id: " + str(kid) + r",.*?\}", html, re.S)
+    row = re.search(r"\{\s*id: \"" + key_uuid(app, kid) + r"\",.*?\}", html, re.S)
     assert row is not None and "revoked_by: null" in row.group(0)
 
 
@@ -381,7 +381,7 @@ def test_repeat_revoke_keeps_first_revoker(app, auth_client, test_user, admin_us
     kid = _make_personal_key(app, test_user["id"], "sk_" + "r" * 32,
                              revoked_at=datetime(2026, 9, 2, 8, 0), revoked_by=admin_user["id"])
     before = _personal_key_state(app, kid)
-    assert auth_client.post(f"/profile/keys/{kid}/revoke").status_code == HTTPStatus.NO_CONTENT
+    assert auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/revoke").status_code == HTTPStatus.NO_CONTENT
     assert _personal_key_state(app, kid) == before
     assert before[:2] == (datetime(2026, 9, 2, 8, 0), admin_user["id"])
 
@@ -391,7 +391,7 @@ def test_revoked_key_is_rejected(app, client, auth_client, test_user):
     kid = _make_personal_key(app, test_user["id"], raw)
     headers = {"Authorization": f"Bearer {raw}"}
     assert client.get("/v1/models", headers=headers).status_code == HTTPStatus.OK
-    resp = auth_client.post(f"/profile/keys/{kid}/revoke")
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/revoke")
     assert resp.status_code == HTTPStatus.NO_CONTENT
     assert client.get("/v1/models", headers=headers).status_code == HTTPStatus.UNAUTHORIZED
 
@@ -414,29 +414,46 @@ def test_revoke_key_forbidden(app, auth_client, admin_user):
         db.session.refresh(ak)
         kid = ak.id
 
-    resp = auth_client.post(f"/profile/keys/{kid}/revoke")
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/revoke")
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
 def test_revoke_key_not_found(auth_client):
-    resp = auth_client.post("/profile/keys/999999/revoke")
+    resp = auth_client.post(f"/profile/keys/{UNKNOWN_UUID}/revoke")
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
+def test_key_routes_refuse_integer_ids(app, auth_client, test_user):
+    """Keys are addressed by uuid only: the integer id of the caller's own key 404s."""
+    kid = _make_personal_key(app, test_user["id"], "sk_" + "x" * 32)
+    assert auth_client.post(f"/profile/keys/{kid}/revoke").status_code == HTTPStatus.NOT_FOUND
+    assert auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": "sk_" + "y" * 32}).status_code == HTTPStatus.NOT_FOUND
+    assert auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 86400}).status_code == HTTPStatus.NOT_FOUND
+    assert auth_client.delete(f"/profile/keys/{kid}").status_code == HTTPStatus.NOT_FOUND
+    assert _personal_key_state(app, kid)[0] is None
+
+
+def test_profile_page_shows_key_uuids_not_integer_ids(app, auth_client, test_user):
+    kid = _make_personal_key(app, test_user["id"], "sk_" + "u" * 32)
+    html = auth_client.get("/profile").get_data(as_text=True)
+    assert f'id: "{key_uuid(app, kid)}",' in html
+    assert not re.search(r"\bid: \d+,", html)
+
+
 def test_revoke_key_requires_login(client):
-    resp = client.post("/profile/keys/1/revoke", follow_redirects=False)
+    resp = client.post(f"/profile/keys/{UNKNOWN_UUID}/revoke", follow_redirects=False)
     assert resp.status_code == HTTPStatus.FOUND
 
 
 def test_old_delete_key_url_returns_405(app, auth_client, test_user):
     kid = _make_personal_key(app, test_user["id"], "sk_" + "q" * 32)
-    resp = auth_client.delete(f"/profile/keys/{kid}")
+    resp = auth_client.delete(f"/profile/keys/{key_uuid(app, kid)}")
     assert resp.status_code == HTTPStatus.METHOD_NOT_ALLOWED
     assert _personal_key_state(app, kid)[0] is None
 
 
 def test_old_delete_key_url_requires_login(client):
-    resp = client.delete("/profile/keys/1", follow_redirects=False)
+    resp = client.delete(f"/profile/keys/{UNKNOWN_UUID}", follow_redirects=False)
     assert resp.status_code == HTTPStatus.FOUND
 
 
@@ -479,9 +496,9 @@ def test_rotate_key_swaps_secret_and_keeps_stats(app, client, auth_client, test_
     kid = _seed_key_with_usage(app, test_user["id"], old)
     before = _key_snapshot(app, kid)
 
-    resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": new})
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/rotate", json={"key": new})
     assert resp.status_code == HTTPStatus.OK
-    assert resp.get_json() == {"id": kid, "name": "rotating", "key": new}
+    assert resp.get_json() == {"id": key_uuid(app, kid), "name": "rotating", "key": new}
 
     after = _key_snapshot(app, kid)
     old_hash, new_hash = before.pop("key_hash"), after.pop("key_hash")
@@ -499,14 +516,14 @@ def test_rotate_key_swaps_secret_and_keeps_stats(app, client, auth_client, test_
 
 def test_rotate_key_forbidden_for_other_user(app, auth_client, admin_user):
     kid = _seed_key_with_usage(app, admin_user["id"], "sk_" + "o" * 32)
-    resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": "sk_" + "p" * 32})
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/rotate", json={"key": "sk_" + "p" * 32})
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
 def test_rotate_keeps_expires_at(app, auth_client, test_user):
     expires_at = utcnow() + timedelta(days=3)
     kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "e" * 32, expires_at=expires_at)
-    resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": "sk_" + "f" * 32})
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/rotate", json={"key": "sk_" + "f" * 32})
     assert resp.status_code == HTTPStatus.OK
     assert _key_snapshot(app, kid)["expires_at"] == expires_at
 
@@ -514,7 +531,7 @@ def test_rotate_keeps_expires_at(app, auth_client, test_user):
 def test_rotate_overdue_key_returns_409_and_revokes(app, auth_client, test_user):
     expires_at = utcnow() - timedelta(minutes=1)
     kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "g" * 32, expires_at=expires_at)
-    resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": "sk_" + "h" * 32})
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/rotate", json={"key": "sk_" + "h" * 32})
     assert resp.status_code == HTTPStatus.CONFLICT
     assert resp.get_json()["error"] == "Key is revoked"
     after = _key_snapshot(app, kid)
@@ -524,7 +541,7 @@ def test_rotate_overdue_key_returns_409_and_revokes(app, auth_client, test_user)
 
 def test_rotate_revoked_key_returns_409(app, auth_client, test_user):
     kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "i" * 32, revoked_at=datetime(2026, 9, 2, 8, 0))
-    resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": "sk_" + "j" * 32})
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/rotate", json={"key": "sk_" + "j" * 32})
     assert resp.status_code == HTTPStatus.CONFLICT
     assert resp.get_json()["error"] == "Key is revoked"
 
@@ -534,7 +551,7 @@ def test_rotate_revoked_key_returns_409(app, auth_client, test_user):
 ])
 def test_rotate_key_invalid_key_returns_400(app, auth_client, test_user, payload):
     kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "v" * 32)
-    resp = auth_client.post(f"/profile/keys/{kid}/rotate", json=payload)
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/rotate", json=payload)
     assert resp.status_code == HTTPStatus.BAD_REQUEST
 
 
@@ -542,9 +559,9 @@ def test_rotate_key_duplicate_returns_409(app, auth_client, test_user):
     kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "w" * 32)
     taken = "sk_" + "x" * 32
     auth_client.post("/profile/keys", json={"key": taken})
-    resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": taken})
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/rotate", json={"key": taken})
     assert resp.status_code == HTTPStatus.CONFLICT
-    resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": "sk_" + "w" * 32})
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/rotate", json={"key": "sk_" + "w" * 32})
     assert resp.status_code == HTTPStatus.CONFLICT
 
 
@@ -559,18 +576,18 @@ def test_rotate_key_concurrent_duplicate_returns_409(app, auth_client, test_user
     monkeypatch.setattr(profile_routes, "_new_key_fields",
                         lambda key: ({"key_hash": hash_api_key(key), "key_hint": "sk_kkkk...kkkk"}, None))
 
-    resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": raced})
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/rotate", json={"key": raced})
     assert resp.status_code == HTTPStatus.CONFLICT
     assert _key_snapshot(app, kid)["key_hint"] == f"{old[:7]}...{old[-4:]}"
 
 
 def test_rotate_key_not_found(auth_client):
-    resp = auth_client.post("/profile/keys/999999/rotate", json={"key": "sk_" + "y" * 32})
+    resp = auth_client.post(f"/profile/keys/{UNKNOWN_UUID}/rotate", json={"key": "sk_" + "y" * 32})
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 def test_rotate_key_requires_login(client):
-    resp = client.post("/profile/keys/1/rotate", json={"key": "sk_" + "z" * 32}, follow_redirects=False)
+    resp = client.post(f"/profile/keys/{UNKNOWN_UUID}/rotate", json={"key": "sk_" + "z" * 32}, follow_redirects=False)
     assert resp.status_code == HTTPStatus.FOUND
 
 
@@ -590,7 +607,7 @@ def test_edit_key_ttl_counts_from_now(app, auth_client, test_user, restore_confi
     kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "a" * 32, expires_at=utcnow() + timedelta(hours=1))
     before = _key_snapshot(app, kid)
 
-    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": ttl})
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/ttl", json={"ttl": ttl})
     assert resp.status_code == HTTPStatus.OK
 
     after = _key_snapshot(app, kid)
@@ -599,10 +616,10 @@ def test_edit_key_ttl_counts_from_now(app, auth_client, test_user, restore_confi
     assert after == before  # nothing but the expiry changes
     if ttl:
         assert abs(expires_at - (utcnow() + timedelta(seconds=ttl))) < timedelta(minutes=1)
-        assert resp.get_json() == {"id": kid, "name": "rotating", "expires_at": expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")}
+        assert resp.get_json() == {"id": key_uuid(app, kid), "name": "rotating", "expires_at": expires_at.strftime("%Y-%m-%dT%H:%M:%SZ")}
     else:
         assert expires_at is None
-        assert resp.get_json() == {"id": kid, "name": "rotating", "expires_at": None}
+        assert resp.get_json() == {"id": key_uuid(app, kid), "name": "rotating", "expires_at": None}
 
 
 @pytest.mark.parametrize("cap, payload", [
@@ -618,7 +635,7 @@ def test_edit_key_ttl_invalid_returns_400(app, auth_client, test_user, restore_c
     app.config["KEY_TTL"] = cap
     expires_at = utcnow() + timedelta(days=3)
     kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "b" * 32, expires_at=expires_at)
-    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json=payload)
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/ttl", json=payload)
     assert resp.status_code == HTTPStatus.BAD_REQUEST
     assert "ttl" in resp.get_json()["error"]
     assert _key_snapshot(app, kid)["expires_at"] == expires_at
@@ -628,15 +645,15 @@ def test_edit_key_ttl_checks_cap_at_edit_time(app, auth_client, test_user, resto
     app.config["KEY_TTL"] = 0
     kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "c" * 32)  # created under no cap: never expires
     app.config["KEY_TTL"] = 7 * 86400
-    assert auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 30 * 86400}).status_code == HTTPStatus.BAD_REQUEST
-    assert auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 0}).status_code == HTTPStatus.BAD_REQUEST
+    assert auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/ttl", json={"ttl": 30 * 86400}).status_code == HTTPStatus.BAD_REQUEST
+    assert auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/ttl", json={"ttl": 0}).status_code == HTTPStatus.BAD_REQUEST
     assert _key_snapshot(app, kid)["expires_at"] is None
 
 
 def test_edit_key_ttl_overdue_key_returns_409_and_revokes(app, auth_client, test_user):
     expires_at = utcnow() - timedelta(minutes=1)
     kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "d" * 32, expires_at=expires_at)
-    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 86400})
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/ttl", json={"ttl": 86400})
     assert resp.status_code == HTTPStatus.CONFLICT
     assert resp.get_json()["error"] == "Key is revoked"
     after = _key_snapshot(app, kid)
@@ -645,7 +662,7 @@ def test_edit_key_ttl_overdue_key_returns_409_and_revokes(app, auth_client, test
 
 def test_edit_key_ttl_revoked_key_returns_409(app, auth_client, test_user):
     kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "e" * 32, revoked_at=datetime(2026, 9, 2, 8, 0))
-    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 86400})
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/ttl", json={"ttl": 86400})
     assert resp.status_code == HTTPStatus.CONFLICT
     assert _key_snapshot(app, kid)["expires_at"] is None
 
@@ -663,7 +680,7 @@ def test_edit_key_ttl_concurrent_revoke_returns_409(app, auth_client, test_user,
         return real_resolve(requested)
 
     monkeypatch.setattr(profile_routes, "resolve_key_ttl", resolve_then_revoke)
-    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 86400})
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/ttl", json={"ttl": 86400})
     assert resp.status_code == HTTPStatus.CONFLICT
     assert _key_snapshot(app, kid)["expires_at"] is None
 
@@ -675,24 +692,24 @@ def test_edit_key_ttl_oauth_minted_key(app, auth_client, test_user):
     with app.app_context():
         db.session.get(APIKey, kid).client_id = "opencode"
         db.session.commit()
-    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 86400})
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/ttl", json={"ttl": 86400})
     assert resp.status_code == HTTPStatus.OK
     assert _key_snapshot(app, kid)["expires_at"] is not None
 
 
 def test_edit_key_ttl_forbidden_for_other_user(app, auth_client, admin_user):
     kid = _seed_key_with_usage(app, admin_user["id"], "sk_" + "h" * 32)
-    resp = auth_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": 86400})
+    resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/ttl", json={"ttl": 86400})
     assert resp.status_code == HTTPStatus.FORBIDDEN
     assert _key_snapshot(app, kid)["expires_at"] is None
 
 
 def test_edit_key_ttl_not_found(auth_client):
-    assert auth_client.post("/profile/keys/999999/ttl", json={"ttl": 86400}).status_code == HTTPStatus.NOT_FOUND
+    assert auth_client.post(f"/profile/keys/{UNKNOWN_UUID}/ttl", json={"ttl": 86400}).status_code == HTTPStatus.NOT_FOUND
 
 
 def test_edit_key_ttl_requires_login(client):
-    resp = client.post("/profile/keys/1/ttl", json={"ttl": 86400}, follow_redirects=False)
+    resp = client.post(f"/profile/keys/{UNKNOWN_UUID}/ttl", json={"ttl": 86400}, follow_redirects=False)
     assert resp.status_code == HTTPStatus.FOUND
 
 

@@ -581,7 +581,7 @@ function applySortHeaders(tableId, state) {
 const KEY_ROWS = [
   {% for key in api_keys %}
   {
-    id: {{ key.id }},
+    id: {{ key.uuid | string | tojson }},
     name: {{ (key.name or "(unnamed)") | tojson }},
     hint: {{ key.key_hint | tojson }},
     source: {% if key.client_id %}{{ ('Requested via ' + key.client_id + ((' by ' + key.requested_by) if key.requested_by else '')) | tojson }}{% else %}null{% endif %},
@@ -656,7 +656,7 @@ function renderKeys() {
       });
     });
     keyTbody.querySelectorAll('.ttl-key-btn').forEach(btn => {
-      const id = Number(btn.dataset.id);
+      const id = btn.dataset.id;
       btn.addEventListener('click', () => editKeyTtl("/profile/keys/" + btn.dataset.id + "/ttl", btn.dataset.name,
         data => { KEY_ROWS.find(k => k.id === id).expires_at = data.expires_at; renderKeys(); },
         () => keyTbody.querySelector(`.ttl-key-btn[data-id="${id}"]`)));

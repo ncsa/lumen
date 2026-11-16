@@ -23,6 +23,7 @@ from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.entity_stat import EntityStat
 from lumen.models.group import Group
 from lumen.models.group_member import GroupMember
+from lumen.models.lookups import key_by_uuid_or_404
 from lumen.models.message import Message
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
@@ -493,7 +494,7 @@ def _requested_key_expiry(data: dict):
 def _created_key_response(api_key: APIKey, key: str):
     """201 response for a newly created key, with its expiry (null = never)."""
     expires_at = api_key.expires_at.strftime("%Y-%m-%dT%H:%M:%SZ") if api_key.expires_at else None
-    return jsonify({"id": api_key.id, "name": api_key.name, "key": key, "expires_at": expires_at}), HTTPStatus.CREATED
+    return jsonify({"id": str(api_key.uuid), "name": api_key.name, "key": key, "expires_at": expires_at}), HTTPStatus.CREATED
 
 
 def rotate_key_secret(api_key: APIKey):
@@ -520,7 +521,7 @@ def rotate_key_secret(api_key: APIKey):
         return jsonify({"error": "Key already exists"}), HTTPStatus.CONFLICT
     if not updated:
         return jsonify({"error": "Key is revoked"}), HTTPStatus.CONFLICT
-    return jsonify({"id": api_key.id, "name": api_key.name, "key": key}), HTTPStatus.OK
+    return jsonify({"id": str(api_key.uuid), "name": api_key.name, "key": key}), HTTPStatus.OK
 
 
 def set_key_ttl(api_key: APIKey):
@@ -550,7 +551,7 @@ def set_key_ttl(api_key: APIKey):
     if not updated:
         return jsonify({"error": "Key is revoked"}), HTTPStatus.CONFLICT
     expires = expires_at.strftime("%Y-%m-%dT%H:%M:%SZ") if expires_at else None
-    return jsonify({"id": api_key.id, "name": api_key.name, "expires_at": expires}), HTTPStatus.OK
+    return jsonify({"id": str(api_key.uuid), "name": api_key.name, "expires_at": expires}), HTTPStatus.OK
 
 
 @profile_bp.route("/profile/keys", methods=["POST"])
@@ -581,18 +582,18 @@ def create_key():
     return _created_key_response(api_key, key)
 
 
-@profile_bp.route("/profile/keys/<int:kid>", methods=["DELETE"])
+@profile_bp.route("/profile/keys/<uuid:kid>", methods=["DELETE"])
 @login_required
 def delete_key_removed(kid):
     # Keys are revoked, not deleted; answer the old URL with 405 instead of 404.
     return jsonify({"error": "Use POST /profile/keys/<id>/revoke"}), HTTPStatus.METHOD_NOT_ALLOWED
 
 
-@profile_bp.route("/profile/keys/<int:kid>/revoke", methods=["POST"])
+@profile_bp.route("/profile/keys/<uuid:kid>/revoke", methods=["POST"])
 @login_required
 def revoke_key(kid):
     entity_id = session["entity_id"]
-    api_key = db.get_or_404(APIKey, kid)
+    api_key = key_by_uuid_or_404(kid)
 
     if api_key.entity_id != entity_id:
         return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
@@ -604,11 +605,11 @@ def revoke_key(kid):
     return "", HTTPStatus.NO_CONTENT
 
 
-@profile_bp.route("/profile/keys/<int:kid>/rotate", methods=["POST"])
+@profile_bp.route("/profile/keys/<uuid:kid>/rotate", methods=["POST"])
 @login_required
 def rotate_key(kid):
     entity_id = session["entity_id"]
-    api_key = db.get_or_404(APIKey, kid)
+    api_key = key_by_uuid_or_404(kid)
 
     if api_key.entity_id != entity_id:
         return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN
@@ -616,11 +617,11 @@ def rotate_key(kid):
     return rotate_key_secret(api_key)
 
 
-@profile_bp.route("/profile/keys/<int:kid>/ttl", methods=["POST"])
+@profile_bp.route("/profile/keys/<uuid:kid>/ttl", methods=["POST"])
 @login_required
 def edit_key_ttl(kid):
     entity_id = session["entity_id"]
-    api_key = db.get_or_404(APIKey, kid)
+    api_key = key_by_uuid_or_404(kid)
 
     if api_key.entity_id != entity_id:
         return jsonify({"error": "Forbidden"}), HTTPStatus.FORBIDDEN

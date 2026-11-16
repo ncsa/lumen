@@ -1,4 +1,6 @@
 """Tests for chat routes (conversations, stream validation, access control)."""
+import json
+import uuid
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 
@@ -71,7 +73,7 @@ def _seed_conversation(app, entity_id, updated_at, messages):
                                    content=content, created_at=created_at))
             db.session.flush()
         db.session.commit()
-        return conv.id
+        return str(conv.uuid)
 
 
 def _seed_conversations(app, entity_id, n):
@@ -84,7 +86,7 @@ def _seed_conversations(app, entity_id, n):
                  for i in range(n)]
         db.session.add_all(convs)
         db.session.commit()
-        return [c.id for c in convs]
+        return [str(c.uuid) for c in convs]
 
 
 def _previews(client, query=""):
@@ -208,8 +210,58 @@ def test_sidebar_preview_query_is_bounded_to_the_page(app, auth_client, test_use
 
 
 def test_get_conversation_messages_not_found(auth_client):
-    resp = auth_client.get("/chat/conversations/9999/messages")
+    resp = auth_client.get(f"/chat/conversations/{uuid.uuid4()}/messages")
     assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+def _own_conversation(app, entity_id, title="Mine"):
+    """A conversation with one message; returns (integer id, uuid string)."""
+    from lumen.extensions import db
+    from lumen.models.conversation import Conversation
+    from lumen.models.message import Message
+    with app.app_context():
+        conv = Conversation(entity_id=entity_id, title=title, model="test-model")
+        db.session.add(conv)
+        db.session.flush()
+        db.session.add(Message(conversation_id=conv.id, role="user", content="hello"))
+        db.session.commit()
+        return conv.id, str(conv.uuid)
+
+
+def _conversation_exists(app, conv_id):
+    from lumen.extensions import db
+    from lumen.models.conversation import Conversation
+    with app.app_context():
+        return db.session.get(Conversation, conv_id) is not None
+
+
+def test_conversation_routes_refuse_integer_ids(app, auth_client, test_user):
+    """Conversations are addressed by uuid only: the integer id of the caller's own one 404s."""
+    conv_id, _ = _own_conversation(app, test_user["id"])
+    assert auth_client.get(f"/chat/conversations/{conv_id}/messages").status_code == HTTPStatus.NOT_FOUND
+    assert auth_client.delete(f"/chat/conversations/{conv_id}").status_code == HTTPStatus.NOT_FOUND
+    assert _conversation_exists(app, conv_id)
+
+
+def test_conversation_of_another_user_is_not_found(app, auth_client, admin_user):
+    conv_id, conv_uuid = _own_conversation(app, admin_user["id"], title="Not yours")
+    assert auth_client.get(f"/chat/conversations/{conv_uuid}/messages").status_code == HTTPStatus.NOT_FOUND
+    assert auth_client.delete(f"/chat/conversations/{conv_uuid}").status_code == HTTPStatus.NOT_FOUND
+    assert _conversation_exists(app, conv_id)
+
+
+def test_sidebar_lists_uuids_not_integer_ids(app, auth_client, test_user):
+    conv_id, conv_uuid = _own_conversation(app, test_user["id"])
+    data = auth_client.get("/chat/conversations").get_json()
+    assert [c["id"] for c in data["conversations"]] == [conv_uuid]
+    assert conv_id not in [c["id"] for c in data["conversations"]]
+
+
+def test_sidebar_before_anchor_ignores_integer_ids(app, auth_client, test_user):
+    """An integer ``before`` is not an anchor any more: it is ignored, so the first page comes back."""
+    conv_id, conv_uuid = _own_conversation(app, test_user["id"])
+    data = auth_client.get(f"/chat/conversations?before={conv_id}").get_json()
+    assert [c["id"] for c in data["conversations"]] == [conv_uuid]
 
 
 def test_get_conversation_messages(app, auth_client, test_user):
@@ -226,9 +278,9 @@ def test_get_conversation_messages(app, auth_client, test_user):
             input_tokens=5, output_tokens=3,
         ))
         db.session.commit()
-        conv_id = conv.id
+        conv_uuid = conv.uuid
 
-    resp = auth_client.get(f"/chat/conversations/{conv_id}/messages")
+    resp = auth_client.get(f"/chat/conversations/{conv_uuid}/messages")
     assert resp.status_code == HTTPStatus.OK
     data = resp.get_json()
     assert len(data["messages"]) == 2
@@ -237,7 +289,7 @@ def test_get_conversation_messages(app, auth_client, test_user):
 
 
 def test_delete_conversation_not_found(auth_client):
-    resp = auth_client.delete("/chat/conversations/9999")
+    resp = auth_client.delete(f"/chat/conversations/{uuid.uuid4()}")
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
@@ -251,9 +303,9 @@ def test_delete_conversation(app, auth_client, test_user):
         db.session.flush()
         db.session.add(Message(conversation_id=conv.id, role="user", content="hello"))
         db.session.commit()
-        conv_id = conv.id
+        conv_id, conv_uuid = conv.id, conv.uuid
 
-    resp = auth_client.delete(f"/chat/conversations/{conv_id}")
+    resp = auth_client.delete(f"/chat/conversations/{conv_uuid}")
     assert resp.status_code == HTTPStatus.OK
     assert resp.get_json()["ok"] is True
 
@@ -486,7 +538,7 @@ def test_chat_stream_skips_persistence_when_storing_disabled(app, auth_client, t
     resp = auth_client.post("/chat/stream", json={
         "messages": [{"role": "user", "content": "hi"}],
         "model": test_model["model_name"],
-        "conversation_id": 12345,
+        "conversation_id": str(uuid.uuid4()),
     })
     assert resp.status_code == HTTPStatus.OK
 
@@ -549,6 +601,7 @@ def test_chat_stream_counts_conversation_when_storing(app, auth_client, test_use
 
     import json as _json
     conv_id = _json.loads(body.strip().splitlines()[-1].removeprefix("data: "))["conversation_id"]
+    assert str(uuid.UUID(conv_id)) == conv_id  # the stream result names the conversation by uuid
 
     resp = auth_client.post("/chat/stream", json={
         "messages": [
@@ -561,6 +614,73 @@ def test_chat_stream_counts_conversation_when_storing(app, auth_client, test_use
     })
     assert '"done": true' in resp.get_data(as_text=True)
     assert _conversation_counter(app, test_user["id"]) == 1
+
+
+def _stream_result(body):
+    """The final SSE event of a /chat/stream response."""
+    return json.loads(body.strip().splitlines()[-1].removeprefix("data: "))
+
+
+def _message_count(app, conv_uuid):
+    from sqlalchemy import func, select
+
+    from lumen.extensions import db
+    from lumen.models.conversation import Conversation
+    from lumen.models.message import Message
+    with app.app_context():
+        return db.session.scalar(
+            select(func.count(Message.id)).join(Conversation, Conversation.id == Message.conversation_id)
+            .where(Conversation.uuid == uuid.UUID(conv_uuid))
+        )
+
+
+def test_chat_stream_continues_conversation_by_uuid(app, auth_client, test_user, test_model, test_model_endpoint,
+                                                    monkeypatch):
+    with app.app_context():
+        _grant_unlimited_pool(app, test_user["id"])
+    from lumen.blueprints.chat import routes as chat_routes
+    monkeypatch.setattr(chat_routes, "send_message_stream", _fake_stream)
+
+    first = _stream_result(auth_client.post("/chat/stream", json={
+        "messages": [{"role": "user", "content": "hi"}], "model": test_model["model_name"],
+    }).get_data(as_text=True))
+    conv_uuid = first["conversation_id"]
+    assert _message_count(app, conv_uuid) == 2
+
+    second = _stream_result(auth_client.post("/chat/stream", json={
+        "messages": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "Hello"},
+                     {"role": "user", "content": "more"}],
+        "model": test_model["model_name"], "conversation_id": conv_uuid,
+    }).get_data(as_text=True))
+    assert second["conversation_id"] == conv_uuid
+    assert _message_count(app, conv_uuid) == 4
+
+
+@pytest.mark.parametrize("bad", [1, "1", "not-a-uuid", ["x"]])
+def test_chat_stream_rejects_non_uuid_conversation_id(app, auth_client, test_user, test_model, bad):
+    with app.app_context():
+        _grant_unlimited_pool(app, test_user["id"])
+    resp = auth_client.post("/chat/stream", json={
+        "messages": [{"role": "user", "content": "hi"}], "model": test_model["model_name"], "conversation_id": bad,
+    })
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json() == {"error": "Invalid conversation_id"}
+
+
+def test_chat_stream_never_appends_to_another_users_conversation(app, auth_client, test_user, admin_user, test_model,
+                                                                 test_model_endpoint, monkeypatch):
+    _, theirs = _own_conversation(app, admin_user["id"], title="Not yours")
+    with app.app_context():
+        _grant_unlimited_pool(app, test_user["id"])
+    from lumen.blueprints.chat import routes as chat_routes
+    monkeypatch.setattr(chat_routes, "send_message_stream", _fake_stream)
+
+    result = _stream_result(auth_client.post("/chat/stream", json={
+        "messages": [{"role": "user", "content": "hi"}], "model": test_model["model_name"], "conversation_id": theirs,
+    }).get_data(as_text=True))
+    assert result["conversation_id"] != theirs
+    assert _message_count(app, theirs) == 1
+    assert _message_count(app, result["conversation_id"]) == 2
 
 
 def test_chat_stream_counts_conversation_when_storing_disabled(app, auth_client, test_user, test_model, test_model_endpoint, monkeypatch):

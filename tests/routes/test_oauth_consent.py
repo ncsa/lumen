@@ -14,6 +14,7 @@ from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.services.key_expiry import expire_keys
 from lumen.timeutils import utcnow
+from tests.conftest import key_uuid
 
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 
@@ -169,7 +170,7 @@ def test_overwrite_target_revoked_before_claim_mints_new_key(client, auth_client
         old_id = db.session.execute(select(APIKey)).scalar_one().id
 
     body = _approve_overwrite(client, auth_client, app)
-    assert auth_client.post(f"/profile/keys/{old_id}/revoke").status_code == HTTPStatus.NO_CONTENT
+    assert auth_client.post(f"/profile/keys/{key_uuid(app, old_id)}/revoke").status_code == HTTPStatus.NO_CONTENT
     with app.app_context():
         revoked_at = db.session.get(APIKey, old_id).revoked_at
     resp = _poll(client, body)

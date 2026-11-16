@@ -30,7 +30,7 @@ from lumen.models.entity_manager import (
 )
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.entity_stat import EntityStat
-from lumen.models.lookups import entity_by_uuid_or_404
+from lumen.models.lookups import entity_by_uuid_or_404, key_by_uuid_or_404
 from lumen.models.model_config import ModelConfig
 from lumen.services.key_expiry import key_ttl_choices
 from lumen.services.llm import entity_has_unlimited_pool, get_model_access_status
@@ -749,21 +749,21 @@ def create_project_key(sid):
     return _created_key_response(api_key, key)
 
 
-@projects_bp.route("/projects/<uuid:sid>/keys/<int:kid>", methods=["DELETE"])
+@projects_bp.route("/projects/<uuid:sid>/keys/<uuid:kid>", methods=["DELETE"])
 @login_required
 def delete_project_key_removed(sid, kid):
     # Keys are revoked, not deleted; answer the old URL with 405 instead of 404.
     return jsonify({"error": "Use POST /projects/<sid>/keys/<id>/revoke"}), HTTPStatus.METHOD_NOT_ALLOWED
 
 
-@projects_bp.route("/projects/<uuid:sid>/keys/<int:kid>/revoke", methods=["POST"])
+@projects_bp.route("/projects/<uuid:sid>/keys/<uuid:kid>/revoke", methods=["POST"])
 @login_required
 def revoke_project_key(sid, kid):
     entity_id = session["entity_id"]
     sid = _project_or_404(sid).id
     _require_project_access(entity_id, sid)
 
-    api_key = db.get_or_404(APIKey, kid)
+    api_key = key_by_uuid_or_404(kid)
     if api_key.entity_id != sid:
         return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
     # 404, not 403: users cannot see other members' keys, so do not confirm they exist.
@@ -777,14 +777,14 @@ def revoke_project_key(sid, kid):
     return "", HTTPStatus.NO_CONTENT
 
 
-@projects_bp.route("/projects/<uuid:sid>/keys/<int:kid>/rotate", methods=["POST"])
+@projects_bp.route("/projects/<uuid:sid>/keys/<uuid:kid>/rotate", methods=["POST"])
 @login_required
 def rotate_project_key(sid, kid):
     entity_id = session["entity_id"]
     sid = _project_or_404(sid).id
     _require_project_access(entity_id, sid)
 
-    api_key = db.get_or_404(APIKey, kid)
+    api_key = key_by_uuid_or_404(kid)
     if api_key.entity_id != sid:
         return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
     # Only the key's creator may rotate it; legacy keys with no creator cannot be rotated.
@@ -794,14 +794,14 @@ def rotate_project_key(sid, kid):
     return rotate_key_secret(api_key)
 
 
-@projects_bp.route("/projects/<uuid:sid>/keys/<int:kid>/ttl", methods=["POST"])
+@projects_bp.route("/projects/<uuid:sid>/keys/<uuid:kid>/ttl", methods=["POST"])
 @login_required
 def edit_project_key_ttl(sid, kid):
     entity_id = session["entity_id"]
     sid = _project_or_404(sid).id
     _require_project_access(entity_id, sid)
 
-    api_key = db.get_or_404(APIKey, kid)
+    api_key = key_by_uuid_or_404(kid)
     if api_key.entity_id != sid:
         return jsonify({"error": "Not found"}), HTTPStatus.NOT_FOUND
     # Same rule as rotation: only the key's creator may change its expiry.

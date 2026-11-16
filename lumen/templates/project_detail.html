@@ -485,7 +485,7 @@ function applySortHeaders(tableId, state) {
 const KEY_ROWS = [
   {% for key in api_keys %}
   {
-    id: {{ key.id }},
+    id: {{ key.uuid | string | tojson }},
     name: {{ (key.name or "(unnamed)") | tojson }},
     created_by: {{ ((key_creators.get(key.id) or 'Unknown') if show_key_creators else '') | tojson }},
     hint: {{ key.key_hint | tojson }},
@@ -562,7 +562,7 @@ function renderKeys() {
       });
     });
     keyTbody.querySelectorAll('.ttl-key-btn').forEach(btn => {
-      const id = Number(btn.dataset.id);
+      const id = btn.dataset.id;
       btn.addEventListener('click', () => editKeyTtl("/projects/" + PROJECT_ID + "/keys/" + btn.dataset.id + "/ttl", btn.dataset.name,
         data => { KEY_ROWS.find(k => k.id === id).expires_at = data.expires_at; renderKeys(); },
         () => keyTbody.querySelector(`.ttl-key-btn[data-id="${id}"]`)));

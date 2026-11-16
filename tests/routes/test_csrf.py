@@ -61,7 +61,7 @@ def test_delete_conversation_rejected_without_csrf_token(app, csrf_client, test_
         conv = Conversation(entity_id=test_user["id"], title="To Delete", model="m")
         db.session.add(conv)
         db.session.commit()
-        conv_id = conv.id
+        conv_id = conv.uuid
 
     resp = csrf_client.delete(f"/chat/conversations/{conv_id}")
     assert resp.status_code == HTTPStatus.BAD_REQUEST
@@ -75,7 +75,7 @@ def test_delete_conversation_accepted_with_csrf_token(app, csrf_client, test_use
         conv = Conversation(entity_id=test_user["id"], title="To Delete", model="m")
         db.session.add(conv)
         db.session.commit()
-        conv_id = conv.id
+        conv_id = conv.uuid
 
     chat = csrf_client.get("/chat")
     token = _extract_csrf_token(chat)

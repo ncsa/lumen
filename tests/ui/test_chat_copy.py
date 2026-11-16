@@ -116,7 +116,7 @@ def stored_conversation(app, test_user):
                     created_at=datetime(2026, 1, 2, 3, 4, 6)),
         ])
         db.session.commit()
-        return conv.id
+        return str(conv.uuid)  # the sidebar and its data-id carry the uuid
 
 
 def _open_stored(page, cid):
@@ -250,7 +250,7 @@ def document_conversation(app, test_user):
                     created_at=datetime(2026, 1, 2, 3, 4, 6)),
         ])
         db.session.commit()
-        return conv.id
+        return str(conv.uuid)  # the sidebar and its data-id carry the uuid
 
 
 def test_copy_all_button_floats_over_the_message_area(open_chat, stored_conversation):

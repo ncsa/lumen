@@ -196,8 +196,10 @@ def test_edit_expiry_modal(app, restore_config, open_page, key_page):
     path, post_path, expires_idx = key_page
     page, posted = open_page(path)
     with app.app_context():
-        kid = db.session.execute(select(APIKey.id).filter_by(name="live-key")).scalar_one()
-    button = page.locator(f".ttl-key-btn[data-id='{kid}']")
+        # The integer id is for DB checks; the page, its buttons and URLs carry the uuid.
+        kid, kuid = db.session.execute(select(APIKey.id, APIKey.uuid).filter_by(name="live-key")).one()
+        kuid = str(kuid)
+    button = page.locator(f".ttl-key-btn[data-id='{kuid}']")
     assert button.get_attribute("aria-label") == "Edit expiry of key live-key"
     # Only live rows get the button.
     page.check("#show-revoked-cb")
@@ -215,18 +217,18 @@ def test_edit_expiry_modal(app, restore_config, open_page, key_page):
     _run_all_checks(page.content().encode(), f"{path} (Edit Key Expiry modal open)")
     page.keyboard.press("Escape")
     _wait_for_ttl_modal_closed(page)
-    assert _focused_ttl_button_id(page) == str(kid)
+    assert _focused_ttl_button_id(page) == kuid
 
     # Saving updates the row in place and returns focus to the re-rendered button.
     before = _row_cells(page, "live-key")[expires_idx]
-    page.locator(f".ttl-key-btn[data-id='{kid}']").click()
+    page.locator(f".ttl-key-btn[data-id='{kuid}']").click()
     page.wait_for_selector("#keyTtlModal.show")
     page.select_option("#edit-key-ttl-select", label="7 days")
     page.click("#key-ttl-save-btn")
     _wait_for_ttl_modal_closed(page)
-    assert posted[-1] == (f"{post_path}/{kid}/ttl", {"ttl": 7 * DAY})
+    assert posted[-1] == (f"{post_path}/{kuid}/ttl", {"ttl": 7 * DAY})
     assert _row_cells(page, "live-key")[expires_idx] != before
-    assert _focused_ttl_button_id(page) == str(kid)
+    assert _focused_ttl_button_id(page) == kuid
     with app.app_context():
         expires_at = db.session.get(APIKey, kid).expires_at
     assert abs(expires_at - (utcnow() + timedelta(days=7))) < timedelta(minutes=1)
@@ -237,10 +239,10 @@ def test_edit_expiry_modal_shows_server_error(app, restore_config, open_page, ke
     page, _ = open_page(path)
     with app.app_context():
         key = db.session.execute(select(APIKey).filter_by(name="live-key")).scalar_one()
-        kid = key.id
+        kuid = str(key.uuid)  # the page, its buttons and URLs carry the uuid
         key.revoked_at = utcnow()  # revoked in another tab
         db.session.commit()
-    page.locator(f".ttl-key-btn[data-id='{kid}']").click()
+    page.locator(f".ttl-key-btn[data-id='{kuid}']").click()
     page.wait_for_selector("#keyTtlModal.show")
     page.click("#key-ttl-save-btn")
     page.wait_for_function("document.getElementById('key-ttl-error').textContent !== ''")
@@ -253,12 +255,13 @@ def test_edit_expiry_closed_while_saving_still_updates_row(app, restore_config, 
     path, _, expires_idx = key_page
     page, _ = open_page(path)
     with app.app_context():
-        kid = db.session.execute(select(APIKey.id).filter_by(name="live-key")).scalar_one()
+        # The page, its buttons and URLs carry the uuid.
+        kuid = str(db.session.execute(select(APIKey.uuid).filter_by(name="live-key")).scalar_one())
     held = []
     page.route("**/ttl", lambda route, request: held.append(route))  # hold the POST until the dialog is closed
 
     before = _row_cells(page, "live-key")[expires_idx]
-    page.locator(f".ttl-key-btn[data-id='{kid}']").click()
+    page.locator(f".ttl-key-btn[data-id='{kuid}']").click()
     page.wait_for_selector("#keyTtlModal.show")
     # .show is set when the fade-in starts; Bootstrap ignores Escape until shown.bs.modal (which focuses the select).
     page.wait_for_function("document.activeElement.id === 'edit-key-ttl-select'")
@@ -276,7 +279,7 @@ def test_edit_expiry_closed_while_saving_still_updates_row(app, restore_config, 
     page.wait_for_function("!document.getElementById('key-ttl-save-btn').disabled")
     assert errors == []
     assert _row_cells(page, "live-key")[expires_idx] != before
-    assert _focused_ttl_button_id(page) == str(kid)
+    assert _focused_ttl_button_id(page) == kuid
 
 
 def test_edit_expiry_transport_error_shows_feedback(app, restore_config, open_page, key_page):
@@ -284,12 +287,13 @@ def test_edit_expiry_transport_error_shows_feedback(app, restore_config, open_pa
     path, _, _ = key_page
     page, _ = open_page(path)
     with app.app_context():
-        kid = db.session.execute(select(APIKey.id).filter_by(name="live-key")).scalar_one()
+        # The page, its buttons and URLs carry the uuid.
+        kuid = str(db.session.execute(select(APIKey.uuid).filter_by(name="live-key")).scalar_one())
     page.route("**/ttl", lambda route, request: route.abort("internetdisconnected"))
     errors = []
     page.on("pageerror", lambda e: errors.append(e))
 
-    page.locator(f".ttl-key-btn[data-id='{kid}']").click()
+    page.locator(f".ttl-key-btn[data-id='{kuid}']").click()
     page.wait_for_selector("#keyTtlModal.show")
     page.click("#key-ttl-save-btn")
     page.wait_for_function("document.getElementById('key-ttl-error').textContent !== ''")
@@ -306,12 +310,12 @@ def test_edit_expiry_error_after_close_alerts(app, restore_config, open_page, ke
     page, _ = open_page(path)
     with app.app_context():
         key = db.session.execute(select(APIKey).filter_by(name="live-key")).scalar_one()
-        kid = key.id
+        kid, kuid = key.id, str(key.uuid)
     held = []
     page.route("**/ttl", lambda route, request: held.append(route))
 
     before = _row_cells(page, "live-key")[expires_idx]
-    page.locator(f".ttl-key-btn[data-id='{kid}']").click()
+    page.locator(f".ttl-key-btn[data-id='{kuid}']").click()
     page.wait_for_selector("#keyTtlModal.show")
     page.wait_for_function("document.activeElement.id === 'edit-key-ttl-select'")  # shown: Escape now closes it
     page.click("#key-ttl-save-btn")

@@ -142,11 +142,13 @@ def test_matched_route_is_labelled_by_its_rule(app, monkeypatch):
 
     from lumen.blueprints.metrics import middleware as mw
 
+    # Routes address rows by uuid (AGENTS.md), so pick a GET route with a uuid argument.
     rule = next(
         r for r in app.url_map.iter_rules()
-        if "<int:" in r.rule and "GET" in r.methods
+        if "<uuid:" in r.rule and "GET" in r.methods
     )
-    concrete = re.sub(r"<int:[^>]+>", "987654", rule.rule)
+    concrete_id = "98765432-1000-4000-8000-000000000000"
+    concrete = re.sub(r"<uuid:[^>]+>", concrete_id, rule.rule)
 
     recorded = _capture_labels(monkeypatch)
     wrapped = mw.make_metrics_middleware(app.wsgi_app)
@@ -158,7 +160,7 @@ def test_matched_route_is_labelled_by_its_rule(app, monkeypatch):
     # wsgi_app returns, so the closures cannot read request.url_rule at all.
     assert environ["lumen.url_rule"] == rule.rule
     assert {path for _, path in recorded} == {rule.rule}
-    assert "987654" not in rule.rule
+    assert concrete_id not in rule.rule
 
 
 def test_unrouted_request_through_the_real_app_is_unmatched(app, monkeypatch):
