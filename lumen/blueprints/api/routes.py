@@ -432,8 +432,8 @@ def me_auth_required(f):
                 return _err(_ME_OAUTH_KEY, "permission_error", HTTPStatus.FORBIDDEN)
             g.me_via_session = False
         else:
-            eid = session.get("entity_id")
-            entity = db.session.get(Entity, eid) if eid else None
+            # The session's user, resolved from its entity_uuid by load_logged_in_entity.
+            entity = g.get("entity")
             if entity is None or not entity.active:
                 return _err(_ME_UNAUTHENTICATED, "authentication_error", HTTPStatus.UNAUTHORIZED)
             g.me_via_session = True
