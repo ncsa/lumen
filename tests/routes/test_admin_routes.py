@@ -721,7 +721,28 @@ models:
         app.config["CONFIG_YAML"] = original
 
 
-def test_config_post_duplicate_url_count_mismatch_rejects(app, admin_client, tmp_path):
+def _drop_first_endpoint(endpoints):
+    # 2 on disk, 1 incoming.
+    endpoints.pop(0)
+
+
+def _add_endpoint_with_real_key(endpoints):
+    # 2 on disk, 3 incoming.  The new key must be real, not MASK: if the
+    # count guard only rejected a *larger* disk group, endpoints 1-2 would be
+    # silently filled with sk-first/sk-second, nothing would stay masked, and
+    # the save would return 200.  With MASK here, that broken guard would raise
+    # IndexError at disk_keys[2] instead of exercising the silent acceptance.
+    endpoints.append({"url": "https://api.openai.com/v1", "api_key": "sk-third"})
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param(_drop_first_endpoint, id="remove"),
+        pytest.param(_add_endpoint_with_real_key, id="add"),
+    ],
+)
+def test_config_post_duplicate_url_count_mismatch_rejects(app, admin_client, tmp_path, change):
     """Adding/removing within a duplicate-URL group → 400, not silent corruption."""
     config = """\
 version: 3
@@ -742,11 +763,12 @@ models:
     original, cfg = _use_config(app, tmp_path, config)
     try:
         masked = admin_client.get("/admin/api/config").get_json()
-        # Drop one of the two same-URL endpoints — count mismatch → ambiguous.
-        masked["models"][0]["endpoints"].pop(0)
+        # Change the size of the same-URL group — count mismatch → ambiguous.
+        change(masked["models"][0]["endpoints"])
         resp = admin_client.post("/admin/api/config", json=masked)
         assert resp.status_code == HTTPStatus.BAD_REQUEST
-        assert "********" not in cfg.read_text()
+        assert "api_key" in resp.get_json()["error"]
+        assert cfg.read_text() == config
     finally:
         app.config["CONFIG_YAML"] = original
 
