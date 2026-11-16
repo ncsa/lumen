@@ -86,9 +86,15 @@ def _insert(conn, eid, model, when, inp=10, out=20, cost="0.25"):
 
 
 def _client(pg_app, eid):
+    """A client signed in as entity ``eid``: the session cookie holds its uuid."""
+    with pg_app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity import Entity
+
+        entity_uuid = str(db.session.get(Entity, eid).uuid)
     client = pg_app.test_client()
     with client.session_transaction() as sess:
-        sess["entity_id"] = eid
+        sess["entity_uuid"] = entity_uuid
     return client
 
 

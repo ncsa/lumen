@@ -209,7 +209,7 @@ def _code_flow_key(app, client, auth_client, overwrite=False):
     url, verifier = _authorize_url(name="personal")
     assert auth_client.get(url).status_code == HTTPStatus.OK
     with app.app_context():
-        req_id = db.session.execute(select(AuthRequest.id)).scalar_one()
+        req_id = str(db.session.execute(select(AuthRequest.uuid)).scalar_one())
     data = {"request_id": req_id, "action": "approve"}
     if overwrite:
         data["overwrite"] = "on"
@@ -249,7 +249,7 @@ def test_web_key_overwritten_through_oauth_is_403(app, client, auth_client, key_
 def test_oauth_key_rotated_in_the_ui_stays_403(app, client, auth_client):
     _device_flow_key(app, client, auth_client)
     with app.app_context():
-        kid = db.session.execute(select(APIKey.id)).scalar_one()
+        kid = db.session.execute(select(APIKey.uuid)).scalar_one()
     rotated = "sk_" + secrets.token_urlsafe(32)
     resp = auth_client.post(f"/profile/keys/{kid}/rotate", json={"key": rotated})
     assert resp.status_code == HTTPStatus.OK, resp.get_json()
