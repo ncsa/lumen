@@ -933,7 +933,7 @@ def profile_json(entity: Entity, period=None, session_admin_mode=None) -> dict:
 
     admin_eligible = is_admin_eligible(entity)
     user = {
-        "id": eid,
+        "id": str(entity.uuid),
         "name": entity.name,
         "email": entity.email,
         "active": entity.active,
@@ -995,7 +995,7 @@ def profile_json(entity: Entity, period=None, session_admin_mode=None) -> dict:
         ],
         "api_keys": [
             {
-                "id": k.id,
+                "id": str(k.uuid),
                 "name": k.name,
                 "key_hint": k.key_hint,
                 "created_at": _iso(k.created_at),

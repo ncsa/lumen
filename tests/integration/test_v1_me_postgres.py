@@ -117,8 +117,8 @@ def seeded(pg_app):
         ), {"n": n}).scalar() for n in ("me-used", "me-unused"))
         ents = {
             key: conn.execute(text(
-                "INSERT INTO entities (entity_type, name, email, initials, active) "
-                "VALUES ('user', :n, :e, 'ME', true) RETURNING id"
+                "INSERT INTO entities (uuid, entity_type, name, email, initials, active) "
+                "VALUES (gen_random_uuid(), 'user', :n, :e, 'ME', true) RETURNING id"
             ), {"n": f"me-{key}", "e": f"me-{key}@example.invalid"}).scalar()
             for key in ("main", "old", "empty", "recent")
         }

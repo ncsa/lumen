@@ -6,6 +6,7 @@ here a month answers ``usage_available: false``.
 import json
 import re
 import secrets
+import uuid
 from datetime import timedelta
 from decimal import Decimal
 from http import HTTPStatus
@@ -61,6 +62,12 @@ def key_id(app, test_user):
         return _add_key(test_user["id"], created_by_entity_id=test_user["id"])
 
 
+def _uuid(app, model, pk):
+    """The public uuid of row ``pk``, as /v1/me reports it."""
+    with app.app_context():
+        return str(db.session.get(model, pk).uuid)
+
+
 def _bearer(raw=KEY):
     return {"Authorization": f"Bearer {raw}"}
 
@@ -101,7 +108,7 @@ def seeded(app, test_user, test_model, test_model_endpoint, admin_user):
 # Auth
 # ---------------------------------------------------------------------------
 
-def test_session_and_key_return_the_same_body(seeded, auth_client, client):
+def test_session_and_key_return_the_same_body(app, seeded, auth_client, client):
     by_session = auth_client.get("/v1/me?period=all")
     assert by_session.status_code == HTTPStatus.OK
     with client.session_transaction() as sess:
@@ -109,13 +116,13 @@ def test_session_and_key_return_the_same_body(seeded, auth_client, client):
     by_key = client.get("/v1/me?period=all", headers=_bearer())
     assert by_key.status_code == HTTPStatus.OK
     assert by_session.get_json() == by_key.get_json()
-    assert by_key.get_json()["user"]["id"] == seeded["eid"]
+    assert by_key.get_json()["user"]["id"] == _uuid(app, Entity, seeded["eid"])
 
 
 def test_key_wins_over_session(app, key_id, test_user, admin_client):
     resp = admin_client.get("/v1/me", headers=_bearer())
     assert resp.status_code == HTTPStatus.OK
-    assert resp.get_json()["user"]["id"] == test_user["id"]
+    assert resp.get_json()["user"]["id"] == _uuid(app, Entity, test_user["id"])
 
 
 def test_bad_key_with_a_valid_session_is_refused(auth_client):
@@ -289,13 +296,24 @@ def test_coin_pool_is_null_without_a_pool(app, client, key_id, test_user):
     assert body["coin_pool"] is None
 
 
-def test_revoked_keys_are_listed(seeded, client):
+def test_revoked_keys_are_listed(app, seeded, client):
     keys = {k["id"]: k for k in client.get("/v1/me", headers=_bearer()).get_json()["api_keys"]}
-    assert set(keys) == {seeded["key"], seeded["revoked"]}
-    assert keys[seeded["revoked"]]["revoked_at"].endswith("Z")
-    assert keys[seeded["revoked"]]["revoked_by"] == "Admin User"
-    assert keys[seeded["key"]]["revoked_at"] is None
-    assert keys[seeded["key"]]["created_by"] == "Test User"
+    key, revoked = _uuid(app, APIKey, seeded["key"]), _uuid(app, APIKey, seeded["revoked"])
+    assert set(keys) == {key, revoked}
+    assert keys[revoked]["revoked_at"].endswith("Z")
+    assert keys[revoked]["revoked_by"] == "Admin User"
+    assert keys[key]["revoked_at"] is None
+    assert keys[key]["created_by"] == "Test User"
+
+
+def test_ids_are_public_uuids(app, seeded, client):
+    """Every id in the body is the row's uuid, never its integer primary key."""
+    body = client.get("/v1/me?period=all", headers=_bearer()).get_json()
+    assert body["user"]["id"] == _uuid(app, Entity, seeded["eid"])
+    assert [p["id"] for p in body["projects"]] == [_uuid(app, Entity, seeded["project"])]
+    for path, key, value in _all_values(body):
+        if key == "id":
+            assert isinstance(value, str) and str(uuid.UUID(value)) == value, (path, value)
 
 
 def test_no_key_hash_or_secret(seeded, client):
@@ -492,7 +510,7 @@ def test_template_values_match_get_profile_data(app, seeded, auth_client):
     assert [(k["id"], k["name"], k["key_hint"], k["lifetime"]["requests"], k["lifetime"]["total_tokens"],
              k["lifetime"]["cost"], k["last_used_at"], k["revoked_at"], k["expires_at"], k["revoked_by"])
             for k in body["api_keys"]] == \
-        [(k.id, k.name, k.key_hint, k.requests, k.input_tokens + k.output_tokens, float(k.cost),
+        [(str(k.uuid), k.name, k.key_hint, k.requests, k.input_tokens + k.output_tokens, float(k.cost),
           iso(k.last_used_at), iso(k.revoked_at), iso(k.expires_at), data["key_revokers"][k.id])
          for k in data["api_keys"]]
 
