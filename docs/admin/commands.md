@@ -336,19 +336,34 @@ or check-stats is already running; retry when it finishes.` and changes nothing.
 Hard-deletes a user for GDPR erasure. It cannot be undone; run it off-hours.
 
 ```bash
-flask erase-entity ENTITY_UUID [--yes]
+flask erase-entity USER [--yes]
 ```
 
 | Flag | Meaning |
 |---|---|
-| `--yes` | Erase without asking for confirmation. Only for scripts. |
+| `--yes` | Erase without asking for confirmation. Only for scripts, and only with the UUID. |
 
-`ENTITY_UUID` is the user's random ID (`entities.uuid`). To find it, open the user's profile from the
-admin Users page and click the avatar, which copies the ID (see
+`USER` is either the user's random ID (`entities.uuid`) or the user's email. To find the ID, open the
+user's profile from the admin Users page and click the avatar, which copies the ID (see
 [Copying the User ID](../guides/profile.md#copying-the-user-id)). A number such as the old
-`entities.id` is refused (`'42' is not a valid UUID.`, exit 2), and a UUID that matches nobody prints
-`No entity with UUID <uuid>: nothing to do.` and exits 0. Run it without `--yes` first: it prints
-which groups will be left without an owner, then names the user and asks before it changes anything:
+`entities.id` is refused (`'42' is neither a user UUID nor an email address.`, exit 2), and a UUID
+that matches nobody prints `No entity with UUID <uuid>: nothing to do.` and exits 0.
+
+An email is matched ignoring case and surrounding spaces, against users only. Erasing by email always
+asks for confirmation: `--yes` with an email is refused (exit 2) before anything is looked up; pass
+the UUID instead. An email that matches no user prints
+`Error: no user with that email; nothing was erased.` and exits 1. Two users whose emails differ
+only in case both match; that prints their UUIDs and exits 1 with nothing changed, and you erase the
+one you mean by UUID:
+
+```text
+Error: 2 users match that email ignoring case; erase by UUID instead:
+  7f3c2a9e-0b1d-4c55-9a8e-2d6f1e4b7c30
+  1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed
+```
+
+Run it without `--yes` first: it prints which groups will be left without an owner, then names the
+user and asks before it changes anything:
 
 ```text
 Erasing user 7f3c2a9e-0b1d-4c55-9a8e-2d6f1e4b7c30
@@ -373,7 +388,9 @@ retention policy.
 
 On PostgreSQL `request_logs` moves one chunk per transaction, and each UPDATE can decompress a whole
 chunk, hence off-hours. It is safe to re-run: an interrupted run leaves every row owned by the user
-or the ghost, and re-running with the same UUID finishes it. The one exception is a failure in the
+or the ghost, and re-running with the same UUID finishes it. Re-run with the UUID printed by
+`Erasing user <uuid>`, even if you started with the email: once the user is deleted the
+email matches nobody (exit 1), while the UUID reports `nothing to do` (exit 0). The one exception is a failure in the
 last step, the aggregate refresh, which runs after the user is deleted: the UUID no longer resolves,
 so the error prints the [`backfill-aggregate`](#backfill-aggregate) commands, in order, that finish
 the refresh:

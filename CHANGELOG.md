@@ -4,6 +4,7 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+- `flask erase-entity` also takes the user's email (matched ignoring case, interactive only); an email that matches no user or several users fails without erasing anything. (#587)
 - Users, projects, groups, API keys, conversations and OAuth requests are addressed by random UUIDs instead of sequential database ids; models by name; click an avatar to copy its ID (#560)
 - **Upgrade:** everyone is logged out of the web UI once; `flask erase-entity` takes a user UUID and `flask reassign-model` takes model names (#560)
 - The usage page shows request and token totals in human-readable form, like the profile page. (#579)
