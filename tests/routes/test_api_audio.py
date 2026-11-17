@@ -220,6 +220,58 @@ def test_transcription_token_billing(
         assert float(log.cost) == expected_cost
 
 
+def test_transcription_token_billing_with_cache(
+    app, client, test_user, test_model, test_model_endpoint, api_key,
+):
+    """Token usage with a cache breakdown bills cached reads and writes at their own rates.
+
+    Rates and usage match ``test_api_chat_bills_cache_write``.
+    """
+    from sqlalchemy import select
+
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    from lumen.models.request_log import RequestLog
+    from lumen.services import model_cache
+
+    token, _ = api_key
+    with app.app_context():
+        model = db.session.get(ModelConfig, test_model["id"])
+        model.input_cost_per_million = 2
+        model.output_cost_per_million = 4
+        model.cached_input_cost_per_million = 0.5
+        model.cache_write_cost_per_million = 0.25
+        db.session.commit()
+        model_cache.refresh(app)
+        _grant_finite_pool(app, test_user["id"], coins=100)
+
+    payload = {
+        "text": "hi",
+        "usage": {
+            "type": "tokens",
+            "prompt_tokens": 1_000_000,
+            "completion_tokens": 100_000,
+            "prompt_tokens_details": {"cached_tokens": 250_000, "cache_creation_input_tokens": 125_000},
+        },
+    }
+    with patch("lumen.blueprints.api.routes.openai.OpenAI", _mock_openai(payload)):
+        resp = client.post(
+            "/v1/audio/transcriptions",
+            headers={"Authorization": f"Bearer {token}"},
+            data=_audio_data(),
+            content_type="multipart/form-data",
+        )
+    assert resp.status_code == HTTPStatus.OK
+
+    with app.app_context():
+        log = db.session.execute(select(RequestLog)).scalar_one()
+        # 625k ordinary @ $2/M + 250k read @ $0.5/M + 125k write @ $0.25/M + 100k output @ $4/M
+        assert float(log.cost) == pytest.approx(1.80625)
+        assert log.input_tokens == 1_000_000
+        assert log.cached_input_tokens == 250_000
+        assert log.cache_write_tokens == 125_000
+
+
 def test_translation_duration_billing(
     app, client, test_user, test_model, test_model_endpoint, api_key,
 ):

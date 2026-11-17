@@ -1002,6 +1002,53 @@ def test_abort_with_usage_already_in_hand_bills_exactly(app, test_user, test_mod
         assert float(balance.coins_left) == pytest.approx(10 - 0.005)
 
 
+def test_abort_with_cache_usage_in_hand_bills_the_cached_split(app, test_user, test_model, test_model_endpoint):
+    """An abort after the usage chunk bills cached reads and writes at their own rates.
+
+    The rates and counts must reach ``estimate_abort_usage`` and
+    ``record_stream_abort``; otherwise the cached part is billed at the full
+    input rate and the request log loses the split. Rates and usage match
+    ``test_api_chat_bills_cache_write``.
+    """
+    import threading
+    entity_id = test_user["id"]
+    disconnected = threading.Event()
+    # _Usage has no cache fields, so the cache breakdown rides on a plain namespace.
+    usage = types.SimpleNamespace(
+        prompt_tokens=1_000_000, completion_tokens=100_000,
+        prompt_tokens_details=types.SimpleNamespace(cached_tokens=250_000,
+                                                    cache_creation_input_tokens=125_000))
+
+    def chunks():
+        yield _Chunk(content="hello")
+        disconnected.set()  # client goes away just as the usage chunk arrives
+        yield _Chunk(usage=usage)
+
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        from lumen.models.request_log import RequestLog
+        from lumen.services.llm import send_message_stream
+        model = db.session.get(ModelConfig, test_model["id"])
+        model.input_cost_per_million = 2
+        model.output_cost_per_million = 4
+        model.cached_input_cost_per_million = 0.5
+        model.cache_write_cost_per_million = 0.25
+        db.session.commit()
+        with patch("lumen.services.llm.openai.OpenAI", _mock_openai(chunks())), \
+             patch("lumen.services.llm.client_disconnect_event", return_value=disconnected):
+            gen = send_message_stream([{"role": "user", "content": "hi"}], "test-model", entity_id=entity_id)
+            assert next(gen) == ("hello", None, None)
+            assert list(gen) == []  # the stream stops itself, no final result dict
+        log = db.session.execute(select(RequestLog).filter_by(entity_id=entity_id)).scalar_one()
+        assert log.aborted is True
+        # 625k ordinary @ $2/M + 250k read @ $0.5/M + 125k write @ $0.25/M + 100k output @ $4/M
+        assert float(log.cost) == pytest.approx(1.80625)
+        assert log.input_tokens == 1_000_000
+        assert log.cached_input_tokens == 250_000
+        assert log.cache_write_tokens == 125_000
+
+
 # ---------------------------------------------------------------------------
 # estimate_abort_usage — what an aborted stream is billed for
 # ---------------------------------------------------------------------------
