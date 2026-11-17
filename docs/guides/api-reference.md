@@ -80,6 +80,15 @@ curl https://lumen.example.com/v1/models \
 Returns a list of model IDs you can use in chat completion requests.
 Aliases of renamed models are listed as additional IDs whose `parent` field names the canonical model; standalone models have `parent: null`.
 
+Each model carries its prices in coins per million tokens:
+
+| Field | Meaning |
+|-------|---------|
+| `input_cost_per_million` | Price of input tokens. |
+| `cached_input_cost_per_million` | Price of input tokens read from the prompt cache. `null` means they are billed at the input rate. |
+| `cache_write_cost_per_million` | Price of input tokens written to the prompt cache. `null` means they are billed at the input rate. |
+| `output_cost_per_million` | Price of output tokens. |
+
 Each model may carry consent-state fields for the calling account:
 
 | Field | Meaning |
@@ -107,8 +116,9 @@ With the [monitoring token](../admin/config-application.md#apimonitoring), `?tok
 |-------|---------|
 | `input_tokens` | Input tokens of the model's requests, per window. |
 | `output_tokens` | Output tokens of the model's requests, per window. |
+| `cache_metrics` | `requests` is the model's request count over the last day; `reads` and `writes` say whether the backend reported a cache-read or cache-write count on any of those requests. With no traffic both are `false`, so check `requests` first. |
 
-Each field holds `last_minute` (the last complete minute), `last_hour`, `last_day` and `last_month` (30 days). Alias rows repeat their model's counts. Like the `requests` counts, they may be up to about a minute old. Any other API key, or the monitoring token without the parameter, gets the normal response: the parameter is ignored.
+`input_tokens` and `output_tokens` each hold `last_minute` (the last complete minute), `last_hour`, `last_day` and `last_month` (30 days). Alias rows repeat their model's counts. Like the `requests` counts, they may be up to about a minute old. Any other API key, or the monitoring token without the parameter, gets the normal response: the parameter is ignored.
 
 ```bash
 curl "https://lumen.example.com/v1/models?tokens=true" \
