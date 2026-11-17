@@ -4,6 +4,7 @@ Route-level behavior (auth, billing, errors) lives in
 tests/routes/test_api_anthropic.py; this file covers the pure translation.
 """
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -382,7 +383,7 @@ def test_strict_tools_are_refused():
     tool = {"name": "bash", "input_schema": {"type": "object"}}
     with pytest.raises(AnthropicError, match="strict"):
         translate_request(_req(tools=[{**tool, "strict": True}]))
-    with pytest.raises(AnthropicError, match="strict"):
+    with pytest.raises(AnthropicError, match=re.escape("tool strict must be a boolean")):
         translate_request(_req(tools=[{**tool, "strict": "yes"}]))
     _, _, _, kwargs, _ = translate_request(_req(tools=[{**tool, "strict": False}]))
     assert "strict" not in kwargs["tools"][0]["function"]
@@ -397,8 +398,10 @@ def test_a_commonly_refused_beta_explains_what_happens_next():
 
 
 def test_server_side_tools_are_refused():
-    with pytest.raises(AnthropicError):
-        translate_request(_req(tools=[{"type": "web_search_20250305", "name": "web_search"}]))
+    """The tool is otherwise well formed, so only the type check can refuse it."""
+    tool = {"type": "web_search_20250305", "name": "web_search", "input_schema": {"type": "object"}}
+    with pytest.raises(AnthropicError, match="Unsupported tool type"):
+        translate_request(_req(tools=[tool]))
 
 
 @pytest.mark.parametrize("given,expected", [
@@ -502,6 +505,73 @@ def test_client_cannot_inject_extra_body():
         extra_body={"cache_salt": "someone-elses"}, vllm_xargs={"x": 1}, stream_options={}))
     assert "extra_body" not in kwargs
     assert extra == {}
+
+
+_MISSING = object()
+_SCHEMA = {"type": "object"}
+
+
+def _user(*blocks):
+    return [{"role": "user", "content": list(blocks)}]
+
+
+def _image(source):
+    return _user({"type": "image", "source": source})
+
+
+def _tool_result(**fields):
+    return _user({"type": "tool_result", **fields})
+
+
+@pytest.mark.parametrize("overrides,message", [
+    pytest.param({"messages": _image("x")},
+                 "image block requires a source object", id="image-source-not-object"),
+    pytest.param({"messages": _image({"type": "base64", "media_type": "image/png"})},
+                 "base64 image source requires media_type and data", id="base64-without-data"),
+    pytest.param({"messages": _image({"type": "url"})},
+                 "url image source requires a url", id="url-source-without-url"),
+    pytest.param({"messages": _tool_result(tool_use_id="t", content=42)},
+                 "tool_result content must be a string or a list of content blocks",
+                 id="tool-result-content-not-string"),
+    pytest.param({"messages": _tool_result(tool_use_id="t", content="ok", is_error="yes")},
+                 "tool_result is_error must be a boolean", id="tool-result-is-error-not-bool"),
+    pytest.param({"messages": [{"role": "user", "content": ["x"]}]},
+                 "content blocks must be objects", id="user-block-not-object"),
+    pytest.param({"messages": _tool_result(content="ok")},
+                 "tool_result block requires tool_use_id", id="tool-result-without-id"),
+    pytest.param({"messages": [{"role": "user", "content": "hi"},
+                               {"role": "assistant", "content": ["x"]},
+                               {"role": "user", "content": "again"}]},
+                 "content blocks must be objects", id="assistant-block-not-object"),
+    pytest.param({"tools": [42]}, "tools must be objects", id="tool-not-object"),
+    pytest.param({"tools": [{"type": "web_search_20250305", "name": "web_search",
+                             "input_schema": _SCHEMA}]},
+                 "Unsupported tool type: 'web_search_20250305'", id="server-side-tool"),
+    pytest.param({"tools": [{"input_schema": _SCHEMA}]},
+                 "each tool requires a name", id="tool-without-name"),
+    pytest.param({"tools": [{"name": "bash"}]},
+                 "tool input_schema must be an object", id="tool-without-schema"),
+    pytest.param({"tools": [{"name": "bash", "input_schema": _SCHEMA, "strict": "yes"}]},
+                 "tool strict must be a boolean", id="tool-strict-not-bool"),
+    pytest.param({"tool_choice": "auto"}, "tool_choice must be an object", id="tool-choice-not-object"),
+    pytest.param({"tool_choice": {"type": "tool"}},
+                 "tool_choice of type 'tool' requires a name", id="tool-choice-without-name"),
+    pytest.param({"messages": ["x"]}, "each message must be an object", id="message-not-object"),
+    pytest.param({"messages": [{"role": "user", "content": 42}]},
+                 "message content must be a string or a list of blocks", id="message-content-not-string"),
+    pytest.param({"messages": []},
+                 "messages is required and must be a non-empty list", id="messages-empty"),
+    pytest.param({"messages": "hi"},
+                 "messages is required and must be a non-empty list", id="messages-not-list"),
+    pytest.param({"messages": _MISSING},
+                 "messages is required and must be a non-empty list", id="messages-missing"),
+])
+def test_malformed_request_is_refused_with_its_own_message(overrides, message):
+    """Each input reaches only its own guard. A bare pytest.raises would also
+    pass if a later guard refused it, so removing this one would go unnoticed."""
+    body = {key: value for key, value in _req(**overrides).items() if value is not _MISSING}
+    with pytest.raises(AnthropicError, match=re.escape(message)):
+        translate_request(body)
 
 
 def test_non_object_body_is_refused():

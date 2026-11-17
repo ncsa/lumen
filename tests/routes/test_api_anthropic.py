@@ -292,12 +292,17 @@ def test_unsupported_feature_fails_explicitly(client, api_key, fresh_rate_limit)
     assert "mcp_servers" in resp.get_json()["error"]["message"]
 
 
-def test_wrong_content_type(client, api_key, fresh_rate_limit):
+@pytest.mark.parametrize("path", ["/v1/messages", "/v1/messages/count_tokens"])
+def test_wrong_content_type(client, api_key, fresh_rate_limit, path):
+    """A valid JSON body under the wrong content type: without the mimetype
+    check the body would be dropped as "Invalid request body" instead."""
     token, _ = api_key
-    resp = client.post("/v1/messages", headers={"x-api-key": token, "content-type": "text/plain"},
-                       data="model=test-model")
+    resp = client.post(path, headers={"x-api-key": token, "content-type": "text/plain"},
+                       data=json.dumps(_body()))
     assert resp.status_code == HTTPStatus.BAD_REQUEST
-    assert resp.get_json()["error"]["type"] == "invalid_request_error"
+    error = resp.get_json()["error"]
+    assert error["type"] == "invalid_request_error"
+    assert error["message"] == "content-type must be application/json"
 
 
 @pytest.mark.parametrize("raw", [
@@ -395,14 +400,15 @@ def test_streaming_preflight_rejection_is_a_plain_error(app, client, test_user, 
     assert resp.get_json()["error"]["type"] == "overloaded_error"
 
 
-def test_rate_limit_uses_the_anthropic_envelope(app, client, api):
+@pytest.mark.parametrize("path", ["/v1/messages", "/v1/messages/count_tokens"])
+def test_rate_limit_uses_the_anthropic_envelope(app, client, api, path):
     """The limiter answers before the view runs, so the envelope comes from the
     app-level handler, which must know this path speaks Anthropic."""
     saved = app.config.get("YAML_DATA", {})
     app.config["YAML_DATA"] = {**saved, "rate_limiting": {"limit": "1 per minute"}}
     try:
-        api.post()
-        resp = api.post()
+        assert api.post(path=path).status_code == HTTPStatus.OK
+        resp = api.post(path=path)
         assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS
         body = resp.get_json()
         assert body["type"] == "error"
@@ -621,13 +627,42 @@ def test_count_tokens_is_not_billed(app, api):
     assert _request_logs(app) == []
 
 
-def test_count_tokens_checks_model_access(app, client, test_model, api_key, fresh_rate_limit):
-    token, _ = api_key
+def _unknown_model(app, test_user, test_model):
+    _allow_model(app, test_user, test_model)
+    return "no-such-model"
+
+
+def _blocked_model(app, test_user, test_model):
+    _allow_model(app, test_user, test_model)
     _give_model_to_someone_else(app, test_model)
-    resp = _post(client, token, {"model": test_model["model_name"],
-                                 "messages": [{"role": "user", "content": "hi"}]},
+    return test_model["model_name"]
+
+
+def _no_pool(app, test_user, test_model):
+    with app.app_context():
+        db.session.add(EntityLimit(entity_id=test_user["id"], max_coins=0,
+                                   refresh_coins=0, starting_coins=0))
+        db.session.commit()
+    return test_model["model_name"]
+
+
+@pytest.mark.parametrize("deny", [
+    pytest.param(_unknown_model, id="unknown-model"),
+    pytest.param(_blocked_model, id="blocked"),
+    pytest.param(_no_pool, id="no-pool"),
+])
+def test_count_tokens_checks_model_access(app, client, test_user, test_model, api_key,
+                                          fresh_rate_limit, deny):
+    """Each case makes exactly one of the three denial reasons true, so each
+    reason is tested on its own."""
+    token, _ = api_key
+    model = deny(app, test_user, test_model)
+    resp = _post(client, token, {"model": model, "messages": [{"role": "user", "content": "hi"}]},
                  path="/v1/messages/count_tokens")
     assert resp.status_code == HTTPStatus.NOT_FOUND
+    error = resp.get_json()["error"]
+    assert error["type"] == "not_found_error"
+    assert model in error["message"]
 
 
 def test_count_tokens_counts_a_model_awaiting_acknowledgement(app, client, test_user, test_model,
@@ -707,31 +742,33 @@ def test_official_sdk_surfaces_errors(live_lumen, api):
                                messages=[{"role": "user", "content": "hi"}])
 
 
-@pytest.mark.parametrize('overrides', [
-    {'system': [{'type': 'text', 'text': 42}]},
-    {'messages': [{'role': 'assistant', 'content': [{'type': 'text', 'text': {}}]}]},
-    {'messages': [{'role': 'user', 'content': [{'type': 'text', 'text': False}]}]},
-    {'messages': [{'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 't',
-                                             'content': [{'type': 'text', 'text': 42}]}]}]},
-    {'tools': 42},
-    {'temperature': float('nan')},
-    {'top_p': True},
-    {'top_k': -1},
-    {'stop_sequences': 'END'},
-    {'tool_choice': {'type': 'auto', 'disable_parallel_tool_use': 'false'}},
-    {'output_config': False},
-    {'tool_choice': {'type': []}},
-    {'messages': [{'role': 'user', 'content': [{'type': []}]}]},
-    {'output_config': {'format': {'type': 'json_schema', 'schema': {'type': 'object'}}}},
-    {'thinking': {'type': 'adaptive'}},
-    {'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
-    {'context_management': {'edits': [{'type': 'clear_tool_uses_20250919'}]}},
-    {'service_tier': 'priority'},
+@pytest.mark.parametrize('overrides,message', [
+    ({'system': [{'type': 'text', 'text': 42}]}, 'text blocks require a string text field'),
+    ({'messages': [{'role': 'assistant', 'content': [{'type': 'text', 'text': {}}]}]}, 'text blocks require a string text field'),
+    ({'messages': [{'role': 'user', 'content': [{'type': 'text', 'text': False}]}]}, 'text blocks require a string text field'),
+    ({'messages': [{'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 't',
+                                              'content': [{'type': 'text', 'text': 42}]}]}]}, 'text blocks require a string text field'),
+    ({'tools': 42}, 'tools must be a list'),
+    ({'temperature': float('nan')}, 'temperature must be a number between 0 and 1'),
+    ({'top_p': True}, 'top_p must be a number between 0 and 1'),
+    ({'top_k': -1}, 'top_k must be a non-negative integer'),
+    ({'stop_sequences': 'END'}, 'stop_sequences must be a list of strings'),
+    ({'tool_choice': {'type': 'auto', 'disable_parallel_tool_use': 'false'}}, 'disable_parallel_tool_use must be a boolean'),
+    ({'output_config': False}, 'Only output_config.effort is supported'),
+    ({'tool_choice': {'type': []}}, 'tool_choice type must be a string'),
+    ({'messages': [{'role': 'user', 'content': [{'type': []}]}]}, 'Unsupported content block type'),
+    ({'output_config': {'format': {'type': 'json_schema', 'schema': {'type': 'object'}}}}, 'Only output_config.effort is supported'),
+    ({'thinking': {'type': 'adaptive'}}, 'thinking controls are unsupported'),
+    ({'thinking': {'type': 'enabled', 'budget_tokens': 1024}}, 'thinking controls are unsupported'),
+    ({'context_management': {'edits': [{'type': 'clear_tool_uses_20250919'}]}}, 'context_management edits are unsupported'),
+    ({'service_tier': 'priority'}, 'service_tier selection is unsupported'),
 ])
-def test_invalid_or_unsupported_request_is_400(api, overrides):
+def test_invalid_or_unsupported_request_is_400(api, overrides, message):
     response = api.post(_body(**overrides))
     assert response.status_code == HTTPStatus.BAD_REQUEST
-    assert response.get_json()['error']['type'] == 'invalid_request_error'
+    error = response.get_json()['error']
+    assert error['type'] == 'invalid_request_error'
+    assert message in error['message']
 
 
 def test_non_ascii_key_with_monitor_enabled(app, client, api, monkeypatch):
