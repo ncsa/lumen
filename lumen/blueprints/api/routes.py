@@ -47,10 +47,11 @@ logger = logging.getLogger(__name__)
 api_bp = Blueprint("api", __name__, url_prefix="/v1")
 
 # CORS for every /v1 response, so browser apps on any origin can call the API.
-# A wildcard origin is safe because the only credential is the Bearer token,
-# which a browser never attaches on its own; no cookies, so never
-# Allow-Credentials. Beyond Authorization/Content-Type, the request headers are
-# the ones the official OpenAI JS SDK sends.
+# A wildcard origin is safe because the only credential is a header the page
+# attaches itself (the Bearer token, or x-api-key on /v1/messages), which a
+# browser never sends on its own; no cookies, so never Allow-Credentials.
+# Beyond Authorization/Content-Type, the request headers are the ones the
+# official OpenAI JS SDK and Anthropic TypeScript SDK send.
 _CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -60,6 +61,8 @@ _CORS_HEADERS = {
         "X-Stainless-Lang", "X-Stainless-Package-Version", "X-Stainless-OS",
         "X-Stainless-Arch", "X-Stainless-Runtime", "X-Stainless-Runtime-Version",
         "X-Stainless-Retry-Count", "X-Stainless-Timeout", "X-Stainless-Helper-Method",
+        "x-api-key", "anthropic-version", "anthropic-beta",
+        "anthropic-dangerous-direct-browser-access",
     ]),
     "Access-Control-Expose-Headers": "Retry-After",
     "Access-Control-Max-Age": "600",
