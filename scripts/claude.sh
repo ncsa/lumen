@@ -10,7 +10,16 @@
 #   LUMEN_BASE_URL  Base URL of the Lumen instance
 #   LUMEN_API_KEY   Lumen API key
 #
-# Usage: scripts/claude.sh [claude arguments...]
+# Required:
+#   ANTHROPIC_MODEL  A model Lumen serves (see /v1/models)
+# Optional:
+#   ANTHROPIC_DEFAULT_HAIKU_MODEL  Model for Claude Code's background tasks;
+#                                  defaults to ANTHROPIC_MODEL
+#
+# Usage: ANTHROPIC_MODEL=<model> scripts/claude.sh [claude arguments...]
+#
+# This is a starting point to copy and adapt. docs/guides/anthropic.md explains
+# the CLAUDE_CODE_* and MAX_THINKING_TOKENS switches set below.
 
 set -eu
 
@@ -30,8 +39,9 @@ export CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1
 export ANTHROPIC_BASE_URL="${LUMEN_BASE_URL}"
 export ANTHROPIC_API_KEY="${LUMEN_API_KEY}"
 
-# Model served by Lumen.
-export ANTHROPIC_MODEL=glm-5.3
+# Model served by Lumen; the Haiku model (background tasks) defaults to it.
+export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:?not set, set it to a model Lumen serves (see /v1/models)}"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-${ANTHROPIC_MODEL}}"
 
 # Prefer the native installer location, then the system-wide one, then PATH.
 for claude in "${HOME}/.local/bin/claude" /usr/local/bin/claude; do
