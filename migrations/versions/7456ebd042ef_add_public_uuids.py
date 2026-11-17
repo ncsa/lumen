@@ -10,11 +10,16 @@ which the app uses in URLs, JSON payloads, the CLI and the session instead of
 the integer id. The uuid is for external use only: the integer id stays the
 primary key and every foreign key still points at it.
 
-Each column is added nullable, every existing row gets its own uuid4()
-generated in Python (so the same code runs on SQLite and PostgreSQL, which
-has no built-in random UUID before version 13 without an extension), and the
-column is then made NOT NULL with a unique index ix_<table>_uuid. New rows get
-their uuid from the model's Python-side default.
+On PostgreSQL each column is added in one statement as NOT NULL with the
+server default gen_random_uuid(), which gives every existing row its own uuid,
+followed by a unique index ix_<table>_uuid. The default stays on: 2.3.1 pods
+keep serving during a rolling ``helm upgrade`` while the migration runs, and
+their INSERTs leave out the uuid column, so without it they would fail with a
+NOT NULL violation until they are replaced. The app still sets uuid4() itself.
+
+Other dialects (SQLite in the unit tests) add the column nullable, give every
+existing row its own uuid4() generated in Python, then make it NOT NULL with
+the same unique index.
 """
 
 import uuid
@@ -53,14 +58,19 @@ def _backfill(conn, table_name):
 def upgrade():
     conn = op.get_bind()
     for table_name in TABLES:
+        if _is_postgresql():
+            op.add_column(table_name, sa.Column(
+                "uuid", sa.Uuid(), nullable=False, server_default=sa.text("gen_random_uuid()"),
+            ))
+            op.create_index(f"ix_{table_name}_uuid", table_name, ["uuid"], unique=True)
+            op.execute(f"COMMENT ON COLUMN {table_name}.uuid IS $comment${COMMENT}$comment$")
+            continue
         with op.batch_alter_table(table_name) as batch_op:
             batch_op.add_column(sa.Column("uuid", sa.Uuid(), nullable=True))
         _backfill(conn, table_name)
         with op.batch_alter_table(table_name) as batch_op:
             batch_op.alter_column("uuid", existing_type=sa.Uuid(), nullable=False)
             batch_op.create_index(f"ix_{table_name}_uuid", ["uuid"], unique=True)
-        if _is_postgresql():
-            op.execute(f"COMMENT ON COLUMN {table_name}.uuid IS $comment${COMMENT}$comment$")
 
 
 def downgrade():
