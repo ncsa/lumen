@@ -15,8 +15,22 @@ from lumen.services.stats_fold import DEFAULT_FOLD_INTERVAL, DEFAULT_FOLD_LAG
 
 _ANNOUNCEMENT_ALLOWED_TAGS = {"a", "b", "br", "em", "i", "li", "ol", "p", "strong", "ul"}
 _ANNOUNCEMENT_ALLOWED_ATTRS = {"a": ["href", "title", "target"]}
+DEFAULT_GITHUB_URL = "https://github.com/ncsa/lumen"
 
 logger = logging.getLogger(__name__)
+
+
+def _web_url(key, value, fallback):
+    """Return value when it is an http(s) URL; otherwise warn (if set) and return fallback.
+
+    These URLs are rendered as link targets, so a javascript: or data: value would run in the browser.
+    """
+    if not value:
+        return fallback
+    if isinstance(value, str) and value.lower().startswith(("http://", "https://")):
+        return value
+    logger.warning("app.%s must start with http:// or https://; ignoring %r", key, str(value)[:200])
+    return fallback
 
 # Lumen 2.0 reads config version 3 only. Older configs must be migrated by hand:
 # the users:, projects:, clients:, and groups: sections were removed (groups and
@@ -278,8 +292,8 @@ def apply_hot_config(app, yaml_data: dict):
             "Never set app.dev_user in production. (Active only while app.debug is true.)",
             app.config["DEV_USER"],
         )
-    app.config["GITHUB_URL"] = app_cfg.get("github_url", "https://github.com/ncsa/lumen")
-    app.config["LLMHUB_URL"] = app_cfg.get("llmhub_url") or ""
+    app.config["GITHUB_URL"] = _web_url("github_url", app_cfg.get("github_url"), DEFAULT_GITHUB_URL)
+    app.config["LLMHUB_URL"] = _web_url("llmhub_url", app_cfg.get("llmhub_url"), "")
 
     logs_cfg = app_cfg.get("logs", {})
     werkzeug_level = logging.WARNING if not logs_cfg.get("access", True) else logging.INFO

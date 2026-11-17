@@ -289,6 +289,33 @@ def test_apply_hot_config_llmhub_url(app, restore_config):
         assert app.config["LLMHUB_URL"] == ""
 
 
+@pytest.mark.parametrize("bad", ["javascript:alert(1)", "data:text/html,x", " https://x.edu", 42])
+def test_apply_hot_config_rejects_non_http_urls(app, caplog, restore_config, bad):
+    """A link URL that is not http(s) is dropped with a warning: LLMHub hidden, GitHub back to default."""
+    from lumen.services.config_watcher import DEFAULT_GITHUB_URL, apply_hot_config
+    with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
+        with app.app_context():
+            apply_hot_config(app, {"app": {"llmhub_url": bad, "github_url": bad}})
+    assert app.config["LLMHUB_URL"] == ""
+    assert app.config["GITHUB_URL"] == DEFAULT_GITHUB_URL
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("app.llmhub_url must start with http:// or https://" in m for m in messages)
+    assert any("app.github_url must start with http:// or https://" in m for m in messages)
+
+
+def test_apply_hot_config_keeps_http_urls(app, caplog, restore_config):
+    from lumen.services.config_watcher import DEFAULT_GITHUB_URL, apply_hot_config
+    with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
+        with app.app_context():
+            apply_hot_config(app, {"app": {"llmhub_url": "http://llmhub.example.edu",
+                                           "github_url": "HTTPS://github.com/example/fork"}})
+            assert app.config["LLMHUB_URL"] == "http://llmhub.example.edu"
+            assert app.config["GITHUB_URL"] == "HTTPS://github.com/example/fork"
+            apply_hot_config(app, {"app": {}})
+            assert app.config["GITHUB_URL"] == DEFAULT_GITHUB_URL
+    assert not any("must start with http" in r.getMessage() for r in caplog.records)
+
+
 # ---------------------------------------------------------------------------
 # apply_hot_config: global defaults and config-editor flag
 # ---------------------------------------------------------------------------
