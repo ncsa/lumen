@@ -520,7 +520,7 @@ The browser-tab icon is driven by an optional `favicon:` block with the keys bel
 
 Each key is optional. A value starting with `http://`, `https://` or `//` is used as-is (the Illinois theme links to `cdn.brand.illinois.edu`); any other value is a path relative to the theme's `static/` directory and is served through `/theme-static/`. A theme without a `favicon:` block renders no favicon tags. Unlike `favicon:`, `logo:` accepts only a theme-relative path.
 
-The `/favicon.ico` route serves the theme's `favicon.ico` file, redirects when that value is an absolute URL, and returns 404 when the key is unset; it needs no login and is exempt from rate limiting.
+The `/favicon.ico` route serves the file named by the theme's `favicon.ico` key from its `static/` directory, redirects when that value is an absolute URL, and returns 404 when the key is unset; it needs no login and is exempt from rate limiting.
 
 > **Accessibility note:** Do not use `#e84a27` (UIUC orange) as a background with white text — contrast ratio is only 3.0:1 (WCAG minimum is 4.5:1). Use `#b5300c` or darker.
 

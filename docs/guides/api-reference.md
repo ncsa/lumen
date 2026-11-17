@@ -429,7 +429,7 @@ OpenAI SDK honours it. A coin budget that never refills automatically sends no
 
 ## CORS (browser apps)
 
-Every `/v1` endpoint except `/v1/messages` (see [Anthropic Messages](anthropic.md)) allows cross-origin requests, so a web page on any origin can call the API directly with `fetch` or the OpenAI JS SDK (`dangerouslyAllowBrowser: true`). Each `/v1` response, including errors and streaming responses, carries:
+Every `/v1` endpoint allows cross-origin requests, so a web page on any origin can call the API directly with `fetch` or the OpenAI JS SDK (`dangerouslyAllowBrowser: true`). Each `/v1` response, including errors and streaming responses, carries:
 
 ```
 Access-Control-Allow-Origin: *
