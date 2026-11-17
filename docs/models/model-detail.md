@@ -78,4 +78,4 @@ Technical details that help you decide if this model fits your task:
 
 #### Pricing
 
-Shows the coin cost per million input tokens and per million output tokens. See the [Introduction](../introduction.md#tokens-and-coins) for how coin costs are calculated.
+Shows the coin cost per million input tokens and per million output tokens, plus "Cached input" and "Cache write" when the model sets them. Cached input and cache writes are charged at their own rates when the model sets them, otherwise at the input rate. See the [Introduction](../introduction.md#tokens-and-coins) for how coin costs are calculated.
