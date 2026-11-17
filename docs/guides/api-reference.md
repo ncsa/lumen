@@ -400,7 +400,7 @@ If you send too many requests too quickly, the API returns:
 HTTP 429 Too Many Requests
 ```
 
-Wait a moment and retry. The Usage page shows your recent request volume so you can gauge how close you are to the limit. Listing models (`GET /v1/models` and `GET /v1/models/{id}`) does not count against the limit, so a client that lists models before every completion is not penalised for it.
+Wait a moment and retry. The Usage page shows your recent request volume so you can gauge how close you are to the limit. The limit is per API key, and chat, completions, messages and audio share one budget: two chat requests and two Anthropic `/v1/messages` requests count as four against it. `POST /v1/messages/count_tokens` and `POST /v1/models/{id}/acknowledge` each have their own budget of the same size. Listing models (`GET /v1/models` and `GET /v1/models/{id}`) and `GET /v1/usage` are not counted, so a client that lists models before every completion is not penalised for it.
 
 A `429` is also returned when your coin budget is exhausted, which needs the opposite
 reaction — retrying shortly will not help until the budget refills. The two are told

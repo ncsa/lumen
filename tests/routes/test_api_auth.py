@@ -2074,6 +2074,13 @@ def fresh_rate_limit(app):
         limiter.reset()
 
 
+@pytest.fixture(autouse=True)
+def _own_rate_limit_budget(fresh_rate_limit):
+    """Every test here starts with a full budget: chat, completions, messages and
+    audio share one per-key bucket (#601), so this module's calls would otherwise
+    add up with the neighbouring modules' into 429s."""
+
+
 def _capturing_openai(monkeypatch, routes, create):
     """Patch openai.OpenAI and return the list of kwargs each construction got."""
     calls = []

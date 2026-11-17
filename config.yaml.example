@@ -131,7 +131,7 @@ chat:
 
 rate_limiting:
   # storage_url: redis://localhost:6379/0  # omit for in-memory (single-process); requires restart to change
-  limit: "30 per minute"  # applies to every endpoint, keyed by authenticated user identity
+  limit: "30 per minute"  # per authenticated user identity; on /v1, chat, completions, messages and audio share one per-key budget, count_tokens and acknowledge each have their own, model listing and usage are not counted
 
 # Groups — memberships, coin pools, model grants, and auto-join rules — are
 # managed in the app (each group's page), not here. There is no group_rules

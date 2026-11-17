@@ -68,6 +68,7 @@ Lumen's server log records every request it rejects with a 400 as `anthropic req
 - Content blocks: `text`, `image`, `tool_use`, `tool_result`. A reasoning model's thinking comes back as a `thinking` block.
 - If the model's tool arguments are not a JSON object (invalid JSON, or a value such as `[]` or `42`), the `tool_use` block's `input` is `{"__raw_arguments": "<the text the model produced>"}`.
 - `POST /v1/messages/count_tokens` returns an estimate that assumes about four characters per token, and is never billed.
+- `/v1/messages` counts against the same per-key rate limit as chat, completions and audio; `count_tokens` has its own budget, so frequent token counts do not use up the generation budget.
 - Browsers cannot call `/v1/messages` directly: the CORS preflight does not allow the Anthropic SDK's headers. Call it from a server or a local client.
 
 ## Refused
