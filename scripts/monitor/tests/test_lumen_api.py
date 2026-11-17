@@ -100,6 +100,12 @@ def test_cache_metrics_only_count_a_literal_true_as_reported():
     assert model["cache_metrics"] == {"requests": 3, "reads": False, "writes": False}
 
 
+@pytest.mark.parametrize("requests", [-5, True, 0], ids=["negative", "bool", "zero"])
+def test_cache_metrics_requests_that_are_not_a_count_read_as_zero(requests):
+    [model] = lumen_api.parse_models({"data": [model_row("qwen", cache_metrics={"requests": requests})]})
+    assert model["cache_metrics"]["requests"] == 0
+
+
 def test_not_an_object_is_an_error():
     with pytest.raises(ValueError):
         lumen_api.parse_models([])
