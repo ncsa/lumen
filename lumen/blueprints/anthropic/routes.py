@@ -20,6 +20,7 @@ from lumen.blueprints.api.routes import (
     _api_limit,
     _complete_and_bill,
     _do_chat,
+    api_generation_limit,
     api_key_required,
 )
 from lumen.extensions import limiter
@@ -191,7 +192,7 @@ def _translate_stream(openai_events, translator: StreamTranslator):
 
 @anthropic_bp.route("", methods=["POST"])
 @anthropic_auth_required
-@limiter.limit(_api_limit, key_func=_api_key_id)
+@api_generation_limit
 def messages():
     try:
         model_name, msgs, stream, kwargs, extra_body = _anthropic_request()

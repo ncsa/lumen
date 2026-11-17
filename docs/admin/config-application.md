@@ -168,7 +168,7 @@ chat:
 
 ## rate_limiting
 
-Controls how many API requests each user can make (the read-only `/v1/models` lookups are exempt):
+Controls how many API requests each user can make. On `/v1`, chat, completions, messages and audio share one per-key budget; `count_tokens` and `acknowledge` each have their own; model listing (`/v1/models`) and `/v1/usage` are not counted:
 
 ```yaml
 rate_limiting:

@@ -11,6 +11,13 @@ from tests.routes.test_api_auth import fresh_rate_limit
 __all__ = ["fresh_rate_limit"]
 
 
+@pytest.fixture(autouse=True)
+def _own_rate_limit_budget(fresh_rate_limit):
+    """Audio shares the per-key generation bucket with chat and messages (#601);
+    start every test here with a full budget so neighbouring modules' calls on the
+    same key id cannot tip it into 429."""
+
+
 @pytest.fixture
 def api_key(app, test_user):
     """Create an active API key for test_user. Returns (token, key_id)."""

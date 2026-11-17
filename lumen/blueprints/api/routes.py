@@ -143,6 +143,12 @@ def _api_limit():
     return cfg.get("rate_limiting", {}).get("limit", "30 per minute")
 
 
+# One per-key budget shared by every /v1 route that sends a request upstream
+# (chat, completions, audio and Anthropic messages), so a key gets the
+# configured limit once in total rather than once per route.
+api_generation_limit = limiter.shared_limit(_api_limit, scope="api", key_func=_api_key_id)
+
+
 def _monitor_metrics() -> dict | None:
     """Usage metrics for a monitor-token ``?tokens=true`` request, else None.
 
@@ -1059,21 +1065,21 @@ def _do_audio(kind: str):
 
 @api_bp.route("/audio/transcriptions", methods=["POST"])
 @api_key_required
-@limiter.limit(_api_limit, key_func=_api_key_id)
+@api_generation_limit
 def audio_transcriptions():
     return _do_audio("transcriptions")
 
 
 @api_bp.route("/audio/translations", methods=["POST"])
 @api_key_required
-@limiter.limit(_api_limit, key_func=_api_key_id)
+@api_generation_limit
 def audio_translations():
     return _do_audio("translations")
 
 
 @api_bp.route("/chat/completions", methods=["POST"])
 @api_key_required
-@limiter.limit(_api_limit, key_func=_api_key_id)
+@api_generation_limit
 def chat_completions():
     data = request.get_json(silent=True)
     if not data:
@@ -1092,7 +1098,7 @@ def chat_completions():
 
 @api_bp.route("/completions", methods=["POST"])
 @api_key_required
-@limiter.limit(_api_limit, key_func=_api_key_id)
+@api_generation_limit
 def completions():
     data = request.get_json(silent=True)
     if not data:
