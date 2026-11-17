@@ -604,9 +604,23 @@ def test_members_data_project_member_has_no_profile_url(admin_client, owned_grou
     assert proj["profile_url"] is None
 
 
-def test_members_data_forbidden_for_non_member(auth_client, app):
-    gid = _make_group(app, name="closed")
+def test_members_data_forbidden_for_non_member(auth_client, app, second_user):
+    """An owned group, so the membership check, not the ownerless-group rule, must refuse."""
+    gid = _make_group(app, name="closed", owner_id=second_user["id"])
     assert auth_client.get(f"/groups/{gid.uuid}/members/data").status_code == HTTPStatus.FORBIDDEN
+
+
+def test_members_data_allowed_for_plain_member(auth_client, member_group):
+    """Positive control for the test above: a plain member of an owned group can list its members."""
+    resp = auth_client.get(f"/groups/{member_group.uuid}/members/data")
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.get_json()["total"] == 2
+
+
+def test_member_search_forbidden_for_plain_member(auth_client, member_group):
+    """Only the owner or an admin may search; the query is long enough to reach the lookup."""
+    resp = auth_client.get(f"/groups/{member_group.uuid}/members/search?q=Research")
+    assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
 def test_members_data_pagination(auth_client, app, owned_group):

@@ -1385,13 +1385,25 @@ def test_rotate_project_key_forbidden_for_legacy_null_creator(app, managed_auth_
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_rotate_project_key_forbidden_for_non_manager(app, auth_client, service_project, second_user,
-                                                      make_created_key):
-    _add_manager(app, service_project["id"], second_user["id"])
-    kid = make_created_key(service_project["id"], second_user["id"], "sk_nonm00000000000000000grrot123456")
+def test_rotate_project_key_forbidden_for_non_member_creator(app, auth_client, service_project, test_user,
+                                                            make_created_key):
+    """Creator but no longer a member (removal leaves keys valid): the access check, not the creator check, must refuse."""
+    old = "sk_nonm00000000000000000grrot123456"
+    kid = make_created_key(service_project["id"], test_user["id"], old)
+
+    def hint():
+        with app.app_context():
+            from lumen.extensions import db
+            from lumen.models.api_key import APIKey
+            return db.session.get(APIKey, kid).key_hint
+
+    before = hint()
     resp = auth_client.post(f"/projects/{service_project['uuid']}/keys/{key_uuid(app, kid)}/rotate",
                             json={"key": "sk_nonm00000000000000000grrotnew123"})
     assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert hint() == before
+    anon = app.test_client()
+    assert anon.get("/v1/usage", headers={"Authorization": f"Bearer {old}"}).status_code == HTTPStatus.OK
 
 
 def test_rotate_project_key_from_other_project_returns_404(app, managed_auth_client, managed_project, test_user,
@@ -1634,12 +1646,13 @@ def test_edit_project_key_ttl_forbidden_for_legacy_null_creator(app, managed_aut
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_edit_project_key_ttl_forbidden_for_non_member(app, auth_client, service_project, second_user,
-                                                       make_created_key):
-    _add_manager(app, service_project["id"], second_user["id"])
-    kid = make_created_key(service_project["id"], second_user["id"], "sk_ttln00000000000000000on01234567")
+def test_edit_project_key_ttl_forbidden_for_non_member_creator(app, auth_client, service_project, test_user,
+                                                              make_created_key):
+    """Creator but no longer a member (removal leaves keys valid): the access check, not the creator check, must refuse."""
+    kid = make_created_key(service_project["id"], test_user["id"], "sk_ttln00000000000000000on01234567")
     resp = auth_client.post(f"/projects/{service_project['uuid']}/keys/{key_uuid(app, kid)}/ttl", json={"ttl": 86400})
     assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert _project_key_expiry(app, kid) == (None, None, None)
 
 
 def test_edit_project_key_ttl_from_other_project_returns_404(app, managed_auth_client, managed_project, test_user,
