@@ -393,6 +393,8 @@ API keys that entities (users or projects) use to authenticate against the proxy
 | `requests` | Integer | NO | Cumulative request count made with this key |
 | `input_tokens` | BigInteger | NO | Cumulative input tokens consumed via this key |
 | `output_tokens` | BigInteger | NO | Cumulative output tokens produced via this key |
+| `cached_input_tokens` | BigInteger | NO | Cumulative cached input tokens among `input_tokens` via this key; requests whose upstream reported no cache breakdown add nothing |
+| `cache_write_tokens` | BigInteger | NO | Cumulative prompt-cache write tokens among `input_tokens` via this key; requests whose upstream reports no write count add nothing |
 | `audio_seconds` | BigInteger | NO | Cumulative seconds of audio transcribed/translated via this key |
 | `cost` | Numeric(12,6) | NO | Cumulative cost in USD charged through this key |
 | `last_used_at` | DateTime | YES | UTC timestamp of the most recent request; null if never used |
@@ -688,6 +690,7 @@ Pre-aggregated usage totals per entity across all models and sources. One row pe
 | `folded_input_tokens` | BigInteger | NO | Part of `input_tokens` added by the stats fold since the cutover |
 | `folded_output_tokens` | BigInteger | NO | Part of `output_tokens` added by the stats fold since the cutover |
 | `folded_cached_input_tokens` | BigInteger | NO | Part of `cached_input_tokens` added by the stats fold since the cutover |
+| `folded_cache_write_tokens` | BigInteger | NO | Part of `cache_write_tokens` added by the stats fold since the cutover |
 | `folded_audio_seconds` | BigInteger | NO | Part of `audio_seconds` added by the stats fold since the cutover |
 | `folded_cost` | Numeric(12,6) | NO | Part of `cost` added by the stats fold since the cutover |
 
