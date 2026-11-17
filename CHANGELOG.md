@@ -22,7 +22,7 @@ All notable changes to Lumen will be documented in this file.
 - Model detail page: the model's notice now always shows in the main column. The acknowledgement text shows on the right only for models that need acknowledgement. Previously, the acknowledgement text replaced the notice. (#492)
 - Connect the GitHub Copilot CLI: `/connect` generates `~/.copilot/providers.json`, and `lumen.sh --copilot` writes the Lumen provider and models into it and keeps them current. (#530)
 - Add `scripts/monitor/backfill_tokens.py` to backfill the monitor's token counts and history from Lumen's request logs; `--day` redoes a single local day, replacing its estimated rows with exact ones
-- Monitor moves to Python 3.14 (was 3.11) and CI tests both projects on 3.14 (required) and 3.15 (allowed to fail); Lumen's `requires-python` drops its `<3.15` cap so the 3.15 run installs, though 3.15 is still unsupported; monitor dead-code cleanup. (#529)
+- Monitor moves to Python 3.14 (was 3.11) and CI tests both projects on 3.14 (required) and 3.15 (allowed to fail); Python 3.15 is experimental for Lumen: it installs (`requires-python` drops its `<3.15` cap) and CI runs it, but failures there do not block a release; monitor dead-code cleanup. (#529, #599)
 - Docs: list every TimescaleDB `job` label on `/metrics`, document `stats.*` and add it and `api.keys.ttl` to the hot-reload table, and drop a stale chart README note. (#528)
 
 ## [2.3.1] - 2026-11-07
