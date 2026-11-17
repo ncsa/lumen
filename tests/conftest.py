@@ -105,6 +105,10 @@ def app(tmp_path_factory):
         from lumen.extensions import db
         db.drop_all()
         backend = db.engine.url.get_backend_name()
+        # The session app is still reachable after this teardown, so nothing
+        # else closes its pooled connections: they surfaced as two
+        # "ResourceWarning: unclosed database" after the last test.
+        db.engine.dispose()
     if backend == "sqlite":
         Path(db_file).unlink(missing_ok=True)
 
