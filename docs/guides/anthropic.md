@@ -66,6 +66,7 @@ Lumen's server log records every request it rejects with a 400 as `anthropic req
 
 - `model`, `messages` and `max_tokens` (all three required; `count_tokens` does not need `max_tokens`), plus the optional `system`, `stream`, `temperature`, `top_p`, `top_k`, `stop_sequences`, `tools` and `tool_choice`.
 - Content blocks: `text`, `image`, `tool_use`, `tool_result`. A reasoning model's thinking comes back as a `thinking` block.
+- An `image` block with a `url` source must use an `http://` or `https://` URL; any other scheme gets a 400. Lumen passes the URL to the backend without fetching it, so a backend that fetches media must block internal hosts itself.
 - If the model's tool arguments are not a JSON object (invalid JSON, or a value such as `[]` or `42`), the `tool_use` block's `input` is `{"__raw_arguments": "<the text the model produced>"}`.
 - `POST /v1/messages/count_tokens` returns an estimate that assumes about four characters per token, and is never billed.
 - `/v1/messages` counts against the same per-key rate limit as chat, completions and audio; `count_tokens` has its own budget, so frequent token counts do not use up the generation budget.

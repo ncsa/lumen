@@ -887,6 +887,16 @@ def test_non_ascii_key_with_monitor_enabled(app, client, api, monkeypatch):
     assert response.status_code == HTTPStatus.UNAUTHORIZED
 
 
+def test_non_http_image_url_is_a_400(api):
+    body = _body(messages=[{"role": "user", "content": [
+        {"type": "image", "source": {"type": "url", "url": "file:///etc/passwd"}}]}])
+    response = api.post(body)
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    error = response.get_json()['error']
+    assert error['type'] == 'invalid_request_error'
+    assert 'http:// or https://' in error['message']
+
+
 def test_official_sdk_reassembles_interleaved_tools(live_lumen, api):
     chunks = [
         _tool(id='a', name='one', arguments='{"x":'),

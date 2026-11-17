@@ -129,6 +129,9 @@ def _system_text(system):
     raise AnthropicError("system must be a string or a list of text blocks")
 
 
+_IMAGE_URL_SCHEMES = ("http://", "https://")
+
+
 def _image_url(block):
     """Anthropic image block -> OpenAI image_url part."""
     source = block.get("source")
@@ -145,6 +148,10 @@ def _image_url(block):
         url = source.get("url")
         if not isinstance(url, str) or not url:
             raise AnthropicError("url image source requires a url")
+        # The backend may fetch the URL; refuse file:, javascript:, data: and
+        # the like. Private hosts are the backend's to restrict.
+        if not url.lower().startswith(_IMAGE_URL_SCHEMES):
+            raise AnthropicError("url image source must be an http:// or https:// URL")
         return {"type": "image_url", "image_url": {"url": url}}
     raise AnthropicError(f"Unsupported image source type: {kind!r}")
 
