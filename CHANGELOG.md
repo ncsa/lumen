@@ -7,7 +7,7 @@ All notable changes to Lumen will be documented in this file.
 - **Behaviour change:** `/v1` chat, completions, messages and audio requests now share one per-key rate-limit budget instead of one each; `count_tokens` keeps its own (#601)
 - `flask erase-entity` also takes the user's email (matched ignoring case, interactive only); an email that matches no user or several users fails without erasing anything. (#587)
 - Users, projects, groups, API keys, conversations and OAuth requests are addressed by random UUIDs instead of sequential database ids; models by name; click an avatar to copy its ID (#560)
-- **Upgrade:** everyone is logged out of the web UI once; `flask erase-entity` takes a user UUID and `flask reassign-model` takes model names (#560)
+- **Upgrade:** everyone is logged out of the web UI once; `flask erase-entity` takes a user UUID and `flask reassign-model` takes model names (#560); 2.3.1 pods keep working during a rolling `helm upgrade` (#598)
 - The usage page shows request and token totals in human-readable form, like the profile page. (#579)
 - Tests now fail on any warning, and CI enforces at least 90% line coverage per file for Lumen and the monitor (#557)
 - The monitor's model detail page charts the cached-input and cache-write prices over time, with the models.dev comparison band where providers publish cache prices. (#510)
