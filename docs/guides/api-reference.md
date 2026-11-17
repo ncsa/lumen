@@ -6,7 +6,7 @@ Lumen exposes an **OpenAI-compatible REST API** at `/v1/`. Any tool or library t
 
 ## Base URL and Authentication
 
-Replace `https://lumen.example.com` with your institution's Lumen URL. All requests require an `Authorization` header:
+Replace `https://lumen.example.com` with your institution's Lumen URL. All requests require an `Authorization` header (`/v1/messages` also accepts `x-api-key`; see [Anthropic Messages](anthropic.md)):
 
 ```
 Authorization: Bearer sk_your_api_key_here

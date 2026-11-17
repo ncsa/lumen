@@ -4,7 +4,7 @@ The **Models** page (`/models`) shows every AI model available to you in your Lu
 
 ![Models dashboard](../img/models.png)
 
-If a model you need is not listed, tools such as [LLMHub](https://llmhub.computes.illinois.edu) can be used to launch it yourself. If your administrator has configured an LLMHub link for your Lumen instance, it appears at the bottom of this page (see [`llmhub_url`](../admin/config-application.md)).
+If a model you need is not listed, you can launch it yourself with [LLMHub](https://llmhub.computes.illinois.edu). If your administrator has configured an LLMHub link, it appears below the table.
 
 ## Table Columns
 
