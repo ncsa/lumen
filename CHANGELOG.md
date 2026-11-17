@@ -5,6 +5,7 @@ All notable changes to Lumen will be documented in this file.
 ## [Unreleased]
 
 - `scripts/claude.sh` takes the model from `ANTHROPIC_MODEL` instead of a hardcoded one and is documented in `scripts/README.md`. (#610)
+- `/v1/messages` reports `input_tokens` without cached tokens and adds `cache_read_input_tokens` / `cache_creation_input_tokens`; browsers can call it with the Anthropic SDK; a malformed upstream token count is logged (#608)
 - **Behaviour change:** `/v1` chat, completions, messages and audio requests now share one per-key rate-limit budget instead of one each; `count_tokens` keeps its own (#601)
 - Docs: fix small inaccuracies in the Anthropic guide, API reference, README, hot-reload table, chart values, favicon route and LLMHub text. (#613)
 - Per-key cache token totals start at 0 on upgrade instead of being summed from request_logs, so the migration no longer scans the request history (#600)

@@ -14,6 +14,10 @@ tokens are billed at the ordinary input rate, so an existing configuration
 keeps its exact price.
 """
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def calculate_cost(
     input_tokens: int,
@@ -104,12 +108,12 @@ def usage_tokens(usage) -> tuple:
     """
     if usage is None:
         return 0, None, 0, None
-    completion = _as_token_count(_field(usage, "completion_tokens"))
+    completion = _total(usage, "completion_tokens")
     if completion is None:
-        completion = _as_token_count(_field(usage, "output_tokens")) or 0
-    prompt = _as_token_count(_field(usage, "prompt_tokens"))
+        completion = _total(usage, "output_tokens") or 0
+    prompt = _total(usage, "prompt_tokens")
     if prompt is None:
-        ordinary = _as_token_count(_field(usage, "input_tokens")) or 0
+        ordinary = _total(usage, "input_tokens") or 0
         cached = _as_token_count(_field(usage, "cache_read_input_tokens"))
         written = _as_token_count(_field(usage, "cache_creation_input_tokens"))
         if cached is not None or written is not None:
@@ -124,6 +128,19 @@ def usage_tokens(usage) -> tuple:
         (details, usage), _CACHE_WRITE_FIELDS, prompt - (cached or 0)
     )
     return prompt, cached, completion, written
+
+
+def _total(usage, name: str):
+    """usage.name as a token count, logging a present but unreadable value.
+
+    A malformed total still counts as unreported (and so bills as 0), but the
+    warning leaves a trace of the misbehaving upstream instead of a silent zero.
+    """
+    value = _field(usage, name)
+    count = _as_token_count(value)
+    if count is None and value is not None:
+        logger.warning("Ignoring malformed usage field %s=%r from upstream", name, value)
+    return count
 
 
 #: Fields reporting the cached part of a prompt total (OpenAI style).
