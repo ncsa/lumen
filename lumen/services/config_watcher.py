@@ -339,6 +339,12 @@ def apply_hot_config(app, yaml_data: dict):
     keys_cfg = (api_cfg.get("keys") if isinstance(api_cfg, dict) else None) or {}
     app.config["KEY_TTL"] = _key_ttl(keys_cfg if isinstance(keys_cfg, dict) else {})
 
+    # api_key_required refuses non-ASCII bearer tokens, so such a monitor token
+    # can never match. Never log the value: it is a credential.
+    monitor_token = _resolve_path(yaml_data, ("api", "monitoring", "token"))
+    if isinstance(monitor_token, str) and not monitor_token.isascii():
+        logger.warning("config.yaml: api.monitoring.token contains non-ASCII characters, so no client can use it.")
+
     # The in-app config editor is on by default; Helm sets it false for git-managed configs.
     app.config["CONFIG_EDITOR"] = bool(app_cfg.get("config_editor", True))
 

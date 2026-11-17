@@ -126,10 +126,6 @@ def anthropic_auth_required(f):
             return _anthropic_err(
                 "Missing API key. Send it in the x-api-key header.",
                 "authentication_error")
-        # Lumen keys are ASCII. Anything else is refused here: the monitor-token
-        # comparison inside api_key_required raises on a non-ASCII str.
-        if not (header_key or bearer).isascii():
-            return _anthropic_err("Invalid or revoked API key", "authentication_error")
         # api_key_required reads "Authorization: Bearer <key>" exactly.
         request.environ["HTTP_AUTHORIZATION"] = f"Bearer {header_key or bearer}"
         return api_key_required(f)(*args, **kwargs)
