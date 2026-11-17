@@ -14,14 +14,10 @@ e3f4a5b6c7d8 had no per-key total, so this adds one for each:
 * api_keys.cache_write_tokens — part of input_tokens the upstream wrote into
   its prompt cache.
 
-Both are counters (NOT NULL, default 0) and are backfilled from each key's
-request_logs rows, where a NULL count adds nothing, so the totals match the log
-from the start. bill_request adds every later request to them.
-
-request_logs.api_key_id has no index (see c5d7e9f1a3b6), so the backfill
-aggregates the history once, grouped by key, and joins that result to
-api_keys; a per-key subquery would scan the whole hypertable once per key while
-the api_keys DDL lock is held. Keys with no logged requests keep the default 0.
+Both are counters (NOT NULL, default 0), and every existing key starts at 0.
+They are not summed from request_logs: its cached_input_tokens and
+cache_write_tokens columns arrive in this same release, so a 2.3.1 database
+has nothing to sum. bill_request adds every later request to them.
 """
 
 import sqlalchemy as sa
@@ -42,21 +38,6 @@ _COMMENTS = {
 }
 
 
-# One pass over request_logs, grouped by key. UPDATE ... FROM works on
-# PostgreSQL and on SQLite >= 3.33. A group whose counts are all NULL sums to
-# NULL, which COALESCE turns into 0.
-BACKFILL_SQL = (
-    "UPDATE api_keys SET "
-    "cached_input_tokens = totals.cached_input_tokens, "
-    "cache_write_tokens = totals.cache_write_tokens "
-    "FROM (SELECT api_key_id, "
-    "COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens, "
-    "COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens "
-    "FROM request_logs WHERE api_key_id IS NOT NULL GROUP BY api_key_id) AS totals "
-    "WHERE api_keys.id = totals.api_key_id"
-)
-
-
 def _is_postgresql():
     return op.get_bind().dialect.name == "postgresql"
 
@@ -69,8 +50,6 @@ def upgrade():
     if _is_postgresql():
         for column, comment in _COMMENTS.items():
             op.execute(f"COMMENT ON COLUMN api_keys.{column} IS $comment${comment}$comment$")
-
-    op.execute(BACKFILL_SQL)
 
 
 def downgrade():
