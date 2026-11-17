@@ -619,13 +619,14 @@ def test_prints_finish_commands_before_an_interrupted_refresh(pg_app, engine):
     assert result.exit_code != 0, result.output
     assert f"user {world['user_uuid']} deleted" in result.output
     assert "Error: refreshing" not in result.output
+    assert stats_walk_lock_is_free(engine), "the interrupted run kept the advisory lock"
     assert _materialised(engine, world["user"]) == SEEDED
 
     backfills = _up_front_backfills(result.output)
     assert [name for name, _ in backfills][:2] == [ENTITY_AGGREGATE, DAILY_ENTITY], result.output
     # Aggregate names and months only: nothing that identifies the user.
     block = result.output.split("If this refresh is interrupted", 1)[1].split("  refreshing '", 1)[0]
-    assert world["user_uuid"] not in block
+    assert str(world["user_uuid"]) not in block
 
     result = _run(pg_app, world["user_uuid"])
     assert result.exit_code == 0, result.output
