@@ -1,4 +1,6 @@
+import gc
 import os
+import warnings
 import weakref
 from contextlib import contextmanager
 from datetime import timedelta
@@ -42,6 +44,54 @@ def _dormant_health_checker(app):
 
 _real_start_health_checker = _health.start_health_checker
 _health.start_health_checker = _dormant_health_checker
+
+
+_late_resource_warnings = pytest.StashKey[list]()
+
+
+def _collect_resource_warnings():
+    """Run the garbage collector and return the ResourceWarnings it raised."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        gc.collect()
+    return [f"{w.category.__name__}: {w.message}" for w in caught if issubclass(w.category, ResourceWarning)]
+
+
+@pytest.hookimpl(wrapper=True, trylast=True)
+def pytest_runtestloop(session):
+    """Collect right after the last test's teardown, session fixtures included.
+
+    ``filterwarnings = ["error"]`` only covers warnings raised while a test
+    runs. A connection, file or socket still open when the tests end is
+    reported by the garbage collector afterwards, where pytest prints it and
+    exits 0. This wrapper is innermost, so it runs before pytest-cov's, whose
+    report work would otherwise trigger that collection (and which sets the
+    sqlite ``unclosed database`` warning to ``default`` for the session).
+    """
+    try:
+        return (yield)
+    finally:
+        session.stash[_late_resource_warnings] = _collect_resource_warnings()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Fail the run on a ResourceWarning raised after the last test.
+
+    Collects once more for anything that became garbage since the test loop
+    ended. This cannot see leaks that only surface at interpreter shutdown.
+    """
+    leaks = session.stash.get(_late_resource_warnings, []) + _collect_resource_warnings()
+    if not leaks:
+        return
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is not None:
+        reporter.ensure_newline()
+        reporter.write_sep("=", "ResourceWarning after the last test", red=True)
+        for line in leaks:
+            reporter.write_line(line)
+        reporter.write_line("Find the test that opened it with PYTHONTRACEMALLOC=20 (see Warnings in AGENTS.md).")
+    if session.exitstatus == pytest.ExitCode.OK:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 @pytest.fixture
