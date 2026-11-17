@@ -33,6 +33,7 @@ from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.request_log import RequestLog
 from lumen.services import llm as llm_service
+from lumen.services import model_cache
 from scripts.anthropic_toolbot import app as toolbot
 from tests.conftest import set_model_owner
 from tests.routes.test_api_auth import (
@@ -492,7 +493,8 @@ def test_non_streaming_shape_and_billing(app, api):
     assert body["model"] == api.model
     assert body["content"] == [{"type": "text", "text": "hello"}]
     assert body["stop_reason"] == "end_turn"
-    assert body["usage"] == {"input_tokens": 7, "output_tokens": 3}
+    assert body["usage"] == {"input_tokens": 7, "output_tokens": 3,
+                             "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
 
     assert _request_logs(app) == [
         {"source": "api", "input_tokens": 7, "output_tokens": 3, "aborted": False}]
@@ -544,11 +546,53 @@ def test_streaming_event_order_and_billing(app, api):
     ]
     assert events[0][1]["message"]["model"] == api.model
     assert "".join(e[1]["delta"]["text"] for e in events[2:4]) == "hello"
-    assert events[5][1]["usage"] == {"input_tokens": 5, "output_tokens": 7}
+    assert events[5][1]["usage"] == {"input_tokens": 5, "output_tokens": 7,
+                                     "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
     assert b"data: [DONE]" not in resp.get_data()
 
     assert _request_logs(app) == [
         {"source": "api", "input_tokens": 5, "output_tokens": 7, "aborted": False}]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_usage_adds_up_to_the_billed_prompt(app, api, test_model, stream):
+    """The three Anthropic input counts sum to the prompt Lumen bills."""
+    with app.app_context():
+        model = db.session.get(ModelConfig, test_model["id"])
+        model.input_cost_per_million = 2
+        model.output_cost_per_million = 4
+        model.cached_input_cost_per_million = 0.5
+        model.cache_write_cost_per_million = 0.25
+        db.session.commit()
+        model_cache.refresh(app)
+
+    usage = {"prompt_tokens": 100, "completion_tokens": 7,
+             "prompt_tokens_details": {"cached_tokens": 60, "cache_write_tokens": 20}}
+    usage_object = SimpleNamespace(
+        prompt_tokens=100, completion_tokens=7,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=60, cache_write_tokens=20))
+    expected = {"input_tokens": 20, "output_tokens": 7,
+                "cache_read_input_tokens": 60, "cache_creation_input_tokens": 20}
+
+    if stream:
+        api.stream(iter([_delta("hi", finish="stop"),
+                         _Chunk({"id": "chatcmpl-1", "choices": [], "usage": usage},
+                                usage=usage_object)]))
+        reported = _sse(api.post(_body(stream=True)))[-2][1]["usage"]
+    else:
+        response = _TextResponse()
+        response.usage = usage_object
+        response.model_dump = lambda: {**_TextResponse().model_dump(), "usage": usage}
+        api.upstream(lambda **kw: response)
+        reported = api.post().get_json()["usage"]
+
+    assert reported == expected
+    with app.app_context():
+        log = db.session.execute(select(RequestLog)).scalar_one()
+        billed = (log.input_tokens, log.cached_input_tokens, log.cache_write_tokens)
+    assert billed == (100, 60, 20)
+    assert (reported["input_tokens"] + reported["cache_read_input_tokens"]
+            + reported["cache_creation_input_tokens"]) == log.input_tokens
 
 
 def test_streaming_upstream_failure_emits_an_error_event(api):

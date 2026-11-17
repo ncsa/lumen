@@ -529,7 +529,8 @@ def test_response_shape():
     assert out["content"] == [{"type": "text", "text": "hello"}]
     assert out["stop_reason"] == "end_turn"
     assert out["stop_sequence"] is None
-    assert out["usage"] == {"input_tokens": 7, "output_tokens": 3}
+    assert out["usage"] == {"input_tokens": 7, "output_tokens": 3,
+                            "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
 
 
 def test_response_tool_calls_become_tool_use():
@@ -585,7 +586,42 @@ def test_response_reasoning_becomes_a_thinking_block():
 def test_missing_usage_is_zero():
     payload = _completion()
     payload.pop("usage")
-    assert translate_response(payload, "m")["usage"] == {"input_tokens": 0, "output_tokens": 0}
+    assert translate_response(payload, "m")["usage"] == {
+        "input_tokens": 0, "output_tokens": 0,
+        "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+    }
+
+
+#: OpenAI-style usage with a cached and a written part of a 100-token prompt.
+_CACHED_USAGE = {"prompt_tokens": 100, "completion_tokens": 7,
+                 "prompt_tokens_details": {"cached_tokens": 60, "cache_write_tokens": 20}}
+
+
+@pytest.mark.parametrize("usage,expected", [
+    pytest.param(_CACHED_USAGE,
+                 {"input_tokens": 20, "output_tokens": 7,
+                  "cache_read_input_tokens": 60, "cache_creation_input_tokens": 20},
+                 id="openai-cached"),
+    pytest.param({"prompt_tokens": 100, "completion_tokens": 7},
+                 {"input_tokens": 100, "output_tokens": 7,
+                  "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+                 id="openai-no-cache-details"),
+    pytest.param({"input_tokens": 20, "output_tokens": 7,
+                  "cache_read_input_tokens": 60, "cache_creation_input_tokens": 20},
+                 {"input_tokens": 20, "output_tokens": 7,
+                  "cache_read_input_tokens": 60, "cache_creation_input_tokens": 20},
+                 id="anthropic-style"),
+])
+def test_usage_excludes_cached_tokens_from_input_tokens(usage, expected):
+    """input_tokens is only the uncached part; both translators agree."""
+    payload = _completion()
+    payload["usage"] = usage
+    assert translate_response(payload, "m")["usage"] == expected
+
+    events = _run(_chunk(content="hi", finish="stop"),
+                  {"id": "chatcmpl-1", "choices": [], "usage": usage})
+    assert events[-2][0] == "message_delta"
+    assert events[-2][1]["usage"] == expected
 
 
 @pytest.mark.parametrize("finish,expected", [
@@ -642,7 +678,18 @@ def test_stream_event_order_for_text():
     assert events[0][1]["message"]["model"] == "m"
     assert [e[1]["delta"]["text"] for e in events[2:4]] == ["he", "llo"]
     assert events[5][1]["delta"] == {"stop_reason": "end_turn", "stop_sequence": None}
-    assert events[5][1]["usage"] == {"input_tokens": 5, "output_tokens": 2}
+    assert events[5][1]["usage"] == {"input_tokens": 5, "output_tokens": 2,
+                                     "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+
+
+def test_stream_without_usage_chunk_reports_zero_usage():
+    zero = {"input_tokens": 0, "output_tokens": 0,
+            "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+    events = _run(_chunk(content="hi", finish="stop"))
+    assert events[0][0] == "message_start"
+    assert events[0][1]["message"]["usage"] == zero
+    assert events[-2][0] == "message_delta"
+    assert events[-2][1]["usage"] == zero
 
 
 def test_stream_tool_use_blocks():
