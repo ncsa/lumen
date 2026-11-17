@@ -60,12 +60,17 @@ def _exempt_from_csrf(state):
 # Errors
 # ---------------------------------------------------------------------------
 
+_LOGGED_MESSAGE_MAX = 200
+
+
 def _anthropic_err(message: str, err_type: str = "invalid_request_error"):
     # The refusal reason is logged because this surface answers a client that
     # cannot show it: Claude Code retries a refused request and then reports its
     # own generic failure, so the access log's bare "400 -" is all an operator
     # would otherwise have to work from.
-    logger.info("anthropic request refused (%s): %s", err_type, message)
+    # The message can carry client text (the model name, for one): %r escapes
+    # newlines so it cannot forge a log line, and the cut bounds its length.
+    logger.info("anthropic request refused (%s): %r", err_type, message[:_LOGGED_MESSAGE_MAX])
     return jsonify(error_body(message, err_type)), ERROR_STATUS[err_type]
 
 

@@ -60,7 +60,7 @@ Auto mode asks the model, through Lumen, to approve each action that your permis
 | 429 `rate_limit_error` | Rate limit or exhausted budget; `Retry-After` says when to try again |
 | 503 `overloaded_error` | No healthy backend for the model right now |
 
-Lumen's server log records every request it rejects with a 400 as `anthropic request refused (<type>): <reason>`.
+Lumen's server log records every request it rejects with a 400 as `anthropic request refused (<type>): '<reason>'`, with the reason quoted and cut to 200 characters.
 
 ## Supported
 

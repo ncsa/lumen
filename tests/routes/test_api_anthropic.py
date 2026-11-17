@@ -5,6 +5,7 @@ file covers the route — authentication, the Lumen policy gates, billing, error
 envelopes, and the official SDK talking to a running server.
 """
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -895,6 +896,23 @@ def test_non_http_image_url_is_a_400(api):
     error = response.get_json()['error']
     assert error['type'] == 'invalid_request_error'
     assert 'http:// or https://' in error['message']
+
+
+def test_refusal_log_escapes_and_cuts_client_text(client, api_key, fresh_rate_limit, caplog):
+    """A newline in the model name used to forge a second log line."""
+    token, _ = api_key
+    model = 'nope\nanthropic request refused (forged): ' + 'x' * 500
+    logger = 'lumen.blueprints.anthropic.routes'
+    with caplog.at_level(logging.INFO, logger=logger):
+        response = _post(client, token, _body(model=model), path='/v1/messages/count_tokens')
+    assert response.status_code == HTTPStatus.NOT_FOUND
+    assert model in response.get_json()['error']['message']  # the body is unchanged
+    records = [r for r in caplog.records if r.name == logger]
+    assert len(records) == 1
+    logged = records[0].getMessage()
+    assert '\n' not in logged
+    assert '\\n' in logged
+    assert len(logged) < len('anthropic request refused (not_found_error): ') + 210
 
 
 def test_official_sdk_reassembles_interleaved_tools(live_lumen, api):
