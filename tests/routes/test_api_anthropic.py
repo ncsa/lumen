@@ -643,6 +643,68 @@ def test_streaming_disconnect_bills_an_abort(app, api):
     assert [log["aborted"] for log in _request_logs(app)] == [True]
 
 
+def test_streaming_without_upstream_usage_bills_an_estimate(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+    fresh_rate_limit,
+):
+    """A backend that ignores include_usage must not make a finished stream free.
+
+    /v1/messages streams through the same generator as /v1/chat/completions, so
+    a reply that ends without a usage chunk is billed and logged as ``ok`` with
+    the abort estimate: the prompt from its character count, the output as one
+    token per content delta. The client still sees zero usage, which is all the
+    upstream reported.
+    """
+    token, key_id = api_key
+    with app.app_context():
+        db.session.add(EntityLimit(
+            entity_id=test_user["id"], max_coins=10, refresh_coins=0, starting_coins=10,
+        ))
+        db.session.add(EntityBalance(entity_id=test_user["id"], coins_left=10))
+        db.session.commit()
+
+    # A genuine SDK chunk, as a backend ignoring include_usage sends it: content,
+    # finish_reason "stop", and no usage chunk after it.
+    _fake_openai(monkeypatch, routes, [ChatCompletionChunk.model_validate({
+        "id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 0,
+        "model": test_model["model_name"],
+        "choices": [{"index": 0, "delta": {"content": "hello"}, "finish_reason": "stop"}],
+    })])
+    resp = _post(client, token, {
+        "model": test_model["model_name"], "max_tokens": 64, "stream": True,
+        "messages": [{"role": "user", "content": "x" * 400}],
+    })
+    assert resp.status_code == HTTPStatus.OK
+    events = _sse(resp)
+    assert [name for name, _ in events] == [
+        "message_start", "content_block_start", "content_block_delta",
+        "content_block_stop", "message_delta", "message_stop",
+    ]
+    assert events[2][1]["delta"]["text"] == "hello"
+    assert events[4][1]["delta"]["stop_reason"] == "end_turn"
+
+    with app.app_context():
+        log = db.session.execute(
+            select(RequestLog).filter_by(entity_id=test_user["id"])
+        ).scalar_one()
+        assert log.source == "api"
+        assert log.outcome == "ok"
+        assert log.aborted is False
+        assert log.input_tokens == 100  # 400 prompt characters / 4
+        assert log.output_tokens == 1   # one content delta
+        assert log.cached_input_tokens is None  # an estimate cannot know the cache
+        # 100 input @ $1/M + 1 output @ $2/M
+        assert float(log.cost) == pytest.approx(0.000102)
+        balance = db.session.execute(
+            select(EntityBalance).filter_by(entity_id=test_user["id"])
+        ).scalar_one()
+        assert float(balance.coins_left) == pytest.approx(10 - 0.000102)
+        key = db.session.get(APIKey, key_id)
+        assert key.requests == 1
+        assert (key.input_tokens, key.output_tokens) == (100, 1)
+        assert float(key.cost) == pytest.approx(0.000102)
+
+
 # ---------------------------------------------------------------------------
 # count_tokens
 # ---------------------------------------------------------------------------
