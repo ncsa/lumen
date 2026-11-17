@@ -162,6 +162,44 @@ set `MONITOR_BASE_PATH` (or `base_path`) when it is served under a prefix such a
 **Run a single replica.** The loops run inside the web process, so two replicas would both
 probe, write two rows per probe and count every request and token twice.
 
+## Backfilling history
+
+`backfill_tokens.py` fills in token counts and history the monitor could not collect itself,
+from Lumen's `request_logs`. It needs read access to Lumen's PostgreSQL database.
+
+It fills:
+
+- per-minute samples whose input or output token count is NULL (`samples.input_tokens_last_minute`
+  and `samples.output_tokens_last_minute`), with the tokens of the last complete minute before
+  the probe; values already set are kept;
+- the input and output token totals in the existing lumen `daily_stats` rows of past days (local
+  days in the monitor's timezone, before today).
+
+It creates, for every model and past local day with traffic but no lumen row yet (the days
+before the monitor started, back to Lumen's first request):
+
+- a `final` lumen row with the exact requests and tokens, priced at the input and output rates
+  fitted to what was billed that day (today's Lumen price when the day's traffic cannot tell
+  them apart); an existing lumen row that is `estimated` or not yet `final` is replaced the
+  same way;
+- a hardware row, assuming the model ran all day on its active endpoints, when the model has a
+  `models:` GPU entry and `kwh` is set.
+
+models.dev rows and uptime have no history and are not created.
+
+Run it from `scripts/monitor`:
+
+```bash
+uv run python backfill_tokens.py --lumen-db postgresql://lumen:PASS@HOST:PORT/lumen --dry-run
+```
+
+| Option | Description |
+|---|---|
+| `--config PATH` | Monitor config file (default `config.yaml`) |
+| `--lumen-db URL` | Lumen's PostgreSQL URL; required, or set `LUMEN_DATABASE_URL` |
+| `--day YYYY-MM-DD` | Redo only this local day (before today): its lumen and hardware rows; the per-minute samples are skipped |
+| `--dry-run` | Compute everything and print the counts, then roll back |
+
 ## Migrating from monitor/app.py
 
 The settings move from environment variables to `config.yaml`:
