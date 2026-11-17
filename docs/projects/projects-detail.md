@@ -21,7 +21,7 @@ The left side of the card shows the project's auto-generated avatar, its name, t
 
 ### Copying the Project ID
 
-Every project has a random ID (a UUID) that Lumen uses in links and API calls instead of a sequential number. To copy it, click the project's avatar: a hint, **Click to copy ID**, appears when you hover over the avatar or move to it with the keyboard (Tab), and clicking it — or pressing Enter or Space — copies the ID to the clipboard and shows **Project ID copied to clipboard**. Press Escape to hide the hint.
+Click the avatar (or focus it and press Enter/Space) to copy the ID, a UUID used in URLs and CLI commands.
 
 ### Editing the Project
 
