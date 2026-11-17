@@ -294,6 +294,27 @@ partial override keeps the rest of the hardened context.
 {{- end }}
 
 {{/*
+Default pod securityContext of the Lumen app pods.
+*/}}
+{{- define "lumen.podSecurityContextDefault" -}}
+seccompProfile:
+  type: RuntimeDefault
+{{- end }}
+
+{{/*
+Pod securityContext of the Lumen app pods (Deployment, migration Job and
+stats-check CronJob). Unset `podSecurityContext` renders the default as written;
+set keys are merged over the default, so e.g. `fsGroup` keeps the seccomp profile.
+*/}}
+{{- define "lumen.podSecurityContext" -}}
+{{- if .Values.podSecurityContext -}}
+{{- toYaml (mergeOverwrite (fromYaml (include "lumen.podSecurityContextDefault" .)) .Values.podSecurityContext) }}
+{{- else -}}
+{{- include "lumen.podSecurityContextDefault" . }}
+{{- end }}
+{{- end }}
+
+{{/*
 Resources of the Lumen app container.
 */}}
 {{- define "lumen.appResources" -}}
@@ -344,8 +365,8 @@ Deployment and the migration Job.
 {{- end }}
 
 {{/*
-Pod-level scheduling and identity settings shared by the Deployment and the
-migration Job.
+Pod-level scheduling and identity settings shared by the Deployment, the
+migration Job and the stats-check CronJob.
 */}}
 {{- define "lumen.podSpecCommon" -}}
 {{- with .Values.imagePullSecrets }}
@@ -355,10 +376,8 @@ imagePullSecrets:
 {{- if .Values.serviceAccount.create }}
 serviceAccountName: {{ .Values.serviceAccount.name | default (include "lumen.fullname" .) }}
 {{- end }}
-{{- with .Values.podSecurityContext }}
 securityContext:
-  {{- toYaml . | nindent 2 }}
-{{- end }}
+  {{- include "lumen.podSecurityContext" . | nindent 2 }}
 {{- with .Values.nodeSelector }}
 nodeSelector:
   {{- toYaml . | nindent 2 }}
