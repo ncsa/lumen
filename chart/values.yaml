@@ -356,13 +356,17 @@ statsCheck:
 
 ## Resources for the Lumen app pod --------------------------------------------------
 
-resources: {}
+# -- Resources of the app container (also used by the wait-for-migrations
+# initContainer, the migration Job and the stats-check CronJob unless they set their
+# own). Empty uses the chart default below; setting `resources` replaces that default
+# entirely, so give both requests and limits.
+#  requests:
+#    cpu: 250m
+#    memory: 512Mi
 #  limits:
 #    cpu: 1
 #    memory: 512Mi
-#  requests:
-#    cpu: 100m
-#    memory: 256Mi
+resources: {}
 
 ## Pod scheduling -------------------------------------------------------------------
 
@@ -372,6 +376,16 @@ affinity: {}
 
 podAnnotations: {}
 podSecurityContext: {}
+# -- Container securityContext of the app container (also used by the
+# wait-for-migrations initContainer, the migration Job and the stats-check CronJob).
+# Empty uses the chart default below. Keys you set are merged over that default, so
+# e.g. `readOnlyRootFilesystem: true` keeps the rest; set a key explicitly to turn a
+# default off (e.g. `runAsNonRoot: false`).
+#  runAsNonRoot: true
+#  runAsUser: 1000
+#  allowPrivilegeEscalation: false
+#  capabilities:
+#    drop: [ALL]
 securityContext: {}
 
 ## Models ---------------------------------------------------------------------------

@@ -270,17 +270,26 @@ prometheus_client raises if that directory does not exist.
 {{- end }}
 
 {{/*
-Container securityContext of the Lumen app container.
+Default container securityContext of the Lumen app container.
 */}}
-{{- define "lumen.appSecurityContext" -}}
-{{- if .Values.securityContext -}}
-{{- toYaml .Values.securityContext }}
-{{- else -}}
+{{- define "lumen.appSecurityContextDefault" -}}
 runAsNonRoot: true
 runAsUser: 1000
 allowPrivilegeEscalation: false
 capabilities:
   drop: [ALL]
+{{- end }}
+
+{{/*
+Container securityContext of the Lumen app container. Unset `securityContext`
+renders the default as written; set keys are merged over the default, so a
+partial override keeps the rest of the hardened context.
+*/}}
+{{- define "lumen.appSecurityContext" -}}
+{{- if .Values.securityContext -}}
+{{- toYaml (mergeOverwrite (fromYaml (include "lumen.appSecurityContextDefault" .)) .Values.securityContext) }}
+{{- else -}}
+{{- include "lumen.appSecurityContextDefault" . }}
 {{- end }}
 {{- end }}
 
