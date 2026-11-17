@@ -98,8 +98,7 @@ Across the dashboard:
   local time (the day on 1y); a screen reader hears the first 5 such periods. `*` marks values
   that include days which are not yet `final` or are `estimated`; `†` marks a model without a
   `models:` GPU entry; `!` marks a cache price Lumen could not bill because the backend
-  reported no count for it in the last day (SGLang reports cache reads but no writes) — those
-  tokens were charged at the input price.
+  reported no count for it in the last day — those tokens were charged at the input price.
 - **1y status**: one bucket per local day. For a model: ok at 99% availability or more,
   degraded above 0%, down otherwise. For Lumen, from the probes still kept: ok when 99% or more
   of the day's probes were ok, down when none was up (failed, or more than `lumen.down_above`
