@@ -418,7 +418,7 @@ resolve_key() {
   if [[ $RELOGIN -eq 0 && -n "${LUMEN_API_KEY:-}" \
         && "$want" == "$SERVER" ]]; then
     if [[ "$LUMEN_API_KEY" =~ $KEY_RE ]]; then
-      KEY_SOURCE=env
+      KEY_SOURCE="env"
     else
       echo "warning: ignoring malformed LUMEN_API_KEY (unset it or run lumen.sh --relogin)" >&2
     fi
@@ -479,6 +479,7 @@ resolve_opencode_config() {
   fi
   if [[ ! -f "$OPENCODE_FILE" ]]; then
     mkdir -p "$(dirname "$OPENCODE_FILE")"
+    # shellcheck disable=SC2016  # "$schema" is a literal JSON key
     (umask 077 && printf '{"$schema": "https://opencode.ai/config.json"}\n' > "$OPENCODE_FILE")
     echo "Created $OPENCODE_FILE"
   fi
@@ -487,6 +488,7 @@ resolve_opencode_config() {
 # JSONC -> JSON for jq: drops // and /* */ comments and trailing commas
 # before } or ], but never inside strings (so "https://..." survives). With
 # check=1 it prints nothing and exits 0 only if the input has comments.
+# shellcheck disable=SC2016  # awk program, expanded by awk, not the shell
 JSONC_AWK='
   function out(s) { if (!check) printf "%s", s }
   {
@@ -612,20 +614,20 @@ sync_models() {
   trap 'rm -f "$tmp"' EXIT
 
   jsonc_to_json "$config" | jq --argjson models "$new_models" --arg base "$SERVER" \
-      --argjson embed "$embed" --arg key "$LUMEN_API_KEY" '
+      --argjson embed "$embed" '
     (if .provider and .provider.lumen then .provider.lumen else null end) as $lumen
     | .provider = ((.provider // {}) + {lumen: (
         if $lumen then
           $lumen + {models: $models}
           | .options = ((.options // {}) + {baseURL: ($base + "/v1")})
-          | if $embed then .options = ((.options // {}) + {apiKey: $key}) else . end
+          | if $embed then .options = ((.options // {}) + {apiKey: env.LUMEN_API_KEY}) else . end
         else
           {
             npm: "@ai-sdk/openai-compatible",
             name: "Lumen",
             options: {
               baseURL: ($base + "/v1"),
-              apiKey: (if $embed then $key else "{env:LUMEN_API_KEY}" end)
+              apiKey: (if $embed then env.LUMEN_API_KEY else "{env:LUMEN_API_KEY}" end)
             },
             models: $models
           }
@@ -722,13 +724,15 @@ sync_copilot() {
 
   tmp=$(mktemp "$config.tmp.XXXXXX")
   trap 'rm -f "$tmp"' EXIT
-  jq --argjson models "$new_models" --arg base "$SERVER" --arg key "$LUMEN_API_KEY" '
+  # The key is read from the environment, not passed as an argument, so it
+  # never shows in the process list.
+  jq --argjson models "$new_models" --arg base "$SERVER" '
     # Only the lumen provider and lumen models are replaced; every other
     # entry, including ones that are not objects, is kept as it is.
     def other(f): select(type != "object" or (f != "lumen"));
     .providers = ([(.providers // [])[] | other(.name)]
                   + [{name: "lumen", type: "openai", baseUrl: ($base + "/v1"),
-                      wireApi: "completions", apiKey: $key}])
+                      wireApi: "completions", apiKey: env.LUMEN_API_KEY}])
     | .models = ([(.models // [])[] | other(.provider)] + $models)
   ' <<<"$current" > "$tmp" || die "cannot update $config"
   chmod 600 "$tmp"
