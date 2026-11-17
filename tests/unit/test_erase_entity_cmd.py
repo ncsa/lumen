@@ -203,6 +203,7 @@ def test_unknown_uuid_has_nothing_to_do(app, world):
     result = app.test_cli_runner().invoke(erase_entity_cmd, [str(uuid.uuid4()), "--yes"])
     assert result.exit_code == 0, result.output
     assert "nothing to do" in result.output
+    assert "run the backfill-aggregate commands it printed" in result.output
     with app.app_context():
         assert db.session.get(Entity, world["user"]).active is True
 
