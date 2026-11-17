@@ -5,6 +5,7 @@ import sys
 import time
 from http import HTTPStatus
 
+import bleach
 import click
 import yaml
 from flask import Flask, current_app, g, jsonify, render_template, request, session
@@ -794,7 +795,25 @@ def create_app():
         _md.reset()
         return Markup(_md.convert(text or ""))
 
+    # Model notices are admin-entered in the UI, so their HTML is cleaned after rendering.
+    _notice_tags = {
+        "p", "br", "strong", "em", "b", "i", "a", "ul", "ol", "li", "code", "pre", "blockquote",
+        "h1", "h2", "h3", "h4", "h5", "h6", "table", "thead", "tbody", "tr", "th", "td", "hr",
+    }
+
+    def _md_safe_filter(text):
+        _md.reset()
+        html = _md.convert(text or "")
+        return Markup(bleach.clean(
+            html,
+            tags=_notice_tags,
+            attributes={"a": ["href", "title"]},
+            protocols={"http", "https", "mailto"},
+            strip=True,
+        ))
+
     app.jinja_env.filters["markdown"] = _md_filter
+    app.jinja_env.filters["markdown_safe"] = _md_safe_filter
     app.jinja_env.filters["compact_number"] = compact_number
 
     # Sync models from yaml on every startup. group_rules is never read from
