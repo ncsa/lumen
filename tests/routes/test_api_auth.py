@@ -2649,6 +2649,77 @@ def test_completed_api_stream_is_not_counted_as_an_abort(
     assert _abort_count("api", "disconnect") == before
 
 
+
+class _StopChunk(_ContentChunk):
+    """The final content delta of a backend that never sends a usage chunk."""
+
+    def model_dump(self):
+        return {"choices": [{"delta": {"content": self.text}, "finish_reason": "stop"}]}
+
+
+def test_completed_api_stream_without_usage_bills_an_estimate(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+    fresh_rate_limit,
+):
+    """A backend that ignores include_usage must not make a finished stream free.
+
+    The stream completes normally, so it is billed and logged as ``ok`` (not an
+    abort) with the same estimate an abort would get: the prompt from its
+    character count, the output as one token per content delta.
+    """
+    from sqlalchemy import select
+
+    from lumen.blueprints.api import routes
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    from lumen.models.entity_balance import EntityBalance
+    from lumen.models.entity_limit import EntityLimit
+    from lumen.models.request_log import RequestLog
+
+    token, key_id = api_key
+    with app.app_context():
+        db.session.add(EntityLimit(
+            entity_id=test_user["id"], max_coins=10, refresh_coins=0, starting_coins=10,
+        ))
+        db.session.add(EntityBalance(entity_id=test_user["id"], coins_left=10))
+        db.session.commit()
+
+    _fake_openai(monkeypatch, routes, [_ContentChunk(), _ContentChunk(), _StopChunk()])
+    before = _abort_count("api", "disconnect")
+    before_err = _abort_count("api", "upstream_error")
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"],
+              "messages": [{"role": "user", "content": "x" * 400}], "stream": True},
+    )
+    body = resp.get_data(as_text=True)
+    assert resp.status_code == HTTPStatus.OK
+    assert body.endswith("data: [DONE]\n\n")
+
+    with app.app_context():
+        log = db.session.execute(
+            select(RequestLog).filter_by(entity_id=test_user["id"])
+        ).scalar_one()
+        assert log.outcome == "ok"
+        assert log.aborted is False
+        assert log.input_tokens == 100  # 400 prompt characters / 4
+        assert log.output_tokens == 3   # three content deltas
+        assert log.cached_input_tokens is None  # an estimate cannot know the cache
+        # 100 input @ $1/M + 3 output @ $2/M
+        assert float(log.cost) == pytest.approx(0.000106)
+        balance = db.session.execute(
+            select(EntityBalance).filter_by(entity_id=test_user["id"])
+        ).scalar_one()
+        assert float(balance.coins_left) == pytest.approx(10 - 0.000106)
+        key = db.session.get(APIKey, key_id)
+        assert (key.input_tokens, key.output_tokens) == (100, 3)
+        assert float(key.cost) == pytest.approx(0.000106)
+
+    assert _abort_count("api", "disconnect") == before
+    assert _abort_count("api", "upstream_error") == before_err
+
 # ---------------------------------------------------------------------------
 # Request timing columns
 #

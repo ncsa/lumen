@@ -853,33 +853,30 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                     yield f"data: {json.dumps(chunk.model_dump())}\n\n"
                 if not aborted:
                     duration = _time.monotonic() - t0
-                    if usage is not None:
-                        input_tokens, cached_tokens, output_tokens, write_tokens = usage_tokens(usage)
-                        cost = calculate_cost(
-                            input_tokens, output_tokens,
-                            mc_in_cost, mc_out_cost,
-                            cached_input_tokens=cached_tokens,
-                            cached_input_cost_per_million=mc_cached_cost,
-                            cache_write_tokens=write_tokens,
-                            cache_write_cost_per_million=mc_write_cost,
-                        )
-                        phase = "billing"
-                        with app.app_context():
-                            bill_request(entity_id, mc_id, "api", input_tokens, output_tokens,
-                                         cost, effective=effective, api_key_id=ak_id,
-                                         cached_input_tokens=cached_tokens,
-                                         cache_write_tokens=write_tokens,
-                                         endpoint_id=ep_id, duration=duration,
-                                         timing=timing, upstream_t0=t0,
-                                         ttft=t_first_any, ttft_visible=t_first_visible,
-                                         outcome="ok")
-                        billed = True
-                    else:
+                    if usage is None:
                         logger.warning(
                             "Upstream did not return usage data for streaming request "
-                            "(model=%s, entity_id=%s) — tokens and cost not recorded.",
+                            "(model=%s, entity_id=%s) — billed an estimate instead.",
                             model_name, entity_id,
                         )
+                    # Without a usage chunk the counts are estimated exactly as an
+                    # abort's are; otherwise a backend that ignores include_usage
+                    # made finishing the stream free while hanging up was billed.
+                    input_tokens, output_tokens, cost, cached_tokens, write_tokens = estimate_abort_usage(
+                        usage, messages, content_deltas, mc_in_cost, mc_out_cost,
+                        cached_in_cost_per_million=mc_cached_cost,
+                        cache_write_cost_per_million=mc_write_cost)
+                    phase = "billing"
+                    with app.app_context():
+                        bill_request(entity_id, mc_id, "api", input_tokens, output_tokens,
+                                     cost, effective=effective, api_key_id=ak_id,
+                                     cached_input_tokens=cached_tokens,
+                                     cache_write_tokens=write_tokens,
+                                     endpoint_id=ep_id, duration=duration,
+                                     timing=timing, upstream_t0=t0,
+                                     ttft=t_first_any, ttft_visible=t_first_visible,
+                                     outcome="ok")
+                    billed = True
                     # [DONE] goes last, after billing, matching llm.py. With the
                     # yield first, a client vanishing on this final event left
                     # billed=False, so the GeneratorExit handler wrote a

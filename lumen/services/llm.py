@@ -1088,6 +1088,11 @@ def estimate_abort_usage(usage, messages, content_deltas, in_cost_per_million, o
     count, and the output as one token per content delta received, the ratio most
     OpenAI-compatible backends emit.
 
+    Despite the name, it also prices a stream that completed without a usage
+    chunk (a backend that ignores ``stream_options.include_usage``): that request
+    is billed the same estimate with ``outcome="ok"``, so finishing a stream can
+    never be cheaper than hanging up on it.
+
     A known usage chunk also brings the upstream's cache-read and cache-write
     counts, priced at the cached-in and cache-write rates and returned for the
     request_logs row. An estimated request reports None for both, not 0: a
