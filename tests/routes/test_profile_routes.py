@@ -880,6 +880,44 @@ def test_profile_page_hides_inactive_model_with_past_usage(app, auth_client, tes
     assert b"retired-model" not in resp.data
 
 
+def test_profile_chat_last_used_is_the_most_recent_chat_row(app, auth_client, test_user, test_model):
+    """The chat Last Used is the latest chat row's last_used_at, never the earliest or an api row's."""
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    from lumen.models.model_stat import ModelStat
+    from tests.routes.test_stats_after_cutover import _rendered
+
+    older = datetime(2026, 9, 1, 12, 0)
+    newer = datetime(2026, 10, 1, 12, 0)
+    later_api = datetime(2026, 11, 1, 12, 0)
+    with app.app_context():
+        # A second model, because (entity, model, source) is unique.
+        second = ModelConfig(model_name="second-model", input_cost_per_million=1.0, output_cost_per_million=2.0)
+        db.session.add(second)
+        db.session.flush()
+        # The newer row goes in first, so neither insertion order nor the first row gives the answer.
+        db.session.add(ModelStat(
+            entity_id=test_user["id"], model_config_id=second.id, source="chat",
+            requests=3, input_tokens=30, output_tokens=60, cost=0.03, last_used_at=newer,
+        ))
+        db.session.add(ModelStat(
+            entity_id=test_user["id"], model_config_id=test_model["id"], source="chat",
+            requests=2, input_tokens=20, output_tokens=40, cost=0.02, last_used_at=older,
+        ))
+        # An api row used even later stays out of the chat aggregate.
+        db.session.add(ModelStat(
+            entity_id=test_user["id"], model_config_id=test_model["id"], source="api",
+            requests=7, input_tokens=70, output_tokens=140, cost=0.07, last_used_at=later_api,
+        ))
+        db.session.commit()
+
+    with _rendered(app) as contexts:
+        assert auth_client.get("/profile").status_code == HTTPStatus.OK
+    chat_agg = contexts[0]["chat_agg"]
+    assert chat_agg[0] == 5
+    assert chat_agg[4] == newer
+
+
 def test_profile_page_hides_blocked_model(app, auth_client, test_model):
     from tests.conftest import set_model_owner
 
