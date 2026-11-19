@@ -28,6 +28,7 @@ All notable changes to Lumen will be documented in this file.
 - Docs: list every TimescaleDB `job` label on `/metrics`, document `stats.*` and add it and `api.keys.ttl` to the hot-reload table, and drop a stale chart README note. (#528)
 - Docs: document the cache rates and `cache_metrics` on `/v1/models`, the cache columns in the DB schema, the monitor's `backfill_tokens.py`, and cache pricing in the user guides (#606)
 - Tests: strengthen weak tests (coverage `--min`, integer-id template guard, favicon, monitor cache-metrics clamp, reassign-model same-name refusal) and fail the suite on `ResourceWarning`s raised after the last test (#611)
+- Helm: a partial `securityContext` is now merged over the chart's hardened default instead of replacing it. (#614)
 
 ## [2.3.1] - 2026-11-07
 
