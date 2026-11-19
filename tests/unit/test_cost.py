@@ -202,6 +202,40 @@ def test_usage_tokens_rejects_counts_that_cannot_be_real(usage, expected):
     assert usage_tokens(usage) == expected
 
 
+@pytest.mark.parametrize("usage, field, expected", [
+    # Billing is unchanged: the malformed total still counts as 0.
+    ({"prompt_tokens": 1000.5, "completion_tokens": 10}, "prompt_tokens", (0, None, 10, None)),
+    ({"prompt_tokens": -5, "completion_tokens": 10}, "prompt_tokens", (0, None, 10, None)),
+    ({"prompt_tokens": True, "completion_tokens": 10}, "prompt_tokens", (0, None, 10, None)),
+    ({"prompt_tokens": 100, "completion_tokens": float("nan")}, "completion_tokens",
+     (100, None, 0, None)),
+    ({"input_tokens": -1, "output_tokens": 2}, "input_tokens", (0, None, 2, None)),
+    ({"input_tokens": 4, "output_tokens": 2.5}, "output_tokens", (4, None, 0, None)),
+])
+def test_usage_tokens_logs_a_malformed_total(usage, field, expected, caplog):
+    with caplog.at_level("WARNING", logger="lumen.services.cost"):
+        assert usage_tokens(usage) == expected
+    messages = [r.getMessage() for r in caplog.records]
+    assert len(messages) == 1
+    assert messages[0].startswith(f"Ignoring malformed usage field {field}=")
+
+
+@pytest.mark.parametrize("usage", [
+    {"prompt_tokens": 100, "completion_tokens": 7,
+     "prompt_tokens_details": {"cached_tokens": 60, "cache_write_tokens": 20}},
+    {"input_tokens": 20, "output_tokens": 7, "cache_read_input_tokens": 60},
+    {"prompt_tokens": "100", "completion_tokens": 7.0},
+    # An unreadable cache count is not a total and is not logged.
+    {"prompt_tokens": 100, "prompt_tokens_details": {"cached_tokens": 1.5}},
+    {},
+    None,
+])
+def test_usage_tokens_logs_nothing_for_valid_totals(usage, caplog):
+    with caplog.at_level("DEBUG", logger="lumen.services.cost"):
+        usage_tokens(usage)
+    assert caplog.records == []
+
+
 def test_audio_cost_one_hour():
     assert calculate_audio_cost(3600, 0.10) == 0.10
 
