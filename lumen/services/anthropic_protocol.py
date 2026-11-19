@@ -54,11 +54,6 @@ ERROR_STATUS = {
     "overloaded_error": HTTPStatus.SERVICE_UNAVAILABLE,
 }
 
-# The error type to report for a status raised outside a view — routing, the
-# limiter, an unhandled exception — where there is no Anthropic type to start
-# from. Statuses Anthropic has no name for fall back to invalid_request_error.
-STATUS_ERROR = {status: err_type for err_type, status in ERROR_STATUS.items()}
-
 # The error types Lumen's OpenAI envelope uses, in Anthropic's vocabulary.
 _FROM_OPENAI = {
     "authentication_error": "authentication_error",

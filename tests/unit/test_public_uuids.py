@@ -18,7 +18,6 @@ from lumen.models.conversation import Conversation
 from lumen.models.entity import Entity
 from lumen.models.group import Group
 from lumen.models.lookups import (
-    conversation_by_uuid_or_404,
     entity_by_uuid_or_404,
     group_by_uuid_or_404,
     key_by_uuid_or_404,
@@ -121,7 +120,6 @@ def test_entity_by_uuid_finds_the_ghost(app):
 @pytest.mark.parametrize("name, helper", [
     ("group", group_by_uuid_or_404),
     ("key", key_by_uuid_or_404),
-    ("conversation", conversation_by_uuid_or_404),
 ])
 def test_lookup_finds_its_row(app, rows, name, helper):
     row_id, row_uuid = rows[name]
@@ -134,8 +132,7 @@ def test_lookup_finds_its_row(app, rows, name, helper):
     lambda u: entity_by_uuid_or_404(u, "project"),
     group_by_uuid_or_404,
     key_by_uuid_or_404,
-    conversation_by_uuid_or_404,
-], ids=["user", "project", "group", "key", "conversation"])
+], ids=["user", "project", "group", "key"])
 def test_lookup_404s_for_an_unknown_uuid(app, rows, helper):
     with app.test_request_context():
         with pytest.raises(NotFound):
@@ -145,7 +142,7 @@ def test_lookup_404s_for_an_unknown_uuid(app, rows, helper):
 @pytest.mark.parametrize("name, helper", [
     ("user", group_by_uuid_or_404),
     ("group", key_by_uuid_or_404),
-    ("key", conversation_by_uuid_or_404),
+    ("key", group_by_uuid_or_404),
     ("conversation", lambda u: entity_by_uuid_or_404(u, "user")),
 ])
 def test_lookup_404s_for_another_tables_uuid(app, rows, name, helper):
