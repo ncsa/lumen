@@ -44,12 +44,8 @@ def engine(tmp_path):
         conn.execute(sa.text("INSERT INTO api_keys VALUES (1, 500), (2, 300), (3, 0)"))
         conn.execute(sa.text(
             "INSERT INTO request_logs (api_key_id, cached_input_tokens, cache_write_tokens) VALUES "
-            # Key 1: NULL counts in either column add nothing.
-            "(1, 40, 10), (1, NULL, 5), (1, 2, NULL), (1, NULL, NULL), "
-            # Key 2: only NULL counts, so its totals are 0, not NULL.
-            "(2, NULL, NULL), "
-            # Key 3 has no rows. Chat rows (no key) are counted for no key.
-            "(NULL, 1000, 1000)"
+            # Non-NULL counts the upgrade must not sum into the new totals.
+            "(1, 40, 10), (1, NULL, 5), (2, NULL, NULL), (NULL, 1000, 1000)"
         ))
     yield engine
     engine.dispose()
@@ -59,7 +55,7 @@ def _columns(engine, table):
     return {c["name"]: c for c in sa.inspect(engine).get_columns(table)}
 
 
-def test_upgrade_backfills_per_key_totals_and_downgrade_drops_them(engine):
+def test_upgrade_starts_totals_at_zero_and_downgrade_drops_them(engine):
     module = _revision_module()
     _run(engine, module.upgrade)
 
@@ -71,7 +67,9 @@ def test_upgrade_backfills_per_key_totals_and_downgrade_drops_them(engine):
         rows = conn.execute(sa.text(
             "SELECT id, input_tokens, cached_input_tokens, cache_write_tokens FROM api_keys ORDER BY id"
         )).all()
-    assert [tuple(r) for r in rows] == [(1, 500, 42, 15), (2, 300, 0, 0), (3, 0, 0, 0)]
+    # Every existing key starts at 0, even with counts in request_logs: the
+    # upgrade does not read the request history.
+    assert [tuple(r) for r in rows] == [(1, 500, 0, 0), (2, 300, 0, 0), (3, 0, 0, 0)]
 
     # A key created after the upgrade starts at 0 from the server default.
     with engine.begin() as conn:

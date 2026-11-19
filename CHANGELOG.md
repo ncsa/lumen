@@ -7,6 +7,7 @@ All notable changes to Lumen will be documented in this file.
 - `scripts/claude.sh` takes the model from `ANTHROPIC_MODEL` instead of a hardcoded one and is documented in `scripts/README.md`. (#610)
 - **Behaviour change:** `/v1` chat, completions, messages and audio requests now share one per-key rate-limit budget instead of one each; `count_tokens` keeps its own (#601)
 - Docs: fix small inaccuracies in the Anthropic guide, API reference, README, hot-reload table, chart values, favicon route and LLMHub text. (#613)
+- Per-key cache token totals start at 0 on upgrade instead of being summed from request_logs, so the migration no longer scans the request history (#600)
 - `flask erase-entity` prints the `backfill-aggregate` commands that finish its aggregate refresh before starting it, so an interrupted run can still be completed. (#612)
 - `flask erase-entity` also takes the user's email (matched ignoring case, interactive only); an email that matches no user or several users fails without erasing anything. (#587)
 - Users, projects, groups, API keys, conversations and OAuth requests are addressed by random UUIDs instead of sequential database ids; models by name; click an avatar to copy its ID (#560)
