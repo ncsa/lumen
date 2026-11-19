@@ -1,6 +1,6 @@
 [project]
 name = "lumen-monitor"
-version = "2.3.1"
+version = "2.4.0"
 description = "Standalone monitoring service for a Lumen instance"
 requires-python = ">=3.14"
 license = "Apache-2.0"

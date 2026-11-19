@@ -16,11 +16,6 @@ from http import HTTPStatus
 from lumen.services.cost import usage_tokens
 from lumen.services.llm import estimate_prompt_tokens
 
-# Versions accepted in the `anthropic-version` header. The header is optional
-# here (the official clients always send it); an unknown value is refused rather
-# than assumed, because a future version could change field meanings.
-SUPPORTED_VERSIONS = frozenset({"2023-06-01", "2023-01-01"})
-
 # Only beta capabilities exercised by the configured Claude Code client.
 SUPPORTED_BETAS = frozenset({
     "claude-code-20250219", "interleaved-thinking-2025-05-14",
@@ -89,13 +84,11 @@ def error_type_for(openai_type: str, status: HTTPStatus) -> str:
 
 
 def check_headers(headers):
-    """Validate the protocol headers. Raises AnthropicError."""
-    version = headers.get("anthropic-version")
-    if version and version not in SUPPORTED_VERSIONS:
-        raise AnthropicError(
-            f"Unsupported anthropic-version: {version}. Supported: "
-            f"{', '.join(sorted(SUPPORTED_VERSIONS))}."
-        )
+    """Validate the protocol headers. Raises AnthropicError.
+
+    `anthropic-version` is accepted as sent: the official SDKs bump it with
+    each release and Lumen implements a single message shape.
+    """
     betas = {value.strip() for value in headers.get("anthropic-beta", "").split(",") if value.strip()}
     unsupported = sorted(betas - SUPPORTED_BETAS)
     if unsupported:

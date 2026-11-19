@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-11-19
+
 **Upgrade:** everyone is logged out of the web UI once; 2.3.1 pods keep working during a rolling `helm upgrade`. Per-key cache token totals start at 0 instead of being summed from `request_logs`. (#560, #598, #600)
 
 - **Breaking:** users, projects, groups, API keys, conversations and OAuth requests are addressed by random UUIDs, models by name; old links with numeric ids (`/projects/<n>`, `/groups/<n>`, `/usage?entity_id=<n>`) no longer work. `flask erase-entity` takes a user UUID, or an email when run interactively (`--yes` needs the UUID); `flask reassign-model` takes model names. (#560, #587)

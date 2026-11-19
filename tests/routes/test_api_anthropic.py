@@ -274,11 +274,10 @@ def test_monitor_token_cannot_send_messages(app, client, fresh_rate_limit):
 # Anthropic envelope, and that the raw-body cases never reach it at all.
 # ---------------------------------------------------------------------------
 
-def test_unsupported_version_is_refused(client, api_key, fresh_rate_limit):
+def test_newer_version_is_accepted(client, api_key, fresh_rate_limit):
     token, _ = api_key
     resp = _post(client, token, **{"anthropic-version": "2099-01-01"})
-    assert resp.status_code == HTTPStatus.BAD_REQUEST
-    assert resp.get_json()["error"]["type"] == "invalid_request_error"
+    assert resp.status_code == HTTPStatus.OK
 
 
 def test_missing_version_is_allowed_and_unknown_beta_is_refused(client, api):

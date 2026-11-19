@@ -48,9 +48,8 @@ def test_missing_version_accepted():
     check_headers({})
 
 
-def test_unknown_version_rejected():
-    with pytest.raises(AnthropicError):
-        check_headers({"anthropic-version": "2099-01-01"})
+def test_newer_version_accepted():
+    check_headers({"anthropic-version": "2099-01-01"})
 
 
 def test_unknown_beta_is_refused():
