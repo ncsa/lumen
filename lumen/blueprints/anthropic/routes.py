@@ -60,12 +60,17 @@ def _exempt_from_csrf(state):
 # Errors
 # ---------------------------------------------------------------------------
 
+_LOGGED_MESSAGE_MAX = 200
+
+
 def _anthropic_err(message: str, err_type: str = "invalid_request_error"):
     # The refusal reason is logged because this surface answers a client that
     # cannot show it: Claude Code retries a refused request and then reports its
     # own generic failure, so the access log's bare "400 -" is all an operator
     # would otherwise have to work from.
-    logger.info("anthropic request refused (%s): %s", err_type, message)
+    # The message can carry client text (the model name, for one): %r escapes
+    # newlines so it cannot forge a log line, and the cut bounds its length.
+    logger.info("anthropic request refused (%s): %r", err_type, message[:_LOGGED_MESSAGE_MAX])
     return jsonify(error_body(message, err_type)), ERROR_STATUS[err_type]
 
 
@@ -126,10 +131,6 @@ def anthropic_auth_required(f):
             return _anthropic_err(
                 "Missing API key. Send it in the x-api-key header.",
                 "authentication_error")
-        # Lumen keys are ASCII. Anything else is refused here: the monitor-token
-        # comparison inside api_key_required raises on a non-ASCII str.
-        if not (header_key or bearer).isascii():
-            return _anthropic_err("Invalid or revoked API key", "authentication_error")
         # api_key_required reads "Authorization: Bearer <key>" exactly.
         request.environ["HTTP_AUTHORIZATION"] = f"Bearer {header_key or bearer}"
         return api_key_required(f)(*args, **kwargs)

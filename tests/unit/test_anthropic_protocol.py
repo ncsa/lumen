@@ -283,6 +283,37 @@ def test_image_url_source():
     assert messages[0]["content"][1]["image_url"]["url"] == "https://example.test/a.png"
 
 
+@pytest.mark.parametrize("url", ["http://images.internal/a.png", "https://example.test/a.png", "HTTPS://Example.test/a.png"])
+def test_http_and_https_image_urls_pass(url):
+    _, messages, _, _, _ = translate_request(_req(messages=[
+        {"role": "user", "content": [{"type": "image", "source": {"type": "url", "url": url}}]},
+    ]))
+    assert messages[0]["content"][0]["image_url"]["url"] == url
+
+
+_REFUSED_IMAGE_URLS = ["file:///etc/passwd", "javascript:alert(1)", "data:image/png;base64,QUJD",
+                       "ftp://example.test/a.png", "//example.test/a.png"]
+
+
+@pytest.mark.parametrize("url", _REFUSED_IMAGE_URLS)
+def test_image_url_with_other_scheme_is_refused(url):
+    with pytest.raises(AnthropicError, match="http:// or https://"):
+        translate_request(_req(messages=[
+            {"role": "user", "content": [{"type": "image", "source": {"type": "url", "url": url}}]},
+        ]))
+
+
+@pytest.mark.parametrize("url", _REFUSED_IMAGE_URLS)
+def test_image_url_with_other_scheme_inside_tool_result_is_refused(url):
+    with pytest.raises(AnthropicError, match="http:// or https://"):
+        translate_request(_req(messages=[
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t",
+                 "content": [{"type": "image", "source": {"type": "url", "url": url}}]},
+            ]},
+        ]))
+
+
 def test_unsupported_image_source_is_refused():
     with pytest.raises(AnthropicError):
         translate_request(_req(messages=[

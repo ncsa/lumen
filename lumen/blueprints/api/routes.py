@@ -331,10 +331,15 @@ def api_key_required(f):
         token = auth_header[7:].strip()
         if not token:
             return _err("Empty token", status=HTTPStatus.BAD_REQUEST)
+        # Lumen keys are ASCII; anything else cannot match one.
+        if not token.isascii():
+            return _err("Invalid or revoked API key", "authentication_error", HTTPStatus.UNAUTHORIZED)
 
         yaml_data = current_app.config.get("YAML_DATA", {})
         monitor_token = yaml_data.get("api", {}).get("monitoring", {}).get("token", "")
-        if monitor_token and hmac.compare_digest(token, monitor_token):
+        # Compare bytes: compare_digest raises TypeError on a non-ASCII str, and
+        # the configured token is not checked to be ASCII.
+        if monitor_token and hmac.compare_digest(token.encode(), str(monitor_token).encode()):
             if request.endpoint not in ("api.list_models", "api.get_model"):
                 return _err("Monitor token can only access /v1/models", "authentication_error", HTTPStatus.FORBIDDEN)
             g.api_key = None

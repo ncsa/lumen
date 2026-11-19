@@ -1,4 +1,5 @@
 """Tests for the /v1 API key authentication decorator (api_key_required)."""
+import logging
 from datetime import timedelta
 from http import HTTPStatus
 from types import SimpleNamespace
@@ -271,6 +272,52 @@ def test_monitor_token_blocked_from_chat_completions(app, client):
         assert resp.get_json()["error"]["type"] == "authentication_error"
     finally:
         app.config["YAML_DATA"].pop("api", None)
+
+
+@pytest.mark.parametrize("call", [
+    pytest.param(lambda c, h: c.get("/v1/models", headers=h), id="models"),
+    pytest.param(lambda c, h: c.post("/v1/chat/completions", headers=h,
+                                     json={"model": "test-model", "messages": [{"role": "user", "content": "hi"}]}),
+                 id="chat-completions"),
+])
+def test_non_ascii_token_401_with_monitor_token(app, client, monkeypatch, call):
+    """compare_digest raised TypeError on a non-ASCII str, so this was a 500."""
+    monkeypatch.setitem(app.config, "YAML_DATA", {**app.config.get("YAML_DATA", {}),
+                                                  "api": {"monitoring": {"token": "monitor-secret"}}})
+    resp = call(client, {"Authorization": "Bearer \xffabc"})
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+    error = resp.get_json()["error"]
+    assert (error["type"], error["message"]) == ("authentication_error", "Invalid or revoked API key")
+
+
+def test_non_ascii_monitor_token_in_config_does_not_break_keys(
+    app, client, test_user, test_model, test_model_endpoint, api_key, monkeypatch, caplog,
+):
+    from lumen.services.config_watcher import apply_hot_config
+
+    token, _ = api_key
+    with app.app_context():
+        _grant_unlimited_pool(app, test_user["id"])
+    yaml_data = {**app.config.get("YAML_DATA", {}), "api": {"monitoring": {"token": "mönitor-secret"}}}
+    monkeypatch.setitem(app.config, "YAML_DATA", yaml_data)
+    with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
+        apply_hot_config(app, yaml_data)
+    warnings = [r.getMessage() for r in caplog.records if "api.monitoring.token" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "mönitor-secret" not in warnings[0]
+
+    resp = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == HTTPStatus.OK
+    assert test_model["model_name"] in [m["id"] for m in resp.get_json()["data"]]
+
+
+def test_ascii_monitor_token_has_no_warning(app, caplog):
+    from lumen.services.config_watcher import apply_hot_config
+
+    yaml_data = {**app.config.get("YAML_DATA", {}), "api": {"monitoring": {"token": "monitor-secret"}}}
+    with caplog.at_level(logging.WARNING, logger="lumen.services.config_watcher"):
+        apply_hot_config(app, yaml_data)
+    assert not [r for r in caplog.records if "api.monitoring.token" in r.getMessage()]
 
 
 # ---------------------------------------------------------------------------
