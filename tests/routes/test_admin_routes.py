@@ -87,6 +87,22 @@ def test_update_user_sets_active_and_coins(app, admin_client, test_user):
         assert limit.config_managed is False
 
 
+def test_update_user_large_coin_pool_saved(app, admin_client, test_user):
+    """A pool well above 1,000 but under the Numeric(12, 6) cap is accepted and stored."""
+    resp = admin_client.patch(
+        f"/admin/users/{test_user['uuid']}", json={"max_coins": 50000, "refresh_coins": 1000}
+    )
+    assert resp.status_code == HTTPStatus.OK
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_limit import EntityLimit
+        limit = db.session.execute(
+            select(EntityLimit).filter_by(entity_id=test_user["id"])
+        ).scalar_one_or_none()
+        assert float(limit.max_coins) == 50000.0
+        assert float(limit.refresh_coins) == 1000.0
+
+
 def test_update_user_updates_existing_limit(app, admin_client, test_user):
     with app.app_context():
         from lumen.extensions import db
@@ -205,6 +221,7 @@ def test_update_user_invalid_coins_return_400(admin_client, test_user):
         {"max_coins": -1, "refresh_coins": 0},
         {"max_coins": 10, "refresh_coins": -1},
         {"max_coins": "abc", "refresh_coins": 1},
+        {"max_coins": 1000000, "refresh_coins": 1},
     ):
         resp = admin_client.patch(f"/admin/users/{test_user['uuid']}", json=payload)
         assert resp.status_code == HTTPStatus.BAD_REQUEST, payload
