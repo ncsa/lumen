@@ -4,42 +4,40 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
-- `scripts/claude.sh` takes the model from `ANTHROPIC_MODEL` instead of a hardcoded one and is documented in `scripts/README.md`. (#610)
-- `/v1/messages` reports `input_tokens` without cached tokens and adds `cache_read_input_tokens` / `cache_creation_input_tokens`; browsers can call it with the Anthropic SDK; a malformed upstream token count is logged (#608)
-- **Behaviour change:** `/v1` chat, completions, messages and audio requests now share one per-key rate-limit budget instead of one each; `count_tokens` keeps its own (#601)
-- Docs: fix small inaccuracies in the Anthropic guide, API reference, README, hot-reload table, chart values, favicon route and LLMHub text. (#613)
-- Per-key cache token totals start at 0 on upgrade instead of being summed from request_logs, so the migration no longer scans the request history (#600)
-- `flask erase-entity` prints the `backfill-aggregate` commands that finish its aggregate refresh before starting it, so an interrupted run can still be completed. (#612)
-- A streamed API reply (`/v1/chat/completions`, `/v1/messages`) whose backend sends no usage data is now billed and logged with an estimate instead of being free and unlogged. (#603)
-- API keys with non-ASCII characters, or a non-ASCII monitor token, no longer cause a 500. (#609)
-- Anthropic image blocks accept only `http://` and `https://` URLs. (#609)
-- Client-supplied text in refused Anthropic requests is escaped in the log. (#609)
-- `app.llmhub_url` and `app.github_url` must be http(s) URLs. (#609)
-- Model notices and acknowledgement messages are sanitised. (#609)
-- `lumen.sh` no longer puts the API key on the jq command line. (#609)
-- `flask erase-entity` also takes the user's email (matched ignoring case, interactive only); an email that matches no user or several users fails without erasing anything. (#587)
-- Users, projects, groups, API keys, conversations and OAuth requests are addressed by random UUIDs instead of sequential database ids; models by name; click an avatar to copy its ID (#560)
-- **Upgrade:** everyone is logged out of the web UI once; `flask erase-entity` takes a user UUID and `flask reassign-model` takes model names (#560); 2.3.1 pods keep working during a rolling `helm upgrade` (#598)
-- The usage page shows request and token totals in human-readable form, like the profile page. (#579)
-- Tests now fail on any warning, and CI enforces at least 90% line coverage per file for Lumen and the monitor (#557)
-- The monitor's model detail page charts the cached-input and cache-write prices over time, with the models.dev comparison band where providers publish cache prices. (#510)
-- The Models page links to LLMHub for launching models that are not listed, when `app.llmhub_url` is set (editable in the admin config editor). (#233)
-- Configure a separate cached-input token price per model; unset rates use the normal input price, while zero is free. The rate is published on `/v1/models` and written into the generated OpenCode config (`cost.cache.read`/`write`) so cache-aware clients bill the same figure. `/connect` now offers that config as `opencode.jsonc`: its `cache` block always states both rates, filling an unset one with the input price and explaining why, because OpenCode bills an omitted cache price as free. (#66)
-- Record the cached-input token count per request (`request_logs.cached_input_tokens`, NULL when the upstream reported no such count — a reported zero stays 0) and fold it into the `model_stats` / `entity_stats` totals, so a discounted request's stored cost can be checked against its tokens. The usage charts still show the full prompt: the continuous aggregates behind them do not carry the cached count yet. (#66)
-- The models table shows prompt-cache pricing as a third "Coins / 1M tokens" column, "Cache read / write", instead of hiding it in a hover tip; an unconfigured rate is shown at the input price it is actually charged. (#66)
-- Price cache writes like cache reads: a per-model `cache_write_cost_per_million` (default: the input rate) bills the prompt-cache write tokens an upstream reports; a backend that reports no creation count (SGLang, which has no cache-write accounting yet) records NULL and its non-cached prompt is billed at the input rate, never inferred as a write. `request_logs.cache_write_tokens` records the count next to `cached_input_tokens` and the stats fold carries both into the totals, keeping a cached request's stored cost checkable. Usage in either API family is normalized to the same totals (Anthropic-style `input_tokens` excludes the cached parts, OpenAI-style `prompt_tokens` includes them). The rate is published on `/v1/models` and written into the generated OpenCode config (`cost.cache.write`, which repeats the input price with a comment when unset), and models.dev autofill can fill both cache rates (`auto_cache_price: true`; second checkbox in the admin config editor). (#66)
-- Add an Anthropic Messages subset and token estimates for the Python SDK and configured Claude Code, sharing Lumen access controls and billing. (#61)
-- `/v1/usage` reports the key's `cached_input_tokens` and `cache_write_tokens`. (#509)
-- Added: per-theme favicons (default, Illinois, UIC, UIS) and a `/favicon.ico` route (#479).
-- Speed up the slowest PostgreSQL migration tests and the request_logs prune guard (#475).
-- Model detail page: the model's notice now always shows in the main column. The acknowledgement text shows on the right only for models that need acknowledgement. Previously, the acknowledgement text replaced the notice. (#492)
-- Connect the GitHub Copilot CLI: `/connect` generates `~/.copilot/providers.json`, and `lumen.sh --copilot` writes the Lumen provider and models into it and keeps them current. (#530)
-- Add `scripts/monitor/backfill_tokens.py` to backfill the monitor's token counts and history from Lumen's request logs; `--day` redoes a single local day, replacing its estimated rows with exact ones
-- Monitor moves to Python 3.14 (was 3.11) and CI tests both projects on 3.14 (required) and 3.15 (allowed to fail); Python 3.15 is experimental for Lumen: it installs (`requires-python` drops its `<3.15` cap) and CI runs it, but failures there do not block a release; monitor dead-code cleanup. (#529, #599)
-- Docs: list every TimescaleDB `job` label on `/metrics`, document `stats.*` and add it and `api.keys.ttl` to the hot-reload table, and drop a stale chart README note. (#528)
-- Docs: document the cache rates and `cache_metrics` on `/v1/models`, the cache columns in the DB schema, the monitor's `backfill_tokens.py`, and cache pricing in the user guides (#606)
-- Tests: strengthen weak tests (coverage `--min`, integer-id template guard, favicon, monitor cache-metrics clamp, reassign-model same-name refusal) and fail the suite on `ResourceWarning`s raised after the last test (#611)
-- Helm: a partial `securityContext` is now merged over the chart's hardened default instead of replacing it, and app pods default to `seccompProfile: RuntimeDefault`. (#614)
+**Upgrade:** everyone is logged out of the web UI once; 2.3.1 pods keep working during a rolling `helm upgrade`. Per-key cache token totals start at 0 instead of being summed from `request_logs`. (#560, #598, #600)
+
+- **Breaking:** users, projects, groups, API keys, conversations and OAuth requests are addressed by random UUIDs, models by name; old links with numeric ids (`/projects/<n>`, `/groups/<n>`, `/usage?entity_id=<n>`) no longer work. `flask erase-entity` takes a user UUID or email, `flask reassign-model` takes model names. (#560, #587)
+- **Breaking:** the monitor requires Python 3.14 (was 3.11). (#529)
+
+### Added
+
+- Anthropic Messages endpoint (`/v1/messages`, `/v1/messages/count_tokens`) for the Anthropic SDK, browsers and Claude Code, with Lumen access control and billing; usage reports `cache_read_input_tokens` / `cache_creation_input_tokens`, image blocks accept only http(s) URLs, and a malformed upstream token count is logged. (#61, #608, #609)
+- Per-model `cached_input_cost_per_million` and `cache_write_cost_per_million` (unset = input price, 0 = free); models.dev autofill fills them with `auto_cache_price: true`. (#66)
+- Cache read/write tokens are recorded per request and shown on `/v1/models`, `/v1/usage`, the models table and the generated OpenCode config, which `/connect` now offers as `opencode.jsonc`. (#66, #509)
+- GitHub Copilot CLI: a `/connect` tab and `lumen.sh --copilot`. (#530)
+- The Models page links to LLMHub when `app.llmhub_url` is set. (#233)
+- Click an avatar to copy its ID. (#560)
+- Per-theme favicons and a `/favicon.ico` route. (#479)
+- Monitor: cache-price charts on the model page. (#510)
+- Monitor: `scripts/monitor/backfill_tokens.py` backfills token counts and history from Lumen's request logs; `--day` redoes one day.
+- Python 3.15 is experimental: Lumen installs on it and CI runs it, but failures there do not block a release. (#599)
+
+### Changed
+
+- `/v1` chat, completions, messages and audio requests share one per-key rate-limit budget instead of one each; `count_tokens` keeps its own. (#601)
+- The usage page shows request and token totals in human-readable form. (#579)
+- A model's notice always shows in the main column; the acknowledgement text shows beside it only for models that need one. (#492)
+- `flask erase-entity` prints the `backfill-aggregate` commands that finish its refresh before it starts, so an interrupted run can be completed. (#612)
+- Helm: a partial `securityContext` is merged over the chart default, and app pods default to `seccompProfile: RuntimeDefault`. (#614)
+
+### Fixed
+
+- A streamed reply whose backend sends no usage data is billed and logged with an estimate instead of being free. (#603)
+- API keys or a monitor token with non-ASCII characters no longer cause a 500. (#609)
+
+### Security
+
+- Model notices and acknowledgement messages are sanitised; `app.github_url` and `app.llmhub_url` must be http(s); client text in refused Anthropic requests is escaped in logs; `lumen.sh` no longer puts the API key on the jq command line. (#609)
 
 ## [2.3.1] - 2026-11-07
 
