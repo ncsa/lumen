@@ -151,7 +151,10 @@ jobs:
       # Skipped on experimental legs: the reporter creates its own check run,
       # which continue-on-error does not cover. Their job log keeps the failures.
       - name: Publish test results
-        uses: dorny/test-reporter@v3
+        # Unreleased upstream fix (PR 867): v3.2.0 fails the job when GitHub
+        # answers the check-run update with a transient 404 (issue 866).
+        # Go back to a release tag once one includes it.
+        uses: dorny/test-reporter@79b4b4400dc2354b89e9dd811ef9caa9bdd4f665
         if: always() && !matrix.experimental
         with:
           name: pytest (${{ matrix.name }}, py${{ matrix.python }})
