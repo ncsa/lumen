@@ -153,6 +153,23 @@ def test_cache_reporting_reads_the_last_day_only(app, test_model):
         assert request_rates.cache_reporting() == {}
 
 
+def test_cache_reporting_excludes_rows_from_the_next_minute(app, test_model):
+    """The day window is half-open, ``day_start <= time < next_minute``.
+
+    A row at 12:00:59, the last second of the current minute, is counted; a row
+    at exactly 12:01:00 (``next_minute``, clock skew) is not, so its write count
+    does not show up either.
+    """
+    with app.app_context():
+        from lumen.extensions import db
+        _log(test_model["id"], timedelta(seconds=-44), 10, 1, cached=4)   # 12:00:59, current minute
+        _log(test_model["id"], timedelta(seconds=-45), 10, 1, write=2)    # 12:01:00, next minute
+        db.session.commit()
+        assert request_rates.cache_reporting() == {
+            test_model["id"]: {"requests": 1, "reads": True, "writes": False},
+        }
+
+
 @pytest.mark.parametrize("cached,write,expected", [
     (3, None, {"requests": 1, "reads": True, "writes": False}),
     (None, 2, {"requests": 1, "reads": False, "writes": True}),
