@@ -15,6 +15,8 @@ It replaces the single-file `monitor/app.py`; see [Migrating from monitor/app.py
 
 ## Setup
 
+Requires Python 3.14; 3.15 is experimental (see the CHANGELOG).
+
 ```bash
 cd scripts/monitor
 cp config.yaml.example config.yaml   # then edit
