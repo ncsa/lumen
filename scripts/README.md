@@ -5,6 +5,9 @@ Helper scripts for local testing and for regenerating the help-doc screenshots.
 For a browser example of the OAuth (PKCE) key-request flow, with a reusable JS module, see
 [`web-oauth/`](web-oauth/README.md). It needs no Playwright; serve it with `python -m http.server`.
 
+The Anthropic Messages API scripts (`claude.sh`, `anthropic_smoke.py`, `anthropic_toolbot.py`)
+need no Playwright either; see [Anthropic Messages API](#anthropic-messages-api) below.
+
 The Python scripts below drive a real browser with Playwright, so install the browser once:
 
 ```bash
@@ -100,3 +103,75 @@ uv run dummy &                                     # echo backend on :9999
 uv run python -c "from lumen import create_app; create_app().run(port=5002)" &
 BASE_URL=http://localhost:5002 uv run python scripts/screenshots.py
 ```
+
+## Anthropic Messages API
+
+These scripts exercise Lumen's Anthropic-compatible Messages API. The
+[Anthropic guide](../docs/guides/anthropic.md) covers the client settings they use.
+
+### claude.sh
+
+Runs [Claude Code](https://docs.anthropic.com/en/docs/claude-code) against a Lumen
+instance instead of Anthropic's API. It is a starting point to copy and adapt, not a
+supported launcher.
+
+Prerequisites: Claude Code is installed, and `LUMEN_BASE_URL` and `LUMEN_API_KEY` are
+set (run `lumen.sh` once to log in and store them in your shell rc file, then open a
+new shell).
+
+```bash
+ANTHROPIC_MODEL=<model> scripts/claude.sh [claude arguments...]
+```
+
+`ANTHROPIC_MODEL` is required and must name a model Lumen serves (see `/v1/models`).
+`ANTHROPIC_DEFAULT_HAIKU_MODEL`, the model Claude Code uses for background tasks,
+is optional and defaults to `ANTHROPIC_MODEL`. The script also sets the `CLAUDE_CODE_*`
+and `MAX_THINKING_TOKENS` switches that non-Anthropic models need; the
+[Anthropic guide](../docs/guides/anthropic.md) explains each of them. Arguments are
+passed through to `claude`.
+
+### anthropic_smoke.py
+
+End-to-end checks of the Messages API against a running Lumen, over real HTTP, with
+the clients people actually use: the official `anthropic` Python SDK (non-streaming,
+streaming, token counting, errors, tool use) and, when installed, the Claude Agent SDK
+and Claude Code. It catches what a real client sends that no hand-written request does.
+It needs `anthropic_toolbot.py` (below) added to the dev config as the `dummy-tools`
+model. Run it in four terminals:
+
+```bash
+# terminal 1
+uv run dummy
+# terminal 2
+uv run python scripts/anthropic_toolbot.py
+# terminal 3
+CONFIG_YAML=./dev.config.yaml uv run lumen
+# terminal 4
+LUMEN_API_KEY=sk_... uv run --with claude-agent-sdk python scripts/anthropic_smoke.py
+```
+
+Override defaults with `BASE_URL` (default `http://localhost:5001`), `MODEL` (default
+`dummy`) and `TOOL_MODEL` (default `dummy-tools`). Checks that need a client that is
+not installed are skipped, not failed. It exits non-zero if any check fails.
+
+### anthropic_toolbot.py
+
+A tiny OpenAI-compatible backend on `:9998` that makes one tool call: the first time a
+request carries tools and no tool result, it calls the first tool it recognises
+(`Bash` or `bash`), and once the result comes back it answers with text quoting it. The echo
+backend (`uv run dummy`) never calls tools, so this is what exercises the
+tool_use/tool_result round trip. Add it to the dev config as `dummy-tools`:
+
+```yaml
+- name: dummy-tools
+  input_cost_per_million: 0
+  output_cost_per_million: 0
+  endpoints:
+  - url: http://localhost:9998/v1
+    api_key: dummy
+    model: dummy-tools
+```
+
+Besides the smoke script, `tests/routes/test_api_anthropic.py::test_claude_code_over_real_http`
+imports it as its live upstream, so a change to its behaviour affects that test when
+`claude` is installed.

@@ -4,6 +4,7 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+- `scripts/claude.sh` takes the model from `ANTHROPIC_MODEL` instead of a hardcoded one and is documented in `scripts/README.md`. (#610)
 - **Behaviour change:** `/v1` chat, completions, messages and audio requests now share one per-key rate-limit budget instead of one each; `count_tokens` keeps its own (#601)
 - Docs: fix small inaccuracies in the Anthropic guide, API reference, README, hot-reload table, chart values, favicon route and LLMHub text. (#613)
 - `flask erase-entity` prints the `backfill-aggregate` commands that finish its aggregate refresh before starting it, so an interrupted run can still be completed. (#612)
