@@ -380,6 +380,28 @@ def test_unknown_block_inside_a_tool_result_is_refused():
         ]))
 
 
+_MISSING = object()
+
+
+@pytest.mark.parametrize("tool_use_id", [
+    pytest.param(_MISSING, id="missing"),
+    pytest.param(None, id="none"),
+    pytest.param("", id="empty-string"),
+    pytest.param(123, id="int"),
+    pytest.param(True, id="bool"),
+    pytest.param(["t"], id="non-empty-list"),
+    pytest.param({"id": "t"}, id="dict"),
+    pytest.param([], id="empty-list"),
+])
+def test_tool_result_requires_a_non_empty_string_tool_use_id(tool_use_id):
+    """A non-string id would otherwise be forwarded as the upstream tool_call_id."""
+    block = {"type": "tool_result", "content": "a.txt"}
+    if tool_use_id is not _MISSING:
+        block["tool_use_id"] = tool_use_id
+    with pytest.raises(AnthropicError, match="tool_use_id"):
+        translate_request(_req(messages=[{"role": "user", "content": [block]}]))
+
+
 def test_thinking_blocks_are_dropped():
     _, messages, _, _, _ = translate_request(_req(messages=[
         {"role": "assistant", "content": [
@@ -538,7 +560,6 @@ def test_client_cannot_inject_extra_body():
     assert extra == {}
 
 
-_MISSING = object()
 _SCHEMA = {"type": "object"}
 
 
