@@ -6,14 +6,14 @@ All notable changes to Lumen will be documented in this file.
 
 **Upgrade:** everyone is logged out of the web UI once; 2.3.1 pods keep working during a rolling `helm upgrade`. Per-key cache token totals start at 0 instead of being summed from `request_logs`. (#560, #598, #600)
 
-- **Breaking:** users, projects, groups, API keys, conversations and OAuth requests are addressed by random UUIDs, models by name; old links with numeric ids (`/projects/<n>`, `/groups/<n>`, `/usage?entity_id=<n>`) no longer work. `flask erase-entity` takes a user UUID or email, `flask reassign-model` takes model names. (#560, #587)
+- **Breaking:** users, projects, groups, API keys, conversations and OAuth requests are addressed by random UUIDs, models by name; old links with numeric ids (`/projects/<n>`, `/groups/<n>`, `/usage?entity_id=<n>`) no longer work. `flask erase-entity` takes a user UUID, or an email when run interactively (`--yes` needs the UUID); `flask reassign-model` takes model names. (#560, #587)
 - **Breaking:** the monitor requires Python 3.14 (was 3.11). (#529)
 
 ### Added
 
-- Anthropic Messages endpoint (`/v1/messages`, `/v1/messages/count_tokens`) for the Anthropic SDK, browsers and Claude Code, with Lumen access control and billing; usage reports `cache_read_input_tokens` / `cache_creation_input_tokens`, image blocks accept only http(s) URLs, and a malformed upstream token count is logged. (#61, #608, #609)
-- Per-model `cached_input_cost_per_million` and `cache_write_cost_per_million` (unset = input price, 0 = free); models.dev autofill fills them with `auto_cache_price: true`. (#66)
-- Cache read/write tokens are recorded per request and shown on `/v1/models`, `/v1/usage`, the models table and the generated OpenCode config, which `/connect` now offers as `opencode.jsonc`. (#66, #509)
+- Anthropic Messages endpoint (`/v1/messages`, `/v1/messages/count_tokens`) for the Anthropic SDK, browsers and Claude Code, with Lumen access control and billing; usage reports cache reads and writes as `cache_read_input_tokens` / `cache_creation_input_tokens` and leaves both out of `input_tokens`, image blocks accept only http(s) URLs, and a malformed upstream token count is logged. (#61, #608, #609)
+- Per-model `cached_input_cost_per_million` and `cache_write_cost_per_million` (unset = input price, 0 = free), published on `/v1/models`, shown on the models table and written into the generated OpenCode config, which `/connect` now offers as `opencode.jsonc`; models.dev autofill fills them with `auto_cache_price: true`. (#66)
+- Cache read and write token counts are recorded per request, and `/v1/usage` reports each key's totals. (#66, #509)
 - GitHub Copilot CLI: a `/connect` tab and `lumen.sh --copilot`. (#530)
 - The Models page links to LLMHub when `app.llmhub_url` is set. (#233)
 - Click an avatar to copy its ID. (#560)
