@@ -71,6 +71,8 @@ If you want to run Lumen locally without Docker or CILogon credentials:
 
 ### 1. Install dependencies
 
+Requires Python 3.14; 3.15 is experimental (see the CHANGELOG).
+
 ```bash
 uv sync
 ```
