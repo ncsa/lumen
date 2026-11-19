@@ -102,6 +102,20 @@ def test_reassign_merges_audio_seconds(app, ids):
     assert _model_stats(app) == {(dst, "api"): (2, 2, 2, 11, Decimal("2"), 0, 0)}
 
 
+def test_reassign_refuses_the_same_model_and_moves_nothing(app, ids):
+    entity_id, src, _ = ids
+    with app.app_context():
+        db.session.add(ModelStat(entity_id=entity_id, model_config_id=src, source="api", requests=1,
+                                 input_tokens=1, output_tokens=1, audio_seconds=5, cost=Decimal("1")))
+        db.session.commit()
+    before = _model_stats(app)
+    result = app.test_cli_runner().invoke(reassign_model_cmd, ["reassign-src", "reassign-src"])
+    assert result.exit_code == 1
+    assert "FROM and TO are the same model" in result.output
+    assert "conversations updated" not in result.output
+    assert _model_stats(app) == before == {(src, "api"): (1, 1, 1, 5, Decimal("1"), 0, 0)}
+
+
 def test_reassign_holds_the_fold_state(app, post_cutover, ids, monkeypatch):
     """The fold state is locked once, as the first statement of the merge
     transaction (after the conversations commit, and after the chunk walk on

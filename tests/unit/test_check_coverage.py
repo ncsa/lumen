@@ -39,6 +39,13 @@ def test_the_floor_defaults_to_90(tmp_path):
     assert check_coverage.main([str(_report(tmp_path, {"lumen/bad.py": 89.99}))]) == 1
 
 
+def test_a_custom_floor_is_used_instead_of_90(tmp_path, capsys):
+    path = _report(tmp_path, {"lumen/mid.py": 92.0})
+    assert check_coverage.main(["--min", "95", str(path)]) == 1
+    assert "lumen/mid.py: 92.00% < 95%" in capsys.readouterr().out
+    assert check_coverage.main(["--min", "95", str(_report(tmp_path, {"lumen/ok.py": 96.0}))]) == 0
+
+
 def test_the_path_defaults_to_coverage_json(tmp_path, monkeypatch):
     _report(tmp_path, {"lumen/bad.py": 50.0})
     monkeypatch.chdir(tmp_path)
