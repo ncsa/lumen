@@ -2046,6 +2046,81 @@ def test_streaming_disconnect_bills_estimated_usage(
         assert float(key.cost) == pytest.approx(0.000102)
 
 
+def test_streaming_disconnect_bills_cache_usage_exactly(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+):
+    """A stream aborted after its usage chunk bills the cached split at its own rates.
+
+    The content delta goes out, the client hangs up, then the usage chunk lands:
+    the abort bills the exact usage, so the cached read and write rates and
+    counts must reach ``estimate_abort_usage`` and ``record_stream_abort``.
+    Rates and usage match ``test_api_chat_bills_cache_write``.
+    """
+    import threading
+
+    from lumen.blueprints.api import routes
+    from lumen.extensions import db
+    from lumen.models.api_key import APIKey
+    from lumen.models.entity_balance import EntityBalance
+    from lumen.models.entity_limit import EntityLimit
+    from lumen.models.model_config import ModelConfig
+    from lumen.models.request_log import RequestLog
+
+    token, key_id = api_key
+    with app.app_context():
+        model = db.session.get(ModelConfig, test_model["id"])
+        model.input_cost_per_million = 2
+        model.output_cost_per_million = 4
+        model.cached_input_cost_per_million = 0.5
+        model.cache_write_cost_per_million = 0.25
+        db.session.add(EntityLimit(
+            entity_id=test_user["id"], max_coins=10, refresh_coins=0, starting_coins=10,
+        ))
+        db.session.add(EntityBalance(entity_id=test_user["id"], coins_left=10))
+        db.session.commit()
+        model_cache.refresh(app)
+
+    disconnected = threading.Event()
+    monkeypatch.setattr(routes, "client_disconnect_event", lambda: disconnected)
+    usage_chunk = _UsageChunk()
+    usage_chunk.usage = SimpleNamespace(
+        prompt_tokens=1_000_000, completion_tokens=100_000,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=250_000,
+                                              cache_creation_input_tokens=125_000))
+
+    def _stream():
+        yield _ContentChunk()
+        disconnected.set()  # client goes away just as the usage chunk arrives
+        yield usage_chunk
+
+    _fake_openai(monkeypatch, routes, _stream())
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"model": test_model["model_name"],
+              "messages": [{"role": "user", "content": "hi"}], "stream": True},
+    )
+    assert resp.is_streamed
+    events = iter(resp.response)
+    next(events)  # the content delta
+    assert list(events) == []  # the stream stops itself — no [DONE]
+    resp.close()
+
+    with app.app_context():
+        log = db.session.execute(
+            select(RequestLog).filter_by(entity_id=test_user["id"])
+        ).scalar_one()
+        assert log.aborted is True
+        # 625k ordinary @ $2/M + 250k read @ $0.5/M + 125k write @ $0.25/M + 100k output @ $4/M
+        assert float(log.cost) == pytest.approx(1.80625)
+        assert log.input_tokens == 1_000_000
+        assert log.cached_input_tokens == 250_000
+        assert log.cache_write_tokens == 125_000
+        key = db.session.get(APIKey, key_id)
+        assert (key.cached_input_tokens, key.cache_write_tokens) == (250_000, 125_000)
+
+
 # ---------------------------------------------------------------------------
 # Upstream call bounds — every proxy client the API path builds must carry a
 # timeout, and the streaming one must never auto-retry. Unbounded, the SDK's
