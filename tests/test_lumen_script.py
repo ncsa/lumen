@@ -1,6 +1,7 @@
 """End-to-end tests for lumen.sh against a fake Lumen server."""
 import json
 import os
+import shutil
 import stat
 import subprocess
 import threading
@@ -1587,3 +1588,27 @@ def test_copilot_without_home_is_reported(lumen_server):
     assert r.returncode != 0
     assert b"--copilot needs $HOME or $COPILOT_HOME" in r.stderr
     assert not lumen_server.hits
+
+
+@pytest.mark.parametrize("args", [["--embed-key"], ["--copilot"]])
+def test_key_never_on_jq_command_line(home, lumen_server, tmp_path, args):
+    """The key is read by jq from the environment, so it never shows in ps."""
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    real_jq = shutil.which("jq")
+    bindir = tmp_path / "jqbin"
+    bindir.mkdir()
+    log = tmp_path / "jq-argv"
+    wrapper = bindir / "jq"
+    wrapper.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" >> {log}\nexec {real_jq} "$@"\n')
+    wrapper.chmod(0o755)
+    r = run_script(home, port, args=args,
+                   env_extra={"PATH": f"{bindir}:{NO_SLEEP_BIN}:/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin"})
+    assert r.returncode == 0, r.stderr
+    assert log.exists()
+    assert "sk_stored_key_000" not in log.read_text()
+    if args == ["--copilot"]:
+        assert copilot_lumen(json.loads(copilot_file(home).read_text()))[0]["apiKey"] == "sk_stored_key_000"
+    else:
+        config = json.loads((home / ".config" / "opencode" / "opencode.json").read_text())
+        assert config["provider"]["lumen"]["options"]["apiKey"] == "sk_stored_key_000"
