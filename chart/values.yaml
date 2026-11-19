@@ -375,6 +375,12 @@ tolerations: []
 affinity: {}
 
 podAnnotations: {}
+# -- Pod securityContext of the app pods (Deployment, migration Job and stats-check
+# CronJob). Empty uses the chart default below. Keys you set are merged over that
+# default, so e.g. `fsGroup: 1000` keeps the seccomp profile; set
+# `seccompProfile.type` explicitly to change it.
+#  seccompProfile:
+#    type: RuntimeDefault
 podSecurityContext: {}
 # -- Container securityContext of the app container (also used by the
 # wait-for-migrations initContainer, the migration Job and the stats-check CronJob).
