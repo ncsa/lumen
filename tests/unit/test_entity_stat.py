@@ -99,17 +99,21 @@ def test_update_stats_records_the_cached_split_and_bumps_both_totals(app, test_u
                      cached_input_tokens=250,
                      cache_write_tokens=125)
         update_stats(entity_id, model_id, "chat", 10, 5, 0.02)
+        # A second split on the existing rows: the update branch must add it too.
+        update_stats(entity_id, model_id, "chat", 20, 5, 0.03,
+                     cached_input_tokens=10,
+                     cache_write_tokens=5)
         db.session.commit()
 
         logs = db.session.execute(
             select(RequestLog).where(RequestLog.entity_id == entity_id).order_by(RequestLog.id)
         ).scalars().all()
-        assert [log.cached_input_tokens for log in logs] == [250, None]
-        assert [log.cache_write_tokens for log in logs] == [125, None]
+        assert [log.cached_input_tokens for log in logs] == [250, None, 10]
+        assert [log.cache_write_tokens for log in logs] == [125, None, 5]
 
         estat = db.session.get(EntityStat, entity_id)
-        assert (estat.input_tokens, estat.cached_input_tokens, estat.cache_write_tokens) == (1_010, 250, 125)
+        assert (estat.input_tokens, estat.cached_input_tokens, estat.cache_write_tokens) == (1_030, 260, 130)
         assert estat.folded_cached_input_tokens == 0  # bumped by billing, not the fold
         mstat = db.session.execute(select(ModelStat).filter_by(
             entity_id=entity_id, model_config_id=model_id, source="chat")).scalar_one()
-        assert (mstat.input_tokens, mstat.cached_input_tokens, mstat.cache_write_tokens) == (1_010, 250, 125)
+        assert (mstat.input_tokens, mstat.cached_input_tokens, mstat.cache_write_tokens) == (1_030, 260, 130)

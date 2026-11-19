@@ -34,6 +34,7 @@ from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.request_log import RequestLog
 from lumen.services import llm as llm_service
 from lumen.services import model_cache
+from lumen.services.crypto import cache_salt_for_entity
 from scripts.anthropic_toolbot import app as toolbot
 from tests.conftest import set_model_owner
 from tests.routes.test_api_auth import (
@@ -517,7 +518,7 @@ def test_non_streaming_tool_use(api):
         {"type": "tool_use", "id": "call_1", "name": "bash", "input": {"cmd": "ls"}}]
 
 
-def test_the_request_reaching_upstream_is_translated(api):
+def test_the_request_reaching_upstream_is_translated(app, api, test_user):
     """System prompt, sampling params and the per-entity cache salt all arrive."""
     seen = {}
 
@@ -532,7 +533,9 @@ def test_the_request_reaching_upstream_is_translated(api):
     assert seen["temperature"] == 0.2
     assert seen["stop"] == ["END"]
     assert seen["extra_body"]["top_k"] == 40
-    assert seen["extra_body"]["cache_salt"]
+    with app.app_context():
+        expected_salt = cache_salt_for_entity(test_user["id"])
+    assert seen["extra_body"]["cache_salt"] == expected_salt
 
 
 # ---------------------------------------------------------------------------
