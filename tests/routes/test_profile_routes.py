@@ -918,6 +918,34 @@ def test_profile_chat_last_used_is_the_most_recent_chat_row(app, auth_client, te
     assert chat_agg[4] == newer
 
 
+def test_profile_model_last_used_is_the_most_recent_row(app, auth_client, test_user, test_model):
+    """A model's Last Used is the latest of its rows across sources, never the earliest."""
+    from lumen.extensions import db
+    from lumen.models.model_stat import ModelStat
+    from tests.routes.test_stats_after_cutover import _rendered
+
+    older = datetime(2026, 9, 1, 12, 0)
+    newer = datetime(2026, 10, 1, 12, 0)
+    with app.app_context():
+        # The newer row goes in first, so neither insertion order nor the first row gives the answer.
+        db.session.add(ModelStat(
+            entity_id=test_user["id"], model_config_id=test_model["id"], source="api",
+            requests=4, input_tokens=40, output_tokens=80, cost=0.04, last_used_at=newer,
+        ))
+        db.session.add(ModelStat(
+            entity_id=test_user["id"], model_config_id=test_model["id"], source="chat",
+            requests=2, input_tokens=20, output_tokens=40, cost=0.02, last_used_at=older,
+        ))
+        db.session.commit()
+
+    with _rendered(app) as contexts:
+        assert auth_client.get("/profile").status_code == HTTPStatus.OK
+    usage = {m["model_name"]: m for m in contexts[0]["model_usage"]}
+    row = usage[test_model["model_name"]]
+    assert row["requests"] == 6
+    assert row["last_used_at"] == newer
+
+
 def test_profile_page_hides_blocked_model(app, auth_client, test_model):
     from tests.conftest import set_model_owner
 
