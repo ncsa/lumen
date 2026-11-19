@@ -707,12 +707,24 @@ def _reassign_start(conn, column, from_id, boundaries):
     return min(found) if found else None
 
 
+def _print_backfill_commands(firsts, header):
+    """Print ``header``, then one backfill-aggregate command per aggregate in ``firsts``.
+
+    ``firsts`` maps each aggregate name, in refresh order, to the month to start from.
+    """
+    click.echo(header)
+    for name, first in firsts.items():
+        click.echo(f"    flask backfill-aggregate --name {name} --from {first:%Y-%m}")
+
+
 def _refresh_reassigned(start, boundaries, rerun=True):
     """Refresh every aggregate month by month from the month of ``start`` to now.
 
     On a failure it tells the operator how to finish: re-run the same command, or,
     with ``rerun=False`` (erase-entity, whose user is already deleted), run
-    backfill-aggregate for the failed aggregate and each one after it.
+    backfill-aggregate for the failed aggregate and each one after it. With
+    ``rerun=False`` it also prints every finishing command before the refresh starts,
+    since a run that is killed outside ``_RefreshFailed`` prints nothing afterwards.
 
     In the order of ``boundaries``, which ``_aggregates_with_column`` gives in refresh
     order, so a hierarchical aggregate is refreshed after the child it is built on.
@@ -725,6 +737,10 @@ def _refresh_reassigned(start, boundaries, rerun=True):
     now = datetime.now(timezone.utc)
     firsts = {name: max(month, boundary) if boundary is not None else month
               for name, boundary in boundaries.items()}
+    if not rerun:
+        # Printed before the refresh starts, so a run that is killed or loses its
+        # session still leaves the operator what they need to finish it.
+        _print_backfill_commands(firsts, "  If this refresh is interrupted, finish it with, in this order:")
     with _autocommit_connection() as conn:
         for i, (name, first) in enumerate(firsts.items()):
             click.echo(f"  refreshing '{name}' from {first:%Y-%m-%d} to {now:%Y-%m-%d}, month by month")
@@ -735,10 +751,10 @@ def _refresh_reassigned(start, boundaries, rerun=True):
                 if rerun:
                     click.echo("  request_logs is moved; re-run the same command to finish the refresh.")
                 else:
-                    click.echo("  request_logs is moved; finish the refresh with, in this order:")
-                    click.echo(f"    flask backfill-aggregate --name {name} --from {failed.month:%Y-%m}")
-                    for later, later_first in list(firsts.items())[i + 1:]:
-                        click.echo(f"    flask backfill-aggregate --name {later} --from {later_first:%Y-%m}")
+                    _print_backfill_commands(
+                        {name: failed.month, **dict(list(firsts.items())[i + 1:])},
+                        "  request_logs is moved; finish the refresh with, in this order:",
+                    )
                 raise SystemExit(1)
 
 
@@ -931,7 +947,8 @@ def _erase_entity(entity_uuid, yes):
     """erase-entity itself, run under stats_walk_lock."""
     user = db.session.execute(select(Entity).where(Entity.uuid == entity_uuid)).scalar_one_or_none()
     if user is None:
-        click.echo(f"No entity with UUID {entity_uuid}: nothing to do.")
+        click.echo(f"No entity with UUID {entity_uuid}: nothing to do. If an earlier erase-entity of this UUID "
+                   "stopped during the aggregate refresh, run the backfill-aggregate commands it printed.")
         return
     if user.entity_type != "user":
         click.echo(f"Error: entity {entity_uuid} is a {user.entity_type}, not a user; only users can be erased.")
@@ -1058,7 +1075,8 @@ def _erase_entity(entity_uuid, yes):
         if start is None:
             click.echo("  no request_logs rows for the user; aggregates unchanged")
         else:
-            # The user row is gone, so a re-run cannot find what is left to refresh.
+            # The user row is gone, so a re-run cannot find what is left to refresh:
+            # the finishing commands are printed before the refresh starts.
             _refresh_reassigned(start, boundaries, rerun=False)
     click.echo("Done.")
 

@@ -12,7 +12,7 @@ The left side displays your avatar (pulled from [Gravatar](https://gravatar.com)
 
 ### Copying the User ID
 
-Every user has a random ID (a UUID) that Lumen uses in links and API calls instead of a sequential number. To copy it, click the avatar: a hint, **Click to copy ID**, appears when you hover over the avatar or move to it with the keyboard (Tab), and clicking it — or pressing Enter or Space — copies the ID to the clipboard and shows **User ID copied to clipboard**. Press Escape to hide the hint. This works on your own profile and, for admins, on another user's profile opened from the Users page (`/admin/users/<id>/profile`, where `<id>` is that UUID). Admins need this ID to erase a user with [`flask erase-entity`](../admin/commands.md#erase-entity), or they can pass the user's email instead and confirm the prompt; erasing without the prompt (`--yes`) needs the ID.
+Click the avatar (or focus it and press Enter/Space) to copy the ID, a UUID used in URLs and CLI commands. Admins can also copy it from another user's profile (`/admin/users/<id>/profile`) and need it to erase that user with [`flask erase-entity`](../admin/commands.md#erase-entity) `--yes`; without `--yes`, the user's email works too.
 
 ### Admin Mode
 

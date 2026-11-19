@@ -588,19 +588,82 @@ def test_finishes_with_backfill_after_the_refresh_fails(pg_app, engine):
     assert _materialised(engine, world["user"]) == SEEDED
     assert _materialised(engine, world["user"], DAILY_ENTITY) == SEEDED
 
-    backfills = re.findall(r"^    flask (backfill-aggregate --name (\S+) --from (\S+))$", result.output, re.M)
-    names = [name for _, name, _ in backfills]
+    up_front = _up_front_backfills(result.output)
+    assert [name for name, _ in up_front][:2] == [ENTITY_AGGREGATE, DAILY_ENTITY], result.output
+
+    failure = result.output.split("request_logs is moved; finish the refresh with, in this order:\n", 1)[1]
+    backfills = _backfills(failure)
+    names = [name for name, _ in backfills]
     assert names[:2] == [ENTITY_AGGREGATE, DAILY_ENTITY], result.output
+    # Same aggregates as the up-front block; the failed one starts at the month that failed.
+    assert names == [name for name, _ in up_front], result.output
 
     result = _run(pg_app, world["user_uuid"])
     assert result.exit_code == 0, result.output
     assert "nothing to do" in result.output
 
+    _backfill(pg_app, backfills)
+    _assert_history_moved(engine, world, ghost_raw)
+
+
+def test_prints_finish_commands_before_an_interrupted_refresh(pg_app, engine):
+    """A run killed during the refresh prints nothing afterwards, so the commands that
+    finish it are printed before the refresh starts; running them finishes the erase,
+    and a re-run with the uuid points back at them."""
+    world = _seed_world(pg_app)
+    _seed_history(engine, world)
+    ghost_raw = _ghost_raw(engine)
+
+    with patch.object(commands, "_refresh_months", side_effect=KeyboardInterrupt):
+        result = _run(pg_app, world["user"])
+    assert result.exit_code != 0, result.output
+    assert f"user {world['user_uuid']} deleted" in result.output
+    assert "Error: refreshing" not in result.output
+    assert stats_walk_lock_is_free(engine), "the interrupted run kept the advisory lock"
+    assert _materialised(engine, world["user"]) == SEEDED
+
+    backfills = _up_front_backfills(result.output)
+    assert [name for name, _ in backfills][:2] == [ENTITY_AGGREGATE, DAILY_ENTITY], result.output
+    # Aggregate names and months only: nothing that identifies the user.
+    block = result.output.split("If this refresh is interrupted", 1)[1].split("  refreshing '", 1)[0]
+    assert str(world["user_uuid"]) not in block
+
+    result = _run(pg_app, world["user_uuid"])
+    assert result.exit_code == 0, result.output
+    assert (f"No entity with UUID {world['user_uuid']}: nothing to do. If an earlier erase-entity of this "
+            "UUID stopped during the aggregate refresh, run the backfill-aggregate commands it printed."
+            ) in result.output
+
+    _backfill(pg_app, backfills)
+    _assert_history_moved(engine, world, ghost_raw)
+
+
+def _backfills(output):
+    """(name, month) of each ``flask backfill-aggregate`` line at the start of ``output``."""
+    lines = []
+    for line in output.splitlines():
+        match = re.fullmatch(r"    flask backfill-aggregate --name (\S+) --from (\S+)", line)
+        if match is None:
+            break
+        lines.append(match.groups())
+    return lines
+
+
+def _up_front_backfills(output):
+    """The commands printed before the refresh starts, checked to come before it."""
+    header = "  If this refresh is interrupted, finish it with, in this order:\n"
+    assert header in output, output
+    assert output.index(header) < output.index("  refreshing '"), output
+    backfills = _backfills(output.split(header, 1)[1])
+    assert backfills, output
+    return backfills
+
+
+def _backfill(pg_app, backfills):
     runner = pg_app.test_cli_runner()
-    for _, name, month in backfills:
+    for name, month in backfills:
         result = runner.invoke(commands.backfill_aggregate_cmd, ["--name", name, "--from", month])
         assert result.exit_code == 0, result.output
-    _assert_history_moved(engine, world, ghost_raw)
 
 
 def test_a_row_the_walk_missed_fails_restrict_and_rolls_back(pg_app, engine):

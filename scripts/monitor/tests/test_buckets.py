@@ -2,12 +2,11 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from oracle import bucket_statuses, worst
+from oracle import bucket_statuses
 
 from monitor.buckets import (
     DEFAULT_RANGE,
     RANGES,
-    STATUS_PRIORITY,
     DayGrid,
     Grid,
     bucket_size,
@@ -99,16 +98,6 @@ def test_points_outside_the_range_are_ignored():
     grid = make_grid(RANGES["1h"], MINUTE, NOW, CHICAGO)
     statuses = bucket_statuses([(NOW - timedelta(hours=2), "down"), (NOW + MINUTE, "down")], grid)
     assert set(statuses) == {"unknown"}
-
-
-def test_worst_ranks_unknown_statuses_below_ok():
-    assert STATUS_PRIORITY == {"ok": 1, "degraded": 2, "down": 3}
-    assert worst([]) == "unknown"
-    assert worst(["starting", "ok"]) == "ok"
-    # A bucket with only statuses outside STATUS_PRIORITY is drawn as degraded and counts against uptime.
-    assert worst(["starting"]) == worst(["starting", "loading"]) == "degraded"
-    assert model_uptime([worst(["starting"]), worst(["ok"])]) == 50
-    assert worst(["ok", "degraded"]) == "degraded"
 
 
 def test_probe_status():

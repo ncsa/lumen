@@ -172,6 +172,25 @@ def test_status_rank_maps_back_to_worst(session_factory):
     assert {rank_status(p) for p in STATUS_PRIORITY.values()} == set(STATUS_PRIORITY)
 
 
+def test_status_priority_ranks_ok_below_degraded_below_down():
+    assert STATUS_PRIORITY == {"ok": 1, "degraded": 2, "down": 3}
+
+
+def test_a_bucket_of_only_unranked_statuses_is_degraded_and_counts_against_uptime(session_factory):
+    rng = RANGES["1h"]
+    grid = make_grid(rng, timedelta(minutes=1), NOW, None)
+    start = NOW - rng.span
+    half = grid.size / 2
+    add(session_factory, [
+        Sample(model="alpha", sampled_at=grid.start + 10 * grid.size + half, status="starting"),
+        Sample(model="alpha", sampled_at=grid.start + 11 * grid.size + half, status="ok"),
+    ])
+    with session_factory() as session:
+        stats = _short_range_stats(session, grid, start, NOW, ["alpha"])["alpha"]
+    assert stats["strip"][10:12] == ["degraded", "ok"]
+    assert stats["uptime"] == model_uptime(["degraded", "ok"]) == 50
+
+
 # --- _short_range_stats -----------------------------------------------------------
 
 

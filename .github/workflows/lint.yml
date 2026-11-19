@@ -120,6 +120,19 @@ jobs:
       - name: Helm lint
         run: helm lint chart
 
+      # The default values fail to render on purpose (required secrets are
+      # unset), so the plain lint above skips the rendered output. This lints
+      # strictly with the required keys set, the same keys as _REQUIRED in
+      # tests/unit/test_chart_migration.py.
+      - name: Helm lint (strict, required values)
+        run: >-
+          helm lint chart --strict
+          --set config.secretKey=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+          --set config.encryptionKey=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+          --set oauth2.clientId=client
+          --set oauth2.clientSecret=secret
+          --set postgresql.auth.password=pw
+
   secrets:
     name: Secrets (gitleaks)
     runs-on: ubuntu-latest

@@ -13,7 +13,6 @@ from sqlalchemy import select
 
 from ..extensions import db
 from .api_key import APIKey
-from .conversation import Conversation
 from .entity import Entity
 from .group import Group
 
@@ -31,8 +30,3 @@ def group_by_uuid_or_404(u: UUID) -> Group:
 def key_by_uuid_or_404(u: UUID) -> APIKey:
     """The API key with this uuid, else 404."""
     return db.first_or_404(select(APIKey).where(APIKey.uuid == u))
-
-
-def conversation_by_uuid_or_404(u: UUID) -> Conversation:
-    """The conversation with this uuid, else 404."""
-    return db.first_or_404(select(Conversation).where(Conversation.uuid == u))

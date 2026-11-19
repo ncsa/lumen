@@ -70,9 +70,23 @@ def test_authenticated_page_renders_favicon_links(app, auth_client, theme):
     assert _favicon_links(resp.get_data(as_text=True)) == EXPECTED_LINKS[theme]
 
 
-@pytest.mark.parametrize("theme", sorted(EXPECTED_LINKS))
+def _local_hrefs(theme):
+    return [href for _, href in EXPECTED_LINKS[theme] if href.startswith("/")]
+
+
+# Only themes that serve a favicon themselves; CDN-only themes (illinois) are
+# covered by test_illinois_links_are_brand_cdn.
+LOCAL_FAVICON_THEMES = sorted(theme for theme in EXPECTED_LINKS if _local_hrefs(theme))
+
+
+def test_some_themes_serve_local_favicons():
+    assert LOCAL_FAVICON_THEMES
+
+
+@pytest.mark.parametrize("theme", LOCAL_FAVICON_THEMES)
 def test_local_favicon_files_are_served_as_images(app, client, theme):
-    local = [href for _, href in EXPECTED_LINKS[theme] if href.startswith("/")]
+    local = _local_hrefs(theme)
+    assert local, theme
     with _theme(app, theme):
         for href in local:
             with client.get(href) as resp:

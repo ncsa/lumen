@@ -46,7 +46,7 @@ jobs:
             python: "3.14"
             image: true
             experimental: false
-          # Runs the real suite; Lumen does not support 3.15 yet (see the 2.3.0 CHANGELOG).
+          # Runs the real suite; 3.15 is experimental for Lumen (allowed to fail).
           - name: lumen
             path: .
             postgres: timescale/timescaledb:2.31.0-pg17

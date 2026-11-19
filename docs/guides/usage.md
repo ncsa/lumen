@@ -52,8 +52,7 @@ Admins see their own usage by default, with two extra controls:
 - **Per-user filter** — from the **Users** admin page, the bar-chart button next to a user opens the
   Usage page filtered to that user (`/usage?entity=<id>`, where `<id>` is the user's random ID, a
   UUID; the project list's button does the same for a project). A banner at the top shows whose
-  usage you're viewing, with a **Clear filter** link to return to your own. The old
-  `?entity_id=<number>` links are ignored.
+  usage you're viewing, with a **Clear filter** link to return to your own.
 
 > **Requires PostgreSQL.** The usage analytics are powered by aggregate tables that only exist on
 > PostgreSQL. On a SQLite (development) database the page loads but the stats and charts are empty.

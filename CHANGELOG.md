@@ -4,9 +4,11 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+- `scripts/claude.sh` takes the model from `ANTHROPIC_MODEL` instead of a hardcoded one and is documented in `scripts/README.md`. (#610)
 - **Behaviour change:** `/v1` chat, completions, messages and audio requests now share one per-key rate-limit budget instead of one each; `count_tokens` keeps its own (#601)
 - Docs: fix small inaccuracies in the Anthropic guide, API reference, README, hot-reload table, chart values, favicon route and LLMHub text. (#613)
 - Per-key cache token totals start at 0 on upgrade instead of being summed from request_logs, so the migration no longer scans the request history (#600)
+- `flask erase-entity` prints the `backfill-aggregate` commands that finish its aggregate refresh before starting it, so an interrupted run can still be completed. (#612)
 - `flask erase-entity` also takes the user's email (matched ignoring case, interactive only); an email that matches no user or several users fails without erasing anything. (#587)
 - Users, projects, groups, API keys, conversations and OAuth requests are addressed by random UUIDs instead of sequential database ids; models by name; click an avatar to copy its ID (#560)
 - **Upgrade:** everyone is logged out of the web UI once; `flask erase-entity` takes a user UUID and `flask reassign-model` takes model names (#560)
@@ -25,9 +27,11 @@ All notable changes to Lumen will be documented in this file.
 - Model detail page: the model's notice now always shows in the main column. The acknowledgement text shows on the right only for models that need acknowledgement. Previously, the acknowledgement text replaced the notice. (#492)
 - Connect the GitHub Copilot CLI: `/connect` generates `~/.copilot/providers.json`, and `lumen.sh --copilot` writes the Lumen provider and models into it and keeps them current. (#530)
 - Add `scripts/monitor/backfill_tokens.py` to backfill the monitor's token counts and history from Lumen's request logs; `--day` redoes a single local day, replacing its estimated rows with exact ones
-- Monitor moves to Python 3.14 (was 3.11) and CI tests both projects on 3.14 (required) and 3.15 (allowed to fail); Lumen's `requires-python` drops its `<3.15` cap so the 3.15 run installs, though 3.15 is still unsupported; monitor dead-code cleanup. (#529)
+- Monitor moves to Python 3.14 (was 3.11) and CI tests both projects on 3.14 (required) and 3.15 (allowed to fail); Python 3.15 is experimental for Lumen: it installs (`requires-python` drops its `<3.15` cap) and CI runs it, but failures there do not block a release; monitor dead-code cleanup. (#529, #599)
 - Docs: list every TimescaleDB `job` label on `/metrics`, document `stats.*` and add it and `api.keys.ttl` to the hot-reload table, and drop a stale chart README note. (#528)
 - Docs: document the cache rates and `cache_metrics` on `/v1/models`, the cache columns in the DB schema, the monitor's `backfill_tokens.py`, and cache pricing in the user guides (#606)
+- Tests: strengthen weak tests (coverage `--min`, integer-id template guard, favicon, monitor cache-metrics clamp, reassign-model same-name refusal) and fail the suite on `ResourceWarning`s raised after the last test (#611)
+- Helm: a partial `securityContext` is now merged over the chart's hardened default instead of replacing it, and app pods default to `seccompProfile: RuntimeDefault`. (#614)
 
 ## [2.3.1] - 2026-11-07
 

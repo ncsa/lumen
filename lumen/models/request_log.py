@@ -100,12 +100,11 @@ class RequestLog(db.Model):
     cached_input_tokens: Mapped[Optional[int]] = mapped_column(
         db.Integer, comment="Cached part of input_tokens; NULL when no upstream usage was available"
     )
-    # The part of input_tokens the upstream wrote into its prompt cache (or the
-    # non-cached remainder when the upstream reports no creation count) and billed
-    # at the model's cache-write rate. NULL when there is nothing to record: no
-    # upstream usage object at all (the abort estimate) or a row written before
-    # this column existed. A usage object without cache fields records 0 just for
-    # the read; the write falls back to the non-cached remainder of the prompt.
+    # The part of input_tokens the upstream reported writing into its prompt
+    # cache, billed at the model's cache-write rate. Taken only from a reported
+    # creation count, never inferred from the non-cached remainder. NULL when the
+    # upstream reported no creation count, when there was no usage object at all
+    # (the abort estimate), or for a row written before this column existed.
     cache_write_tokens: Mapped[Optional[int]] = mapped_column(
         db.Integer, comment="Cache-write part of input_tokens; NULL when no upstream usage was available"
     )

@@ -347,7 +347,9 @@ flask erase-entity USER [--yes]
 user's profile from the admin Users page and click the avatar, which copies the ID (see
 [Copying the User ID](../guides/profile.md#copying-the-user-id)). A number such as the old
 `entities.id` is refused (`'42' is neither a user UUID nor an email address.`, exit 2), and a UUID
-that matches nobody prints `No entity with UUID <uuid>: nothing to do.` and exits 0.
+that matches nobody prints `No entity with UUID <uuid>: nothing to do. If an earlier erase-entity of
+this UUID stopped during the aggregate refresh, run the backfill-aggregate commands it printed.` and
+exits 0.
 
 An email is matched ignoring case and surrounding spaces, against users only. Erasing by email always
 asks for confirmation: `--yes` with an email is refused (exit 2) before anything is looked up; pass
@@ -390,10 +392,23 @@ On PostgreSQL `request_logs` moves one chunk per transaction, and each UPDATE ca
 chunk, hence off-hours. It is safe to re-run: an interrupted run leaves every row owned by the user
 or the ghost, and re-running with the same UUID finishes it. Re-run with the UUID printed by
 `Erasing user <uuid>`, even if you started with the email: once the user is deleted the
-email matches nobody (exit 1), while the UUID reports `nothing to do` (exit 0). The one exception is a failure in the
+email matches nobody (exit 1), while the UUID reports `nothing to do` (exit 0). The one exception is the
 last step, the aggregate refresh, which runs after the user is deleted: the UUID no longer resolves,
-so the error prints the [`backfill-aggregate`](#backfill-aggregate) commands, in order, that finish
-the refresh:
+so a re-run cannot finish it. Before the refresh starts, `erase-entity` prints the
+[`backfill-aggregate`](#backfill-aggregate) commands, in order, that finish it. Keep them: if the run
+is killed or loses its session during the refresh, run them to finish it (running one over months
+already refreshed is harmless, only slower):
+
+```text
+  user 7f3c2a9e-0b1d-4c55-9a8e-2d6f1e4b7c30 deleted
+  If this refresh is interrupted, finish it with, in this order:
+    flask backfill-aggregate --name request_counts_daily_by_entity --from 2026-01
+    flask backfill-aggregate --name request_counts_hourly --from 2026-01
+  refreshing 'request_counts_daily_by_entity' from 2026-01-01 to 2026-04-14, month by month
+```
+
+If the refresh fails with an error, the error prints the same commands, starting from the month that
+failed:
 
 ```text
 Error: refreshing 'request_counts_daily_by_entity' for 2026-03 failed: ...
