@@ -105,6 +105,28 @@ def test_token_windows_reader(app, seeded, test_model):
         }
 
 
+def test_token_windows_exclude_rows_from_the_next_minute(app, test_model):
+    """The token windows are half-open, ``month_start <= t < next_minute``.
+
+    A row at 12:00:59, the last second of the current minute, is counted in
+    every window that reaches the current minute (``last_hour``, ``last_day``,
+    ``last_month``; ``last_minute`` is the previous whole minute, so it counts
+    neither row). A row at exactly 12:01:00 (``next_minute``, clock skew) is not
+    counted anywhere.
+    """
+    with app.app_context():
+        from lumen.extensions import db
+        _log(test_model["id"], timedelta(seconds=-44), 1, 10)        # 12:00:59, current minute
+        _log(test_model["id"], timedelta(seconds=-45), 100, 1000)    # 12:01:00, next minute
+        db.session.commit()
+        assert request_rates.token_windows() == {
+            test_model["id"]: {
+                "input_tokens": {"last_minute": 0, "last_hour": 1, "last_day": 1, "last_month": 1},
+                "output_tokens": {"last_minute": 0, "last_hour": 10, "last_day": 10, "last_month": 10},
+            },
+        }
+
+
 def test_last_month_starts_thirty_days_before_the_current_minute(app, test_model):
     """last_month starts exactly 30 days before the current minute, inclusive.
 
