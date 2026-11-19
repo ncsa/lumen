@@ -33,7 +33,7 @@
       {% if model_notice %}
       <div class="alert alert-warning" id="model-notice" role="note" aria-labelledby="model-notice-label">
         <strong id="model-notice-label">Notice</strong>
-        <div class="mt-1">{{ model_notice | markdown }}</div>
+        <div class="mt-1">{{ model_notice | markdown_safe }}</div>
       </div>
       {% endif %}
 
@@ -64,7 +64,7 @@
       {% if ack_notice %}
       <div class="alert alert-warning mb-0" role="alert" aria-live="polite">
         <strong>Notice</strong>
-        <div id="model-ack-notice" class="mt-1">{{ ack_notice | markdown }}</div>
+        <div id="model-ack-notice" class="mt-1">{{ ack_notice | markdown_safe }}</div>
       </div>
       {% endif %}
 

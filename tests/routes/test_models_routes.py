@@ -440,3 +440,38 @@ def test_model_detail_shows_when_the_acknowledgement_was_given(app, auth_client,
     resp = auth_client.get(f"/models/{test_model['model_name']}")
     assert resp.status_code == HTTPStatus.OK
     assert b'data-utc="2026-03-04T05:06:07Z"' in resp.data
+
+
+_HOSTILE_NOTICE = (
+    "**Bold** and [docs](https://example.edu/docs)\n\n"
+    "- one\n- two\n\n"
+    "<script>alert(1)</script>\n\n"
+    '<a href="javascript:alert(2)">click</a>\n'
+)
+
+
+def test_model_detail_sanitises_notices(app, auth_client):
+    """Admin-entered notice and ack text drop script tags and javascript: links but keep markdown."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        db.session.add(ModelConfig(
+            model_name="notice-model",
+            input_cost_per_million=1.0,
+            output_cost_per_million=1.0,
+            notice=_HOSTILE_NOTICE,
+            needs_ack=True,
+            ack_message=_HOSTILE_NOTICE,
+        ))
+        db.session.commit()
+
+    resp = auth_client.get("/models/notice-model")
+    assert resp.status_code == HTTPStatus.OK
+    soup = BeautifulSoup(resp.data, "html.parser")
+    for block in (soup.find(id="model-notice").find("div", class_="mt-1"), soup.find(id="model-ack-notice")):
+        assert block is not None
+        assert block.find("script") is None
+        assert "javascript:" not in str(block)
+        assert block.find("strong").get_text() == "Bold"
+        assert block.find("a", href="https://example.edu/docs") is not None
+        assert [li.get_text() for li in block.find_all("li")] == ["one", "two"]
