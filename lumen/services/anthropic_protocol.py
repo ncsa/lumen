@@ -13,6 +13,7 @@ being dropped, except where dropping cannot change what the model is asked to do
 import json
 from http import HTTPStatus
 
+from lumen.services.cost import usage_tokens
 from lumen.services.llm import estimate_prompt_tokens
 
 # Versions accepted in the `anthropic-version` header. The header is optional
@@ -619,7 +620,7 @@ def translate_response(payload: dict, model_name: str) -> dict:
     for call in message.get("tool_calls") or ():
         content.append(_tool_use_block(call))
 
-    usage = payload.get("usage") or {}
+    usage = payload.get("usage")
     reason, sequence = stop_reason(
         choice.get("finish_reason"),
         has_tool_use=bool(message.get("tool_calls")),
@@ -633,10 +634,35 @@ def translate_response(payload: dict, model_name: str) -> dict:
         "content": content,
         "stop_reason": reason,
         "stop_sequence": sequence,
-        "usage": {
-            "input_tokens": usage.get("prompt_tokens") or 0,
-            "output_tokens": usage.get("completion_tokens") or 0,
-        },
+        "usage": _anthropic_usage(usage),
+    }
+
+
+#: Anthropic usage before any counts are known. Unreported cache counts are 0,
+#: not null, so clients always see the same four keys.
+_ZERO_USAGE = {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "cache_creation_input_tokens": 0,
+}
+
+
+def _anthropic_usage(usage) -> dict:
+    """Upstream usage as Anthropic usage fields.
+
+    Built on ``usage_tokens``, the function billing uses, so the counts a client
+    sees add up to the prompt Lumen bills. In the Anthropic protocol
+    ``input_tokens`` is only the uncached part of the prompt; cache reads and
+    writes are reported separately. ``usage_tokens`` keeps both cache counts
+    within the prompt, so ``input_tokens`` cannot go negative.
+    """
+    prompt, cached, completion, written = usage_tokens(usage)
+    return {
+        "input_tokens": prompt - (cached or 0) - (written or 0),
+        "output_tokens": completion,
+        "cache_read_input_tokens": cached or 0,
+        "cache_creation_input_tokens": written or 0,
     }
 
 
@@ -671,14 +697,13 @@ class StreamTranslator:
         self._tool_by_index = {}
         self._finish_reason = None
         self._stop_sequence = None
-        self._usage = {"input_tokens": 0, "output_tokens": 0}
+        self._usage = dict(_ZERO_USAGE)
 
     def chunk(self, payload: dict):
         """Yield the SSE events for one upstream chunk."""
         usage = payload.get("usage")
         if usage:
-            self._usage = {"input_tokens": usage.get("prompt_tokens") or 0,
-                           "output_tokens": usage.get("completion_tokens") or 0}
+            self._usage = _anthropic_usage(usage)
 
         if not self._started:
             self._message_id = _message_id(payload.get("id"))
@@ -727,7 +752,7 @@ class StreamTranslator:
                 # Real counts are only known from the terminal usage chunk; they
                 # are reported in message_delta, which the SDKs merge into this
                 # snapshot.
-                "usage": {"input_tokens": 0, "output_tokens": 0},
+                "usage": dict(_ZERO_USAGE),
             },
         })
 
