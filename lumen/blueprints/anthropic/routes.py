@@ -19,6 +19,7 @@ from lumen.blueprints.api.routes import (
     _api_key_id,
     _api_limit,
     _complete_and_bill,
+    _cors_preflight,
     _do_chat,
     api_generation_limit,
     api_key_required,
@@ -42,6 +43,9 @@ from lumen.services.model_resolver import resolve_model_config
 logger = logging.getLogger(__name__)
 
 anthropic_bp = Blueprint("anthropic", __name__, url_prefix="/v1/messages")
+# Browsers preflight here as on every /v1 path; the CORS headers themselves come
+# from the api blueprint's app-wide hook.
+anthropic_bp.before_request(_cors_preflight)
 
 
 @anthropic_bp.record_once

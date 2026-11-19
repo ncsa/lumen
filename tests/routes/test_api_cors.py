@@ -30,7 +30,15 @@ OPENAI_JS_SDK_HEADERS = {
     "x-stainless-runtime", "x-stainless-runtime-version", "x-stainless-retry-count",
     "x-stainless-timeout", "x-stainless-helper-method",
 }
-V1_PATHS = ["/v1/models", "/v1/usage", "/v1/chat/completions", "/v1/audio/transcriptions"]
+# The headers the Anthropic TypeScript SDK adds in a browser
+# (dangerouslyAllowBrowser), beyond the X-Stainless ones it shares with OpenAI's.
+ANTHROPIC_SDK_HEADERS = {
+    "x-api-key", "anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access",
+}
+V1_PATHS = [
+    "/v1/models", "/v1/usage", "/v1/chat/completions", "/v1/audio/transcriptions",
+    "/v1/messages", "/v1/messages/count_tokens",
+]
 
 
 @pytest.fixture
@@ -112,7 +120,27 @@ def test_preflight_answers_without_auth_or_db(app, client, path):
     assert resp.headers["Access-Control-Allow-Methods"] == "GET, POST, OPTIONS"
     allowed = {h.strip().lower() for h in resp.headers["Access-Control-Allow-Headers"].split(",")}
     assert OPENAI_JS_SDK_HEADERS <= allowed
+    assert ANTHROPIC_SDK_HEADERS <= allowed
     assert resp.headers["Access-Control-Max-Age"] == "600"
+
+
+def test_anthropic_sdk_preflight_to_messages(client):
+    resp = client.options("/v1/messages", headers={
+        "Origin": ORIGIN,
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": ", ".join(sorted(ANTHROPIC_SDK_HEADERS | {"content-type"})),
+    })
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    _assert_cors(resp)
+    allowed = {h.strip().lower() for h in resp.headers["Access-Control-Allow-Headers"].split(",")}
+    assert ANTHROPIC_SDK_HEADERS <= allowed
+
+
+def test_messages_error_has_cors(client):
+    resp = client.post("/v1/messages", headers={"x-api-key": "nope", "Origin": ORIGIN}, json={})
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED
+    assert resp.get_json()["type"] == "error"
+    _assert_cors(resp)
 
 
 def test_preflights_do_not_use_up_the_per_key_rate_limit(

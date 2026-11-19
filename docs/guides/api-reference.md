@@ -429,19 +429,20 @@ OpenAI SDK honours it. A coin budget that never refills automatically sends no
 
 ## CORS (browser apps)
 
-Every `/v1` endpoint allows cross-origin requests, so a web page on any origin can call the API directly with `fetch` or the OpenAI JS SDK (`dangerouslyAllowBrowser: true`). Each `/v1` response, including errors and streaming responses, carries:
+Every `/v1` endpoint allows cross-origin requests, so a web page on any origin can call the API directly with `fetch`, the OpenAI JS SDK or the Anthropic TypeScript SDK (both with `dangerouslyAllowBrowser: true`). Each `/v1` response, including errors and streaming responses, carries:
 
 ```
 Access-Control-Allow-Origin: *
 Access-Control-Allow-Methods: GET, POST, OPTIONS
 Access-Control-Allow-Headers: Authorization, Content-Type, OpenAI-Organization, OpenAI-Project, OpenAI-Beta,
     X-Stainless-Lang, X-Stainless-Package-Version, X-Stainless-OS, X-Stainless-Arch, X-Stainless-Runtime,
-    X-Stainless-Runtime-Version, X-Stainless-Retry-Count, X-Stainless-Timeout, X-Stainless-Helper-Method
+    X-Stainless-Runtime-Version, X-Stainless-Retry-Count, X-Stainless-Timeout, X-Stainless-Helper-Method,
+    x-api-key, anthropic-version, anthropic-beta, anthropic-dangerous-direct-browser-access
 Access-Control-Expose-Headers: Retry-After
 Access-Control-Max-Age: 600
 ```
 
-(Beyond `Authorization` and `Content-Type`, these are the headers the OpenAI JS SDK sends.) Preflight `OPTIONS` requests are answered `204` without an API key and do not count against your rate limit. Credentials are never allowed: the browser sends no cookies, and the page must attach the `Authorization: Bearer` header itself. Any script on that page can read the key, so treat a key held in the browser like any other secret and revoke it on your [Profile](../guides/profile.md#api-keys) if it leaks.
+(Beyond `Authorization` and `Content-Type`, these are the headers the OpenAI JS SDK and the Anthropic TypeScript SDK send; `/v1/messages` reads the key from `x-api-key`.) Preflight `OPTIONS` requests are answered `204` without an API key and do not count against your rate limit. Credentials are never allowed: the browser sends no cookies, and the page must attach the `Authorization: Bearer` (or `x-api-key`) header itself. Any script on that page can read the key, so treat a key held in the browser like any other secret and revoke it on your [Profile](../guides/profile.md#api-keys) if it leaks.
 
 `Retry-After` is exposed so browser code can honour it on a `429` (see Rate Limits).
 
