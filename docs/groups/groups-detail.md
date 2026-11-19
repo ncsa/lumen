@@ -16,7 +16,7 @@ The card at the top of the page shows:
 
 ### Copying the Group ID
 
-Every group has a random ID (a UUID) that Lumen uses in links and API calls instead of a sequential number. To copy it, click the group's avatar: a hint, **Click to copy ID**, appears when you hover over the avatar or move to it with the keyboard (Tab), and clicking it — or pressing Enter or Space — copies the ID to the clipboard and shows **Group ID copied to clipboard**. Press Escape to hide the hint.
+Click the avatar (or focus it and press Enter/Space) to copy the ID, a UUID used in URLs and CLI commands.
 
 ### Editing the Group
 
