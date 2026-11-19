@@ -187,7 +187,8 @@ def backfill_history(lumen, session, config, only_day=None) -> tuple[int, int, i
         days = conn.execute(HISTORY_SQL, {"tz": tz.key, **window}).all()
         models = {m.model_name: m for m in conn.execute(MODELS_SQL).all()}
 
-    existing = set(session.execute(select(DailyStat.model, DailyStat.day, DailyStat.source)).all())
+    # Every monitor row, loaded once; rows created below are added so a key is never added twice.
+    existing = {(r.model, r.day, r.source): r for r in session.execute(select(DailyStat)).scalars()}
     # See backfill_days: only models the live collector counts a metric for get its watermark.
     watermarked = watermarked_models(session)
 
@@ -204,19 +205,18 @@ def backfill_history(lumen, session, config, only_day=None) -> tuple[int, int, i
         fitted += prices is not None
         price_in, price_out = prices or (float(model.input_cost_per_million), float(model.output_cost_per_million))
 
-        existing_lumen = session.execute(
-            select(DailyStat).where(DailyStat.day == d.day, DailyStat.model == d.model_name, DailyStat.source == "lumen")
-        ).scalar_one_or_none()
+        existing_lumen = existing.get((d.model_name, d.day, "lumen"))
         tokens = split(d.input_tokens, d.output_tokens)
         if existing_lumen is None:
-            session.add(DailyStat(
+            existing[d.model_name, d.day, "lumen"] = row = DailyStat(
                 day=d.day, model=d.model_name, source="lumen",
                 input_price=price_in, output_price=price_out,
                 requests=d.requests, **tokens,
                 covered_until=day_end,
                 **{column: day_end if d.model_name in watermarked[metric] else None for metric, column in TOKEN_METRICS.items()},
                 estimated=False, final=True, configured=model.endpoints,
-            ))
+            )
+            session.add(row)
             created += 1
         elif existing_lumen.estimated or not existing_lumen.final:
             # Replace an estimated/partial row with the exact, final backfilled values.
@@ -240,12 +240,13 @@ def backfill_history(lumen, session, config, only_day=None) -> tuple[int, int, i
         elif config.kwh is not None and (d.model_name, d.day, "hardware") not in existing:
             gpu, gpus = hw
             entry = config.model_entry(d.model_name)
-            session.add(DailyStat(
+            existing[d.model_name, d.day, "hardware"] = row = DailyStat(
                 day=d.day, model=d.model_name, source="hardware",
                 daily_cost=hardware.daily_cost(gpu, gpus, config.kwh, model.endpoints),
                 gpu=entry.gpu, gpus=gpus, gpu_price=gpu.price, energy=gpu.energy, kwh=config.kwh,
                 avg_healthy=float(model.endpoints),
-            ))
+            )
+            session.add(row)
             hw_created += 1
     if skipped:
         print("skipped (no model_configs row): " + ", ".join(sorted(skipped)))
