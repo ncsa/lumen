@@ -183,14 +183,19 @@ def _normalize_knowledge_cutoff(value, model_name=None):
     return None
 
 
-def _normalize_output_modalities(value):
+def _normalize_output_modalities(model_def):
     """Return the output_modalities to store for a model definition.
 
-    An explicit empty list is what sync wrote for an embedding model before the
-    ["embedding"] marker existed, so it is stored as the marker: those models
-    stay hidden from chat without a re-sync. Anything else falsy means unknown.
+    Before the ["embedding"] marker existed, Update wrote exactly
+    input_modalities ["text"] with output_modalities [] for a backend that
+    reported is_embedding, and this loader stored that [] as NULL. That pair is
+    the only trace of the sync origin, so it, and only it, is stored as the
+    marker; create_app runs this sync before serving, so such a model is hidden
+    from chat from the first request, without a re-sync. Any other empty or
+    missing output list means unknown, as before.
     """
-    if value == []:
+    value = model_def.get("output_modalities")
+    if value == [] and model_def.get("input_modalities") == ["text"]:
         return [EMBEDDING_MODALITY]
     return value or None
 
@@ -215,7 +220,7 @@ def _apply_model_fields(config, model_def):
     config.url = _normalize_model_url(model_def.get("url"))
     config.supports_function_calling = model_def.get("supports_function_calling")
     config.input_modalities = model_def.get("input_modalities") or None
-    config.output_modalities = _normalize_output_modalities(model_def.get("output_modalities"))
+    config.output_modalities = _normalize_output_modalities(model_def)
     config.context_window = model_def.get("context_window") or None
     config.max_output_tokens = model_def.get("max_output_tokens") or None
     config.supports_reasoning = model_def.get("supports_reasoning")

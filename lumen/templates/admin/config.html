@@ -638,10 +638,12 @@ function syncAutoPriceFields() {
 function renderModelForm(m, idx) {
   if (!m) return '';
   const inMod  = m.input_modalities  || [];
-  // An empty output list is what Update wrote for an embedding model before the
-  // "embedding" marker; Lumen reads it as the marker, so the form shows it too.
-  const outMod = Array.isArray(m.output_modalities) && !m.output_modalities.length
-    ? ['embedding'] : (m.output_modalities || []);
+  // Text in with an empty output list is exactly what Update wrote for an
+  // embedding model before the "embedding" marker; Lumen loads that pair as the
+  // marker (commands._normalize_output_modalities), so the form shows it too.
+  const legacyEmbedding = Array.isArray(m.output_modalities) && !m.output_modalities.length
+    && Array.isArray(m.input_modalities) && m.input_modalities.length === 1 && m.input_modalities[0] === 'text';
+  const outMod = legacyEmbedding ? ['embedding'] : (m.output_modalities || []);
   const eps    = m.endpoints         || [];
   const modChecks = (prefix, modList, available) => available.map(mod => {
     // Audio input toggles the speech-to-text Audio Cost field.

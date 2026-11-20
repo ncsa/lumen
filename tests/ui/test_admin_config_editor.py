@@ -170,7 +170,7 @@ models:
   - name: embed-model
     input_cost_per_million: 0.1
     output_cost_per_million: 0
-    input_modalities: [text]
+    input_modalities: {input}
     output_modalities: {output}
     endpoints:
       - url: https://api.example.com/v1
@@ -183,7 +183,7 @@ def test_editor_keeps_the_embedding_marker(editor, output):
     """The embedding output checkbox is ticked for a marked model (and for the
     legacy empty list sync used to write) and saves as ["embedding"]."""
     page, cfg, posted = editor
-    cfg.write_text(EMBEDDING_CONFIG.format(output=output))
+    cfg.write_text(EMBEDDING_CONFIG.format(input="[text]", output=output))
 
     page.goto(f"{ORIGIN}/admin/config")
     page.click("#nav-models")
@@ -196,6 +196,19 @@ def test_editor_keeps_the_embedding_marker(editor, output):
 
     assert posted[0]["models"][0]["output_modalities"] == ["embedding"]
     assert yaml.safe_load(cfg.read_text())["models"][0]["output_modalities"] == ["embedding"]
+
+
+def test_editor_leaves_other_empty_outputs_unticked(editor):
+    """Only the exact legacy pair (text in, [] out) reads as the marker; an empty
+    output on any other model stays unknown, as Lumen loads it."""
+    page, cfg, posted = editor
+    cfg.write_text(EMBEDDING_CONFIG.format(input="[text, image]", output="[]"))
+
+    page.goto(f"{ORIGIN}/admin/config")
+    page.click("#nav-models")
+    page.wait_for_selector("#mdl-out-embedding")
+    assert not page.is_checked("#mdl-out-embedding")
+    assert not page.is_checked("#mdl-out-text")
 
 
 def test_editor_marks_a_model_as_embedding(editor):

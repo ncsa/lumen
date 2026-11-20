@@ -158,18 +158,24 @@ def test_apply_model_access_defaults(app):
         assert mc.disabled is False
 
 
-@pytest.mark.parametrize("output, stored, embedding", [
-    (["embedding"], ["embedding"], True),   # the marker, set by hand or by sync
-    ([], ["embedding"], True),              # legacy sync output for an embedding model
-    (["text"], ["text"], False),
-    (None, None, False),                    # unknown
+@pytest.mark.parametrize("inp, output, stored, embedding", [
+    (["text"], ["embedding"], ["embedding"], True),  # the marker, set by hand or by sync
+    (None, ["embedding"], ["embedding"], True),
+    (["text"], [], ["embedding"], True),             # exactly what the old sync wrote for is_embedding
+    (None, [], None, False),                         # any other empty list stays unknown
+    (["text", "image"], [], None, False),
+    (["audio"], [], None, False),
+    (["text"], ["text"], ["text"], False),
+    (["text"], None, None, False),                   # unknown
 ])
-def test_apply_model_fields_embedding_marker(app, output, stored, embedding):
+def test_apply_model_fields_embedding_marker(app, inp, output, stored, embedding):
     from lumen.commands import _apply_model_fields
     from lumen.models.model_config import ModelConfig, is_embedding_model
     with app.app_context():
         mc = ModelConfig(model_name="e")
         model_def = {"name": "e", "input_cost_per_million": 1.0, "output_cost_per_million": 0}
+        if inp is not None:
+            model_def["input_modalities"] = inp
         if output is not None:
             model_def["output_modalities"] = output
         _apply_model_fields(mc, model_def)
