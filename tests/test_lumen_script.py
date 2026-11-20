@@ -1137,6 +1137,25 @@ def test_sync_skips_models_without_text_input(home, lumen_server, monkeypatch):
     assert cfg_path.read_text() == before
 
 
+def test_sync_skips_embedding_models(home, lumen_server, monkeypatch):
+    """Embedding models (output_modalities ["embedding"]) cannot chat, so they
+    are not written to the OpenCode config; chat models are."""
+    port = lumen_server.server_address[1]
+    keys = home / ".config" / "lumen" / "keys.json"
+    keys.parent.mkdir(parents=True)
+    keys.write_text(json.dumps({host_key(port): "sk_stored_key_000"}))
+    monkeypatch.setitem(MODELS, "data", MODELS["data"] + [
+        {"id": "embed-demo", "max_model_len": 8192,
+         "input_cost_per_million": 0.1, "output_cost_per_million": 0.0,
+         "input_modalities": ["text"], "output_modalities": ["embedding"]},
+    ])
+    r = run_script(home, port)
+    assert r.returncode == 0, r.stderr
+    cfg_path = home / ".config" / "opencode" / "opencode.json"
+    models = json.loads(cfg_path.read_text())["provider"]["lumen"]["models"]
+    assert set(models) == {"gpt-demo", "gpt-alias"}
+
+
 # --- hostile server values ----------------------------------------------------
 
 def fake_bin(tmp_path, start=1_000_000, step=0):

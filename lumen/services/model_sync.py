@@ -419,10 +419,11 @@ def _server_modalities(ep_model: dict, pending_in, current_in) -> tuple:
     nothing about the model's modalities, so it leaves both fields untouched.
     False strips image/video from the base but keeps text and audio. True adds
     image only when the base has no non-text input modality, so an audio-only
-    model is left as is.
+    model is left as is. is_embedding marks an embedding model: text in,
+    ["embedding"] out.
     """
     if ep_model.get("is_embedding"):
-        return ["text"], []
+        return ["text"], ["embedding"]
     multimodal = ep_model.get("enable_multimodal")
     if multimodal is None:
         return None, None

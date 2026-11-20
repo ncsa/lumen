@@ -161,6 +161,59 @@ def test_editor_saves_cached_input_price(editor):
     assert saved["models"][0]["cached_input_cost_per_million"] == 0.05
 
 
+EMBEDDING_CONFIG = """\
+version: 3
+app:
+  name: Lumen
+  secret_key: real-secret
+models:
+  - name: embed-model
+    input_cost_per_million: 0.1
+    output_cost_per_million: 0
+    input_modalities: [text]
+    output_modalities: {output}
+    endpoints:
+      - url: https://api.example.com/v1
+        api_key: sk-real
+"""
+
+
+@pytest.mark.parametrize("output", ["[embedding]", "[]"])
+def test_editor_keeps_the_embedding_marker(editor, output):
+    """The embedding output checkbox is ticked for a marked model (and for the
+    legacy empty list sync used to write) and saves as ["embedding"]."""
+    page, cfg, posted = editor
+    cfg.write_text(EMBEDDING_CONFIG.format(output=output))
+
+    page.goto(f"{ORIGIN}/admin/config")
+    page.click("#nav-models")
+    page.wait_for_selector("#mdl-out-embedding")
+    assert page.is_checked("#mdl-out-embedding")
+    assert not page.is_checked("#mdl-out-text")
+
+    page.click("#btn-save")
+    page.wait_for_selector("#cfg-toast >> text=Saved successfully")
+
+    assert posted[0]["models"][0]["output_modalities"] == ["embedding"]
+    assert yaml.safe_load(cfg.read_text())["models"][0]["output_modalities"] == ["embedding"]
+
+
+def test_editor_marks_a_model_as_embedding(editor):
+    """Ticking the embedding box by hand marks a model as an embedding model."""
+    page, cfg, posted = editor
+    cfg.write_text(MODELS_CONFIG)
+
+    page.goto(f"{ORIGIN}/admin/config")
+    page.click("#nav-models")
+    page.wait_for_selector("#mdl-out-embedding")
+    assert not page.is_checked("#mdl-out-embedding")
+    page.check("#mdl-out-embedding")
+    page.click("#btn-save")
+    page.wait_for_selector("#cfg-toast >> text=Saved successfully")
+
+    assert yaml.safe_load(cfg.read_text())["models"][0]["output_modalities"] == ["embedding"]
+
+
 def test_editor_key_ttl_read_only_when_editor_disabled(app, editor):
     page, cfg, posted = editor
     original = app.config.get("CONFIG_EDITOR", True)

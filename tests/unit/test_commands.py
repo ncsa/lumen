@@ -158,6 +158,25 @@ def test_apply_model_access_defaults(app):
         assert mc.disabled is False
 
 
+@pytest.mark.parametrize("output, stored, embedding", [
+    (["embedding"], ["embedding"], True),   # the marker, set by hand or by sync
+    ([], ["embedding"], True),              # legacy sync output for an embedding model
+    (["text"], ["text"], False),
+    (None, None, False),                    # unknown
+])
+def test_apply_model_fields_embedding_marker(app, output, stored, embedding):
+    from lumen.commands import _apply_model_fields
+    from lumen.models.model_config import ModelConfig, is_embedding_model
+    with app.app_context():
+        mc = ModelConfig(model_name="e")
+        model_def = {"name": "e", "input_cost_per_million": 1.0, "output_cost_per_million": 0}
+        if output is not None:
+            model_def["output_modalities"] = output
+        _apply_model_fields(mc, model_def)
+        assert mc.output_modalities == stored
+        assert is_embedding_model(mc) is embedding
+
+
 def test_apply_model_access_legacy_active_false_maps_to_disabled(app, caplog):
     import logging
 

@@ -28,7 +28,7 @@ from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_stat import EntityStat
 from lumen.models.model_alias import ModelAlias
-from lumen.models.model_config import ModelConfig
+from lumen.models.model_config import EMBEDDING_MODALITY, ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
 from lumen.models.request_log import RequestLog
@@ -183,6 +183,18 @@ def _normalize_knowledge_cutoff(value, model_name=None):
     return None
 
 
+def _normalize_output_modalities(value):
+    """Return the output_modalities to store for a model definition.
+
+    An explicit empty list is what sync wrote for an embedding model before the
+    ["embedding"] marker existed, so it is stored as the marker: those models
+    stay hidden from chat without a re-sync. Anything else falsy means unknown.
+    """
+    if value == []:
+        return [EMBEDDING_MODALITY]
+    return value or None
+
+
 def _apply_model_fields(config, model_def):
     config.input_cost_per_million = model_def["input_cost_per_million"]
     config.cached_input_cost_per_million = model_def.get("cached_input_cost_per_million")
@@ -203,7 +215,7 @@ def _apply_model_fields(config, model_def):
     config.url = _normalize_model_url(model_def.get("url"))
     config.supports_function_calling = model_def.get("supports_function_calling")
     config.input_modalities = model_def.get("input_modalities") or None
-    config.output_modalities = model_def.get("output_modalities") or None
+    config.output_modalities = _normalize_output_modalities(model_def.get("output_modalities"))
     config.context_window = model_def.get("context_window") or None
     config.max_output_tokens = model_def.get("max_output_tokens") or None
     config.supports_reasoning = model_def.get("supports_reasoning")

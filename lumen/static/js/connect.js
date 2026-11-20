@@ -1,6 +1,7 @@
 // Builds OpenCode / Copilot CLI / curl / Python connection snippets for the /connect page.
 // Reads server data from #connect-data; the OpenCode and Copilot CLI configs cover every
-// accessible model, while the curl/Python examples follow the model selector and
+// accessible model (OpenCode leaves out embedding models), while the curl/Python
+// examples follow the model selector and
 // adapt to the selected model's modalities (image / audio).
 (function () {
   const dataEl = document.getElementById("connect-data");
@@ -111,11 +112,14 @@
       "charges nothing for a cache price the config does not state.";
   }
 
-  // ── OpenCode (always every accessible model) ─────────────────────────────
+  // ── OpenCode (every accessible chat model) ────────────────────────────────
   function openCodeConfig() {
     const models = {};
-    if (data.models.length) {
-      data.models.forEach((m) => {
+    // OpenCode chats, so embedding models (callable only through
+    // /v1/embeddings) are left out.
+    const chatModels = data.models.filter((m) => !m.embedding);
+    if (chatModels.length) {
+      chatModels.forEach((m) => {
         const entry = { name: m.name + " via " + data.provider_name };
         if (m.context_window) {
           entry.limit = {

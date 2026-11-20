@@ -87,6 +87,23 @@ def test_connect_excludes_blocked_model(app, auth_client, test_model, test_user)
     assert test_model["model_name"] not in ids
 
 
+def test_connect_flags_embedding_models(app, auth_client, test_model):
+    """Each model carries an embedding flag so the OpenCode config can leave
+    embedding models out; chat models are flagged false."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        db.session.add(ModelConfig(
+            model_name="embed-model", input_cost_per_million=0.1, output_cost_per_million=0,
+            input_modalities=["text"], output_modalities=["embedding"],
+        ))
+        db.session.commit()
+
+    rows = {r["id"]: r for r in _connect_data(auth_client.get("/connect").data)["models"]}
+    assert rows["embed-model"]["embedding"] is True
+    assert rows[test_model["model_name"]]["embedding"] is False
+
+
 def test_connect_preselects_valid_model(auth_client, test_model):
     resp = auth_client.get("/connect", query_string={"model": test_model["model_name"]})
     assert _connect_data(resp.data)["selected"] == test_model["model_name"]

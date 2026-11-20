@@ -780,6 +780,54 @@ def test_chat_page_excludes_expired_model(app, auth_client, test_user, test_mode
     assert test_model["model_name"].encode() not in resp.data
 
 
+def _mark_embedding(app, model_id):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        db.session.get(ModelConfig, model_id).output_modalities = ["embedding"]
+        db.session.commit()
+
+
+def test_chat_page_excludes_embedding_model(app, auth_client, test_user, test_model, test_model_endpoint):
+    """An embedding model cannot chat, so the picker leaves it out; a chat model stays."""
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    from lumen.models.model_endpoint import ModelEndpoint
+    _grant_unlimited_pool(app, test_user["id"])
+    with app.app_context():
+        embed = ModelConfig(model_name="embed-model", input_cost_per_million=0.1, output_cost_per_million=0,
+                            input_modalities=["text"], output_modalities=["embedding"])
+        db.session.add(embed)
+        db.session.flush()
+        db.session.add(ModelEndpoint(model_config_id=embed.id, url="http://localhost:9999/v1",
+                                     api_key="k", model_name="dummy", healthy=True))
+        db.session.commit()
+
+    resp = auth_client.get("/chat")
+    assert resp.status_code == HTTPStatus.OK
+    assert b'value="test-model"' in resp.data
+    assert b"embed-model" not in resp.data
+
+
+def test_chat_stream_rejects_embedding_model(app, auth_client, test_user, test_model, test_model_endpoint, monkeypatch):
+    """A chat request naming an embedding model is a clear 400 before any upstream call."""
+    _grant_unlimited_pool(app, test_user["id"])
+    _mark_embedding(app, test_model["id"])
+
+    def _no_upstream(*a, **kw):
+        raise AssertionError("an embedding model must not reach the upstream")
+    monkeypatch.setattr("lumen.blueprints.chat.routes.send_message_stream", _no_upstream)
+
+    resp = auth_client.post("/chat/stream", json={
+        "messages": [{"role": "user", "content": "hi"}],
+        "model": test_model["model_name"],
+    })
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    error = resp.get_json()["error"]
+    assert "embedding model" in error
+    assert "/v1/embeddings" in error
+
+
 def test_chat_page_excludes_needs_ack_model_without_coin_pool(
     app, auth_client, test_model, test_model_endpoint,
 ):

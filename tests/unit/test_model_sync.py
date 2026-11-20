@@ -666,14 +666,27 @@ def _patch_ep(monkeypatch, ep_model, dev_match):
     monkeypatch.setattr(model_sync, "find_in_modelsdev", lambda *a, **k: dev_match)
 
 
-def test_server_embedding_sets_text_in_empty_out(monkeypatch):
-    """is_embedding=True from SGLang → input=['text'], output=[] (authoritative)."""
+def test_server_embedding_sets_text_in_embedding_out(monkeypatch):
+    """is_embedding=True from SGLang → input=['text'], output=['embedding'] (authoritative)."""
     _patch_ep(monkeypatch,
               ep_model={"id": "m", "max_model_len": 8192, "backend": "sglang", "is_embedding": True, "enable_multimodal": None},
               dev_match={"modalities": {"input": ["text"], "output": ["text"]}})
     result = model_sync.sync_model({"name": "m", "endpoints": [{"url": "http://x"}]})
     assert result["updates"]["input_modalities"] == ["text"]
-    assert result["updates"]["output_modalities"] == []
+    assert result["updates"]["output_modalities"] == ["embedding"]
+
+
+def test_server_embedding_replaces_legacy_empty_output(monkeypatch):
+    """A model synced before the marker existed (output []) is re-synced to it."""
+    _patch_ep(monkeypatch,
+              ep_model={"id": "m", "max_model_len": 8192, "backend": "sglang", "is_embedding": True},
+              dev_match=None)
+    result = model_sync.sync_model({
+        "name": "m", "input_modalities": ["text"], "output_modalities": [],
+        "endpoints": [{"url": "http://x"}],
+    })
+    assert "input_modalities" not in result["updates"]
+    assert result["updates"]["output_modalities"] == ["embedding"]
 
 
 def test_server_multimodal_null_keeps_dev_image(monkeypatch):
@@ -1247,7 +1260,7 @@ def test_server_modalities_matching_operator_drop_dev_updates(monkeypatch):
               ep_model={"id": "m", "max_model_len": 8192, "backend": "sglang", "is_embedding": True},
               dev_match={"modalities": {"input": ["text", "image"], "output": ["text"]}})
     result = model_sync.sync_model({
-        "name": "m", "input_modalities": ["text"], "output_modalities": [],
+        "name": "m", "input_modalities": ["text"], "output_modalities": ["embedding"],
         "endpoints": [{"url": "http://x"}],
     })
     assert "input_modalities" not in result["updates"]

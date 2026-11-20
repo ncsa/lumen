@@ -638,7 +638,10 @@ function syncAutoPriceFields() {
 function renderModelForm(m, idx) {
   if (!m) return '';
   const inMod  = m.input_modalities  || [];
-  const outMod = m.output_modalities || [];
+  // An empty output list is what Update wrote for an embedding model before the
+  // "embedding" marker; Lumen reads it as the marker, so the form shows it too.
+  const outMod = Array.isArray(m.output_modalities) && !m.output_modalities.length
+    ? ['embedding'] : (m.output_modalities || []);
   const eps    = m.endpoints         || [];
   const modChecks = (prefix, modList, available) => available.map(mod => {
     // Audio input toggles the speech-to-text Audio Cost field.
@@ -676,7 +679,7 @@ function renderModelForm(m, idx) {
       ${cbi('mdl-reason', !!m.supports_reasoning,       'Supports reasoning / chain-of-thought')}
       <div class="mt-2">${cbi('mdl-fn', !!m.supports_function_calling, 'Supports function calling')}</div>
       <div class="mt-3"><span class="fw-semibold small">Input Modalities: </span>${modChecks('mdl-in',  inMod,  ['text','image','video','audio'])}</div>
-      <div class="mt-1"><span class="fw-semibold small">Output Modalities: </span>${modChecks('mdl-out', outMod, ['text','audio'])}</div>
+      <div class="mt-1"><span class="fw-semibold small">Output Modalities: </span>${modChecks('mdl-out', outMod, ['text','audio','embedding'])}</div>
     `)}
     ${card('Endpoints', `
       <p class="text-muted small mb-2">Multiple endpoints enable load-balancing and failover</p>
@@ -764,7 +767,7 @@ function collectCurrentModel() {
   m.supports_function_calling = boolVal('mdl-fn')|| undefined;
   const inMod  = ['text','image','video','audio'].filter(mod => $(`mdl-in-${mod}`)?.checked);
   m.input_modalities  = inMod.length  ? inMod  : undefined;
-  const outMod = ['text','audio'].filter(mod => $(`mdl-out-${mod}`)?.checked);
+  const outMod = ['text','audio','embedding'].filter(mod => $(`mdl-out-${mod}`)?.checked);
   m.output_modalities = outMod.length ? outMod : undefined;
   const endpoints = [];
   document.querySelectorAll('#ep-body .ep-row').forEach(row => {

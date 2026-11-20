@@ -130,6 +130,32 @@ def test_config_fills_only_an_unset_read_rate(app, connect_page):
     )
 
 
+def test_config_leaves_out_embedding_models(app, connect_page, test_model):
+    """OpenCode chats, so an embedding model is not in its config; chat models are."""
+    _add_model(
+        app,
+        model_name="embed-model",
+        input_cost_per_million=0.1,
+        output_cost_per_million=0,
+        input_modalities=["text"],
+        output_modalities=["embedding"],
+    )
+    models, _ = _generated(connect_page)
+    assert set(models) == {test_model["model_name"]}
+
+
+def test_config_with_only_embedding_models_uses_the_placeholder(app, connect_page):
+    _add_model(
+        app,
+        model_name="embed-model",
+        input_cost_per_million=0.1,
+        output_cost_per_million=0,
+        output_modalities=["embedding"],
+    )
+    models, _ = _generated(connect_page)
+    assert set(models) == {"MODEL"}
+
+
 def test_generated_file_is_named_jsonc(connect_page):
     """The file carries comments, so it is offered as opencode.jsonc — OpenCode
     reads either extension."""

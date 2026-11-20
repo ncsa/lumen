@@ -17,7 +17,7 @@ from lumen.models.conversation import Conversation
 from lumen.models.entity import Entity
 from lumen.models.entity_stat import EntityStat
 from lumen.models.message import Message
-from lumen.models.model_config import ModelConfig
+from lumen.models.model_config import ModelConfig, is_embedding_model
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.services import model_cache
 from lumen.services.live_state import get_live_state
@@ -110,6 +110,9 @@ def chat_page():
     available_models = []
     for m in all_models:
         if healthy_counts.get(m.id, 0) == 0:
+            continue
+        # Embedding models cannot chat; they are called through /v1/embeddings.
+        if is_embedding_model(m):
             continue
         status = access_statuses.get(m.id, "allowed")
         if status == "blocked":
@@ -224,6 +227,9 @@ def chat_stream():
         return _snapshot_unavailable()
     if not model_config:
         return jsonify({"error": f"Unknown model: {model}"}), HTTPStatus.BAD_REQUEST
+    if is_embedding_model(model_config):
+        return jsonify({"error": f"{model} is an embedding model and cannot be used for chat; "
+                                 "call it through /v1/embeddings"}), HTTPStatus.BAD_REQUEST
 
     ok, code, msg, effective, _, retry_after = check_coin_budget(
         entity_id, model_config.id, source="chat", model_name=model, model_config=model_config,
