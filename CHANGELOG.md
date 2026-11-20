@@ -4,6 +4,10 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Fix the `anthropic-version` route test, which had no model set up and failed with a 404 after 2.4.0 started accepting any version. (#676)
+
 ## [2.4.0] - 2026-11-19
 
 **Upgrade:** everyone is logged out of the web UI once; 2.3.1 pods keep working during a rolling `helm upgrade`. Per-key cache token totals start at 0 instead of being summed from `request_logs`. (#560, #598, #600)
@@ -31,6 +35,7 @@ All notable changes to Lumen will be documented in this file.
 - A model's notice always shows in the main column; the acknowledgement text shows beside it only for models that need one. (#492)
 - `flask erase-entity` prints the `backfill-aggregate` commands that finish its refresh before it starts, so an interrupted run can be completed. (#612)
 - Helm: a partial `securityContext` is merged over the chart default, and app pods default to `seccompProfile: RuntimeDefault`. (#614)
+- `/v1/messages` accepts any `anthropic-version` header instead of refusing unknown versions, so current Anthropic SDKs work.
 
 ### Fixed
 
