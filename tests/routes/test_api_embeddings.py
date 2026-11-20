@@ -374,3 +374,33 @@ def test_output_price_is_never_charged(
         assert log.output_tokens == 0
         assert float(log.cost) == round(10 * 1.0 / 1_000_000, 6)
         assert db.session.get(ModelConfig, test_model["id"]).output_cost_per_million == 2
+
+
+def test_cached_tokens_are_billed_at_the_input_price(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+):
+    """A reported cache breakdown never discounts an embedding: with input and
+    cache-read rates of 3 and 1 per million, 1000 tokens (500 cached) cost 0.003."""
+    token, _ = api_key
+    with app.app_context():
+        _grant_finite_pool(app, test_user["id"], coins=100)
+        _set_model_flag(app, test_model, input_cost_per_million=3.0,
+                        cached_input_cost_per_million=1.0, cache_write_cost_per_million=0.5)
+        model_cache.refresh(app)
+    response = CreateEmbeddingResponse.model_validate({
+        "object": "list", "model": "upstream-name",
+        "data": [{"object": "embedding", "index": 0, "embedding": [0.1]}],
+        "usage": {"prompt_tokens": 1000, "total_tokens": 1000,
+                  "prompt_tokens_details": {"cached_tokens": 500, "cache_creation_input_tokens": 200}},
+    })
+    _upstream(monkeypatch, response)
+
+    assert _post(client, token, {"model": "test-model", "input": "hi"}).status_code == HTTPStatus.OK
+    with app.app_context():
+        log = _log()
+        assert log.input_tokens == 1000
+        assert log.cached_input_tokens is None
+        assert log.cache_write_tokens is None
+        assert float(log.cost) == 0.003
+        bal = db.session.execute(select(EntityBalance)).scalar_one()
+        assert float(bal.coins_left) == pytest.approx(100 - 0.003)

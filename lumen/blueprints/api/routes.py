@@ -1140,8 +1140,6 @@ def embeddings():
     ep_id          = endpoint.id
     mc_id          = model_config.id
     mc_in_cost     = float(model_config.input_cost_per_million)
-    mc_cached_cost = (float(model_config.cached_input_cost_per_million)
-                      if model_config.cached_input_cost_per_million is not None else None)
     timeout, max_retries = upstream_call_bounds(streaming=False)
     # Read while the request context is current, like the paths above.
     timing = capture_request_timing()
@@ -1166,15 +1164,13 @@ def embeddings():
         usage = response.usage
         if usage is None:
             logger.warning("Upstream did not return usage data (model=%s, entity_id=%s)", model_name, entity_id)
-        in_tok, cached_tok, _, _ = usage_tokens(usage)
-        cost = calculate_cost(
-            in_tok, 0, mc_in_cost, 0.0,
-            cached_input_tokens=cached_tok,
-            cached_input_cost_per_million=mc_cached_cost,
-        )
+        # Every prompt token is billed at the input price, cache hits included:
+        # embedding models have no cache price, so a reported cache breakdown is
+        # neither priced nor recorded.
+        in_tok, _, _, _ = usage_tokens(usage)
+        cost = calculate_cost(in_tok, 0, mc_in_cost, 0.0)
         bill_request(entity_id, mc_id, "api", in_tok, 0, cost,
                      effective=effective, api_key_id=ak_id,
-                     cached_input_tokens=cached_tok,
                      endpoint_id=ep_id, duration=duration,
                      timing=timing, upstream_t0=t0,
                      # Non-streaming: the vectors arrive in one piece, so the
