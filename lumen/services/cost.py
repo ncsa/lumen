@@ -5,13 +5,12 @@ as served from the cache ('cached_tokens'); the *write* is what it reports as
 created/stored ('cache_creation_input_tokens', the vLLM spelling
 'created_cache_tokens', or the OpenAI client's 'cache_write_tokens'). A backend
 that reports no creation count (SGLang, DeepSeek) is billed for those tokens at
-the ordinary input rate, exactly as if no write rate were configured: Lumen
-prices the cache accounting an upstream reports, and never infers a write count
-from the remainder of the prompt.
+the ordinary input rate: Lumen prices the cache accounting an upstream reports,
+and never infers a write count from the remainder of the prompt.
 
-The two rates are optional and independent: when a rate is unset, the matching
-tokens are billed at the ordinary input rate, so an existing configuration
-keeps its exact price.
+The two rates are optional and independent. An unset read rate bills cached
+tokens at the ordinary input rate; an unset write rate bills reported write
+tokens at 0 (cache writes are free).
 """
 
 import logging
@@ -37,18 +36,12 @@ def calculate_cost(
     'cached_input_tokens' is a subset of 'input_tokens' reported by the
     upstream; 'cache_write_tokens' is the part of the remainder it reports as
     written to its prompt cache. A count the upstream did not report is None
-    (or 0) and bills as ordinary input. When no cache rate is configured,
-    preserve ordinary input pricing exactly. Zero is a valid configured rate.
-    The two cache rates are independent: a rate that is unset bills its tokens
-    at the input rate, so a model can price writes without pricing reads (and
-    the other way round).
+    (or 0) and bills as ordinary input. Zero is a valid configured rate. The
+    two cache rates are independent: an unset read rate bills cached tokens at
+    the input rate, and an unset write rate bills reported write tokens at 0.
+    With neither rate set and no cache counts reported, this is the plain
+    input-rate price.
     """
-    if cached_input_cost_per_million is None and cache_write_cost_per_million is None:
-        return round(
-            input_tokens * float(input_cost_per_million) / 1_000_000
-            + output_tokens * float(output_cost_per_million) / 1_000_000,
-            6,
-        )
     # An unreadable count is billed as ordinary input, never as a discount, and
     # a count above the reported prompt total cannot credit the request. Write
     # tokens are capped at the remainder after the cached part, so the two
@@ -57,23 +50,16 @@ def calculate_cost(
     write = min(_as_token_count(cache_write_tokens) or 0, input_tokens - cached)
     input_rate = float(input_cost_per_million)
     output_rate = float(output_cost_per_million)
-    # The rates are independent, so the unset one bills its tokens at the
-    # ordinary input rate instead of leaving a None to be multiplied.
     cached_rate = (
         input_rate
         if cached_input_cost_per_million is None
         else float(cached_input_cost_per_million)
     )
-    if cache_write_cost_per_million is None:
-        # No write rate: the write portion stays in the input-rate block, which
-        # is exactly how this request priced before write tokens existed.
-        return round(
-            (input_tokens - cached) * input_rate / 1_000_000
-            + cached * cached_rate / 1_000_000
-            + output_tokens * output_rate / 1_000_000,
-            6,
-        )
-    write_rate = float(cache_write_cost_per_million)
+    write_rate = (
+        0.0
+        if cache_write_cost_per_million is None
+        else float(cache_write_cost_per_million)
+    )
     return round(
         (input_tokens - cached - write) * input_rate / 1_000_000
         + cached * cached_rate / 1_000_000

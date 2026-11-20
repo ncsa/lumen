@@ -86,7 +86,7 @@ Each model carries its prices in coins per million tokens:
 |-------|---------|
 | `input_cost_per_million` | Price of input tokens. |
 | `cached_input_cost_per_million` | Price of input tokens read from the prompt cache. `null` means they are billed at the input rate. |
-| `cache_write_cost_per_million` | Price of input tokens written to the prompt cache. `null` means they are billed at the input rate. |
+| `cache_write_cost_per_million` | Price of input tokens written to the prompt cache. `null` means they are free (0). |
 | `output_cost_per_million` | Price of output tokens. |
 
 Each model may carry consent-state fields for the calling account:

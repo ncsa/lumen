@@ -223,10 +223,9 @@ def _model_dict(c, rates: dict, eps, ack_fields=None, metrics=None) -> dict:
             float(c.cached_input_cost_per_million)
             if c.cached_input_cost_per_million is not None else None
         ),
-        # Nullable for the same reason: null means written cache tokens are
-        # billed at input_cost_per_million, so a client that also sees
-        # cache-creation tokens in a usage payload can price them the way
-        # Lumen did.
+        # Nullable too, but null means written cache tokens are free (0), so
+        # a client that also sees cache-creation tokens in a usage payload
+        # can price them the way Lumen did.
         "cache_write_cost_per_million": (
             float(c.cache_write_cost_per_million)
             if c.cache_write_cost_per_million is not None else None

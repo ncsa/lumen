@@ -33,9 +33,8 @@ class ModelConfig(db.Model):
     # NULL = charge the input rate, so billing is unchanged until an admin sets it.
     cached_input_cost_per_million: Mapped[Optional[Decimal]] = mapped_column(db.Numeric(12, 6), comment="USD cost per one million cached input tokens; NULL = same as input_cost_per_million")
     # USD cost per one million input tokens written into the provider's prompt cache.
-    # NULL = charge the input rate for the written tokens, so billing is
-    # unchanged until an admin sets it.
-    cache_write_cost_per_million: Mapped[Optional[Decimal]] = mapped_column(db.Numeric(12, 6), comment="USD cost per one million cache-write input tokens; NULL = same as input_cost_per_million")
+    # NULL = 0: written tokens are free until an admin sets a rate.
+    cache_write_cost_per_million: Mapped[Optional[Decimal]] = mapped_column(db.Numeric(12, 6), comment="USD cost per one million cache-write input tokens; NULL = 0 (cache writes are free)")
     # USD cost per hour of audio; only set for speech-to-text (ASR) models
     audio_cost_per_hour: Mapped[Optional[Decimal]] = mapped_column(db.Numeric(12, 6), comment="USD cost per hour of audio; only set for speech-to-text models")
     # Owning user entity; NULL means the model is available to everyone.
