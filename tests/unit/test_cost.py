@@ -73,21 +73,43 @@ def test_cache_write_rate_without_a_cached_rate():
     assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 0, None, 500_000, 0.25) == 1.525
     assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, None, 500_000, 0.25) == 1.525
     assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, None, 500_000, 0) == 1.4
+    # A configured write rate prices exactly as before, at the six-decimal
+    # rounding boundary too: 4 * 0.1 + 1 * 0.1 + 1 * 3.0 per 1M rounds up.
+    assert calculate_cost(6, 0, 0.1, 0, 1, None, 1, 3.0) == 0.000004
 
 
-def test_unset_cache_write_rate_bills_writes_at_the_input_rate():
-    # Without a write rate the write portion stays in the input-rate block,
-    # which is exactly how the request priced before write tokens existed.
-    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, 0.5, 500_000) == 2.025
-    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, 0.5, 500_000, None) == 2.025
+def test_unset_cache_write_rate_bills_writes_at_zero():
+    # Read set, write unset: reported write tokens are free, the cached part
+    # bills at its rate and the rest of the prompt at the input rate.
+    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, 0.5, 500_000) == 1.025
+    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, 0.5, 500_000, None) == 1.025
+    # No write count reported: nothing is free.
     assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, 0.5) == 2.025
 
 
-def test_no_cache_rates_is_the_legacy_formula():
-    # With neither cache rate set the legacy formula prices the request
-    # exactly, whatever counts (or unreadable counts) are reported.
-    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, None, 500_000, None) == 2.4
+def test_explicit_cache_write_rates():
+    # A non-zero write rate prices writes at that rate; an explicit 0 is the
+    # same as unset.
+    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, 0.5, 500_000, 3.0) == 2.525
+    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, 0.5, 500_000, 0) == 1.025
+
+
+def test_no_cache_rates_bills_reads_at_input_and_writes_at_zero():
+    # Neither rate set: cached tokens bill at the input rate and reported
+    # write tokens are free.
+    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, None, 500_000, None) == 1.4
+    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 0, None, 500_000) == 1.4
+    # Without a reported write count this is the plain input-rate price.
     assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000) == 2.4
+    assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, None, None, None) == 2.4
+
+
+def test_unset_read_rate_matches_the_plain_input_price_at_the_rounding_boundary():
+    # Cached tokens at the input rate must price exactly like the plain input
+    # formula, even where splitting them would drift across the rounding
+    # boundary (5 * 0.1 / 1e6 rounds to 0.0; 4 * 0.1 + 1 * 0.1 rounds up).
+    assert calculate_cost(5, 0, 0.1, 0, 1) == calculate_cost(5, 0, 0.1, 0) == 0.0
+    assert calculate_cost(5, 0, 0.1, 0, 1, None, 0) == 0.0
 
 
 @pytest.mark.parametrize("usage, expected", [
@@ -177,13 +199,16 @@ def test_usage_tokens_reads_every_write_spelling(usage, expected):
 def test_usage_tokens_never_infers_a_write_count():
     """Only a reported creation count is a write. SGLang reports its cache
     reads and nothing about writes, so its non-cached remainder is ordinary
-    input, billed at the input price — the same as a model with no write
-    price configured."""
+    input, billed at the input price, whatever write price is configured."""
     sglang = {"prompt_tokens": 1513, "completion_tokens": 1,
               "prompt_tokens_details": {"cached_tokens": 1508}}
     assert usage_tokens(sglang) == (1513, 1508, 1, None)
     assert calculate_cost(1513, 1, 1.0, 2.0, 1508, 0.1, None, 0.05) == round(
         (1513 - 1508) * 1.0 / 1e6 + 1508 * 0.1 / 1e6 + 2.0 / 1e6, 6)
+    # With no cache rates set the non-cached remainder still bills at the
+    # input rate: an unset write rate only frees tokens reported as writes.
+    assert calculate_cost(1513, 1, 1.0, 2.0, 1508, None, None, None) == round(
+        1513 * 1.0 / 1e6 + 2.0 / 1e6, 6)
 
 
 @pytest.mark.parametrize("usage, expected", [

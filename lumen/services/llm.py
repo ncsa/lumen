@@ -342,7 +342,7 @@ class StreamTarget(NamedTuple):
     # input_cost (see calculate_cost).
     cached_input_cost: Optional[float] = None
     # None = the model has no cache-write rate, so written prompt tokens are
-    # billed at input_cost (see calculate_cost).
+    # free (see calculate_cost).
     cache_write_cost: Optional[float] = None
 
 
