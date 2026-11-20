@@ -22,6 +22,9 @@ MODELSDEV_TIMEOUT = 15
 OBSOLETE_FIELDS = ["supports_vision"]
 
 _TTL = 600  # 10 minutes
+# A failed fetch (empty result) is cached only this long, so a later Update
+# retries soon while Update All still pays at most one timeout per minute.
+_FAILED_TTL = 60
 _CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 
 _cache: dict = {"data": None, "ts": 0.0, "index": {}}
@@ -49,9 +52,13 @@ def get_modelsdev() -> tuple[list[dict], dict[str, list[dict]]]:
 
     Both come from the same fetch so callers can't see a torn view if a
     concurrent request refreshes the cache between two separate reads.
+
+    A non-empty result is kept for ``_TTL`` seconds; an empty one (the fetch
+    failed) only for ``_FAILED_TTL`` seconds.
     """
     now = time.monotonic()
-    if _cache["data"] is None or now - _cache["ts"] > _TTL:
+    ttl = _TTL if _cache["data"] else _FAILED_TTL
+    if _cache["data"] is None or now - _cache["ts"] > ttl:
         _cache["data"] = _fetch_modelsdev()
         _cache["ts"] = now
         _cache["index"] = _build_price_index(_cache["data"])
@@ -441,6 +448,7 @@ def sync_model(model_def: dict) -> dict:
       endpoint_ok – whether at least one endpoint responded
       modelsdev_price – {input, output} averaged models.dev price (either may
                     be None), or None when there is no match or no price
+      modelsdev_ok – whether the models.dev data could be fetched
     """
     dev_models, price_index = get_modelsdev()
 
@@ -567,4 +575,5 @@ def sync_model(model_def: dict) -> dict:
         "matched": dev_match.get("id") if dev_match else None,
         "endpoint_ok": ep_model is not None,
         "modelsdev_price": modelsdev_price,
+        "modelsdev_ok": bool(dev_models),
     }

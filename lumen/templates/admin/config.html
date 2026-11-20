@@ -794,7 +794,7 @@ async function syncModel() {
     });
     const result = await resp.json();
     if (!resp.ok) { showToast('Update failed: ' + (result.error || resp.statusText), 'danger'); return; }
-    const { updates, removals, matched, endpoint_ok, modelsdev_price } = result;
+    const { updates, removals, matched, endpoint_ok, modelsdev_price, modelsdev_ok } = result;
     // With Automatic price off, Update keeps the hand-set price; point out a
     // models.dev price the operator could take by ticking the box.
     let priceHint = '';
@@ -804,7 +804,9 @@ async function syncModel() {
     }
     if (!Object.keys(updates).length && !removals.length) {
       const info = matched ? ` (models.dev: ${matched})` : (endpoint_ok ? '' : ', endpoint unreachable');
-      showToast('No changes' + info + priceHint, 'secondary');
+      // An unreachable models.dev is retried on a later Update within a minute.
+      const head = modelsdev_ok === false ? 'models.dev unreachable' : 'No changes';
+      showToast(head + info + priceHint, 'secondary');
       return;
     }
     const m = state.data.models[idx];
