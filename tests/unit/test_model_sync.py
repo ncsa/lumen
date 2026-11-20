@@ -1206,3 +1206,103 @@ def test_server_modalities_matching_operator_drop_dev_updates(monkeypatch):
     })
     assert "input_modalities" not in result["updates"]
     assert "output_modalities" not in result["updates"]
+
+
+# ---------------------------------------------------------------------------
+# qwen3-embedding-8b (#680): id variants, a $0 listing with limit.output: 0
+# ---------------------------------------------------------------------------
+
+_QWEN_EMBED_LISTINGS = [
+    # First listing: embedding provider reporting no output budget and no price.
+    {"id": "qwen3-embedding-8b", "name": "Qwen3 Embedding 8B",
+     "limit": {"context": 0, "output": 0}, "cost": {"input": 0, "output": 0}},
+    {"id": "Qwen/Qwen3-Embedding-8B", "name": "Qwen3 Embedding 8B",
+     "limit": {"context": 32768, "output": 0}, "cost": {"input": 0.01, "output": 0}},
+    {"id": "qwen/qwen3-embedding-8b", "name": "Qwen3 Embedding 8B",
+     "limit": {"context": 32768}, "cost": {"input": 0.07, "output": 0}},
+    {"id": "alibaba/qwen3-embedding-8b", "name": "Qwen3 Embedding 8B",
+     "limit": {"context": 32768}, "cost": {"input": 0.1, "output": 0.1}},
+    {"id": "evroc/qwen3-embedding-8b", "name": "Qwen3 Embedding 8B",
+     "cost": {"input": 0.115, "output": 0.115}},
+]
+
+
+def _patch_qwen_embed(monkeypatch):
+    """Real matcher and price index over the listings; no endpoint."""
+    models = list(_QWEN_EMBED_LISTINGS)
+    monkeypatch.setattr(model_sync, "fetch_endpoint_model", lambda ep: None)
+    monkeypatch.setattr(model_sync, "get_modelsdev",
+                        lambda: (models, model_sync._build_price_index(models)))
+
+
+_QWEN_IN = round((0.01 + 0.07 + 0.1 + 0.115) / 4, 6)
+_QWEN_OUT = round((0.1 + 0.115) / 2, 6)
+
+
+def test_qwen3_embedding_auto_price_sets_averages(monkeypatch):
+    """A new model (auto_price ticked) gets the averaged models.dev price, and the
+    0 limits of the first listing never become a 0 context or output cap."""
+    _patch_qwen_embed(monkeypatch)
+    result = model_sync.sync_model({
+        "name": "qwen3-embedding-8b", "auto_price": True,
+        "input_cost_per_million": 0, "output_cost_per_million": 0,
+        "endpoints": [{"url": "http://x"}],
+    })
+    assert result["matched"] == "qwen3-embedding-8b"
+    assert result["updates"]["input_cost_per_million"] == _QWEN_IN
+    assert result["updates"]["output_cost_per_million"] == _QWEN_OUT
+    assert result["modelsdev_price"] == {"input": _QWEN_IN, "output": _QWEN_OUT}
+    assert "max_output_tokens" not in result["updates"]
+    assert "context_window" not in result["updates"]
+
+
+@pytest.mark.parametrize("flag", [{}, {"auto_price": False}])
+def test_qwen3_embedding_manual_price_kept_but_reported(monkeypatch, flag):
+    """Without auto_price the price stays, but modelsdev_price is still filled
+    in so the editor can offer it."""
+    _patch_qwen_embed(monkeypatch)
+    result = model_sync.sync_model({
+        "name": "qwen3-embedding-8b",
+        "input_cost_per_million": 0, "output_cost_per_million": 0,
+        "endpoints": [{"url": "http://x"}],
+        **flag,
+    })
+    assert "input_cost_per_million" not in result["updates"]
+    assert "output_cost_per_million" not in result["updates"]
+    assert result["modelsdev_price"] == {"input": _QWEN_IN, "output": _QWEN_OUT}
+
+
+@pytest.mark.parametrize("ep_id", [
+    "Qwen/Qwen3-Embedding-8B", "qwen/qwen3-embedding-8b", "alibaba/qwen3-embedding-8b",
+])
+def test_qwen3_embedding_id_variants_resolve_same_price(monkeypatch, ep_id):
+    """Every id a provider uses for the model gives the same averaged price."""
+    _patch_qwen_embed(monkeypatch)
+    result = model_sync.sync_model({
+        "name": "my-embedder", "auto_price": True,
+        "endpoints": [{"url": "http://x", "model": ep_id}],
+    })
+    assert result["matched"] is not None
+    assert result["updates"]["input_cost_per_million"] == _QWEN_IN
+    assert result["updates"]["output_cost_per_million"] == _QWEN_OUT
+
+
+def test_zero_dev_limits_are_ignored(monkeypatch):
+    """A models.dev limit of 0 is "not reported": the operator values stay."""
+    _patch(monkeypatch, ep_model=None,
+           dev_match={"limit": {"context": 0, "output": 0}})
+    result = model_sync.sync_model({
+        "name": "m", "context_window": 8192, "max_output_tokens": 1024,
+        "endpoints": [{"url": "http://x"}],
+    })
+    assert "context_window" not in result["updates"]
+    assert "max_output_tokens" not in result["updates"]
+
+
+def test_modelsdev_price_none_without_match_or_price(monkeypatch):
+    """modelsdev_price is null with no match, and with a match that has no price."""
+    _patch(monkeypatch, ep_model=None, dev_match=None)
+    assert model_sync.sync_model({"name": "m", "endpoints": []})["modelsdev_price"] is None
+    dev_models = [{"id": "p/m", "cost": {"input": 0, "output": 0}}]
+    _patch_price(monkeypatch, dev_models, dev_models[0])
+    assert model_sync.sync_model({"name": "m", "endpoints": []})["modelsdev_price"] is None
