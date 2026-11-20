@@ -73,6 +73,9 @@ def test_cache_write_rate_without_a_cached_rate():
     assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 0, None, 500_000, 0.25) == 1.525
     assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, None, 500_000, 0.25) == 1.525
     assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, None, 500_000, 0) == 1.4
+    # A configured write rate prices exactly as before, at the six-decimal
+    # rounding boundary too: 4 * 0.1 + 1 * 0.1 + 1 * 3.0 per 1M rounds up.
+    assert calculate_cost(6, 0, 0.1, 0, 1, None, 1, 3.0) == 0.000004
 
 
 def test_unset_cache_write_rate_bills_writes_at_zero():

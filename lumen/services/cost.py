@@ -50,23 +50,31 @@ def calculate_cost(
     write = min(_as_token_count(cache_write_tokens) or 0, input_tokens - cached)
     input_rate = float(input_cost_per_million)
     output_rate = float(output_cost_per_million)
+    if cached_input_cost_per_million is None and cache_write_cost_per_million is None:
+        # No cache rates: cached tokens bill at the input rate and reported
+        # writes are free, so price the rest of the prompt as one quantity.
+        # Splitting it into two terms at the same rate can drift across the
+        # six-decimal rounding boundary.
+        return round(
+            (input_tokens - write) * input_rate / 1_000_000
+            + output_tokens * output_rate / 1_000_000,
+            6,
+        )
+    # Same terms in the same order as before an unset write rate meant 0, so a
+    # configured rate prices exactly as it did.
+    cached_rate = (
+        input_rate
+        if cached_input_cost_per_million is None
+        else float(cached_input_cost_per_million)
+    )
     write_rate = (
         0.0
         if cache_write_cost_per_million is None
         else float(cache_write_cost_per_million)
     )
-    if cached_input_cost_per_million is None:
-        # Cached tokens bill at the input rate, so price them with the rest of
-        # the prompt as one quantity: splitting two terms at the same rate can
-        # drift across the six-decimal rounding boundary.
-        input_cost = (input_tokens - write) * input_rate / 1_000_000
-    else:
-        input_cost = (
-            (input_tokens - cached - write) * input_rate / 1_000_000
-            + cached * float(cached_input_cost_per_million) / 1_000_000
-        )
     return round(
-        input_cost
+        (input_tokens - cached - write) * input_rate / 1_000_000
+        + cached * cached_rate / 1_000_000
         + write * write_rate / 1_000_000
         + output_tokens * output_rate / 1_000_000,
         6,
