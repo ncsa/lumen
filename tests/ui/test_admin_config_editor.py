@@ -167,3 +167,29 @@ def test_editor_key_ttl_read_only_when_editor_disabled(app, editor):
         assert page.is_disabled("#btn-save")
     finally:
         app.config["CONFIG_EDITOR"] = original
+
+
+@pytest.mark.parametrize("updates, toast, alert", [
+    ({"context_window": 32768}, "Updated: context size. models.dev unreachable", "alert-success"),
+    ({}, "models.dev unreachable", "alert-secondary"),
+])
+def test_editor_update_reports_unreachable_modelsdev(editor, monkeypatch, updates, toast, alert):
+    """Update says "models.dev unreachable" when the fetch failed, both alongside
+    the changes the endpoint supplied and when there are none."""
+    from lumen.services import model_sync
+    page, cfg, posted = editor
+    cfg.write_text(MODELS_CONFIG)
+    monkeypatch.setattr(model_sync, "sync_model", lambda model_def: {
+        "updates": updates, "removals": [], "matched": None, "endpoint_ok": True,
+        "modelsdev_price": None, "modelsdev_ok": False,
+    })
+
+    page.goto(f"{ORIGIN}/admin/config")
+    page.click("#nav-models")
+    page.wait_for_selector("#mdl-ctx")
+    page.click("#btn-sync-model")
+    page.wait_for_selector(f"#cfg-toast .{alert}")
+
+    assert page.text_content("#cfg-toast .alert").strip() == toast
+    assert page.input_value("#mdl-ctx") == ("32768" if updates else "")
+    assert posted[-1]["name"] == "cached-model"

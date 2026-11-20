@@ -879,11 +879,11 @@ def test_sync_model_toast_offers_modelsdev_price(admin_client):
 
 
 def test_sync_model_toast_says_modelsdev_unreachable(admin_client):
-    """A failed models.dev fetch shows "models.dev unreachable", not a bare "No changes"."""
+    """The Update toast reads modelsdev_ok; tests/ui/test_admin_config_editor.py
+    checks the visible toast in both response shapes."""
     html = admin_client.get("/admin/config").get_data(as_text=True)
     assert "const { updates, removals, matched, endpoint_ok, modelsdev_price, modelsdev_ok } = result;" in html
-    assert "const head = modelsdev_ok === false ? 'models.dev unreachable' : 'No changes';" in html
-    assert "showToast(head + info + priceHint, 'secondary');" in html
+    assert "const outage = modelsdev_ok === false ? 'models.dev unreachable' : '';" in html
 
 
 @pytest.mark.parametrize("models, ok", [([], False), ([{"id": "a/m"}], True)])

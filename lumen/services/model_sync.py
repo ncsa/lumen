@@ -1,9 +1,9 @@
 """
 Fetch model metadata from vLLM/SGLang endpoints and models.dev.
 Mirrors the logic in the top-level sync_models.py script, but designed
-for use from the web process.  models.dev is cached in-process for TTL
+for use from the web process.  models.dev is cached in-process for _TTL
 seconds so repeated calls during a config-editor session only hit the
-remote API once.
+remote API once; a failed fetch is cached for _FAILED_TTL seconds only.
 """
 
 import ipaddress
@@ -448,7 +448,8 @@ def sync_model(model_def: dict) -> dict:
       endpoint_ok – whether at least one endpoint responded
       modelsdev_price – {input, output} averaged models.dev price (either may
                     be None), or None when there is no match or no price
-      modelsdev_ok – whether the models.dev data could be fetched
+      modelsdev_ok – False when models.dev is unavailable: the fetch failed or
+                    returned no models (an empty catalogue counts as a failure)
     """
     dev_models, price_index = get_modelsdev()
 

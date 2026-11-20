@@ -802,11 +802,12 @@ async function syncModel() {
       const fmt = v => (v === null || v === undefined) ? '-' : '$' + v;
       priceHint = `. models.dev price available (${fmt(modelsdev_price.input)} / ${fmt(modelsdev_price.output)} per M), tick Automatic price to apply`;
     }
+    // An unreachable models.dev is retried on a later Update within a minute;
+    // say so whether or not the endpoint supplied changes.
+    const outage = modelsdev_ok === false ? 'models.dev unreachable' : '';
     if (!Object.keys(updates).length && !removals.length) {
       const info = matched ? ` (models.dev: ${matched})` : (endpoint_ok ? '' : ', endpoint unreachable');
-      // An unreachable models.dev is retried on a later Update within a minute.
-      const head = modelsdev_ok === false ? 'models.dev unreachable' : 'No changes';
-      showToast(head + info + priceHint, 'secondary');
+      showToast((outage || 'No changes') + info + priceHint, 'secondary');
       return;
     }
     const m = state.data.models[idx];
@@ -833,7 +834,7 @@ async function syncModel() {
       ...removals.map(f => `${label(f)} removed`),
     ];
     const suffix = matched ? ` [${matched}]` : '';
-    showToast('Updated: ' + changed.join(', ') + suffix + priceHint, 'success');
+    showToast('Updated: ' + changed.join(', ') + suffix + (outage ? '. ' + outage : '') + priceHint, 'success');
   } catch (e) {
     showToast('Update failed: ' + e.message, 'danger');
   } finally {
