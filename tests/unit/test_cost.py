@@ -101,6 +101,14 @@ def test_no_cache_rates_bills_reads_at_input_and_writes_at_zero():
     assert calculate_cost(1_000_000, 100_000, 2.0, 4.0, 250_000, None, None, None) == 2.4
 
 
+def test_unset_read_rate_matches_the_plain_input_price_at_the_rounding_boundary():
+    # Cached tokens at the input rate must price exactly like the plain input
+    # formula, even where splitting them would drift across the rounding
+    # boundary (5 * 0.1 / 1e6 rounds to 0.0; 4 * 0.1 + 1 * 0.1 rounds up).
+    assert calculate_cost(5, 0, 0.1, 0, 1) == calculate_cost(5, 0, 0.1, 0) == 0.0
+    assert calculate_cost(5, 0, 0.1, 0, 1, None, 0) == 0.0
+
+
 @pytest.mark.parametrize("usage, expected", [
     # Nothing to go on: the prompt is 0 and neither cache count was reported.
     (None, (0, None, 0, None)),
