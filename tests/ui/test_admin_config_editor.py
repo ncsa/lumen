@@ -134,6 +134,11 @@ def test_editor_saves_cached_input_price(editor):
     label = page.text_content("label[for='mdl-cached-in-cost']")
     assert "Cached Input Cost / 1M tokens ($)" in label
     assert "defaults to input price when unset" in label
+    # An unset write rate is billed at 0, and its hint says only that.
+    write_label = page.text_content("label[for='mdl-cached-write-cost']")
+    assert "Cache Write Cost / 1M tokens ($)" in write_label
+    assert "defaults to 0 when unset" in write_label
+    assert "input price" not in write_label
 
     # Blank it out: the collector drops the key so the app falls back to input price.
     page.fill("#mdl-cached-in-cost", "")

@@ -65,21 +65,23 @@ def _add_model(app, **fields):
         db.session.commit()
 
 
-def test_config_repeats_the_input_price_for_unset_cache_rates(connect_page, test_model):
+def test_config_fills_unset_cache_rates_as_lumen_bills_them(connect_page, test_model):
     """OpenCode bills an omitted cache price as free, so both sides are stated:
-    a model without cache rates repeats its input price, and a comment says the
-    rates were filled in — Lumen charges exactly that."""
+    a model without cache rates repeats its input price for reads, with a
+    comment saying it was filled in, and writes 0 for writes — Lumen charges
+    exactly that."""
     models, text = _generated(connect_page)
     entry = models[test_model["model_name"]]
     assert entry["cost"] == {
         "input": 1.0,
         "output": 2.0,
-        "cache": {"read": 1.0, "write": 1.0},
+        "cache": {"read": 1.0, "write": 0},
     }
     block = _cache_block(text, test_model["model_name"])
-    assert "// No cache rates are configured, so both repeat the input price:" in block
-    assert "OpenCode charges" in block
-    assert "nothing for a cache price the config does not state." in block
+    assert "// No cache-read rate is configured, so it repeats the input price:" in block
+    assert "OpenCode" in block
+    assert "charges nothing for a cache price the config does not state." in block
+    assert "cache-write" not in block
 
 
 def test_config_states_configured_rates_and_adds_no_comment(app, connect_page):
@@ -100,7 +102,7 @@ def test_config_states_configured_rates_and_adds_no_comment(app, connect_page):
     assert "//" not in _cache_block(text, "cached-model")
 
 
-def test_config_fills_only_the_side_the_model_leaves_unset(app, connect_page):
+def test_config_writes_zero_for_an_unset_write_rate(app, connect_page):
     _add_model(
         app,
         model_name="read-only-cache",
@@ -109,9 +111,22 @@ def test_config_fills_only_the_side_the_model_leaves_unset(app, connect_page):
         cached_input_cost_per_million=0.2,
     )
     models, text = _generated(connect_page)
-    assert models["read-only-cache"]["cost"]["cache"] == {"read": 0.2, "write": 2.0}
-    assert "// No cache-write rate is configured, so it repeats the input price:" in _cache_block(
-        text, "read-only-cache"
+    assert models["read-only-cache"]["cost"]["cache"] == {"read": 0.2, "write": 0}
+    assert "//" not in _cache_block(text, "read-only-cache")
+
+
+def test_config_fills_only_an_unset_read_rate(app, connect_page):
+    _add_model(
+        app,
+        model_name="write-only-cache",
+        input_cost_per_million=2.0,
+        output_cost_per_million=4.0,
+        cache_write_cost_per_million=2.5,
+    )
+    models, text = _generated(connect_page)
+    assert models["write-only-cache"]["cost"]["cache"] == {"read": 2.0, "write": 2.5}
+    assert "// No cache-read rate is configured, so it repeats the input price:" in _cache_block(
+        text, "write-only-cache"
     )
 
 

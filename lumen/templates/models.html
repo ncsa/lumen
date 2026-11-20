@@ -47,9 +47,9 @@
         </td>
         <td class="text-end">{{ "%.2f"|format(config.input_cost_per_million | float) }}</td>
         <td class="text-end">{{ "%.2f"|format(config.output_cost_per_million | float) }}</td>
-        {#- A cache rate that is not configured is billed at the input price, so the column shows what is actually charged. -#}
+        {#- An unset read rate is billed at the input price and an unset write rate at 0, so the column shows what is actually charged. -#}
         {% set cache_read = config.cached_input_cost_per_million if config.cached_input_cost_per_million is not none else config.input_cost_per_million %}
-        {% set cache_write = config.cache_write_cost_per_million if config.cache_write_cost_per_million is not none else config.input_cost_per_million %}
+        {% set cache_write = config.cache_write_cost_per_million if config.cache_write_cost_per_million is not none else 0 %}
         <td class="text-end text-nowrap">{{ "%.2f"|format(cache_read | float) }} / {{ "%.2f"|format(cache_write | float) }}</td>
         <td>
           {% set checked_at = endpoints | map(attribute="last_checked_at") | select("ne", None) | list %}

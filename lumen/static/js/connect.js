@@ -103,14 +103,12 @@
     return JSON.stringify(value);
   }
 
-  // Why a cache rate repeats the input price: Lumen bills it that way, and
-  // OpenCode would otherwise bill the tokens as free.
-  function cacheNote(sides) {
-    const what = sides.length === 2 ? "cache rates are" : "cache-" + sides[0] + " rate is";
-    const both = sides.length === 2 ? "both repeat" : "it repeats";
-    return "No " + what + " configured, so " + both + " the input price:\n" +
-      "Lumen bills an unset cache price at the input price; OpenCode charges\n" +
-      "nothing for a cache price the config does not state.";
+  // Why the cache-read rate repeats the input price: Lumen bills it that way,
+  // and OpenCode would otherwise bill the tokens as free.
+  function cacheNote() {
+    return "No cache-read rate is configured, so it repeats the input price:\n" +
+      "Lumen bills an unset cache-read price at the input price; OpenCode\n" +
+      "charges nothing for a cache price the config does not state.";
   }
 
   // ── OpenCode (always every accessible model) ─────────────────────────────
@@ -128,9 +126,10 @@
         // Costs are USD per million tokens — OpenCode's models.dev cost unit.
         // OpenCode prices cached input and cache writes separately
         // (cost.cache.read / cost.cache.write) and charges nothing for a side
-        // the file does not state, while Lumen bills an unset rate at the input
-        // price. Both sides are written, so the two agree: the configured rate,
-        // or the input price with a comment saying it was filled in.
+        // the file does not state. Lumen bills an unset read rate at the input
+        // price and an unset write rate at 0, so both sides are written to
+        // agree: an unset read is filled with the input price (with a comment
+        // saying so) and an unset write is written as 0.
         entry.cost = {
           input: m.input_cost_per_million,
           output: m.output_cost_per_million,
@@ -139,17 +138,14 @@
         const readRate = m.cached_input_cost_per_million != null
           ? m.cached_input_cost_per_million : inputRate;
         const writeRate = m.cache_write_cost_per_million != null
-          ? m.cache_write_cost_per_million : inputRate;
-        const filled = [];
-        if (m.cached_input_cost_per_million == null && readRate != null) filled.push("read");
-        if (m.cache_write_cost_per_million == null && writeRate != null) filled.push("write");
-        if (readRate != null || writeRate != null) {
-          const cache = {};
-          if (filled.length) cache["//"] = { comment: cacheNote(filled) };
-          if (readRate != null) cache.read = readRate;
-          if (writeRate != null) cache.write = writeRate;
-          entry.cost.cache = cache;
+          ? m.cache_write_cost_per_million : 0;
+        const cache = {};
+        if (m.cached_input_cost_per_million == null && readRate != null) {
+          cache["//"] = { comment: cacheNote() };
         }
+        if (readRate != null) cache.read = readRate;
+        cache.write = writeRate;
+        entry.cost.cache = cache;
         // Capability fields (issue #79). OpenCode derives image support from
         // modalities.input — attachment alone does not gate image requests —
         // and reads tool_call (underscored) for function calling. Unknown

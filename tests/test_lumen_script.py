@@ -1067,7 +1067,8 @@ def test_sync_writes_cache_cost_rates(home, lumen_server, monkeypatch):
 
     OpenCode charges nothing for a cache read when ``cost.cache.read`` is
     absent, while Lumen bills an unset cached-input rate at the ordinary input
-    rate, so every entry must carry one (issue #66).
+    rate, so every entry must carry one (issue #66). An unset cache-write rate
+    is billed at 0, so it is written as 0 (issue #678).
     """
     port = lumen_server.server_address[1]
     keys = home / ".config" / "lumen" / "keys.json"
@@ -1088,8 +1089,8 @@ def test_sync_writes_cache_cost_rates(home, lumen_server, monkeypatch):
     assert models["cache-demo"]["cost"] == {
         "input": 3.0, "output": 9.0, "cache": {"read": 0.3, "write": 0.75},
     }
-    # No configured cached-input rate: cached reads cost the input rate.
-    assert models["gpt-demo"]["cost"]["cache"] == {"read": 1.0, "write": 1.0}
+    # No configured cache rates: cached reads cost the input rate, writes 0.
+    assert models["gpt-demo"]["cost"]["cache"] == {"read": 1.0, "write": 0}
 
 
 def test_sync_reports_added_and_removed(home, lumen_server):
