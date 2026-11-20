@@ -112,7 +112,7 @@ The steps below walk through a concrete example using [ChatWise](https://chatwis
 - **Windows:** `%USERPROFILE%\.config\opencode\opencode.jsonc`
 - Or `opencode.jsonc` in a project's root directory for per-project settings.
 
-OpenCode reads `opencode.json` and `opencode.jsonc` alike. The generated file is JSONC because it comments the cache prices it fills in.
+OpenCode reads `opencode.json` and `opencode.jsonc` alike. The generated file is JSONC because it comments the cache-read price it fills in.
 
 ```jsonc
 {
@@ -133,10 +133,11 @@ OpenCode reads `opencode.json` and `opencode.jsonc` alike. The generated file is
             "input": 5.0,
             "output": 15.0,
             "cache": {
-              // Filled in at the input price: no cache rate is configured, and
-              // OpenCode charges nothing for a cache price it is not given.
+              // No cache-read rate is configured, so it repeats the input price:
+              // Lumen bills an unset cache-read price at the input price; OpenCode
+              // charges nothing for a cache price the config does not state.
               "read": 5.0,
-              "write": 5.0
+              "write": 0
             }
           },
           "modalities": { "input": ["text", "image"], "output": ["text"] },
@@ -148,7 +149,7 @@ OpenCode reads `opencode.json` and `opencode.jsonc` alike. The generated file is
 }
 ```
 
-Each model entry includes `limit` (the context window and max output, in tokens) and `cost` (USD per million input/output tokens), so OpenCode can size the context and track spending. `cost.cache` states both cache rates: `read` is the model's `cached_input_cost_per_million` and `write` its `cache_write_cost_per_million`. An unset rate is written as the input price, because Lumen bills it that way and OpenCode would otherwise count it as free. Capability fields describe what the model accepts: `modalities` mirrors the model's input/output types, `attachment` marks models that accept images — models that can attach files and images fail with "this model does not support image input" otherwise. `tool_call` is always set (`true`/`false`) because OpenCode assumes tool calling unless told `false`; `reasoning` appears only for reasoning models. Other fields the instance doesn't publish are omitted. The **Download config.jsonc** button fills these in from the model's configured limits and pricing.
+Each model entry includes `limit` (the context window and max output, in tokens) and `cost` (USD per million input/output tokens), so OpenCode can size the context and track spending. `cost.cache` states both cache rates: `read` is the model's `cached_input_cost_per_million` and `write` its `cache_write_cost_per_million`. An unset read rate is written as the input price, because Lumen bills it that way and OpenCode would otherwise count it as free; an unset write rate is written as 0, because Lumen does not bill cache writes without a rate. Capability fields describe what the model accepts: `modalities` mirrors the model's input/output types, `attachment` marks models that accept images — models that can attach files and images fail with "this model does not support image input" otherwise. `tool_call` is always set (`true`/`false`) because OpenCode assumes tool calling unless told `false`; `reasoning` appears only for reasoning models. Other fields the instance doesn't publish are omitted. The **Download config.jsonc** button fills these in from the model's configured limits and pricing.
 
 To have OpenCode only use Lumen's models — and ignore every other installed provider — add an `enabled_providers` array at the top level of your config:
 

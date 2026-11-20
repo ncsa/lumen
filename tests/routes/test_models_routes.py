@@ -147,11 +147,12 @@ def test_models_cache_column_shows_the_charged_rates(app, auth_client):
         assert cells[3].get_text(strip=True) == "2.00"
         return cells[4]
 
-    # An unconfigured rate is billed at the input price, so the column shows the
-    # input rate on the missing side rather than a dash or a hover tip.
-    assert cache_cell("cached-model").get_text(strip=True) == "0.10 / 1.00"
+    # An unconfigured read rate is billed at the input price and an unconfigured
+    # write rate at 0, so the column shows what is charged on the missing side
+    # rather than a dash or a hover tip.
+    assert cache_cell("cached-model").get_text(strip=True) == "0.10 / 0.00"
     assert cache_cell("cache-write-model").get_text(strip=True) == "1.00 / 0.50"
-    assert cache_cell("plain-model").get_text(strip=True) == "1.00 / 1.00"
+    assert cache_cell("plain-model").get_text(strip=True) == "1.00 / 0.00"
     for model_name in ("cached-model", "cache-write-model", "plain-model"):
         row = _row_for(resp.data, model_name)
         assert row.find("span", attrs={"data-bs-toggle": "tooltip"}) is None
@@ -180,7 +181,12 @@ def test_model_detail_cached_input_row_only_when_set(app, auth_client):
     assert write.parent.find("td").get_text(strip=True) == "0.75 / 1M"
     plain = BeautifulSoup(auth_client.get("/models/plain-detail").data, "html.parser")
     assert plain.find("th", string="Cached input") is None
-    assert plain.find("th", string="Cache write") is None
+    # An unset write rate is billed at 0, so the Cache write row always shows.
+    plain_write = plain.find("th", string="Cache write")
+    assert plain_write is not None
+    assert plain_write.parent.find("td").get_text(strip=True) == "0.00 / 1M"
+    # The SGLang note is only for a configured write rate.
+    assert "Cache writes are billed only from a count" not in plain.get_text()
 
 
 def test_model_detail_ok(auth_client, test_model):
