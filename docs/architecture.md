@@ -171,7 +171,7 @@ The app factory (`create_app`) wires all layers together: it initialises extensi
 |---|---|---|
 | `auth` | `/` | Landing page, OAuth2 login/callback/logout, group auto-assignment |
 | `chat` | `/chat` | Web chat UI (SSE streaming) + conversation management |
-| `api` | `/v1` | OpenAI-compatible completions, models, and embeddings endpoints |
+| `api` | `/v1` | OpenAI-compatible chat, completions, audio, embeddings, models and usage endpoints |
 | `anthropic` | `/v1/messages` | Anthropic Messages API, translated to and from the `api` chat path |
 | `admin` | `/admin` | User/project management, analytics dashboard |
 | `projects` | `/projects` | Service account & API key management |
@@ -190,7 +190,7 @@ GET  /v1/models/<id>           → model detail JSON
 POST /v1/chat/completions      → stream/non-stream chat (proxied to backend)
 POST /v1/audio/transcriptions  → speech-to-text (billed per hour of audio)
 POST /v1/audio/translations    → speech-to-text translated to English
-POST /v1/embeddings            → embeddings passthrough
+POST /v1/embeddings            → embedding vectors (billed per input token)
 ```
 
 Every request through `@api_key_required`:

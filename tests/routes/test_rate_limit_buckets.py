@@ -1,6 +1,6 @@
 """Which /v1 routes share a per-key rate-limit bucket (#601).
 
-Chat, completions, Anthropic messages and audio all send a request upstream, so
+Chat, completions, Anthropic messages, audio and embeddings all send a request upstream, so
 one API key gets ``rate_limiting.limit`` once across them. count_tokens and
 acknowledge never call a model and keep a bucket of their own.
 """
@@ -24,13 +24,13 @@ ANTHROPIC = {"anthropic-version": "2023-06-01", "content-type": "application/jso
 
 
 class _Response:
-    """One upstream reply that serves the chat, completions and audio stubs."""
+    """One upstream reply that serves the chat, completions, audio and embeddings stubs."""
 
     class usage:  # noqa: N801 - stands in for the OpenAI usage object
         prompt_tokens = 1
         completion_tokens = 1
 
-    def model_dump(self):
+    def model_dump(self, **kwargs):
         return {"id": "x", "text": "hello", "choices": [{
             "index": 0, "text": "hello",
             "message": {"role": "assistant", "content": "hello"},
@@ -47,7 +47,8 @@ def caller(app, client, test_user, test_model, test_model_endpoint, api_key, mon
     upstream.__enter__ = MagicMock(return_value=upstream)
     upstream.__exit__ = MagicMock(return_value=False)
     for create in (upstream.chat.completions.create, upstream.completions.create,
-                   upstream.audio.transcriptions.create, upstream.audio.translations.create):
+                   upstream.audio.transcriptions.create, upstream.audio.translations.create,
+                   upstream.embeddings.create):
         create.return_value = _Response()
     monkeypatch.setattr(routes.openai, "OpenAI", MagicMock(return_value=upstream))
     monkeypatch.setitem(app.config, "YAML_DATA",
@@ -64,6 +65,9 @@ def _call(client, token, route):
     if route == "completions":
         return client.post("/v1/completions", headers={"Authorization": f"Bearer {token}"},
                            json={"model": model, "prompt": "hi"})
+    if route == "embeddings":
+        return client.post("/v1/embeddings", headers={"Authorization": f"Bearer {token}"},
+                           json={"model": model, "input": "hi"})
     if route in ("transcriptions", "translations"):
         return client.post(f"/v1/audio/{route}", headers={"Authorization": f"Bearer {token}"},
                            data={"model": model, "file": (BytesIO(b"audio"), "a.flac")},
@@ -78,6 +82,8 @@ def _call(client, token, route):
     ("messages", "messages", "completions"),
     ("transcriptions", "chat", "messages"),
     ("chat", "translations", "transcriptions"),
+    ("embeddings", "chat", "embeddings"),
+    ("messages", "embeddings", "completions"),
 ])
 def test_generating_routes_share_one_budget(client, caller, first, second, third):
     assert _call(client, caller, first).status_code == HTTPStatus.OK
