@@ -1010,6 +1010,52 @@ def test_get_modelsdev_empty_fetch_returns_empty_list(modelsdev_clock):
     assert model_sync.get_modelsdev() == ([], {})
 
 
+def test_get_modelsdev_failed_fetch_reused_within_failed_ttl(modelsdev_clock):
+    """A failed fetch is not retried on every call: it is reused for _FAILED_TTL."""
+    modelsdev_clock.payload = []
+    model_sync.get_modelsdev()
+    modelsdev_clock.payload = [{"id": "m-1"}]
+    modelsdev_clock.now += model_sync._FAILED_TTL  # exactly at the TTL is still fresh
+    assert model_sync.get_modelsdev() == ([], {})
+    assert modelsdev_clock.fetches == 1
+
+
+def test_get_modelsdev_failed_fetch_retried_after_failed_ttl(modelsdev_clock):
+    """A failed fetch is retried after _FAILED_TTL, well before the full _TTL."""
+    assert model_sync._FAILED_TTL == 60 < model_sync._TTL
+    modelsdev_clock.payload = []
+    model_sync.get_modelsdev()
+    modelsdev_clock.payload = [{"id": "m-1"}]
+    modelsdev_clock.now += model_sync._FAILED_TTL + 1
+    models, index = model_sync.get_modelsdev()
+    assert modelsdev_clock.fetches == 2
+    assert models == [{"id": "m-1"}]
+    assert index == {"m1": [{"id": "m-1"}]}
+    # The successful result now gets the full TTL.
+    modelsdev_clock.payload = [{"id": "other"}]
+    modelsdev_clock.now += model_sync._TTL
+    assert model_sync.get_modelsdev()[0] == [{"id": "m-1"}]
+    assert modelsdev_clock.fetches == 2
+
+
+def test_get_modelsdev_success_not_refetched_after_failed_ttl(modelsdev_clock):
+    """The shorter TTL applies only to a failed fetch."""
+    model_sync.get_modelsdev()
+    modelsdev_clock.now += model_sync._FAILED_TTL + 1
+    model_sync.get_modelsdev()
+    assert modelsdev_clock.fetches == 1
+
+
+@pytest.mark.parametrize("payload, ok", [([], False), ([{"id": "m-1"}], True)])
+def test_sync_model_reports_modelsdev_ok(modelsdev_clock, monkeypatch, payload, ok):
+    """sync_model says whether models.dev could be fetched."""
+    modelsdev_clock.payload = payload
+    monkeypatch.setattr(model_sync, "fetch_endpoint_model", lambda ep: None)
+    result = model_sync.sync_model({"name": "m-1", "endpoints": [{"url": "http://x"}]})
+    assert result["modelsdev_ok"] is ok
+    assert modelsdev_clock.fetches == 1
+
+
 # ---------------------------------------------------------------------------
 # _fetch_modelsdev
 # ---------------------------------------------------------------------------

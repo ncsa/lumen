@@ -873,9 +873,31 @@ def test_add_model_starts_with_auto_price_ticked(admin_client):
 def test_sync_model_toast_offers_modelsdev_price(admin_client):
     """With Automatic price off, Update points out an available models.dev price."""
     html = admin_client.get("/admin/config").get_data(as_text=True)
-    assert "const { updates, removals, matched, endpoint_ok, modelsdev_price } = result;" in html
+    assert "const { updates, removals, matched, endpoint_ok, modelsdev_price, modelsdev_ok } = result;" in html
     assert "if (modelsdev_price && !model.auto_price)" in html
     assert "per M), tick Automatic price to apply" in html
+
+
+def test_sync_model_toast_says_modelsdev_unreachable(admin_client):
+    """The Update toast reads modelsdev_ok; tests/ui/test_admin_config_editor.py
+    checks the visible toast in both response shapes."""
+    html = admin_client.get("/admin/config").get_data(as_text=True)
+    assert "const { updates, removals, matched, endpoint_ok, modelsdev_price, modelsdev_ok } = result;" in html
+    assert "const outage = modelsdev_ok === false ? 'models.dev unreachable' : '';" in html
+
+
+@pytest.mark.parametrize("models, ok", [([], False), ([{"id": "a/m"}], True)])
+def test_sync_model_api_returns_modelsdev_ok(admin_client, monkeypatch, models, ok):
+    """/admin/api/sync_model says whether models.dev could be fetched."""
+    from lumen.services import model_sync
+    monkeypatch.setattr(model_sync, "fetch_endpoint_model", lambda ep: None)
+    monkeypatch.setattr(model_sync, "get_modelsdev",
+                        lambda: (models, model_sync._build_price_index(models)))
+    resp = admin_client.post("/admin/api/sync_model", json={
+        "name": "m", "endpoints": [{"url": "http://x", "api_key": ""}],
+    })
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.get_json()["modelsdev_ok"] is ok
 
 
 @pytest.mark.parametrize("auto_price, price_updated", [(True, True), (False, False)])

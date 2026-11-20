@@ -7,6 +7,7 @@ All notable changes to Lumen will be documented in this file.
 ### Fixed
 
 - Fix the `anthropic-version` route test, which had no model set up and failed with a 404 after 2.4.0 started accepting any version. (#676)
+- Fix models.dev prices not being applied to new models in the config editor, and retry an unreachable models.dev sooner. (#680)
 
 ## [2.4.0] - 2026-11-19
 
