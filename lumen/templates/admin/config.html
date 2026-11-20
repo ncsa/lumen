@@ -715,7 +715,7 @@ function switchModel(idx) {
 function addModel() {
   collectCurrentModel();
   if (!state.data.models) state.data.models = [];
-  state.data.models.push({ name: 'new-model', input_cost_per_million: 0, output_cost_per_million: 0, endpoints: [{ url: '', api_key: '' }] });
+  state.data.models.push({ name: 'new-model', input_cost_per_million: 0, output_cost_per_million: 0, auto_price: true, endpoints: [{ url: '', api_key: '' }] });
   state.selectedModelIdx = state.data.models.length - 1;
   renderModels();
 }
@@ -794,10 +794,17 @@ async function syncModel() {
     });
     const result = await resp.json();
     if (!resp.ok) { showToast('Update failed: ' + (result.error || resp.statusText), 'danger'); return; }
-    const { updates, removals, matched, endpoint_ok } = result;
+    const { updates, removals, matched, endpoint_ok, modelsdev_price } = result;
+    // With Automatic price off, Update keeps the hand-set price; point out a
+    // models.dev price the operator could take by ticking the box.
+    let priceHint = '';
+    if (modelsdev_price && !model.auto_price) {
+      const fmt = v => (v === null || v === undefined) ? '-' : '$' + v;
+      priceHint = `. models.dev price available (${fmt(modelsdev_price.input)} / ${fmt(modelsdev_price.output)} per M), tick Automatic price to apply`;
+    }
     if (!Object.keys(updates).length && !removals.length) {
       const info = matched ? ` (models.dev: ${matched})` : (endpoint_ok ? '' : ', endpoint unreachable');
-      showToast('No changes' + info, 'secondary');
+      showToast('No changes' + info + priceHint, 'secondary');
       return;
     }
     const m = state.data.models[idx];
@@ -824,7 +831,7 @@ async function syncModel() {
       ...removals.map(f => `${label(f)} removed`),
     ];
     const suffix = matched ? ` [${matched}]` : '';
-    showToast('Updated: ' + changed.join(', ') + suffix, 'success');
+    showToast('Updated: ' + changed.join(', ') + suffix + priceHint, 'success');
   } catch (e) {
     showToast('Update failed: ' + e.message, 'danger');
   } finally {

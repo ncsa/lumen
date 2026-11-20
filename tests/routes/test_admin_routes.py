@@ -862,6 +862,45 @@ def test_config_page_renders_auto_price_checkbox(admin_client):
     assert "function syncAutoPriceFields()" in html
 
 
+def test_add_model_starts_with_auto_price_ticked(admin_client):
+    """A model added with + New starts with Automatic price ticked (#680); a
+    model without the key still renders it unticked."""
+    html = admin_client.get("/admin/config").get_data(as_text=True)
+    assert re.search(r"state\.data\.models\.push\(\{ name: 'new-model',[^}]*auto_price: true,", html)
+    assert "!!m.auto_price" in html
+
+
+def test_sync_model_toast_offers_modelsdev_price(admin_client):
+    """With Automatic price off, Update points out an available models.dev price."""
+    html = admin_client.get("/admin/config").get_data(as_text=True)
+    assert "const { updates, removals, matched, endpoint_ok, modelsdev_price } = result;" in html
+    assert "if (modelsdev_price && !model.auto_price)" in html
+    assert "per M), tick Automatic price to apply" in html
+
+
+@pytest.mark.parametrize("auto_price, price_updated", [(True, True), (False, False)])
+def test_sync_model_api_returns_modelsdev_price(admin_client, monkeypatch, auto_price, price_updated):
+    """/admin/api/sync_model returns the averaged models.dev price whether or
+    not it was applied."""
+    from lumen.services import model_sync
+    models = [
+        {"id": "a/qwen3-embedding-8b", "cost": {"input": 0.1, "output": 0.1}},
+        {"id": "b/qwen3-embedding-8b", "cost": {"input": 0.2, "output": 0}},
+    ]
+    monkeypatch.setattr(model_sync, "fetch_endpoint_model", lambda ep: None)
+    monkeypatch.setattr(model_sync, "get_modelsdev",
+                        lambda: (models, model_sync._build_price_index(models)))
+    resp = admin_client.post("/admin/api/sync_model", json={
+        "name": "qwen3-embedding-8b", "auto_price": auto_price,
+        "input_cost_per_million": 0, "output_cost_per_million": 0,
+        "endpoints": [{"url": "http://x", "api_key": ""}],
+    })
+    assert resp.status_code == HTTPStatus.OK
+    data = resp.get_json()
+    assert data["modelsdev_price"] == {"input": 0.15, "output": 0.1}
+    assert ("input_cost_per_million" in data["updates"]) is price_updated
+
+
 def test_config_page_renders_cached_input_price_box(admin_client):
     """The model form has a Cached Input Cost box; unset rates default to the input price."""
     html = admin_client.get("/admin/config").get_data(as_text=True)

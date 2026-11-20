@@ -439,6 +439,8 @@ def sync_model(model_def: dict) -> dict:
       removals  – list of obsolete field names present in model_def
       matched   – models.dev model id that was matched, or None
       endpoint_ok – whether at least one endpoint responded
+      modelsdev_price – {input, output} averaged models.dev price (either may
+                    be None), or None when there is no match or no price
     """
     dev_models, price_index = get_modelsdev()
 
@@ -454,13 +456,18 @@ def sync_model(model_def: dict) -> dict:
         dev_match = find_in_modelsdev(ep_id, dev_models, config_name=model_def.get("name"))
 
     updates: dict = {}
+    modelsdev_price = None
     dev_limit = (dev_match.get("limit") or {}) if dev_match else {}
 
     # context_window is the total input+output budget. The endpoint's
     # max_model_len is authoritative — an operator can configure it below the
     # model's theoretical max — so prefer it and fall back to models.dev.
     ep_ctx = ep_model.get("max_model_len") if ep_model else None
-    context_window = ep_ctx if ep_ctx is not None else dev_limit.get("context")
+    # A models.dev limit of 0 or less (e.g. an embedding listing with
+    # limit.output: 0) means "not reported", not a real cap.
+    dev_ctx = dev_limit.get("context")
+    dev_ctx = dev_ctx if isinstance(dev_ctx, (int, float)) and dev_ctx > 0 else None
+    context_window = ep_ctx if ep_ctx is not None else dev_ctx
     if context_window is not None and model_def.get("context_window") != context_window:
         updates["context_window"] = context_window
 
@@ -468,6 +475,8 @@ def sync_model(model_def: dict) -> dict:
     # endpoint shares one budget and has no such cap, so only models.dev can
     # supply it; leave the field untouched when there is no match.
     out_tokens = dev_limit.get("output")
+    if not (isinstance(out_tokens, (int, float)) and out_tokens > 0):
+        out_tokens = None
     if out_tokens is not None and model_def.get("max_output_tokens") != out_tokens:
         updates["max_output_tokens"] = out_tokens
 
@@ -499,9 +508,12 @@ def sync_model(model_def: dict) -> dict:
 
         # Pricing: average across providers offering the same base model on
         # models.dev, excluding $0 listings. Only for models that opt in with
-        # auto_price: true — otherwise the operator's hand-set price is kept.
+        # auto_price: true — otherwise the operator's hand-set price is kept,
+        # but the averages are still returned so the editor can offer them.
+        avg_in, avg_out, _, _ = _average_price(dev_match, price_index)
+        if avg_in is not None or avg_out is not None:
+            modelsdev_price = {"input": avg_in, "output": avg_out}
         if model_def.get("auto_price") is True:
-            avg_in, avg_out, _, _ = _average_price(dev_match, price_index)
             if avg_in is not None and model_def.get("input_cost_per_million") != avg_in:
                 updates["input_cost_per_million"] = avg_in
             if avg_out is not None and model_def.get("output_cost_per_million") != avg_out:
@@ -554,4 +566,5 @@ def sync_model(model_def: dict) -> dict:
         "removals": removals,
         "matched": dev_match.get("id") if dev_match else None,
         "endpoint_ok": ep_model is not None,
+        "modelsdev_price": modelsdev_price,
     }
