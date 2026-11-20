@@ -227,9 +227,6 @@ def chat_stream():
         return _snapshot_unavailable()
     if not model_config:
         return jsonify({"error": f"Unknown model: {model}"}), HTTPStatus.BAD_REQUEST
-    if is_embedding_model(model_config):
-        return jsonify({"error": f"{model} is an embedding model and cannot be used for chat; "
-                                 "call it through /v1/embeddings"}), HTTPStatus.BAD_REQUEST
 
     ok, code, msg, effective, _, retry_after = check_coin_budget(
         entity_id, model_config.id, source="chat", model_name=model, model_config=model_config,
@@ -246,6 +243,11 @@ def chat_stream():
             if retry_after is not None:
                 return jsonify({"error": msg}), code, {"Retry-After": str(retry_after)}
         return jsonify({"error": msg}), code
+    # After the access check, so the model's type is only disclosed to an
+    # entity that may use it; anyone else gets the generic 403 above.
+    if is_embedding_model(model_config):
+        return jsonify({"error": f"{model} is an embedding model and cannot be used for chat; "
+                                 "call it through /v1/embeddings"}), HTTPStatus.BAD_REQUEST
 
     # Picked here, not in the generator, so the stream needs no DB phase of its
     # own and a missing endpoint is a 503 before streaming, as on /v1.

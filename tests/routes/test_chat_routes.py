@@ -828,6 +828,54 @@ def test_chat_stream_rejects_embedding_model(app, auth_client, test_user, test_m
     assert "/v1/embeddings" in error
 
 
+@pytest.mark.parametrize("own", [True, False])
+def test_chat_stream_embedding_type_only_disclosed_to_a_user_with_access(
+    app, auth_client, test_user, test_model, test_model_endpoint, own,
+):
+    """The access check runs first: the owner of a private embedding model gets
+    the embedding 400, anyone else the same generic 403 as for any private model."""
+    from lumen.extensions import db
+    from lumen.models.entity import Entity
+    from tests.conftest import set_model_owner
+    _grant_unlimited_pool(app, test_user["id"])
+    _mark_embedding(app, test_model["id"])
+    with app.app_context():
+        if own:
+            owner_id = test_user["id"]
+        else:
+            owner = Entity(entity_type="user", email="owner@example.com", name="Owner", active=True)
+            db.session.add(owner)
+            db.session.commit()
+            owner_id = owner.id
+        set_model_owner(test_model["id"], owner_id)
+
+    resp = auth_client.post("/chat/stream", json={
+        "messages": [{"role": "user", "content": "hi"}],
+        "model": test_model["model_name"],
+    })
+    error = resp.get_json()["error"]
+    if own:
+        assert resp.status_code == HTTPStatus.BAD_REQUEST
+        assert "embedding model" in error
+    else:
+        assert resp.status_code == HTTPStatus.FORBIDDEN
+        assert error == "No access to this model"
+        assert "embedding" not in error
+
+
+def test_chat_page_tolerates_a_scalar_output_modalities(app, auth_client, test_user, test_model, test_model_endpoint):
+    """A truthy scalar stored by an older config is not the marker and breaks nothing."""
+    _grant_unlimited_pool(app, test_user["id"])
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        db.session.get(ModelConfig, test_model["id"]).output_modalities = 1
+        db.session.commit()
+    resp = auth_client.get("/chat")
+    assert resp.status_code == HTTPStatus.OK
+    assert b'value="test-model"' in resp.data
+
+
 def test_chat_page_excludes_needs_ack_model_without_coin_pool(
     app, auth_client, test_model, test_model_endpoint,
 ):

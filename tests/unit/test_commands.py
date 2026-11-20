@@ -161,10 +161,11 @@ def test_apply_model_access_defaults(app):
 @pytest.mark.parametrize("inp, output, stored, embedding", [
     (["text"], ["embedding"], ["embedding"], True),  # the marker, set by hand or by sync
     (None, ["embedding"], ["embedding"], True),
-    (["text"], [], ["embedding"], True),             # exactly what the old sync wrote for is_embedding
-    (None, [], None, False),                         # any other empty list stays unknown
-    (["text", "image"], [], None, False),
-    (["audio"], [], None, False),
+    # Ambiguous: the old sync wrote this for an embedding model, but models.dev
+    # sync can write it for a chat model too, so it stays unknown until a
+    # backend re-sync or the operator marks it.
+    (["text"], [], None, False),
+    (None, [], None, False),
     (["text"], ["text"], ["text"], False),
     (["text"], None, None, False),                   # unknown
 ])
@@ -181,6 +182,20 @@ def test_apply_model_fields_embedding_marker(app, inp, output, stored, embedding
         _apply_model_fields(mc, model_def)
         assert mc.output_modalities == stored
         assert is_embedding_model(mc) is embedding
+
+
+@pytest.mark.parametrize("value, embedding", [
+    (["embedding"], True), (("text", "embedding"), True),
+    (["text"], False), ([], False), (None, False),
+    (1, False), (True, False), ("embedding", False), ({"embedding": 1}, False),
+])
+def test_is_embedding_model_shapes(value, embedding):
+    """Only the list (DB) and tuple (snapshot) shapes carry the marker; a scalar,
+    string or dict stored by an older config never raises."""
+    from types import SimpleNamespace
+
+    from lumen.models.model_config import is_embedding_model
+    assert is_embedding_model(SimpleNamespace(output_modalities=value)) is embedding
 
 
 def test_apply_model_access_legacy_active_false_maps_to_disabled(app, caplog):

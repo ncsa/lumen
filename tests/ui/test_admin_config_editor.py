@@ -178,12 +178,10 @@ models:
 """
 
 
-@pytest.mark.parametrize("output", ["[embedding]", "[]"])
-def test_editor_keeps_the_embedding_marker(editor, output):
-    """The embedding output checkbox is ticked for a marked model (and for the
-    legacy empty list sync used to write) and saves as ["embedding"]."""
+def test_editor_keeps_the_embedding_marker(editor):
+    """A marked model shows the embedding box ticked and saves as ["embedding"]."""
     page, cfg, posted = editor
-    cfg.write_text(EMBEDDING_CONFIG.format(input="[text]", output=output))
+    cfg.write_text(EMBEDDING_CONFIG.format(input="[text]", output="[embedding]"))
 
     page.goto(f"{ORIGIN}/admin/config")
     page.click("#nav-models")
@@ -198,11 +196,12 @@ def test_editor_keeps_the_embedding_marker(editor, output):
     assert yaml.safe_load(cfg.read_text())["models"][0]["output_modalities"] == ["embedding"]
 
 
-def test_editor_leaves_other_empty_outputs_unticked(editor):
-    """Only the exact legacy pair (text in, [] out) reads as the marker; an empty
-    output on any other model stays unknown, as Lumen loads it."""
+@pytest.mark.parametrize("inp", ["[text]", "[text, image]"])
+def test_editor_leaves_an_empty_output_unknown(editor, inp):
+    """An empty output list is ambiguous (models.dev sync writes it for chat
+    models too), so the editor does not tick embedding for it, text-only included."""
     page, cfg, posted = editor
-    cfg.write_text(EMBEDDING_CONFIG.format(input="[text, image]", output="[]"))
+    cfg.write_text(EMBEDDING_CONFIG.format(input=inp, output="[]"))
 
     page.goto(f"{ORIGIN}/admin/config")
     page.click("#nav-models")

@@ -23,7 +23,10 @@ def is_embedding_model(config) -> bool:
     ``output_modalities`` attribute. Embedding models are callable only through
     ``/v1/embeddings``; chat and the OpenCode config leave them out.
     """
-    return EMBEDDING_MODALITY in (getattr(config, "output_modalities", None) or ())
+    value = getattr(config, "output_modalities", None)
+    # Only the list (DB) and tuple (snapshot) shapes can hold the marker; a
+    # scalar or a string stored by an older config is simply not one.
+    return isinstance(value, (list, tuple)) and EMBEDDING_MODALITY in value
 
 
 class ModelConfig(db.Model):

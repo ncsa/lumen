@@ -258,11 +258,11 @@ def test_theme_loader_outside_a_request_uses_the_configured_theme(app):
     assert result["uptodate"] is True
 
 
-def test_legacy_embedding_model_is_marked_before_the_first_request(tmp_path, monkeypatch):
-    """A model an older Update left as text in / [] out was stored with a NULL
-    output (the old loader turned [] into None). create_app's YAML sync stores it
-    as the embedding marker before the app serves anything, so the model cache
-    and the chat routes see an embedding model from the first request."""
+def test_text_model_with_empty_output_stays_a_chat_model_at_startup(tmp_path, monkeypatch):
+    """input ["text"] with output [] is ambiguous: older Update wrote it for an
+    embedding backend, and models.dev sync can write it for a chat model. The
+    startup YAML sync keeps it unknown, so a chat model is never hidden; only a
+    backend re-sync or an explicit marker makes a model an embedding model."""
     from sqlalchemy import select
 
     from lumen.extensions import db
@@ -273,28 +273,21 @@ def test_legacy_embedding_model_is_marked_before_the_first_request(tmp_path, mon
     first = _build(tmp_path, monkeypatch, data)
     with first.app_context():
         db.create_all()
-        # The row as the pre-marker loader left it.
-        db.session.add(ModelConfig(model_name="legacy-embed", input_cost_per_million=0.1,
-                                   output_cost_per_million=0, input_modalities=["text"],
-                                   output_modalities=None))
-        db.session.commit()
 
-    data["models"] = [{
-        "name": "legacy-embed", "input_cost_per_million": 0.1, "output_cost_per_million": 0,
-        "input_modalities": ["text"], "output_modalities": [],
-        "endpoints": [{"url": "http://localhost:9999/v1", "api_key": "k"}],
-    }, {
-        "name": "unknown-output", "input_cost_per_million": 1.0, "output_cost_per_million": 2.0,
-        "input_modalities": ["text", "image"], "output_modalities": [],
-        "endpoints": [{"url": "http://localhost:9999/v1", "api_key": "k"}],
-    }]
+    endpoint = [{"url": "http://localhost:9999/v1", "api_key": "k"}]
+    data["models"] = [
+        {"name": "text-chat", "input_cost_per_million": 1.0, "output_cost_per_million": 2.0,
+         "input_modalities": ["text"], "output_modalities": [], "endpoints": endpoint},
+        {"name": "marked-embed", "input_cost_per_million": 0.1, "output_cost_per_million": 0,
+         "input_modalities": ["text"], "output_modalities": ["embedding"], "endpoints": endpoint},
+    ]
     app = _build(tmp_path, monkeypatch, data)
 
     with app.app_context():
         rows = {mc.model_name: mc for mc in db.session.execute(select(ModelConfig)).scalars()}
-        assert rows["legacy-embed"].output_modalities == ["embedding"]
-        assert rows["unknown-output"].output_modalities is None
+        assert rows["text-chat"].output_modalities is None
+        assert rows["marked-embed"].output_modalities == ["embedding"]
         model_cache.clear()
-        assert is_embedding_model(model_cache.resolve("legacy-embed"))
-        assert not is_embedding_model(model_cache.resolve("unknown-output"))
+        assert not is_embedding_model(model_cache.resolve("text-chat"))
+        assert is_embedding_model(model_cache.resolve("marked-embed"))
     model_cache.clear()

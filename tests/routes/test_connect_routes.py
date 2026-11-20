@@ -104,6 +104,19 @@ def test_connect_flags_embedding_models(app, auth_client, test_model):
     assert rows[test_model["model_name"]]["embedding"] is False
 
 
+def test_connect_tolerates_a_scalar_output_modalities(app, auth_client, test_model):
+    """A truthy scalar stored by an older config is not the marker and breaks nothing."""
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        db.session.get(ModelConfig, test_model["id"]).output_modalities = 1
+        db.session.commit()
+    resp = auth_client.get("/connect")
+    assert resp.status_code == HTTPStatus.OK
+    rows = {r["id"]: r for r in _connect_data(resp.data)["models"]}
+    assert rows[test_model["model_name"]]["embedding"] is False
+
+
 def test_connect_preselects_valid_model(auth_client, test_model):
     resp = auth_client.get("/connect", query_string={"model": test_model["model_name"]})
     assert _connect_data(resp.data)["selected"] == test_model["model_name"]

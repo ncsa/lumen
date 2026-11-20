@@ -28,7 +28,7 @@ from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_stat import EntityStat
 from lumen.models.model_alias import ModelAlias
-from lumen.models.model_config import EMBEDDING_MODALITY, ModelConfig
+from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
 from lumen.models.request_log import RequestLog
@@ -183,23 +183,6 @@ def _normalize_knowledge_cutoff(value, model_name=None):
     return None
 
 
-def _normalize_output_modalities(model_def):
-    """Return the output_modalities to store for a model definition.
-
-    Before the ["embedding"] marker existed, Update wrote exactly
-    input_modalities ["text"] with output_modalities [] for a backend that
-    reported is_embedding, and this loader stored that [] as NULL. That pair is
-    the only trace of the sync origin, so it, and only it, is stored as the
-    marker; create_app runs this sync before serving, so such a model is hidden
-    from chat from the first request, without a re-sync. Any other empty or
-    missing output list means unknown, as before.
-    """
-    value = model_def.get("output_modalities")
-    if value == [] and model_def.get("input_modalities") == ["text"]:
-        return [EMBEDDING_MODALITY]
-    return value or None
-
-
 def _apply_model_fields(config, model_def):
     config.input_cost_per_million = model_def["input_cost_per_million"]
     config.cached_input_cost_per_million = model_def.get("cached_input_cost_per_million")
@@ -220,7 +203,7 @@ def _apply_model_fields(config, model_def):
     config.url = _normalize_model_url(model_def.get("url"))
     config.supports_function_calling = model_def.get("supports_function_calling")
     config.input_modalities = model_def.get("input_modalities") or None
-    config.output_modalities = _normalize_output_modalities(model_def)
+    config.output_modalities = model_def.get("output_modalities") or None
     config.context_window = model_def.get("context_window") or None
     config.max_output_tokens = model_def.get("max_output_tokens") or None
     config.supports_reasoning = model_def.get("supports_reasoning")
