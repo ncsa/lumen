@@ -1139,7 +1139,9 @@ def test_sync_skips_models_without_text_input(home, lumen_server, monkeypatch):
 
 def test_sync_skips_embedding_models(home, lumen_server, monkeypatch):
     """Embedding models (output_modalities ["embedding"]) cannot chat, so they
-    are not written to the OpenCode config; chat models are."""
+    are not written to the OpenCode config; chat models are, including one whose
+    output_modalities is a stored scalar, which is not the marker and must not
+    break the refresh."""
     port = lumen_server.server_address[1]
     keys = home / ".config" / "lumen" / "keys.json"
     keys.parent.mkdir(parents=True)
@@ -1148,12 +1150,15 @@ def test_sync_skips_embedding_models(home, lumen_server, monkeypatch):
         {"id": "embed-demo", "max_model_len": 8192,
          "input_cost_per_million": 0.1, "output_cost_per_million": 0.0,
          "input_modalities": ["text"], "output_modalities": ["embedding"]},
+        {"id": "scalar-chat", "max_model_len": 4000,
+         "input_cost_per_million": 1.0, "output_cost_per_million": 2.0,
+         "input_modalities": ["text"], "output_modalities": 1},
     ])
     r = run_script(home, port)
     assert r.returncode == 0, r.stderr
     cfg_path = home / ".config" / "opencode" / "opencode.json"
     models = json.loads(cfg_path.read_text())["provider"]["lumen"]["models"]
-    assert set(models) == {"gpt-demo", "gpt-alias"}
+    assert set(models) == {"gpt-demo", "gpt-alias", "scalar-chat"}
 
 
 # --- hostile server values ----------------------------------------------------
