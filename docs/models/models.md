@@ -40,6 +40,21 @@ The numbers on the cards always count every model, whichever card is active. If 
 
 The page address remembers the active card (for example `/models?show=healthy`), so reloading the page or sharing the link opens the same view. The values are `healthy`, `early_access` and `needs_ack`; without one, or with any other value, every model is shown.
 
+## Sorting
+
+The buttons above the list sort it. Click a button (or tab to it and press Enter or Space) to sort by that column; click it again to reverse the order. A dark ▲ or ▼ in the site theme's main color marks the active sort: ▲ for low to high (or A to Z), ▼ for high to low.
+
+| Button | Sorts by | First click |
+|--------|----------|-------------|
+| **Model** | Model name | A to Z |
+| **Context** | Context window | Largest first |
+| **Max output** | Most tokens per response | Largest first |
+| **Price** | Input price, then output price | Cheapest first |
+
+**Price** sorts by the input price; models with the same input price are ordered by their output price. A model with no value for the sorted column (shown as a dash) always comes last, in both directions, and models with equal values are listed by name.
+
+Sorting keeps the active card filter and an open row, which moves with its model. The page address remembers the order (for example `/models?sort=price&dir=asc`) next to the active card, so reloading or sharing the link shows the same order. The `sort` values are `name`, `context`, `max_output` and `price`, and `dir` is `asc` or `desc`; without them, or with any other value, the list is sorted by name A to Z.
+
 ## Model Rows
 
 Each model is one row with three columns. Without opening it, a row shows:

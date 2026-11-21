@@ -20,6 +20,43 @@ models_page_bp = Blueprint("models_page", __name__)
 # ``?show=`` values the stat cards filter the list by; anything else shows every model.
 SHOW_VIEWS = ("healthy", "early_access", "needs_ack")
 
+# ``?sort=`` keys for the model list -> (values compared in order, first-click direction).
+# Numbers sort high to low first, except price, which sorts cheapest first.
+SORTS = {
+    "name": ((), "asc"),
+    "context": ((lambda c: c.context_window,), "desc"),
+    "max_output": ((lambda c: c.max_output_tokens,), "desc"),
+    "price": ((lambda c: c.input_cost_per_million, lambda c: c.output_cost_per_million), "asc"),
+}
+SORT_DIRS = ("asc", "desc")
+
+
+def _sort_params(args):
+    """``(sort, dir)`` from the query string; no or an unknown key or dir gives name A to Z."""
+    sort, direction = args.get("sort"), args.get("dir")
+    if sort not in SORTS or (direction is not None and direction not in SORT_DIRS):
+        return "name", "asc"
+    return sort, direction or SORTS[sort][1]
+
+
+def _sort_configs(configs, sort, direction):
+    """Sort models by ``sort`` in ``direction``.
+
+    A missing value sorts last in both directions, and ties fall back to the
+    model name A to Z. The inline script in models.html sorts the same way.
+    """
+    desc = direction == "desc"
+
+    def key(config):
+        parts = []
+        for value_of in SORTS[sort][0]:
+            value = value_of(config)
+            parts += [value is None, 0 if value is None else (-value if desc else value)]
+        return parts
+
+    by_name = sorted(configs, key=lambda c: (c.model_name.lower(), c.model_name), reverse=desc and sort == "name")
+    return by_name if sort == "name" else sorted(by_name, key=key)
+
 
 def _visible_model_or_404(model_name):
     """Return an active model visible to the current entity, or hide its existence.
@@ -82,6 +119,8 @@ def index():
         "acknowledged": sum(1 for a in ack_map.values() if a["consented"]),
     }
     show = request.args.get("show")
+    sort, direction = _sort_params(request.args)
+    configs = _sort_configs(configs, sort, direction)
     return render_template(
         "models.html",
         configs=configs,
@@ -90,6 +129,8 @@ def index():
         statuses=statuses,
         stats=stats,
         show=show if show in SHOW_VIEWS else None,
+        sort=sort,
+        sort_dir=direction,
         token_count=_token_count,
         modalities=_modalities,
     )

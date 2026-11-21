@@ -252,3 +252,87 @@ def test_row_filtered_out_while_opening_ends_closed(open_models, back):
     page.wait_for_function("!document.querySelector('#model-list .collapsing')")
     assert page.eval_on_selector_all("#model-list .collapse.show", "els => els.map(e => e.closest('li').dataset.model)") == ["bare-model"]
     assert errors == []
+
+
+# ── Sortable columns ─────────────────────────────────────────────────────────
+
+@pytest.fixture
+def priced_models(app):
+    """Early-access ``dear`` and ``cheap`` around a regular ``mid`` model; ``cheap`` has no context window."""
+    _add_model(app, "a-dear", True, early_access=True, input_cost_per_million=9, output_cost_per_million=9, context_window=1_000_000)
+    _add_model(app, "b-mid", True, input_cost_per_million=2, output_cost_per_million=5, context_window=8_000)
+    _add_model(app, "c-cheap", True, early_access=True, input_cost_per_million=1, output_cost_per_million=1)
+
+
+def _order(page):
+    return page.eval_on_selector_all("#model-list .model-row", "rows => rows.map(r => r.dataset.model)")
+
+
+def _sort(key):
+    return f'.model-sort-btn[data-sort="{key}"]'
+
+
+def _query(page):
+    return dict(p.split("=") for p in urlsplit(page.url).query.split("&") if p)
+
+
+def test_price_click_puts_cheapest_first_and_second_click_reverses(priced_models, serve_models):
+    page, errors = serve_models()
+    assert _order(page) == ["a-dear", "b-mid", "c-cheap"]
+    page.click(_sort("price"))
+    assert _order(page) == ["c-cheap", "b-mid", "a-dear"]
+    assert "sort-asc" in page.get_attribute(_sort("price"), "class")
+    assert page.get_attribute(_sort("price"), "aria-label") == "Sort by price, sorted cheapest first"
+    assert page.get_attribute(_sort("name"), "aria-label") == "Sort by model, A to Z"
+    page.click(_sort("price"))
+    assert _order(page) == ["a-dear", "b-mid", "c-cheap"]
+    assert page.get_attribute(_sort("price"), "aria-label") == "Sort by price, sorted most expensive first"
+    # Context sorts high to low first; the model without one stays last.
+    page.click(_sort("context"))
+    assert _order(page) == ["a-dear", "b-mid", "c-cheap"]
+    page.click(_sort("context"))
+    assert _order(page) == ["b-mid", "a-dear", "c-cheap"]
+    assert errors == []
+
+
+def test_sorting_keeps_the_card_filter_and_the_url(priced_models, serve_models):
+    page, errors = serve_models()
+    page.click(_card("early-access"))
+    page.click(_sort("price"))
+    assert _visible(page) == ["c-cheap", "a-dear"]
+    assert _pressed(page) == ["early-access"]
+    assert _query(page) == {"show": "early_access", "sort": "price", "dir": "asc"}
+    # The server renders the same order, filter and arrow on reload.
+    page.reload()
+    page.wait_for_selector("#model-list .model-row-toggle", state="attached")
+    assert _visible(page) == ["c-cheap", "a-dear"]
+    assert _pressed(page) == ["early-access"]
+    assert "sort-asc" in page.get_attribute(_sort("price"), "class")
+    # Changing the card keeps the sort.
+    page.click(_card("models"))
+    assert _order(page) == ["c-cheap", "b-mid", "a-dear"]
+    assert _query(page) == {"sort": "price", "dir": "asc"}
+    assert errors == []
+
+
+def test_open_row_stays_open_after_sorting(priced_models, serve_models):
+    page, errors = serve_models()
+    page.click('li[data-model="a-dear"] .model-row-toggle')
+    page.wait_for_function("!document.querySelector('#model-list .collapsing')")
+    page.click(_sort("price"))
+    assert _order(page)[-1] == "a-dear"
+    assert page.eval_on_selector_all("#model-list .collapse.show", "els => els.map(e => e.closest('li').dataset.model)") == ["a-dear"]
+    assert page.get_attribute('li[data-model="a-dear"] .model-row-toggle', "aria-expanded") == "true"
+    # Opening another row still closes it: the single-open behaviour survives the move.
+    page.click('li[data-model="c-cheap"] .model-row-toggle')
+    page.wait_for_function("!document.querySelector('#model-list .collapsing')")
+    assert page.eval_on_selector_all("#model-list .collapse.show", "els => els.map(e => e.closest('li').dataset.model)") == ["c-cheap"]
+    assert errors == []
+
+
+def test_sort_header_wraps_on_a_phone(priced_models, serve_models):
+    page, errors = serve_models()
+    page.set_viewport_size({"width": 375, "height": 800})
+    assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+    assert all(page.is_visible(_sort(k)) for k in ("name", "context", "max_output", "price"))
+    assert errors == []
