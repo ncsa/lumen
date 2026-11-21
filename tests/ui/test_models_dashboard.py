@@ -7,11 +7,13 @@ import pytest
 from bs4 import BeautifulSoup
 from sqlalchemy import event
 
+from lumen.blueprints.models_page import routes as models_page_routes
 from lumen.blueprints.models_page.routes import _token_count
 from lumen.extensions import db
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
+from lumen.services import llm
 
 
 def _soup(auth_client):
@@ -515,8 +517,47 @@ def test_access_dates_use_one_consent_query(app, auth_client, test_user):
         _soup(auth_client)
     finally:
         event.remove(engine, "before_cursor_execute", record)
-    # bulk_model_access_info reads the consent rows once, the panel dates once more.
-    assert sum("entity_model_consents" in s for s in statements) == 2
+    # One read feeds the panel dates, the Needs Ack card and its filter alike.
+    assert sum("entity_model_consents" in s for s in statements) == 1
+
+
+def test_access_panel_and_needs_ack_agree_when_consent_lands_mid_render(app, auth_client, test_user, test_model, monkeypatch):
+    # A first acceptance that lands right after the page reads the consent rows
+    # must not show up in some parts of the page and not others: the panel, the
+    # Needs Ack card and the row's filter attribute all come from the same read.
+    # Every name the rows can be read through is wrapped, so a second read
+    # anywhere in the render would see the new row and disagree.
+    _set_model(app, test_model["id"], needs_ack=True)
+    real = llm.consent_rows
+    reads = []
+
+    def read_then_accept(entity_id, model_config_ids):
+        rows = real(entity_id, model_config_ids)
+        if not reads:
+            db.session.add(EntityModelConsent(entity_id=test_user["id"], model_config_id=test_model["id"],
+                                              consented_at=datetime(2026, 2, 3, 4, 5, 6)))
+            db.session.commit()
+        reads.append(model_config_ids)
+        return rows
+
+    monkeypatch.setattr(llm, "consent_rows", read_then_accept)
+    monkeypatch.setattr(models_page_routes, "consent_rows", read_then_accept)
+    soup = _soup(auth_client)
+    row = _row(soup, "test-model")
+    # The render saw the model before the acceptance, everywhere on the page.
+    assert _access_rows(row)["Acknowledgment"] == ("pending", "Acknowledgment required")
+    assert _card(soup, "needs-ack")[0] == 1
+    assert row.has_attr("data-needs-ack")
+    assert _flags(row)[0] == ("bi-lock", "Needs acknowledgment")
+    assert len(reads) == 1
+    # The next page load sees the acceptance, again everywhere.
+    monkeypatch.undo()
+    soup = _soup(auth_client)
+    row = _row(soup, "test-model")
+    assert _access_rows(row)["Acknowledgment"][0] == "accepted"
+    assert _card(soup, "needs-ack")[0] == 0
+    assert not row.has_attr("data-needs-ack")
+    assert _flags(row)[0] == ("bi-unlock", "Access granted")
 
 
 def test_page_includes_ack_dialog(auth_client, test_model):
