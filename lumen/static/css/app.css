@@ -727,6 +727,11 @@ ilw-content .btn-primary:active {
 .model-stat-icon { font-size: 1.25rem; color: #13294b; }
 .model-stat-label { font-weight: 600; }
 .model-stat-count { font-size: 2rem; font-weight: 700; line-height: 1.2; margin-top: .25rem; }
+/* Each card is a filter button; the active one gets a navy accent border (plus aria-pressed). */
+button.model-stat { width: 100%; padding: 0; color: inherit; border-width: 2px; }
+button.model-stat:hover { border-color: #707070; }
+button.model-stat[aria-pressed="true"] { border-color: #13294b; box-shadow: inset 0 -4px 0 #e84a27; }
+button.model-stat:focus-visible { outline: 3px solid #13294b; outline-offset: 2px; }
 
 /* Rows: the chevron turns down while its panel is open. */
 .model-row-toggle { color: inherit; text-decoration: none; }
