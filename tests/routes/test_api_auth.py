@@ -563,7 +563,7 @@ class _CompletionResponse:
 
     choices = [_Choice()]
 
-    def model_dump(self):
+    def model_dump(self, **_):
         return {"choices": [{"message": {"role": "assistant", "content": "hi"}}],
                 "text": "hi", "usage": {"type": "duration", "seconds": 1}}
 
@@ -1698,7 +1698,7 @@ def test_chat_completions_streaming_error_emits_done(
 
     class _Chunk:
         usage = None
-        def model_dump(self):
+        def model_dump(self, **_):
             return {"choices": [{"delta": {"content": "hi"}}]}
 
     def _stream():
@@ -1746,7 +1746,7 @@ def test_chat_completions_streaming_records_duration(
         def __init__(self, usage):
             self.usage = usage
 
-        def model_dump(self):
+        def model_dump(self, **_):
             return {"choices": [{"delta": {"content": "hi"}}]}
 
     def _stream():
@@ -1800,7 +1800,7 @@ class _UsageChunk:
         prompt_tokens = 1
         completion_tokens = 1
 
-    def model_dump(self):
+    def model_dump(self, **_):
         return {"choices": [{"delta": {"content": "hi"}}]}
 
 
@@ -2024,7 +2024,7 @@ class _ContentChunk:
         self.text = text
         self.choices = [type("Choice", (), {"delta": type("Delta", (), {"content": text})()})()]
 
-    def model_dump(self):
+    def model_dump(self, **_):
         return {"choices": [{"delta": {"content": self.text}}]}
 
 
@@ -2244,7 +2244,7 @@ class _NonStreamResponse:
         prompt_tokens = 1
         completion_tokens = 1
 
-    def model_dump(self):
+    def model_dump(self, **_):
         return {"choices": [{"message": {"role": "assistant", "content": "hi"}}]}
 
 
@@ -2677,7 +2677,7 @@ def test_audio_client_is_bounded(
     _allow_model(app, test_user, test_model)
     calls = _capturing_openai(
         monkeypatch, routes,
-        lambda **kw: type("R", (), {"model_dump": lambda self: {"text": "hi"}})(),
+        lambda **kw: type("R", (), {"model_dump": lambda self, **_: {"text": "hi"}})(),
     )
 
     resp = client.post(
@@ -2779,7 +2779,7 @@ def test_completed_api_stream_is_not_counted_as_an_abort(
 class _StopChunk(_ContentChunk):
     """The final content delta of a backend that never sends a usage chunk."""
 
-    def model_dump(self):
+    def model_dump(self, **_):
         return {"choices": [{"delta": {"content": self.text}, "finish_reason": "stop"}]}
 
 

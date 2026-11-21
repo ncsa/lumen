@@ -99,7 +99,7 @@ class _Chunk:
         self.choices = [_Choice(text)]
         self._text = text
 
-    def model_dump(self):
+    def model_dump(self, **_):
         return {"choices": [{"delta": {"content": self._text}}]}
 
 
@@ -555,7 +555,7 @@ class _UsageChunk:
         self.choices = []
         self.usage = types.SimpleNamespace(prompt_tokens=7, completion_tokens=11)
 
-    def model_dump(self):
+    def model_dump(self, **_):
         return {"choices": [], "usage": {"prompt_tokens": 7, "completion_tokens": 11}}
 
 

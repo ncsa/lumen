@@ -724,7 +724,8 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
         response, err = _complete_and_bill(model_name, messages, **kwargs)
         if err:
             return err
-        return jsonify(response.model_dump())
+        # Backends return values that don't match the SDK types; pass them through as is.
+        return jsonify(response.model_dump(warnings=False))
 
     model_config, endpoint, effective, err = _preflight(model_name)
     if err:
@@ -854,7 +855,7 @@ def _do_chat(model_name: str, messages: list, stream: bool, **kwargs):
                             t_first_visible = _time.monotonic() - t0
                     # Report the requested name (which may be an alias), not the backend's.
                     chunk.model = model_name
-                    yield f"data: {json.dumps(chunk.model_dump())}\n\n"
+                    yield f"data: {json.dumps(chunk.model_dump(warnings=False))}\n\n"
                 if not aborted:
                     duration = _time.monotonic() - t0
                     if usage is None:
@@ -1025,7 +1026,7 @@ def _do_audio(kind: str):
 
         # response is a pydantic model for json/verbose_json, or a plain string for
         # text/srt/vtt response formats (which carry no usage object).
-        payload = response.model_dump() if hasattr(response, "model_dump") else {"text": str(response)}
+        payload = response.model_dump(warnings=False) if hasattr(response, "model_dump") else {"text": str(response)}
         usage = payload.get("usage") if isinstance(payload, dict) else None
 
         # cached_tok stays None unless the upstream reports a token usage object

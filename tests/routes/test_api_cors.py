@@ -206,7 +206,7 @@ def test_streaming_chat_has_cors(
             self.choices = []
             self.model = None
 
-        def model_dump(self):
+        def model_dump(self, **_):
             return {"model": self.model, "choices": [{"delta": {"content": "hi"}}]}
 
     with app.app_context():

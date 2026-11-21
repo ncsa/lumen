@@ -274,7 +274,7 @@ def test_streaming_alias_request_uses_canonical_remote_model_and_echoes_alias(
             self.choices = []
             self.model = None  # set by the stream to the requested name
 
-        def model_dump(self):
+        def model_dump(self, **_):
             return {"model": self.model, "choices": [{"delta": {"content": "hi"}}]}
 
     def _stream():

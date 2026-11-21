@@ -255,7 +255,7 @@ def test_audio_bills_hot_locks_last(
     _own_limit(app, test_user["id"])
 
     class _Transcription:
-        def model_dump(self):
+        def model_dump(self, **_):
             return {"text": "hello", "usage": {"type": "duration", "seconds": 3}}
 
     with _writes(app) as log:
