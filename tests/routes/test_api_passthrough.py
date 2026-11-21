@@ -2,17 +2,20 @@
 Pydantic serializer warning (ncsa/lumen#693).
 
 Backends such as vLLM can return a chat ``metadata`` whose values are lists, where the
-SDK declares strings. Lumen relays the response unchanged, so serializing it must not
-log ``PydanticSerializationUnexpectedValue``. The fixtures use ``model_construct`` so
-the off-type values reach the route as a backend would deliver them, unvalidated.
+SDK declares strings, and a base64 embedding is a string where the SDK declares floats.
+Lumen relays the response unchanged, so serializing it must not log
+``PydanticSerializationUnexpectedValue``. The fixtures use ``model_construct`` so the
+off-type values reach the route as a backend would deliver them, unvalidated.
 """
 import json
 import warnings
 from unittest.mock import MagicMock, patch
 
 import pytest
+from openai.types import CreateEmbeddingResponse, Embedding
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.completion_usage import CompletionUsage
+from openai.types.create_embedding_response import Usage as EmbeddingUsage
 
 _METADATA = {"segments": [{"version": "default", "start": 0, "end": 450}]}
 _FINGERPRINT = ["a", "b"]
@@ -39,6 +42,7 @@ def api_key(app, test_user, test_model_endpoint):
 def _mock_openai(return_value):
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = return_value
+    mock_client.embeddings.create.return_value = return_value
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
     return patch("lumen.blueprints.api.routes.openai.OpenAI", MagicMock(return_value=mock_client))
@@ -82,4 +86,26 @@ def test_chat_completion_chunk_off_type_value_passes_through_without_warning(cli
     events = [json.loads(line[len("data: "):]) for line in body.splitlines()
               if line.startswith("data: ") and line != "data: [DONE]"]
     assert [e["system_fingerprint"] for e in events] == [_FINGERPRINT]
+    assert _serializer_warnings(recorded) == []
+
+
+@pytest.mark.parametrize("encoding_format, vector", [
+    ("base64", "AAAAAAAAgD8AAABA"),  # a str where the SDK declares list[float]
+    ("float", [0.0, 1.0, 2.0]),
+], ids=["base64", "float"])
+def test_embedding_vector_passes_through_without_warning(client, api_key, encoding_format, vector):
+    response = CreateEmbeddingResponse.model_construct(
+        object="list", model="backend-model",
+        data=[Embedding.model_construct(object="embedding", index=0, embedding=vector)],
+        usage=EmbeddingUsage.model_construct(prompt_tokens=3, total_tokens=3),
+    )
+    with _mock_openai(response), warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        resp = client.post(
+            "/v1/embeddings",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"model": "test-model", "input": "hi", "encoding_format": encoding_format},
+        )
+    assert resp.status_code == 200
+    assert resp.get_json()["data"][0]["embedding"] == vector
     assert _serializer_warnings(recorded) == []
