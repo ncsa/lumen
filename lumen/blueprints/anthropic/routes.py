@@ -222,7 +222,7 @@ def messages():
     response, err = _complete_and_bill(model_name, msgs, **kwargs)
     if err:
         return err
-    return jsonify(translate_response(response.model_dump(), model_name))
+    return jsonify(translate_response(response.model_dump(warnings=False), model_name))
 
 
 @anthropic_bp.route("/count_tokens", methods=["POST"])
