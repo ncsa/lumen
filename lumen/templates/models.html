@@ -172,13 +172,18 @@
   document.querySelectorAll('.consent-info-btn').forEach(btn => {
     btn.addEventListener('click', () => toggleConsentPopover(btn, 'left'));
   });
-  // A click anywhere on a collapsed row's summary toggles its details through
-  // the row's chevron button, which stays the keyboard control. Links and
-  // buttons keep their own behaviour, and selecting text does not toggle.
-  document.querySelectorAll('.model-row-grid').forEach(grid => {
+  // A click anywhere on a model row's summary toggles its details through the
+  // row's chevron button, which stays the keyboard control. Only the rows in
+  // the list (not the column labels) are bound. Links and buttons keep their
+  // own behaviour, and a click that ends a text selection in this row does
+  // not toggle; a selection elsewhere on the page does not block it.
+  document.querySelectorAll('#model-list .model-row-grid').forEach(grid => {
+    const toggle = grid.querySelector('.model-row-toggle');
     grid.addEventListener('click', e => {
-      if (e.target.closest('a, button') || String(window.getSelection())) return;
-      grid.querySelector('.model-row-toggle').click();
+      if (e.target.closest('a, button')) return;
+      const selection = window.getSelection();
+      if (!selection.isCollapsed && selection.containsNode(grid, true)) return;
+      toggle.click();
     });
   });
 </script>

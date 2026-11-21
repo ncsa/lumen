@@ -1,4 +1,5 @@
 """The Model Dashboard (/models): stat cards, collapsed rows, expanded panels and access."""
+import re
 from datetime import datetime
 from decimal import Decimal
 
@@ -260,12 +261,19 @@ def test_no_icons_for_plain_model(auth_client, test_model):
     assert _flags(_row(_soup(auth_client), "test-model")) == []
 
 
-def test_whole_row_toggles_details(auth_client, test_model):
+def test_row_click_selector_matches_only_rows_with_a_toggle(app, auth_client, test_model):
+    # The row-click script calls .click() on each matched node's chevron, so
+    # every node its selector matches must have one; the aria-hidden column
+    # labels share the grid class but have no toggle. Browser behaviour is in
+    # test_models_row_click.py.
+    _add_model(app, "second-model")
     soup = _soup(auth_client)
     script = "".join(s.get_text() for s in soup.find_all("script") if not s.get("src"))
-    assert "document.querySelectorAll('.model-row-grid')" in script
-    assert "e.target.closest('a, button')" in script  # the name link still opens the detail page
-    assert "grid.querySelector('.model-row-toggle').click()" in script
+    selector = re.search(r"querySelectorAll\('([^']*model-row-grid[^']*)'\)", script).group(1)
+    matched = soup.select(selector)
+    assert len(matched) == 2
+    assert all(node.find("button", class_="model-row-toggle") for node in matched)
+    assert soup.find(class_="model-list-columns") not in matched
 
 
 # ── Expanded panel ────────────────────────────────────────────────────────

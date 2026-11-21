@@ -736,7 +736,7 @@ ilw-content .btn-primary:active {
 /* Row columns: model / capabilities 45%, token limits 30%, price and health 25%.
    On phones the token limits drop under the name, next to the price. */
 .model-row-grid { display: grid; grid-template-columns: 45% 30% 25%; align-items: start; line-height: 1.35; }
-.model-row { padding-top: .375rem; padding-bottom: .375rem; }
+#model-list .model-row { padding-top: .375rem; padding-bottom: .375rem; }
 #model-list .model-row-grid { cursor: pointer; }
 .model-row-grid > * { min-width: 0; }
 @media (max-width: 575.98px) {
