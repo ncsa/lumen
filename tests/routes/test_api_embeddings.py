@@ -1,5 +1,8 @@
 """Tests for the /v1/embeddings endpoint."""
+import dataclasses
 import logging
+import math
+from decimal import Decimal
 from http import HTTPStatus
 
 import openai
@@ -409,6 +412,44 @@ def test_high_output_price_is_never_charged(
         assert log.output_tokens == 0
         assert float(log.cost) == expected
         bal = db.session.execute(select(EntityBalance)).scalar_one()
+        assert float(bal.coins_left) == pytest.approx(100 - expected)
+
+
+@pytest.mark.parametrize("out_price", ["NaN", "Infinity", "-Infinity"])
+def test_non_finite_cached_output_price_bills_input_only(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, out_price,
+):
+    """A legacy non-finite output price in the model cache (YAML ``.nan`` passes
+    config validation, PostgreSQL numeric stores it) must not turn the bill
+    into NaN: the request succeeds and is billed at the input price only."""
+    token, _ = api_key
+    with app.app_context():
+        _grant_finite_pool(app, test_user["id"], coins=100)
+        _set_model_flag(app, test_model, input_cost_per_million=1.0)
+        model_cache.refresh(app)
+    resolve = model_cache.resolve
+
+    def resolve_with_legacy_price(name):
+        mc = resolve(name)
+        return dataclasses.replace(mc, output_cost_per_million=Decimal(out_price)) if mc else mc
+
+    monkeypatch.setattr(model_cache, "resolve", resolve_with_legacy_price)
+    response = _response(prompt_tokens=1000)
+    response.usage.completion_tokens = 7
+    _upstream(monkeypatch, response)
+
+    resp = _post(client, token, {"model": "test-model", "input": "hi"})
+
+    assert resp.status_code == HTTPStatus.OK
+    expected = round(1000 * 1.0 / 1_000_000, 6)
+    with app.app_context():
+        log = _log()
+        assert log.input_tokens == 1000
+        assert log.output_tokens == 0
+        assert math.isfinite(float(log.cost))
+        assert float(log.cost) == expected
+        bal = db.session.execute(select(EntityBalance)).scalar_one()
+        assert math.isfinite(float(bal.coins_left))
         assert float(bal.coins_left) == pytest.approx(100 - expected)
 
 

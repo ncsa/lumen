@@ -1,6 +1,7 @@
 import hmac
 import json
 import logging
+import math
 import time as _time
 from functools import wraps
 from http import HTTPStatus
@@ -1144,6 +1145,10 @@ def embeddings():
     mc_id          = model_config.id
     mc_in_cost     = float(model_config.input_cost_per_million)
     mc_out_cost    = float(model_config.output_cost_per_million)
+    if not math.isfinite(mc_out_cost):
+        # A legacy NaN/Infinity output price would turn 0 output tokens into a
+        # NaN cost; embeddings never bill output, so price it at 0 instead.
+        mc_out_cost = 0.0
     timeout, max_retries = upstream_call_bounds(streaming=False)
     # Read while the request context is current, like the paths above.
     timing = capture_request_timing()
