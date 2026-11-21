@@ -67,7 +67,7 @@
     <div class="model-row-grid model-list-columns" role="group" aria-label="Sort models">
       <span>{{ sort_button("name") }} <span class="model-sort-caption">/ Capabilities</span></span>
       <span class="model-sort-pair">{{ sort_button("context") }}{{ sort_button("max_output") }}</span>
-      <span class="text-sm-end">{{ sort_button("price") }} <span class="model-sort-caption">coins / 1M tokens</span></span>
+      <span class="text-sm-end">{{ sort_button("price") }} <span class="model-sort-caption">Coins / 1M tokens</span></span>
     </div>
   </div>
   <ul class="list-group list-group-flush" id="model-list" aria-labelledby="model-list-heading">
@@ -81,8 +81,9 @@
     {% set needs_ack = ack and not ack.consented %}
     {% set in_view = {"all": true, "healthy": status in ("ok", "degraded"), "early_access": config.early_access, "needs_ack": needs_ack}[active_view] %}
     <li class="list-group-item model-row" data-model="{{ config.model_name }}" data-health="{{ status }}"
-        data-sort-name="{{ config.model_name | lower }}" data-sort-context="{{ config.context_window if config.context_window is not none }}"
-        data-sort-max-output="{{ config.max_output_tokens if config.max_output_tokens is not none }}"
+        {#- data-sort-name is the row's place in the server's name order; a token limit of 0 is missing, like the dash it shows. #}
+        data-sort-name="{{ name_rank[config.model_name] }}" data-sort-context="{{ config.context_window or '' }}"
+        data-sort-max-output="{{ config.max_output_tokens or '' }}"
         data-sort-input="{{ config.input_cost_per_million if config.input_cost_per_million is not none }}"
         data-sort-output="{{ config.output_cost_per_million if config.output_cost_per_million is not none }}"
         {%- if config.early_access %} data-early-access{% endif %}{% if needs_ack %} data-needs-ack{% endif %}{% if not in_view %} hidden{% endif %}>
@@ -286,11 +287,9 @@
     const list = document.getElementById('model-list');
     const buttons = document.querySelectorAll('.model-sort-btn');
     const fields = {name: [], context: ['sortContext'], max_output: ['sortMaxOutput'], price: ['sortInput', 'sortOutput']};
-    const byName = (a, b) => {
-      const x = a.dataset.sortName, y = b.dataset.sortName;
-      if (x !== y) return x < y ? -1 : 1;
-      return a.dataset.model < b.dataset.model ? -1 : a.dataset.model > b.dataset.model ? 1 : 0;
-    };
+    // data-sort-name is the row's rank in the server's name order, so a click and a
+    // reload agree for every name (JS and Python compare strings differently).
+    const byName = (a, b) => a.dataset.sortName - b.dataset.sortName;
     function compare(sort, dir) {
       const sign = dir === 'desc' ? -1 : 1;
       return (a, b) => {

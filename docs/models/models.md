@@ -42,18 +42,18 @@ The page address remembers the active card (for example `/models?show=healthy`),
 
 ## Sorting
 
-The buttons above the list sort it. Click a button (or tab to it and press Enter or Space) to sort by that column; click it again to reverse the order. A dark ▲ or ▼ in the site theme's main color marks the active sort: ▲ for low to high (or A to Z), ▼ for high to low.
+The buttons above the list sort it. Click a button (or tab to it and press Enter or Space) to sort by that column in the direction listed below; click it again to reverse the order. The list starts sorted by **Model**, A to Z, so clicking **Model** first reverses it to Z to A. A dark ▲ or ▼ in the site theme's main color marks the active sort: ▲ for low to high (or A to Z), ▼ for high to low.
 
-| Button | Sorts by | First click |
+| Button | Sorts by | When you switch to it |
 |--------|----------|-------------|
 | **Model** | Model name | A to Z |
 | **Context** | Context window | Largest first |
 | **Max output** | Most tokens per response | Largest first |
 | **Price** | Input price, then output price | Cheapest first |
 
-**Price** sorts by the input price; models with the same input price are ordered by their output price. A model with no value for the sorted column (shown as a dash) always comes last, in both directions, and models with equal values are listed by name.
+**Price** sorts by the input price; models with the same input price are ordered by their output price. A model with no context window or max output for the sorted column (shown as a dash) always comes last, in both directions, and models with equal values are listed by name.
 
-Sorting keeps the active card filter and an open row, which moves with its model. The page address remembers the order (for example `/models?sort=price&dir=asc`) next to the active card, so reloading or sharing the link shows the same order. The `sort` values are `name`, `context`, `max_output` and `price`, and `dir` is `asc` or `desc`; without them, or with any other value, the list is sorted by name A to Z.
+Sorting keeps the active card filter and an open row, which moves with its model. The page address remembers the order (for example `/models?sort=price&dir=asc`) next to the active card, so reloading or sharing the link shows the same order. The `sort` values are `name`, `context`, `max_output` and `price`, and `dir` is `asc` or `desc`; a `sort` without `dir` uses the direction listed above. Without `sort`, or with any other value, the list is sorted by name A to Z.
 
 ## Model Rows
 
@@ -62,7 +62,7 @@ Each model is one row with three columns. Without opening it, a row shows:
 - **Model / Capabilities**
   - **Name** — links to the [model detail page](model-detail.md). A closed lock next to the name means you still have to acknowledge the model's terms before you can use it, and an open lock means you already have; a flask icon marks an early-access model.
   - **Modalities** — what the model accepts and produces, as input → output (e.g. `Text, Image → Text`). A dash means the instance hasn't published that information.
-- **Token limits** — the model's context window (e.g. `128K context`) and, below it, the most tokens it can generate per response (e.g. `8K max output`). A dash means the value is not set.
+- **Context** and **Max output** — the model's context window (e.g. `128K context`) and, below it, the most tokens it can generate per response (e.g. `8K max output`). A dash means the value is not set.
 - **Coins / 1M tokens** — the price per million input / output tokens (e.g. `1.00 / 2.00`), with the model's health (see below) under it.
 
 On a phone the token limits move under the model name, next to the price.

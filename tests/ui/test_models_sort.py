@@ -115,9 +115,44 @@ def test_active_button_shows_arrow_and_label(auth_client, test_model, query, act
 
 def test_rows_carry_sort_values(app, auth_client):
     _add_model(app, "Some-Model", context_window=128_000, input_cost_per_million=1.5, output_cost_per_million=3)
-    row = _soup(auth_client).find("li", class_="model-row")
-    assert row["data-sort-name"] == "some-model"
+    _add_model(app, "another", max_output_tokens=0, input_cost_per_million=0, output_cost_per_million=0)
+    rows = {r["data-model"]: r for r in _soup(auth_client, "?sort=price").find_all("li", class_="model-row")}
+    row = rows["Some-Model"]
+    assert row["data-sort-name"] == "1"  # its place in the name order, after "another"
     assert row["data-sort-context"] == "128000"
     assert row["data-sort-max-output"] == ""
     assert float(row["data-sort-input"]) == 1.5
     assert float(row["data-sort-output"]) == 3
+    # A token limit of 0 is missing, like the dash it shows; a price of 0 is free.
+    zero = rows["another"]
+    assert zero["data-sort-name"] == "0"
+    assert zero["data-sort-max-output"] == ""
+    assert float(zero["data-sort-input"]) == 0
+    assert float(zero["data-sort-output"]) == 0
+
+
+@pytest.mark.parametrize(("key", "field"), [("context", "context_window"), ("max_output", "max_output_tokens")])
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+def test_zero_token_limit_sorts_last_like_missing(app, auth_client, key, field, direction):
+    _add_model(app, "a-zero", **{field: 0})
+    _add_model(app, "b-small", **{field: 8_000})
+    _add_model(app, "c-unset", **{field: None})
+    _add_model(app, "d-big", **{field: 128_000})
+    present = ["b-small", "d-big"] if direction == "asc" else ["d-big", "b-small"]
+    assert _order(auth_client, f"?sort={key}&dir={direction}") == [*present, "a-zero", "c-unset"]
+
+
+@pytest.mark.parametrize(("direction", "order"), [("asc", ["b-free", "a-paid"]), ("desc", ["a-paid", "b-free"])])
+def test_zero_price_sorts_as_free(app, auth_client, direction, order):
+    _add_model(app, "a-paid", input_cost_per_million=1, output_cost_per_million=1)
+    _add_model(app, "b-free", input_cost_per_million=0, output_cost_per_million=0)
+    assert _order(auth_client, f"?sort=price&dir={direction}") == order
+
+
+def test_name_order_by_code_point(app, auth_client):
+    # U+FF41 (full-width a) is one UTF-16 unit above U+D801 (the lead surrogate of
+    # U+10428), so JavaScript would order them the other way round.
+    for name in ("\U00010428-model", "\uff41-model", "a-model"):
+        _add_model(app, name)
+    assert _order(auth_client) == ["a-model", "\uff41-model", "\U00010428-model"]
+    assert _order(auth_client, "?sort=name&dir=desc") == ["\U00010428-model", "\uff41-model", "a-model"]

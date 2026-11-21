@@ -254,7 +254,7 @@ def test_row_columns_in_order(app, auth_client, test_model):
     assert len(columns) == 3
     header = soup.find(class_="model-list-columns")
     assert [c.get_text(" ", strip=True) for c in header.find_all(recursive=False)] == [
-        "Model ▲ ▼ / Capabilities", "Context ▲ ▼ Max output ▲ ▼", "Price ▲ ▼ coins / 1M tokens"]
+        "Model ▲ ▼ / Capabilities", "Context ▲ ▼ Max output ▲ ▼", "Price ▲ ▼ Coins / 1M tokens"]
 
 
 def test_price_names_its_unit_for_screen_readers(auth_client, test_model):

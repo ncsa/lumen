@@ -336,3 +336,38 @@ def test_sort_header_wraps_on_a_phone(priced_models, serve_models):
     assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
     assert all(page.is_visible(_sort(k)) for k in ("name", "context", "max_output", "price"))
     assert errors == []
+
+
+def _reloaded_order(page):
+    page.reload()
+    page.wait_for_selector("#model-list .model-row-toggle", state="attached")
+    return _order(page)
+
+
+@pytest.mark.parametrize(("key", "field"), [("context", "context_window"), ("max_output", "max_output_tokens")])
+def test_zero_token_limit_sorts_last_on_click_and_reload(app, serve_models, key, field):
+    _add_model(app, "a-zero", **{field: 0})
+    _add_model(app, "b-small", **{field: 8_000})
+    _add_model(app, "c-unset", **{field: None})
+    _add_model(app, "d-big", **{field: 128_000})
+    page, errors = serve_models()
+    for present in (["d-big", "b-small"], ["b-small", "d-big"]):  # first click high to low, then reversed
+        page.click(_sort(key))
+        assert _order(page) == [*present, "a-zero", "c-unset"]
+        assert _reloaded_order(page) == [*present, "a-zero", "c-unset"]
+    assert errors == []
+
+
+def test_click_and_reload_agree_on_astral_and_full_width_names(app, serve_models):
+    # JavaScript compares UTF-16 code units and Python code points: U+FF41 sorts
+    # before U+10428 in Python but after its lead surrogate U+D801 in JavaScript.
+    # Equal prices make the price sort fall back to the name A to Z, both ways.
+    for name in ("\U00010428-model", "\uff41-model", "a-model"):
+        _add_model(app, name)
+    names = ["a-model", "\uff41-model", "\U00010428-model"]
+    page, errors = serve_models()
+    for key, order in (("name", names[::-1]), ("name", names), ("price", names), ("price", names)):
+        page.click(_sort(key))
+        assert _order(page) == order, key
+        assert _reloaded_order(page) == order, key
+    assert errors == []

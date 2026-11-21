@@ -21,11 +21,13 @@ models_page_bp = Blueprint("models_page", __name__)
 SHOW_VIEWS = ("healthy", "early_access", "needs_ack")
 
 # ``?sort=`` keys for the model list -> (values compared in order, first-click direction).
-# Numbers sort high to low first, except price, which sorts cheapest first.
+# Numbers sort high to low first, except price, which sorts cheapest first. A token
+# limit of 0 shows as a dash like an unset one, so it counts as missing; a price of 0
+# is a real (free) price.
 SORTS = {
     "name": ((), "asc"),
-    "context": ((lambda c: c.context_window,), "desc"),
-    "max_output": ((lambda c: c.max_output_tokens,), "desc"),
+    "context": ((lambda c: c.context_window or None,), "desc"),
+    "max_output": ((lambda c: c.max_output_tokens or None,), "desc"),
     "price": ((lambda c: c.input_cost_per_million, lambda c: c.output_cost_per_million), "asc"),
 }
 SORT_DIRS = ("asc", "desc")
@@ -39,8 +41,19 @@ def _sort_params(args):
     return sort, direction or SORTS[sort][1]
 
 
-def _sort_configs(configs, sort, direction):
-    """Sort models by ``sort`` in ``direction``.
+def _name_order(configs):
+    """Models in name order A to Z: case-insensitive, then exact name.
+
+    The rows carry their position in this order (``data-sort-name``) so the
+    inline script in models.html never compares names itself: JavaScript compares
+    UTF-16 code units where Python compares code points, so an astral or a
+    full-width name would land elsewhere after a click than after a reload.
+    """
+    return sorted(configs, key=lambda c: (c.model_name.lower(), c.model_name))
+
+
+def _sort_configs(by_name, sort, direction):
+    """Sort models, given in :func:`_name_order`, by ``sort`` in ``direction``.
 
     A missing value sorts last in both directions, and ties fall back to the
     model name A to Z. The inline script in models.html sorts the same way.
@@ -54,8 +67,9 @@ def _sort_configs(configs, sort, direction):
             parts += [value is None, 0 if value is None else (-value if desc else value)]
         return parts
 
-    by_name = sorted(configs, key=lambda c: (c.model_name.lower(), c.model_name), reverse=desc and sort == "name")
-    return by_name if sort == "name" else sorted(by_name, key=key)
+    if sort == "name":
+        return by_name[::-1] if desc else by_name
+    return sorted(by_name, key=key)  # stable, so ties keep the name order
 
 
 def _visible_model_or_404(model_name):
@@ -120,7 +134,9 @@ def index():
     }
     show = request.args.get("show")
     sort, direction = _sort_params(request.args)
-    configs = _sort_configs(configs, sort, direction)
+    by_name = _name_order(configs)
+    name_rank = {c.model_name: rank for rank, c in enumerate(by_name)}
+    configs = _sort_configs(by_name, sort, direction)
     return render_template(
         "models.html",
         configs=configs,
@@ -131,6 +147,7 @@ def index():
         show=show if show in SHOW_VIEWS else None,
         sort=sort,
         sort_dir=direction,
+        name_rank=name_rank,
         token_count=_token_count,
         modalities=_modalities,
     )
