@@ -1,7 +1,8 @@
-"""Theme colours: the shared stylesheet follows the active theme's primary colour.
+"""Theme colours: the stylesheet and templates follow the active theme's primary colour.
 
-Each theme's ``head_extras.html`` sets ``--theme-primary``; ``app.css`` reads it
-through ``--lumen-primary`` and keeps the Illinois navy only as a fallback.
+Each theme's ``head_extras.html`` sets ``--theme-primary``; ``app.css`` and the
+templates read it through ``--lumen-primary`` and keep the Illinois navy only as
+a fallback.
 """
 import re
 from pathlib import Path
@@ -10,6 +11,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_CSS = ROOT / "lumen" / "static" / "css" / "app.css"
+TEMPLATES = sorted((ROOT / "lumen" / "templates").glob("**/*.html"))
 THEME_HEADS = sorted(ROOT.glob("themes/*/templates/theme/head_extras.html"))
 
 # Illinois navy, its darker hover shade and its translucent focus-ring form.
@@ -19,6 +21,9 @@ NAVY = re.compile(r"#13294b\b|#0e1f38\b|rgba\(\s*19\s*,\s*41\s*,\s*75\s*,", re.I
 ALLOWED = [
     re.compile(r"--lumen-primary\s*:\s*var\(\s*--theme-primary\s*,\s*#13294b\s*\)", re.IGNORECASE),
     re.compile(r"var\(\s*--bubble-[\w-]+\s*,[^)]*\)", re.IGNORECASE),
+    # usage.html: the chart colour's fallback when --theme-primary is not a
+    # 6-digit hex (the line chart appends '22' for its fill alpha).
+    re.compile(r"\bCHART_COLOR_FALLBACK\s*=\s*'#13294b'", re.IGNORECASE),
 ]
 THEME_PRIMARY = re.compile(r"--theme-primary\s*:\s*(#[0-9a-fA-F]{6})\b")
 
@@ -53,6 +58,22 @@ def test_app_css_keeps_the_navy_fallback():
     assert ALLOWED[0].search(APP_CSS.read_text())
 
 
+def test_templates_have_no_hardcoded_navy():
+    assert TEMPLATES, "no templates found"
+    found = {
+        str(t.relative_to(ROOT)): hits
+        for t in TEMPLATES
+        if (hits := _hardcoded_navy(t.read_text()))
+    }
+    assert found == {}
+
+
+def test_usage_chart_reads_theme_primary():
+    usage = (ROOT / "lumen" / "templates" / "usage.html").read_text()
+    assert "getPropertyValue('--theme-primary')" in usage
+    assert "CHART_COLOR_FALLBACK = '#13294b'" in usage
+
+
 def test_scan_flags_hardcoded_navy():
     css = (
         ":root { --lumen-primary: var(--theme-primary, #13294b); }\n"
@@ -60,9 +81,11 @@ def test_scan_flags_hardcoded_navy():
         ".b { color: #13294B; }\n"
         ".c { color: #0e1f38; }\n"
         ".d { box-shadow: 0 0 0 1px rgba(19, 41, 75, 0.4); }\n"
+        "const CHART_COLOR_FALLBACK = '#13294b';\n"
+        "const CHART_COLOR = '#13294b';\n"
     )
     found = _hardcoded_navy(css)
-    assert [f.split(":")[0] for f in found] == ["line 3", "line 4", "line 5"]
+    assert [f.split(":")[0] for f in found] == ["line 3", "line 4", "line 5", "line 7"]
 
 
 def test_every_theme_is_checked():

@@ -149,7 +149,13 @@ const IS_ADMIN = {{ is_admin | tojson }};
 const ILLINOIS_BLUE   = [0,   60,  125];
 const ILLINOIS_ORANGE = [255, 95,  5];
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const CHART_COLOR = '#13294b';
+// The active theme's primary colour. The line chart appends '22' for its fill
+// alpha, so anything other than a 6-digit hex falls back to the Illinois navy.
+const CHART_COLOR_FALLBACK = '#13294b';
+const CHART_COLOR = (() => {
+  const value = getComputedStyle(document.documentElement).getPropertyValue('--theme-primary').trim();
+  return /^#[0-9a-fA-F]{6}$/.test(value) ? value : CHART_COLOR_FALLBACK;
+})();
 
 const charts = {};
 
