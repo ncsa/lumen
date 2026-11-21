@@ -486,6 +486,8 @@ Each theme lives under `themes/<name>/`:
 
 A custom `_ThemeLoader` (Jinja2 `BaseLoader`) checks the active theme directory first, then falls back to `lumen/templates/`. The config watcher hot-reloads the active theme when `app.theme` changes in `config.yaml`.
 
+Each theme's `templates/theme/head_extras.html` sets `--theme-primary`, and `app.css` and the core templates (buttons, nav, outlines, the admin config nav, the user-groups editor and the usage charts) read it instead of hard-coding Illinois navy, which remains only as the fallback; the one exception is the SkipTo widget in `base.html` and `landing.html`, which keeps `colorTheme:illinois`. Hover shades and focus rings are derived with `color-mix()`; browsers without it keep readable primary-button states and a visible keyboard focus ring.
+
 Footer content is driven by optional `theme.yaml` keys that each theme's `templates/theme/footer.html` reads:
 
 - `footer_links` — list of `{label, url}` rendered next to the GitHub links (default theme only; the UIC and UIS footer templates hard-code their links and ignore this key).

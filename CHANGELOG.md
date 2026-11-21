@@ -23,6 +23,7 @@ All notable changes to Lumen will be documented in this file.
 ### Removed
 
 - Remove the `sync_models.py` script; use **Update All** (or **Update** per model) in the admin config editor to refresh model metadata from the backends and models.dev. (#706)
+- Buttons, nav, outlines and usage charts now use the active theme's primary colour instead of Illinois navy in the UIC, UIS and default themes; browsers without `color-mix()` keep readable primary-button states and a visible keyboard focus ring. (#709)
 
 ## [2.4.0] - 2026-11-19
 
