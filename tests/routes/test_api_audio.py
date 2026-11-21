@@ -59,7 +59,7 @@ class _FakeResponse:
     def __init__(self, payload):
         self._payload = payload
 
-    def model_dump(self):
+    def model_dump(self, **_):
         return self._payload
 
 
@@ -673,7 +673,7 @@ from tests.routes.test_chat_routes import _recording_live_state  # noqa: E402
 class _FakeAudio:
     """Upstream transcription response with a billable duration."""
 
-    def model_dump(self):
+    def model_dump(self, **_):
         return {"text": "hi", "usage": {"type": "duration", "seconds": 10}}
 
 

@@ -92,7 +92,7 @@ class _ApiChunk:
     def __init__(self, usage=None):
         self.usage = usage
 
-    def model_dump(self):
+    def model_dump(self, **_):
         return {"usage": None}
 
 

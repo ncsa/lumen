@@ -104,7 +104,7 @@ class _ToolCallResponse:
         prompt_tokens = 11
         completion_tokens = 5
 
-    def model_dump(self):
+    def model_dump(self, **_):
         return {"id": "chatcmpl-1", "choices": [{
             "index": 0,
             "message": {"role": "assistant", "content": None, "tool_calls": [
@@ -120,7 +120,7 @@ class _TextResponse:
         prompt_tokens = 7
         completion_tokens = 3
 
-    def model_dump(self):
+    def model_dump(self, **_):
         return {"id": "chatcmpl-1", "choices": [{
             "index": 0,
             "message": {"role": "assistant", "content": "hello"},
@@ -136,7 +136,7 @@ class _Chunk:
         self.usage = usage
         self.choices = payload.get("choices") or []
 
-    def model_dump(self):
+    def model_dump(self, **_):
         return self._payload
 
 
@@ -591,7 +591,7 @@ def test_usage_adds_up_to_the_billed_prompt(app, api, test_model, stream):
     else:
         response = _TextResponse()
         response.usage = usage_object
-        response.model_dump = lambda: {**_TextResponse().model_dump(), "usage": usage}
+        response.model_dump = lambda **_: {**_TextResponse().model_dump(), "usage": usage}
         api.upstream(lambda **kw: response)
         reported = api.post().get_json()["usage"]
 
