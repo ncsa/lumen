@@ -49,10 +49,25 @@
 <div class="card mb-4">
   <div class="card-header">
     <h2 class="visually-hidden" id="model-list-heading">Models</h2>
-    <div class="model-row-grid model-list-columns" aria-hidden="true">
-      <span>Model / Capabilities</span>
-      <span>Token limits</span>
-      <span class="text-end">Coins / 1M tokens</span>
+    {#- Sort buttons: (?sort= key, visible text, first-click direction, phrase per direction).
+        The inline script re-orders the rows on click; the server renders the order in ?sort= / ?dir=. -#}
+    {%- set sort_buttons = {
+      "name": ("Model", "asc", {"asc": "A to Z", "desc": "Z to A"}),
+      "context": ("Context", "desc", {"asc": "low to high", "desc": "high to low"}),
+      "max_output": ("Max output", "desc", {"asc": "low to high", "desc": "high to low"}),
+      "price": ("Price", "asc", {"asc": "cheapest first", "desc": "most expensive first"}),
+    } %}
+    {%- macro sort_button(key) %}
+      {%- set text, first, phrases = sort_buttons[key] %}
+      {%- set active = key == sort %}
+      <button type="button" class="btn btn-link model-sort-btn{{ ' sort-' ~ sort_dir if active }}" data-sort="{{ key }}" data-first="{{ first }}"
+              data-asc="{{ phrases.asc }}" data-desc="{{ phrases.desc }}" aria-controls="model-list"
+              aria-label="Sort by {{ text | lower }}, {{ 'sorted ' ~ phrases[sort_dir] if active else phrases[first] }}">{{ text }}<span class="model-sort-arrows" aria-hidden="true"><span class="sa-up">▲</span><span class="sa-dn">▼</span></span></button>
+    {%- endmacro %}
+    <div class="model-row-grid model-list-columns" role="group" aria-label="Sort models">
+      <span>{{ sort_button("name") }} <span class="model-sort-caption">/ Capabilities</span></span>
+      <span class="model-sort-pair">{{ sort_button("context") }}{{ sort_button("max_output") }}</span>
+      <span class="text-sm-end">{{ sort_button("price") }} <span class="model-sort-caption">Coins / 1M tokens</span></span>
     </div>
   </div>
   <ul class="list-group list-group-flush" id="model-list" aria-labelledby="model-list-heading">
@@ -66,6 +81,11 @@
     {% set needs_ack = ack and not ack.consented %}
     {% set in_view = {"all": true, "healthy": status in ("ok", "degraded"), "early_access": config.early_access, "needs_ack": needs_ack}[active_view] %}
     <li class="list-group-item model-row" data-model="{{ config.model_name }}" data-health="{{ status }}"
+        {#- data-sort-name is the row's place in the server's name order; a token limit of 0 is missing, like the dash it shows. #}
+        data-sort-name="{{ name_rank[config.model_name] }}" data-sort-context="{{ config.context_window or '' }}"
+        data-sort-max-output="{{ config.max_output_tokens or '' }}"
+        data-sort-input="{{ config.input_cost_per_million if config.input_cost_per_million is not none }}"
+        data-sort-output="{{ config.output_cost_per_million if config.output_cost_per_million is not none }}"
         {%- if config.early_access %} data-early-access{% endif %}{% if needs_ack %} data-needs-ack{% endif %}{% if not in_view %} hidden{% endif %}>
       <div class="model-row-grid">
         <div class="d-flex align-items-start gap-2 model-row-main">
@@ -255,6 +275,54 @@
       const url = new URL(location.href);
       if (view === 'all') url.searchParams.delete('show');
       else url.searchParams.set('show', view);
+      history.replaceState(null, '', url);
+    }));
+  })();
+  // Sort buttons re-order the existing rows in place, so the active card filter
+  // and an open row (which moves with its row) are kept. The first click on a
+  // button uses its own direction (data-first), a second click reverses it.
+  // A missing value sorts last either way and ties fall back to the name A to Z,
+  // the same as the server's order for ?sort= / ?dir=.
+  (function () {
+    const list = document.getElementById('model-list');
+    const buttons = document.querySelectorAll('.model-sort-btn');
+    const fields = {name: [], context: ['sortContext'], max_output: ['sortMaxOutput'], price: ['sortInput', 'sortOutput']};
+    // data-sort-name is the row's rank in the server's name order, so a click and a
+    // reload agree for every name (JS and Python compare strings differently).
+    const byName = (a, b) => a.dataset.sortName - b.dataset.sortName;
+    function compare(sort, dir) {
+      const sign = dir === 'desc' ? -1 : 1;
+      return (a, b) => {
+        if (sort === 'name') return sign * byName(a, b);
+        for (const field of fields[sort]) {
+          const x = a.dataset[field], y = b.dataset[field];
+          if (x === '' || y === '') {
+            if (x !== y) return x === '' ? 1 : -1;
+            continue;
+          }
+          const diff = parseFloat(x) - parseFloat(y);
+          if (diff) return sign * diff;
+        }
+        return byName(a, b);
+      };
+    }
+    buttons.forEach(button => button.addEventListener('click', () => {
+      const sort = button.dataset.sort;
+      const current = button.classList.contains('sort-asc') ? 'asc' : button.classList.contains('sort-desc') ? 'desc' : null;
+      const dir = current ? (current === 'asc' ? 'desc' : 'asc') : button.dataset.first;
+      const rows = Array.from(list.querySelectorAll(':scope > .model-row')).sort(compare(sort, dir));
+      const after = list.querySelector(':scope > .model-list-empty, :scope > .model-filter-empty');
+      rows.forEach(row => list.insertBefore(row, after));
+      buttons.forEach(b => {
+        const active = b === button;
+        b.classList.toggle('sort-asc', active && dir === 'asc');
+        b.classList.toggle('sort-desc', active && dir === 'desc');
+        const text = b.firstChild.textContent.trim().toLowerCase();
+        b.setAttribute('aria-label', `Sort by ${text}, ` + (active ? `sorted ${b.dataset[dir]}` : b.dataset[b.dataset.first]));
+      });
+      const url = new URL(location.href);
+      url.searchParams.set('sort', sort);
+      url.searchParams.set('dir', dir);
       history.replaceState(null, '', url);
     }));
   })();

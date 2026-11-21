@@ -50,7 +50,7 @@ def _set_model(app, model_id, **fields):
 def _add_model(app, name, *health, **fields):
     """A model with one active endpoint per entry of ``health`` (True = healthy)."""
     with app.app_context():
-        model = ModelConfig(model_name=name, input_cost_per_million=1.0, output_cost_per_million=2.0, **fields)
+        model = ModelConfig(model_name=name, **{"input_cost_per_million": 1.0, "output_cost_per_million": 2.0, **fields})
         db.session.add(model)
         db.session.flush()
         for i, healthy in enumerate(health):
@@ -253,11 +253,12 @@ def test_row_columns_in_order(app, auth_client, test_model):
     assert [name in c["class"] for c, name in zip(columns, ["model-row-main", "model-limits", "model-row-side"])] == [True] * 3
     assert len(columns) == 3
     header = soup.find(class_="model-list-columns")
-    assert [c.get_text(strip=True) for c in header.find_all(recursive=False)] == ["Model / Capabilities", "Token limits", "Coins / 1M tokens"]
+    assert [c.get_text(" ", strip=True) for c in header.find_all(recursive=False)] == [
+        "Model ▲ ▼ / Capabilities", "Context ▲ ▼ Max output ▲ ▼", "Price ▲ ▼ Coins / 1M tokens"]
 
 
 def test_price_names_its_unit_for_screen_readers(auth_client, test_model):
-    # The column labels are aria-hidden, so the price carries its own unit.
+    # The price is read row by row, away from the header, so it carries its own unit.
     price = _row(_soup(auth_client), "test-model").find(class_="model-price")
     assert price.find(class_="visually-hidden").get_text(strip=True) == "coins per 1M input / output tokens"
 
@@ -290,8 +291,8 @@ def test_no_icons_for_plain_model(auth_client, test_model):
 
 def test_row_click_selector_matches_only_rows_with_a_toggle(app, auth_client, test_model):
     # The row-click script calls .click() on each matched node's chevron, so
-    # every node its selector matches must have one; the aria-hidden column
-    # labels share the grid class but have no toggle. Browser behaviour is in
+    # every node its selector matches must have one; the column header
+    # shares the grid class but has no toggle. Browser behaviour is in
     # test_models_row_click.py.
     _add_model(app, "second-model")
     soup = _soup(auth_client)

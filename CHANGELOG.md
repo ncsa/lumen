@@ -10,7 +10,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Changed
 
-- Redesign the Models page as a dashboard with summary cards that filter the list and expandable model rows. (#694)
+- Redesign the Models page as a dashboard with summary cards that filter the list, sortable columns and expandable model rows. (#694)
 
 ### Fixed
 
