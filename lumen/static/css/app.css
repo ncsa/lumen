@@ -1,12 +1,23 @@
 /* ── Theme primary colour ────────────────────────────────────── */
 /* Each theme's head_extras.html sets --theme-primary; the Illinois navy is the
    fallback. Hover (75% shade) and focus-ring (40% / 25% alpha) colours are
-   derived from it, so the Illinois theme keeps its former exact values. */
+   derived from it with color-mix(), so the Illinois theme keeps its former
+   exact values. Browsers without color-mix() get the plain primary colour for
+   all three, so buttons keep a background behind their white label, and the
+   button focus rings below get a white gap to stay distinct. */
 :root {
     --lumen-primary: var(--theme-primary, #13294b);
-    --lumen-primary-hover: color-mix(in srgb, var(--lumen-primary) 75%, #000);
-    --lumen-primary-ring: color-mix(in srgb, var(--lumen-primary) 40%, transparent);
-    --lumen-primary-ring-soft: color-mix(in srgb, var(--lumen-primary) 25%, transparent);
+    --lumen-primary-hover: var(--lumen-primary);
+    --lumen-primary-ring: var(--lumen-primary);
+    --lumen-primary-ring-soft: var(--lumen-primary);
+}
+
+@supports (color: color-mix(in srgb, white, black)) {
+    :root {
+        --lumen-primary-hover: color-mix(in srgb, var(--lumen-primary) 75%, #000);
+        --lumen-primary-ring: color-mix(in srgb, var(--lumen-primary) 40%, transparent);
+        --lumen-primary-ring-soft: color-mix(in srgb, var(--lumen-primary) 25%, transparent);
+    }
 }
 
 /* ── Full-height pages (body.fill-viewport) ──────────────────── */
@@ -460,6 +471,16 @@ ilw-content .btn-primary:active {
     box-shadow: 0 0 0 0.25rem var(--lumen-primary-ring);
 }
 
+/* Without color-mix() the ring is the button's own colour, so separate the
+   two with a white gap to keep keyboard focus visible. */
+@supports not (color: color-mix(in srgb, white, black)) {
+    .btn-outline-primary:focus-visible,
+    .btn-primary:focus,
+    .btn-primary:active {
+        box-shadow: 0 0 0 0.15rem #fff, 0 0 0 0.35rem var(--lumen-primary-ring);
+    }
+}
+
 /* ── Navbar ──────────────────────────────────────────────────── */
 .navbar-lumen {
     background-color: #e2e3e3;
@@ -504,6 +525,16 @@ ilw-content .btn-primary:active {
     background-color: var(--lumen-primary-hover);
     border-color: var(--lumen-primary-hover);
     color: #fff;
+}
+
+.btn-login:focus-visible {
+    box-shadow: 0 0 0 0.25rem var(--lumen-primary-ring);
+}
+
+@supports not (color: color-mix(in srgb, white, black)) {
+    .btn-login:focus-visible {
+        box-shadow: 0 0 0 0.15rem #fff, 0 0 0 0.35rem var(--lumen-primary-ring);
+    }
 }
 
 /* ── Chat input ──────────────────────────────────────────────── */
