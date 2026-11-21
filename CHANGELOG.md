@@ -14,6 +14,7 @@ All notable changes to Lumen will be documented in this file.
 - Fix models.dev prices not being applied to new models in the config editor, and retry an unreachable models.dev sooner. (#680)
 - An unset `cache_write_cost_per_million` now means 0 (cache writes free) instead of the input price; an unset `cached_input_cost_per_million` still means the input price. (#678)
 - Stop logging a Pydantic serializer warning when a backend returns values (e.g. chat `metadata` lists) that don't match the OpenAI SDK types; the response is passed through unchanged. (#693)
+- Embeddings billing now passes the model's output price and is tested to bill input tokens only (#702).
 
 ## [2.4.0] - 2026-11-19
 

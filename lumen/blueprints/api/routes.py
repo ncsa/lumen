@@ -1104,8 +1104,10 @@ def embeddings():
     """OpenAI-compatible embeddings, billed per input token at the input price.
 
     Same shape as the other non-streaming paths: preflight, admit, upstream
-    call, bill_request. Embeddings produce no output tokens, so the request is
-    priced by ``input_cost_per_million`` alone.
+    call, bill_request. Embeddings produce no output tokens: the model's output
+    price is passed to ``calculate_cost`` like on the other paths, but it
+    multiplies zero output tokens, so the request is priced by
+    ``input_cost_per_million`` alone.
     """
     data = request.get_json(silent=True)
     if not isinstance(data, dict) or not data:
@@ -1141,6 +1143,7 @@ def embeddings():
     ep_id          = endpoint.id
     mc_id          = model_config.id
     mc_in_cost     = float(model_config.input_cost_per_million)
+    mc_out_cost    = float(model_config.output_cost_per_million)
     timeout, max_retries = upstream_call_bounds(streaming=False)
     # Read while the request context is current, like the paths above.
     timing = capture_request_timing()
@@ -1167,9 +1170,11 @@ def embeddings():
             logger.warning("Upstream did not return usage data (model=%s, entity_id=%s)", model_name, entity_id)
         # Every prompt token is billed at the input price, cache hits included:
         # embedding models have no cache price, so a reported cache breakdown is
-        # neither priced nor recorded.
+        # neither priced nor recorded. Embeddings have no output tokens: any
+        # completion_tokens the upstream reports are ignored, and the model's
+        # output price is passed but multiplies zero.
         in_tok, _, _, _ = usage_tokens(usage)
-        cost = calculate_cost(in_tok, 0, mc_in_cost, 0.0)
+        cost = calculate_cost(in_tok, 0, mc_in_cost, mc_out_cost)
         bill_request(entity_id, mc_id, "api", in_tok, 0, cost,
                      effective=effective, api_key_id=ak_id,
                      endpoint_id=ep_id, duration=duration,
