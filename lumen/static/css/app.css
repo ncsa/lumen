@@ -1,3 +1,14 @@
+/* ── Theme primary colour ────────────────────────────────────── */
+/* Each theme's head_extras.html sets --theme-primary; the Illinois navy is the
+   fallback. Hover (75% shade) and focus-ring (40% / 25% alpha) colours are
+   derived from it, so the Illinois theme keeps its former exact values. */
+:root {
+    --lumen-primary: var(--theme-primary, #13294b);
+    --lumen-primary-hover: color-mix(in srgb, var(--lumen-primary) 75%, #000);
+    --lumen-primary-ring: color-mix(in srgb, var(--lumen-primary) 40%, transparent);
+    --lumen-primary-ring-soft: color-mix(in srgb, var(--lumen-primary) 25%, transparent);
+}
+
 /* ── Full-height pages (body.fill-viewport) ──────────────────── */
 /* The theme wrapper is exactly one screen tall and the page content takes what
    the header and banner leave, so the page scrolls inside itself instead of
@@ -82,7 +93,7 @@ body.fill-viewport > :has(> #main-content) > footer {
 
 .conv-item.active {
     background: #e8f0fe;
-    border-left: 3px solid #13294b;
+    border-left: 3px solid var(--lumen-primary);
 }
 
 .conv-remove-btn {
@@ -235,7 +246,7 @@ body.fill-viewport > :has(> #main-content) > footer {
     margin: 1rem auto;
     padding: 0.9rem 1rem;
     border: 1px solid #dee2e6;
-    border-left: 3px solid #13294b;
+    border-left: 3px solid var(--lumen-primary);
     border-radius: 6px;
     background: #fff;
     color: #495057;
@@ -278,11 +289,11 @@ body.fill-viewport > :has(> #main-content) > footer {
 }
 
 .copy-btn:hover {
-    color: #13294b;
+    color: var(--lumen-primary);
 }
 
 .copy-btn:focus-visible {
-    outline: 2px solid #13294b;
+    outline: 2px solid var(--lumen-primary);
     outline-offset: 2px;
     border-radius: 2px;
 }
@@ -309,7 +320,7 @@ body.fill-viewport > :has(> #main-content) > footer {
     background: #fff;
     border: 1px solid #dee2e6;
     border-radius: 0.375rem;
-    color: #13294b;
+    color: var(--lumen-primary);
     font-size: 1rem;
 }
 
@@ -390,7 +401,7 @@ body.fill-viewport > :has(> #main-content) > footer {
     width: 36px;
     height: 36px;
     border-radius: 50%;
-    background-color: #13294b;
+    background-color: var(--lumen-primary);
     color: #fff;
     font-size: 0.72rem;
     font-weight: 700;
@@ -404,32 +415,32 @@ body.fill-viewport > :has(> #main-content) > footer {
 
 /* ── Progress bars ───────────────────────────────────────────── */
 .progress-bar {
-    background-color: #13294b;
+    background-color: var(--lumen-primary);
 }
 
-/* ── Override Bootstrap outline-primary with il-blue ─────────── */
+/* ── Override Bootstrap outline-primary with theme primary ─────── */
 .btn-outline-primary {
-    color: #13294b !important;
-    border-color: #13294b !important;
+    color: var(--lumen-primary) !important;
+    border-color: var(--lumen-primary) !important;
 }
 
 .btn-outline-primary:hover,
 .btn-outline-primary:focus,
 .btn-outline-primary:active {
-    background-color: #13294b !important;
-    border-color: #13294b !important;
+    background-color: var(--lumen-primary) !important;
+    border-color: var(--lumen-primary) !important;
     color: #fff !important;
 }
 
 .btn-outline-primary:focus-visible {
-    box-shadow: 0 0 0 0.25rem rgba(19, 41, 75, 0.4);
+    box-shadow: 0 0 0 0.25rem var(--lumen-primary-ring);
 }
 
-/* ── Override Bootstrap primary color with il-blue ───────────── */
+/* ── Override Bootstrap primary color with theme primary ───────── */
 .btn-primary,
 ilw-content .btn-primary {
-    background-color: #13294b !important;
-    border-color: #13294b !important;
+    background-color: var(--lumen-primary) !important;
+    border-color: var(--lumen-primary) !important;
     color: #fff !important;
 }
 
@@ -440,13 +451,13 @@ ilw-content .btn-primary {
 ilw-content .btn-primary:hover,
 ilw-content .btn-primary:focus,
 ilw-content .btn-primary:active {
-    background-color: #0e1f38 !important;
-    border-color: #0e1f38 !important;
+    background-color: var(--lumen-primary-hover) !important;
+    border-color: var(--lumen-primary-hover) !important;
 }
 
 .btn-primary:focus,
 .btn-primary:active {
-    box-shadow: 0 0 0 0.25rem rgba(19, 41, 75, 0.4);
+    box-shadow: 0 0 0 0.25rem var(--lumen-primary-ring);
 }
 
 /* ── Navbar ──────────────────────────────────────────────────── */
@@ -457,41 +468,41 @@ ilw-content .btn-primary:active {
 .navbar-lumen .navbar-brand,
 .navbar-lumen .nav-link,
 .navbar-lumen .nav-link.active {
-    color: #13294b;
+    color: var(--lumen-primary);
 }
 
 .navbar-lumen .nav-link:hover,
 .navbar-lumen .nav-link:focus {
-    color: #0e1f38;
+    color: var(--lumen-primary-hover);
 }
 
 .navbar-lumen .navbar-toggler {
-    border-color: #13294b;
+    border-color: var(--lumen-primary);
 }
 
 .btn-logout {
-    color: #13294b;
-    border-color: #13294b;
+    color: var(--lumen-primary);
+    border-color: var(--lumen-primary);
     background: transparent;
 }
 
 .btn-logout:hover,
 .btn-logout:focus {
-    background-color: #13294b;
+    background-color: var(--lumen-primary);
     color: #fff;
 }
 
 /* ── Login button ────────────────────────────────────────────── */
 .btn-login {
-    background-color: #13294b;
-    border-color: #13294b;
+    background-color: var(--lumen-primary);
+    border-color: var(--lumen-primary);
     color: #fff;
 }
 
 .btn-login:hover,
 .btn-login:focus {
-    background-color: #0e1f38;
-    border-color: #0e1f38;
+    background-color: var(--lumen-primary-hover);
+    border-color: var(--lumen-primary-hover);
     color: #fff;
 }
 
@@ -518,15 +529,15 @@ ilw-content .btn-primary:active {
 .attach-btn:hover,
 .attach-btn:focus {
     background-color: #f8f9fa;
-    color: #13294b;
-    border-color: #13294b;
+    color: var(--lumen-primary);
+    border-color: var(--lumen-primary);
 }
 
 .attach-chip {
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    background-color: #13294b;
+    background-color: var(--lumen-primary);
     color: #fff;
     border-radius: 999px;
     padding: 0.2rem 0.6rem;
@@ -560,8 +571,8 @@ ilw-content .btn-primary:active {
 }
 
 .chat-input-bar.drag-over #chat-input {
-    border-color: #13294b;
-    box-shadow: 0 0 0 0.2rem rgba(19, 41, 75, 0.25);
+    border-color: var(--lumen-primary);
+    box-shadow: 0 0 0 0.2rem var(--lumen-primary-ring-soft);
 }
 
 /* Inline image in user bubble */
@@ -711,7 +722,7 @@ ilw-content .btn-primary:active {
 }
 
 .copy-id-avatar:focus-visible {
-    outline: 3px solid #13294b;
+    outline: 3px solid var(--lumen-primary);
     outline-offset: 3px;
 }
 
