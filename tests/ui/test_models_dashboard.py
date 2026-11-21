@@ -1,5 +1,6 @@
 """The Model Dashboard (/models): stat cards, collapsed rows, expanded panels and access."""
 from datetime import datetime
+from decimal import Decimal
 
 import pytest
 from bs4 import BeautifulSoup
@@ -12,6 +13,13 @@ from lumen.models.model_endpoint import ModelEndpoint
 
 
 def _soup(auth_client):
+    # pytest-flask pushes one request context for the whole test, so every
+    # request here shares its SQLAlchemy session and no request teardown runs
+    # between them. Expire that session so each render reads the database the
+    # way a real request's fresh session does; otherwise a row loaded by an
+    # earlier request keeps its old attribute values for as long as it stays
+    # in the identity map.
+    db.session.expire_all()
     return BeautifulSoup(auth_client.get("/models").data, "html.parser")
 
 
@@ -190,7 +198,8 @@ def test_collapsed_row_pills_while_ack_pending(app, auth_client, test_user, test
 def test_panels_share_one_parent_and_start_collapsed(app, auth_client, test_model):
     _add_model(app, "second-model")
     soup = _soup(auth_client)
-    assert soup.find(id="model-list") is not None
+    model_list = soup.find(id="model-list")
+    assert soup.find(id=model_list["aria-labelledby"]).get_text(strip=True) == "Models"
     rows = soup.find_all("li", class_="model-row")
     assert len(rows) == 2
     panel_ids = set()
@@ -203,7 +212,7 @@ def test_panels_share_one_parent_and_start_collapsed(app, auth_client, test_mode
         assert toggle["aria-expanded"] == "false"
         assert toggle["aria-controls"] == panel["id"]
         assert toggle["data-bs-target"] == f"#{panel['id']}"
-        assert toggle["aria-label"] == f"Show details for {row['data-model']}"
+        assert toggle["aria-label"] == f"Toggle details for {row['data-model']}"
         panel_ids.add(panel["id"])
     assert len(panel_ids) == 2
 
@@ -244,6 +253,19 @@ def test_panel_effective_cache_prices_set(app, auth_client, test_model):
     assert _panel_values(_row(_soup(auth_client), "test-model"), "model-pricing") == {
         "Input": "1.00", "Output": "2.00", "Cached read": "0.25", "Cached write": "1.50",
     }
+
+
+def test_rerender_reads_rates_changed_between_requests(app, auth_client, test_model):
+    # Both requests share the test's SQLAlchemy session (see _soup). Hold the
+    # row there, as the first render does, so the second render shows the
+    # change only because _soup expires the session first.
+    held = db.session.get(ModelConfig, test_model["id"])
+    assert _panel_values(_row(_soup(auth_client), "test-model"), "model-pricing")["Cached read"] == "1.00"
+    _set_model(app, test_model["id"], cached_input_cost_per_million=0.25, cache_write_cost_per_million=1.5)
+    assert _panel_values(_row(_soup(auth_client), "test-model"), "model-pricing") == {
+        "Input": "1.00", "Output": "2.00", "Cached read": "0.25", "Cached write": "1.50",
+    }
+    assert held.cached_input_cost_per_million == Decimal("0.25")
 
 
 # ── Access ────────────────────────────────────────────────────────────────

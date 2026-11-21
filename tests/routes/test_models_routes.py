@@ -1,6 +1,7 @@
 from datetime import timedelta
 from http import HTTPStatus
 
+import pytest
 from bs4 import BeautifulSoup
 
 
@@ -68,6 +69,28 @@ def test_models_row_unknown_modalities_shows_dash(app, auth_client, test_model):
     row = _row_for(resp.data, test_model["model_name"])
     assert row is not None
     assert row.find(class_="model-modalities").get_text(strip=True) == "\u2014"  # em dash
+
+
+@pytest.mark.parametrize(("inputs", "outputs", "text"), [
+    (["text"], 1, "Text \u2192 \u2014"),
+    (1, 1, "\u2014"),
+    ("text", None, "Text \u2192 \u2014"),
+    ({"kind": "text"}, ["text"], "\u2014 \u2192 Text"),
+    (["text", 3, ""], ["text"], "Text \u2192 Text"),
+])
+def test_models_page_tolerates_malformed_modalities(app, auth_client, inputs, outputs, text):
+    # The JSON columns are not schema-checked, and config sync stores e.g.
+    # ``output_modalities: 1`` as is; the dashboard must still render.
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        db.session.add(ModelConfig(model_name="odd-model", input_cost_per_million=1.0, output_cost_per_million=1.0,
+                                   input_modalities=inputs, output_modalities=outputs))
+        db.session.commit()
+
+    resp = auth_client.get("/models")
+    assert resp.status_code == HTTPStatus.OK
+    assert _row_for(resp.data, "odd-model").find(class_="model-modalities").get_text(strip=True) == text
 
 
 def _make_other_owner(app):

@@ -32,10 +32,10 @@
 
 <div class="card mb-4">
   <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-    <h2 class="h5 mb-0">Models</h2>
+    <h2 class="h5 mb-0" id="model-list-heading">Models</h2>
     <span class="text-muted small">Coins per 1M tokens</span>
   </div>
-  <ul class="list-group list-group-flush" id="model-list">
+  <ul class="list-group list-group-flush" id="model-list" aria-labelledby="model-list-heading">
     {% for config in configs %}
     {% set endpoints = endpoints_map.get(config.id, []) %}
     {% set healthy_count = endpoints | selectattr("healthy") | list | length %}
@@ -46,7 +46,7 @@
       <div class="d-flex align-items-start gap-2">
         <button type="button" class="btn btn-sm btn-link model-row-toggle p-0 mt-1" data-bs-toggle="collapse"
                 data-bs-target="#{{ panel_id }}" aria-expanded="false" aria-controls="{{ panel_id }}"
-                aria-label="Show details for {{ config.model_name }}"><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+                aria-label="Toggle details for {{ config.model_name }}"><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
         <div class="d-flex flex-wrap flex-grow-1 column-gap-3 row-gap-1 model-row-body">
         <div class="me-auto model-row-main">
           <a href="{{ url_for('models_page.detail', model_name=config.model_name) }}"

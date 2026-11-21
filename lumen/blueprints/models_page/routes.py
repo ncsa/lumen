@@ -106,13 +106,29 @@ def _token_count(n):
     return str(n)
 
 
+_DASH = "\u2014"
+
+
+def _modality_names(value):
+    """``"Text, Image"`` from a stored modality list, or ``None`` when unknown.
+
+    The JSON column is not schema-checked, so a bare string counts as one
+    modality and any other shape (a number, an object) or non-string item is
+    treated as unknown rather than iterated.
+    """
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        return None
+    return ", ".join(v.strip().capitalize() for v in value if isinstance(v, str) and v.strip()) or None
+
+
 def _modalities(config):
     """``Text, Image → Text``; a side the model does not publish shows ``—``."""
-    def side(values):
-        return ", ".join(str(v).capitalize() for v in values) if values else "\u2014"
-    if not config.input_modalities and not config.output_modalities:
-        return "\u2014"
-    return f"{side(config.input_modalities)} \u2192 {side(config.output_modalities)}"
+    inputs, outputs = _modality_names(config.input_modalities), _modality_names(config.output_modalities)
+    if inputs is None and outputs is None:
+        return _DASH
+    return f"{inputs or _DASH} \u2192 {outputs or _DASH}"
 
 
 @models_page_bp.route("/models/<path:model_name>")
