@@ -229,11 +229,17 @@ def test_panel_last_checked_is_relative(app, auth_client, test_model, test_model
     assert span["data-utc"] == "2026-01-02T03:04:05Z"
 
 
-def test_panel_effective_cache_prices(app, auth_client, test_model):
+def test_panel_effective_cache_prices_unset(app, auth_client, test_model):
     # Unset cache rates: read billed at the input price, write at 0 (#685).
     assert _panel_values(_row(_soup(auth_client), "test-model"), "model-pricing") == {
         "Input": "1.00", "Output": "2.00", "Cached read": "1.00", "Cached write": "0.00",
     }
+
+
+def test_panel_effective_cache_prices_set(app, auth_client, test_model):
+    # Set before the first request: in the full suite the request session can
+    # keep a ModelConfig loaded by an earlier request in the same test, so a
+    # change made between two requests may not show up in the second.
     _set_model(app, test_model["id"], cached_input_cost_per_million=0.25, cache_write_cost_per_million=1.5)
     assert _panel_values(_row(_soup(auth_client), "test-model"), "model-pricing") == {
         "Input": "1.00", "Output": "2.00", "Cached read": "0.25", "Cached write": "1.50",
