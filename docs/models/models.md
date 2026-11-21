@@ -21,11 +21,13 @@ Four cards at the top summarise the models listed for you:
 
 The flask after **Early Access** and the lock after **Needs Ack** are the same icons the model rows show next to a name.
 
+A red bar along the bottom of the **Healthy** card (with its line of text in red) means at least one model is **Down**; a yellow bar means none is down but some are **Degraded**. Models with **No endpoints** add no bar, and the bar goes away when every model is healthy.
+
 The cards are worked out when the page loads; reload the page to update them, for example after acknowledging a model.
 
 ## Filtering
 
-Click a card (or tab to it and press Enter or Space) to show only the models it counts. The active card has a dark blue border with an orange bar along the bottom; click **Models** to show every model again.
+Click a card (or tab to it and press Enter or Space) to show only the models it counts. The active card has a border in the site theme's main color and a bar along the top in its accent color (dark blue and orange on the Illinois theme); click **Models** to show every model again.
 
 | Card | Shows |
 |------|-------|

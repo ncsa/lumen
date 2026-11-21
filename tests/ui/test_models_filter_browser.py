@@ -102,12 +102,48 @@ def test_each_card_shows_exactly_its_rows(open_models, key, query, rows):
     assert errors == []
 
 
-def test_active_card_has_accent_border(open_models):
-    page, _ = open_models("?show=healthy")
-    border = page.eval_on_selector(_card("healthy"), "el => getComputedStyle(el).borderTopColor")
-    other = page.eval_on_selector(_card("models"), "el => getComputedStyle(el).borderTopColor")
-    assert border == "rgb(19, 41, 75)"
+def _theme_color(page, name):
+    """The page's computed theme variable, resolved to the rgb() form getComputedStyle reports."""
+    return page.evaluate("""name => {
+        const probe = document.createElement('span');
+        probe.style.color = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+        document.body.appendChild(probe);
+        const color = getComputedStyle(probe).color;
+        probe.remove();
+        return color;
+    }""", name)
+
+
+def _bars(page, key):
+    """The card's visible inset bars as {"top" | "bottom": colour}."""
+    return page.eval_on_selector(_card(key), """el => {
+        const bars = {};
+        // Each layer reads like "rgb(232, 74, 39) 0px 4px 0px 0px inset".
+        for (const m of getComputedStyle(el).boxShadow.matchAll(/(rgba?\\([^)]*\\)) 0px (-?\\d+)px 0px 0px inset/g)) {
+            if (m[1] === 'rgba(0, 0, 0, 0)') continue;
+            bars[Number(m[2]) > 0 ? 'top' : 'bottom'] = m[1];
+        }
+        return bars;
+    }""")
+
+
+def test_active_card_has_theme_border_and_top_bar(open_models):
+    page, _ = open_models()
+    primary = _theme_color(page, "--theme-primary")
+    accent = _theme_color(page, "--theme-accent")
+    border = page.eval_on_selector(_card("models"), "el => getComputedStyle(el).borderTopColor")
+    other = page.eval_on_selector(_card("early-access"), "el => getComputedStyle(el).borderTopColor")
+    assert border == primary
     assert other != border
+    assert _bars(page, "models") == {"top": accent}
+    assert _bars(page, "early-access") == {}
+
+
+def test_active_healthy_card_keeps_its_status_bar(open_models):
+    page, _ = open_models("?show=healthy")
+    bars = _bars(page, "healthy")
+    assert bars["top"] == _theme_color(page, "--theme-accent")
+    assert "bottom" in bars and bars["bottom"] != bars["top"]
 
 
 def test_cards_work_from_the_keyboard(open_models):

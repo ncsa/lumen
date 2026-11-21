@@ -724,13 +724,33 @@ ilw-content .btn-primary:active {
 }
 @media (max-width: 991.98px) { .model-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 575.98px) { .model-stats { grid-template-columns: 1fr; } }
+.model-stat .card-body { padding: .5rem .75rem; }
 .model-stat-label { font-weight: 600; }
-.model-stat-count { font-size: 2rem; font-weight: 700; line-height: 1.2; margin-top: .25rem; }
-/* Each card is a filter button; the active one gets a navy accent border (plus aria-pressed). */
-button.model-stat { width: 100%; padding: 0; color: inherit; border-width: 2px; }
+.model-stat-count { font-size: 1.75rem; font-weight: 700; line-height: 1.1; margin-top: 0; }
+/* Each card is a filter button. Two inset bars: the active card (aria-pressed) gets a
+   top bar in the theme accent and a theme-primary border; the Healthy card gets a
+   bottom bar in a status color while a model is down (red) or degraded (yellow). */
+button.model-stat {
+    --model-stat-top-bar: transparent;
+    --model-stat-bottom-bar: transparent;
+    width: 100%;
+    padding: 0;
+    color: inherit;
+    border-width: 2px;
+    box-shadow: inset 0 4px 0 var(--model-stat-top-bar), inset 0 -4px 0 var(--model-stat-bottom-bar);
+}
 button.model-stat:hover { border-color: #707070; }
-button.model-stat[aria-pressed="true"] { border-color: #13294b; box-shadow: inset 0 -4px 0 #e84a27; }
-button.model-stat:focus-visible { outline: 3px solid #13294b; outline-offset: 2px; }
+button.model-stat[aria-pressed="true"] {
+    --model-stat-top-bar: var(--theme-accent, #e84a27);
+    border-color: var(--theme-primary, #13294b);
+}
+button.model-stat:focus-visible { outline: 3px solid var(--theme-primary, #13294b); outline-offset: 2px; }
+/* Status colors stay Bootstrap's in every theme. Yellow text uses the darker
+   warning shade: plain --bs-warning is unreadable as text on white. */
+button.model-stat.model-stat-health-down { --model-stat-bottom-bar: var(--bs-danger, #dc3545); }
+button.model-stat.model-stat-health-degraded { --model-stat-bottom-bar: var(--bs-warning, #ffc107); }
+.model-stat-health-down .model-stat-subtitle { color: var(--bs-danger, #dc3545) !important; }
+.model-stat-health-degraded .model-stat-subtitle { color: var(--bs-warning-text-emphasis, #664d03) !important; }
 
 /* Rows: the chevron turns down while its panel is open. */
 .model-row-toggle { color: inherit; text-decoration: none; }

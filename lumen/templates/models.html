@@ -26,9 +26,11 @@
   ("needs-ack", "needs_ack", "bi-lock", "Needs Ack", stats.needs_ack, ack_subtitle, ack_detail),
 ] %}
 {%- set active_view = show or "all" %}
-<div class="model-stats mt-3 mb-4" role="group" aria-label="Filter models">
+{#- Healthy card status bar: red while any model is down, yellow while some are only degraded. -#}
+{%- set health_class = "model-stat-health-down" if stats.down else ("model-stat-health-degraded" if stats.degraded else "") %}
+<div class="model-stats mt-3 mb-3" role="group" aria-label="Filter models">
   {% for key, view, icon, label, count, subtitle, detail in cards %}
-  <button type="button" class="card model-stat text-start" data-stat="{{ key }}" data-show="{{ view }}"
+  <button type="button" class="card model-stat text-start{{ ' ' ~ health_class if key == 'healthy' and health_class }}" data-stat="{{ key }}" data-show="{{ view }}"
           aria-pressed="{{ 'true' if view == active_view else 'false' }}" aria-controls="model-list">
     <span class="card-body d-block">
       <span class="d-flex align-items-center model-stat-label">{{ label }}{% if icon %}<i class="bi {{ icon }} ms-1 text-muted" aria-hidden="true"></i>{% endif %}</span>
