@@ -15,6 +15,10 @@ All notable changes to Lumen will be documented in this file.
 - An unset `cache_write_cost_per_million` now means 0 (cache writes free) instead of the input price; an unset `cached_input_cost_per_million` still means the input price. (#678)
 - Stop logging a Pydantic serializer warning when a backend returns values (e.g. chat `metadata` lists) that don't match the OpenAI SDK types; the response is passed through unchanged. (#693)
 
+### Removed
+
+- Remove the `sync_models.py` script; use **Update All** (or **Update** per model) in the admin config editor to refresh model metadata from the backends and models.dev. (#706)
+
 ## [2.4.0] - 2026-11-19
 
 **Upgrade:** everyone is logged out of the web UI once; 2.3.1 pods keep working during a rolling `helm upgrade`. Per-key cache token totals start at 0 instead of being summed from `request_logs`. (#560, #598, #600)
