@@ -12,6 +12,10 @@ import pytest
 from tests.ui.test_key_tables import BOOTSTRAP_JS, BOOTSTRAP_JS_URL, ORIGIN
 from tests.ui.test_models_dashboard import _add_model, _consent
 
+# Bootstrap's CSS, served from a pinned copy so the subtitle colors resolve its variables as in production.
+BOOTSTRAP_CSS_URL = "https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
+BOOTSTRAP_CSS = BOOTSTRAP_JS.parent / "bootstrap-5.3.8.min.css"
+
 ALL = ["acked-model", "bare-model", "degraded-model", "down-model", "ok-model"]
 
 
@@ -31,6 +35,10 @@ def serve_models(auth_client, browser):
     """Return a function opening /models<query> in the browser -> (page, uncaught errors)."""
     def handle(route, request):
         url = urlsplit(request.url)
+        if request.url == BOOTSTRAP_CSS_URL:
+            route.fulfill(status=200, content_type="text/css",
+                          headers={"Access-Control-Allow-Origin": "*"}, body=BOOTSTRAP_CSS.read_bytes())
+            return
         if request.url == BOOTSTRAP_JS_URL:
             route.fulfill(status=200, content_type="application/javascript",
                           headers={"Access-Control-Allow-Origin": "*"}, body=BOOTSTRAP_JS.read_bytes())
@@ -132,6 +140,32 @@ def test_healthy_card_has_no_bar_while_a_model_is_down(open_models):
     page, _ = open_models("?show=healthy")
     assert page.eval_on_selector(_card("healthy"), "el => el.classList.contains('model-stat-health-down')")
     assert _shadow(page, "healthy") == "none"
+
+
+def test_bootstrap_css_copy_matches_base_template():
+    base = (BOOTSTRAP_JS.parents[3] / "lumen" / "templates" / "base.html").read_text()
+    assert f'href="{BOOTSTRAP_CSS_URL}"' in base, "update BOOTSTRAP_CSS_URL and the copy in tests/fixtures/vendor"
+
+
+def _subtitle_color(page, key):
+    return page.eval_on_selector(f"{_card(key)} .model-stat-subtitle", "el => getComputedStyle(el).color")
+
+
+@pytest.mark.parametrize(("health", "color"), [
+    ([(False,), (True, False)], "rgb(220, 53, 69)"),    # down -> --bs-danger
+    ([(True, False), ()], "rgb(102, 77, 3)"),           # degraded only -> --bs-warning-text-emphasis
+    ([(True,), ()], None),                               # no-endpoint only -> muted like the other cards
+])
+def test_healthy_subtitle_color(app, serve_models, health, color):
+    for i, endpoints in enumerate(health):
+        _add_model(app, f"model-{i}", *endpoints)
+    page, errors = serve_models()
+    # The colors come from Bootstrap's variables, so make sure its stylesheet applied.
+    assert page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--bs-danger').trim()") == "#dc3545"
+    muted = _subtitle_color(page, "early-access")
+    assert _subtitle_color(page, "healthy") == (color or muted)
+    assert muted not in ("rgb(220, 53, 69)", "rgb(102, 77, 3)")
+    assert errors == []
 
 
 def test_cards_work_from_the_keyboard(open_models):

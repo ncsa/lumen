@@ -8,8 +8,10 @@
 </div>
 <ilw-content>
 
+{#- Healthy subtitle: down models, or degraded ones when none is down (the same state that colors it), then no-endpoint models. -#}
 {%- set unhealthy = [] %}
-{%- if stats.down %}{% set _ = unhealthy.append(stats.down ~ " down") %}{% endif %}
+{%- if stats.down %}{% set _ = unhealthy.append(stats.down ~ " down") %}
+{%- elif stats.degraded %}{% set _ = unhealthy.append(stats.degraded ~ " degraded") %}{% endif %}
 {%- if stats.no_endpoints %}{% set _ = unhealthy.append(stats.no_endpoints ~ " no endpoints") %}{% endif %}
 {#- Needs Ack: what is pending, plus how many of the models that need it are already acknowledged. -#}
 {%- if not stats.ack_total %}{% set ack_subtitle, ack_detail = "Nothing to acknowledge", none %}
@@ -21,7 +23,7 @@
 {%- set cards = [
   ("models", "all", none, "Models", stats.total, "Listed models", none),
   ("healthy", "healthy", none, "Healthy", stats.healthy,
-     unhealthy | join(" · ") if unhealthy else (stats.degraded ~ " degraded" if stats.degraded else "All healthy"), none),
+     unhealthy | join(" · ") if unhealthy else "All healthy", none),
   ("early-access", "early_access", "bi-flask", "Early Access", stats.early_access, "May change or be removed", none),
   ("needs-ack", "needs_ack", "bi-lock", "Needs Ack", stats.needs_ack, ack_subtitle, ack_detail),
 ] %}

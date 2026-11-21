@@ -105,6 +105,8 @@ def test_healthy_card_counts_degraded_and_names_down_and_no_endpoints(app, auth_
     ([(False,)], "1 down"),
     ([()], "1 no endpoints"),
     ([(True, False), (True, False)], "2 degraded"),
+    ([(True, False), ()], "1 degraded · 1 no endpoints"),
+    ([(False,), (True, False), ()], "1 down · 1 no endpoints"),
     ([(True,), (True, True)], "All healthy"),
 ])
 def test_healthy_card_subtitle(app, auth_client, health, subtitle):
@@ -119,11 +121,12 @@ def test_healthy_card_subtitle(app, auth_client, health, subtitle):
     ([(False,), (True, False)], "down"),
     ([(False,)], "down"),
     ([(True, False), (True, False)], "degraded"),
+    ([(True, False), ()], "degraded"),
     ([()], None),
     ([(True,), (True, True)], None),
 ])
-def test_healthy_card_status_bar(app, auth_client, health, status):
-    """Red while any model is down, yellow while some are only degraded; no-endpoint models add neither."""
+def test_healthy_card_health_class(app, auth_client, health, status):
+    """Red while any model is down, yellow while some are only degraded; no-endpoint models alone color nothing."""
     for i, endpoints in enumerate(health):
         _add_model(app, f"model-{i}", *endpoints)
     _add_model(app, "always-ok", True)

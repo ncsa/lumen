@@ -15,7 +15,7 @@ Four cards at the top summarise the models listed for you:
 | Card | Number | Subtitle |
 |------|--------|----------|
 | **Models** | Every model listed on the page, including models with no endpoints | "Listed models" |
-| **Healthy** | Models that can serve requests right now: **Healthy** and **Degraded** models (at least one working backend) | The number of **Down** and **No endpoints** models when there are any (e.g. "1 down · 2 no endpoints"); otherwise the number of **Degraded** models; otherwise "All healthy" |
+| **Healthy** | Models that can serve requests right now: **Healthy** and **Degraded** models (at least one working backend) | The number of **Down** models, or of **Degraded** models when none is down, followed by the number of **No endpoints** models (e.g. "1 down · 2 no endpoints" or "1 degraded · 2 no endpoints"); "All healthy" when there are none of these |
 | **Early Access** | Early-access models, which may change or be removed at any time | "May change or be removed" |
 | **Needs Ack** | Models you still have to acknowledge before you can use them | "Acknowledge before use" with how many of the models that need acknowledging you have already accepted (e.g. "1 of 3 acknowledged"); "All 3 acknowledged" once you have accepted them all; "Nothing to acknowledge" when no model needs it |
 
