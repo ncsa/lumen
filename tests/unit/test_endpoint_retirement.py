@@ -1,7 +1,6 @@
 """Retirement keeps endpoint history while removing the endpoint from live use."""
 
 import logging
-import re
 from datetime import timezone
 from http import HTTPStatus
 from unittest.mock import patch
@@ -127,7 +126,7 @@ def test_duplicate_url_reduction_retires_every_stale_row(app, admin_client):
     assert b.encode() not in detail.data
     assert b"1/1 healthy" in detail.data
     listing = admin_client.get("/models")
-    assert re.search(r">\s*1\s*</span>\s*/\s*1\b", listing.data.decode())
+    assert b"1/1 passed" in listing.data
 
 
 @pytest.mark.parametrize("active_healthy", [False, True])
@@ -153,7 +152,7 @@ def test_retired_endpoint_is_excluded_from_live_consumers(app, admin_client, adm
     assert b.encode() not in detail.data
     assert f"{int(active_healthy)}/1 healthy".encode() in detail.data
     listing = admin_client.get("/models")
-    assert re.search(rf">\s*{int(active_healthy)}\s*</span>\s*/\s*1\b", listing.data.decode())
+    assert f"{int(active_healthy)}/1 passed".encode() in listing.data
 
     with patch.dict(app.config, YAML_DATA={"api": {"monitoring": {"token": "review-monitor"}}}):
         headers = {"Authorization": "Bearer review-monitor"}
@@ -266,5 +265,5 @@ def test_watcher_retries_failed_removal_sync_until_it_converges(
     assert b.encode() not in detail.data
     assert b"1/1 healthy" in detail.data
     listing = admin_client.get("/models")
-    assert re.search(r">\s*1\s*</span>\s*/\s*1\b", listing.data.decode())
+    assert b"1/1 passed" in listing.data
     assert [ep["url"] for ep in app.config["YAML_DATA"]["models"][0]["endpoints"]] == [a]
