@@ -3,7 +3,7 @@ from http import HTTPStatus
 from bs4 import BeautifulSoup
 
 
-def test_accessible_model_present_in_table(auth_client, test_model):
+def test_accessible_model_present_in_list(auth_client, test_model):
     resp = auth_client.get("/models")
     assert resp.status_code == HTTPStatus.OK
     soup = BeautifulSoup(resp.data, "html.parser")
@@ -21,16 +21,16 @@ def _make_owner(app, email="owner@example.com"):
         return owner.id
 
 
-def test_blocked_model_absent_from_table(app, auth_client, test_model, test_user):
-    """A model owned by another user (no grant) does not appear in the table."""
+def test_blocked_model_absent_from_list(app, auth_client, test_model, test_user):
+    """A model owned by another user (no grant) does not appear in the list."""
     from tests.conftest import set_model_owner
     with app.app_context():
         set_model_owner(test_model["id"], _make_owner(app))
 
     resp = auth_client.get("/models")
     soup = BeautifulSoup(resp.data, "html.parser")
-    cell_text = " ".join(td.get_text(strip=True) for td in soup.find_all("td"))
-    assert test_model["model_name"] not in cell_text
+    assert soup.find("li", class_="model-row", attrs={"data-model": test_model["model_name"]}) is None
+    assert test_model["model_name"] not in soup.find(id="model-list").get_text()
 
 
 def test_no_models_shows_empty_message(auth_client):
@@ -100,7 +100,9 @@ def test_early_access_badge_on_models_list(app, auth_client, test_model):
     _set_model(app, test_model["id"], early_access=True)
     resp = auth_client.get("/models")
     assert resp.status_code == HTTPStatus.OK
-    assert b"early access" in resp.data
+    soup = BeautifulSoup(resp.data, "html.parser")
+    pills = soup.find("li", class_="model-row").find(class_="model-row-pills")
+    assert [p.get_text(strip=True) for p in pills.find_all(class_="badge")] == ["early access"]
 
 
 def test_early_access_badge_on_model_detail(app, auth_client, test_model):
@@ -119,8 +121,8 @@ def test_expired_model_absent_from_models_list(app, auth_client, test_model):
     _set_model(app, test_model["id"], end_date=utcnow() - timedelta(days=1))
     resp = auth_client.get("/models")
     soup = BeautifulSoup(resp.data, "html.parser")
-    cell_text = " ".join(td.get_text(strip=True) for td in soup.find_all("td"))
-    assert test_model["model_name"] not in cell_text
+    assert soup.find("li", class_="model-row", attrs={"data-model": test_model["model_name"]}) is None
+    assert test_model["model_name"] not in soup.find(id="model-list").get_text()
 
 
 def test_future_end_date_shows_available_until(app, auth_client, test_model):

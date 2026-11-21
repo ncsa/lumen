@@ -6,10 +6,7 @@ from bs4 import BeautifulSoup
 
 def _row_for(html_bytes, model_name):
     soup = BeautifulSoup(html_bytes, "html.parser")
-    for row in soup.find_all("tr"):
-        if row.find("a", string=model_name):
-            return row
-    return None
+    return soup.find("li", class_="model-row", attrs={"data-model": model_name})
 
 
 def test_models_requires_login(client):
@@ -46,7 +43,7 @@ def test_models_hides_llmhub_link_when_unconfigured(app, auth_client, restore_co
     assert "Want a model that’s not listed?" not in soup.get_text()
 
 
-def test_models_header_and_input_modality_pills(app, auth_client):
+def test_models_row_shows_input_and_output_modalities(app, auth_client):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.model_config import ModelConfig
@@ -55,27 +52,22 @@ def test_models_header_and_input_modality_pills(app, auth_client):
             input_cost_per_million=1.0,
             output_cost_per_million=1.0,
             input_modalities=["text", "image"],
+            output_modalities=["text"],
         ))
         db.session.commit()
 
     resp = auth_client.get("/models")
     assert resp.status_code == HTTPStatus.OK
-    soup = BeautifulSoup(resp.data, "html.parser")
-    assert soup.find("th", string="Input") is not None
     row = _row_for(resp.data, "pill-model")
     assert row is not None
-    pills = [s.get_text(strip=True) for s in row.find_all(
-        "span", class_=lambda c: c and "badge" in c and "rounded-pill" in c and "bg-secondary" in c)]
-    assert pills == ["text", "image"]
+    assert row.find(class_="model-modalities").get_text(strip=True) == "Text, Image \u2192 Text"
 
 
 def test_models_row_unknown_modalities_shows_dash(app, auth_client, test_model):
     resp = auth_client.get("/models")
     row = _row_for(resp.data, test_model["model_name"])
     assert row is not None
-    cells = row.find_all("td")
-    assert cells[1].get_text(strip=True) == "\u2014"  # em dash
-    assert not cells[1].find_all("span", class_="badge")
+    assert row.find(class_="model-modalities").get_text(strip=True) == "\u2014"  # em dash
 
 
 def _make_other_owner(app):
@@ -124,7 +116,7 @@ def test_model_detail_404_unknown(auth_client):
     assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
-def test_models_cache_column_shows_the_charged_rates(app, auth_client):
+def test_models_panel_shows_the_charged_cache_rates(app, auth_client):
     with app.app_context():
         from lumen.extensions import db
         from lumen.models.model_config import ModelConfig
@@ -140,22 +132,18 @@ def test_models_cache_column_shows_the_charged_rates(app, auth_client):
     resp = auth_client.get("/models")
     assert resp.status_code == HTTPStatus.OK
 
-    def cache_cell(model_name):
-        cells = _row_for(resp.data, model_name).find_all("td")
-        # The cache column is the last of the three "Coins / 1M tokens" cells.
-        assert cells[2].get_text(strip=True) == "1.00"
-        assert cells[3].get_text(strip=True) == "2.00"
-        return cells[4]
+    def pricing(model_name):
+        row = _row_for(resp.data, model_name)
+        assert row.find(class_="model-price").get_text(strip=True) == "1.00 / 2.00"
+        dds = row.find("dl", class_="model-pricing").find_all("dd")
+        return [d.get_text(strip=True) for d in dds]
 
     # An unconfigured read rate is billed at the input price and an unconfigured
-    # write rate at 0, so the column shows what is charged on the missing side
+    # write rate at 0, so the panel shows what is charged on the missing side
     # rather than a dash or a hover tip.
-    assert cache_cell("cached-model").get_text(strip=True) == "0.10 / 0.00"
-    assert cache_cell("cache-write-model").get_text(strip=True) == "1.00 / 0.50"
-    assert cache_cell("plain-model").get_text(strip=True) == "1.00 / 0.00"
-    for model_name in ("cached-model", "cache-write-model", "plain-model"):
-        row = _row_for(resp.data, model_name)
-        assert row.find("span", attrs={"data-bs-toggle": "tooltip"}) is None
+    assert pricing("cached-model") == ["1.00", "2.00", "0.10", "0.00"]
+    assert pricing("cache-write-model") == ["1.00", "2.00", "1.00", "0.50"]
+    assert pricing("plain-model") == ["1.00", "2.00", "1.00", "0.00"]
 
 
 def test_model_detail_cached_input_row_only_when_set(app, auth_client):

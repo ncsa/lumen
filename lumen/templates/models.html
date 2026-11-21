@@ -4,100 +4,132 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
   <h1 class="mb-0">Model Dashboard</h1>
-  <a class="btn btn-primary" href="{{ url_for('connect.index') }}">Connect your tools</a>
+  <a class="btn btn-primary" href="{{ url_for('connect.index') }}"><i class="bi bi-plug me-1" aria-hidden="true"></i>Connect your tools</a>
 </div>
 <ilw-content>
 
-<div class="table-responsive">
-  <table class="table table-bordered table-hover align-middle">
-    <caption class="visually-hidden">Model health and endpoint status</caption>
-    <thead class="table-light">
-      <tr>
-        <th scope="col" rowspan="2">Model</th>
-        <th scope="col" rowspan="2">Input</th>
-        <th scope="colgroup" colspan="3" class="text-center">Coins / 1M tokens</th>
-        <th scope="col" rowspan="2">Checked</th>
-        <th scope="col" rowspan="2">Status</th>
-        <th scope="col" rowspan="2" class="text-center">Access</th>
-      </tr>
-      <tr>
-        <th scope="col" class="text-end">Input</th>
-        <th scope="col" class="text-end">Output</th>
-        {# Keep this column as wide as its label: with no width hint the auto layout
-           dumps the table's leftover width into it. #}
-        <th scope="col" class="text-end text-nowrap" style="width: 1%">Cache read / write</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for config in configs %}
-      {% set endpoints = endpoints_map.get(config.id, []) %}
-      {% set healthy_eps = endpoints | selectattr("healthy") | list %}
-      <tr>
-        <td>
+{%- set unhealthy = [] %}
+{%- if stats.down %}{% set _ = unhealthy.append(stats.down ~ " down") %}{% endif %}
+{%- if stats.no_endpoints %}{% set _ = unhealthy.append(stats.no_endpoints ~ " no endpoints") %}{% endif %}
+{%- set cards = [
+  ("models", "bi-cpu", "Models", stats.total, "Listed models"),
+  ("healthy", "bi-heart-pulse", "Healthy", stats.healthy,
+     unhealthy | join(" · ") if unhealthy else (stats.degraded ~ " degraded" if stats.degraded else "All healthy")),
+  ("early-access", "bi-stars", "Early Access", stats.early_access, "May change or be removed"),
+  ("needs-ack", "bi-shield-exclamation", "Needs Ack", stats.needs_ack, "Acknowledge before use" if stats.needs_ack else "Nothing to acknowledge"),
+] %}
+<div class="model-stats mt-3 mb-4">
+  {% for key, icon, label, count, subtitle in cards %}
+  <div class="card model-stat" data-stat="{{ key }}">
+    <div class="card-body">
+      <div class="d-flex align-items-center gap-2 model-stat-label"><i class="bi {{ icon }} model-stat-icon" aria-hidden="true"></i>{{ label }}</div>
+      <div class="model-stat-count">{{ count }}</div>
+      <div class="model-stat-subtitle text-muted small">{{ subtitle }}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <h2 class="h5 mb-0">Models</h2>
+    <span class="text-muted small">Coins per 1M tokens</span>
+  </div>
+  <ul class="list-group list-group-flush" id="model-list">
+    {% for config in configs %}
+    {% set endpoints = endpoints_map.get(config.id, []) %}
+    {% set healthy_count = endpoints | selectattr("healthy") | list | length %}
+    {% set status = statuses[config.id] %}
+    {% set ack = ack_map.get(config.id) %}
+    {% set panel_id = "model-panel-" ~ loop.index %}
+    <li class="list-group-item model-row" data-model="{{ config.model_name }}">
+      <div class="d-flex align-items-start gap-2">
+        <button type="button" class="btn btn-sm btn-link model-row-toggle p-0 mt-1" data-bs-toggle="collapse"
+                data-bs-target="#{{ panel_id }}" aria-expanded="false" aria-controls="{{ panel_id }}"
+                aria-label="Show details for {{ config.model_name }}"><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+        <div class="d-flex flex-wrap flex-grow-1 column-gap-3 row-gap-1 model-row-body">
+        <div class="me-auto model-row-main">
           <a href="{{ url_for('models_page.detail', model_name=config.model_name) }}"
-             class="fw-bold text-decoration-none text-nowrap"
+             class="fw-bold text-decoration-none model-name"
              {% if config.description %}title="{{ config.description }}" data-bs-toggle="tooltip" data-bs-placement="right"{% endif %}>{{ config.model_name }}</a>
-        </td>
-        <td>
-          {% if config.input_modalities %}
-            {% for modality in config.input_modalities %}<span class="badge rounded-pill bg-secondary">{{ modality }}</span> {% endfor %}
-          {% else %}
-            <span class="text-muted">&mdash;</span>
+          <div class="text-muted small model-row-meta">
+            <span class="model-modalities">{{ modalities(config) }}</span>
+            <span class="model-limits">{{ token_count(config.context_window) }} context · {{ token_count(config.max_output_tokens) }} max output</span>
+          </div>
+        </div>
+        <div class="text-end ms-auto model-row-side">
+          <div class="model-price text-nowrap">{{ "%.2f"|format(config.input_cost_per_million | float) }} / {{ "%.2f"|format(config.output_cost_per_million | float) }}</div>
+          <div class="model-health small text-nowrap" data-health="{{ status }}">
+            {%- if status == "ok" %}<i class="bi bi-check-circle-fill text-success" aria-hidden="true"></i> <span class="text-success-emphasis">Healthy</span>
+            {%- elif status == "degraded" %}<i class="bi bi-exclamation-triangle-fill text-warning" aria-hidden="true"></i> <span class="text-warning-emphasis">Degraded</span>
+            {%- elif status == "down" %}<i class="bi bi-x-circle-fill text-danger" aria-hidden="true"></i> <span class="text-danger-emphasis">Down</span>
+            {%- else %}<i class="bi bi-dash-circle text-secondary" aria-hidden="true"></i> <span class="text-secondary">No endpoints</span>
+            {%- endif %}
+          </div>
+          {% if ack and not ack.consented %}
+          <div class="model-row-pills">
+            {% if config.needs_ack %}<span class="badge rounded-pill bg-warning text-dark">acknowledge</span>{% endif %}
+            {% if config.early_access %}<span class="badge rounded-pill bg-info text-dark">early access</span>{% endif %}
+          </div>
           {% endif %}
-        </td>
-        <td class="text-end">{{ "%.2f"|format(config.input_cost_per_million | float) }}</td>
-        <td class="text-end">{{ "%.2f"|format(config.output_cost_per_million | float) }}</td>
-        {#- An unset read rate is billed at the input price and an unset write rate at 0, so the column shows what is actually charged. -#}
-        {% set cache_read = config.cached_input_cost_per_million if config.cached_input_cost_per_million is not none else config.input_cost_per_million %}
-        {% set cache_write = config.cache_write_cost_per_million if config.cache_write_cost_per_million is not none else 0 %}
-        <td class="text-end text-nowrap">{{ "%.2f"|format(cache_read | float) }} / {{ "%.2f"|format(cache_write | float) }}</td>
-        <td>
-          {% set checked_at = endpoints | map(attribute="last_checked_at") | select("ne", None) | list %}
-          {% if checked_at %}
-            <span class="local-datetime" data-relative data-utc="{{ (checked_at | max).strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
-          {% else %}
-            <span class="text-muted">Never</span>
-          {% endif %}
-        </td>
-        <td class="text-nowrap">
-          {% if not config.active %}
-            <span class="badge bg-secondary">disabled</span>
-          {% elif endpoints | length == 0 %}
-            <span class="badge bg-secondary">no endpoints</span>
-          {% elif healthy_eps | length == endpoints | length %}
-            <span class="badge bg-success">ok</span>
-          {% elif healthy_eps | length > 0 %}
-            <span class="badge bg-warning text-dark">degraded</span>
-          {% else %}
-            <span class="badge bg-danger">down</span>
-          {% endif %}
-          {% if config.active and endpoints %}
-            <span class="fw-bold {% if healthy_eps %}text-success{% else %}text-danger{% endif %}">{{ healthy_eps | length }}</span>/{{ endpoints | length }}
-          {% endif %}
-        </td>
-        <td class="text-center text-nowrap">
-          {% set ack = ack_map.get(config.id) %}
-          {% if ack and ack.consented %}
-            <button type="button" class="badge rounded-pill bg-success border-0 consent-info-btn"
-                    data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}"
-                    data-consented-at="{{ ack.consent_at.strftime('%Y-%m-%dT%H:%M:%SZ') if ack.consent_at else '' }}">granted<span class="visually-hidden"> for {{ config.model_name }}, show acknowledgment details</span></button>
-          {% elif ack %}
-            {% if config.needs_ack %}
-              <button type="button" class="badge rounded-pill bg-warning text-dark border-0 ack-btn" aria-haspopup="dialog"
-                      data-name="{{ config.model_name }}" data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}">acknowledge<span class="visually-hidden"> for {{ config.model_name }}</span></button>
+        </div>
+        </div>
+      </div>
+      <div class="collapse" id="{{ panel_id }}" data-bs-parent="#model-list">
+        <div class="model-panel mt-2 pt-2">
+        <div class="row g-3">
+          <div class="col-sm-4">
+            <h3 class="model-panel-heading">Health</h3>
+            <dl class="model-panel-list mb-0">
+              <dt>Last checked</dt>
+              <dd>
+                {%- set checked_at = endpoints | map(attribute="last_checked_at") | select("ne", None) | list %}
+                {%- if checked_at %}<span class="local-datetime" data-relative data-utc="{{ (checked_at | max).strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span>
+                {%- else %}<span class="text-muted">Never</span>{% endif -%}
+              </dd>
+              <dt>Health checks</dt>
+              <dd class="model-health-checks">{% if endpoints %}{{ healthy_count }}/{{ endpoints | length }} passed{% else %}<span class="text-muted">&mdash;</span>{% endif %}</dd>
+            </dl>
+          </div>
+          <div class="col-sm-4">
+            <h3 class="model-panel-heading">Detailed pricing <span class="fw-normal text-muted">· coins / 1M tokens</span></h3>
+            {#- An unset read rate is billed at the input price and an unset write rate at 0, so the panel shows what is actually charged (#685). -#}
+            {% set cache_read = config.cached_input_cost_per_million if config.cached_input_cost_per_million is not none else config.input_cost_per_million %}
+            {% set cache_write = config.cache_write_cost_per_million if config.cache_write_cost_per_million is not none else 0 %}
+            <dl class="model-panel-list model-pricing mb-0">
+              <dt>Input</dt><dd>{{ "%.2f"|format(config.input_cost_per_million | float) }}</dd>
+              <dt>Output</dt><dd>{{ "%.2f"|format(config.output_cost_per_million | float) }}</dd>
+              <dt>Cached read</dt><dd>{{ "%.2f"|format(cache_read | float) }}</dd>
+              <dt>Cached write</dt><dd>{{ "%.2f"|format(cache_write | float) }}</dd>
+            </dl>
+          </div>
+          <div class="col-sm-4 text-sm-end model-access">
+            <h3 class="model-panel-heading">Access</h3>
+            {% if ack and ack.consented %}
+              <button type="button" class="badge rounded-pill bg-success border-0 consent-info-btn"
+                      data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}"
+                      data-consented-at="{{ ack.consent_at.strftime('%Y-%m-%dT%H:%M:%SZ') if ack.consent_at else '' }}">granted<span class="visually-hidden"> for {{ config.model_name }}, show acknowledgment details</span></button>
+            {% elif ack %}
+              {% if config.needs_ack %}
+                <button type="button" class="badge rounded-pill bg-warning text-dark border-0 ack-btn" aria-haspopup="dialog"
+                        data-name="{{ config.model_name }}" data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}">acknowledge<span class="visually-hidden"> for {{ config.model_name }}</span></button>
+              {% endif %}
+              {% if config.early_access %}
+                <button type="button" class="badge rounded-pill bg-info text-dark border-0 ack-btn" aria-haspopup="dialog"
+                        data-name="{{ config.model_name }}" data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}">early access<span class="visually-hidden"> for {{ config.model_name }}</span></button>
+              {% endif %}
+            {% else %}
+              <span class="text-muted small">Open</span>
             {% endif %}
-            {% if config.early_access %}
-              <button type="button" class="badge rounded-pill bg-info text-dark border-0 ack-btn" aria-haspopup="dialog"
-                      data-name="{{ config.model_name }}" data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}">early access<span class="visually-hidden"> for {{ config.model_name }}</span></button>
-            {% endif %}
-          {% endif %}
-        </td>
-      </tr>
-      {% else %}
-      <tr><td colspan="8" class="text-center text-muted">No models configured.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+          </div>
+        </div>
+        </div>
+      </div>
+    </li>
+    {% else %}
+    <li class="list-group-item text-center text-muted">No models configured.</li>
+    {% endfor %}
+  </ul>
 </div>
 {% if config.LLMHUB_URL %}
 <div class="alert alert-info d-flex flex-wrap align-items-center gap-2 mb-0" role="note">

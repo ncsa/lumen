@@ -1,42 +1,64 @@
 # Models
 
-The **Models** page (`/models`) shows every AI model available to you in your Lumen instance, along with its pricing and current health. Models that are owned by another user are not listed, and their detail URLs return **Not Found** without exposing metadata. Disabled, expired, and deleted models are hidden the same way.
+The **Model Dashboard** (`/models`) shows every AI model available to you in your Lumen instance, with a summary of their health at the top and one compact row per model below. Models that are owned by another user are not listed, and their detail URLs return **Not Found** without exposing metadata. Disabled, expired, and deleted models are hidden the same way.
 
-![Models dashboard](../img/models.png)
+![Model Dashboard](../img/models.png)
 
-If a model you need is not listed, you can launch it yourself with [LLMHub](https://llmhub.computes.illinois.edu). If your administrator has configured an LLMHub link, it appears below the table.
+The **Connect your tools** button in the header takes you to the setup instructions for your coding tools and SDKs.
 
-## Table Columns
+If a model you need is not listed, you can launch it yourself with [LLMHub](https://llmhub.computes.illinois.edu). If your administrator has configured an LLMHub link, it appears below the model list.
 
-| Column | Description |
-|--------|------------|
-| **Model** | Clickable name — links to the model detail page |
-| **Input** | What the model accepts, one pill per modality (text, image, audio) — a dash means the instance hasn't published modality info |
-| **Coins / 1M tokens — Input** | Cost per million input tokens |
-| **Coins / 1M tokens — Output** | Cost per million output tokens |
-| **Coins / 1M tokens — Cache read / write** | Cost per million tokens for prompt-cache reads and writes, in that order. A cache-read rate the model does not configure is billed at the input price and a cache-write rate at 0, so the column always shows what you are actually charged |
-| **Checked** | How long ago the most recent health check ran (e.g. `5 min. ago`); hover over or tab to it for the full date and time. It updates every minute while the page is open. **Never** means no check has run yet |
-| **Status** | Current availability (see below), followed by how many of the model's backend servers are currently reachable out of the total configured (e.g. **ok** `4/4`, **degraded** `2/4`) |
-| **Access** | Whether you must acknowledge the model's terms before use, or **granted** once you have (see below) |
+## Summary Cards
 
-## Status Badges
+Four cards at the top summarise the models listed for you:
 
-| Badge | Meaning |
+| Card | Number | Subtitle |
+|------|--------|----------|
+| **Models** | Every model listed on the page, including models with no endpoints | "Listed models" |
+| **Healthy** | Models that can serve requests right now: **Healthy** and **Degraded** models (at least one working backend) | The number of **Down** and **No endpoints** models when there are any (e.g. "1 down · 2 no endpoints"); otherwise the number of **Degraded** models; otherwise "All healthy" |
+| **Early Access** | Early-access models, which may change or be removed at any time | "May change or be removed" |
+| **Needs Ack** | Models you still have to acknowledge before you can use them | "Acknowledge before use", or "Nothing to acknowledge" when the number is 0 |
+
+The cards are worked out when the page loads; reload the page to update them, for example after acknowledging a model.
+
+## Model Rows
+
+Each model is one row. Without opening it, a row shows:
+
+- **Name** — links to the [model detail page](model-detail.md).
+- **Modalities** — what the model accepts and produces, as input → output (e.g. `Text, Image → Text`). A dash means the instance hasn't published that information.
+- **Context and max output** — the model's context window and the most tokens it can generate per response (e.g. `128K context · 8K max output`). A dash means the value is not set.
+- **Price** — coins per million input / output tokens (e.g. `1.00 / 2.00`).
+- **Health** — the model's current availability (see below).
+- **acknowledge** / **early access** pills — shown under the health label while you still have to accept the model's terms.
+
+### Health Labels
+
+| Label | Meaning |
 |-------|---------|
-| **ok** (green) | All backends are healthy — model is fully available |
-| **degraded** (yellow) | Some backends are down, but at least one is working |
-| **down** (red) | No backends are reachable — model is temporarily unavailable |
-| **disabled** (gray) | Model has been turned off |
-| **no endpoints** (gray) | No backends have been set up for this model |
+| **Healthy** (green check) | All backends are healthy — model is fully available |
+| **Degraded** (yellow warning) | Some backends are down, but at least one is working |
+| **Down** (red cross) | No backends are reachable — model is temporarily unavailable |
+| **No endpoints** (grey) | No backends have been set up for this model |
 
-Models with **no endpoints** show the badge alone, without a healthy count.
+The **Healthy** card counts **Degraded** models too, because they still answer requests; the row keeps the separate **Degraded** label so you can see the model is running with fewer backends.
 
-In the **Access** column, models that require a one-time acknowledgment show an **acknowledge** pill, and early-access models show an **early access** pill — these models may change or be removed at any time, and you must acknowledge that before using them. Click either pill to open the acknowledgment dialog, which shows every notice that applies to the model; **Accept & Enable** records your acknowledgment and the pills are replaced by a green **granted** pill; click **granted** to see the notices you accepted and when you acknowledged them. **Cancel** leaves the model unchanged. If a model gains a new requirement after you acknowledged it, its pills appear again until you acknowledge the new terms. Models without requirements leave the column empty. A model with an end date disappears from this page once the date passes.
+## Model Details
+
+Click the arrow at the start of a row (or tab to it and press Enter or Space) to open the model's details. Only one row is open at a time: opening another row closes the previous one. The details show:
+
+- **Health** — **Last checked**: how long ago the most recent health check ran (e.g. `5 min. ago`); hover over or tab to it for the full date and time. It updates every minute while the page is open. **Never** means no check has run yet. **Health checks**: how many of the model's backends passed their last check out of the total configured (e.g. `2/4 passed`).
+- **Detailed pricing** — coins per million tokens for **Input**, **Output**, **Cached read** and **Cached write**. A cache-read rate the model does not configure is billed at the input price and a cache-write rate at 0, so these always show what you are actually charged.
+- **Access** — see below.
+
+## Access
+
+Models that require a one-time acknowledgment show an **acknowledge** button under **Access**, and early-access models show an **early access** button — these models may change or be removed at any time, and you must acknowledge that before using them. Click either button to open the acknowledgment dialog, which shows every notice that applies to the model. **Accept & Enable** records your acknowledgment and the buttons are replaced by a green **granted** pill; click **granted** to see the notices you accepted and when you acknowledged them. **Cancel** leaves the model unchanged. If a model gains a new requirement after you acknowledged it, its buttons appear again until you acknowledge the new terms. Models without requirements show **Open**. A model with an end date disappears from this page once the date passes.
 
 ## Understanding Pricing
 
 Coins are Lumen's internal currency. See the [Introduction](../introduction.md#tokens-and-coins) for a full explanation of how tokens and coins relate. The prices shown here are per million tokens — typical single messages cost a small fraction of that.
 
-Prompt-cache reads and writes are priced separately when a model configures those rates. With no cache-read rate, cached tokens are charged the normal input price; with no cache-write rate, cache writes are free. The cache column shows those figures.
+Prompt-cache reads and writes are priced separately when a model configures those rates. With no cache-read rate, cached tokens are charged the normal input price; with no cache-write rate, cache writes are free. The **Detailed pricing** section shows those figures.
 
 Models with higher output rates tend to be more capable or larger. If you are cost-sensitive, compare models on the detail page before running a long batch job.

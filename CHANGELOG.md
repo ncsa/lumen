@@ -8,6 +8,10 @@ All notable changes to Lumen will be documented in this file.
 
 - `POST /v1/embeddings` for embedding models, billed per input token at the model's input price; embedding models are hidden from chat and the OpenCode config. (#681)
 
+### Changed
+
+- Redesign the Models page as a dashboard with summary cards and expandable model rows. (#694)
+
 ### Fixed
 
 - Fix the `anthropic-version` route test, which had no model set up and failed with a 404 after 2.4.0 started accepting any version. (#676)
