@@ -26,7 +26,7 @@
   ("needs-ack", "needs_ack", "bi-lock", "Needs Ack", stats.needs_ack, ack_subtitle, ack_detail),
 ] %}
 {%- set active_view = show or "all" %}
-{#- Healthy card status bar: red while any model is down, yellow while some are only degraded. -#}
+{#- Healthy card subtitle color: red while any model is down, yellow while some are only degraded. -#}
 {%- set health_class = "model-stat-health-down" if stats.down else ("model-stat-health-degraded" if stats.degraded else "") %}
 <div class="model-stats mt-3 mb-3" role="group" aria-label="Filter models">
   {% for key, view, icon, label, count, subtitle, detail in cards %}

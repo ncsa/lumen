@@ -114,36 +114,24 @@ def _theme_color(page, name):
     }""", name)
 
 
-def _bars(page, key):
-    """The card's visible inset bars as {"top" | "bottom": colour}."""
-    return page.eval_on_selector(_card(key), """el => {
-        const bars = {};
-        // Each layer reads like "rgb(232, 74, 39) 0px 4px 0px 0px inset".
-        for (const m of getComputedStyle(el).boxShadow.matchAll(/(rgba?\\([^)]*\\)) 0px (-?\\d+)px 0px 0px inset/g)) {
-            if (m[1] === 'rgba(0, 0, 0, 0)') continue;
-            bars[Number(m[2]) > 0 ? 'top' : 'bottom'] = m[1];
-        }
-        return bars;
-    }""")
+def _shadow(page, key):
+    return page.eval_on_selector(_card(key), "el => getComputedStyle(el).boxShadow")
 
 
-def test_active_card_has_theme_border_and_top_bar(open_models):
+def test_active_card_has_theme_border_only(open_models):
     page, _ = open_models()
-    primary = _theme_color(page, "--theme-primary")
-    accent = _theme_color(page, "--theme-accent")
     border = page.eval_on_selector(_card("models"), "el => getComputedStyle(el).borderTopColor")
     other = page.eval_on_selector(_card("early-access"), "el => getComputedStyle(el).borderTopColor")
-    assert border == primary
+    assert border == _theme_color(page, "--theme-primary")
     assert other != border
-    assert _bars(page, "models") == {"top": accent}
-    assert _bars(page, "early-access") == {}
+    assert _shadow(page, "models") == "none"
 
 
-def test_active_healthy_card_keeps_its_status_bar(open_models):
+def test_healthy_card_has_no_bar_while_a_model_is_down(open_models):
+    """The down state colors the subtitle only; the card itself gets no bar, active or not."""
     page, _ = open_models("?show=healthy")
-    bars = _bars(page, "healthy")
-    assert bars["top"] == _theme_color(page, "--theme-accent")
-    assert "bottom" in bars and bars["bottom"] != bars["top"]
+    assert page.eval_on_selector(_card("healthy"), "el => el.classList.contains('model-stat-health-down')")
+    assert _shadow(page, "healthy") == "none"
 
 
 def test_cards_work_from_the_keyboard(open_models):
