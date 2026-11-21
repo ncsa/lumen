@@ -7,6 +7,7 @@ All notable changes to Lumen will be documented in this file.
 ### Added
 
 - `POST /v1/embeddings` for embedding models, billed per input token at the model's input price; embedding models are hidden from chat and the OpenCode config. (#681)
+- Add `GET /v1/me`, returning the signed-in user's profile and per-model usage for a UTC calendar month (default: current; `?period=all` for lifetime) as JSON via the session or a personal API key; project and OAuth-issued keys are refused. (#72)
 
 ### Fixed
 
