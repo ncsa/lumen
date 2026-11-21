@@ -404,3 +404,24 @@ def test_cached_tokens_are_billed_at_the_input_price(
         assert float(log.cost) == 0.003
         bal = db.session.execute(select(EntityBalance)).scalar_one()
         assert float(bal.coins_left) == pytest.approx(100 - 0.003)
+
+
+def test_embedding_model_is_listed_and_callable(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+):
+    """A model marked as an embedding model is hidden from chat, but /v1/models
+    still lists it with its marker, and /v1/embeddings serves it."""
+    token, _ = api_key
+    with app.app_context():
+        _grant_finite_pool(app, test_user["id"])
+        _set_model_flag(app, test_model, input_modalities=["text"], output_modalities=["embedding"])
+        model_cache.refresh(app)
+    _upstream(monkeypatch, _response())
+
+    listed = client.get("/v1/models", headers={"Authorization": f"Bearer {token}"}).get_json()["data"]
+    entry = next(m for m in listed if m["id"] == "test-model")
+    assert entry["output_modalities"] == ["embedding"]
+
+    resp = _post(client, token, {"model": "test-model", "input": "hi"})
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.get_json()["model"] == "test-model"

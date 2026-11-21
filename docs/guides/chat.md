@@ -9,7 +9,7 @@ When you start a new conversation, a notice explains that the built-in chat is i
 ## Page Layout
 
 - **Left sidebar** — Lists your conversations. Click any conversation to reload its message history.
-- **Model selector** — At the top of the chat area. Choose which model to send your message to. Models that require acknowledgment show a warning (⚠) if you haven't acknowledged them yet. Models are omitted when your account or project has no coin pool, because acknowledging them would still leave them unusable.
+- **Model selector** — At the top of the chat area. Choose which model to send your message to. Models that require acknowledgment show a warning (⚠) if you haven't acknowledged them yet. Models are omitted when your account or project has no coin pool, because acknowledging them would still leave them unusable. Embedding models are not listed: they turn text into vectors and are called through the API's `/v1/embeddings`.
 - **Chat area** — Displays message bubbles. Your messages appear on the right; assistant replies appear on the left.
 - **Message detail** — Each assistant message has an info icon (ⓘ). Click it to see the token counts, response duration, and output speed for that reply.
 - **Copy reply** — The copy icon under each assistant reply copies that reply as Markdown.

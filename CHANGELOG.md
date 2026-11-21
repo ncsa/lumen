@@ -6,7 +6,7 @@ All notable changes to Lumen will be documented in this file.
 
 ### Added
 
-- `POST /v1/embeddings` for embedding models, billed per input token at the model's input price. (#681)
+- `POST /v1/embeddings` for embedding models, billed per input token at the model's input price; embedding models are hidden from chat and the OpenCode config. (#681)
 
 ### Fixed
 

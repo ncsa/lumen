@@ -547,6 +547,9 @@ sync_models() {
      | select(($skip_aliases | not) or (.parent == null))
      # OpenCode chats in text, so skip models that take no text input (e.g. audio-only); unknown modalities are kept.
      | select(((.input_modalities // []) | length) == 0 or ((.input_modalities | index("text")) != null))
+     # Embedding models (output_modalities ["embedding"]) cannot chat; they are called through /v1/embeddings.
+     # Only an array can hold the marker; any other value (a stored scalar) is not one.
+     | select(((.output_modalities | type) != "array") or ((.output_modalities | index("embedding")) == null))
      | {
        key: .id,
        value: (

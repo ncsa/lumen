@@ -10,6 +10,24 @@ from lumen.timeutils import utcnow
 from ..extensions import db
 from .model_alias import ModelAlias
 
+#: The output modality that marks an embedding model. Sync writes it for a
+#: backend that reports is_embedding, and config.yaml can set it by hand:
+#: ``output_modalities: ["embedding"]``.
+EMBEDDING_MODALITY = "embedding"
+
+
+def is_embedding_model(config) -> bool:
+    """True when the model produces embeddings rather than text.
+
+    Takes a ModelConfig, a model_cache.ModelSnapshot or anything else with an
+    ``output_modalities`` attribute. Embedding models are callable only through
+    ``/v1/embeddings``; chat and the OpenCode config leave them out.
+    """
+    value = getattr(config, "output_modalities", None)
+    # Only the list (DB) and tuple (snapshot) shapes can hold the marker; a
+    # scalar or a string stored by an older config is simply not one.
+    return isinstance(value, (list, tuple)) and EMBEDDING_MODALITY in value
+
 
 class ModelConfig(db.Model):
     """Configuration and metadata for a proxied AI model.
@@ -56,7 +74,7 @@ class ModelConfig(db.Model):
     supports_function_calling: Mapped[Optional[bool]] = mapped_column(db.Boolean, comment="Whether the model supports tool/function-calling")
     # e.g. ["text", "image"]
     input_modalities: Mapped[Optional[Any]] = mapped_column(db.JSON, comment='Supported input types, e.g. ["text", "image"]')
-    # e.g. ["text"]
+    # e.g. ["text"]; ["embedding"] marks an embedding model
     output_modalities: Mapped[Optional[Any]] = mapped_column(db.JSON, comment='Supported output types, e.g. ["text"]')
     # Total context window in tokens (input + output)
     context_window: Mapped[Optional[int]] = mapped_column(db.Integer, comment="Total context window in tokens (input + output)")

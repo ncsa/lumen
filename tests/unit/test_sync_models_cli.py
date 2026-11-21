@@ -42,11 +42,26 @@ def test_cli_multimodal_false_strips_image():
     assert changes["input_modalities"] == (["text", "image"], ["text"])
 
 
-def test_cli_embedding_sets_text_in_empty_out():
-    """is_embedding=True → input=['text'], output=[]."""
+def test_cli_embedding_sets_text_in_embedding_out():
+    """is_embedding=True → input=['text'], output=['embedding'] (the embedding marker)."""
     changes = _changes({}, {**_SGLANG, "is_embedding": True, "enable_multimodal": None}, None)
     assert changes["input_modalities"] == (None, ["text"])
-    assert changes["output_modalities"] == (None, [])
+    assert changes["output_modalities"] == (None, ["embedding"])
+
+
+def test_cli_non_embedding_leaves_empty_output_unmarked():
+    """A chat backend (is_embedding false) never turns the text-in / []-out pair into the marker."""
+    changes = _changes({"input_modalities": ["text"], "output_modalities": []},
+                       {**_SGLANG, "is_embedding": False, "enable_multimodal": None}, None)
+    assert "output_modalities" not in changes
+
+
+def test_cli_embedding_replaces_legacy_empty_output():
+    """A model synced before the marker existed (output []) is re-synced to it."""
+    changes = _changes({"input_modalities": ["text"], "output_modalities": []},
+                       {**_SGLANG, "is_embedding": True, "enable_multimodal": None}, None)
+    assert "input_modalities" not in changes
+    assert changes["output_modalities"] == ([], ["embedding"])
 
 
 def test_cli_multimodal_false_keeps_audio():

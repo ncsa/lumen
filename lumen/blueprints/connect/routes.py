@@ -4,7 +4,7 @@ from flask import Blueprint, current_app, g, render_template, request
 from sqlalchemy import select
 
 from lumen.extensions import db
-from lumen.models.model_config import ModelConfig
+from lumen.models.model_config import ModelConfig, is_embedding_model
 from lumen.services.llm import bulk_model_access_info
 
 connect_bp = Blueprint("connect", __name__)
@@ -28,6 +28,9 @@ def _accessible_models(entity_id):
             "name": c.model_name,
             "input_modalities": c.input_modalities or [],
             "output_modalities": c.output_modalities or [],
+            # Embedding models are left out of the generated OpenCode config:
+            # OpenCode chats, and an embedding model cannot.
+            "embedding": is_embedding_model(c),
             # Capability booleans so the generated OpenCode config can advertise
             # what each model can do (issue #79). None stays None — "unknown"
             # must stay distinguishable from false on the client.
