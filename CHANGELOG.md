@@ -13,6 +13,7 @@ All notable changes to Lumen will be documented in this file.
 ### Changed
 
 - Redesign the Models page as a dashboard with summary cards that filter the list, sortable columns and expandable model rows. (#694)
+- Models page shows context window and max output in 1024-based K/M units. (#714)
 
 ### Fixed
 

@@ -189,7 +189,7 @@ def test_needs_ack_card_with_nothing_to_acknowledge(auth_client, test_model):
 
 def test_collapsed_row(app, auth_client, test_model, test_model_endpoint):
     _set_model(app, test_model["id"], input_modalities=["text", "image"], output_modalities=["text"],
-               context_window=131072, max_output_tokens=8192,
+               context_window=131066, max_output_tokens=8192,
                cached_input_cost_per_million=0.25, cache_write_cost_per_million=1.5)
 
     row = _row(_soup(auth_client), "test-model")
@@ -221,8 +221,9 @@ def test_collapsed_row_dash_for_missing_side(app, auth_client, test_model):
 
 
 @pytest.mark.parametrize(("value", "text"), [
-    (None, "—"), (0, "—"), (512, "512"), (1500, "1.5K"), (8192, "8K"), (128000, "128K"),
-    (131072, "128K"), (200000, "200K"), (1_000_000, "1M"), (1_048_576, "1M"), (2_500_000, "2.5M"),
+    (None, "—"), (0, "—"), (512, "512"), (1023, "1023"), (1024, "1K"), (1500, "1.5K"), (8192, "8K"),
+    (128000, "125K"), (131066, "128K"), (131072, "128K"), (200000, "195.3K"), (262138, "256K"),
+    (524282, "512K"), (1_000_000, "976.6K"), (1_048_575, "1M"), (1_048_576, "1M"), (2_500_000, "2.4M"),
 ])
 def test_token_count(value, text):
     assert _token_count(value) == text
