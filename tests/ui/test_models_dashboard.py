@@ -105,6 +105,8 @@ def test_healthy_card_counts_degraded_and_names_down_and_no_endpoints(app, auth_
     ([(False,)], "1 down"),
     ([()], "1 no endpoints"),
     ([(True, False), (True, False)], "2 degraded"),
+    ([(True, False), ()], "1 degraded · 1 no endpoints"),
+    ([(False,), (True, False), ()], "1 down · 1 no endpoints"),
     ([(True,), (True, True)], "All healthy"),
 ])
 def test_healthy_card_subtitle(app, auth_client, health, subtitle):
@@ -113,6 +115,28 @@ def test_healthy_card_subtitle(app, auth_client, health, subtitle):
     _add_model(app, "always-ok", True)
 
     assert _card(_soup(auth_client), "healthy")[1] == subtitle
+
+
+@pytest.mark.parametrize(("health", "status"), [
+    ([(False,), (True, False)], "down"),
+    ([(False,)], "down"),
+    ([(True, False), (True, False)], "degraded"),
+    ([(True, False), ()], "degraded"),
+    ([()], None),
+    ([(True,), (True, True)], None),
+])
+def test_healthy_card_health_class(app, auth_client, health, status):
+    """Red while any model is down, yellow while some are only degraded; no-endpoint models alone color nothing."""
+    for i, endpoints in enumerate(health):
+        _add_model(app, f"model-{i}", *endpoints)
+    _add_model(app, "always-ok", True)
+
+    soup = _soup(auth_client)
+    classes = soup.find(class_="model-stat", attrs={"data-stat": "healthy"})["class"]
+    assert [c for c in classes if c.startswith("model-stat-health-")] == ([f"model-stat-health-{status}"] if status else [])
+    for key in ("models", "early-access", "needs-ack"):
+        card = soup.find(class_="model-stat", attrs={"data-stat": key})
+        assert not any(c.startswith("model-stat-health-") for c in card["class"])
 
 
 def test_early_access_and_needs_ack_cards(app, auth_client, test_user):
