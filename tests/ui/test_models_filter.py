@@ -105,7 +105,15 @@ def test_empty_view_shows_empty_line(auth_client, test_model):
     assert empty.get_text(strip=True) == "No models in this view."
 
 
-def test_no_empty_line_without_models(auth_client):
-    soup = _soup(auth_client, "?show=healthy")
-    assert _empty_line(soup) is None
-    assert soup.find(id="model-list").get_text(strip=True) == "No models configured."
+def _visible_lines(soup):
+    return [li.get_text(strip=True) for li in soup.find(id="model-list").find_all("li") if not li.has_attr("hidden")]
+
+
+@pytest.mark.parametrize("query", ["", "?show=unknown"])
+def test_models_view_without_models_says_none_configured(auth_client, query):
+    assert _visible_lines(_soup(auth_client, query)) == ["No models configured."]
+
+
+@pytest.mark.parametrize("query", ["?show=healthy", "?show=early_access", "?show=needs_ack"])
+def test_filter_without_models_says_empty_view(auth_client, query):
+    assert _visible_lines(_soup(auth_client, query)) == ["No models in this view."]

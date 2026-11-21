@@ -76,6 +76,7 @@ def index():
         "ack_total": len(ack_map),
         "acknowledged": sum(1 for a in ack_map.values() if a["consented"]),
     }
+    show = request.args.get("show")
     return render_template(
         "models.html",
         configs=configs,
@@ -83,7 +84,7 @@ def index():
         ack_map=ack_map,
         statuses=statuses,
         stats=stats,
-        show=request.args.get("show") if request.args.get("show") in SHOW_VIEWS else None,
+        show=show if show in SHOW_VIEWS else None,
         token_count=_token_count,
         modalities=_modalities,
     )

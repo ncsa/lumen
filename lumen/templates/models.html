@@ -149,12 +149,11 @@
       </div>
     </li>
     {% else %}
-    <li class="list-group-item text-center text-muted">No models configured.</li>
+    <li class="list-group-item text-center text-muted model-list-empty"{% if active_view != "all" %} hidden{% endif %}>No models configured.</li>
     {% endfor %}
-    {% if configs %}
-    {#- The active card's number is exactly the rows in its view, so a 0 means an empty view. -#}
-    <li class="list-group-item text-center text-muted model-filter-empty"{% if {"all": stats.total, "healthy": stats.healthy, "early_access": stats.early_access, "needs_ack": stats.needs_ack}[active_view] %} hidden{% endif %}>No models in this view.</li>
-    {% endif %}
+    {#- The active card's number is exactly the rows in its view, so a 0 means an empty view.
+        The Models view keeps "No models configured." for an empty list. -#}
+    <li class="list-group-item text-center text-muted model-filter-empty"{% if active_view == "all" or {"healthy": stats.healthy, "early_access": stats.early_access, "needs_ack": stats.needs_ack}[active_view] %} hidden{% endif %}>No models in this view.</li>
   </ul>
 </div>
 {% if config.LLMHUB_URL %}
@@ -204,12 +203,29 @@
     const cards = document.querySelectorAll('.model-stat[data-show]');
     const rows = document.querySelectorAll('#model-list .model-row');
     const empty = document.querySelector('#model-list .model-filter-empty');
+    const noModels = document.querySelector('#model-list .model-list-empty');
     const matches = {
       all: () => true,
       healthy: row => ['ok', 'degraded'].includes(row.dataset.health),
       early_access: row => row.hasAttribute('data-early-access'),
       needs_ack: row => row.hasAttribute('data-needs-ack'),
     };
+    function forceClose(panel) {
+      panel.classList.remove('show');
+      const toggle = panel.closest('.model-row').querySelector('.model-row-toggle');
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.classList.add('collapsed');
+    }
+    // A panel still opening when its row is filtered out finishes its
+    // transition later; close it then, even if its row is back in view.
+    document.querySelectorAll('#model-list .collapse').forEach(panel => {
+      panel.addEventListener('shown.bs.collapse', () => {
+        if (panel.dataset.closeWhenShown || panel.closest('.model-row').hidden) {
+          delete panel.dataset.closeWhenShown;
+          forceClose(panel);
+        }
+      });
+    });
     cards.forEach(card => card.addEventListener('click', () => {
       const view = card.dataset.show;
       let shown = 0;
@@ -217,18 +233,19 @@
         const visible = matches[view](row);
         if (!visible) {
           // Close an open row that leaves the view so it does not reappear open.
-          const panel = row.querySelector('.collapse.show');
-          if (panel) {
-            panel.classList.remove('show');
-            const toggle = row.querySelector('.model-row-toggle');
-            toggle.setAttribute('aria-expanded', 'false');
-            toggle.classList.add('collapsed');
-          }
+          // A panel mid-transition is neither shown nor hidden yet; if it is
+          // opening (its toggle already reads expanded), close it once shown.
+          const panel = row.querySelector('.collapse, .collapsing');
+          const opening = panel.classList.contains('collapsing')
+            && row.querySelector('.model-row-toggle').getAttribute('aria-expanded') === 'true';
+          if (panel.classList.contains('show')) forceClose(panel);
+          else if (opening) panel.dataset.closeWhenShown = '1';
         }
         row.hidden = !visible;
         if (visible) shown++;
       });
-      if (empty) empty.hidden = shown > 0;
+      empty.hidden = shown > 0 || view === 'all';
+      if (noModels) noModels.hidden = view !== 'all';
       cards.forEach(c => c.setAttribute('aria-pressed', String(c === card)));
       const url = new URL(location.href);
       if (view === 'all') url.searchParams.delete('show');

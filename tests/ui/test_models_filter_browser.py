@@ -51,7 +51,7 @@ def serve_models(auth_client, browser):
         page.on("pageerror", lambda error: errors.append(error))
         page.route("**/*", handle)
         page.goto(f"{ORIGIN}/models{query}")
-        page.wait_for_selector("#model-list .model-row-toggle")
+        page.wait_for_selector("#model-list li", state="attached")
         return page, errors
 
     yield open_page
@@ -153,4 +153,44 @@ def test_empty_view_shows_empty_line(test_model, serve_models):
     page.click(_card("models"))
     assert _visible(page) == ["test-model"]
     assert not _empty_shown(page)
+    assert errors == []
+
+
+def test_empty_models_view_then_filter(serve_models):
+    page, errors = serve_models()
+
+    def lines():
+        return page.eval_on_selector_all("#model-list li", "lis => lis.filter(l => l.offsetParent).map(l => l.textContent.trim())")
+
+    assert lines() == ["No models configured."]
+    page.click(_card("healthy"))
+    assert lines() == ["No models in this view."]
+    page.click(_card("models"))
+    assert lines() == ["No models configured."]
+    assert errors == []
+
+
+@pytest.mark.parametrize("back", [True, False])
+def test_row_filtered_out_while_opening_ends_closed(open_models, back):
+    """Filter a row out while its panel is still opening, then (optionally) switch straight back."""
+    page, errors = open_models()
+    # The tests do not load Bootstrap's CSS; add its collapse transition so the
+    # panel really animates, as in production.
+    page.add_style_tag(content=".collapse:not(.show){display:none}.collapsing{height:0;overflow:hidden;transition:height .35s ease}")
+    # One task, so the clicks land while Bootstrap's opening transition is still running.
+    page.evaluate("""back => {
+        document.querySelector('li[data-model="bare-model"] .model-row-toggle').click();
+        if (!document.querySelector('li[data-model="bare-model"] .collapsing')) throw new Error('not opening');
+        document.querySelector('.model-stat[data-stat="healthy"]').click();
+        if (back) document.querySelector('.model-stat[data-stat="models"]').click();
+    }""", back)
+    page.wait_for_timeout(600)  # past the transition and Bootstrap's shown event
+    if not back:
+        page.click(_card("models"))
+    assert page.eval_on_selector_all("#model-list .collapse.show", "els => els.length") == 0
+    assert page.get_attribute('li[data-model="bare-model"] .model-row-toggle', "aria-expanded") == "false"
+    # The row still opens normally afterwards.
+    page.click('li[data-model="bare-model"] .model-row-toggle')
+    page.wait_for_function("!document.querySelector('#model-list .collapsing')")
+    assert page.eval_on_selector_all("#model-list .collapse.show", "els => els.map(e => e.closest('li').dataset.model)") == ["bare-model"]
     assert errors == []
