@@ -10,6 +10,8 @@ import pytest
 
 from tests.test_theme_colors import THEME_HEADS, THEME_PRIMARY
 
+# The chart-colour block in usage.html, from its CHART_COLOR_FALLBACK line to
+# the closing "})();" at the start of a line; keep that shape if it is edited.
 USAGE = Path(__file__).resolve().parents[2] / "lumen" / "templates" / "usage.html"
 SNIPPET = re.search(
     r"^const CHART_COLOR_FALLBACK = .*?^\}\)\(\);$", USAGE.read_text(), re.MULTILINE | re.DOTALL

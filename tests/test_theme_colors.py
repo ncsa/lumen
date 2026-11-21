@@ -11,25 +11,29 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_CSS = ROOT / "lumen" / "static" / "css" / "app.css"
-TEMPLATES = sorted((ROOT / "lumen" / "templates").glob("**/*.html"))
+TEMPLATES_DIR = ROOT / "lumen" / "templates"
+TEMPLATES = sorted(TEMPLATES_DIR.glob("**/*.html"))
 THEME_HEADS = sorted(ROOT.glob("themes/*/templates/theme/head_extras.html"))
 
 # Illinois navy, its darker hover shade and its translucent focus-ring form.
 NAVY = re.compile(r"#13294b\b|#0e1f38\b|rgba\(\s*19\s*,\s*41\s*,\s*75\s*,", re.IGNORECASE)
-# The only places the navy may still appear: the single --lumen-primary
-# fallback, and the existing var(--bubble-*, ...) fallbacks.
+# The only places the navy may still appear in app.css: the single
+# --lumen-primary fallback, and the existing var(--bubble-*, ...) fallbacks.
 ALLOWED = [
     re.compile(r"--lumen-primary\s*:\s*var\(\s*--theme-primary\s*,\s*#13294b\s*\)", re.IGNORECASE),
     re.compile(r"var\(\s*--bubble-[\w-]+\s*,[^)]*\)", re.IGNORECASE),
-    # usage.html: the chart colour's fallback when --theme-primary is not a
-    # 6-digit hex (the line chart appends '22' for its fill alpha).
-    re.compile(r"\bCHART_COLOR_FALLBACK\s*=\s*'#13294b'", re.IGNORECASE),
 ]
+# The only place it may appear in a template: the usage chart colour's fallback
+# when --theme-primary is not a 6-digit hex (the line chart appends '22' for its
+# fill alpha), as its own declaration line in usage.html.
+TEMPLATE_ALLOWED = {
+    "usage.html": [re.compile(r"^const CHART_COLOR_FALLBACK = '#13294b';$", re.MULTILINE)],
+}
 THEME_PRIMARY = re.compile(r"--theme-primary\s*:\s*(#[0-9a-fA-F]{6})\b")
 
 
-def _hardcoded_navy(text):
-    for pattern in ALLOWED:
+def _hardcoded_navy(text, allowed=ALLOWED):
+    for pattern in allowed:
         text = pattern.sub("", text)
     return [
         f"line {text.count(chr(10), 0, m.start()) + 1}: {m.group(0)}"
@@ -58,14 +62,31 @@ def test_app_css_keeps_the_navy_fallback():
     assert ALLOWED[0].search(APP_CSS.read_text())
 
 
+def _template_navy(name, text):
+    return _hardcoded_navy(text, TEMPLATE_ALLOWED.get(name, []))
+
+
 def test_templates_have_no_hardcoded_navy():
     assert TEMPLATES, "no templates found"
     found = {
-        str(t.relative_to(ROOT)): hits
+        name: hits
         for t in TEMPLATES
-        if (hits := _hardcoded_navy(t.read_text()))
+        if (hits := _template_navy(name := t.relative_to(TEMPLATES_DIR).as_posix(), t.read_text()))
     }
     assert found == {}
+
+
+def test_template_scan_allows_the_chart_fallback_only_in_usage_html():
+    fallback = "const CHART_COLOR_FALLBACK = '#13294b';\n"
+    assert _template_navy("usage.html", fallback) == []
+    assert _template_navy("other.html", fallback) == ["line 1: #13294b"]
+    assert _template_navy("admin/usage.html", fallback) == ["line 1: #13294b"]
+    # Only that declaration line: the same constant elsewhere in usage.html,
+    # and the app.css allowances, are still flagged.
+    assert _template_navy("usage.html", "body { color: CHART_COLOR_FALLBACK = '#13294b'; }\n")
+    assert _template_navy("usage.html", "const CHART_COLOR = '#13294b';\n")
+    assert _template_navy("usage.html", ".a { background: var(--bubble-user, #13294b); }\n")
+    assert _template_navy("usage.html", ":root { --lumen-primary: var(--theme-primary, #13294b); }\n")
 
 
 def test_usage_chart_reads_theme_primary():
@@ -81,11 +102,9 @@ def test_scan_flags_hardcoded_navy():
         ".b { color: #13294B; }\n"
         ".c { color: #0e1f38; }\n"
         ".d { box-shadow: 0 0 0 1px rgba(19, 41, 75, 0.4); }\n"
-        "const CHART_COLOR_FALLBACK = '#13294b';\n"
-        "const CHART_COLOR = '#13294b';\n"
     )
     found = _hardcoded_navy(css)
-    assert [f.split(":")[0] for f in found] == ["line 3", "line 4", "line 5", "line 7"]
+    assert [f.split(":")[0] for f in found] == ["line 3", "line 4", "line 5"]
 
 
 def test_every_theme_is_checked():
