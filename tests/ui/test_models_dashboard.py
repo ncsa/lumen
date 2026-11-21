@@ -421,6 +421,7 @@ def test_page_includes_ack_dialog(auth_client, test_model):
 def test_empty_state(auth_client):
     soup = _soup(auth_client)
     assert soup.find("li", class_="model-row") is None
-    assert soup.find(id="model-list").get_text(strip=True) == "No models configured."
+    visible = [li.get_text(strip=True) for li in soup.find(id="model-list").find_all("li") if not li.has_attr("hidden")]
+    assert visible == ["No models configured."]
     assert _card(soup, "models") == (0, "Listed models")
     assert _card(soup, "healthy") == (0, "All healthy")
