@@ -117,3 +117,14 @@ def test_models_view_without_models_says_none_configured(auth_client, query):
 @pytest.mark.parametrize("query", ["?show=healthy", "?show=early_access", "?show=needs_ack"])
 def test_filter_without_models_says_empty_view(auth_client, query):
     assert _visible_lines(_soup(auth_client, query)) == ["No models in this view."]
+
+
+def test_card_icons_follow_early_access_and_needs_ack_only(auth_client, test_model):
+    icons = {c["data-stat"]: [(i["class"], i.find_previous(string=True).strip()) for i in c.find(class_="model-stat-label").find_all("i")]
+             for c in _cards(_soup(auth_client))}
+    assert icons == {
+        "models": [],
+        "healthy": [],
+        "early-access": [(["bi", "bi-flask", "ms-1", "text-muted"], "Early Access")],
+        "needs-ack": [(["bi", "bi-lock", "ms-1", "text-muted"], "Needs Ack")],
+    }

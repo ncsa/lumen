@@ -16,13 +16,14 @@
 {%- elif stats.needs_ack %}{% set ack_subtitle, ack_detail = "Acknowledge before use", stats.acknowledged ~ " of " ~ stats.ack_total ~ " acknowledged" %}
 {%- else %}{% set ack_subtitle, ack_detail = "All " ~ stats.ack_total ~ " acknowledged", none %}
 {%- endif %}
-{#- Each card is also a filter: (data-stat key, ?show= value, …); Models shows every model. -#}
+{#- Each card is also a filter: (data-stat key, ?show= value, icon, …); Models shows every model.
+    The flask and lock after a label are the same icons the rows show beside a model name. -#}
 {%- set cards = [
-  ("models", "all", "bi-cpu", "Models", stats.total, "Listed models", none),
-  ("healthy", "healthy", "bi-heart-pulse", "Healthy", stats.healthy,
+  ("models", "all", none, "Models", stats.total, "Listed models", none),
+  ("healthy", "healthy", none, "Healthy", stats.healthy,
      unhealthy | join(" · ") if unhealthy else (stats.degraded ~ " degraded" if stats.degraded else "All healthy"), none),
-  ("early-access", "early_access", "bi-stars", "Early Access", stats.early_access, "May change or be removed", none),
-  ("needs-ack", "needs_ack", "bi-shield-exclamation", "Needs Ack", stats.needs_ack, ack_subtitle, ack_detail),
+  ("early-access", "early_access", "bi-flask", "Early Access", stats.early_access, "May change or be removed", none),
+  ("needs-ack", "needs_ack", "bi-lock", "Needs Ack", stats.needs_ack, ack_subtitle, ack_detail),
 ] %}
 {%- set active_view = show or "all" %}
 <div class="model-stats mt-3 mb-4" role="group" aria-label="Filter models">
@@ -30,7 +31,7 @@
   <button type="button" class="card model-stat text-start" data-stat="{{ key }}" data-show="{{ view }}"
           aria-pressed="{{ 'true' if view == active_view else 'false' }}" aria-controls="model-list">
     <span class="card-body d-block">
-      <span class="d-flex align-items-center gap-2 model-stat-label"><i class="bi {{ icon }} model-stat-icon" aria-hidden="true"></i>{{ label }}</span>
+      <span class="d-flex align-items-center model-stat-label">{{ label }}{% if icon %}<i class="bi {{ icon }} ms-1 text-muted" aria-hidden="true"></i>{% endif %}</span>
       <span class="d-block model-stat-count">{{ count }}</span>
       <span class="d-block model-stat-subtitle text-muted small">{{ subtitle }}</span>
       {%- if detail %}

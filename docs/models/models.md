@@ -19,6 +19,8 @@ Four cards at the top summarise the models listed for you:
 | **Early Access** | Early-access models, which may change or be removed at any time | "May change or be removed" |
 | **Needs Ack** | Models you still have to acknowledge before you can use them | "Acknowledge before use" with how many of the models that need acknowledging you have already accepted (e.g. "1 of 3 acknowledged"); "All 3 acknowledged" once you have accepted them all; "Nothing to acknowledge" when no model needs it |
 
+The flask after **Early Access** and the lock after **Needs Ack** are the same icons the model rows show next to a name.
+
 The cards are worked out when the page loads; reload the page to update them, for example after acknowledging a model.
 
 ## Filtering

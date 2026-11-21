@@ -724,7 +724,6 @@ ilw-content .btn-primary:active {
 }
 @media (max-width: 991.98px) { .model-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 575.98px) { .model-stats { grid-template-columns: 1fr; } }
-.model-stat-icon { font-size: 1.25rem; color: #13294b; }
 .model-stat-label { font-weight: 600; }
 .model-stat-count { font-size: 2rem; font-weight: 700; line-height: 1.2; margin-top: .25rem; }
 /* Each card is a filter button; the active one gets a navy accent border (plus aria-pressed). */
