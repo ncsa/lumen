@@ -222,6 +222,12 @@ def test_request_gives_up_after_max_retries(rag, monkeypatch):
     assert len(attempts) == rag.MAX_RETRIES
 
 
+def test_request_without_attempts_raises_runtime_error(rag, monkeypatch):
+    monkeypatch.setattr(rag, "MAX_RETRIES", 0)
+    with pytest.raises(RuntimeError, match="MAX_RETRIES is 0"):
+        rag._request("/v1/embeddings", {})
+
+
 def test_request_does_not_retry_client_errors(rag, monkeypatch):
     attempts = []
 

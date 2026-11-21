@@ -105,7 +105,7 @@ def _request(path, payload):
             last = RuntimeError(f"Request to {BASE_URL}{path} failed: {e}")
         if attempt < MAX_RETRIES - 1:
             time.sleep(2**attempt)
-    raise last
+    raise last or RuntimeError(f"No request attempted: MAX_RETRIES is {MAX_RETRIES}")
 
 
 def get_conn():
