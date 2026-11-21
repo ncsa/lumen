@@ -3,7 +3,7 @@ from http import HTTPStatus
 from urllib.parse import urlparse
 
 import requests as http_requests
-from flask import Blueprint, abort, g, render_template
+from flask import Blueprint, abort, g, render_template, request
 from sqlalchemy import select
 
 from lumen.decorators import login_required
@@ -16,6 +16,9 @@ from lumen.services.llm import _consent_satisfied, bulk_model_access_info, get_m
 from lumen.services.model_resolver import resolve_model_config
 
 models_page_bp = Blueprint("models_page", __name__)
+
+# ``?show=`` values the stat cards filter the list by; anything else shows every model.
+SHOW_VIEWS = ("healthy", "early_access", "needs_ack")
 
 
 def _visible_model_or_404(model_name):
@@ -80,6 +83,7 @@ def index():
         ack_map=ack_map,
         statuses=statuses,
         stats=stats,
+        show=request.args.get("show") if request.args.get("show") in SHOW_VIEWS else None,
         token_count=_token_count,
         modalities=_modalities,
     )

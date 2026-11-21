@@ -21,6 +21,21 @@ Four cards at the top summarise the models listed for you:
 
 The cards are worked out when the page loads; reload the page to update them, for example after acknowledging a model.
 
+## Filtering
+
+Click a card (or tab to it and press Enter or Space) to show only the models it counts. The active card has a dark blue border with an orange bar along the bottom; click **Models** to show every model again.
+
+| Card | Shows |
+|------|-------|
+| **Models** | Every model |
+| **Healthy** | **Healthy** and **Degraded** models |
+| **Early Access** | Early-access models |
+| **Needs Ack** | Models you still have to acknowledge; models you have already accepted are left out |
+
+The numbers on the cards always count every model, whichever card is active. If no model matches, the list reads "No models in this view."
+
+The page address remembers the active card (for example `/models?show=healthy`), so reloading the page or sharing the link opens the same view. The values are `healthy`, `early_access` and `needs_ack`; without one, or with any other value, every model is shown.
+
 ## Model Rows
 
 Each model is one row with three columns. Without opening it, a row shows:
