@@ -2225,6 +2225,10 @@ def _capturing_openai(monkeypatch, routes, create):
                 "translations": type("R", (), {"create": staticmethod(create)})(),
             })()
 
+        @property
+        def embeddings(self):
+            return type("E", (), {"create": staticmethod(create)})()
+
     def _factory(*a, **kw):
         calls.append(kw)
         return _FakeClient()

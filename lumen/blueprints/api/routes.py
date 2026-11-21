@@ -147,7 +147,7 @@ def _api_limit():
 
 
 # One per-key budget shared by every /v1 route that sends a request upstream
-# (chat, completions, audio and Anthropic messages), so a key gets the
+# (chat, completions, audio, embeddings and Anthropic messages), so a key gets the
 # configured limit once in total rather than once per route.
 api_generation_limit = limiter.shared_limit(_api_limit, scope="api", key_func=_api_key_id)
 
@@ -1079,6 +1079,112 @@ def audio_transcriptions():
 @api_generation_limit
 def audio_translations():
     return _do_audio("translations")
+
+
+def _valid_embedding_input(value) -> bool:
+    """True for a non-empty string, or a non-empty list of strings, of token ids
+    or of token-id lists — the input shapes the OpenAI embeddings API accepts."""
+    def is_token(v):
+        return isinstance(v, int) and not isinstance(v, bool)
+
+    if isinstance(value, str):
+        return bool(value)
+    if not isinstance(value, list) or not value:
+        return False
+    return (all(isinstance(v, str) and v for v in value)
+            or all(is_token(v) for v in value)
+            or all(isinstance(v, list) and v and all(is_token(t) for t in v) for v in value))
+
+
+@api_bp.route("/embeddings", methods=["POST"])
+@api_key_required
+@api_generation_limit
+def embeddings():
+    """OpenAI-compatible embeddings, billed per input token at the input price.
+
+    Same shape as the other non-streaming paths: preflight, admit, upstream
+    call, bill_request. Embeddings produce no output tokens, so the request is
+    priced by ``input_cost_per_million`` alone.
+    """
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or not data:
+        return _err("Invalid request body")
+
+    model_name = data.get("model")
+    if not model_name or not isinstance(model_name, str):
+        return _err("model is required")
+    if "input" not in data:
+        return _err("input is required")
+    if not _valid_embedding_input(data["input"]):
+        return _err("input must be a non-empty string, or a non-empty list of strings, "
+                    "token ids or token id lists")
+
+    # An allowlist, like _forward_params: anything else — a client extra_body
+    # included — is dropped. encoding_format is always sent so the response
+    # format does not depend on the backend's own default.
+    forward = {"encoding_format": data.get("encoding_format") or "float"}
+    for key in ("dimensions", "user"):
+        if key in data:
+            forward[key] = data[key]
+
+    model_config, endpoint, effective, err = _preflight(model_name)
+    if err:
+        return err
+
+    entity_id = g.entity.id
+    ak_id = g.api_key.id
+    # Forward the endpoint's override name, else the CANONICAL model name.
+    remote_model   = endpoint.model_name or model_config.model_name
+    ep_api_key     = endpoint.api_key
+    ep_url         = endpoint.url
+    ep_id          = endpoint.id
+    mc_id          = model_config.id
+    mc_in_cost     = float(model_config.input_cost_per_million)
+    timeout, max_retries = upstream_call_bounds(streaming=False)
+    # Read while the request context is current, like the paths above.
+    timing = capture_request_timing()
+    db.session.remove()
+    # Admitted only now, for the same reason as the completions path above:
+    # _preflight owns every rejection. Not a generator either, so the finally
+    # runs when the request itself finishes.
+    live_state = get_live_state()
+    ticket = live_state.admit(model_config.model_name, entity_id)
+
+    try:
+        try:
+            t0 = _time.monotonic()
+            with openai.OpenAI(api_key=ep_api_key, base_url=ep_url,
+                               timeout=timeout, max_retries=max_retries) as client:
+                response = client.embeddings.create(model=remote_model, input=data["input"], **forward)
+            duration = _time.monotonic() - t0
+        except Exception as exc:
+            return _err(*_classify_upstream_error(
+                exc, f"upstream embeddings error (endpoint={ep_id} {ep_url} model={remote_model})"))
+
+        usage = response.usage
+        if usage is None:
+            logger.warning("Upstream did not return usage data (model=%s, entity_id=%s)", model_name, entity_id)
+        # Every prompt token is billed at the input price, cache hits included:
+        # embedding models have no cache price, so a reported cache breakdown is
+        # neither priced nor recorded.
+        in_tok, _, _, _ = usage_tokens(usage)
+        cost = calculate_cost(in_tok, 0, mc_in_cost, 0.0)
+        bill_request(entity_id, mc_id, "api", in_tok, 0, cost,
+                     effective=effective, api_key_id=ak_id,
+                     endpoint_id=ep_id, duration=duration,
+                     timing=timing, upstream_t0=t0,
+                     # Non-streaming: the vectors arrive in one piece, so the
+                     # first chunk is the response and both marks are the duration.
+                     ttft=duration, ttft_visible=duration, outcome="ok")
+
+        # warnings=False: with encoding_format "base64" each embedding is a
+        # string where the SDK's type says list[float]; it is passed through as is.
+        payload = response.model_dump(warnings=False)
+        # Report the requested name (which may be an alias), not the backend's.
+        payload["model"] = model_name
+        return jsonify(payload)
+    finally:
+        live_state.release(ticket)
 
 
 @api_bp.route("/chat/completions", methods=["POST"])

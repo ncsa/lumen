@@ -26,6 +26,7 @@ See [Profile → API Keys](../guides/profile.md#api-keys) to create a key.
 | `POST` | `/v1/completions` | Legacy text-completion endpoint (prefer `/v1/chat/completions`) |
 | `POST` | `/v1/audio/transcriptions` | Transcribe audio to text (speech-to-text) |
 | `POST` | `/v1/audio/translations` | Translate audio into English text |
+| `POST` | `/v1/embeddings` | Turn text or token ids into embedding vectors |
 | `POST` | `/v1/messages` | Anthropic Messages API, see [Anthropic API](anthropic.md) |
 | `POST` | `/v1/messages/count_tokens` | Estimate the prompt tokens of a Messages request |
 
@@ -368,6 +369,46 @@ Speech-to-text models are billed **per hour of audio**. Lumen reads the upstream
 - `{"type": "duration", "seconds": N}` → cost = `N / 3600 × audio_cost_per_hour` (configured per model).
 - `{"type": "tokens", ...}` (e.g. gpt-4o-transcribe-style models) → billed via the usual per-token pricing.
 - No usage reported → the request succeeds at zero cost and a warning is logged.
+
+---
+
+## Embeddings
+
+Lumen proxies the OpenAI-compatible **embeddings** endpoint for embedding models (e.g. Qwen3-Embedding). The request is JSON:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `model` | yes | A Lumen model name (or alias) backed by an embedding endpoint |
+| `input` | yes | A non-empty string, or a non-empty list of strings, of token ids, or of token-id lists |
+| `encoding_format` | no | `float` (default) or `base64` |
+| `dimensions` | no | Number of dimensions, for models that support shortening |
+| `user` | no | An end-user identifier, passed to the backend |
+
+Any other field is ignored. The response is the backend's `{"object": "list", "data": [...], "usage": {...}}` with `model` set to the name you requested.
+
+### curl
+
+```bash
+curl https://lumen.example.com/v1/embeddings \
+  -H "Authorization: Bearer sk_your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen3-embedding-8b", "input": ["first sentence", "second sentence"]}'
+```
+
+### Python (openai SDK)
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="https://lumen.example.com/v1", api_key="sk_your_api_key_here")
+
+result = client.embeddings.create(model="qwen3-embedding-8b", input=["first sentence", "second sentence"])
+print(len(result.data), len(result.data[0].embedding))
+```
+
+### Billing
+
+Embeddings are billed **per input token** at the model's input price: cost = `prompt_tokens × input_cost_per_million / 1,000,000`. There are no output tokens, so the output price never applies. Requests show up in usage and `/v1/usage` as input tokens, and share the per-key rate limit with the other `/v1` model calls. If the backend reports no usage, the request succeeds at zero cost and a warning is logged.
 
 ---
 

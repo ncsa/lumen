@@ -272,6 +272,31 @@ def test_audio_bills_hot_locks_last(
     assert _logged_key(app) == key_id
 
 
+def test_embeddings_bills_hot_locks_last(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, fresh_rate_limit, cutover,
+):
+    from openai.types import CreateEmbeddingResponse
+    token, key_id = api_key
+    _own_limit(app, test_user["id"])
+    response = CreateEmbeddingResponse.model_validate({
+        "object": "list", "model": "upstream",
+        "data": [{"object": "embedding", "index": 0, "embedding": [0.1, 0.2]}],
+        "usage": {"prompt_tokens": 3, "total_tokens": 3},
+    })
+
+    with _writes(app) as log:
+        _capturing_openai(monkeypatch, routes, _upstream(log, response))
+        resp = client.post(
+            "/v1/embeddings",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"model": test_model["model_name"], "input": "hello"},
+        )
+        assert resp.status_code == HTTPStatus.OK
+    assert _billing(log) == (CUTOVER_API_BILLING if cutover else API_BILLING)
+    assert _marker(app) is (True if cutover else None)
+    assert _logged_key(app) == key_id
+
+
 def test_chat_stream_bills_hot_locks_last(app, auth_client, test_user, test_model, test_model_endpoint, cutover):
     """Billing commits before the conversation is written, in its own transaction.
 
