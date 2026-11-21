@@ -10,10 +10,11 @@ import re
 
 import pytest
 
-from tests.test_theme_colors import APP_CSS, THEME_HEADS, THEME_PRIMARY, _contrast
+from tests.test_theme_colors import APP_CSS, THEME_HEADS, THEME_PRIMARY, _contrast, _luminance
 
 CSS = APP_CSS.read_text()
 NO_COLOR_MIX_CSS = CSS.replace("color-mix(", "color-mix-unsupported(")
+assert "color-mix(" not in NO_COLOR_MIX_CSS  # the simulation must catch every use
 PAGE = """<!doctype html>
 <html><head>
 <style>:root {{ --theme-primary: {primary}; }} body {{ background: #fff; }}</style>
@@ -95,6 +96,13 @@ def test_keyboard_focus_ring_is_visible(open_page, primary, css):
     for selector in ("#primary", "#outline", "#login"):
         page.keyboard.press("Tab")
         assert page.evaluate("document.activeElement.id") == selector[1:]
+        if selector == "#login" and css is CSS:
+            # With color-mix() the login button keeps its focus style from
+            # before the theme change: a darker background and no ring.
+            assert _style(page, selector, "boxShadow") == "none"
+            [(bg, _)] = _colours(_style(page, selector, "backgroundColor"))
+            assert _luminance(bg) < _luminance(primary), f"{selector} focus does not darken"
+            continue
         shadow = _style(page, selector, "boxShadow")
         ring = [(c, a) for c, a in _colours(shadow) if c != "#ffffff" and a > 0]
         assert ring, f"{selector} has no visible focus ring: {shadow}"
@@ -113,3 +121,8 @@ def test_illinois_with_color_mix_keeps_its_former_colours(open_page):
     page.keyboard.press("Tab")
     [(ring, alpha)] = _colours(_style(page, "#primary", "boxShadow"))
     assert ring == "#13294b" and alpha == pytest.approx(0.4, abs=0.01)
+    page.keyboard.press("Tab")
+    page.keyboard.press("Tab")
+    assert page.evaluate("document.activeElement.id") == "login"
+    assert _colours(_style(page, "#login", "backgroundColor")) == [("#0e1f38", 1.0)]
+    assert _style(page, "#login", "boxShadow") == "none"

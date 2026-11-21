@@ -527,10 +527,8 @@ ilw-content .btn-primary:active {
     color: #fff;
 }
 
-.btn-login:focus-visible {
-    box-shadow: 0 0 0 0.25rem var(--lumen-primary-ring);
-}
-
+/* With color-mix() the darker :focus background marks keyboard focus, as it
+   always has. Without it that background equals the idle one, so add a ring. */
 @supports not (color: color-mix(in srgb, white, black)) {
     .btn-login:focus-visible {
         box-shadow: 0 0 0 0.15rem #fff, 0 0 0 0.35rem var(--lumen-primary-ring);
