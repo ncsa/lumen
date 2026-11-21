@@ -1,5 +1,8 @@
 """Tests for the /v1/embeddings endpoint."""
+import dataclasses
 import logging
+import math
+from decimal import Decimal
 from http import HTTPStatus
 
 import openai
@@ -142,6 +145,8 @@ def test_embeds_and_bills_input_tokens(
     token, ak_id = api_key
     with app.app_context():
         _grant_finite_pool(app, test_user["id"], coins=100)
+        # The non-zero output price is deliberate: it is what catches any
+        # output tokens being billed (#702).
         _set_model_flag(app, test_model, input_cost_per_million=3.0, output_cost_per_million=50.0)
         model_cache.refresh(app)
     calls, _ = _upstream(monkeypatch, _response(n=n, prompt_tokens=2000))
@@ -363,6 +368,8 @@ def test_output_price_is_never_charged(
     """Even an upstream that reports completion tokens is billed as input only."""
     token, _ = api_key
     with app.app_context():
+        # test_model's output price (2 per million) is deliberately non-zero:
+        # it is what catches any output tokens being billed (#702).
         _grant_finite_pool(app, test_user["id"])
     response = _response(prompt_tokens=10)
     response.usage.completion_tokens = 99
@@ -374,6 +381,76 @@ def test_output_price_is_never_charged(
         assert log.output_tokens == 0
         assert float(log.cost) == round(10 * 1.0 / 1_000_000, 6)
         assert db.session.get(ModelConfig, test_model["id"]).output_cost_per_million == 2
+
+
+@pytest.mark.parametrize("in_rate, out_rate, in_tok, out_tok", [
+    (1.0, 1000.0, 1000, 500),
+    (0.02, 60.0, 37, 4096),
+])
+def test_high_output_price_is_never_charged(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+    in_rate, out_rate, in_tok, out_tok,
+):
+    """An output price far above the input price, with completion tokens
+    reported upstream, still bills input tokens at the input price only, so
+    any output token billed would show up in the cost (#702)."""
+    token, _ = api_key
+    with app.app_context():
+        _grant_finite_pool(app, test_user["id"], coins=100)
+        _set_model_flag(app, test_model, input_cost_per_million=in_rate,
+                        output_cost_per_million=out_rate)
+        model_cache.refresh(app)
+    response = _response(prompt_tokens=in_tok)
+    response.usage.completion_tokens = out_tok
+    _upstream(monkeypatch, response)
+
+    assert _post(client, token, {"model": "test-model", "input": "hi"}).status_code == HTTPStatus.OK
+    expected = round(in_tok * in_rate / 1_000_000, 6)
+    with app.app_context():
+        log = _log()
+        assert log.input_tokens == in_tok
+        assert log.output_tokens == 0
+        assert float(log.cost) == expected
+        bal = db.session.execute(select(EntityBalance)).scalar_one()
+        assert float(bal.coins_left) == pytest.approx(100 - expected)
+
+
+@pytest.mark.parametrize("out_price", ["NaN", "Infinity", "-Infinity"])
+def test_non_finite_cached_output_price_bills_input_only(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, out_price,
+):
+    """A legacy non-finite output price in the model cache (YAML ``.nan`` passes
+    config validation, PostgreSQL numeric stores it) must not turn the bill
+    into NaN: the request succeeds and is billed at the input price only."""
+    token, _ = api_key
+    with app.app_context():
+        _grant_finite_pool(app, test_user["id"], coins=100)
+        _set_model_flag(app, test_model, input_cost_per_million=1.0)
+        model_cache.refresh(app)
+    resolve = model_cache.resolve
+
+    def resolve_with_legacy_price(name):
+        mc = resolve(name)
+        return dataclasses.replace(mc, output_cost_per_million=Decimal(out_price)) if mc else mc
+
+    monkeypatch.setattr(model_cache, "resolve", resolve_with_legacy_price)
+    response = _response(prompt_tokens=1000)
+    response.usage.completion_tokens = 7
+    _upstream(monkeypatch, response)
+
+    resp = _post(client, token, {"model": "test-model", "input": "hi"})
+
+    assert resp.status_code == HTTPStatus.OK
+    expected = round(1000 * 1.0 / 1_000_000, 6)
+    with app.app_context():
+        log = _log()
+        assert log.input_tokens == 1000
+        assert log.output_tokens == 0
+        assert math.isfinite(float(log.cost))
+        assert float(log.cost) == expected
+        bal = db.session.execute(select(EntityBalance)).scalar_one()
+        assert math.isfinite(float(bal.coins_left))
+        assert float(bal.coins_left) == pytest.approx(100 - expected)
 
 
 def test_cached_tokens_are_billed_at_the_input_price(
