@@ -246,6 +246,97 @@ def test_device_flow_stores_key_and_rc_block(home, lumen_server, tmp_path):
     assert f"LUMEN_API_KEY={TEST_KEY}" in r.stdout.decode()
 
 
+def test_login_writes_config_ini_and_keeps_other_lines(home, lumen_server, tmp_path):
+    port = lumen_server.server_address[1]
+    env, _ = fake_bin(tmp_path)
+    ini = home / ".config" / "lumen" / "config.ini"
+    ini.parent.mkdir(parents=True)
+    ini.write_text("# mine\n[lumen]\nchat_model = m1\napi_key = old\n\n[other]\nx = 1\n")
+    ini.chmod(0o644)
+    lumen_server.token_queue = [(200, {"access_token": TEST_KEY, "token_type": "Bearer"})]
+    r = run_script(home, port, args=["--no-opencode", "--relogin"], env_extra=env)
+    assert r.returncode == 0, r.stderr
+    assert ini.read_text() == (
+        f"# mine\n[lumen]\nchat_model = m1\napi_key = {TEST_KEY}\n"
+        f"base_url = http://127.0.0.1:{port}\nopencode = false\n\n[other]\nx = 1\n")
+    assert stat.S_IMODE(ini.stat().st_mode) == 0o600
+
+
+def test_login_creates_config_ini(home, lumen_server, tmp_path):
+    port = lumen_server.server_address[1]
+    env, _ = fake_bin(tmp_path)
+    lumen_server.token_queue = [(200, {"access_token": TEST_KEY, "token_type": "Bearer"})]
+    r = run_script(home, port, args=["--no-opencode"], env_extra=env)
+    assert r.returncode == 0, r.stderr
+    ini = home / ".config" / "lumen" / "config.ini"
+    assert ini.read_text() == (
+        f"[lumen]\nbase_url = http://127.0.0.1:{port}\napi_key = {TEST_KEY}\n"
+        "opencode = false\n")
+    assert stat.S_IMODE(ini.stat().st_mode) == 0o600
+
+
+def _ini(home):
+    return home / ".config" / "lumen" / "config.ini"
+
+
+def _models_fetched(server):
+    return any(path.endswith("/v1/models") for path in server.hits)
+
+
+def test_no_shell_leaves_rc_untouched_and_is_remembered(home, lumen_server, tmp_path):
+    port = lumen_server.server_address[1]
+    env, _ = fake_bin(tmp_path)
+    lumen_server.token_queue = [(200, {"access_token": TEST_KEY, "token_type": "Bearer"})]
+    r = run_script(home, port, args=["--no-shell", "--no-opencode"], env_extra=env)
+    assert r.returncode == 0, r.stderr
+    assert not (home / ".bashrc").exists()
+    keys = json.loads((home / ".config" / "lumen" / "keys.json").read_text())
+    assert keys[host_key(port)] == TEST_KEY
+    assert _ini(home).read_text() == (
+        f"[lumen]\nbase_url = http://127.0.0.1:{port}\napi_key = {TEST_KEY}\n"
+        "shell = false\nopencode = false\n")
+
+
+def test_remembered_options_are_the_next_defaults_and_flags_win(home, lumen_server, tmp_path):
+    port = lumen_server.server_address[1]
+    env, _ = fake_bin(tmp_path)
+    lumen_server.token_queue = [(200, {"access_token": TEST_KEY, "token_type": "Bearer"})]
+    r = run_script(home, port, args=["--no-shell", "--no-opencode"], env_extra=env)
+    assert r.returncode == 0, r.stderr
+    # No flags: opencode=false is remembered, so there is no catalog sync.
+    r = run_script(home, port, env_extra=env)
+    assert r.returncode == 0, r.stderr
+    assert not _models_fetched(lumen_server)
+    assert not (home / ".bashrc").exists()
+    # Flags win over the remembered values and are remembered in turn.
+    lumen_server.token_queue = [(200, {"access_token": TEST_KEY, "token_type": "Bearer"})]
+    r = run_script(home, port, args=["--opencode", "--shell", "--relogin"], env_extra=env)
+    assert r.returncode == 0, r.stderr
+    assert _models_fetched(lumen_server)
+    assert f"export LUMEN_API_KEY='{TEST_KEY}'" in (home / ".bashrc").read_text()
+    ini = _ini(home).read_text()
+    assert "opencode = true" in ini and "shell = true" in ini and "false" not in ini
+    # Remembered again: a plain run now syncs the catalog.
+    lumen_server.hits.clear()
+    r = run_script(home, port, env_extra=env)
+    assert r.returncode == 0, r.stderr
+    assert _models_fetched(lumen_server)
+
+
+def test_remembered_embed_key_does_not_conflict_with_no_opencode(home, lumen_server):
+    port = lumen_server.server_address[1]
+    keys = home / ".config" / "lumen" / "keys.json"
+    keys.parent.mkdir(parents=True)
+    keys.write_text(json.dumps({host_key(port): TEST_KEY}))
+    _ini(home).write_text("[lumen]\nembed_key = true\n")
+    r = run_script(home, port, args=["--no-opencode"])
+    assert r.returncode == 0, r.stderr
+    # Given on the command line the same pair is still an error.
+    r = run_script(home, port, args=["--no-opencode", "--embed-key"])
+    assert r.returncode != 0
+    assert b"--embed-key needs the opencode config" in r.stderr
+
+
 def test_second_run_reuses_stored_key(home, lumen_server):
     port = lumen_server.server_address[1]
     keys = home / ".config" / "lumen" / "keys.json"
@@ -263,7 +354,9 @@ def test_env_key_wins_over_store(home, lumen_server):
                    env_extra={"LUMEN_API_KEY": "sk_from_env_00000"})
     assert r.returncode == 0, r.stderr
     assert "sk_from_env_00000" in r.stdout.decode()
-    assert not (home / ".config" / "lumen").exists()
+    # Nothing about the key is stored; only the remembered option is.
+    assert not (home / ".config" / "lumen" / "keys.json").exists()
+    assert _ini(home).read_text() == "[lumen]\nopencode = false\n"
 
 
 def test_relogin_replaces_stored_key_without_prompt(home, lumen_server):
