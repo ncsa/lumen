@@ -1,3 +1,4 @@
+from collections import Counter
 from http import HTTPStatus
 from urllib.parse import urlparse
 
@@ -55,7 +56,82 @@ def index():
     endpoints_map: dict[int, list] = {}
     for ep in db.session.execute(select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(model_ids), ModelEndpoint.active.is_(True))).scalars().all():
         endpoints_map.setdefault(ep.model_config_id, []).append(ep)
-    return render_template("models.html", configs=configs, endpoints_map=endpoints_map, ack_map=ack_map)
+
+    # One status per model, shared by the stat cards and the rows so both count the same way.
+    statuses = {c.id: _health_status(endpoints_map.get(c.id, [])) for c in configs}
+    status_counts = Counter(statuses.values())
+    stats = {
+        "total": len(configs),
+        # Healthy counts every model that serves requests, degraded included.
+        "healthy": status_counts["ok"] + status_counts["degraded"],
+        "degraded": status_counts["degraded"],
+        "down": status_counts["down"],
+        "no_endpoints": status_counts["no_endpoints"],
+        "early_access": sum(1 for c in configs if c.early_access),
+        "needs_ack": sum(1 for a in ack_map.values() if not a["consented"]),
+        # Models with an acknowledgment requirement, and how many of them this user has accepted.
+        "ack_total": len(ack_map),
+        "acknowledged": sum(1 for a in ack_map.values() if a["consented"]),
+    }
+    return render_template(
+        "models.html",
+        configs=configs,
+        endpoints_map=endpoints_map,
+        ack_map=ack_map,
+        statuses=statuses,
+        stats=stats,
+        token_count=_token_count,
+        modalities=_modalities,
+    )
+
+
+def _health_status(endpoints):
+    """``ok`` / ``degraded`` / ``down`` / ``no_endpoints`` from a model's active endpoints."""
+    if not endpoints:
+        return "no_endpoints"
+    healthy = sum(1 for e in endpoints if e.healthy)
+    if healthy == len(endpoints):
+        return "ok"
+    return "degraded" if healthy else "down"
+
+
+def _token_count(n):
+    """Short token count: 128000 and 131072 both read ``128K``, 1048576 reads ``1M``; ``—`` when unset.
+
+    Round decimal counts use 1000s, power-of-two counts use 1024s.
+    """
+    if not n:
+        return "\u2014"
+    for unit, decimal, binary in (("M", 1_000_000, 1024 * 1024), ("K", 1_000, 1024)):
+        if n >= decimal:
+            value = n / binary if n % binary == 0 and n % decimal else n / decimal
+            return f"{value:.1f}".removesuffix(".0") + unit
+    return str(n)
+
+
+_DASH = "\u2014"
+
+
+def _modality_names(value):
+    """``"Text, Image"`` from a stored modality list, or ``None`` when unknown.
+
+    The JSON column is not schema-checked, so a bare string counts as one
+    modality and any other shape (a number, an object) or non-string item is
+    treated as unknown rather than iterated.
+    """
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        return None
+    return ", ".join(v.strip().capitalize() for v in value if isinstance(v, str) and v.strip()) or None
+
+
+def _modalities(config):
+    """``Text, Image → Text``; a side the model does not publish shows ``—``."""
+    inputs, outputs = _modality_names(config.input_modalities), _modality_names(config.output_modalities)
+    if inputs is None and outputs is None:
+        return _DASH
+    return f"{inputs or _DASH} \u2192 {outputs or _DASH}"
 
 
 @models_page_bp.route("/models/<path:model_name>")
