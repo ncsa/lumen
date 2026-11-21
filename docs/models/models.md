@@ -23,14 +23,15 @@ The cards are worked out when the page loads; reload the page to update them, fo
 
 ## Model Rows
 
-Each model is one row. Without opening it, a row shows:
+Each model is one row with three columns. Without opening it, a row shows:
 
-- **Name** — links to the [model detail page](model-detail.md).
-- **Modalities** — what the model accepts and produces, as input → output (e.g. `Text, Image → Text`). A dash means the instance hasn't published that information.
-- **Context and max output** — the model's context window and the most tokens it can generate per response (e.g. `128K context · 8K max output`). A dash means the value is not set.
-- **Price** — coins per million input / output tokens (e.g. `1.00 / 2.00`).
-- **Health** — the model's current availability (see below).
-- **acknowledge** / **early access** pills — shown under the health label while you still have to accept the model's terms.
+- **Model / Capabilities**
+  - **Name** — links to the [model detail page](model-detail.md). A lock icon next to the name means you still have to acknowledge the model's terms before you can use it; a flask icon marks an early-access model.
+  - **Modalities** — what the model accepts and produces, as input → output (e.g. `Text, Image → Text`). A dash means the instance hasn't published that information.
+- **Token limits** — the model's context window (e.g. `128K context`) and, below it, the most tokens it can generate per response (e.g. `8K max output`). A dash means the value is not set.
+- **Coins / 1M tokens** — the price per million input / output tokens (e.g. `1.00 / 2.00`), with the model's health (see below) under it.
+
+On a phone the token limits move under the model name, next to the price.
 
 ### Health Labels
 

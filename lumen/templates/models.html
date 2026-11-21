@@ -31,9 +31,13 @@
 </div>
 
 <div class="card mb-4">
-  <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
-    <h2 class="h5 mb-0" id="model-list-heading">Models</h2>
-    <span class="text-muted small">Coins per 1M tokens</span>
+  <div class="card-header">
+    <h2 class="visually-hidden" id="model-list-heading">Models</h2>
+    <div class="model-row-grid model-list-columns" aria-hidden="true">
+      <span>Model / Capabilities</span>
+      <span>Token limits</span>
+      <span class="text-end">Coins / 1M tokens</span>
+    </div>
   </div>
   <ul class="list-group list-group-flush" id="model-list" aria-labelledby="model-list-heading">
     {% for config in configs %}
@@ -43,21 +47,29 @@
     {% set ack = ack_map.get(config.id) %}
     {% set panel_id = "model-panel-" ~ loop.index %}
     <li class="list-group-item model-row" data-model="{{ config.model_name }}">
-      <div class="d-flex align-items-start gap-2">
-        <button type="button" class="btn btn-sm btn-link model-row-toggle p-0 mt-1" data-bs-toggle="collapse"
-                data-bs-target="#{{ panel_id }}" aria-expanded="false" aria-controls="{{ panel_id }}"
-                aria-label="Toggle details for {{ config.model_name }}"><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
-        <div class="d-flex flex-wrap flex-grow-1 column-gap-3 row-gap-1 model-row-body">
-        <div class="me-auto model-row-main">
-          <a href="{{ url_for('models_page.detail', model_name=config.model_name) }}"
-             class="fw-bold text-decoration-none model-name"
-             {% if config.description %}title="{{ config.description }}" data-bs-toggle="tooltip" data-bs-placement="right"{% endif %}>{{ config.model_name }}</a>
-          <div class="text-muted small model-row-meta">
-            <span class="model-modalities">{{ modalities(config) }}</span>
-            <span class="model-limits">{{ token_count(config.context_window) }} context · {{ token_count(config.max_output_tokens) }} max output</span>
+      <div class="model-row-grid">
+        <div class="d-flex align-items-start gap-2 model-row-main">
+          <button type="button" class="btn btn-sm btn-link model-row-toggle p-0 mt-1" data-bs-toggle="collapse"
+                  data-bs-target="#{{ panel_id }}" aria-expanded="false" aria-controls="{{ panel_id }}"
+                  aria-label="Toggle details for {{ config.model_name }}"><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+          <div class="model-row-name">
+            <a href="{{ url_for('models_page.detail', model_name=config.model_name) }}"
+               class="fw-bold text-decoration-none model-name"
+               {% if config.description %}title="{{ config.description }}" data-bs-toggle="tooltip" data-bs-placement="right"{% endif %}>{{ config.model_name }}</a>
+            {%- if ack and not ack.consented %}
+            <i class="bi bi-lock model-flag ms-1" role="img" aria-label="Needs acknowledgment" title="Needs acknowledgment"></i>
+            {%- endif %}
+            {%- if config.early_access %}
+            <i class="bi bi-flask model-flag ms-1" role="img" aria-label="Early access" title="Early access"></i>
+            {%- endif %}
+            <div class="text-muted small model-modalities">{{ modalities(config) }}</div>
           </div>
         </div>
-        <div class="text-end ms-auto model-row-side">
+        <div class="model-limits">
+          <div class="model-context">{{ token_count(config.context_window) }} context</div>
+          <div class="text-muted small model-max-output">{{ token_count(config.max_output_tokens) }} max output</div>
+        </div>
+        <div class="text-end model-row-side">
           <div class="model-price text-nowrap">{{ "%.2f"|format(config.input_cost_per_million | float) }} / {{ "%.2f"|format(config.output_cost_per_million | float) }}</div>
           <div class="model-health small text-nowrap" data-health="{{ status }}">
             {%- if status == "ok" %}<i class="bi bi-check-circle-fill text-success" aria-hidden="true"></i> <span class="text-success-emphasis">Healthy</span>
@@ -66,13 +78,6 @@
             {%- else %}<i class="bi bi-dash-circle text-secondary" aria-hidden="true"></i> <span class="text-secondary">No endpoints</span>
             {%- endif %}
           </div>
-          {% if ack and not ack.consented %}
-          <div class="model-row-pills">
-            {% if config.needs_ack %}<span class="badge rounded-pill bg-warning text-dark">acknowledge</span>{% endif %}
-            {% if config.early_access %}<span class="badge rounded-pill bg-info text-dark">early access</span>{% endif %}
-          </div>
-          {% endif %}
-        </div>
         </div>
       </div>
       <div class="collapse" id="{{ panel_id }}" data-bs-parent="#model-list">

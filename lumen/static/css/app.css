@@ -733,10 +733,19 @@ ilw-content .btn-primary:active {
 .model-row-toggle .bi-chevron-right { display: inline-block; transition: transform .15s ease-in-out; }
 .model-row-toggle[aria-expanded="true"] .bi-chevron-right { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .model-row-toggle .bi-chevron-right { transition: none; } }
-.model-row-body { min-width: 0; }
-.model-row-main { min-width: 0; overflow-wrap: anywhere; }
-.model-row-meta { display: flex; flex-wrap: wrap; column-gap: 1rem; }
-.model-row-pills { display: flex; gap: .25rem; justify-content: flex-end; margin-top: .25rem; }
+/* Row columns: model / capabilities 45%, token limits 30%, price and health 25%.
+   On phones the token limits drop under the name, next to the price. */
+.model-row-grid { display: grid; grid-template-columns: 45% 30% 25%; align-items: start; }
+.model-row-grid > * { min-width: 0; }
+@media (max-width: 575.98px) {
+    .model-row-grid { grid-template-columns: 1fr auto; row-gap: .25rem; column-gap: 1rem; }
+    .model-row-main { grid-column: 1 / -1; }
+    .model-limits { padding-left: 1.5rem; }
+}
+.model-list-columns { font-weight: 600; }
+@media (max-width: 575.98px) { .model-list-columns > :nth-child(2) { display: none; } }
+.model-row-name { min-width: 0; overflow-wrap: anywhere; }
+.model-flag { color: var(--bs-secondary-color); }
 .model-panel { border-top: 1px solid var(--bs-border-color); margin-left: 1.5rem; }
 .model-panel-heading { font-size: .875rem; font-weight: 700; margin: 0 0 .5rem; }
 .model-panel-list { display: grid; grid-template-columns: auto auto; column-gap: 1rem; font-size: .875rem; }

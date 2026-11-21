@@ -101,8 +101,9 @@ def test_early_access_badge_on_models_list(app, auth_client, test_model):
     resp = auth_client.get("/models")
     assert resp.status_code == HTTPStatus.OK
     soup = BeautifulSoup(resp.data, "html.parser")
-    pills = soup.find("li", class_="model-row").find(class_="model-row-pills")
-    assert [p.get_text(strip=True) for p in pills.find_all(class_="badge")] == ["early access"]
+    row = soup.find("li", class_="model-row")
+    assert row.find("i", class_="bi-flask")["aria-label"] == "Early access"
+    assert "early access" in row.find(class_="model-access").get_text()
 
 
 def test_early_access_badge_on_model_detail(app, auth_client, test_model):

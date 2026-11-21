@@ -142,7 +142,8 @@ def test_collapsed_row(app, auth_client, test_model, test_model_endpoint):
     assert link.get_text(strip=True) == "test-model"
     assert link["href"] == "/models/test-model"
     assert row.find(class_="model-modalities").get_text(strip=True) == "Text, Image → Text"
-    assert row.find(class_="model-limits").get_text(strip=True) == "128K context · 8K max output"
+    assert row.find(class_="model-context").get_text(strip=True) == "128K context"
+    assert row.find(class_="model-max-output").get_text(strip=True) == "8K max output"
     assert row.find(class_="model-price").get_text(strip=True) == "1.00 / 2.00"
     health = row.find(class_="model-health")
     assert health.get_text(strip=True) == "Healthy"
@@ -155,7 +156,8 @@ def test_collapsed_row(app, auth_client, test_model, test_model_endpoint):
 def test_collapsed_row_dashes_for_unknown_values(auth_client, test_model):
     row = _row(_soup(auth_client), "test-model")
     assert row.find(class_="model-modalities").get_text(strip=True) == "—"
-    assert row.find(class_="model-limits").get_text(strip=True) == "— context · — max output"
+    assert row.find(class_="model-context").get_text(strip=True) == "— context"
+    assert row.find(class_="model-max-output").get_text(strip=True) == "— max output"
 
 
 def test_collapsed_row_dash_for_missing_side(app, auth_client, test_model):
@@ -183,13 +185,37 @@ def test_health_labels(app, auth_client, test_model, health, label, icon):
     assert tag.find("i", class_=icon)["aria-hidden"] == "true"
 
 
-def test_collapsed_row_pills_while_ack_pending(app, auth_client, test_user, test_model):
-    _set_model(app, test_model["id"], needs_ack=True, early_access=True)
-    pills = _row(_soup(auth_client), "test-model").find(class_="model-row-pills")
-    assert [p.get_text(strip=True) for p in pills.find_all(class_="badge")] == ["acknowledge", "early access"]
+def _flags(row):
+    """The accessible names of the lock / flask icons beside the model name."""
+    return [(i["class"][1], i["aria-label"]) for i in row.find(class_="model-row-name").find_all("i", class_="model-flag")]
 
+
+def test_row_columns_in_order(app, auth_client, test_model):
+    soup = _soup(auth_client)
+    grid = _row(soup, "test-model").find(class_="model-row-grid")
+    assert [c["class"][-1] for c in grid.find_all(recursive=False)] == ["model-row-main", "model-limits", "model-row-side"]
+    header = soup.find(class_="model-list-columns")
+    assert [c.get_text(strip=True) for c in header.find_all(recursive=False)] == ["Model / Capabilities", "Token limits", "Coins / 1M tokens"]
+
+
+def test_lock_and_flask_icons_while_ack_pending(app, auth_client, test_user, test_model):
+    _set_model(app, test_model["id"], needs_ack=True, early_access=True)
+    row = _row(_soup(auth_client), "test-model")
+    assert _flags(row) == [("bi-lock", "Needs acknowledgment"), ("bi-flask", "Early access")]
+    assert row.find(class_="model-row-grid").find(class_="badge") is None  # icons replace the pills
+
+    # Once acknowledged the lock goes; the model is still early access.
     _consent(app, test_user["id"], test_model["id"], consented_at=datetime(2026, 1, 1), early_access_at=datetime(2026, 1, 1))
-    assert _row(_soup(auth_client), "test-model").find(class_="model-row-pills") is None
+    assert _flags(_row(_soup(auth_client), "test-model")) == [("bi-flask", "Early access")]
+
+
+def test_lock_only_for_needs_ack_model(app, auth_client, test_model):
+    _set_model(app, test_model["id"], needs_ack=True)
+    assert _flags(_row(_soup(auth_client), "test-model")) == [("bi-lock", "Needs acknowledgment")]
+
+
+def test_no_icons_for_plain_model(auth_client, test_model):
+    assert _flags(_row(_soup(auth_client), "test-model")) == []
 
 
 # ── Expanded panel ────────────────────────────────────────────────────────
