@@ -16,6 +16,10 @@ All notable changes to Lumen will be documented in this file.
 - Stop logging a Pydantic serializer warning when a backend returns values (e.g. chat `metadata` lists) that don't match the OpenAI SDK types; the response is passed through unchanged. (#693)
 - Embeddings billing now passes the model's output price and is tested to bill input tokens only (#702).
 
+### Removed
+
+- Remove the `sync_models.py` script; use **Update All** (or **Update** per model) in the admin config editor to refresh model metadata from the backends and models.dev. (#706)
+
 ## [2.4.0] - 2026-11-19
 
 **Upgrade:** everyone is logged out of the web UI once; 2.3.1 pods keep working during a rolling `helm upgrade`. Per-key cache token totals start at 0 instead of being summed from `request_logs`. (#560, #598, #600)

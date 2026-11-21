@@ -1,9 +1,9 @@
 """
 Fetch model metadata from vLLM/SGLang endpoints and models.dev.
-Mirrors the logic in the top-level sync_models.py script, but designed
-for use from the web process.  models.dev is cached in-process for _TTL
-seconds so repeated calls during a config-editor session only hit the
-remote API once; a failed fetch is cached for _FAILED_TTL seconds only.
+Backs the admin config editor's Update (and Update All) buttons.
+models.dev is cached in-process for _TTL seconds so repeated calls during
+a config-editor session only hit the remote API once; a failed fetch is
+cached for _FAILED_TTL seconds only.
 """
 
 import ipaddress
@@ -249,7 +249,7 @@ def fetch_endpoint_model(endpoint: dict) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
-# models.dev fuzzy matching (same algorithm as sync_models.py)
+# models.dev fuzzy matching
 # ---------------------------------------------------------------------------
 
 _NOISE = re.compile(
