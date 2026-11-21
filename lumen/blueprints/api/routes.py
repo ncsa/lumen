@@ -2,6 +2,7 @@ import hmac
 import json
 import logging
 import time as _time
+from dataclasses import dataclass
 from functools import wraps
 from http import HTTPStatus
 from urllib.parse import quote
@@ -320,46 +321,76 @@ def _classify_upstream_error(exc, context: str):
     return "Upstream error. Please try again.", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR
 
 
+@dataclass(frozen=True)
+class APIKeyAuthFailure:
+    """Why an ``Authorization: Bearer`` credential did not resolve to a key.
+
+    ``kind`` is one of ``"malformed"`` (missing, non-Bearer or empty header),
+    ``"monitor"`` (the monitoring token, which has no key or entity),
+    ``"invalid"`` (unknown, revoked or expired key) or ``"disabled"`` (the
+    key's entity is inactive). ``err_type``, ``status`` and ``message`` are what
+    ``api_key_required`` answers with; a caller may answer differently.
+    """
+
+    kind: str
+    status: HTTPStatus
+    message: str
+    err_type: str = "authentication_error"
+
+
+def lookup_api_key() -> tuple[APIKey, Entity] | APIKeyAuthFailure:
+    """Resolve the request's ``Authorization: Bearer <key>`` header.
+
+    Returns the active key and its active entity, or an ``APIKeyAuthFailure``.
+    An expired key is revoked on the way (``revoke_if_expired``). Bumps no
+    usage counters and sets nothing on ``g``.
+    """
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return APIKeyAuthFailure("malformed", HTTPStatus.BAD_REQUEST,
+                                 "Missing or malformed Authorization header", "invalid_request_error")
+
+    token = auth_header[7:].strip()
+    if not token:
+        return APIKeyAuthFailure("malformed", HTTPStatus.BAD_REQUEST, "Empty token", "invalid_request_error")
+    # Lumen keys are ASCII; anything else cannot match one.
+    if not token.isascii():
+        return APIKeyAuthFailure("invalid", HTTPStatus.UNAUTHORIZED, "Invalid or revoked API key")
+
+    yaml_data = current_app.config.get("YAML_DATA", {})
+    monitor_token = yaml_data.get("api", {}).get("monitoring", {}).get("token", "")
+    # Compare bytes: compare_digest raises TypeError on a non-ASCII str, and
+    # the configured token is not checked to be ASCII.
+    if monitor_token and hmac.compare_digest(token.encode(), str(monitor_token).encode()):
+        return APIKeyAuthFailure("monitor", HTTPStatus.FORBIDDEN, "Monitor token can only access /v1/models")
+
+    row = db.session.execute(
+        select(APIKey, Entity).join(Entity, Entity.id == APIKey.entity_id)
+        .where(APIKey.key_hash == hash_api_key(token))
+    ).one_or_none()
+    if not row or row.APIKey.revoked_at is not None or revoke_if_expired(row.APIKey):
+        return APIKeyAuthFailure("invalid", HTTPStatus.UNAUTHORIZED, "Invalid or revoked API key")
+
+    api_key, entity = row
+    if not entity.active:
+        return APIKeyAuthFailure("disabled", HTTPStatus.FORBIDDEN, "Account disabled")
+    return api_key, entity
+
+
 def api_key_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            return _err("Missing or malformed Authorization header", status=HTTPStatus.BAD_REQUEST)
-
-        token = auth_header[7:].strip()
-        if not token:
-            return _err("Empty token", status=HTTPStatus.BAD_REQUEST)
-        # Lumen keys are ASCII; anything else cannot match one.
-        if not token.isascii():
-            return _err("Invalid or revoked API key", "authentication_error", HTTPStatus.UNAUTHORIZED)
-
-        yaml_data = current_app.config.get("YAML_DATA", {})
-        monitor_token = yaml_data.get("api", {}).get("monitoring", {}).get("token", "")
-        # Compare bytes: compare_digest raises TypeError on a non-ASCII str, and
-        # the configured token is not checked to be ASCII.
-        if monitor_token and hmac.compare_digest(token.encode(), str(monitor_token).encode()):
-            if request.endpoint not in ("api.list_models", "api.get_model"):
-                return _err("Monitor token can only access /v1/models", "authentication_error", HTTPStatus.FORBIDDEN)
-            g.api_key = None
-            g.entity = None
-            g.monitor = True
-            return f(*args, **kwargs)
+        result = lookup_api_key()
+        if isinstance(result, APIKeyAuthFailure):
+            if result.kind == "monitor" and request.endpoint in ("api.list_models", "api.get_model"):
+                g.api_key = None
+                g.entity = None
+                g.monitor = True
+                return f(*args, **kwargs)
+            return _err(result.message, result.err_type, result.status)
 
         g.monitor = False
-        row = db.session.execute(
-            select(APIKey, Entity).join(Entity, Entity.id == APIKey.entity_id)
-            .where(APIKey.key_hash == hash_api_key(token))
-        ).one_or_none()
-        if not row or row.APIKey.revoked_at is not None or revoke_if_expired(row.APIKey):
-            return _err("Invalid or revoked API key", "authentication_error", HTTPStatus.UNAUTHORIZED)
-
-        api_key, entity = row
-        if not entity.active:
-            return _err("Account disabled", "authentication_error", HTTPStatus.FORBIDDEN)
-
-        g.api_key = api_key
-        g.entity = entity
+        g.api_key, g.entity = result
         return f(*args, **kwargs)
 
     return decorated
