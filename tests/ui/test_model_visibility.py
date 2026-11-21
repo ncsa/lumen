@@ -102,7 +102,8 @@ def test_early_access_badge_on_models_list(app, auth_client, test_model):
     assert resp.status_code == HTTPStatus.OK
     soup = BeautifulSoup(resp.data, "html.parser")
     row = soup.find("li", class_="model-row")
-    assert row.find("i", class_="bi-flask")["aria-label"] == "Early access"
+    # Early access alone still needs acknowledging: closed lock and flask.
+    assert [i["aria-label"] for i in row.find_all("i", class_="model-flag")] == ["Needs acknowledgment", "Early access"]
     assert "early access" in row.find(class_="model-access").get_text()
 
 

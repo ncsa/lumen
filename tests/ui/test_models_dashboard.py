@@ -125,8 +125,35 @@ def test_early_access_and_needs_ack_cards(app, auth_client, test_user):
     assert _card(_soup(auth_client), "needs-ack") == (1, "Acknowledge before use")
 
 
+def _ack_detail(soup):
+    detail = soup.find(class_="model-stat", attrs={"data-stat": "needs-ack"}).find(class_="model-stat-detail")
+    return detail.get_text(strip=True) if detail else None
+
+
+def test_needs_ack_card_counts_acknowledged_models(app, auth_client, test_user):
+    _add_model(app, "plain", True)
+    first = _add_model(app, "ack-1", True, needs_ack=True)
+    second = _add_model(app, "ack-2", True, early_access=True)
+
+    soup = _soup(auth_client)
+    assert _card(soup, "needs-ack") == (2, "Acknowledge before use")
+    assert _ack_detail(soup) == "0 of 2 acknowledged"
+
+    _consent(app, test_user["id"], first, consented_at=datetime(2026, 1, 1))
+    soup = _soup(auth_client)
+    assert _card(soup, "needs-ack") == (1, "Acknowledge before use")
+    assert _ack_detail(soup) == "1 of 2 acknowledged"
+
+    _consent(app, test_user["id"], second, early_access_at=datetime(2026, 1, 1))
+    soup = _soup(auth_client)
+    assert _card(soup, "needs-ack") == (0, "All 2 acknowledged")
+    assert _ack_detail(soup) is None
+
+
 def test_needs_ack_card_with_nothing_to_acknowledge(auth_client, test_model):
-    assert _card(_soup(auth_client), "needs-ack") == (0, "Nothing to acknowledge")
+    soup = _soup(auth_client)
+    assert _card(soup, "needs-ack") == (0, "Nothing to acknowledge")
+    assert _ack_detail(soup) is None
 
 
 # ── Collapsed row ─────────────────────────────────────────────────────────
@@ -144,7 +171,7 @@ def test_collapsed_row(app, auth_client, test_model, test_model_endpoint):
     assert row.find(class_="model-modalities").get_text(strip=True) == "Text, Image → Text"
     assert row.find(class_="model-context").get_text(strip=True) == "128K context"
     assert row.find(class_="model-max-output").get_text(strip=True) == "8K max output"
-    assert row.find(class_="model-price").get_text(strip=True) == "1.00 / 2.00"
+    assert row.find(class_="model-price").find(string=True, recursive=False).strip() == "1.00 / 2.00"
     health = row.find(class_="model-health")
     assert health.get_text(strip=True) == "Healthy"
     assert health.find("i", class_="bi-check-circle-fill") is not None
@@ -186,36 +213,59 @@ def test_health_labels(app, auth_client, test_model, health, label, icon):
 
 
 def _flags(row):
-    """The accessible names of the lock / flask icons beside the model name."""
-    return [(i["class"][1], i["aria-label"]) for i in row.find(class_="model-row-name").find_all("i", class_="model-flag")]
+    """The lock / flask icons beside the model name, as (icon, accessible name)."""
+    icons = row.find(class_="model-row-name").find_all("i", class_="model-flag")
+    return [(next(c for c in i["class"] if c in {"bi-lock", "bi-unlock", "bi-flask"}), i["aria-label"]) for i in icons]
 
 
 def test_row_columns_in_order(app, auth_client, test_model):
     soup = _soup(auth_client)
     grid = _row(soup, "test-model").find(class_="model-row-grid")
-    assert [c["class"][-1] for c in grid.find_all(recursive=False)] == ["model-row-main", "model-limits", "model-row-side"]
+    columns = grid.find_all(recursive=False)
+    assert [name in c["class"] for c, name in zip(columns, ["model-row-main", "model-limits", "model-row-side"])] == [True] * 3
+    assert len(columns) == 3
     header = soup.find(class_="model-list-columns")
     assert [c.get_text(strip=True) for c in header.find_all(recursive=False)] == ["Model / Capabilities", "Token limits", "Coins / 1M tokens"]
 
 
-def test_lock_and_flask_icons_while_ack_pending(app, auth_client, test_user, test_model):
+def test_price_names_its_unit_for_screen_readers(auth_client, test_model):
+    # The column labels are aria-hidden, so the price carries its own unit.
+    price = _row(_soup(auth_client), "test-model").find(class_="model-price")
+    assert price.find(class_="visually-hidden").get_text(strip=True) == "coins per 1M input / output tokens"
+
+
+def test_closed_lock_while_ack_pending_then_open_lock(app, auth_client, test_user, test_model):
     _set_model(app, test_model["id"], needs_ack=True, early_access=True)
     row = _row(_soup(auth_client), "test-model")
     assert _flags(row) == [("bi-lock", "Needs acknowledgment"), ("bi-flask", "Early access")]
     assert row.find(class_="model-row-grid").find(class_="badge") is None  # icons replace the pills
 
-    # Once acknowledged the lock goes; the model is still early access.
+    # Once acknowledged the lock opens; the model is still early access.
     _consent(app, test_user["id"], test_model["id"], consented_at=datetime(2026, 1, 1), early_access_at=datetime(2026, 1, 1))
-    assert _flags(_row(_soup(auth_client), "test-model")) == [("bi-flask", "Early access")]
+    assert _flags(_row(_soup(auth_client), "test-model")) == [("bi-unlock", "Access granted"), ("bi-flask", "Early access")]
 
 
-def test_lock_only_for_needs_ack_model(app, auth_client, test_model):
+def test_closed_lock_for_needs_ack_model(app, auth_client, test_model):
     _set_model(app, test_model["id"], needs_ack=True)
     assert _flags(_row(_soup(auth_client), "test-model")) == [("bi-lock", "Needs acknowledgment")]
 
 
+def test_early_access_only_model_needs_acknowledgment_too(app, auth_client, test_model):
+    # Early access alone still has to be acknowledged before use, so it is locked as well.
+    _set_model(app, test_model["id"], early_access=True)
+    assert _flags(_row(_soup(auth_client), "test-model")) == [("bi-lock", "Needs acknowledgment"), ("bi-flask", "Early access")]
+
+
 def test_no_icons_for_plain_model(auth_client, test_model):
     assert _flags(_row(_soup(auth_client), "test-model")) == []
+
+
+def test_whole_row_toggles_details(auth_client, test_model):
+    soup = _soup(auth_client)
+    script = "".join(s.get_text() for s in soup.find_all("script") if not s.get("src"))
+    assert "document.querySelectorAll('.model-row-grid')" in script
+    assert "e.target.closest('a, button')" in script  # the name link still opens the detail page
+    assert "grid.querySelector('.model-row-toggle').click()" in script
 
 
 # ── Expanded panel ────────────────────────────────────────────────────────

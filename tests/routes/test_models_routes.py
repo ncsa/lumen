@@ -157,7 +157,7 @@ def test_models_panel_shows_the_charged_cache_rates(app, auth_client):
 
     def pricing(model_name):
         row = _row_for(resp.data, model_name)
-        assert row.find(class_="model-price").get_text(strip=True) == "1.00 / 2.00"
+        assert row.find(class_="model-price").find(string=True, recursive=False).strip() == "1.00 / 2.00"
         dds = row.find("dl", class_="model-pricing").find_all("dd")
         return [d.get_text(strip=True) for d in dds]
 

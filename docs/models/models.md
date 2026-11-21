@@ -17,7 +17,7 @@ Four cards at the top summarise the models listed for you:
 | **Models** | Every model listed on the page, including models with no endpoints | "Listed models" |
 | **Healthy** | Models that can serve requests right now: **Healthy** and **Degraded** models (at least one working backend) | The number of **Down** and **No endpoints** models when there are any (e.g. "1 down · 2 no endpoints"); otherwise the number of **Degraded** models; otherwise "All healthy" |
 | **Early Access** | Early-access models, which may change or be removed at any time | "May change or be removed" |
-| **Needs Ack** | Models you still have to acknowledge before you can use them | "Acknowledge before use", or "Nothing to acknowledge" when the number is 0 |
+| **Needs Ack** | Models you still have to acknowledge before you can use them | "Acknowledge before use" with how many of the models that need acknowledging you have already accepted (e.g. "1 of 3 acknowledged"); "All 3 acknowledged" once you have accepted them all; "Nothing to acknowledge" when no model needs it |
 
 The cards are worked out when the page loads; reload the page to update them, for example after acknowledging a model.
 
@@ -26,7 +26,7 @@ The cards are worked out when the page loads; reload the page to update them, fo
 Each model is one row with three columns. Without opening it, a row shows:
 
 - **Model / Capabilities**
-  - **Name** — links to the [model detail page](model-detail.md). A lock icon next to the name means you still have to acknowledge the model's terms before you can use it; a flask icon marks an early-access model.
+  - **Name** — links to the [model detail page](model-detail.md). A closed lock next to the name means you still have to acknowledge the model's terms before you can use it, and an open lock means you already have; a flask icon marks an early-access model.
   - **Modalities** — what the model accepts and produces, as input → output (e.g. `Text, Image → Text`). A dash means the instance hasn't published that information.
 - **Token limits** — the model's context window (e.g. `128K context`) and, below it, the most tokens it can generate per response (e.g. `8K max output`). A dash means the value is not set.
 - **Coins / 1M tokens** — the price per million input / output tokens (e.g. `1.00 / 2.00`), with the model's health (see below) under it.
@@ -46,7 +46,7 @@ The **Healthy** card counts **Degraded** models too, because they still answer r
 
 ## Model Details
 
-Click the arrow at the start of a row (or tab to it and press Enter or Space) to open the model's details. Only one row is open at a time: opening another row closes the previous one. The details show:
+Click anywhere on a row (or tab to the arrow at its start and press Enter or Space) to open the model's details; clicking the model name still opens its detail page. Only one row is open at a time: opening another row closes the previous one. The details show:
 
 - **Health** — **Last checked**: how long ago the most recent health check ran (e.g. `5 min. ago`); hover over or tab to it for the full date and time. It updates every minute while the page is open. **Never** means no check has run yet. **Health checks**: how many of the model's backends passed their last check out of the total configured (e.g. `2/4 passed`).
 - **Detailed pricing** — coins per million tokens for **Input**, **Output**, **Cached read** and **Cached write**. A cache-read rate the model does not configure is billed at the input price and a cache-write rate at 0, so these always show what you are actually charged.

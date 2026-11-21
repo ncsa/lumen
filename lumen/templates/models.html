@@ -11,20 +11,28 @@
 {%- set unhealthy = [] %}
 {%- if stats.down %}{% set _ = unhealthy.append(stats.down ~ " down") %}{% endif %}
 {%- if stats.no_endpoints %}{% set _ = unhealthy.append(stats.no_endpoints ~ " no endpoints") %}{% endif %}
+{#- Needs Ack: what is pending, plus how many of the models that need it are already acknowledged. -#}
+{%- if not stats.ack_total %}{% set ack_subtitle, ack_detail = "Nothing to acknowledge", none %}
+{%- elif stats.needs_ack %}{% set ack_subtitle, ack_detail = "Acknowledge before use", stats.acknowledged ~ " of " ~ stats.ack_total ~ " acknowledged" %}
+{%- else %}{% set ack_subtitle, ack_detail = "All " ~ stats.ack_total ~ " acknowledged", none %}
+{%- endif %}
 {%- set cards = [
-  ("models", "bi-cpu", "Models", stats.total, "Listed models"),
+  ("models", "bi-cpu", "Models", stats.total, "Listed models", none),
   ("healthy", "bi-heart-pulse", "Healthy", stats.healthy,
-     unhealthy | join(" · ") if unhealthy else (stats.degraded ~ " degraded" if stats.degraded else "All healthy")),
-  ("early-access", "bi-stars", "Early Access", stats.early_access, "May change or be removed"),
-  ("needs-ack", "bi-shield-exclamation", "Needs Ack", stats.needs_ack, "Acknowledge before use" if stats.needs_ack else "Nothing to acknowledge"),
+     unhealthy | join(" · ") if unhealthy else (stats.degraded ~ " degraded" if stats.degraded else "All healthy"), none),
+  ("early-access", "bi-stars", "Early Access", stats.early_access, "May change or be removed", none),
+  ("needs-ack", "bi-shield-exclamation", "Needs Ack", stats.needs_ack, ack_subtitle, ack_detail),
 ] %}
 <div class="model-stats mt-3 mb-4">
-  {% for key, icon, label, count, subtitle in cards %}
+  {% for key, icon, label, count, subtitle, detail in cards %}
   <div class="card model-stat" data-stat="{{ key }}">
     <div class="card-body">
       <div class="d-flex align-items-center gap-2 model-stat-label"><i class="bi {{ icon }} model-stat-icon" aria-hidden="true"></i>{{ label }}</div>
       <div class="model-stat-count">{{ count }}</div>
       <div class="model-stat-subtitle text-muted small">{{ subtitle }}</div>
+      {%- if detail %}
+      <div class="model-stat-detail text-muted small">{{ detail }}</div>
+      {%- endif %}
     </div>
   </div>
   {% endfor %}
@@ -56,7 +64,9 @@
             <a href="{{ url_for('models_page.detail', model_name=config.model_name) }}"
                class="fw-bold text-decoration-none model-name"
                {% if config.description %}title="{{ config.description }}" data-bs-toggle="tooltip" data-bs-placement="right"{% endif %}>{{ config.model_name }}</a>
-            {%- if ack and not ack.consented %}
+            {%- if ack and ack.consented %}
+            <i class="bi bi-unlock model-flag ms-1" role="img" aria-label="Access granted" title="Access granted"></i>
+            {%- elif ack %}
             <i class="bi bi-lock model-flag ms-1" role="img" aria-label="Needs acknowledgment" title="Needs acknowledgment"></i>
             {%- endif %}
             {%- if config.early_access %}
@@ -70,7 +80,7 @@
           <div class="text-muted small model-max-output">{{ token_count(config.max_output_tokens) }} max output</div>
         </div>
         <div class="text-end model-row-side">
-          <div class="model-price text-nowrap">{{ "%.2f"|format(config.input_cost_per_million | float) }} / {{ "%.2f"|format(config.output_cost_per_million | float) }}</div>
+          <div class="model-price text-nowrap">{{ "%.2f"|format(config.input_cost_per_million | float) }} / {{ "%.2f"|format(config.output_cost_per_million | float) }}<span class="visually-hidden"> coins per 1M input / output tokens</span></div>
           <div class="model-health small text-nowrap" data-health="{{ status }}">
             {%- if status == "ok" %}<i class="bi bi-check-circle-fill text-success" aria-hidden="true"></i> <span class="text-success-emphasis">Healthy</span>
             {%- elif status == "degraded" %}<i class="bi bi-exclamation-triangle-fill text-warning" aria-hidden="true"></i> <span class="text-warning-emphasis">Degraded</span>
@@ -161,6 +171,15 @@
   });
   document.querySelectorAll('.consent-info-btn').forEach(btn => {
     btn.addEventListener('click', () => toggleConsentPopover(btn, 'left'));
+  });
+  // A click anywhere on a collapsed row's summary toggles its details through
+  // the row's chevron button, which stays the keyboard control. Links and
+  // buttons keep their own behaviour, and selecting text does not toggle.
+  document.querySelectorAll('.model-row-grid').forEach(grid => {
+    grid.addEventListener('click', e => {
+      if (e.target.closest('a, button') || String(window.getSelection())) return;
+      grid.querySelector('.model-row-toggle').click();
+    });
   });
 </script>
 {% endblock %}

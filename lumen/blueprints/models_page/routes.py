@@ -69,6 +69,9 @@ def index():
         "no_endpoints": status_counts["no_endpoints"],
         "early_access": sum(1 for c in configs if c.early_access),
         "needs_ack": sum(1 for a in ack_map.values() if not a["consented"]),
+        # Models with an acknowledgment requirement, and how many of them this user has accepted.
+        "ack_total": len(ack_map),
+        "acknowledged": sum(1 for a in ack_map.values() if a["consented"]),
     }
     return render_template(
         "models.html",
