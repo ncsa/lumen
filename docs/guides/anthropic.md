@@ -43,6 +43,8 @@ export CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1
 claude
 ```
 
+`scripts/claude.sh` in the Lumen repository sets all of this up for you. It takes `LUMEN_BASE_URL`, `LUMEN_API_KEY` and `ANTHROPIC_MODEL` from the environment, else from `base_url`, `api_key` and `chat_model` in the `[lumen]` section of `~/.config/lumen/config.ini` (`$LUMEN_CONFIG_DIR/config.ini`), which `lumen.sh` fills in at login; add `chat_model` by hand.
+
 The `CLAUDE_CODE_*` and `MAX_THINKING_TOKENS` lines are required. Without them, Claude Code asks for thinking and beta features that Lumen refuses with a 400, retries a few times, and then fails. The Claude Agent SDK needs the same settings. Pick a model with reliable tool calling and a large context. Verified with Claude Code 2.1.284 and 2.1.304; pin the version you roll out, because a newer version may ask for something Lumen refuses.
 
 ## Auto mode may fail

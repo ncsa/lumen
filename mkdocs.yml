@@ -51,6 +51,7 @@ nav:
       - Usage: guides/usage.md
       - API Reference: guides/api-reference.md
       - Anthropic API: guides/anthropic.md
+      - Ask Your Files (RAG): guides/rag.md
   - Models:
       - Model Dashboard: models/models.md
       - Model Detail: models/model-detail.md

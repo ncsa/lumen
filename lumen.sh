@@ -11,8 +11,8 @@ usage() {
   cat <<'EOF'
 usage: lumen.sh [-s SERVER] [-k|--keyname NAME] [--author LABEL]
                 [--client-id ID] [--ttl DURATION] [--opencode | --no-opencode]
-                [--copilot | --no-copilot] [--embed-key] [--relogin]
-                [--no-aliases] [-h|--help]
+                [--copilot | --no-copilot] [--shell | --no-shell] [--embed-key]
+                [--relogin] [--no-aliases] [-h|--help]
 
   -s, --server URL     Lumen base URL (default: $LUMEN_BASE_URL or
                        https://lumen.ncsa.illinois.edu)
@@ -36,6 +36,10 @@ usage: lumen.sh [-s SERVER] [-k|--keyname NAME] [--author LABEL]
                        mode 600). Once it holds a "lumen" provider, later
                        runs keep it up to date without this flag
       --no-copilot     Leave the Copilot CLI config untouched this run
+      --shell          Write the key and server into your shell's rc file
+                       (default)
+      --no-shell       Leave the shell rc file untouched; the key is still
+                       kept in keys.json and config.ini
       --embed-key      Also write the key itself into the opencode config
                        (mode 600), for apps that don't read your shell rc.
                        Once embedded, later runs keep it up to date
@@ -52,6 +56,13 @@ both variables, a plain run targets the server you last logged in to.
 server. Without -s, the server in the opencode config is used; if it, or a
 key embedded there, disagrees with $LUMEN_BASE_URL, $LUMEN_API_KEY or
 keys.json, the run stops (--relogin replaces a mismatching key).
+The login also writes base_url and api_key into the [lumen] section of
+config.ini next to keys.json (mode 600); scripts/claude.sh and scripts/rag.py
+read it, along with chat_model and embed_model, which you can add by hand.
+The options you pass (--shell/--no-shell, --opencode/--no-opencode,
+--copilot/--no-copilot, --embed-key) are saved there too (shell, opencode,
+copilot, embed_key = true/false) and are the defaults of the next run; an
+option on the command line always wins. Edit the file to change them back.
 Environment: LUMEN_API_KEY, LUMEN_BASE_URL, OPENCODE_CONFIG, COPILOT_HOME,
 LUMEN_CONFIG_DIR.
 EOF
@@ -72,11 +83,40 @@ KEYNAME="opencode"
 AUTHOR="${USER:-$(id -un)}"
 CLIENT_ID="lumen-cli"
 TTL=""
-OPENCODE=1
-COPILOT=""
+# Prints the value of key $1 in the [lumen] section of config.ini, or nothing.
+ini_get() {
+  local ini="${LUMEN_CONFIG_DIR:-"${HOME:-}/.config/lumen"}/config.ini"
+  [[ -r "$ini" ]] || return 0
+  # shellcheck disable=SC2016  # awk program, expanded by awk, not the shell
+  awk -v want="$1" '
+    /^[ \t]*\[/ { insec = ($0 ~ /^[ \t]*\[lumen\][ \t]*$/); next }
+    insec && !/^[ \t]*[#;]/ && match($0, /[=:]/) {
+      k = substr($0, 1, RSTART - 1); v = substr($0, RSTART + 1)
+      gsub(/^[ \t]+|[ \t\r]+$/, "", k); gsub(/^[ \t]+|[ \t\r]+$/, "", v)
+      if (k == want) { print v; exit }
+    }
+  ' "$ini"
+}
+# Prints 1 or 0 for a true/false value of key $1 in config.ini, else $2.
+ini_bool() {
+  case "$(ini_get "$1" | tr '[:upper:]' '[:lower:]')" in
+    true|yes|on|1) printf 1 ;;
+    false|no|off|0) printf 0 ;;
+    *) printf '%s' "$2" ;;
+  esac
+}
+
+# The on/off options default to what config.ini remembers from earlier runs
+# (the built-in default when it holds nothing); an option on the command line
+# wins and is remembered in PERSIST, written once the run succeeds.
+OPENCODE=$(ini_bool opencode 1)
+COPILOT=$(ini_bool copilot "")
+SHELL_RC=$(ini_bool shell 1)
+EMBED_KEY=$(ini_bool embed_key 0)
+EMBED_KEY_EXPLICIT=0
+PERSIST=()
 RELOGIN=0
 NO_ALIASES=0
-EMBED_KEY=0
 SERVER_EXPLICIT=0
 
 while [[ $# -gt 0 ]]; do
@@ -86,18 +126,20 @@ while [[ $# -gt 0 ]]; do
     --author)      AUTHOR="${2:?missing value for $1}"; shift 2 ;;
     --client-id)   CLIENT_ID="${2:?missing value for $1}"; shift 2 ;;
     --ttl)         TTL="${2:?missing value for $1}"; shift 2 ;;
-    --opencode)    OPENCODE=1; shift ;;
-    --no-opencode) OPENCODE=0; shift ;;
-    --copilot)     COPILOT=1; shift ;;
-    --no-copilot)  COPILOT=0; shift ;;
-    --embed-key)   EMBED_KEY=1; shift ;;
+    --opencode)    OPENCODE=1; PERSIST+=("opencode=true"); shift ;;
+    --no-opencode) OPENCODE=0; PERSIST+=("opencode=false"); shift ;;
+    --copilot)     COPILOT=1; PERSIST+=("copilot=true"); shift ;;
+    --no-copilot)  COPILOT=0; PERSIST+=("copilot=false"); shift ;;
+    --shell)       SHELL_RC=1; PERSIST+=("shell=true"); shift ;;
+    --no-shell)    SHELL_RC=0; PERSIST+=("shell=false"); shift ;;
+    --embed-key)   EMBED_KEY=1; EMBED_KEY_EXPLICIT=1; PERSIST+=("embed_key=true"); shift ;;
     --relogin)     RELOGIN=1; shift ;;
     --no-aliases)  NO_ALIASES=1; shift ;;
     -h|--help)     usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 1 ;;
   esac
 done
-[[ $EMBED_KEY -eq 0 || $OPENCODE -eq 1 ]] || die "--embed-key needs the opencode config; drop --no-opencode"
+[[ $EMBED_KEY_EXPLICIT -eq 0 || $OPENCODE -eq 1 ]] || die "--embed-key needs the opencode config; drop --no-opencode"
 
 # The Copilot sync is opt-in, then sticky: without --copilot or --no-copilot
 # it runs when the file already holds a provider named "lumen". A file that
@@ -229,7 +271,7 @@ store_key() {
   fi
   chmod 600 "$tmp"
   mv "$tmp" "$KEYS_JSON"
-  install_rc_key "$1" "$SERVER"
+  record_login "$1" "$SERVER"
 }
 
 # $1 holds a key in plaintext: restrict it to the owner, as keys.json is,
@@ -268,6 +310,65 @@ rc_quote() {
     fi
   done
   printf "'%s'" "$out"
+}
+
+# Sets the key=value pairs given as arguments in the [lumen] section of
+# $LDIR/config.ini (mode 600), the file scripts/claude.sh and scripts/rag.py
+# read. Every other line (comments, chat_model, embed_model, other sections)
+# is kept as it is. The pairs go through the environment so awk does not
+# interpret backslashes in them.
+write_config_ini() {
+  local ini="$LDIR/config.ini" tmp
+  mkdir -p "$LDIR"
+  chmod 700 "$LDIR"
+  restrict_to_owner "$ini"
+  tmp=$(mktemp "$LDIR/.config.tmp.XXXXXX")
+  # shellcheck disable=SC2016  # awk program, expanded by awk, not the shell
+  INI_PAIRS=$(printf '%s\n' "$@") awk '
+    BEGIN {
+      n = split(ENVIRON["INI_PAIRS"], pair, "\n")
+      for (i = 1; i <= n; i++) {
+        p = index(pair[i], "=")
+        order[i] = substr(pair[i], 1, p - 1); val[order[i]] = substr(pair[i], p + 1)
+      }
+    }
+    # Blank lines are held back so new keys land before them, not after.
+    function flush(   i) {
+      for (i = 1; i <= n; i++) if (!done[order[i]]) print order[i] " = " val[order[i]]
+      printf "%s", pend; pend = ""
+    }
+    /^[ \t]*\[/ {
+      if (insec) { flush(); insec = 0 }
+      if ($0 ~ /^[ \t]*\[lumen\][ \t]*$/) { insec = 1; seen = 1 }
+      print; next
+    }
+    insec && /^[ \t]*$/ { pend = pend $0 "\n"; next }
+    insec && match($0, /^[ \t]*[A-Za-z_]+[ \t]*[=:]/) {
+      k = substr($0, 1, RLENGTH - 1); gsub(/^[ \t]+|[ \t]+$/, "", k)
+      if (k in val) {
+        printf "%s", pend; pend = ""
+        print k " = " val[k]; done[k] = 1; next
+      }
+    }
+    { if (insec) { printf "%s", pend; pend = "" } print }
+    END {
+      if (insec) flush()
+      else if (!seen) { if (NR > 0) print ""; print "[lumen]"; flush() }
+    }
+  ' "$ini" > "$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$ini"
+}
+
+# Remembers the options given on the command line as the next run's defaults.
+persist_options() {
+  [[ ${#PERSIST[@]} -eq 0 ]] || write_config_ini "${PERSIST[@]}"
+}
+
+# Records a login: config.ini always, the shell rc file unless --no-shell.
+record_login() {
+  write_config_ini "base_url=$2" "api_key=$1"
+  [[ $SHELL_RC -eq 0 ]] || install_rc_key "$1" "$2"
 }
 
 install_rc_key() {
@@ -773,6 +874,7 @@ derive_server_vars
 resolve_key
 
 if [[ $OPENCODE -eq 0 && $COPILOT -eq 0 ]]; then
+  persist_options
   echo "LUMEN_API_KEY=$LUMEN_API_KEY"
   exit 0
 fi
@@ -787,5 +889,6 @@ fetch_models
 # env or keys.json key is deliberately not (re)written to keys.json.
 case "$KEY_SOURCE" in
   config) store_key "$LUMEN_API_KEY" ;;
-  env|keys) [[ $SERVER_EXPLICIT -eq 0 ]] || install_rc_key "$LUMEN_API_KEY" "$SERVER" ;;
+  env|keys) [[ $SERVER_EXPLICIT -eq 0 ]] || record_login "$LUMEN_API_KEY" "$SERVER" ;;
 esac
+persist_options

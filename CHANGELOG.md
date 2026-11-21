@@ -7,6 +7,8 @@ All notable changes to Lumen will be documented in this file.
 ### Added
 
 - `POST /v1/embeddings` for embedding models, billed per input token at the model's input price; embedding models are hidden from chat and the OpenCode config. (#681)
+- `lumen.sh` writes `base_url` and `api_key` to `~/.config/lumen/config.ini`, adds `--shell`/`--no-shell`, and remembers `--shell`, `--opencode`, `--copilot` and `--embed-key` choices there as the next run's defaults; `scripts/claude.sh` and `scripts/rag.py` read the file, including `chat_model` and `embed_model`.
+- Help page for `scripts/rag.py`, a small RAG helper that embeds your files through `/v1/embeddings` and answers questions about them.
 
 ### Changed
 
