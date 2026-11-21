@@ -109,3 +109,20 @@ def test_embedding_vector_passes_through_without_warning(client, api_key, encodi
     assert resp.status_code == 200
     assert resp.get_json()["data"][0]["embedding"] == vector
     assert _serializer_warnings(recorded) == []
+
+
+def test_anthropic_message_metadata_list_without_warning(client, api_key):
+    # translate_response drops metadata, so only the absence of the warning is checked.
+    response = ChatCompletion.model_construct(
+        id="chatcmpl-1", object="chat.completion", created=0, model="backend-model",
+        choices=[], usage=_usage(), metadata=_METADATA,
+    )
+    with _mock_openai(response), warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        resp = client.post(
+            "/v1/messages",
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+            json={"model": "test-model", "max_tokens": 64, "messages": [{"role": "user", "content": "hi"}]},
+        )
+    assert resp.status_code == 200
+    assert _serializer_warnings(recorded) == []
