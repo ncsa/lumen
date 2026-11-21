@@ -340,6 +340,14 @@ def test_reasoning_tie_leaves_field_untouched(monkeypatch):
     assert "supports_reasoning" not in result["updates"]
 
 
+def test_reasoning_tie_does_not_downgrade_true(monkeypatch):
+    """An even split leaves an operator's True alone instead of deciding False."""
+    dev_models = _reasoning_models(True, False)
+    _patch_price(monkeypatch, dev_models, dev_models[0])
+    result = model_sync.sync_model({"name": "m", "supports_reasoning": True, "endpoints": [{"url": "http://x"}]})
+    assert "supports_reasoning" not in result["updates"]
+
+
 def test_reasoning_ignores_providers_without_boolean(monkeypatch):
     dev_models = _reasoning_models(None, "yes", True)
     _patch_price(monkeypatch, dev_models, dev_models[0])
@@ -378,6 +386,28 @@ def test_reasoning_downgraded_when_consensus_false(monkeypatch):
 def test_consensus_without_dev_id_is_none():
     index = model_sync._build_price_index(_reasoning_models(True, True))
     assert model_sync._consensus_bool({"reasoning": True}, index, "reasoning") is None
+
+
+@pytest.mark.parametrize("flags, expected", [
+    # Ties: undecided, never False.
+    ([True, False], None),
+    ([False, True], None),
+    ([True, True, False, False], None),
+    ([True, False, None, "yes"], None),
+    # Strict majority wins.
+    ([True, True, False], True),
+    ([False, False, True], False),
+    ([False, True, True], True),
+    ([True, True, True, False, False], True),
+    ([True], True),
+    ([False], False),
+    # No boolean votes at all.
+    ([None, None], None),
+])
+def test_consensus_bool_vote_table(flags, expected):
+    dev_models = _reasoning_models(*flags)
+    index = model_sync._build_price_index(dev_models)
+    assert model_sync._consensus_bool(dev_models[0], index, "reasoning") is expected
 
 
 # ── fetch_endpoint_model: server info first ────────────────────────────────────
