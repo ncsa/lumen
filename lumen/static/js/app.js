@@ -84,7 +84,8 @@ document.addEventListener("DOMContentLoaded", function () {
 // Convert UTC ISO timestamps to local time for display. Exposed so pages
 // that insert timestamps after load (e.g. the OAuth consent page flipping a
 // model row to "acknowledged") render them identically to the server pass.
-// Elements with data-relative show "5 min. ago", refresh every minute, and
+// Elements with data-relative show "5 min. ago" and refresh every minute;
+// elements with data-date show the local date only ("Nov 18, 2026"). Both
 // expose the full local datetime in a tooltip shown on hover and focus.
 window.renderLocalDatetimes = function (root) {
   (root || document).querySelectorAll(".local-datetime[data-utc]").forEach(function (el) {
@@ -94,8 +95,11 @@ window.renderLocalDatetimes = function (root) {
         year: "numeric", month: "2-digit", day: "2-digit",
         hour: "2-digit", minute: "2-digit",
       });
-      if (el.hasAttribute("data-relative")) {
-        el.textContent = relativeTime(d);
+      const relative = el.hasAttribute("data-relative");
+      if (relative || el.hasAttribute("data-date")) {
+        el.textContent = relative
+          ? relativeTime(d)
+          : d.toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" });
         el.title = local;  // becomes the Bootstrap tooltip's content
         el.tabIndex = 0;
         bootstrap.Tooltip.getOrCreateInstance(el);

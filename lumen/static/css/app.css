@@ -759,3 +759,11 @@ button.model-stat:focus-visible { outline: 3px solid #13294b; outline-offset: 2p
 .model-panel-list dt, .model-panel-list dd { margin: 0 0 .25rem; line-height: 1.5; }
 .model-panel-list dt { font-weight: 400; color: var(--bs-secondary-color); }
 .model-panel-list dd { text-align: end; }
+/* Access & Acknowledgments: values read left to right; a pending row's button wraps under its text when narrow. */
+.model-access-list { grid-template-columns: max-content minmax(0, 1fr); }
+.model-access-list dd { text-align: start; display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .5rem; }
+/* Between sm and md the three panel columns are too narrow for label and value side by side: stack them. */
+@media (min-width: 576px) and (max-width: 767.98px) {
+    .model-access-list { grid-template-columns: minmax(0, 1fr); }
+    .model-access-list dd { margin-bottom: .5rem; }
+}
