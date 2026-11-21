@@ -126,24 +126,27 @@
               <dt>Cached write</dt><dd>{{ "%.2f"|format(cache_write | float) }}</dd>
             </dl>
           </div>
-          <div class="col-sm-4 text-sm-end model-access">
-            <h3 class="model-panel-heading">Access</h3>
-            {% if ack and ack.consented %}
-              <button type="button" class="badge rounded-pill bg-success border-0 consent-info-btn"
-                      data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}"
-                      data-consented-at="{{ ack.consent_at.strftime('%Y-%m-%dT%H:%M:%SZ') if ack.consent_at else '' }}">granted<span class="visually-hidden"> for {{ config.model_name }}, show acknowledgment details</span></button>
-            {% elif ack %}
-              {% if config.needs_ack %}
-                <button type="button" class="badge rounded-pill bg-warning text-dark border-0 ack-btn" aria-haspopup="dialog"
-                        data-name="{{ config.model_name }}" data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}">acknowledge<span class="visually-hidden"> for {{ config.model_name }}</span></button>
-              {% endif %}
-              {% if config.early_access %}
-                <button type="button" class="badge rounded-pill bg-info text-dark border-0 ack-btn" aria-haspopup="dialog"
-                        data-name="{{ config.model_name }}" data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}">early access<span class="visually-hidden"> for {{ config.model_name }}</span></button>
-              {% endif %}
-            {% else %}
-              <span class="text-muted small">Open</span>
-            {% endif %}
+          <div class="col-sm-4 model-access">
+            <h3 class="model-panel-heading">Access &amp; Acknowledgments</h3>
+            {#- One row per requirement: not required, pending (with the button that opens the
+                acknowledgment dialog) or the date it was accepted, in the user's local timezone. -#}
+            <dl class="model-panel-list model-access-list mb-0">
+              {%- for label, required, accepted_at, pending, pill, pill_class in [
+                ("Acknowledgment", config.needs_ack, ack.ack_at if ack else none, "Acknowledgment required", "acknowledge", "bg-warning"),
+                ("Early access", config.early_access, ack.early_access_at if ack else none, "Acceptance required", "early access", "bg-info"),
+              ] %}
+              <dt>{{ label }}</dt>
+              {%- if not required %}
+              <dd data-state="not-required"><span class="text-muted">Not required</span></dd>
+              {%- elif accepted_at %}
+              <dd data-state="accepted"><span class="local-datetime" data-date data-utc="{{ accepted_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"></span></dd>
+              {%- else %}
+              <dd data-state="pending"><span>{{ pending }}</span>
+                <button type="button" class="badge rounded-pill {{ pill_class }} text-dark border-0 ack-btn" aria-haspopup="dialog"
+                        data-name="{{ config.model_name }}" data-notice="{{ ack.notice or '' }}" data-early-notice="{{ ack.early_notice or '' }}">{{ pill }}<span class="visually-hidden"> for {{ config.model_name }}</span></button></dd>
+              {%- endif %}
+              {%- endfor %}
+            </dl>
           </div>
         </div>
         </div>
@@ -179,9 +182,6 @@
   const openAckModal = initAckConsent(() => location.reload());
   document.querySelectorAll('.ack-btn').forEach(btn => {
     btn.addEventListener('click', () => openAckModal(btn.dataset.name, btn.dataset.notice || null, btn.dataset.earlyNotice || null));
-  });
-  document.querySelectorAll('.consent-info-btn').forEach(btn => {
-    btn.addEventListener('click', () => toggleConsentPopover(btn, 'left'));
   });
   // A click anywhere on a model row's summary toggles its details through the
   // row's chevron button, which stays the keyboard control. Only the rows in

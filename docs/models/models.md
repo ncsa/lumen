@@ -67,11 +67,20 @@ Click anywhere on a row (or tab to the arrow at its start and press Enter or Spa
 
 - **Health** — **Last checked**: how long ago the most recent health check ran (e.g. `5 min. ago`); hover over or tab to it for the full date and time. It updates every minute while the page is open. **Never** means no check has run yet. **Health checks**: how many of the model's backends passed their last check out of the total configured (e.g. `2/4 passed`).
 - **Detailed pricing** — coins per million tokens for **Input**, **Output**, **Cached read** and **Cached write**. A cache-read rate the model does not configure is billed at the input price and a cache-write rate at 0, so these always show what you are actually charged.
-- **Access** — see below.
+- **Access & Acknowledgments** — see below.
 
-## Access
+## Access & Acknowledgments
 
-Models that require a one-time acknowledgment show an **acknowledge** button under **Access**, and early-access models show an **early access** button — these models may change or be removed at any time, and you must acknowledge that before using them. Click either button to open the acknowledgment dialog, which shows every notice that applies to the model. **Accept & Enable** records your acknowledgment and the buttons are replaced by a green **granted** pill; click **granted** to see the notices you accepted and when you acknowledged them. **Cancel** leaves the model unchanged. If a model gains a new requirement after you acknowledged it, its buttons appear again until you acknowledge the new terms. Models without requirements show **Open**. A model with an end date disappears from this page once the date passes.
+The last column of a model's details lists the two things a model can ask you to accept before you use it:
+
+| Row | Shows |
+|-----|-------|
+| **Acknowledgment** | **Not required** when the model has no acknowledgment; **Acknowledgment required** with an **acknowledge** button until you accept its terms; then the date you accepted them (e.g. `Nov 18, 2026`) |
+| **Early access** | **Not required** for a regular model; **Acceptance required** with an **early access** button until you accept that the model may change or be removed at any time; then the date you accepted it |
+
+Dates are shown in your own timezone. Hover over or tab to a date to see the full date and time.
+
+Click **acknowledge** or **early access** to open the acknowledgment dialog, which shows every notice that applies to the model. **Accept & Enable** records your acceptance and reloads the page, so the rows show today's date and the **Needs Ack** card goes down. **Cancel** leaves the model unchanged. Each row keeps its own date, so a model you acknowledged earlier and accepted for early access later shows two different dates. If a model gains a new requirement after you accepted it, that row asks for acceptance again until you accept the new terms; the model counts under **Needs Ack** until every row shows a date or **Not required**. A model with an end date disappears from this page once the date passes.
 
 ## Understanding Pricing
 

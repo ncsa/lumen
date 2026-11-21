@@ -196,9 +196,12 @@ def test_models_page_with_access_pills(app, auth_client, test_model):
     _run_all_checks(resp.data, "/models")
 
 
-def test_models_page_with_granted_pill(app, auth_client, test_user, test_model):
+def test_models_page_with_accepted_and_pending_access(app, auth_client, test_user, test_model):
+    # Acknowledgment accepted (a date), early access still pending (text and button).
     with app.app_context():
-        db.session.get(ModelConfig, test_model["id"]).needs_ack = True
+        model = db.session.get(ModelConfig, test_model["id"])
+        model.needs_ack = True
+        model.early_access = True
         db.session.add(EntityModelConsent(entity_id=test_user["id"], model_config_id=test_model["id"], consented_at=datetime(2026, 1, 1)))
         db.session.commit()
     resp = auth_client.get("/models")

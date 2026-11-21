@@ -12,7 +12,7 @@ from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.services import request_rates
-from lumen.services.llm import _consent_satisfied, bulk_model_access_info, get_model_access_status, model_notices
+from lumen.services.llm import _consent_satisfied, bulk_model_access_statuses, consent_rows, get_model_access_status, model_notices
 from lumen.services.model_resolver import resolve_model_config
 
 models_page_bp = Blueprint("models_page", __name__)
@@ -40,22 +40,27 @@ def _visible_model_or_404(model_name):
 def index():
     entity_id = g.get("entity_id")
     all_configs = db.session.execute(select(ModelConfig).where(ModelConfig.active).order_by(ModelConfig.model_name)).scalars().all()
-    access_statuses, consent_map = bulk_model_access_info(entity_id, [c.id for c in all_configs])
+    access_statuses = bulk_model_access_statuses(entity_id, [c.id for c in all_configs])
     configs = [c for c in all_configs if access_statuses.get(c.id, "allowed") != "blocked"]
     model_ids = [c.id for c in configs]
-    # Acknowledgement state for the Access column. consent_map only holds models
-    # whose requirements are all satisfied, so a requirement added after consent
-    # re-shows the pills.
+    # Acknowledgement state for the Access & Acknowledgments column, the Needs Ack
+    # card and its filter, all from ONE read of the consent rows so they always
+    # agree: each requirement's own acceptance time, counted only while that
+    # requirement is in force (one added after consent shows as required), and
+    # whether every requirement is satisfied.
+    ack_configs = [c for c in configs if access_statuses.get(c.id) == "needs_ack"]
+    rows = consent_rows(entity_id, [c.id for c in ack_configs])
     ack_map = {}
-    for c in configs:
-        if access_statuses.get(c.id) == "needs_ack":
-            notice, early_notice = model_notices(c)
-            ack_map[c.id] = {
-                "consented": c.id in consent_map,
-                "consent_at": consent_map.get(c.id),
-                "notice": notice,
-                "early_notice": early_notice,
-            }
+    for c in ack_configs:
+        notice, early_notice = model_notices(c)
+        row = rows.get(c.id)
+        ack_map[c.id] = {
+            "consented": _consent_satisfied(row, c),
+            "ack_at": row.consented_at if row and c.needs_ack else None,
+            "early_access_at": row.early_access_at if row and c.early_access else None,
+            "notice": notice,
+            "early_notice": early_notice,
+        }
     endpoints_map: dict[int, list] = {}
     for ep in db.session.execute(select(ModelEndpoint).where(ModelEndpoint.model_config_id.in_(model_ids), ModelEndpoint.active.is_(True))).scalars().all():
         endpoints_map.setdefault(ep.model_config_id, []).append(ep)
