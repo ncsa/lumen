@@ -107,3 +107,50 @@ def test_falls_back_to_claude_on_path(tmp_path):
     args, env = parse(r.stdout)
     assert args == ["--version"]
     assert env["ANTHROPIC_MODEL"] == "some-model"
+
+
+def _write_ini(home, text, config_dir=None):
+    ini = (config_dir or home / ".config" / "lumen") / "config.ini"
+    ini.parent.mkdir(parents=True, exist_ok=True)
+    ini.write_text(text)
+    return ini
+
+
+def test_settings_come_from_config_ini(home):
+    _write_ini(home, "# note\n[other]\nchat_model = wrong\n\n[lumen]\n"
+                     "base_url = http://ini.example:5001\napi_key: sk_ini_key_00000\n"
+                     "chat_model=ini-model\n")
+    r = run_script(home, {"LUMEN_BASE_URL": None, "LUMEN_API_KEY": None,
+                          "ANTHROPIC_MODEL": None})
+    assert r.returncode == 0, r.stderr
+    _, env = parse(r.stdout)
+    assert env["ANTHROPIC_BASE_URL"] == "http://ini.example:5001"
+    assert env["ANTHROPIC_API_KEY"] == "sk_ini_key_00000"
+    assert env["ANTHROPIC_MODEL"] == "ini-model"
+    assert env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "ini-model"
+
+
+def test_environment_wins_over_config_ini(home):
+    _write_ini(home, "[lumen]\nbase_url = http://ini.example\napi_key = sk_ini\n"
+                     "chat_model = ini-model\n")
+    r = run_script(home)
+    assert r.returncode == 0, r.stderr
+    _, env = parse(r.stdout)
+    assert env["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:5001"
+    assert env["ANTHROPIC_API_KEY"] == "sk_test1234567890abcd"
+    assert env["ANTHROPIC_MODEL"] == "some-model"
+
+
+def test_config_dir_override(home, tmp_path):
+    other = tmp_path / "elsewhere"
+    _write_ini(home, "[lumen]\nchat_model = home-model\n")
+    _write_ini(home, "[lumen]\nchat_model = other-model\n", config_dir=other)
+    r = run_script(home, {"ANTHROPIC_MODEL": None, "LUMEN_CONFIG_DIR": str(other)})
+    assert r.returncode == 0, r.stderr
+    assert parse(r.stdout)[1]["ANTHROPIC_MODEL"] == "other-model"
+
+
+def test_missing_model_error_names_config_ini(home):
+    r = run_script(home, {"ANTHROPIC_MODEL": None})
+    assert r.returncode != 0
+    assert "chat_model" in r.stderr and "config.ini" in r.stderr
