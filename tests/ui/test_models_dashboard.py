@@ -269,11 +269,13 @@ def test_row_click_selector_matches_only_rows_with_a_toggle(app, auth_client, te
     _add_model(app, "second-model")
     soup = _soup(auth_client)
     script = "".join(s.get_text() for s in soup.find_all("script") if not s.get("src"))
-    selector = re.search(r"querySelectorAll\('([^']*model-row-grid[^']*)'\)", script).group(1)
-    matched = soup.select(selector)
-    assert len(matched) == 2
-    assert all(node.find("button", class_="model-row-toggle") for node in matched)
-    assert soup.find(class_="model-list-columns") not in matched
+    selectors = re.findall(r"""querySelectorAll\(\s*(['"`])([^'"`]*model-row-grid[^'"`]*)\1\s*\)""", script)
+    assert selectors, "the row-click script no longer binds .model-row-grid via querySelectorAll; update this test"
+    for _, selector in selectors:
+        matched = soup.select(selector)
+        assert len(matched) == 2, selector
+        assert all(node.find("button", class_="model-row-toggle") for node in matched), selector
+        assert soup.find(class_="model-list-columns") not in matched, selector
 
 
 # ── Expanded panel ────────────────────────────────────────────────────────

@@ -179,6 +179,7 @@
   // not toggle; a selection elsewhere on the page does not block it.
   document.querySelectorAll('#model-list .model-row-grid').forEach(grid => {
     const toggle = grid.querySelector('.model-row-toggle');
+    if (!toggle) return;
     grid.addEventListener('click', e => {
       if (e.target.closest('a, button')) return;
       const selection = window.getSelection();

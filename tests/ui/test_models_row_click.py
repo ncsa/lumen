@@ -21,7 +21,9 @@ def models_page(app, auth_client, browser):
     """Open /models with two models; return (page, uncaught page errors)."""
     with app.app_context():
         for name in MODELS:
-            db.session.add(ModelConfig(model_name=name, input_cost_per_million=1.0, output_cost_per_million=2.0))
+            # beta-model is early access, so its row shows the lock and flask icons.
+            db.session.add(ModelConfig(model_name=name, input_cost_per_million=1.0, output_cost_per_million=2.0,
+                                       early_access=name == "beta-model"))
         db.session.commit()
 
     def handle(route, request):
@@ -90,6 +92,28 @@ def test_chevron_toggles_once(models_page):
     assert errors == []
 
 
+def test_keyboard_on_the_chevron_keeps_one_row_open(models_page):
+    page, errors = models_page
+    page.focus(f"{_row('alpha-model')} .model-row-toggle")
+    page.keyboard.press("Enter")
+    assert _open_rows(page) == ["alpha-model"]
+    page.focus(f"{_row('beta-model')} .model-row-toggle")
+    page.keyboard.press("Space")
+    assert _open_rows(page) == ["beta-model"]
+    page.keyboard.press("Enter")
+    assert _open_rows(page) == []
+    assert errors == []
+
+
+def test_clicking_inside_an_open_panel_does_not_close_it(models_page):
+    page, errors = models_page
+    page.click(f"{_row('alpha-model')} .model-limits")
+    assert _open_rows(page) == ["alpha-model"]
+    page.click(f"{_row('alpha-model')} .model-pricing")
+    assert _open_rows(page) == ["alpha-model"]
+    assert errors == []
+
+
 def test_model_name_still_opens_the_detail_page(models_page):
     page, errors = models_page
     page.click(f"{_row('alpha-model')} a.model-name")
@@ -124,4 +148,24 @@ def test_a_selection_elsewhere_does_not_block_the_row(models_page):
     _select_text(page, "h1")
     _click_without_mouse(page, f"{_row('beta-model')} .model-context")
     assert _open_rows(page) == ["beta-model"]
+    assert errors == []
+
+
+def test_lock_and_flask_sit_inline_and_smaller_than_the_name(models_page):
+    page, errors = models_page
+    sizes = page.eval_on_selector(_row("beta-model"), """row => {
+        const name = row.querySelector('a.model-name').getBoundingClientRect();
+        return [...row.querySelectorAll('.model-flag')].map(icon => {
+            const box = icon.getBoundingClientRect();
+            return {
+                label: icon.getAttribute('aria-label'),
+                smaller: parseFloat(getComputedStyle(icon).fontSize) < parseFloat(getComputedStyle(row.querySelector('a.model-name')).fontSize),
+                inline: box.top >= name.top - 1 && box.bottom <= name.bottom + 1,
+            };
+        });
+    }""")
+    assert sizes == [
+        {"label": "Needs acknowledgment", "smaller": True, "inline": True},
+        {"label": "Early access", "smaller": True, "inline": True},
+    ]
     assert errors == []

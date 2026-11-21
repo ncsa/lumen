@@ -747,7 +747,8 @@ ilw-content .btn-primary:active {
 .model-list-columns { font-weight: 600; }
 @media (max-width: 575.98px) { .model-list-columns > :nth-child(2) { display: none; } }
 .model-row-name { min-width: 0; overflow-wrap: anywhere; }
-.model-flag { color: var(--bs-secondary-color); }
+/* Lock / flask beside the name: smaller than the name and sitting on its line. */
+.model-flag { color: var(--bs-secondary-color); font-size: .8em; vertical-align: baseline; }
 .model-panel { border-top: 1px solid var(--bs-border-color); margin-left: 1.5rem; }
 .model-panel-heading { font-size: .875rem; font-weight: 700; margin: 0 0 .5rem; }
 .model-panel-list { display: grid; grid-template-columns: auto auto; column-gap: 1rem; font-size: .875rem; }
