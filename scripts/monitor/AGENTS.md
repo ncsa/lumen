@@ -5,9 +5,8 @@ The root `AGENTS.md` applies here too. Rules specific to the monitor:
 - This is a standalone package. Never import from `lumen/`; run everything from
   `scripts/monitor` with uv (`uv sync`, `uv run pytest`, `uv run monitor ...`).
 - **Drift caveat:** the models.dev fetch and matcher are a copy of
-  `lumen/services/model_sync.py` (`_fetch_modelsdev`, `find_in_modelsdev`, and `_build_price_index` as `build_price_index`),
-  which `sync_models.py` also copies. When one of them changes, update the monitor's copy in
-  the same PR, and the other way round.
+  `lumen/services/model_sync.py` (`_fetch_modelsdev`, `find_in_modelsdev`, and `_build_price_index` as `build_price_index`).
+  When one of them changes, update the monitor's copy in the same PR, and the other way round.
 - All timestamps are naive UTC; get "now" from `monitor.db.utcnow()`. Only `daily_stats.day`
   is a local date, in the configured `timezone`.
 - Schema changes need a new Alembic revision in `monitor/migrations/versions/` that works on SQLite
