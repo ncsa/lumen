@@ -45,7 +45,8 @@ Both configs are filled from one `/v1/models` request, and the script prints the
 | `--no-copilot` | Leave the Copilot CLI config untouched this run |
 | `--embed-key` | Also write the key itself into the opencode config (`options.apiKey`, mode `600`) instead of `{env:LUMEN_API_KEY}`; can't be combined with `--no-opencode`. The Copilot CLI config always holds the key |
 | `--relogin` | Request a new key even if one is stored; the new key always replaces the stored one |
-| `--no-aliases` | Skip model aliases when syncing (both configs) |
+| `--aliases` | Include model aliases when syncing (both configs); the default |
+| `--no-aliases` | Leave model aliases out when syncing (both configs) |
 
 When a stored key stops working because it expired or was revoked, `lumen.sh` stops with `key expired or revoked — run lumen.sh --relogin`; run that to request a new key.
 

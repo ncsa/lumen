@@ -12,7 +12,7 @@ usage() {
 usage: lumen.sh [-s SERVER] [-k|--keyname NAME] [--author LABEL]
                 [--client-id ID] [--ttl DURATION] [--opencode | --no-opencode]
                 [--copilot | --no-copilot] [--shell | --no-shell] [--embed-key]
-                [--relogin] [--no-aliases] [-h|--help]
+                [--relogin] [--aliases | --no-aliases] [-h|--help]
 
   -s, --server URL     Lumen base URL (default: $LUMEN_BASE_URL or
                        https://lumen.ncsa.illinois.edu)
@@ -45,6 +45,7 @@ usage: lumen.sh [-s SERVER] [-k|--keyname NAME] [--author LABEL]
                        Once embedded, later runs keep it up to date
       --relogin        Request a new key even if one is stored; the newly
                        issued key always replaces the stored one
+      --aliases        Include alias entries when syncing models (default)
       --no-aliases     Skip alias entries when syncing models
 
 An $LUMEN_API_KEY from the environment (or the rc-file block) is only used
@@ -116,7 +117,7 @@ EMBED_KEY=$(ini_bool embed_key 0)
 EMBED_KEY_EXPLICIT=0
 PERSIST=()
 RELOGIN=0
-NO_ALIASES=0
+ALIASES=1
 SERVER_EXPLICIT=0
 
 while [[ $# -gt 0 ]]; do
@@ -134,7 +135,8 @@ while [[ $# -gt 0 ]]; do
     --no-shell)    SHELL_RC=0; PERSIST+=("shell=false"); shift ;;
     --embed-key)   EMBED_KEY=1; EMBED_KEY_EXPLICIT=1; PERSIST+=("embed_key=true"); shift ;;
     --relogin)     RELOGIN=1; shift ;;
-    --no-aliases)  NO_ALIASES=1; shift ;;
+    --aliases)     ALIASES=1; shift ;;
+    --no-aliases)  ALIASES=0; shift ;;
     -h|--help)     usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 1 ;;
   esac
@@ -642,7 +644,7 @@ sync_models() {
 
   local new_models model_count old_models added removed tmp
   local skip_aliases_json="false"
-  [[ $NO_ALIASES -eq 1 ]] && skip_aliases_json="true"
+  [[ $ALIASES -eq 0 ]] && skip_aliases_json="true"
   new_models=$(printf '%s' "$models_json" | jq --argjson skip_aliases "$skip_aliases_json" '
     [.data[]
      | select(($skip_aliases | not) or (.parent == null))
@@ -766,7 +768,7 @@ sync_models() {
 sync_copilot() {
   local config="$COPILOT_FILE"
   local skip_aliases_json="false"
-  [[ $NO_ALIASES -eq 1 ]] && skip_aliases_json="true"
+  [[ $ALIASES -eq 0 ]] && skip_aliases_json="true"
 
   local new_models model_count
   new_models=$(printf '%s' "$MODELS_JSON" | jq --argjson skip_aliases "$skip_aliases_json" '

@@ -1129,6 +1129,39 @@ def test_sync_no_aliases_flag(home, lumen_server):
     assert set(cfg["provider"]["lumen"]["models"]) == {"gpt-demo"}
 
 
+
+@pytest.mark.parametrize("args, expected", [
+    (["--aliases"], {"gpt-demo", "gpt-alias"}),
+    (["--no-aliases", "--aliases"], {"gpt-demo", "gpt-alias"}),
+    (["--aliases", "--no-aliases"], {"gpt-demo"}),
+])
+def test_sync_aliases_flag_last_wins(home, lumen_server, args, expected):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    r = run_script(home, port, args=args)
+    assert r.returncode == 0, r.stderr
+    cfg = json.loads((home / ".config" / "opencode" / "opencode.json").read_text())
+    assert set(cfg["provider"]["lumen"]["models"]) == expected
+
+
+@pytest.mark.parametrize("flag", ["--aliasses", "--no-aliasses"])
+def test_misspelled_aliases_flag_rejected(home, lumen_server, flag):
+    port = lumen_server.server_address[1]
+    r = run_script(home, port, args=[flag])
+    assert r.returncode != 0
+    assert f"unknown argument: {flag}".encode() in r.stderr
+    assert not lumen_server.hits
+
+
+def test_help_lists_aliases_flags(home, lumen_server):
+    port = lumen_server.server_address[1]
+    r = run_script(home, port, args=["--help"])
+    assert r.returncode == 0, r.stderr
+    assert b"[--aliases | --no-aliases]" in r.stdout
+    assert b"--aliases        Include alias entries" in r.stdout
+    assert b"--no-aliases     Skip alias entries" in r.stdout
+
+
 def test_sync_writes_capability_flags(home, lumen_server):
     """Capability fields from /v1/models land in the config as OpenCode's
     modalities/attachment/tool_call/reasoning flags; models without the data
@@ -1544,6 +1577,17 @@ def test_copilot_no_aliases(home, lumen_server):
     _, models = copilot_lumen(json.loads(copilot_file(home).read_text()))
     assert set(models) == {"gpt-demo"}
     assert not any("alias of" in m["name"] for m in models.values())
+
+
+
+def test_copilot_aliases_flag(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    r = run_script(home, port, args=["--copilot", "--no-aliases", "--aliases"])
+    assert r.returncode == 0, r.stderr
+    _, models = copilot_lumen(json.loads(copilot_file(home).read_text()))
+    assert set(models) == {"gpt-demo", "gpt-alias"}
+    assert models["gpt-alias"]["name"].endswith("(alias of gpt-demo)")
 
 
 def test_copilot_sticky_with_no_opencode(home, lumen_server):
