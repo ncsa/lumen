@@ -267,7 +267,8 @@
                 </tr>
                 <tr>
                   <th scope="row" class="text-muted fw-normal ps-3">Output</th>
-                  <td class="text-end pe-3">{{ "%.2f"|format(config.output_cost_per_million | float) }} / 1M</td>
+                  {#- An embedding model produces no output tokens, so its output price (always 0) shows a dash (#741). -#}
+                  <td class="text-end pe-3">{% if is_embedding_model(config) %}<span aria-hidden="true">&mdash;</span><span class="visually-hidden">no output price</span>{% else %}{{ "%.2f"|format(config.output_cost_per_million | float) }} / 1M{% endif %}</td>
                 </tr>
                 {% if config.cache_write_cost_per_million is not none %}
                 <tr>

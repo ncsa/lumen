@@ -8,6 +8,10 @@ All notable changes to Lumen will be documented in this file.
 
 - `lumen.sh` adds `--aliases` and remembers the `--aliases`/`--no-aliases` choice in `config.ini` as `aliases = true/false`. (#734)
 
+### Changed
+
+- Embedding models always have an output price of 0: the config editor locks the field, and the models page and the model detail page show `—`. (#741)
+
 ## [2.5.0] - 2026-11-21
 
 **Upgrade:** speech-to-text models must have `audio` in `input_modalities` (the **audio** input box in the config editor, or `config.yaml`), or `/v1/audio/transcriptions` and `/v1/audio/translations` return 400. `/v1/chat/completions`, `/v1/completions`, `/v1/messages` and `/v1/audio/*` also return 400 for models marked as embedding (`output_modalities: ["embedding"]`) instead of forwarding the call to the backend. An unset `cache_write_cost_per_million` now bills cache writes at 0 instead of the input price; set it explicitly to keep the 2.4.0 charge. (#678, #721)

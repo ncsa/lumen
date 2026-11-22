@@ -9,7 +9,7 @@ from sqlalchemy import select
 from lumen.decorators import login_required
 from lumen.extensions import db
 from lumen.models.entity_model_consent import EntityModelConsent
-from lumen.models.model_config import ModelConfig
+from lumen.models.model_config import ModelConfig, is_embedding_model
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.services import request_rates
 from lumen.services.llm import _consent_satisfied, bulk_model_access_statuses, consent_rows, get_model_access_status, model_notices
@@ -150,6 +150,7 @@ def index():
         name_rank=name_rank,
         token_count=_token_count,
         modalities=_modalities,
+        is_embedding_model=is_embedding_model,
     )
 
 
@@ -265,6 +266,7 @@ def detail(model_name):
         model_notice=config.notice,
         ack_notice=ack_notice,
         early_access_notice=early_access_notice if access_status == "needs_ack" else None,
+        is_embedding_model=is_embedding_model,
     )
 
 

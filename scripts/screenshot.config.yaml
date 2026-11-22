@@ -114,3 +114,19 @@ models:
   - url: http://localhost:9999/v1
     api_key: dummy
     model: dummy
+- name: bge-m3
+  description: BAAI BGE-M3 — multilingual text embeddings.
+  # An embedding model, so models.png shows the dash for its output price.
+  aliases:
+  - BGE-M3
+  url: https://huggingface.co/BAAI/bge-m3
+  input_modalities:
+  - text
+  output_modalities:
+  - embedding
+  input_cost_per_million: 0.02
+  output_cost_per_million: 0
+  endpoints:
+  - url: http://localhost:9999/v1
+    api_key: dummy
+    model: dummy
