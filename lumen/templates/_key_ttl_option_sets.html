@@ -1,0 +1,10 @@
+{# The "Expires after" options of every key type, one <template> each, for
+   setKeyTtlOptions in static/js/key-ttl-edit.js. Needs key_ttl_choice_sets
+   ({key_type: key_ttl_choices(key_type=...)}). #}
+{% for key_type, choices in key_ttl_choice_sets.items() %}
+<template class="key-ttl-options" data-key-type="{{ key_type }}">
+  {% for seconds, label, selected in choices %}
+  <option value="{{ seconds }}"{% if selected %} selected{% endif %}>{{ label }}</option>
+  {% endfor %}
+</template>
+{% endfor %}

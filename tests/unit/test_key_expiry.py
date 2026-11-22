@@ -7,10 +7,11 @@ import pytest
 from sqlalchemy import select, update
 
 from lumen.extensions import db
-from lumen.models.api_key import APIKey
+from lumen.models.api_key import KEY_TYPE_ADMIN, KEY_TYPE_MONITORING, KEY_TYPE_NORMAL, APIKey
 from lumen.services import key_expiry
 from lumen.services.config_watcher import apply_hot_config, validate_config_structure
 from lumen.services.key_expiry import (
+    ADMIN_KEY_MAX_TTL,
     KEY_TTL_PRESETS,
     MAX_KEY_TTL,
     expire_keys,
@@ -392,3 +393,83 @@ def test_start_key_expirer_logs_a_failed_tick_and_keeps_running(app, monkeypatch
     assert len(calls) == 2
     assert sleeps == [key_expiry.EXPIRE_INTERVAL] * 2
     assert caplog.text.count("key expirer error") == 2
+
+
+# --- per key type ----------------------------------------------------------
+
+WEEK = 7 * DAY
+
+
+def test_admin_key_max_ttl_is_one_week():
+    assert ADMIN_KEY_MAX_TTL == WEEK
+
+
+@pytest.mark.parametrize("key_type, cap, requested, expected", [
+    (KEY_TYPE_ADMIN, 0, None, WEEK),           # default: the longest allowed
+    (KEY_TYPE_ADMIN, 30 * DAY, None, WEEK),
+    (KEY_TYPE_ADMIN, DAY, None, DAY),          # a shorter cap wins
+    (KEY_TYPE_ADMIN, 0, WEEK, WEEK),
+    (KEY_TYPE_ADMIN, 0, 3600, 3600),
+    (KEY_TYPE_MONITORING, 0, None, 0),         # default: never
+    (KEY_TYPE_MONITORING, DAY, None, 0),       # the cap does not apply
+    (KEY_TYPE_MONITORING, DAY, 0, 0),
+    (KEY_TYPE_MONITORING, DAY, 365 * DAY, 365 * DAY),
+    (KEY_TYPE_MONITORING, DAY, MAX_KEY_TTL, MAX_KEY_TTL),
+    (KEY_TYPE_NORMAL, DAY, None, DAY),         # as before
+    (KEY_TYPE_NORMAL, 0, None, 0),
+])
+def test_resolve_key_ttl_per_type(app, restore_config, key_type, cap, requested, expected):
+    app.config["KEY_TTL"] = cap
+    with app.app_context():
+        assert resolve_key_ttl(requested, key_type) == expected
+
+
+@pytest.mark.parametrize("key_type, cap, requested, message", [
+    (KEY_TYPE_ADMIN, 0, 0, "admin keys must expire"),
+    (KEY_TYPE_ADMIN, 0, WEEK + 1, "cannot exceed 604800"),
+    (KEY_TYPE_ADMIN, DAY, DAY + 1, "cannot exceed 86400"),
+    (KEY_TYPE_ADMIN, 30 * DAY, 30 * DAY, "cannot exceed 604800"),
+    (KEY_TYPE_MONITORING, 0, MAX_KEY_TTL + 1, "cannot exceed"),
+    (KEY_TYPE_MONITORING, 0, -1, "whole number"),
+    (KEY_TYPE_NORMAL, DAY, 0, "keys must expire"),
+])
+def test_resolve_key_ttl_per_type_rejected(app, restore_config, key_type, cap, requested, message):
+    app.config["KEY_TTL"] = cap
+    with app.app_context():
+        with pytest.raises(ValueError, match=message):
+            resolve_key_ttl(requested, key_type)
+
+
+@pytest.mark.parametrize("cap, expected", [
+    (0, [(DAY, "1 day", False), (WEEK, "7 days", True)]),
+    (30 * DAY, [(DAY, "1 day", False), (WEEK, "7 days", True)]),
+    (DAY, [(DAY, "1 day", True)]),
+    (2 * DAY, [(DAY, "1 day", False), (2 * DAY, "2 days", True)]),
+])
+def test_key_ttl_choices_admin(app, restore_config, cap, expected):
+    app.config["KEY_TTL"] = cap
+    with app.app_context():
+        assert key_ttl_choices(key_type=KEY_TYPE_ADMIN) == expected
+
+
+@pytest.mark.parametrize("cap", [0, DAY])
+def test_key_ttl_choices_monitoring_ignores_cap(app, restore_config, cap):
+    app.config["KEY_TTL"] = cap
+    with app.app_context():
+        assert key_ttl_choices(key_type=KEY_TYPE_MONITORING) == (
+            [(s, label, False) for s, label in KEY_TTL_PRESETS] + [(0, "Never", True)])
+
+
+def test_key_ttl_choices_admin_selected(app, restore_config):
+    app.config["KEY_TTL"] = 0
+    with app.app_context():
+        assert key_ttl_choices(DAY, KEY_TYPE_ADMIN) == [(DAY, "1 day", True), (WEEK, "7 days", False)]
+        # Not allowed for an admin key: falls back to the default.
+        assert key_ttl_choices(0, KEY_TYPE_ADMIN)[-1] == (WEEK, "7 days", True)
+
+
+@pytest.mark.parametrize("cap", [0, 30 * DAY])
+def test_key_ttl_choices_normal_unchanged(app, restore_config, cap):
+    app.config["KEY_TTL"] = cap
+    with app.app_context():
+        assert key_ttl_choices(key_type=KEY_TYPE_NORMAL) == key_ttl_choices()

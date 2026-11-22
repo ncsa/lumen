@@ -13,7 +13,7 @@ from sqlalchemy.orm import aliased
 from lumen.decorators import is_admin as _is_admin
 from lumen.decorators import is_admin_eligible, login_required
 from lumen.extensions import db
-from lumen.models.api_key import APIKey
+from lumen.models.api_key import KEY_PREFIXES, KEY_TYPE_NORMAL, KEY_TYPES, APIKey
 from lumen.models.conversation import Conversation
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
@@ -422,6 +422,7 @@ def index():
         all_groups=_all_groups_for_picker() if admin else [],
         user_memberships=_memberships_by_entity([entity_id]).get(entity_id, []) if admin else [],
         key_ttl_choices=key_ttl_choices(),
+        key_ttl_choice_sets={t: key_ttl_choices(key_type=t) for t in KEY_TYPES},
     )
 
 
@@ -431,18 +432,44 @@ def project_profile_page(sid):
     return redirect(url_for("projects.detail", sid=sid), HTTPStatus.MOVED_PERMANENTLY)
 
 
+def requested_key_type(value):
+    """The key type a create/generate request asks for: (type, None) or (None, error response).
+
+    No type gives a normal key. An unknown type gets 400; an admin or
+    monitoring key needs an admin with admin mode on, otherwise 403.
+    """
+    if value is None or value == "":
+        return KEY_TYPE_NORMAL, None
+    if value not in KEY_TYPES:
+        return None, (jsonify({"error": "Invalid key type"}), HTTPStatus.BAD_REQUEST)
+    if value != KEY_TYPE_NORMAL and not _is_admin(g.entity):
+        return None, (jsonify({"error": "Only admins in admin mode can create this key type"}), HTTPStatus.FORBIDDEN)
+    return value, None
+
+
+def _reserved_prefix(key: str) -> bool:
+    """True when ``key`` starts with the prefix of an admin or monitoring key."""
+    return any(key.startswith(p) for t, p in KEY_PREFIXES.items() if t != KEY_TYPE_NORMAL)
+
+
 @profile_bp.route("/profile/keys/generate")
 @login_required
 def generate_key():
-    key = "sk_" + secrets.token_urlsafe(32)
+    key_type, error = requested_key_type(request.args.get("type"))
+    if error:
+        return error
+    key = KEY_PREFIXES[key_type] + secrets.token_urlsafe(32)
+    # A random normal key could (very rarely) look like an admin or monitoring one.
+    while key_type == KEY_TYPE_NORMAL and _reserved_prefix(key):
+        key = KEY_PREFIXES[key_type] + secrets.token_urlsafe(32)
     return jsonify({"key": key})
 
 
 _CLIENT_KEY_RE = re.compile(r"sk_[A-Za-z0-9_-]{32,}")
 
 
-def _new_key_fields(key: str):
-    """Validate a client-supplied raw key for create/rotate.
+def _new_key_fields(key: str, key_type: str = KEY_TYPE_NORMAL):
+    """Validate a client-supplied raw key of ``key_type`` for create/rotate.
 
     Returns ({"key_hash", "key_hint"}, None) on success, or (None, error response).
     """
@@ -450,20 +477,28 @@ def _new_key_fields(key: str):
     # trivially guessable secret.
     if not _CLIENT_KEY_RE.fullmatch(key):
         return None, (jsonify({"error": "Invalid key"}), HTTPStatus.BAD_REQUEST)
+    # The prefix must match the type, so a key never looks like another type.
+    if not key.startswith(KEY_PREFIXES[key_type]) or (key_type == KEY_TYPE_NORMAL and _reserved_prefix(key)):
+        return None, (jsonify({"error": "Key prefix does not match the key type"}), HTTPStatus.BAD_REQUEST)
 
-    fields = key_secret_fields(key)
+    fields = key_secret_fields(key, key_type)
     if db.session.execute(select(APIKey).filter_by(key_hash=fields["key_hash"])).scalar_one_or_none():
         return None, (jsonify({"error": "Key already exists"}), HTTPStatus.CONFLICT)
 
     return fields, None
 
 
-def key_secret_fields(key: str) -> dict:
-    """The stored columns for a raw key: its hash and the hint shown in the UI."""
-    return {"key_hash": hash_api_key(key), "key_hint": f"{key[:7]}...{key[-4:]}"}
+def key_secret_fields(key: str, key_type: str = KEY_TYPE_NORMAL) -> dict:
+    """The stored columns for a raw key: its hash and the hint shown in the UI.
+
+    The hint keeps the type's whole prefix plus four characters, so an admin
+    or monitoring key is recognisable (``sk_admin_abcd...wxyz``).
+    """
+    head = len(KEY_PREFIXES[key_type]) + 4
+    return {"key_hash": hash_api_key(key), "key_hint": f"{key[:head]}...{key[-4:]}"}
 
 
-def set_key_secret(api_key_id: int, key: str, **values) -> bool:
+def set_key_secret(api_key_id: int, key: str, key_type: str = KEY_TYPE_NORMAL, **values) -> bool:
     """Replace an active key's secret in place, keeping its id, name and usage stats.
 
     Guarded on the key still being active, so a concurrent revoke wins. Extra
@@ -473,19 +508,19 @@ def set_key_secret(api_key_id: int, key: str, **values) -> bool:
     result = db.session.execute(
         update(APIKey)
         .where(APIKey.id == api_key_id, APIKey.revoked_at.is_(None))
-        .values(**key_secret_fields(key), **values)
+        .values(**key_secret_fields(key, key_type), **values)
     )
     return result.rowcount > 0
 
 
-def _requested_key_expiry(data: dict):
-    """expires_at for a new key from the request's optional ``ttl`` (seconds).
+def _requested_key_expiry(data: dict, key_type: str = KEY_TYPE_NORMAL):
+    """expires_at for a new key of ``key_type`` from the request's optional ``ttl`` (seconds).
 
     Returns (expires_at, None), or (None, error response) when the ttl is not
-    allowed under the api.keys.ttl cap. No ttl gives the cap.
+    allowed for the type (see resolve_key_ttl). No ttl gives the type's default.
     """
     try:
-        ttl = resolve_key_ttl(data.get("ttl"))
+        ttl = resolve_key_ttl(data.get("ttl"), key_type)
     except ValueError as e:
         return None, (jsonify({"error": str(e)}), HTTPStatus.BAD_REQUEST)
     return key_expires_at(ttl), None
@@ -498,7 +533,13 @@ def _created_key_response(api_key: APIKey, key: str):
 
 
 def rotate_key_secret(api_key: APIKey):
-    """Replace api_key's secret with the request's key, keeping usage stats. Commits."""
+    """Replace api_key's secret with the request's key, keeping usage stats and type. Commits.
+
+    The new key's prefix must match the key's type, and an admin or monitoring
+    key can only be rotated by an admin in admin mode, as when it is created.
+    """
+    if api_key.key_type != KEY_TYPE_NORMAL and not _is_admin(g.entity):
+        return jsonify({"error": "Only admins in admin mode can rotate this key type"}), HTTPStatus.FORBIDDEN
     if api_key.revoked_at is not None or revoke_if_expired(api_key):
         return jsonify({"error": "Key is revoked"}), HTTPStatus.CONFLICT
 
@@ -508,12 +549,12 @@ def rotate_key_secret(api_key: APIKey):
         return jsonify({"error": "Invalid key"}), HTTPStatus.BAD_REQUEST
 
     key = key.strip()
-    _, error = _new_key_fields(key)
+    _, error = _new_key_fields(key, api_key.key_type)
     if error:
         return error
 
     try:
-        updated = set_key_secret(api_key.id, key)
+        updated = set_key_secret(api_key.id, key, api_key.key_type)
         db.session.commit()
     except IntegrityError:
         # A concurrent create/rotate committed the same secret after the duplicate check.
@@ -527,8 +568,8 @@ def rotate_key_secret(api_key: APIKey):
 def set_key_ttl(api_key: APIKey):
     """Set api_key's expiry to now + the request's ``ttl`` (seconds; 0 = never). Commits.
 
-    A revoked or overdue key gets 409; a ttl not allowed under the api.keys.ttl
-    cap gets 400.
+    A revoked or overdue key gets 409; a ttl not allowed for the key's type
+    (see resolve_key_ttl) gets 400.
     """
     if api_key.revoked_at is not None or revoke_if_expired(api_key):
         return jsonify({"error": "Key is revoked"}), HTTPStatus.CONFLICT
@@ -537,7 +578,7 @@ def set_key_ttl(api_key: APIKey):
     if not isinstance(data, dict) or data.get("ttl") is None:
         return jsonify({"error": "ttl is required"}), HTTPStatus.BAD_REQUEST
     try:
-        expires_at = key_expires_at(resolve_key_ttl(data["ttl"]))
+        expires_at = key_expires_at(resolve_key_ttl(data["ttl"], api_key.key_type))
     except ValueError as e:
         return jsonify({"error": str(e)}), HTTPStatus.BAD_REQUEST
 
@@ -562,10 +603,13 @@ def create_key():
     name = (data.get("name") or "").strip()
     key = (data.get("key") or "").strip()
 
-    expires_at, error = _requested_key_expiry(data)
+    key_type, error = requested_key_type(data.get("type"))
     if error:
         return error
-    fields, error = _new_key_fields(key)
+    expires_at, error = _requested_key_expiry(data, key_type)
+    if error:
+        return error
+    fields, error = _new_key_fields(key, key_type)
     if error:
         return error
 
@@ -574,6 +618,7 @@ def create_key():
         created_by_entity_id=entity_id,
         name=name or "Unnamed Key",
         expires_at=expires_at,
+        key_type=key_type,
         **fields,
     )
     db.session.add(api_key)

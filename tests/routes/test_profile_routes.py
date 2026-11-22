@@ -574,7 +574,7 @@ def test_rotate_key_concurrent_duplicate_returns_409(app, auth_client, test_user
     auth_client.post("/profile/keys", json={"key": raced})
     # Skip the pre-check so the unique constraint on key_hash is what catches the duplicate.
     monkeypatch.setattr(profile_routes, "_new_key_fields",
-                        lambda key: ({"key_hash": hash_api_key(key), "key_hint": "sk_kkkk...kkkk"}, None))
+                        lambda key, key_type="normal": ({"key_hash": hash_api_key(key), "key_hint": "sk_kkkk...kkkk"}, None))
 
     resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/rotate", json={"key": raced})
     assert resp.status_code == HTTPStatus.CONFLICT
@@ -675,9 +675,9 @@ def test_edit_key_ttl_concurrent_revoke_returns_409(app, auth_client, test_user,
     kid = _seed_key_with_usage(app, test_user["id"], "sk_" + "f" * 32)
     real_resolve = profile_routes.resolve_key_ttl
 
-    def resolve_then_revoke(requested):
+    def resolve_then_revoke(requested, key_type="normal"):
         db.session.execute(APIKey.__table__.update().where(APIKey.id == kid).values(revoked_at=utcnow()))
-        return real_resolve(requested)
+        return real_resolve(requested, key_type)
 
     monkeypatch.setattr(profile_routes, "resolve_key_ttl", resolve_then_revoke)
     resp = auth_client.post(f"/profile/keys/{key_uuid(app, kid)}/ttl", json={"ttl": 86400})

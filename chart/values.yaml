@@ -189,7 +189,8 @@ api:
     # -- Path for multi-worker metric aggregation (mount a shared volume here for multiple replicas)
     multiprocDir: ""
   monitoring:
-    # -- Bearer token for the monitoring endpoint. Empty disables it.
+    # -- Bearer token for the monitoring endpoint. Empty disables it. Deprecated, removed in 2.7:
+    # use a monitoring key (sk_monitor_) that an admin creates on the profile page instead.
     token: ""
 
 ## Prometheus Operator ServiceMonitor -----------------------------------------------

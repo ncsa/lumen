@@ -71,7 +71,8 @@ api:
                        # For multiple containers, mount a shared volume at this path.
 
   monitoring:
-    token: ""   # Set to a long random string; leave empty to disable
+    token: ""   # Deprecated, removed in 2.7: use a monitoring key (sk_monitor_) created by an admin
+                # on the profile page instead. Set to a long random string; leave empty to disable.
 
   keys:
     ttl: "0"    # Maximum and default API key lifetime: 0 = keys never expire, or a duration

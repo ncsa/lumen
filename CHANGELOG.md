@@ -7,6 +7,7 @@ All notable changes to Lumen will be documented in this file.
 ### Added
 
 - `lumen.sh` adds `--aliases` and remembers the `--aliases`/`--no-aliases` choice in `config.ini` as `aliases = true/false`. (#734)
+- Add admin (sk_admin_, max 1-week TTL) and monitoring (sk_monitor_) API key types for admins; api.monitoring.token is deprecated (#737)
 
 ### Changed
 

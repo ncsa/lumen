@@ -323,6 +323,21 @@
           <label class="form-label" for="key-name-input">Key Name</label>
           <input type="text" id="key-name-input" class="form-control" placeholder="e.g. My App">
         </div>
+        {% if admin_eligible and admin_mode %}
+        <div class="mb-3">
+          <label class="form-label" for="key-type-select">Key type</label>
+          <select id="key-type-select" class="form-select" aria-describedby="key-type-help">
+            <option value="normal" selected>Normal</option>
+            <option value="admin">Admin</option>
+            <option value="monitoring">Monitoring</option>
+          </select>
+          <ul id="key-type-help" class="form-text list-unstyled mb-0">
+            <li><strong>Normal:</strong> chat and the rest of the API, billed to you.</li>
+            <li><strong>Admin</strong> (<code>sk_admin_</code>): model listing with token metrics, and the admin API once it ships; no chat; expires within a week.</li>
+            <li><strong>Monitoring</strong> (<code>sk_monitor_</code>): model listing with token metrics only; may never expire.</li>
+          </ul>
+        </div>
+        {% endif %}
         {% include '_key_ttl_select.html' %}
         <div class="mb-3">
           <label class="form-label" for="key-display">
@@ -335,6 +350,9 @@
             <button class="btn btn-outline-secondary" onclick="copyKey()" aria-label="Copy key to clipboard">Copy</button>
           </div>
           <input type="hidden" id="generated-key">
+          {% if admin_eligible and admin_mode %}
+          <div class="form-text">Changing the key type generates a new key: copy it after choosing the type.</div>
+          {% endif %}
         </div>
       </div>
       <div class="modal-footer">
@@ -347,6 +365,7 @@
 
 {% include '_rotated_key_modal.html' %}
 {% include '_key_ttl_modal.html' %}
+{% include '_key_ttl_option_sets.html' %}
 
 <!-- Delete Conversations confirmation modal -->
 <div class="modal fade" id="purgeConversationsModal" tabindex="-1" aria-labelledby="purgeConversationsModal-title" aria-modal="true" role="dialog">
@@ -584,6 +603,7 @@ const KEY_ROWS = [
     id: {{ key.uuid | string | tojson }},
     name: {{ (key.name or "(unnamed)") | tojson }},
     hint: {{ key.key_hint | tojson }},
+    type: {{ key.key_type | tojson }},
     source: {% if key.client_id %}{{ ('Requested via ' + key.client_id + ((' by ' + key.requested_by) if key.requested_by else '')) | tojson }}{% else %}null{% endif %},
     requests: {{ key.requests or 0 }},
     tokens: {{ (key.input_tokens or 0) + (key.output_tokens or 0) }},
@@ -595,6 +615,13 @@ const KEY_ROWS = [
   },
   {% endfor %}
 ];
+
+// Text badge next to the name of an admin or monitoring key.
+const KEY_TYPE_LABELS = { admin: 'Admin', monitoring: 'Monitoring' };
+function keyTypeBadge(k) {
+  const label = KEY_TYPE_LABELS[k.type];
+  return label ? ` <span class="badge text-bg-secondary">${label}</span>` : '';
+}
 
 function revokedBadge(k) {
   // The expirer revokes a key with no revoker, at exactly its expiry time.
@@ -632,12 +659,12 @@ function renderKeys() {
       const action = IS_ADMIN_VIEW
         ? (!k.revoked_at ? '' : revokedBadge(k))
         : (!k.revoked_at
-          ? `<button class="btn btn-sm btn-outline-secondary ttl-key-btn" data-id="${k.id}" data-name="${escHtml(k.name)}" aria-label="Edit expiry of key ${escHtml(k.name)}">Edit expiry</button>
-             <button class="btn btn-sm btn-outline-secondary rotate-key-btn" data-id="${k.id}" data-name="${escHtml(k.name)}" aria-label="Rotate key ${escHtml(k.name)}">Rotate</button>
+          ? `<button class="btn btn-sm btn-outline-secondary ttl-key-btn" data-id="${k.id}" data-name="${escHtml(k.name)}" data-type="${escHtml(k.type)}" aria-label="Edit expiry of key ${escHtml(k.name)}">Edit expiry</button>
+             <button class="btn btn-sm btn-outline-secondary rotate-key-btn" data-id="${k.id}" data-name="${escHtml(k.name)}" data-type="${escHtml(k.type)}" aria-label="Rotate key ${escHtml(k.name)}">Rotate</button>
              <button class="btn btn-sm btn-outline-danger revoke-key-btn" data-id="${k.id}" aria-label="Revoke key ${escHtml(k.name)}">Revoke</button>`
           : revokedBadge(k));
       return `<tr${revokedClass}>
-        <td><span data-bs-toggle="tooltip" data-bs-title="${escHtml(k.hint)}${k.source ? '&#10;' + escHtml(k.source) : ''}">${escHtml(k.name)}</span></td>
+        <td><span data-bs-toggle="tooltip" data-bs-title="${escHtml(k.hint)}${k.source ? '&#10;' + escHtml(k.source) : ''}">${escHtml(k.name)}</span>${keyTypeBadge(k)}</td>
         <td class="text-end">${k.requests.toLocaleString()}</td>
         <td class="text-end">${k.tokens.toLocaleString()}</td>
         <td class="text-end">${parseFloat(k.cost).toFixed(2)}</td>
@@ -659,10 +686,10 @@ function renderKeys() {
       const id = btn.dataset.id;
       btn.addEventListener('click', () => editKeyTtl("/profile/keys/" + btn.dataset.id + "/ttl", btn.dataset.name,
         data => { KEY_ROWS.find(k => k.id === id).expires_at = data.expires_at; renderKeys(); },
-        () => keyTbody.querySelector(`.ttl-key-btn[data-id="${id}"]`)));
+        () => keyTbody.querySelector(`.ttl-key-btn[data-id="${id}"]`), btn.dataset.type));
     });
     keyTbody.querySelectorAll('.rotate-key-btn').forEach(btn => {
-      btn.addEventListener('click', () => rotateApiKey("/profile/keys/" + btn.dataset.id + "/rotate", btn.dataset.name));
+      btn.addEventListener('click', () => rotateApiKey("/profile/keys/" + btn.dataset.id + "/rotate", btn.dataset.name, btn.dataset.type));
     });
   }
 }
@@ -877,22 +904,41 @@ renderModels();
 // ── API Key modal ─────────────────────────────────────────────────────────
 if (!IS_ADMIN_VIEW) {
 const apiKeyModal = document.getElementById("apiKeyModal");
-apiKeyModal.addEventListener("show.bs.modal", async function () {
+// Only rendered for an admin in admin mode; everyone else creates normal keys.
+const keyTypeSelect = document.getElementById("key-type-select");
+const selectedKeyType = () => keyTypeSelect ? keyTypeSelect.value : "normal";
+// Each type change mints a new key with that type's prefix; only the latest request counts.
+let keyGeneration = 0;
+async function generateNewKey() {
+  const generation = ++keyGeneration;
+  const keyType = selectedKeyType();
   document.getElementById("key-display").value = "(generating…)";
   document.getElementById("generated-key").value = "";
   document.getElementById("save-key-btn").disabled = true;
-  const ttlSelect = document.getElementById("key-ttl-select");
-  ttlSelect.value = [...ttlSelect.options].find(o => o.defaultSelected).value;
+  setKeyTtlOptions(document.getElementById("key-ttl-select"), keyType);
 
-  const resp = await fetch("/profile/keys/generate");
-  const data = await resp.json();
+  const resp = await fetch("/profile/keys/generate?type=" + encodeURIComponent(keyType));
+  const data = await resp.json().catch(() => ({}));
+  if (generation !== keyGeneration) return;
+  if (!resp.ok) {
+    document.getElementById("key-display").value = "";
+    appAlert("Error: " + (data.error || "Failed to generate a key."));
+    return;
+  }
   document.getElementById("key-display").value = data.key;
   document.getElementById("generated-key").value = data.key;
   document.getElementById("save-key-btn").disabled = false;
+}
+apiKeyModal.addEventListener("show.bs.modal", () => {
+  if (keyTypeSelect) keyTypeSelect.value = "normal";
+  generateNewKey();
 });
+if (keyTypeSelect) keyTypeSelect.addEventListener("change", generateNewKey);
 
 function copyKey() {
-  const val = document.getElementById("key-display").value;
+  // The hidden field holds the key Save will submit; it is empty while a new one is generated.
+  const val = document.getElementById("generated-key").value;
+  if (!val) return;
   navigator.clipboard.writeText(val).then(() => {
     const btn = event.target;
     btn.textContent = "Copied!";
@@ -908,7 +954,7 @@ document.getElementById("save-key-btn").addEventListener("click", async function
   const resp = await fetch("/profile/keys", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken },
-    body: JSON.stringify({ name, key, ttl: parseInt(document.getElementById("key-ttl-select").value, 10) }),
+    body: JSON.stringify({ name, key, type: selectedKeyType(), ttl: parseInt(document.getElementById("key-ttl-select").value, 10) }),
   });
   if (resp.ok) {
     bootstrap.Modal.getInstance(apiKeyModal).hide();

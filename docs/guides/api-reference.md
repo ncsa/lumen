@@ -14,6 +14,21 @@ Authorization: Bearer sk_your_api_key_here
 
 See [Profile → API Keys](../guides/profile.md#api-keys) to create a key.
 
+### Key types and access
+
+Admins can also create admin (`sk_admin_…`) and monitoring (`sk_monitor_…`) keys (see [Key Types](profile.md#key-types)). The key's type, not its prefix, decides what it may do:
+
+| Action | Admin key | Normal key | Monitoring key | `api.monitoring.token` (deprecated) |
+|--------|-----------|------------|----------------|--------------------------------------|
+| Chat, completions, embeddings, audio, Anthropic `/v1/messages` | 403 | ✅ (billed) | 403 | 403 |
+| `POST /v1/models/<id>/acknowledge` (acknowledging a model) | 403 | ✅ (not billed) | 403 | 403 |
+| `GET /v1/usage` (own key usage) | 403 | ✅ | 403 | 403 |
+| `GET /v1/models`, `GET /v1/models/<id>` | ✅ every active model | ✅ only models you can use | ✅ every active model | ✅ every active model |
+| `?tokens=true` token metrics on the models endpoints | ✅ | ignored: request counts only, never token metrics | ✅ | ✅ |
+| Admin API `/v1/organization/*` (not available yet, planned in #736) | ✅ | 403 | 403 | 403 |
+
+Admin keys **cannot chat**: they are for monitoring now, and for the admin API once it ships (#736). A normal key sees request counts on the models endpoints but never `?tokens=true` token metrics. Admin and monitoring requests are never billed. A missing or malformed `Authorization` header gets `400`. An unknown, revoked or expired key, or an admin or monitoring key whose owner is no longer an admin, gets `401`.
+
 ## Endpoints
 
 | Method | Path | Description |
@@ -109,9 +124,9 @@ curl "https://lumen.example.com/v1/models?include_unacknowledged=true" \
   -H "Authorization: Bearer sk_your_api_key_here"
 ```
 
-### Token counts (monitoring token only)
+### Token counts (monitoring and admin keys only)
 
-With the [monitoring token](../admin/config-application.md#apimonitoring), `?tokens=true` (also `1` or `yes`) adds per-model token counts to `GET /v1/models` and `GET /v1/models/<id>`:
+With a monitoring or admin key, or the deprecated [monitoring token](../admin/config-application.md#apimonitoring), `?tokens=true` (also `1` or `yes`) adds per-model token counts to `GET /v1/models` and `GET /v1/models/<id>`:
 
 | Field | Meaning |
 |-------|---------|
@@ -119,11 +134,11 @@ With the [monitoring token](../admin/config-application.md#apimonitoring), `?tok
 | `output_tokens` | Output tokens of the model's requests, per window. |
 | `cache_metrics` | `requests` is the model's request count over the last day; `reads` and `writes` say whether the backend reported a cache-read or cache-write count on any of those requests. With no traffic both are `false`, so check `requests` first. |
 
-`input_tokens` and `output_tokens` each hold `last_minute` (the last complete minute), `last_hour`, `last_day` and `last_month` (30 days). Alias rows repeat their model's counts. Like the `requests` counts, they may be up to about a minute old. Any other API key, or the monitoring token without the parameter, gets the normal response: the parameter is ignored.
+`input_tokens` and `output_tokens` each hold `last_minute` (the last complete minute), `last_hour`, `last_day` and `last_month` (30 days). Alias rows repeat their model's counts. Like the `requests` counts, they may be up to about a minute old. A normal API key gets the normal response, with request counts only: the parameter is ignored. Without the parameter, every credential gets the normal response.
 
 ```bash
 curl "https://lumen.example.com/v1/models?tokens=true" \
-  -H "Authorization: Bearer $MONITORING_TOKEN"
+  -H "Authorization: Bearer $MONITORING_KEY"
 ```
 
 ---
@@ -495,8 +510,9 @@ Access-Control-Max-Age: 600
 
 | HTTP Status | Meaning |
 |-------------|---------|
-| `401` | Invalid or missing API key |
-| `403` | Your account does not have access to the requested model |
+| `400` | Missing or malformed `Authorization` header (not `Bearer <key>`, or an empty key), or an invalid request body |
+| `401` | Unknown, revoked or expired API key, or an admin or monitoring key whose owner is no longer an admin |
+| `403` | Your account does not have access to the requested model, or the key's type may not use the endpoint (see [Key types and access](#key-types-and-access)) |
 | `404` | Model not found |
 | `429` | Rate limit exceeded, or coin budget exhausted (see Rate Limits) |
 | `503` | Model backend is currently unavailable |

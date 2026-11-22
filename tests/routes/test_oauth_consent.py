@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy import update as sa_update
 
 from lumen.extensions import db
-from lumen.models.api_key import APIKey
+from lumen.models.api_key import KEY_PREFIXES, KEY_TYPE_ADMIN, KEY_TYPE_MONITORING, KEY_TYPE_NORMAL, APIKey
 from lumen.models.auth_request import AuthRequest
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import ModelConfig
@@ -437,3 +437,35 @@ def test_consent_approve_second_time_is_already_handled(client, auth_client, app
     second = auth_client.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
     assert second.status_code == HTTPStatus.OK  # result page, not an error
     assert b"already" in second.get_data().lower()
+
+
+@pytest.mark.parametrize("key_type", [KEY_TYPE_ADMIN, KEY_TYPE_MONITORING])
+@pytest.mark.parametrize("overwrite", [False, True])
+def test_oauth_never_overwrites_admin_or_monitoring_key(client, auth_client, app, test_user, key_type, overwrite):
+    """A same-name admin or monitoring key is not an overwrite target: OAuth mints a new normal key."""
+    from lumen.services.crypto import hash_api_key
+    raw = KEY_PREFIXES[key_type] + "p" * 32
+    with app.app_context():
+        db.session.add(APIKey(entity_id=test_user["id"], name="opencode", key_hash=hash_api_key(raw),
+                              key_hint="x", key_type=key_type, expires_at=utcnow() + timedelta(days=1)))
+        db.session.commit()
+        before = db.session.execute(select(APIKey).filter_by(name="opencode")).scalar_one()
+        before = (before.id, before.key_hash, before.key_type, before.expires_at)
+
+    body = _issue(client, name="opencode")
+    page = auth_client.get(f"/device?code={body['user_code']}")
+    assert b"Replace the secret of key" not in page.data
+    req_id = str(_request_row(app, body["user_code"]).uuid)
+    form = {"request_id": req_id, "action": "approve", **({"overwrite": "on"} if overwrite else {})}
+    assert auth_client.post("/oauth/consent", data=form).status_code == HTTPStatus.OK
+    assert _request_row(app, body["user_code"]).status == "approved"
+
+    new_key = _poll(client, body).get_json()["access_token"]
+    assert new_key.startswith("sk_")
+    with app.app_context():
+        keys = db.session.execute(select(APIKey).filter_by(name="opencode").order_by(APIKey.id)).scalars().all()
+        assert len(keys) == 2
+        kept, minted = keys
+        assert (kept.id, kept.key_hash, kept.key_type, kept.expires_at) == before
+        assert kept.revoked_at is None
+        assert minted.key_type == KEY_TYPE_NORMAL and minted.key_hash == hash_api_key(new_key)

@@ -12,6 +12,10 @@ from ..extensions import db
 KEY_TYPE_NORMAL = "normal"
 KEY_TYPE_ADMIN = "admin"
 KEY_TYPE_MONITORING = "monitoring"
+# The raw-key prefix each type is minted with. The prefix is only a label for
+# people: access is decided by the key_type column, never by the prefix.
+KEY_PREFIXES = {KEY_TYPE_NORMAL: "sk_", KEY_TYPE_ADMIN: "sk_admin_", KEY_TYPE_MONITORING: "sk_monitor_"}
+KEY_TYPES = tuple(KEY_PREFIXES)
 
 
 class APIKey(db.Model):
