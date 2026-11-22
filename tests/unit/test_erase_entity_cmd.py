@@ -739,7 +739,8 @@ T_NEW = datetime(2025, 12, 1)
     (T_NEW, T_MID, T_NEW),
     (None, T_MID, T_MID),
     (T_NEW, None, T_NEW),
-], ids=["ghost-older", "ghost-newer", "ghost-null", "user-null"])
+    (T_MID, T_MID, T_MID),
+], ids=["ghost-older", "ghost-newer", "ghost-null", "user-null", "same-instant"])
 def test_merge_into_an_existing_ghost_keeps_the_latest_last_used_at(app, world, ghost_ts, user_ts, expected):
     """One erasure where the ghost already has the user's (model, chat) row but not the
     (model, api) one: the first is merged, the second re-pointed, and last_used_at is the
