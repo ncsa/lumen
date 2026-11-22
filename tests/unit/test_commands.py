@@ -184,6 +184,70 @@ def test_apply_model_fields_embedding_marker(app, inp, output, stored, embedding
         assert is_embedding_model(mc) is embedding
 
 
+def test_apply_model_fields_embedding_output_cost_forced_to_zero(app, caplog):
+    """An embedding model stores an output price of 0 whatever the YAML says,
+    and a nonzero YAML value logs one warning, however often the sync runs."""
+    import logging
+
+    from lumen.commands import _apply_model_fields, _warned
+    from lumen.models.model_config import ModelConfig
+    with app.app_context():
+        _warned.clear()
+        model_def = {"name": "emb", "input_cost_per_million": 0.1, "output_cost_per_million": 2.0,
+                     "input_modalities": ["text"], "output_modalities": ["embedding"]}
+        with caplog.at_level(logging.WARNING):
+            for _ in range(3):
+                mc = ModelConfig(model_name="emb")
+                _apply_model_fields(mc, model_def)
+                assert mc.output_cost_per_million == 0
+                assert mc.input_cost_per_million == 0.1
+        warnings = [r for r in caplog.records if "embedding model 'emb'" in r.getMessage()]
+        assert len(warnings) == 1
+        assert "output_cost_per_million" in warnings[0].getMessage()
+
+
+def test_apply_model_fields_embedding_zero_output_cost_does_not_warn(app, caplog):
+    import logging
+
+    from lumen.commands import _apply_model_fields, _warned
+    from lumen.models.model_config import ModelConfig
+    with app.app_context():
+        _warned.clear()
+        mc = ModelConfig(model_name="emb0")
+        with caplog.at_level(logging.WARNING):
+            _apply_model_fields(mc, {"name": "emb0", "input_cost_per_million": 0.1, "output_cost_per_million": 0,
+                                     "output_modalities": ["embedding"]})
+        assert mc.output_cost_per_million == 0
+        assert not [r for r in caplog.records if "emb0" in r.getMessage()]
+
+
+def test_apply_model_fields_text_model_keeps_output_cost(app):
+    from lumen.commands import _apply_model_fields
+    from lumen.models.model_config import ModelConfig
+    with app.app_context():
+        mc = ModelConfig(model_name="txt")
+        _apply_model_fields(mc, {"name": "txt", "input_cost_per_million": 1.0, "output_cost_per_million": 2.0,
+                                 "output_modalities": ["text"]})
+        assert mc.output_cost_per_million == 2.0
+
+
+def test_sync_models_resets_output_cost_when_model_becomes_embedding(app):
+    """A stored model switched to embedding in a later sync has its output price reset to 0."""
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    with app.app_context():
+        yaml_data = {"models": [{"name": "switch-model", "input_cost_per_million": 1.0,
+                                 "output_cost_per_million": 2.0, "output_modalities": ["text"]}]}
+        sync_models_from_yaml(yaml_data)
+        mc = db.session.execute(select(ModelConfig).filter_by(model_name="switch-model")).scalar_one()
+        assert float(mc.output_cost_per_million) == 2.0
+        yaml_data["models"][0]["output_modalities"] = ["embedding"]
+        sync_models_from_yaml(yaml_data)
+        db.session.expire_all()
+        mc = db.session.execute(select(ModelConfig).filter_by(model_name="switch-model")).scalar_one()
+        assert float(mc.output_cost_per_million) == 0
+
+
 @pytest.mark.parametrize("value, embedding", [
     (["embedding"], True), (("text", "embedding"), True),
     (["text"], False), ([], False), (None, False),

@@ -219,6 +219,42 @@ def test_no_price_update_when_all_zero(monkeypatch):
     assert "output_cost_per_million" not in result["updates"]
 
 
+def test_embedding_model_gets_no_output_price(monkeypatch):
+    """An embedding model's output price is always 0: auto price proposes only the
+    input price, and the models.dev hint reports an output price of 0."""
+    dev_models = [{"id": "p/bge-m3", "cost": {"input": 0.1, "output": 0.5}}]
+    _patch_price(monkeypatch, dev_models, dev_models[0])
+    result = model_sync.sync_model({
+        "name": "bge-m3", "auto_price": True, "output_cost_per_million": 0,
+        "input_modalities": ["text"], "output_modalities": ["embedding"],
+        "endpoints": [{"url": "http://x"}],
+    })
+    assert result["updates"]["input_cost_per_million"] == 0.1
+    assert "output_cost_per_million" not in result["updates"]
+    assert result["modelsdev_price"] == {"input": 0.1, "output": 0}
+
+
+def test_model_becoming_embedding_gets_no_output_price(monkeypatch):
+    """When Update itself marks the model as embedding, no output price is proposed either."""
+    dev_models = [{"id": "p/bge-m3", "cost": {"input": 0.1, "output": 0.5},
+                   "modalities": {"input": ["text"], "output": ["embedding"]}}]
+    _patch_price(monkeypatch, dev_models, dev_models[0])
+    result = model_sync.sync_model({"name": "bge-m3", "auto_price": True, "endpoints": [{"url": "http://x"}]})
+    assert result["updates"]["output_modalities"] == ["embedding"]
+    assert "output_cost_per_million" not in result["updates"]
+    assert result["modelsdev_price"]["output"] == 0
+
+
+def test_text_model_still_gets_output_price(monkeypatch):
+    dev_models = [{"id": "p/m", "cost": {"input": 1.0, "output": 3.0}}]
+    _patch_price(monkeypatch, dev_models, dev_models[0])
+    result = model_sync.sync_model({
+        "name": "m", "auto_price": True, "output_modalities": ["text"], "endpoints": [{"url": "http://x"}],
+    })
+    assert result["updates"]["output_cost_per_million"] == 3.0
+    assert result["modelsdev_price"] == {"input": 1.0, "output": 3.0}
+
+
 def test_cache_prices_filled_by_auto_cache_price(monkeypatch):
     """auto_cache_price: true pulls the models.dev cache rates in too."""
     dev_models = [

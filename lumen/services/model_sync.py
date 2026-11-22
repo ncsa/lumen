@@ -569,6 +569,16 @@ def sync_model(model_def: dict) -> dict:
             elif "output_modalities" in updates:
                 del updates["output_modalities"]
 
+    # An embedding model's output price is always 0 (the config sync forces it),
+    # so never propose another one. This mirrors lumen.models.model_config's
+    # is_embedding_model inline: scripts/monitor loads this file by path without
+    # the lumen package, so it must not import from lumen.
+    out_modalities = updates.get("output_modalities", model_def.get("output_modalities"))
+    if isinstance(out_modalities, (list, tuple)) and "embedding" in out_modalities:
+        updates.pop("output_cost_per_million", None)
+        if modelsdev_price is not None:
+            modelsdev_price["output"] = 0
+
     removals = [f for f in OBSOLETE_FIELDS if f in model_def]
 
     return {
