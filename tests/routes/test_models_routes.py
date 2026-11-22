@@ -516,7 +516,7 @@ def _add_embedding_and_text_models(app):
         db.session.add_all([
             ModelConfig(model_name="embed-model", input_cost_per_million=1.0, output_cost_per_million=0,
                         output_modalities=["embedding"]),
-            ModelConfig(model_name="text-model", input_cost_per_million=1.0, output_cost_per_million=2.0,
+            ModelConfig(model_name="a-text-model", input_cost_per_million=1.0, output_cost_per_million=2.0,
                         output_modalities=["text"]),
         ])
         db.session.commit()
@@ -537,7 +537,7 @@ def test_models_embedding_model_shows_dash_for_output_price(app, auth_client):
     # The sort attribute keeps the stored price, which is always 0 for an embedding model.
     assert float(embed["data-sort-output"]) == 0
 
-    text = _row_for(resp.data, "text-model")
+    text = _row_for(resp.data, "a-text-model")
     assert _visible_text(text.find(class_="model-price")) == "1.00 / 2.00"
     assert text.find("dl", class_="model-pricing").find_all("dd")[1].get_text(strip=True) == "2.00"
 
@@ -550,11 +550,12 @@ def test_model_detail_embedding_model_shows_dash_for_output_price(app, auth_clie
     assert "/ 1M" not in td.get_text()
     assert td.find(class_="visually-hidden").get_text() == "no output price"
 
-    assert _pricing_output_cell(auth_client.get("/models/text-model").data).get_text(strip=True) == "2.00 / 1M"
+    assert _pricing_output_cell(auth_client.get("/models/a-text-model").data).get_text(strip=True) == "2.00 / 1M"
 
 
 def test_models_price_sort_puts_embedding_model_first_at_equal_input_price(app, auth_client):
     _add_embedding_and_text_models(app)
     soup = BeautifulSoup(auth_client.get("/models?sort=price&dir=asc").data, "html.parser")
     order = [r["data-model"] for r in soup.find_all("li", class_="model-row")]
-    assert order.index("embed-model") < order.index("text-model")
+    # By name a-text-model comes first, so only the output price (0 < 2) puts the embedding model ahead.
+    assert order.index("embed-model") < order.index("a-text-model")
