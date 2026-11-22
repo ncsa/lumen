@@ -81,10 +81,10 @@ def _audio(client, token, model, kind="transcriptions"):
 
 
 CASES = {
-    "chat": lambda c, t, m: _chat(c, t, m),
+    "chat": _chat,
     "chat-stream": lambda c, t, m: _chat(c, t, m, stream=True),
     "completions": _completion,
-    "messages": lambda c, t, m: _messages(c, t, m),
+    "messages": _messages,
     "messages-stream": lambda c, t, m: _messages(c, t, m, stream=True),
     "transcriptions": lambda c, t, m: _audio(c, t, m, "transcriptions"),
     "translations": lambda c, t, m: _audio(c, t, m, "translations"),
@@ -129,8 +129,8 @@ def test_embedding_model_refused(
 
 
 @pytest.mark.parametrize("send", [
-    pytest.param(lambda c, t, m: _chat(c, t, m), id="chat"),
-    pytest.param(lambda c, t, m: _audio(c, t, m), id="transcriptions"),
+    pytest.param(_chat, id="chat"),
+    pytest.param(_audio, id="transcriptions"),
 ])
 def test_blocked_embedding_model_is_403_not_400(
     app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, send,
@@ -152,8 +152,8 @@ def test_blocked_embedding_model_is_403_not_400(
 
 
 @pytest.mark.parametrize("send", [
-    pytest.param(lambda c, t, m: _chat(c, t, m), id="chat"),
-    pytest.param(lambda c, t, m: _audio(c, t, m), id="transcriptions"),
+    pytest.param(_chat, id="chat"),
+    pytest.param(_audio, id="transcriptions"),
 ])
 def test_unknown_model_is_404_not_400(
     app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, send,
