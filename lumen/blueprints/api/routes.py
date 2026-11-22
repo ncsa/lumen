@@ -19,6 +19,7 @@ from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_model_consent import EntityModelConsent
+from lumen.models.model_config import is_embedding_model
 from lumen.services import model_cache, request_rates
 from lumen.services.cost import calculate_audio_cost, calculate_cost, usage_tokens
 from lumen.services.crypto import cache_salt_for_entity, hash_api_key
@@ -565,11 +566,32 @@ def _snapshot_unavailable():
                 HTTPStatus.SERVICE_UNAVAILABLE)
 
 
-def _preflight(model_name: str):
-    """Look up model, check coin budget, select endpoint.
+def _purpose_refusal(model_name: str, model_config, purpose: str):
+    """400 when the model cannot serve ``purpose``, else None.
+
+    ``"generate"`` (chat, completions, messages) and ``"audio"`` refuse an
+    embedding model; ``"embeddings"`` checks nothing.
+    """
+    if purpose in ("generate", "audio") and is_embedding_model(model_config):
+        return _err(
+            f"Model '{model_name}' is an embedding model; call it through /v1/embeddings",
+            status=HTTPStatus.BAD_REQUEST, err_code="model_not_supported",
+        )
+    return None
+
+
+def _preflight(model_name: str, purpose: str = "generate"):
+    """Look up model, check coin budget, check the model fits the route, select endpoint.
 
     The model and endpoint come from the per-process snapshot (model_cache),
     so neither is read from the database here.
+
+    ``purpose`` names the route family: ``"generate"`` (chat, completions,
+    messages), ``"audio"`` (transcriptions, translations) or ``"embeddings"``.
+    A model that cannot serve it gets a 400 (see _purpose_refusal). That check
+    runs only after the access and budget check, so an entity without access
+    gets the 404/403 and never learns the model's type, and before an endpoint
+    is picked, so nothing goes upstream.
 
     Returns (model_config, endpoint, effective, None) or (None, None, None, error_response).
     ``effective`` is the resolved coin pool limit, threaded to subtract_coins so the
@@ -609,6 +631,9 @@ def _preflight(model_name: str):
                 err_code="consent_required",
             )
         return None, None, None, _err(msg, status=code)
+    refusal = _purpose_refusal(model_name, model_config, purpose)
+    if refusal is not None:
+        return None, None, None, refusal
     try:
         endpoint = model_cache.next_endpoint(model_config.id)
     except model_cache.SnapshotUnavailable:
@@ -980,7 +1005,7 @@ def _do_audio(kind: str):
         except ValueError:
             return _err("temperature must be a number")
 
-    model_config, endpoint, effective, err = _preflight(model_name)
+    model_config, endpoint, effective, err = _preflight(model_name, purpose="audio")
     if err:
         return err
 
@@ -1131,7 +1156,7 @@ def embeddings():
         if key in data:
             forward[key] = data[key]
 
-    model_config, endpoint, effective, err = _preflight(model_name)
+    model_config, endpoint, effective, err = _preflight(model_name, purpose="embeddings")
     if err:
         return err
 
