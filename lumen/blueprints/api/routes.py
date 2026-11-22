@@ -15,15 +15,14 @@ from sqlalchemy.exc import IntegrityError
 from lumen.blueprints.metrics.middleware import observe_stream_abort
 from lumen.commands import RESERVED_MODEL_ID_SUFFIX
 from lumen.extensions import db, limiter
-from lumen.models.api_key import APIKey
-from lumen.models.entity import Entity
+from lumen.models.api_key import KEY_TYPE_NORMAL
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_model_consent import EntityModelConsent
 from lumen.models.model_config import accepts_audio_input, is_embedding_model
 from lumen.services import model_cache, request_rates
+from lumen.services.api_auth import KeyRejected, resolve_api_key
 from lumen.services.cost import calculate_audio_cost, calculate_cost, usage_tokens
-from lumen.services.crypto import cache_salt_for_entity, hash_api_key
-from lumen.services.key_expiry import revoke_if_expired
+from lumen.services.crypto import cache_salt_for_entity
 from lumen.services.live_state import get_live_state
 from lumen.services.llm import (
     _access_statuses,
@@ -155,12 +154,13 @@ api_generation_limit = limiter.shared_limit(_api_limit, scope="api", key_func=_a
 
 
 def _monitor_metrics() -> dict | None:
-    """Usage metrics for a monitor-token ``?tokens=true`` request, else None.
+    """Usage metrics for a monitor-path ``?tokens=true`` request, else None.
 
     Returns ``{"tokens": ..., "cache": ...}`` — the token windows and the
-    per-model cache-reporting flags — for the monitor token asking for
-    ``tokens=true``; any other caller, or the monitor token without the
-    parameter, gets None and so the normal response without per-model usage.
+    per-model cache-reporting flags — for a monitor-path caller (the monitor
+    token, an admin key or a monitoring key) asking for ``tokens=true``; a
+    normal key, or a monitor-path caller without the parameter, gets None and
+    so the normal response without per-model usage.
     """
     if not g.monitor or request.args.get("tokens", "").lower() not in ("1", "true", "yes"):
         return None
@@ -322,6 +322,10 @@ def _classify_upstream_error(exc, context: str):
     return "Upstream error. Please try again.", "api_error", HTTPStatus.INTERNAL_SERVER_ERROR
 
 
+# The only routes the monitor token and admin/monitoring keys may call.
+MONITOR_ENDPOINTS = ("api.list_models", "api.get_model")
+
+
 def api_key_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -341,25 +345,30 @@ def api_key_required(f):
         # Compare bytes: compare_digest raises TypeError on a non-ASCII str, and
         # the configured token is not checked to be ASCII.
         if monitor_token and hmac.compare_digest(token.encode(), str(monitor_token).encode()):
-            if request.endpoint not in ("api.list_models", "api.get_model"):
+            if request.endpoint not in MONITOR_ENDPOINTS:
                 return _err("Monitor token can only access /v1/models", "authentication_error", HTTPStatus.FORBIDDEN)
             g.api_key = None
             g.entity = None
             g.monitor = True
             return f(*args, **kwargs)
 
+        resolved = resolve_api_key(token)
+        if isinstance(resolved, KeyRejected):
+            return _err(resolved.message, "authentication_error", resolved.status)
+
+        api_key, entity = resolved
+        if api_key.key_type != KEY_TYPE_NORMAL:
+            # Admin and monitoring keys reach the models endpoints only, on the
+            # monitor path (every active model, ?tokens=true, never billed).
+            if request.endpoint not in MONITOR_ENDPOINTS:
+                return _err(f"{api_key.key_type.capitalize()} keys can only access /v1/models",
+                            "permission_error", HTTPStatus.FORBIDDEN)
+            g.api_key = None
+            g.entity = None
+            g.monitor = True
+            return f(*args, **kwargs)
+
         g.monitor = False
-        row = db.session.execute(
-            select(APIKey, Entity).join(Entity, Entity.id == APIKey.entity_id)
-            .where(APIKey.key_hash == hash_api_key(token))
-        ).one_or_none()
-        if not row or row.APIKey.revoked_at is not None or revoke_if_expired(row.APIKey):
-            return _err("Invalid or revoked API key", "authentication_error", HTTPStatus.UNAUTHORIZED)
-
-        api_key, entity = row
-        if not entity.active:
-            return _err("Account disabled", "authentication_error", HTTPStatus.FORBIDDEN)
-
         g.api_key = api_key
         g.entity = entity
         return f(*args, **kwargs)

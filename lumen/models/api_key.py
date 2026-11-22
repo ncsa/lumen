@@ -9,6 +9,10 @@ from lumen.timeutils import utcnow
 
 from ..extensions import db
 
+KEY_TYPE_NORMAL = "normal"
+KEY_TYPE_ADMIN = "admin"
+KEY_TYPE_MONITORING = "monitoring"
+
 
 class APIKey(db.Model):
     """API keys that entities use to authenticate against the proxy.
@@ -22,6 +26,7 @@ class APIKey(db.Model):
     __table_args__ = (
         db.Index("ix_api_keys_entity_id", "entity_id"),
         db.Index("ix_api_keys_expires_at", "expires_at"),
+        db.CheckConstraint("key_type IN ('normal', 'admin', 'monitoring')", name="ck_api_keys_key_type"),
         {"comment": "API keys for entity authentication; only an HMAC-SHA256 of the key is stored, never the plaintext"},
     )
 
@@ -32,6 +37,7 @@ class APIKey(db.Model):
     key_hash: Mapped[str] = mapped_column(db.String(64), unique=True, comment="HMAC-SHA256 of the raw key, keyed on ENCRYPTION_KEY")
     # Last few characters of the raw key shown in the UI for identification
     key_hint: Mapped[Optional[str]] = mapped_column(db.String(32), comment="Last few characters of the raw key shown in the UI for identification")
+    key_type: Mapped[str] = mapped_column(db.String(16), nullable=False, default=KEY_TYPE_NORMAL, server_default=KEY_TYPE_NORMAL, comment="Key type: 'normal' (proxy API, billed), 'admin' (admin API and model listing) or 'monitoring' (model listing only); the type decides access, never the key prefix")
     revoked_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, comment="UTC time the key was revoked; null while the key is usable; approximate for keys revoked before this column existed")
     expires_at: Mapped[Optional[datetime]] = mapped_column(db.DateTime, comment="UTC time the key expires and is revoked (revoked_at set to this value); null if the key never expires")
     requests: Mapped[int] = mapped_column(db.Integer, default=0, comment="Cumulative request count made with this key")

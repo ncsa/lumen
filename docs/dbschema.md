@@ -27,6 +27,7 @@ erDiagram
         string name
         string key_hash
         string key_hint
+        string key_type
         datetime revoked_at
         datetime expires_at
         int requests
@@ -392,6 +393,7 @@ API keys that entities (users or projects) use to authenticate against the proxy
 | `name` | String(128) | NO | Human-readable label for the key (e.g., "Production bot") |
 | `key_hash` | String(64) | NO | HMAC-SHA256 of the raw key, keyed on `ENCRYPTION_KEY`; finding a key from its raw value takes the server secret. Unique. Erasure replaces it with 64 random hex characters. |
 | `key_hint` | String(32) | YES | Last few characters of the raw key shown in the UI for identification |
+| `key_type` | String(16) | NO | `normal` (default), `admin` or `monitoring`; the column, never the key prefix, decides what the key may do. A normal key uses the proxy API and is billed. Admin and monitoring keys are never billed and are refused on the proxy routes and `/v1/usage` (403); both list every active model on `/v1/models` with `?tokens=true` metrics, and only an admin key may use the admin API. They work only while their owner is active and in the `admins` list (401 otherwise), and their `last_used_at` is updated at most once a minute. Existing keys, including project and OAuth keys, were set to `normal` by migration `b7c9d1e3f5a7`. |
 | `revoked_at` | DateTime | YES | UTC time the key was revoked; null while the key is usable. Approximate (`last_used_at`, else `created_at`, else the migration time) for keys revoked before this column existed. |
 | `expires_at` | DateTime | YES | UTC time the key expires; null if it never expires. Set when the key is created, from the chosen TTL (capped by and defaulting to `api.keys.ttl`; for OAuth keys, the approved `auth_requests.ttl` counted from mint, including when an OAuth overwrite refreshes the key in place), and when its expiry is edited. A background job (and the API on use) revokes an overdue key by setting `revoked_at` to this value, with `revoked_by_entity_id` left null. Indexed (`ix_api_keys_expires_at`). |
 | `requests` | Integer | NO | Cumulative request count made with this key |
@@ -408,7 +410,7 @@ API keys that entities (users or projects) use to authenticate against the proxy
 | `created_by_entity_id` | Integer (FK → entities) | YES | The user who created this key (the approving user for OAuth claims). Null for legacy keys; SET NULL on creator deletion. |
 | `revoked_by_entity_id` | Integer (FK → entities) | YES | The user who revoked this key (the approving user when an OAuth overwrite revokes an extra key with the same name). Null while the key is usable, for keys revoked before this column existed, for system revocations (OAuth authorization-code replay, key expiry), and when the revoker is deleted (SET NULL). |
 
-**Constraints:** `UNIQUE(key_hash)`; index `ix_api_keys_entity_id` on (`entity_id`); index `ix_api_keys_expires_at` on (`expires_at`)
+**Constraints:** `UNIQUE(key_hash)`; `CHECK ck_api_keys_key_type` (`key_type IN ('normal', 'admin', 'monitoring')`); index `ix_api_keys_entity_id` on (`entity_id`); index `ix_api_keys_expires_at` on (`expires_at`)
 
 **Storage:** `fillfactor = 80` (PostgreSQL only) so the per-request counter updates stay HOT; see migration `d3e4f5a6b7c8`.
 
