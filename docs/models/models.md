@@ -62,7 +62,7 @@ Each model is one row with three columns. Without opening it, a row shows:
 - **Model / Capabilities**
   - **Name** — links to the [model detail page](model-detail.md). A closed lock next to the name means you still have to acknowledge the model's terms before you can use it, and an open lock means you already have; a flask icon marks an early-access model.
   - **Modalities** — what the model accepts and produces, as input → output (e.g. `Text, Image → Text`). A dash means the instance hasn't published that information.
-- **Context** and **Max output** — the model's context window (e.g. `128K context`) and, below it, the most tokens it can generate per response (e.g. `8K max output`). K and M are 1024-based (`128K` is 131,072 tokens). A dash means the value is not set.
+- **Context** and **Max output** — the model's context window (e.g. `128K context`) and, below it, the most tokens it can generate per response (e.g. `8K max output`). Round decimal values are shown in 1000-based units (`128K` for 128,000 tokens); everything else is 1024-based (`128K` for 131,072 tokens). A dash means the value is not set.
 - **Coins / 1M tokens** — the price per million input / output tokens (e.g. `1.00 / 2.00`), with the model's health (see below) under it.
 
 On a phone the token limits move under the model name, next to the price.

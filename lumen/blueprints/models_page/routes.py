@@ -164,14 +164,20 @@ def _health_status(endpoints):
 
 
 def _token_count(n):
-    """Short token count in 1024-based units: 131072 reads ``128K``, 1048576 reads ``1M``; ``—`` when unset.
+    """Short token count: 128000 reads ``128K``, 131072 reads ``128K``; ``—`` when unset.
 
-    K is 1024 and M is 1024², with one decimal place and a trailing ``.0``
-    dropped; a value that rounds to 1024 of a unit moves up to the next unit
-    (1048575 reads ``1M``, not ``1024K``).
+    A value that is round in decimal, exact to one decimal place of K (1000) or
+    M (1000²) and below 1000 of that unit, is shown in that unit, the largest
+    such unit winning (2500000 reads ``2.5M``). Any other value uses 1024-based
+    units: K is 1024 and M is 1024², with one decimal place and a trailing
+    ``.0`` dropped; a value that rounds to 1024 of a unit moves up to the next
+    unit (1048575 reads ``1M``, not ``1024K``).
     """
     if not n:
         return "\u2014"
+    for size, unit in ((1000 * 1000, "M"), (1000, "K")):
+        if n >= size and n % (size // 10) == 0 and n < 1000 * size:
+            return f"{n / size:.1f}".removesuffix(".0") + unit
     if n < 1024:
         return str(n)
     value, unit = n / 1024, "K"
