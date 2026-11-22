@@ -535,8 +535,11 @@ def _created_key_response(api_key: APIKey, key: str):
 def rotate_key_secret(api_key: APIKey):
     """Replace api_key's secret with the request's key, keeping usage stats and type. Commits.
 
-    The new key's prefix must match the key's type.
+    The new key's prefix must match the key's type, and an admin or monitoring
+    key can only be rotated by an admin in admin mode, as when it is created.
     """
+    if api_key.key_type != KEY_TYPE_NORMAL and not _is_admin(g.entity):
+        return jsonify({"error": "Only admins in admin mode can rotate this key type"}), HTTPStatus.FORBIDDEN
     if api_key.revoked_at is not None or revoke_if_expired(api_key):
         return jsonify({"error": "Key is revoked"}), HTTPStatus.CONFLICT
 

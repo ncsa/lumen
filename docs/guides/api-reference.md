@@ -24,9 +24,9 @@ Admins can also create admin (`sk_admin_…`) and monitoring (`sk_monitor_…`) 
 | `GET /v1/usage` (own key usage) | 403 | ✅ | 403 | 403 |
 | `GET /v1/models`, `GET /v1/models/<id>` | ✅ every active model | ✅ only models you can use | ✅ every active model | ✅ every active model |
 | `?tokens=true` token metrics on the models endpoints | ✅ | ignored: request counts only, never token metrics | ✅ | ✅ |
-| Admin API `/v1/organization/*` | ✅ | 403 | 403 | 403 |
+| Admin API `/v1/organization/*` (not available yet, planned in #736) | ✅ | 403 | 403 | 403 |
 
-Admin keys **cannot chat**: they are for the admin API and monitoring only. A normal key sees request counts on the models endpoints but never `?tokens=true` token metrics. Admin and monitoring requests are never billed. A missing, revoked or expired key, or an admin or monitoring key whose owner is no longer an admin, gets `401`.
+Admin keys **cannot chat**: they are for monitoring now, and for the admin API once it ships (#736). A normal key sees request counts on the models endpoints but never `?tokens=true` token metrics. Admin and monitoring requests are never billed. A missing, revoked or expired key, or an admin or monitoring key whose owner is no longer an admin, gets `401`.
 
 ## Endpoints
 

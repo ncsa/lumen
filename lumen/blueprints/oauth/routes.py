@@ -29,7 +29,7 @@ from sqlalchemy.exc import IntegrityError
 from lumen.blueprints.profile.routes import key_secret_fields, set_key_secret
 from lumen.decorators import login_required
 from lumen.extensions import _chat_entity_id, _chat_limit, db, limiter
-from lumen.models.api_key import APIKey
+from lumen.models.api_key import KEY_TYPE_NORMAL, APIKey
 from lumen.models.auth_request import AuthRequest
 from lumen.models.entity import Entity
 from lumen.models.entity_model_consent import EntityModelConsent
@@ -332,7 +332,7 @@ def consent():
         overwrite = request.form.get("overwrite") == "on"
         existing = db.session.execute(
             select(APIKey).where(APIKey.entity_id == entity_id, APIKey.name == req.requested_name,
-                                 APIKey.revoked_at.is_(None))
+                                 APIKey.key_type == KEY_TYPE_NORMAL, APIKey.revoked_at.is_(None))
         ).scalars().all()
         if existing and not overwrite:
             return _render_consent(req, error='Tick "Overwrite key" to replace your existing key.')
@@ -529,9 +529,11 @@ def _mint(req: AuthRequest):
         db.session.rollback()
         return _oauth_error("invalid_grant", "not approved (anymore)")
 
+    # Only normal keys can be overwritten: OAuth never touches an admin or
+    # monitoring key, even one with the requested name.
     existing = db.session.execute(
         select(APIKey).where(APIKey.entity_id == req.entity_id, APIKey.name == req.requested_name,
-                             APIKey.revoked_at.is_(None))
+                             APIKey.key_type == KEY_TYPE_NORMAL, APIKey.revoked_at.is_(None))
         .order_by(APIKey.created_at.desc(), APIKey.id.desc())
     ).scalars().all()
     if existing and not req.overwrite:
@@ -639,7 +641,7 @@ def _render_consent(req: AuthRequest, error: str | None = None):
     entity_id = g.entity_id
     existing_key = db.session.execute(
         select(APIKey).where(APIKey.entity_id == entity_id, APIKey.name == req.requested_name,
-                             APIKey.revoked_at.is_(None))
+                             APIKey.key_type == KEY_TYPE_NORMAL, APIKey.revoked_at.is_(None))
         .order_by(APIKey.created_at.desc(), APIKey.id.desc())
     ).scalars().first()
     session["oauth_consent_request_id"] = str(req.uuid)

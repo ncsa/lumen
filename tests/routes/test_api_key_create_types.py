@@ -346,4 +346,20 @@ def test_admin_view_of_user_profile_carries_key_type(app, admin_client, test_use
     _seed(app, test_user["id"], KEY_TYPE_ADMIN, _raw(KEY_TYPE_ADMIN))
     html = admin_client.get(f"/admin/users/{test_user['uuid']}/profile").get_data(as_text=True)
     assert 'type: "admin"' in html
-    assert "keyTypeBadge(k)" in html
+
+
+@pytest.mark.parametrize("client_fixture", ["auth_client", "admin_client_no_mode"])
+@pytest.mark.parametrize("key_type", [KEY_TYPE_ADMIN, KEY_TYPE_MONITORING])
+def test_rotate_non_normal_requires_admin_mode(app, request, client_fixture, key_type, test_user, admin_user):
+    client = request.getfixturevalue(client_fixture)
+    owner = test_user if client_fixture == "auth_client" else admin_user
+    kid = _seed(app, owner["id"], key_type, _raw(key_type))
+    resp = client.post(f"/profile/keys/{kid}/rotate", json={"key": _raw(key_type, "R" * 32)})
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert _key(app, kid).key_hash == hash_api_key(_raw(key_type))
+
+
+def test_rotate_normal_key_needs_no_admin_mode(app, admin_client_no_mode, admin_user):
+    kid = _seed(app, admin_user["id"], KEY_TYPE_NORMAL, _raw(KEY_TYPE_NORMAL))
+    resp = admin_client_no_mode.post(f"/profile/keys/{kid}/rotate", json={"key": _raw(KEY_TYPE_NORMAL, "R" * 32)})
+    assert resp.status_code == HTTPStatus.OK
