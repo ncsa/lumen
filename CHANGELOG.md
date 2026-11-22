@@ -24,6 +24,7 @@ All notable changes to Lumen will be documented in this file.
 - Stop logging a Pydantic serializer warning when a backend returns values (e.g. chat `metadata` lists) that don't match the OpenAI SDK types; the response is passed through unchanged. (#693)
 - Embeddings billing now passes the model's output price and is tested to bill input tokens only (#702).
 - `scripts/rag.py` creates its config directory and new stores private to the user (700/600), silences only pypdf's warnings instead of every warning in the process, and says which setting to change when the server does not know the embed or chat model. (#722)
+- POST /v1/chat/completions, /v1/completions, /v1/messages and /v1/audio/* now refuse embedding models with a 400 instead of forwarding the call to the backend; the docs now name the endpoints that check this marker. (#721)
 
 ### Removed
 

@@ -20,8 +20,11 @@ def is_embedding_model(config) -> bool:
     """True when the model produces embeddings rather than text.
 
     Takes a ModelConfig, a model_cache.ModelSnapshot or anything else with an
-    ``output_modalities`` attribute. Embedding models are callable only through
-    ``/v1/embeddings``; chat and the OpenCode config leave them out.
+    ``output_modalities`` attribute. POST ``/v1/chat/completions``,
+    ``/v1/completions``, ``/v1/messages``, ``/v1/audio/transcriptions`` and
+    ``/v1/audio/translations`` refuse an embedding model with a 400; the web
+    chat hides it and the OpenCode config leaves it out. ``/v1/embeddings``
+    and ``/v1/messages/count_tokens`` do not check the marker.
     """
     value = getattr(config, "output_modalities", None)
     # Only the list (DB) and tuple (snapshot) shapes can hold the marker; a

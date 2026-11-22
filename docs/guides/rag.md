@@ -13,7 +13,7 @@ It is a single script with one dependency (`pypdf`); `uv` installs that for you.
   export LUMEN_API_KEY=your-api-key
   ```
 
-- An embedding model and a chat model you can use. Pick them on the [Models](../models/models.md) page; embedding models are marked as such and do not appear in chat.
+- An embedding model and a chat model you can use. Pick them on the [Models](../models/models.md) page; embedding models are marked as such, do not appear in chat, and are refused by the generation endpoints (chat, completions, messages, audio).
 
 ## Configuration
 
