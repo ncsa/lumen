@@ -350,6 +350,9 @@
             <button class="btn btn-outline-secondary" onclick="copyKey()" aria-label="Copy key to clipboard">Copy</button>
           </div>
           <input type="hidden" id="generated-key">
+          {% if admin_eligible and admin_mode %}
+          <div class="form-text">Changing the key type generates a new key: copy it after choosing the type.</div>
+          {% endif %}
         </div>
       </div>
       <div class="modal-footer">
@@ -933,7 +936,9 @@ apiKeyModal.addEventListener("show.bs.modal", () => {
 if (keyTypeSelect) keyTypeSelect.addEventListener("change", generateNewKey);
 
 function copyKey() {
-  const val = document.getElementById("key-display").value;
+  // The hidden field holds the key Save will submit; it is empty while a new one is generated.
+  const val = document.getElementById("generated-key").value;
+  if (!val) return;
   navigator.clipboard.writeText(val).then(() => {
     const btn = event.target;
     btn.textContent = "Copied!";

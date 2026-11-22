@@ -20,13 +20,14 @@ Admins can also create admin (`sk_admin_…`) and monitoring (`sk_monitor_…`) 
 
 | Action | Admin key | Normal key | Monitoring key | `api.monitoring.token` (deprecated) |
 |--------|-----------|------------|----------------|--------------------------------------|
-| Chat, completions, embeddings, audio, Anthropic `/v1/messages`, acknowledging a model | 403 | ✅ (billed) | 403 | 403 |
+| Chat, completions, embeddings, audio, Anthropic `/v1/messages` | 403 | ✅ (billed) | 403 | 403 |
+| `POST /v1/models/<id>/acknowledge` (acknowledging a model) | 403 | ✅ (not billed) | 403 | 403 |
 | `GET /v1/usage` (own key usage) | 403 | ✅ | 403 | 403 |
 | `GET /v1/models`, `GET /v1/models/<id>` | ✅ every active model | ✅ only models you can use | ✅ every active model | ✅ every active model |
 | `?tokens=true` token metrics on the models endpoints | ✅ | ignored: request counts only, never token metrics | ✅ | ✅ |
 | Admin API `/v1/organization/*` (not available yet, planned in #736) | ✅ | 403 | 403 | 403 |
 
-Admin keys **cannot chat**: they are for monitoring now, and for the admin API once it ships (#736). A normal key sees request counts on the models endpoints but never `?tokens=true` token metrics. Admin and monitoring requests are never billed. A missing, revoked or expired key, or an admin or monitoring key whose owner is no longer an admin, gets `401`.
+Admin keys **cannot chat**: they are for monitoring now, and for the admin API once it ships (#736). A normal key sees request counts on the models endpoints but never `?tokens=true` token metrics. Admin and monitoring requests are never billed. A missing or malformed `Authorization` header gets `400`. An unknown, revoked or expired key, or an admin or monitoring key whose owner is no longer an admin, gets `401`.
 
 ## Endpoints
 
@@ -509,7 +510,8 @@ Access-Control-Max-Age: 600
 
 | HTTP Status | Meaning |
 |-------------|---------|
-| `401` | Invalid or missing API key |
+| `400` | Missing or malformed `Authorization` header (not `Bearer <key>`, or an empty key), or an invalid request body |
+| `401` | Unknown, revoked or expired API key, or an admin or monitoring key whose owner is no longer an admin |
 | `403` | Your account does not have access to the requested model, or the key's type may not use the endpoint (see [Key types and access](#key-types-and-access)) |
 | `404` | Model not found |
 | `429` | Rate limit exceeded, or coin budget exhausted (see Rate Limits) |

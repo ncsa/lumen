@@ -435,3 +435,52 @@ def test_key_table_type_badge_and_edit_expiry_options(app, restore_config, admin
     page.locator(".ttl-key-btn[data-name='plain-key']").click()
     page.wait_for_selector("#keyTtlModal.show")
     assert _ttl_labels(page, "#edit-key-ttl-select") == ["1 day", "7 days", "30 days"]
+
+
+def test_new_key_modal_copies_the_key_that_is_saved(app, admin_open_page, admin_user):
+    """Copy after changing the type copies the regenerated key, the one Save submits."""
+    from lumen.services.crypto import hash_api_key
+    _seed_keys(app, admin_user["id"], admin_user["id"])
+    page, posted = admin_open_page("/profile")
+    page.evaluate("""() => {
+        window.__copied = [];
+        Object.defineProperty(navigator, "clipboard", {configurable: true, value: {
+            writeText(text) { window.__copied.push(text); return Promise.resolve(); }}});
+    }""")
+
+    page.click("button[data-bs-target='#apiKeyModal']")
+    page.wait_for_selector("#apiKeyModal.show")
+    page.wait_for_function("document.getElementById('generated-key').value !== ''")
+    first = page.input_value("#generated-key")
+    page.select_option("#key-type-select", "monitoring")
+    page.wait_for_function("document.getElementById('generated-key').value.startsWith('sk_monitor_')")
+    page.click("button[aria-label='Copy key to clipboard']")
+    page.wait_for_function("window.__copied.length === 1")
+    copied = page.evaluate("window.__copied[0]")
+    assert copied != first and copied == page.input_value("#key-display")
+
+    page.fill("#key-name-input", "copied-key")
+    with page.expect_navigation():
+        page.click("#save-key-btn")
+    body = next(b for p, b in posted if p == "/profile/keys")
+    assert body["key"] == copied
+    with app.app_context():
+        key = db.session.execute(select(APIKey).filter_by(name="copied-key")).scalar_one()
+        assert key.key_hash == hash_api_key(copied) and key.key_type == KEY_TYPE_MONITORING
+
+
+def test_new_key_modal_copy_does_nothing_while_generating(app, admin_open_page, admin_user):
+    _seed_keys(app, admin_user["id"], admin_user["id"])
+    page, _ = admin_open_page("/profile")
+    page.evaluate("""() => {
+        window.__copied = [];
+        Object.defineProperty(navigator, "clipboard", {configurable: true, value: {
+            writeText(text) { window.__copied.push(text); return Promise.resolve(); }}});
+    }""")
+    page.click("button[data-bs-target='#apiKeyModal']")
+    page.wait_for_selector("#apiKeyModal.show")
+    page.wait_for_function("document.getElementById('generated-key').value !== ''")
+    page.evaluate("document.getElementById('generated-key').value = ''")  # as during a regeneration
+    page.click("button[aria-label='Copy key to clipboard']")
+    page.wait_for_timeout(200)
+    assert page.evaluate("window.__copied") == []

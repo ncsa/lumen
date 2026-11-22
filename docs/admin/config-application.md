@@ -234,7 +234,7 @@ In the Config editor (`/admin/config`) this is the **Max / default key TTL** fie
 
 ### api.monitoring
 
-> **Deprecated:** use a **monitoring key** instead. An admin creates one on their [Profile](../guides/profile.md#key-types) (**Key type: Monitoring**, prefix `sk_monitor_`); it has the same access as this token, may never expire, and stops working when its owner leaves the `admins` list. `api.monitoring.token` keeps working for now and will be removed in 2.7.
+> **Deprecated:** use a **monitoring key** instead. An admin creates one on their [Profile](../guides/profile.md#key-types) (**Key type: Monitoring**, prefix `sk_monitor_`); it has the same access as this token, may never expire, and stops working when its owner leaves the `admins` list. `api.monitoring.token` keeps working for now and is scheduled for removal in the 2.7 release; switch your monitors to a monitoring key before upgrading to 2.7.
 
 A read-only token for uptime monitoring tools (e.g. Uptime Kuma). Pass it as a Bearer token in the
 `Authorization` header:

@@ -82,13 +82,12 @@ An API key is a secret token in the format `sk_...`. It identifies you to the AP
 
 ### Creating a Key
 
-1. Click **+ New API Key** at the top of the API Keys section.
-2. A dialog opens and displays your new key in a read-only field.
-3. **Copy the key now.**
-4. Enter a descriptive name (e.g., `my-research-script` or `jupyter-notebook`).
-5. Admins in admin mode also choose a **Key type** (see [Key Types](#key-types)); everyone else creates a normal key.
-6. Choose how long the key lasts in **Expires after** (see below).
-7. Click **Save Key**. The key now appears in the table.
+1. Click **+ New API Key** at the top of the API Keys section. A dialog opens and displays a new key in a read-only field.
+2. Enter a descriptive name (e.g., `my-research-script` or `jupyter-notebook`).
+3. Admins in admin mode also choose a **Key type** (see [Key Types](#key-types)); everyone else creates a normal key. Changing the type generates a new key, so choose it before you copy.
+4. Choose how long the key lasts in **Expires after** (see below).
+5. **Copy the key now**, with **Copy** next to it. It is not shown again.
+6. Click **Save Key**. The key now appears in the table.
 
 #### Key Types
 
