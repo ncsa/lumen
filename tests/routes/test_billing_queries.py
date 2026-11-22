@@ -248,7 +248,7 @@ def test_anthropic_aborted_stream_bills_hot_locks_last(
 
 
 def test_audio_bills_hot_locks_last(
-    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, fresh_rate_limit, cutover,
+    app, client, monkeypatch, test_user, test_model, audio_model, test_model_endpoint, api_key, fresh_rate_limit, cutover,
 ):
     from lumen.blueprints.api import routes
     token, key_id = api_key

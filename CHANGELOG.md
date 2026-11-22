@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+**Upgrade:** speech-to-text models must have `audio` in `input_modalities` (the **audio** input box in the config editor, or `config.yaml`), or `/v1/audio/transcriptions` and `/v1/audio/translations` return 400. (#721)
+
 ### Added
 
 - `POST /v1/embeddings` for embedding models, billed per input token at the model's input price; embedding models are hidden from chat and the OpenCode config. (#681)
@@ -24,7 +26,7 @@ All notable changes to Lumen will be documented in this file.
 - Stop logging a Pydantic serializer warning when a backend returns values (e.g. chat `metadata` lists) that don't match the OpenAI SDK types; the response is passed through unchanged. (#693)
 - Embeddings billing now passes the model's output price and is tested to bill input tokens only (#702).
 - `scripts/rag.py` creates its config directory and new stores private to the user (700/600), silences only pypdf's warnings instead of every warning in the process, and says which setting to change when the server does not know the embed or chat model. (#722)
-- POST /v1/chat/completions, /v1/completions, /v1/messages and /v1/audio/* now refuse embedding models with a 400 instead of forwarding the call to the backend; the docs now name the endpoints that check this marker. (#721)
+- POST /v1/chat/completions, /v1/completions, /v1/messages and /v1/audio/* now refuse embedding models with a 400 instead of forwarding the call to the backend, and /v1/audio/* also refuses models whose input modalities do not include audio; the docs now name the endpoints that check these markers. (#721)
 
 ### Removed
 

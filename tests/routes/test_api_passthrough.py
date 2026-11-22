@@ -134,7 +134,7 @@ def test_anthropic_message_metadata_list_without_warning(client, api_key):
     assert _serializer_warnings(recorded) == []
 
 
-def test_audio_transcription_off_type_value_passes_through_without_warning(client, api_key):
+def test_audio_transcription_off_type_value_passes_through_without_warning(client, api_key, audio_model):
     response = Transcription.model_construct(
         text="hi", logprobs="not-a-list",  # a str where the SDK declares a list
         usage=UsageDuration.model_construct(type="duration", seconds=10),

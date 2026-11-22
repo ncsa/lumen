@@ -230,7 +230,7 @@ def test_metrics_snapshot_after_cutover(app, client, monkeypatch, test_user, tes
     assert usage.cost == pytest.approx(cost)
 
 
-def test_audio_seconds_after_cutover(app, client, test_user, test_model, test_model_endpoint):
+def test_audio_seconds_after_cutover(app, client, test_user, test_model, audio_model, test_model_endpoint):
     """/v1/audio bills audio_seconds; the fold carries them into both stats tables."""
     token = _key(app, test_user["id"], "lk_cutover_audio")
     before = _stats(app)

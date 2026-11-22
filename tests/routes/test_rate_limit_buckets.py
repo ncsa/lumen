@@ -39,10 +39,10 @@ class _Response:
 
 
 @pytest.fixture
-def caller(app, client, test_user, test_model, test_model_endpoint, api_key, monkeypatch,
+def caller(app, client, test_user, audio_model, test_model_endpoint, api_key, monkeypatch,
            fresh_rate_limit):
     """A key with model access, an upstream stub, and a limit of 2 per minute."""
-    _allow_model(app, test_user, test_model)
+    _allow_model(app, test_user, audio_model)
     upstream = MagicMock()
     upstream.__enter__ = MagicMock(return_value=upstream)
     upstream.__exit__ = MagicMock(return_value=False)

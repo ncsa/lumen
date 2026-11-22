@@ -12,6 +12,11 @@ __all__ = ["fresh_rate_limit"]
 
 
 @pytest.fixture(autouse=True)
+def _audio_models(audio_model):
+    """The audio routes accept only models marked with the "audio" input modality."""
+
+
+@pytest.fixture(autouse=True)
 def _own_rate_limit_budget(fresh_rate_limit):
     """Audio shares the per-key generation bucket with chat and messages (#601);
     start every test here with a full budget so neighbouring modules' calls on the

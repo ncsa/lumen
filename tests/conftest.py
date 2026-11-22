@@ -360,6 +360,24 @@ def test_model(app):
         return {"id": m.id, "model_name": m.model_name}
 
 
+@pytest.fixture
+def audio_model(app, test_model):
+    """test_model marked as a speech-to-text model (``input_modalities: ["audio"]``).
+
+    The audio routes refuse any model without the marker, so every test that
+    sends test_model to /v1/audio/* uses this fixture.
+    """
+    from lumen.extensions import db
+    from lumen.models.model_config import ModelConfig
+    with app.app_context():
+        db.session.get(ModelConfig, test_model["id"]).input_modalities = ["audio"]
+        db.session.commit()
+    # Drop the snapshot rather than reload it here: the next request loads it
+    # lazily, so endpoints a later fixture adds are still seen.
+    model_cache.clear()
+    return test_model
+
+
 def set_model_owner(model_id, owner_entity_id):
     """Set (or clear) a model's owner. Call inside an app context; commits."""
     from lumen.extensions import db

@@ -658,7 +658,7 @@ def upstream_ok(monkeypatch):
 @pytest.mark.parametrize("endpoint", list(_ENDPOINTS))
 @pytest.mark.parametrize("requirement", list(_REQUIREMENTS))
 def test_api_requires_acknowledgment(
-    app, client, test_model, test_model_endpoint, key_entity, upstream_ok, fresh_rate_limit,
+    app, client, test_model, audio_model, test_model_endpoint, key_entity, upstream_ok, fresh_rate_limit,
     requirement, endpoint,
 ):
     """Without consent every surface refuses it (open tag, or 403); with consent the call succeeds."""
@@ -712,7 +712,7 @@ def test_project_manager_acknowledgment_enables_api(
 
 @pytest.mark.parametrize("endpoint", list(_ENDPOINTS))
 def test_new_requirement_reblocks_api_until_acknowledged(
-    app, auth_client, test_user, test_model, test_model_endpoint, api_key, upstream_ok,
+    app, auth_client, test_user, test_model, audio_model, test_model_endpoint, api_key, upstream_ok,
     fresh_rate_limit, endpoint,
 ):
     """Adding early_access after a needs_ack consent blocks the API until it is re-acknowledged."""
@@ -2665,7 +2665,7 @@ def test_streaming_bounds_are_captured_into_the_generator_closure():
 
 
 def test_audio_client_is_bounded(
-    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+    app, client, monkeypatch, test_user, test_model, audio_model, test_model_endpoint, api_key,
     fresh_rate_limit,
 ):
     from io import BytesIO
