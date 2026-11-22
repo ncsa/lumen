@@ -4,7 +4,7 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
-**Upgrade:** speech-to-text models must have `audio` in `input_modalities` (the **audio** input box in the config editor, or `config.yaml`), or `/v1/audio/transcriptions` and `/v1/audio/translations` return 400. An unset `cache_write_cost_per_million` now bills cache writes at 0 instead of the input price; set it explicitly to keep the 2.4.0 charge. (#678, #721)
+**Upgrade:** speech-to-text models must have `audio` in `input_modalities` (the **audio** input box in the config editor, or `config.yaml`), or `/v1/audio/transcriptions` and `/v1/audio/translations` return 400. `/v1/chat/completions`, `/v1/completions`, `/v1/messages` and `/v1/audio/*` also return 400 for models marked as embedding (`output_modalities: ["embedding"]`) instead of forwarding the call to the backend. An unset `cache_write_cost_per_million` now bills cache writes at 0 instead of the input price; set it explicitly to keep the 2.4.0 charge. (#678, #721)
 
 ### Added
 
