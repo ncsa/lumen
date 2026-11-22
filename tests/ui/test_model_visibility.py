@@ -105,6 +105,7 @@ def test_early_access_badge_on_models_list(app, auth_client, test_model):
     # Early access alone still needs acknowledging: closed lock and flask.
     assert [i["aria-label"] for i in row.find_all("i", class_="model-flag")] == ["Needs acknowledgment", "Early access"]
     assert "early access" in row.find(class_="model-access").get_text()
+    assert row.select_one(".model-row-ack .ack-btn.btn-info").find(string=True, recursive=False).strip() == "early access"
 
 
 def test_early_access_badge_on_model_detail(app, auth_client, test_model):

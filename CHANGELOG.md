@@ -14,6 +14,7 @@ All notable changes to Lumen will be documented in this file.
 
 - Redesign the Models page as a dashboard with summary cards that filter the list, sortable columns and expandable model rows. (#694)
 - Models page shows context window and max output in 1024-based K/M units, or 1000-based when the value is round in decimal. (#714)
+- Models page shows an **Acknowledge**, **early access** or (when both are pending) **Accept & Enable** button on rows with a pending requirement, and per-requirement buttons in the expanded row in place of the acceptance date; remove the unused `toggleConsentPopover` helper. (#720)
 
 ### Fixed
 

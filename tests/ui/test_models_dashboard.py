@@ -80,6 +80,18 @@ def _access_buttons(row):
     return {b.find(string=True, recursive=False).strip(): b for b in _access(row).find_all("button")}
 
 
+def _row_buttons(row):
+    """Labels of the buttons under a row's modality line, or None without a ``.model-row-ack``."""
+    ack = row.find(class_="model-row-ack")
+    if ack is None:
+        return None
+    return [b.find(string=True, recursive=False).strip() for b in ack.find_all("button")]
+
+
+def _row_button(row):
+    return row.find(class_="model-row-ack").find("button")
+
+
 # ── Stat cards ────────────────────────────────────────────────────────────
 
 
@@ -388,10 +400,13 @@ def test_rerender_reads_rates_changed_between_requests(app, auth_client, test_mo
 
 
 def _access_rows(row):
-    """``{label: (state, text)}`` for the Access & Acknowledgments list, in page order."""
+    """``{label: (state, text)}`` for the Access & Acknowledgments list, in page order.
+
+    ``text`` is the value's own text; a pending value holds only its button, so its text is empty.
+    """
     dl = _access(row).find("dl", class_="model-access-list")
     return {
-        dt.get_text(strip=True): (dd["data-state"], dd.find("span").get_text(strip=True))
+        dt.get_text(strip=True): (dd["data-state"], span.get_text(strip=True) if (span := dd.find("span", recursive=False)) else "")
         for dt, dd in zip(dl.find_all("dt"), dl.find_all("dd"))
     }
 
@@ -421,25 +436,36 @@ def test_access_neither_required(auth_client, test_model):
     }
     assert _access(row).find("button") is None
     assert "Open" not in _access(row).get_text()
+    assert _row_buttons(row) is None
 
 
 def test_access_acknowledge_pending(app, auth_client, test_model):
     _set_model(app, test_model["id"], needs_ack=True, ack_message="Read **this**.")
     row = _row(_soup(auth_client), "test-model")
     assert _access_rows(row) == {
-        "Acknowledgment": ("pending", "Acknowledgment required"),
+        "Acknowledgment": ("pending", ""),
         "Early access": ("not-required", "Not required"),
     }
     buttons = _access_buttons(row)
-    assert list(buttons) == ["acknowledge"]
-    btn = buttons["acknowledge"]
-    assert {"ack-btn", "bg-warning", "text-dark"} <= set(btn["class"])
+    assert list(buttons) == ["Acknowledge"]
+    btn = buttons["Acknowledge"]
+    assert {"btn", "btn-sm", "btn-warning", "ack-btn"} <= set(btn["class"])
     assert btn["aria-haspopup"] == "dialog"
     assert btn["data-name"] == "test-model"
     assert btn["data-notice"] == "Read **this**."
     assert btn.find("span", class_="visually-hidden").get_text() == " for test-model"
-    # The button sits in its own requirement's row.
-    assert btn.find_parent("dd").find_previous_sibling("dt").get_text(strip=True) == "Acknowledgment"
+    # The button sits in its own requirement's row, alone where the date goes.
+    dd = btn.find_parent("dd")
+    assert dd.find_previous_sibling("dt").get_text(strip=True) == "Acknowledgment"
+    assert dd.find_all(recursive=False) == [btn]
+    assert "required" not in dd.get_text()
+    # The row itself shows the same button under the modality line.
+    assert _row_buttons(row) == ["Acknowledge"]
+    row_btn = _row_button(row)
+    assert {"btn", "btn-sm", "btn-warning", "ack-btn"} <= set(row_btn["class"])
+    assert row_btn["aria-haspopup"] == "dialog"
+    assert row_btn.find("span", class_="visually-hidden").get_text() == " for test-model"
+    assert row_btn.find_parent(class_="model-row-name").find(class_="model-modalities") is not None
 
 
 def test_access_early_access_pending(app, auth_client, test_model):
@@ -447,26 +473,34 @@ def test_access_early_access_pending(app, auth_client, test_model):
     row = _row(_soup(auth_client), "test-model")
     assert _access_rows(row) == {
         "Acknowledgment": ("not-required", "Not required"),
-        "Early access": ("pending", "Acceptance required"),
+        "Early access": ("pending", ""),
     }
     buttons = _access_buttons(row)
     assert list(buttons) == ["early access"]
-    assert {"ack-btn", "bg-info", "text-dark"} <= set(buttons["early access"]["class"])
+    assert {"btn", "btn-sm", "btn-info", "ack-btn"} <= set(buttons["early access"]["class"])
     assert buttons["early access"].find_parent("dd").find_previous_sibling("dt").get_text(strip=True) == "Early access"
+    assert _row_buttons(row) == ["early access"]
+    assert {"btn", "btn-sm", "btn-info", "ack-btn"} <= set(_row_button(row)["class"])
 
 
 def test_access_both_pending(app, auth_client, test_model):
     _set_model(app, test_model["id"], needs_ack=True, early_access=True)
     row = _row(_soup(auth_client), "test-model")
     assert _access_rows(row) == {
-        "Acknowledgment": ("pending", "Acknowledgment required"),
-        "Early access": ("pending", "Acceptance required"),
+        "Acknowledgment": ("pending", ""),
+        "Early access": ("pending", ""),
     }
     buttons = _access_buttons(row)
-    assert list(buttons) == ["acknowledge", "early access"]
-    # Both open the same dialog with both notices.
-    assert buttons["acknowledge"]["data-early-notice"] == buttons["early access"]["data-early-notice"]
-    assert buttons["acknowledge"]["data-notice"] == buttons["early access"]["data-notice"]
+    assert list(buttons) == ["Acknowledge", "early access"]
+    # The row has one button that accepts both, in the colour of the dialog's own Accept & Enable.
+    assert _row_buttons(row) == ["Accept & Enable"]
+    row_btn = _row_button(row)
+    assert {"btn", "btn-sm", "btn-warning", "ack-btn"} <= set(row_btn["class"])
+    # All three open the same dialog with both notices.
+    for btn in [row_btn, *buttons.values()]:
+        assert (btn["data-name"], btn["data-notice"], btn["data-early-notice"]) == (
+            row_btn["data-name"], row_btn["data-notice"], row_btn["data-early-notice"])
+    assert row_btn["data-name"] == "test-model"
 
 
 def test_access_ack_accepted_early_access_pending(app, auth_client, test_user, test_model):
@@ -474,9 +508,10 @@ def test_access_ack_accepted_early_access_pending(app, auth_client, test_user, t
     _consent(app, test_user["id"], test_model["id"], consented_at=datetime(2026, 2, 3, 4, 5, 6))
     soup = _soup(auth_client)
     row = _row(soup, "test-model")
-    assert _access_rows(row) == {"Acknowledgment": ("accepted", ""), "Early access": ("pending", "Acceptance required")}
+    assert _access_rows(row) == {"Acknowledgment": ("accepted", ""), "Early access": ("pending", "")}
     assert _accepted_span(row, "Acknowledgment")["data-utc"] == "2026-02-03T04:05:06Z"
     assert list(_access_buttons(row)) == ["early access"]
+    assert _row_buttons(row) == ["early access"]
     # Still counts as needing acknowledgment until every requirement is accepted.
     assert _card(soup, "needs-ack")[0] == 1
     assert row.has_attr("data-needs-ack")
@@ -496,6 +531,7 @@ def test_access_both_accepted_show_their_own_dates(app, auth_client, test_user, 
         # Date-only text with the full local timestamp in a focusable tooltip, filled in by app.js.
         assert _accepted_span(row, label).has_attr("data-date")
     assert _access(row).find("button") is None
+    assert _row_buttons(row) is None
     assert _card(soup, "needs-ack")[0] == 0
 
 
@@ -515,8 +551,50 @@ def test_access_requirement_added_after_consent(app, auth_client, test_user, tes
     _consent(app, test_user["id"], test_model["id"], consented_at=datetime(2026, 1, 1))
     _set_model(app, test_model["id"], early_access=True)
     row = _row(_soup(auth_client), "test-model")
-    assert _access_rows(row) == {"Acknowledgment": ("accepted", ""), "Early access": ("pending", "Acceptance required")}
+    assert _access_rows(row) == {"Acknowledgment": ("accepted", ""), "Early access": ("pending", "")}
     assert list(_access_buttons(row)) == ["early access"]
+    # Only early access is left, so the row offers it, not Accept & Enable.
+    assert _row_buttons(row) == ["early access"]
+    assert "btn-info" in _row_button(row)["class"]
+
+
+@pytest.mark.parametrize(("fields", "consent"), [
+    ({}, {}),
+    ({"needs_ack": True}, {"consented_at": datetime(2026, 1, 1)}),
+    ({"early_access": True}, {"early_access_at": datetime(2026, 1, 1)}),
+    ({"needs_ack": True, "early_access": True}, {"consented_at": datetime(2026, 1, 1), "early_access_at": datetime(2026, 1, 2)}),
+])
+def test_no_row_button_without_a_pending_requirement(app, auth_client, test_user, test_model, fields, consent):
+    _set_model(app, test_model["id"], **fields)
+    if consent:
+        _consent(app, test_user["id"], test_model["id"], **consent)
+    row = _row(_soup(auth_client), "test-model")
+    assert row.find(class_="model-row-ack") is None
+    assert row.find("button", class_="ack-btn") is None
+
+
+def test_row_button_iff_needs_ack(app, auth_client, test_user, test_model):
+    # Every combination of requirements and acceptances: a row has the button exactly
+    # when the Needs Ack filter shows it, and never more than one.
+    combos = [(needs, early, acked, early_acked)
+              for needs in (False, True) for early in (False, True)
+              for acked in (False, True) for early_acked in (False, True)]
+    for i, (needs, early, acked, early_acked) in enumerate(combos):
+        model_id = _add_model(app, f"combo-{i}", True, needs_ack=needs, early_access=early)
+        timestamps = {**({"consented_at": datetime(2026, 1, 1)} if acked else {}),
+                      **({"early_access_at": datetime(2026, 1, 2)} if early_acked else {})}
+        if timestamps:
+            _consent(app, test_user["id"], model_id, **timestamps)
+    soup = _soup(auth_client)
+    with_button = 0
+    for i in range(len(combos)):
+        row = _row(soup, f"combo-{i}")
+        labels = _row_buttons(row)
+        assert (labels is not None) == row.has_attr("data-needs-ack"), combos[i]
+        if labels is not None:
+            assert len(labels) == 1
+            with_button += 1
+    assert with_button == _card(soup, "needs-ack")[0] > 0
 
 
 def test_access_requirement_removed_hides_its_old_date(app, auth_client, test_user, test_model):
@@ -572,7 +650,7 @@ def test_access_panel_and_needs_ack_agree_when_consent_lands_mid_render(app, aut
     soup = _soup(auth_client)
     row = _row(soup, "test-model")
     # The render saw the model before the acceptance, everywhere on the page.
-    assert _access_rows(row)["Acknowledgment"] == ("pending", "Acknowledgment required")
+    assert _access_rows(row)["Acknowledgment"] == ("pending", "")
     assert _card(soup, "needs-ack")[0] == 1
     assert row.has_attr("data-needs-ack")
     assert _flags(row)[0] == ("bi-lock", "Needs acknowledgment")
