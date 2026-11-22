@@ -2,6 +2,10 @@
 import importlib.util
 import io
 import json
+import logging
+import os
+import stat
+import sys
 import urllib.error
 import warnings
 from contextlib import closing
@@ -29,9 +33,7 @@ def load_rag(monkeypatch, config_dir, ini=None, env=None):
         (config_dir / "config.ini").write_text(ini)
     spec = importlib.util.spec_from_file_location("rag_under_test", SCRIPT)
     module = importlib.util.module_from_spec(spec)
-    # rag.py silences all warnings at import; keep that out of the test session.
-    with warnings.catch_warnings():
-        spec.loader.exec_module(module)
+    spec.loader.exec_module(module)
     return module
 
 
@@ -88,6 +90,12 @@ def test_defaults_without_any_configuration(monkeypatch, tmp_path):
     m = load_rag(monkeypatch, tmp_path / "missing")
     assert (m.BASE_URL, m.API_KEY) == ("", "")
     assert (m.EMBED_MODEL, m.CHAT_MODEL) == ("qwen3-embedding-8b", "qwen3.8-27b")
+
+
+def test_import_leaves_warning_filters_alone(monkeypatch, tmp_path):
+    before = list(warnings.filters)
+    load_rag(monkeypatch, tmp_path / "cfg")
+    assert warnings.filters == before
 
 
 def test_malformed_config_ini_exits_with_message(monkeypatch, tmp_path):
@@ -158,6 +166,77 @@ def test_extract_text_pdf(rag, tmp_path):
     with f.open("wb") as fh:
         writer.write(fh)
     assert rag.extract_text(f).strip() == ""
+
+
+class NoisyPdfReader:
+    """Stands in for PdfReader and complains the way pypdf does on odd PDFs."""
+
+    def __init__(self, path):
+        warnings.warn("pypdf noise", UserWarning)
+        logging.getLogger("pypdf").warning("Ignoring wrong pointing object")
+        self.pages = []
+
+
+@pytest.mark.parametrize("verbose", [False, True])
+def test_extract_text_pdf_silences_pypdf_unless_verbose(rag, monkeypatch, tmp_path, caplog,
+                                                       verbose):
+    f = tmp_path / "noisy.pdf"
+    f.write_bytes(b"%PDF")
+    monkeypatch.setattr(rag, "PdfReader", NoisyPdfReader)
+    monkeypatch.setattr(rag, "VERBOSE", verbose)
+    caplog.set_level(logging.WARNING, logger="pypdf")
+    level = logging.getLogger("pypdf").level
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert rag.extract_text(f) == ""
+    assert [str(w.message) for w in caught] == (["pypdf noise"] if verbose else [])
+    assert (["Ignoring wrong pointing object"] if verbose else []) == [
+        r.getMessage() for r in caplog.records if r.name == "pypdf"]
+    assert logging.getLogger("pypdf").level == level
+
+
+# --- store permissions ----------------------------------------------------------------
+
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
+
+
+@pytest.fixture()
+def umask_022():
+    old = os.umask(0o022)
+    yield
+    os.umask(old)
+
+
+def mode(path):
+    return stat.S_IMODE(path.stat().st_mode)
+
+
+@posix_only
+def test_new_store_and_directory_are_private(rag, umask_022):
+    assert not rag.DB_PATH.parent.exists()
+    rag.get_conn().close()
+    assert mode(rag.DB_PATH.parent) == 0o700
+    assert mode(rag.DB_PATH) == 0o600
+
+
+@posix_only
+def test_file_option_creates_a_private_store_in_a_new_directory(rag, tmp_path, umask_022,
+                                                                capsys):
+    db = tmp_path / "new" / "dir" / "topic.db"
+    run(rag, "-f", str(db), "list")
+    assert "No files added yet." in capsys.readouterr().out
+    assert mode(db.parent) == 0o700
+    assert mode(db) == 0o600
+
+
+@posix_only
+def test_existing_store_keeps_its_mode(rag, umask_022):
+    rag.DB_PATH.parent.mkdir(mode=0o755)
+    rag.DB_PATH.touch()
+    rag.DB_PATH.chmod(0o644)
+    rag.get_conn().close()
+    assert mode(rag.DB_PATH) == 0o644
+    assert mode(rag.DB_PATH.parent) == 0o755
 
 
 # --- HTTP ---------------------------------------------------------------------------
@@ -248,6 +327,58 @@ def test_request_reports_unreachable_server(rag, monkeypatch):
     monkeypatch.setattr(rag.urllib.request, "urlopen", urlopen)
     with pytest.raises(RuntimeError, match="failed: .*refused"):
         rag._request("/v1/x", {})
+
+
+def fail_with(code, body):
+    def urlopen(req, timeout):
+        raise http_error(code, body)
+    return urlopen
+
+
+def test_embed_404_names_the_model_and_its_setting(rag, monkeypatch):
+    monkeypatch.setattr(rag, "EMBED_MODEL", "emb-x")
+    monkeypatch.setattr(rag.urllib.request, "urlopen",
+                        fail_with(HTTPStatus.NOT_FOUND, b"Model 'emb-x' not found"))
+    with pytest.raises(RuntimeError) as e:
+        rag.embed_texts(["a"])
+    msg = str(e.value)
+    assert msg.startswith("HTTP 404 from /v1/embeddings: Model 'emb-x' not found")
+    assert "Model 'emb-x' is not available on http://lumen.test." in msg
+    assert "LUMEN_EMBED_MODEL" in msg and "embed_model" in msg
+    assert str(rag.CONFIG_FILE) in msg
+
+
+def test_chat_404_names_the_model_and_its_setting(rag, monkeypatch):
+    monkeypatch.setattr(rag, "CHAT_MODEL", "chat-x")
+    monkeypatch.setattr(rag.urllib.request, "urlopen",
+                        fail_with(HTTPStatus.NOT_FOUND, b"not found"))
+    with pytest.raises(RuntimeError) as e:
+        rag.chat([])
+    msg = str(e.value)
+    assert "Model 'chat-x' is not available on http://lumen.test." in msg
+    assert "LUMEN_CHAT_MODEL" in msg and "chat_model" in msg
+    assert "EMBED" not in msg
+
+
+@pytest.mark.parametrize("call", [lambda rag: rag.embed_texts(["a"]), lambda rag: rag.chat([])])
+def test_other_http_errors_keep_their_message(rag, monkeypatch, call):
+    monkeypatch.setattr(rag.urllib.request, "urlopen",
+                        fail_with(HTTPStatus.BAD_REQUEST, b"bad input"))
+    with pytest.raises(rag.HttpError) as e:
+        call(rag)
+    assert e.value.code == HTTPStatus.BAD_REQUEST
+    assert str(e.value).startswith("HTTP 400 from /v1/")
+    assert str(e.value).endswith(": bad input")
+
+
+def test_404_hint_reaches_the_command_line(rag, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(rag.urllib.request, "urlopen",
+                        fail_with(HTTPStatus.NOT_FOUND, b"not found"))
+    f = make_file(tmp_path, "a.txt")
+    with pytest.raises(SystemExit) as e:
+        run(rag, "add", str(f))
+    assert e.value.code == 1
+    assert "LUMEN_EMBED_MODEL" in capsys.readouterr().err
 
 
 def test_embed_texts_batches_and_orders_by_index(rag, monkeypatch):

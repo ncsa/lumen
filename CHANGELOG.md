@@ -22,6 +22,7 @@ All notable changes to Lumen will be documented in this file.
 - An unset `cache_write_cost_per_million` now means 0 (cache writes free) instead of the input price; an unset `cached_input_cost_per_million` still means the input price. (#678)
 - Stop logging a Pydantic serializer warning when a backend returns values (e.g. chat `metadata` lists) that don't match the OpenAI SDK types; the response is passed through unchanged. (#693)
 - Embeddings billing now passes the model's output price and is tested to bill input tokens only (#702).
+- `scripts/rag.py` creates its config directory and new stores private to the user (700/600), silences only pypdf's warnings instead of every warning in the process, and says which setting to change when the server does not know the embed or chat model. (#722)
 
 ### Removed
 

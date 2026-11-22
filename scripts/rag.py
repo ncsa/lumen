@@ -28,6 +28,7 @@ import argparse
 import configparser
 import heapq
 import json
+import logging
 import math
 import os
 import sqlite3
@@ -43,8 +44,6 @@ from http import HTTPStatus
 from pathlib import Path
 
 from pypdf import PdfReader
-
-warnings.filterwarnings("ignore")
 
 CONFIG_DIR = Path(os.environ.get("LUMEN_CONFIG_DIR") or Path.home() / ".config" / "lumen")
 CONFIG_FILE = CONFIG_DIR / "config.ini"
@@ -78,6 +77,14 @@ RETRY_STATUSES = {HTTPStatus.TOO_MANY_REQUESTS, HTTPStatus.BAD_GATEWAY,
 VERBOSE = os.environ.get("LUMEN_VERBOSE", "").lower() in ("1", "true", "yes")
 
 
+class HttpError(RuntimeError):
+    """An HTTP error response from Lumen; `code` is the status."""
+
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
 def _request(path, payload):
     """POST JSON to Lumen; retry transient failures, raise RuntimeError otherwise."""
     body = json.dumps(payload).encode()
@@ -98,7 +105,7 @@ def _request(path, payload):
         except urllib.error.HTTPError as e:
             detail = e.read().decode(errors="replace")[:500]
             e.close()
-            last = RuntimeError(f"HTTP {e.code} from {path}: {detail}")
+            last = HttpError(e.code, f"HTTP {e.code} from {path}: {detail}")
             if e.code not in RETRY_STATUSES:
                 raise last from e
         except (urllib.error.URLError, TimeoutError) as e:
@@ -108,8 +115,27 @@ def _request(path, payload):
     raise last or RuntimeError(f"No request attempted: MAX_RETRIES is {MAX_RETRIES}")
 
 
+def _request_model(path, payload, env_name, key):
+    """_request() for a model endpoint; a 404 says which setting names the model."""
+    try:
+        return _request(path, payload)
+    except HttpError as e:
+        if e.code != HTTPStatus.NOT_FOUND:
+            raise
+        raise RuntimeError(
+            f"{e}\nModel '{payload['model']}' is not available on {BASE_URL}. Set {env_name} "
+            f"(or {key} in {CONFIG_FILE}) to a model listed on the Models page."
+        ) from e
+
+
 def get_conn():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # New directories and stores are private to the user; existing ones are left alone.
+    DB_PATH.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not DB_PATH.exists():
+        try:
+            os.close(os.open(DB_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+        except FileExistsError:
+            pass
     conn = sqlite3.connect(str(DB_PATH))
     conn.execute(
         """CREATE TABLE IF NOT EXISTS chunks (
@@ -155,9 +181,24 @@ def extract_text(path):
         raise FileNotFoundError(path)
     suffix = p.suffix.lower()
     if suffix == ".pdf":
-        reader = PdfReader(str(p))
-        return "\n\n".join((pg.extract_text() or "") for pg in reader.pages)
+        if VERBOSE:
+            return _read_pdf(p)
+        # pypdf reports harmless problems in real-world PDFs as warnings and log lines.
+        pypdf_logger = logging.getLogger("pypdf")
+        level = pypdf_logger.level
+        pypdf_logger.setLevel(logging.ERROR)
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                return _read_pdf(p)
+        finally:
+            pypdf_logger.setLevel(level)
     return p.read_text(encoding="utf-8", errors="replace")
+
+
+def _read_pdf(p):
+    reader = PdfReader(str(p))
+    return "\n\n".join((pg.extract_text() or "") for pg in reader.pages)
 
 
 def chunk_text(text):
@@ -184,7 +225,8 @@ def embed_texts(texts):
     vectors = []
     for i in range(0, len(texts), BATCH_SIZE):
         batch = texts[i : i + BATCH_SIZE]
-        resp = _request("/v1/embeddings", {"model": EMBED_MODEL, "input": batch})
+        resp = _request_model("/v1/embeddings", {"model": EMBED_MODEL, "input": batch},
+                              "LUMEN_EMBED_MODEL", "embed_model")
         try:
             data = sorted(resp["data"], key=lambda d: d["index"])
             batch_vectors = [d["embedding"] for d in data]
@@ -210,7 +252,7 @@ def cosine(a, b, na=None):
 
 
 def chat(messages):
-    resp = _request(
+    resp = _request_model(
         "/v1/chat/completions",
         {
             "model": CHAT_MODEL,
@@ -218,6 +260,8 @@ def chat(messages):
             "max_tokens": 1500,
             "chat_template_kwargs": {"enable_thinking": False},
         },
+        "LUMEN_CHAT_MODEL",
+        "chat_model",
     )
     try:
         msg = resp["choices"][0]["message"]
