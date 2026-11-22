@@ -3,7 +3,8 @@
 An embedding model (``output_modalities: ["embedding"]``) gets a 400 from
 chat, completions, messages and both audio routes, after the access check and
 before anything goes upstream; /v1/embeddings and /v1/messages/count_tokens
-do not check the marker.
+do not check the marker. The audio routes also refuse any model whose
+``input_modalities`` does not include ``"audio"`` (unset included).
 """
 from http import HTTPStatus
 from io import BytesIO
@@ -16,7 +17,7 @@ from lumen.extensions import db
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.request_log import RequestLog
 from lumen.services import model_cache
-from tests.routes.test_api_audio import _grant_finite_pool
+from tests.routes.test_api_audio import _FakeAudio, _grant_finite_pool, _live_state
 from tests.routes.test_api_auth import (
     _capturing_openai,
     _make_model_blocked,
@@ -29,6 +30,7 @@ from tests.routes.test_api_auth import (
 __all__ = ["api_key", "fresh_rate_limit"]
 
 EMBEDDING_MESSAGE = "Model '{}' is an embedding model; call it through /v1/embeddings"
+AUDIO_MESSAGE = "Model '{}' does not accept audio input"
 ANTHROPIC_HEADERS = {"anthropic-version": "2023-06-01"}
 
 
@@ -108,6 +110,7 @@ def test_embedding_model_refused(
         _grant_finite_pool(app, test_user["id"])
     _mark(app, test_model, output_modalities=["embedding"])
     calls = _upstream(monkeypatch)
+    state = _live_state(monkeypatch)
     with app.app_context():
         before = _balances()
 
@@ -123,9 +126,114 @@ def test_embedding_model_refused(
         assert body["error"] == {"message": message, "type": "invalid_request_error",
                                  "code": "model_not_supported"}
     assert calls == []
+    assert state.admits == 0
     with app.app_context():
         assert _balances() == before
         assert _usage_rows() == 0
+
+
+@pytest.mark.parametrize("kind", ["transcriptions", "translations"])
+@pytest.mark.parametrize("flags", [
+    pytest.param({"input_modalities": ["text"]}, id="text"),
+    pytest.param({"input_modalities": ["text"], "audio_cost_per_hour": 0.36}, id="text-with-audio-rate"),
+    pytest.param({"input_modalities": None}, id="unset"),
+])
+def test_non_audio_model_refused_on_audio_routes(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, kind, flags,
+):
+    token, _ = api_key
+    with app.app_context():
+        _grant_finite_pool(app, test_user["id"])
+    _mark(app, test_model, **flags)
+    calls = _upstream(monkeypatch)
+    state = _live_state(monkeypatch)
+    with app.app_context():
+        before = _balances()
+
+    resp = _audio(client, token, test_model["model_name"], kind)
+
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json()["error"] == {
+        "message": AUDIO_MESSAGE.format(test_model["model_name"]),
+        "type": "invalid_request_error", "code": "model_not_supported",
+    }
+    assert calls == []
+    assert state.admits == 0
+    with app.app_context():
+        assert _balances() == before
+        assert _usage_rows() == 0
+
+
+def test_embedding_message_wins_on_audio_routes(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+):
+    """An embedding model without the audio marker gets the embedding message."""
+    token, _ = api_key
+    with app.app_context():
+        _grant_finite_pool(app, test_user["id"])
+    _mark(app, test_model, output_modalities=["embedding"], input_modalities=["text"])
+    _upstream(monkeypatch)
+
+    resp = _audio(client, token, test_model["model_name"])
+
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json()["error"]["message"] == EMBEDDING_MESSAGE.format(test_model["model_name"])
+
+
+@pytest.mark.parametrize("modalities", [["audio"], ["text", "audio"]], ids=["audio", "text-and-audio"])
+def test_audio_model_accepted(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key, modalities,
+):
+    token, _ = api_key
+    with app.app_context():
+        _grant_finite_pool(app, test_user["id"])
+    _mark(app, test_model, input_modalities=modalities)
+    calls = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return _FakeAudio()
+
+    _capturing_openai(monkeypatch, routes, create)
+
+    resp = _audio(client, token, test_model["model_name"])
+
+    assert resp.status_code == HTTPStatus.OK
+    assert len(calls) == 1
+
+
+def test_blocked_non_audio_model_is_403_not_400(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+):
+    token, _ = api_key
+    with app.app_context():
+        _grant_finite_pool(app, test_user["id"])
+        _set_model_flag(app, test_model, input_modalities=["text"])
+        _make_model_blocked(test_model["id"])
+    model_cache.refresh(app)
+    calls = _upstream(monkeypatch)
+
+    resp = _audio(client, token, test_model["model_name"])
+
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert "audio input" not in resp.get_json()["error"]["message"]
+    assert calls == []
+
+
+def test_unknown_model_on_audio_route_is_404_not_400(
+    app, client, monkeypatch, test_user, test_model, test_model_endpoint, api_key,
+):
+    """No such model, while the configured one lacks the audio marker: still 404."""
+    token, _ = api_key
+    with app.app_context():
+        _grant_finite_pool(app, test_user["id"])
+    _mark(app, test_model, input_modalities=["text"])
+    calls = _upstream(monkeypatch)
+
+    resp = _audio(client, token, "no-such-model")
+
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert calls == []
 
 
 @pytest.mark.parametrize("send", [

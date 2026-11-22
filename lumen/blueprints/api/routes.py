@@ -19,7 +19,7 @@ from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_model_consent import EntityModelConsent
-from lumen.models.model_config import is_embedding_model
+from lumen.models.model_config import accepts_audio_input, is_embedding_model
 from lumen.services import model_cache, request_rates
 from lumen.services.cost import calculate_audio_cost, calculate_cost, usage_tokens
 from lumen.services.crypto import cache_salt_for_entity, hash_api_key
@@ -570,11 +570,19 @@ def _purpose_refusal(model_name: str, model_config, purpose: str):
     """400 when the model cannot serve ``purpose``, else None.
 
     ``"generate"`` (chat, completions, messages) and ``"audio"`` refuse an
-    embedding model; ``"embeddings"`` checks nothing.
+    embedding model; ``"audio"`` (transcriptions, translations) also refuses a
+    model whose ``input_modalities`` does not include ``"audio"``, unset
+    included. The embedding message wins for an embedding model.
+    ``"embeddings"`` checks nothing.
     """
     if purpose in ("generate", "audio") and is_embedding_model(model_config):
         return _err(
             f"Model '{model_name}' is an embedding model; call it through /v1/embeddings",
+            status=HTTPStatus.BAD_REQUEST, err_code="model_not_supported",
+        )
+    if purpose == "audio" and not accepts_audio_input(model_config):
+        return _err(
+            f"Model '{model_name}' does not accept audio input",
             status=HTTPStatus.BAD_REQUEST, err_code="model_not_supported",
         )
     return None
@@ -588,7 +596,9 @@ def _preflight(model_name: str, purpose: str = "generate"):
 
     ``purpose`` names the route family: ``"generate"`` (chat, completions,
     messages), ``"audio"`` (transcriptions, translations) or ``"embeddings"``.
-    A model that cannot serve it gets a 400 (see _purpose_refusal). That check
+    A model that cannot serve it (an embedding model on a generation or audio
+    route, a model without the ``"audio"`` input marker on an audio route)
+    gets a 400 (see _purpose_refusal). That check
     runs only after the access and budget check, so an entity without access
     gets the 404/403 and never learns the model's type, and before an endpoint
     is picked, so nothing goes upstream.

@@ -15,6 +15,11 @@ from .model_alias import ModelAlias
 #: ``output_modalities: ["embedding"]``.
 EMBEDDING_MODALITY = "embedding"
 
+#: The input modality that marks a speech-to-text model. The audio routes
+#: (``/v1/audio/transcriptions``, ``/v1/audio/translations``) refuse any model
+#: without it.
+AUDIO_MODALITY = "audio"
+
 
 def is_embedding_model(config) -> bool:
     """True when the model produces embeddings rather than text.
@@ -30,6 +35,19 @@ def is_embedding_model(config) -> bool:
     # Only the list (DB) and tuple (snapshot) shapes can hold the marker; a
     # scalar or a string stored by an older config is simply not one.
     return isinstance(value, (list, tuple)) and EMBEDDING_MODALITY in value
+
+
+def accepts_audio_input(config) -> bool:
+    """True when the model is marked as taking audio input (speech-to-text).
+
+    Takes a ModelConfig, a model_cache.ModelSnapshot or anything else with an
+    ``input_modalities`` attribute. POST ``/v1/audio/transcriptions`` and
+    ``/v1/audio/translations`` refuse a model without the marker with a 400.
+    Strict: an unset, empty or non-list value means not audio, and an
+    ``audio_cost_per_hour`` does not count as the marker.
+    """
+    value = getattr(config, "input_modalities", None)
+    return isinstance(value, (list, tuple)) and AUDIO_MODALITY in value
 
 
 class ModelConfig(db.Model):

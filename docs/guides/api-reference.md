@@ -329,7 +329,7 @@ Everything else — model names, message format, streaming, tool calls — works
 
 ## Audio Transcriptions and Translations
 
-Lumen proxies OpenAI-compatible **speech-to-text** endpoints for backends that support them (e.g. Qwen3-ASR). `transcriptions` returns text in the spoken language; `translations` returns English text. Both accept a `multipart/form-data` upload, not JSON.
+Lumen proxies OpenAI-compatible **speech-to-text** endpoints for backends that support them (e.g. Qwen3-ASR). `transcriptions` returns text in the spoken language; `translations` returns English text. Both accept a `multipart/form-data` upload, not JSON. They accept only models whose `input_modalities` includes `"audio"`; embedding models and other models get a 400.
 
 | Form field | Required | Applies to | Description |
 |------------|----------|------------|-------------|

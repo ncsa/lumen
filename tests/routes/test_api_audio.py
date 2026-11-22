@@ -10,6 +10,9 @@ from tests.routes.test_api_auth import fresh_rate_limit
 # Re-exported so pytest resolves the fixture by name in this module's tests.
 __all__ = ["fresh_rate_limit"]
 
+# The audio routes accept only models marked with the "audio" input modality.
+pytestmark = pytest.mark.usefixtures("audio_model")
+
 
 @pytest.fixture(autouse=True)
 def _own_rate_limit_budget(fresh_rate_limit):
