@@ -28,7 +28,7 @@ from lumen.models.api_key import APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_stat import EntityStat
 from lumen.models.model_alias import ModelAlias
-from lumen.models.model_config import ModelConfig
+from lumen.models.model_config import ModelConfig, is_embedding_model
 from lumen.models.model_endpoint import ModelEndpoint
 from lumen.models.model_stat import ModelStat
 from lumen.models.request_log import RequestLog
@@ -211,6 +211,13 @@ def _apply_model_fields(config, model_def):
     config.notice = model_def.get("notice") or None
     config.ack_message = model_def.get("ack_message") or None
     config.end_date = _normalize_end_date(model_def.get("end_date"), model_def.get("name"))
+    # An embedding model has no output tokens, so its output price is always 0.
+    if is_embedding_model(config):
+        if config.output_cost_per_million:
+            _warn_once(("embedding-output-cost", model_def.get("name")),
+                       "embedding model '%s' has output_cost_per_million %s; using 0 instead",
+                       model_def.get("name"), config.output_cost_per_million)
+        config.output_cost_per_million = 0
 
 
 def _apply_model_access(config, model_def):

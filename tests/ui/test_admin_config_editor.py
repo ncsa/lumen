@@ -226,6 +226,77 @@ def test_editor_marks_a_model_as_embedding(editor):
     assert yaml.safe_load(cfg.read_text())["models"][0]["output_modalities"] == ["embedding"]
 
 
+def test_editor_locks_output_cost_for_embedding(editor):
+    """Ticking embedding sets Output Cost to 0 and makes it read-only, with a hint;
+    unticking makes it editable again; saving writes an output price of 0."""
+    page, cfg, posted = editor
+    cfg.write_text(MODELS_CONFIG)
+
+    page.goto(f"{ORIGIN}/admin/config")
+    page.click("#nav-models")
+    page.wait_for_selector("#mdl-out-embedding")
+    assert page.input_value("#mdl-out-cost") == "2"
+    assert page.is_editable("#mdl-out-cost")
+    assert not page.is_visible("#mdl-out-cost-hint")
+
+    page.check("#mdl-out-embedding")
+    assert page.input_value("#mdl-out-cost") == "0"
+    assert not page.is_editable("#mdl-out-cost")
+    assert page.is_visible("#mdl-out-cost-hint")
+    assert page.text_content("#mdl-out-cost-hint").strip() == "embedding models have no output tokens"
+    assert page.get_attribute("#mdl-out-cost", "aria-describedby") == "mdl-out-cost-hint"
+
+    page.uncheck("#mdl-out-embedding")
+    assert page.is_editable("#mdl-out-cost")
+    assert not page.is_visible("#mdl-out-cost-hint")
+    assert page.get_attribute("#mdl-out-cost", "aria-describedby") is None
+
+    page.check("#mdl-out-embedding")
+    page.click("#btn-save")
+    page.wait_for_selector("#cfg-toast >> text=Saved successfully")
+    assert posted[0]["models"][0]["output_cost_per_million"] == 0
+    assert yaml.safe_load(cfg.read_text())["models"][0]["output_cost_per_million"] == 0
+
+
+def test_editor_locks_output_cost_of_a_loaded_embedding_model(editor):
+    """A model already marked as embedding renders with Output Cost locked at 0."""
+    page, cfg, posted = editor
+    cfg.write_text(EMBEDDING_CONFIG.format(input="[text]", output="[embedding]").replace(
+        "output_cost_per_million: 0", "output_cost_per_million: 2"))
+
+    page.goto(f"{ORIGIN}/admin/config")
+    page.click("#nav-models")
+    page.wait_for_selector("#mdl-out-embedding")
+    assert page.input_value("#mdl-out-cost") == "0"
+    assert not page.is_editable("#mdl-out-cost")
+    assert page.is_visible("#mdl-out-cost-hint")
+
+
+def test_editor_output_cost_stays_read_only_with_automatic_price(editor):
+    """With Automatic price on, unticking embedding leaves Output Cost read-only,
+    and unticking Automatic price while embedding is ticked keeps it locked too."""
+    page, cfg, posted = editor
+    cfg.write_text(MODELS_CONFIG.replace("    output_cost_per_million: 2\n",
+                                         "    output_cost_per_million: 2\n    auto_price: true\n"))
+
+    page.goto(f"{ORIGIN}/admin/config")
+    page.click("#nav-models")
+    page.wait_for_selector("#mdl-out-embedding")
+    assert page.is_checked("#mdl-autoprice")
+    assert not page.is_editable("#mdl-out-cost")
+
+    page.check("#mdl-out-embedding")
+    assert not page.is_editable("#mdl-out-cost")
+    page.uncheck("#mdl-autoprice")
+    assert not page.is_editable("#mdl-out-cost")
+    assert page.is_editable("#mdl-in-cost")
+    page.check("#mdl-autoprice")
+    page.uncheck("#mdl-out-embedding")
+    assert not page.is_editable("#mdl-out-cost")
+    page.uncheck("#mdl-autoprice")
+    assert page.is_editable("#mdl-out-cost")
+
+
 def test_editor_key_ttl_read_only_when_editor_disabled(app, editor):
     page, cfg, posted = editor
     original = app.config.get("CONFIG_EDITOR", True)
