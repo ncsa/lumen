@@ -193,7 +193,7 @@ def test_transcription_duration_billing(
 def test_transcription_token_billing(
     app, client, test_user, test_model, test_model_endpoint, api_key,
 ):
-    token, _ = api_key
+    token, ak_id = api_key
     with app.app_context():
         _grant_finite_pool(app, test_user["id"], coins=100)
         _set_audio_rate(app, test_model["id"], 0.6)
@@ -217,12 +217,22 @@ def test_transcription_token_billing(
         from sqlalchemy import select
 
         from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        from lumen.models.entity_balance import EntityBalance
         from lumen.models.request_log import RequestLog
         log = db.session.execute(select(RequestLog)).scalar_one()
         assert log.audio_seconds == 0
         assert log.input_tokens == 1000
         assert log.output_tokens == 500
         assert float(log.cost) == expected_cost
+
+        ak = db.session.get(APIKey, ak_id)
+        assert float(ak.cost) == expected_cost
+        assert ak.input_tokens == 1000
+        assert ak.output_tokens == 500
+
+        bal = db.session.execute(select(EntityBalance)).scalar_one()
+        assert float(bal.coins_left) == round(100 - expected_cost, 6)
 
 
 def test_transcription_token_billing_with_cache(
