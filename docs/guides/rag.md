@@ -27,10 +27,12 @@ Each setting is read from the environment first, then from the `[lumen]` section
 | `LUMEN_CHAT_MODEL` | `chat_model` | `qwen3.8-27b` | Model that writes the answer |
 | `LUMEN_VERBOSE` | – | off | Set to `1` to print each step; same as `-v` |
 
+The default model names are the ones on a single Lumen deployment, so you will normally set both for your server. If the server does not know a model, the script says which setting to change.
+
 ```ini
 [lumen]
-embed_model = qwen3-embedding-8b
-chat_model = qwen3.8-27b
+embed_model = your-embedding-model
+chat_model = your-chat-model
 ```
 
 ## Usage
@@ -71,4 +73,4 @@ Options that work with every command:
 - Scanned PDFs without a text layer have nothing to extract; the script reports "No extractable text".
 - Embeddings from different models are not comparable. If you change `embed_model`, `clear` the store and `add` your files again.
 - Chunk and result sizes are constants at the top of the script (`CHUNK_SIZE`, `CHUNK_OVERLAP`, `TOP_K`); edit them to tune recall.
-- The store holds your document text in plain form. Keep the file private, and do not add documents you are not allowed to send to the models on your Lumen server.
+- The store holds your document text in plain form. A new store is private to you (mode 600), and so is its directory when the script creates it (mode 700); any parent directories created along the way follow your umask. An existing store keeps its permissions, so check them if you created it with an older version. Do not add documents you are not allowed to send to the models on your Lumen server.
