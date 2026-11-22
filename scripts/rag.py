@@ -135,7 +135,7 @@ def get_conn():
         try:
             os.close(os.open(DB_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
         except FileExistsError:
-            pass
+            pass  # another process created the store first; use it as it is
     conn = sqlite3.connect(str(DB_PATH))
     conn.execute(
         """CREATE TABLE IF NOT EXISTS chunks (

@@ -73,4 +73,4 @@ Options that work with every command:
 - Scanned PDFs without a text layer have nothing to extract; the script reports "No extractable text".
 - Embeddings from different models are not comparable. If you change `embed_model`, `clear` the store and `add` your files again.
 - Chunk and result sizes are constants at the top of the script (`CHUNK_SIZE`, `CHUNK_OVERLAP`, `TOP_K`); edit them to tune recall.
-- The store holds your document text in plain form. A new store and any directory the script creates for it are private to you (modes 700 and 600); an existing store keeps its permissions, so check them if you created it with an older version. Do not add documents you are not allowed to send to the models on your Lumen server.
+- The store holds your document text in plain form. A new store is private to you (mode 600), and so is its directory when the script creates it (mode 700); any parent directories created along the way follow your umask. An existing store keeps its permissions, so check them if you created it with an older version. Do not add documents you are not allowed to send to the models on your Lumen server.
