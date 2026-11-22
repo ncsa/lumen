@@ -12,6 +12,7 @@ import pytest
 from lumen.extensions import db
 from lumen.models.model_config import ModelConfig
 from tests.ui.test_key_tables import BOOTSTRAP_JS, BOOTSTRAP_JS_URL, ORIGIN
+from tests.ui.test_models_access_browser import STUBS
 
 MODELS = ("alpha-model", "beta-model")
 
@@ -21,7 +22,8 @@ def models_page(app, auth_client, browser):
     """Open /models with two models; return (page, uncaught page errors)."""
     with app.app_context():
         for name in MODELS:
-            # beta-model is early access, so its row shows the lock and flask icons.
+            # beta-model is early access, so its row shows the lock and flask icons
+            # and an early access button.
             db.session.add(ModelConfig(model_name=name, input_cost_per_million=1.0, output_cost_per_million=2.0,
                                        early_access=name == "beta-model"))
         db.session.commit()
@@ -40,6 +42,7 @@ def models_page(app, auth_client, browser):
 
     page = browser.new_page()
     page.set_default_timeout(10_000)
+    page.add_init_script(STUBS)  # the acknowledgment dialog's Markdown renderer and sanitizer
     errors = []
     page.on("pageerror", lambda error: errors.append(error))
     page.route("**/*", handle)
@@ -111,6 +114,17 @@ def test_clicking_inside_an_open_panel_does_not_close_it(models_page):
     assert _open_rows(page) == ["alpha-model"]
     page.click(f"{_row('alpha-model')} .model-pricing")
     assert _open_rows(page) == ["alpha-model"]
+    assert errors == []
+
+
+def test_row_ack_button_opens_the_dialog_without_toggling_the_row(models_page):
+    page, errors = models_page
+    button = page.locator(f"{_row('beta-model')} .model-row-ack button.ack-btn")
+    assert button.inner_text() == "early access for beta-model"
+    button.click()
+    page.locator("#ackModal").wait_for(state="visible")
+    assert _open_rows(page) == []
+    assert page.get_attribute(f"{_row('beta-model')} .model-row-toggle", "aria-expanded") == "false"
     assert errors == []
 
 

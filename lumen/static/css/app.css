@@ -813,6 +813,8 @@ button.model-stat:focus-visible { outline: 3px solid var(--lumen-primary); outli
 .model-row-name { min-width: 0; overflow-wrap: anywhere; }
 /* Lock / flask beside the name: smaller than the name and sitting on its line. */
 .model-flag { color: var(--bs-secondary-color); font-size: .8em; vertical-align: baseline; }
+/* The acknowledgment button under the modality line of a row with a pending requirement. */
+.model-row-ack { margin-top: .25rem; }
 .model-panel { border-top: 1px solid var(--bs-border-color); margin-left: 1.5rem; }
 .model-panel-heading { font-size: .875rem; font-weight: 700; margin: 0 0 .5rem; }
 /* Label and value side by side: the label column is as wide as its longest label and each value
@@ -820,8 +822,6 @@ button.model-stat:focus-visible { outline: 3px solid var(--lumen-primary); outli
 .model-panel-list { display: grid; grid-template-columns: max-content minmax(0, 1fr); column-gap: 1rem; font-size: .875rem; }
 .model-panel-list dt, .model-panel-list dd { margin: 0 0 .25rem; line-height: 1.5; }
 .model-panel-list dt { font-weight: 400; color: var(--bs-secondary-color); }
-/* Access & Acknowledgments: a pending row's button wraps under its text when narrow. */
-.model-access-list dd { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .5rem; }
 /* Between sm and md the three panel columns are too narrow for label and value side by side: stack them. */
 @media (min-width: 576px) and (max-width: 767.98px) {
     .model-panel-list { grid-template-columns: minmax(0, 1fr); }

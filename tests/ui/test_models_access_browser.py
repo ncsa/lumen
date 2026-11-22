@@ -23,11 +23,14 @@ STUBS = "window.marked = { parse: s => s }; window.DOMPurify = { sanitize: s => 
 
 @pytest.fixture
 def models_page(app, auth_client, browser, test_user):
-    """Open /models in America/Chicago with one model acknowledged and its early access pending."""
+    """Open /models in America/Chicago with one model acknowledged and its early access pending,
+    and one with both requirements pending."""
     with app.app_context():
         model = ModelConfig(model_name="ack-model", input_cost_per_million=1.0, output_cost_per_million=2.0,
                             needs_ack=True, early_access=True)
         db.session.add(model)
+        db.session.add(ModelConfig(model_name="both-model", input_cost_per_million=1.0, output_cost_per_million=2.0,
+                                   needs_ack=True, early_access=True, ack_message="Read the terms."))
         db.session.flush()
         # 04:05 UTC on Feb 3 is 22:05 on Feb 2 in Chicago (UTC-6).
         db.session.add(EntityModelConsent(entity_id=test_user["id"], model_config_id=model.id,
@@ -90,16 +93,16 @@ def test_accepted_date_is_local_with_a_keyboard_tooltip(models_page):
 def test_accepting_early_access_shows_its_date_and_lowers_needs_ack(models_page):
     page, errors = models_page
     needs_ack = page.locator('.model-stat[data-stat="needs-ack"] .model-stat-count')
-    assert needs_ack.inner_text() == "1"
+    assert needs_ack.inner_text() == "2"
     page.click(f"{ROW} .model-row-toggle")
     early = _value(page, "Early access")
-    assert early.inner_text().startswith("Acceptance required")
+    assert early.locator("button.ack-btn").inner_text() == "early access for ack-model"
     early.locator("button.ack-btn").click()
     page.locator("#ackModal").wait_for(state="visible")
     with page.expect_navigation():
         page.click("#ack-accept-btn")  # the page reloads after the consent is stored
     page.wait_for_selector("#model-list .model-row-toggle")
-    assert needs_ack.inner_text() == "0"
+    assert needs_ack.inner_text() == "1"
     page.click(f"{ROW} .model-row-toggle")
     date = _value(page, "Early access").locator(".local-datetime")
     date.wait_for(state="visible")
@@ -107,4 +110,34 @@ def test_accepting_early_access_shows_its_date_and_lowers_needs_ack(models_page)
     assert early.locator("button").count() == 0
     # The acknowledgment keeps its own, earlier date.
     assert _value(page, "Acknowledgment").inner_text() == "Feb 2, 2026"
+    assert errors == []
+
+
+BOTH = 'li[data-model="both-model"]'
+
+
+def test_accept_and_enable_in_the_row_accepts_both(models_page):
+    page, errors = models_page
+    needs_ack = page.locator('.model-stat[data-stat="needs-ack"] .model-stat-count')
+    assert needs_ack.inner_text() == "2"
+    button = page.locator(f"{BOTH} .model-row-ack button.ack-btn")
+    assert button.inner_text() == "Accept & Enable for both-model"
+    button.click()
+    dialog = page.locator("#ackModal")
+    dialog.wait_for(state="visible")
+    # The dialog lists both notices.
+    assert page.locator("#ack-notice-section").is_visible()
+    assert page.locator("#ack-early-section").is_visible()
+    assert "Read the terms." in dialog.inner_text()
+    with page.expect_navigation():
+        page.click("#ack-accept-btn")
+    page.wait_for_selector("#model-list .model-row-toggle")
+    assert needs_ack.inner_text() == "1"
+    assert page.locator(f"{BOTH} .model-row-ack").count() == 0
+    page.click(f"{BOTH} .model-row-toggle")
+    for label in ("Acknowledgment", "Early access"):
+        value = page.locator(f"{BOTH} .model-access-list dt:text-is('{label}') + dd")
+        value.locator(".local-datetime").wait_for(state="visible")
+        assert value.get_attribute("data-state") == "accepted"
+        assert value.locator("button").count() == 0
     assert errors == []
