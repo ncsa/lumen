@@ -277,6 +277,61 @@ def test_transcription_token_billing_with_cache(
         assert log.cache_write_tokens == 125_000
 
 
+@pytest.mark.parametrize("path", ["/v1/audio/transcriptions", "/v1/audio/translations"])
+def test_audio_openai_token_usage_billing(
+    app, client, test_user, test_model, test_model_endpoint, api_key, path,
+):
+    """OpenAI's gpt-4o-transcribe usage ("type": "tokens", no prompt_tokens) bills per token."""
+    token, ak_id = api_key
+    with app.app_context():
+        _grant_finite_pool(app, test_user["id"], coins=100)
+        _set_audio_rate(app, test_model["id"], 0.6)
+
+    payload = {
+        "text": "hi",
+        "usage": {
+            "type": "tokens",
+            "input_tokens": 1000,
+            "output_tokens": 500,
+            "total_tokens": 1500,
+            "input_token_details": {"audio_tokens": 900, "text_tokens": 100},
+        },
+    }
+    with patch("lumen.blueprints.api.routes.openai.OpenAI", _mock_openai(payload)):
+        resp = client.post(
+            path,
+            headers={"Authorization": f"Bearer {token}"},
+            data=_audio_data(),
+            content_type="multipart/form-data",
+        )
+    assert resp.status_code == HTTPStatus.OK
+
+    # input_cost=1.0/M, output_cost=2.0/M (from test_model fixture)
+    expected_cost = round(1000 * 1.0 / 1_000_000 + 500 * 2.0 / 1_000_000, 6)
+    with app.app_context():
+        from sqlalchemy import select
+
+        from lumen.extensions import db
+        from lumen.models.api_key import APIKey
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.request_log import RequestLog
+
+        log = db.session.execute(select(RequestLog)).scalar_one()
+        assert log.input_tokens == 1000
+        assert log.output_tokens == 500
+        assert log.audio_seconds == 0
+        assert float(log.cost) == expected_cost
+        assert float(log.cost) > 0
+
+        ak = db.session.get(APIKey, ak_id)
+        assert float(ak.cost) == expected_cost
+        assert ak.input_tokens == 1000
+        assert ak.output_tokens == 500
+
+        bal = db.session.execute(select(EntityBalance)).scalar_one()
+        assert float(bal.coins_left) == round(100 - expected_cost, 6)
+
+
 def test_translation_duration_billing(
     app, client, test_user, test_model, test_model_endpoint, api_key,
 ):
