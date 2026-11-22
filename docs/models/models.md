@@ -62,6 +62,7 @@ Each model is one row with three columns. Without opening it, a row shows:
 - **Model / Capabilities**
   - **Name** — links to the [model detail page](model-detail.md). A closed lock next to the name means you still have to acknowledge the model's terms before you can use it, and an open lock means you already have; a flask icon marks an early-access model.
   - **Modalities** — what the model accepts and produces, as input → output (e.g. `Text, Image → Text`). A dash means the instance hasn't published that information.
+  - **Acknowledgment button** — a model with a pending requirement shows one button under its modalities: **Acknowledge** (yellow) when you still have to accept its terms, **early access** (blue) when you still have to accept early access, or **Accept & Enable** (yellow) when both are pending. The button opens the [acknowledgment dialog](#access-acknowledgments) without expanding the row.
 - **Context** and **Max output** — the model's context window (e.g. `128K context`) and, below it, the most tokens it can generate per response (e.g. `8K max output`). Round decimal values are shown in 1000-based units (`128K` for 128,000 tokens); everything else is 1024-based (`128K` for 131,072 tokens). A dash means the value is not set.
 - **Coins / 1M tokens** — the price per million input / output tokens (e.g. `1.00 / 2.00`), with the model's health (see below) under it.
 
@@ -92,12 +93,12 @@ The last column of a model's details lists the two things a model can ask you to
 
 | Row | Shows |
 |-----|-------|
-| **Acknowledgment** | **Not required** when the model has no acknowledgment; **Acknowledgment required** with an **acknowledge** button until you accept its terms; then the date you accepted them (e.g. `Nov 18, 2026`) |
-| **Early access** | **Not required** for a regular model; **Acceptance required** with an **early access** button until you accept that the model may change or be removed at any time; then the date you accepted it |
+| **Acknowledgment** | **Not required** when the model has no acknowledgment; an **Acknowledge** button until you accept its terms; then the date you accepted them (e.g. `Nov 18, 2026`) |
+| **Early access** | **Not required** for a regular model; an **early access** button until you accept that the model may change or be removed at any time; then the date you accepted it |
 
 Dates are shown in your own timezone. Hover over or tab to a date to see the full date and time.
 
-Click **acknowledge** or **early access** to open the acknowledgment dialog, which shows every notice that applies to the model. **Accept & Enable** records your acceptance and reloads the page, so the rows show today's date and the **Needs Ack** card goes down. **Cancel** leaves the model unchanged. Each row keeps its own date, so a model you acknowledged earlier and accepted for early access later shows two different dates. If a model gains a new requirement after you accepted it, that row asks for acceptance again until you accept the new terms; the model counts under **Needs Ack** until every row shows a date or **Not required**. A model with an end date disappears from this page once the date passes.
+Click the button in the row, or **Acknowledge** / **early access** in its details, to open the acknowledgment dialog, which shows every notice that applies to the model. **Accept & Enable** accepts all of them at once: it records your acceptance and reloads the page, so the rows show today's date and the **Needs Ack** card goes down. **Cancel** leaves the model unchanged. Each row keeps its own date, so a model you acknowledged earlier and accepted for early access later shows two different dates. If a model gains a new requirement after you accepted it, that row asks for acceptance again until you accept the new terms; the model counts under **Needs Ack** until every row shows a date or **Not required**. A model with an end date disappears from this page once the date passes.
 
 ## Understanding Pricing
 
