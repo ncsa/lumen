@@ -17,7 +17,7 @@ from lumen.blueprints.profile.routes import (
 )
 from lumen.decorators import admin_required, is_admin, login_required
 from lumen.extensions import db
-from lumen.models.api_key import APIKey
+from lumen.models.api_key import KEY_TYPE_NORMAL, APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
@@ -729,6 +729,9 @@ def create_project_key(sid):
     name = (data.get("name") or "").strip()
     key = (data.get("key") or "").strip()
 
+    # Project keys are always normal keys.
+    if data.get("type") not in (None, "", KEY_TYPE_NORMAL):
+        return jsonify({"error": "Project keys can only be normal keys"}), HTTPStatus.BAD_REQUEST
     expires_at, error = _requested_key_expiry(data)
     if error:
         return error

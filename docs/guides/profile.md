@@ -86,12 +86,25 @@ An API key is a secret token in the format `sk_...`. It identifies you to the AP
 2. A dialog opens and displays your new key in a read-only field.
 3. **Copy the key now.**
 4. Enter a descriptive name (e.g., `my-research-script` or `jupyter-notebook`).
-5. Choose how long the key lasts in **Expires after** (see below).
-6. Click **Save Key**. The key now appears in the table.
+5. Admins in admin mode also choose a **Key type** (see [Key Types](#key-types)); everyone else creates a normal key.
+6. Choose how long the key lasts in **Expires after** (see below).
+7. Click **Save Key**. The key now appears in the table.
+
+#### Key Types
+
+In admin mode, the dialog has a **Key type** select. Changing it generates a new key with that type's prefix and switches the **Expires after** choices to that type's limits.
+
+| Type | Prefix | What it can do | Expires after |
+|------|--------|----------------|---------------|
+| **Normal** (default) | `sk_` | Chat and the rest of the API, billed to you | Up to the maximum key lifetime (see [Key Expiry](#key-expiry)) |
+| **Admin** | `sk_admin_` | The admin API and the model list with token metrics; never chat | At most 1 week, or the maximum key lifetime if that is shorter; never **Never**. Defaults to the longest allowed |
+| **Monitoring** | `sk_monitor_` | Only the model list with token metrics, for uptime monitors such as `scripts/monitor` | Anything, including **Never**, whatever the maximum key lifetime; defaults to **Never** |
+
+Admin and monitoring keys are never billed, and they stop working when their owner is removed from the `admins` list (they work again if the owner is added back). See the [access matrix](api-reference.md#key-types-and-access) for every endpoint. Keys of a project or requested through OAuth are always normal keys.
 
 #### Key Expiry
 
-**Expires after** offers 1 day, 7 days, 30 days, 90 days, 1 year and Never, limited by the maximum key lifetime your administrator set (`api.keys.ttl`, see [Application settings](../admin/config-application.md)):
+For a normal key, **Expires after** offers 1 day, 7 days, 30 days, 90 days, 1 year and Never, limited by the maximum key lifetime your administrator set (`api.keys.ttl`, see [Application settings](../admin/config-application.md)):
 
 - When there is a maximum, only choices up to it are shown. The maximum itself is always offered and is selected by default, and **Never** is not offered.
 - When there is no maximum (the default), every choice is offered and **Never** is selected by default.
@@ -100,14 +113,14 @@ The expiry is fixed when the key is created or its expiry is edited (see [Changi
 
 ### Viewing Your Keys
 
-The API Keys table shows all your active keys and lets you sort by name, requests, tokens, cost, last used, or expiry. Enable **Show revoked keys** to see revoked and expired keys (deactivated, usage kept). They are displayed with strikethrough and a **revoked** or **expired** badge. Hover over or focus an **expired** badge to see when the key expired. Hover over or focus a **revoked** badge to see when the key was revoked, in your local time, and who revoked it (e.g. *Revoked 10/10/2026, 2:15 PM by Jane Doe*). The name is left out when no revoker is recorded, such as for keys revoked before this was recorded or revoked automatically by an OAuth code replay. Times for keys revoked before this was recorded are approximate.
+The API Keys table shows all your active keys and lets you sort by name, requests, tokens, cost, last used, or expiry. Admin and monitoring keys have an **Admin** or **Monitoring** badge next to their name, also when an admin views your profile. Enable **Show revoked keys** to see revoked and expired keys (deactivated, usage kept). They are displayed with strikethrough and a **revoked** or **expired** badge. Hover over or focus an **expired** badge to see when the key expired. Hover over or focus a **revoked** badge to see when the key was revoked, in your local time, and who revoked it (e.g. *Revoked 10/10/2026, 2:15 PM by Jane Doe*). The name is left out when no revoker is recorded, such as for keys revoked before this was recorded or revoked automatically by an OAuth code replay. Times for keys revoked before this was recorded are approximate.
 
 Keys requested through a CLI or web app via [OAuth](./oauth-clients.md) show that provenance in the name tooltip (e.g. *Requested via lumen-cli by alice*); keys created with **+ New API Key** have no such note.
 
 | Column | Description |
 |--------|------------|
 | **Name** | The label you chose |
-| **Hint** | First 7 + last 4 characters of the key, for identification |
+| **Hint** | The key's prefix and 4 more characters (`sk_abcd`, `sk_admin_abcd`), plus its last 4 characters, for identification |
 | **Requests** | Total API calls made with this key |
 | **Tokens** | Total input + output tokens |
 | **Coins** | Total coins spent |
@@ -119,7 +132,7 @@ Keys requested through a CLI or web app via [OAuth](./oauth-clients.md) show tha
 
 Click **Edit expiry** on any active key, including keys requested through OAuth, to give it a new lifetime.
 
-1. Choose a new lifetime in **Expires after**. The choices follow the same maximum as [Key Expiry](#key-expiry), checked when you save.
+1. Choose a new lifetime in **Expires after**. The choices follow the same limits as when the key was created ([Key Expiry](#key-expiry), and [Key Types](#key-types) for admin and monitoring keys), checked when you save.
 2. Click **Save**. The **Expires** column shows the new expiry.
 
 The new lifetime counts from now, not from when the key was created, so editing also renews the key. **Never** is only offered when there is no maximum. Revoked and expired keys cannot be edited.

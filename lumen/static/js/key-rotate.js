@@ -1,25 +1,30 @@
-// Rotates an API key in place: confirm, generate a new secret, POST it to
-// rotateUrl, then show it once in the shared _rotated_key_modal.html dialog.
+// Rotates an API key in place: confirm, generate a new secret of the key's
+// type (keyType, default "normal"), POST it to rotateUrl, then show it once in
+// the shared _rotated_key_modal.html dialog.
 // The page reloads when the dialog closes so the table shows the new key hint.
 // rotateInFlight blocks a second rotation (e.g. a double-click) while one is pending.
 let rotateInFlight = false;
-async function rotateApiKey(rotateUrl, keyName) {
+async function rotateApiKey(rotateUrl, keyName, keyType = "normal") {
   if (rotateInFlight) return;
   rotateInFlight = true;
   try {
-    await rotateApiKeyOnce(rotateUrl, keyName);
+    await rotateApiKeyOnce(rotateUrl, keyName, keyType);
   } finally {
     rotateInFlight = false;
   }
 }
 
-async function rotateApiKeyOnce(rotateUrl, keyName) {
+async function rotateApiKeyOnce(rotateUrl, keyName, keyType) {
   if (!await appConfirm(
     `Rotate API key "${keyName}"? The current key stops working immediately; usage stats are kept.`,
     { title: "Rotate API Key", okLabel: "Rotate", okClass: "btn-danger" })) return;
 
-  const gen = await fetch("/profile/keys/generate");
-  if (!gen.ok) { appAlert("Failed to generate a new key."); return; }
+  const gen = await fetch("/profile/keys/generate?type=" + encodeURIComponent(keyType));
+  if (!gen.ok) {
+    const err = await gen.json().catch(() => ({}));
+    appAlert("Failed to generate a new key." + (err.error ? " " + err.error + "." : ""));
+    return;
+  }
   const { key } = await gen.json();
 
   const resp = await fetch(rotateUrl, {

@@ -1469,7 +1469,7 @@ def test_rotate_project_key_concurrent_duplicate_returns_409(app, managed_auth_c
     make_created_key(managed_project["id"], test_user["id"], "sk_race00000000000000000taken123456")
     # Skip the pre-check so the unique constraint on key_hash is what catches the duplicate.
     monkeypatch.setattr(profile_routes, "_new_key_fields",
-                        lambda key: ({"key_hash": hash_api_key(key), "key_hint": "sk_race...3456"}, None))
+                        lambda key, key_type="normal": ({"key_hash": hash_api_key(key), "key_hint": "sk_race...3456"}, None))
 
     resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/rotate",
                                     json={"key": "sk_race00000000000000000taken123456"})
@@ -1593,9 +1593,9 @@ def test_edit_project_key_ttl_concurrent_revoke_returns_409(app, managed_auth_cl
     kid = make_created_key(managed_project["id"], test_user["id"], "sk_ttlk00000000000000000rc01234567")
     real_resolve = profile_routes.resolve_key_ttl
 
-    def resolve_then_revoke(requested):
+    def resolve_then_revoke(requested, key_type="normal"):
         db.session.execute(APIKey.__table__.update().where(APIKey.id == kid).values(revoked_at=utcnow()))
-        return real_resolve(requested)
+        return real_resolve(requested, key_type)
 
     monkeypatch.setattr(profile_routes, "resolve_key_ttl", resolve_then_revoke)
     resp = managed_auth_client.post(f"/projects/{managed_project['uuid']}/keys/{key_uuid(app, kid)}/ttl", json={"ttl": 86400})

@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy import select
 
 from lumen.extensions import db
-from lumen.models.api_key import APIKey
+from lumen.models.api_key import KEY_TYPE_ADMIN, KEY_TYPE_MONITORING, APIKey
 from lumen.timeutils import utcnow
 from tests.conftest import make_project
 from tests.ui.test_accessibility import _run_all_checks
@@ -28,9 +28,8 @@ BOOTSTRAP_JS = Path(__file__).parent.parent / "fixtures" / "vendor" / "bootstrap
 DAY = 86400
 
 
-@pytest.fixture
-def open_page(auth_client, browser):
-    """Return open(path) -> (page, posted payloads), answering requests with auth_client."""
+def _page_opener(client, browser):
+    """Return (open(path) -> (page, posted payloads), pages), answering requests with client."""
     pages = []
     posted = []
 
@@ -52,9 +51,9 @@ def open_page(auth_client, browser):
         path = url.path + (f"?{url.query}" if url.query else "")
         if request.method == "POST":
             posted.append((url.path, request.post_data_json))
-            resp = auth_client.post(path, json=request.post_data_json)
+            resp = client.post(path, json=request.post_data_json)
         else:
-            resp = auth_client.get(path)
+            resp = client.get(path)
         # Close the response: a static file stays open until it is.
         with resp:
             route.fulfill(status=resp.status_code, content_type=resp.content_type, body=resp.get_data())
@@ -68,6 +67,22 @@ def open_page(auth_client, browser):
         page.wait_for_selector("#key-tbody tr")
         return page, posted
 
+    return _open, pages
+
+
+@pytest.fixture
+def open_page(auth_client, browser):
+    """Return open(path) -> (page, posted payloads), answering requests with auth_client."""
+    _open, pages = _page_opener(auth_client, browser)
+    yield _open
+    for page in pages:
+        page.close()
+
+
+@pytest.fixture
+def admin_open_page(admin_client, browser):
+    """Like open_page, as an admin in admin mode."""
+    _open, pages = _page_opener(admin_client, browser)
     yield _open
     for page in pages:
         page.close()
@@ -174,7 +189,11 @@ def test_new_key_modal_ttl_dropdown(app, restore_config, open_page, key_page, ca
         page.click("#save-key-btn")
 
     body = next(b for p, b in posted if p == post_path)
-    assert body == {"name": "chosen-ttl", "key": body["key"], "ttl": chosen}
+    # The profile always sends the key type (normal for everyone but admins in admin mode).
+    expected = {"name": "chosen-ttl", "key": body["key"], "ttl": chosen}
+    if post_path == "/profile/keys":
+        expected["type"] = "normal"
+    assert body == expected
     assert chosen == ({"1 day": DAY, "12 hours": 12 * 3600}[options[0]])
     with app.app_context():
         key = db.session.execute(select(APIKey).filter_by(name="chosen-ttl")).scalar_one()
@@ -337,3 +356,82 @@ def test_edit_expiry_error_after_close_alerts(app, restore_config, open_page, ke
     assert expected in page.locator(".modal.show .modal-body").inner_text()
     assert page.inner_text("#key-ttl-error") == ""
     assert _row_cells(page, "live-key")[expires_idx] == before
+
+
+# --- key types (admin mode) -------------------------------------------------
+
+def _ttl_labels(page, select):
+    return [t.strip() for t in page.locator(f"{select} option").all_inner_texts()]
+
+
+def test_new_key_modal_key_type_swaps_prefix_and_expiry(app, restore_config, admin_open_page, admin_user):
+    app.config["KEY_TTL"] = 30 * DAY
+    _seed_keys(app, admin_user["id"], admin_user["id"])
+    page, posted = admin_open_page("/profile")
+
+    page.click("button[data-bs-target='#apiKeyModal']")
+    page.wait_for_selector("#apiKeyModal.show")
+    page.wait_for_function("document.getElementById('generated-key').value !== ''")
+    assert page.input_value("#key-type-select") == "normal"
+    assert _ttl_labels(page, "#key-ttl-select") == ["1 day", "7 days", "30 days"]
+    _run_all_checks(page.content().encode(), "/profile (New API Key modal, admin mode)")
+
+    page.select_option("#key-type-select", "monitoring")
+    page.wait_for_function("document.getElementById('generated-key').value.startsWith('sk_monitor_')")
+    assert _ttl_labels(page, "#key-ttl-select") == ["1 day", "7 days", "30 days", "90 days", "1 year", "Never"]
+    assert page.locator("#key-ttl-select option:checked").inner_text().strip() == "Never"
+
+    page.select_option("#key-type-select", "admin")
+    page.wait_for_function("document.getElementById('generated-key').value.startsWith('sk_admin_')")
+    assert _ttl_labels(page, "#key-ttl-select") == ["1 day", "7 days"]
+    assert page.locator("#key-ttl-select option:checked").inner_text().strip() == "7 days"
+    page.fill("#key-name-input", "ops-admin")
+    with page.expect_navigation():
+        page.click("#save-key-btn")
+
+    body = next(b for p, b in posted if p == "/profile/keys")
+    assert body["type"] == "admin" and body["ttl"] == 7 * DAY and body["key"].startswith("sk_admin_")
+    with app.app_context():
+        key = db.session.execute(select(APIKey).filter_by(name="ops-admin")).scalar_one()
+        assert key.key_type == KEY_TYPE_ADMIN
+
+    # Reopening the dialog starts over with a normal key.
+    page.wait_for_selector("#key-tbody tr")
+    page.click("button[data-bs-target='#apiKeyModal']")
+    page.wait_for_selector("#apiKeyModal.show")
+    page.wait_for_function("document.getElementById('generated-key').value !== ''")
+    assert page.input_value("#key-type-select") == "normal"
+    assert not page.input_value("#generated-key").startswith(("sk_admin_", "sk_monitor_"))
+
+
+def test_key_table_type_badge_and_edit_expiry_options(app, restore_config, admin_open_page, admin_user):
+    app.config["KEY_TTL"] = 30 * DAY
+    now = utcnow()
+    with app.app_context():
+        db.session.add_all([
+            APIKey(entity_id=admin_user["id"], created_by_entity_id=admin_user["id"], name="adm-key",
+                   key_hash="5" * 64, key_hint="sk_admin_abcd...0005", key_type=KEY_TYPE_ADMIN,
+                   expires_at=now + timedelta(days=2)),
+            APIKey(entity_id=admin_user["id"], created_by_entity_id=admin_user["id"], name="mon-key",
+                   key_hash="6" * 64, key_hint="sk_monitor_abcd...0006", key_type=KEY_TYPE_MONITORING),
+            APIKey(entity_id=admin_user["id"], created_by_entity_id=admin_user["id"], name="plain-key",
+                   key_hash="7" * 64, key_hint="sk_abcd...0007"),
+        ])
+        db.session.commit()
+        adm_uuid = str(db.session.execute(select(APIKey.uuid).filter_by(name="adm-key")).scalar_one())
+    page, _ = admin_open_page("/profile")
+
+    assert _row_cells(page, "adm-key")[0] == "adm-key Admin"
+    assert _row_cells(page, "mon-key")[0] == "mon-key Monitoring"
+    assert _row_cells(page, "plain-key")[0] == "plain-key"
+    _run_all_checks(page.content().encode(), "/profile (key type badges)")
+
+    # Edit expiry offers the key's own type's options.
+    page.locator(f".ttl-key-btn[data-id='{adm_uuid}']").click()
+    page.wait_for_selector("#keyTtlModal.show")
+    assert _ttl_labels(page, "#edit-key-ttl-select") == ["1 day", "7 days"]
+    page.keyboard.press("Escape")
+    _wait_for_ttl_modal_closed(page)
+    page.locator(".ttl-key-btn[data-name='plain-key']").click()
+    page.wait_for_selector("#keyTtlModal.show")
+    assert _ttl_labels(page, "#edit-key-ttl-select") == ["1 day", "7 days", "30 days"]

@@ -1,4 +1,10 @@
-"""API key expiry: the ``api.keys.ttl`` cap, and revoking keys once they expire.
+"""API key expiry: the TTL limits per key type, and revoking keys once they expire.
+
+The longest TTL a key may get depends on its type:
+
+- normal: the ``api.keys.ttl`` cap; "never" only when there is no cap;
+- admin: one week, or the cap if that is shorter; never "never";
+- monitoring: no limit (the cap does not apply); defaults to "never".
 
 An expired key is simply revoked: ``revoked_at`` is set to its ``expires_at``
 and ``revoked_by_entity_id`` stays NULL (a system revocation), so every
@@ -18,7 +24,7 @@ from flask import current_app
 from sqlalchemy import update
 
 from lumen.extensions import db
-from lumen.models.api_key import APIKey
+from lumen.models.api_key import KEY_TYPE_ADMIN, KEY_TYPE_MONITORING, KEY_TYPE_NORMAL, APIKey
 from lumen.timeutils import utcnow
 
 logger = logging.getLogger(__name__)
@@ -26,6 +32,8 @@ logger = logging.getLogger(__name__)
 EXPIRE_INTERVAL = 60
 # Upper bound on any TTL, so a typo like 999999999w cannot overflow the expiry datetime.
 MAX_KEY_TTL = 100 * 365 * 86400
+# Longest TTL of an admin key, whatever api.keys.ttl says (a shorter cap still wins).
+ADMIN_KEY_MAX_TTL = 7 * 86400
 
 _TTL_RE = re.compile(r"(0|([0-9]+)([hdw]))")
 _TTL_UNIT_SECONDS = {"h": 3600, "d": 86400, "w": 7 * 86400}
@@ -59,22 +67,36 @@ def parse_key_ttl(value) -> int:
     return seconds
 
 
-def resolve_key_ttl(requested: Optional[int] = None) -> int:
-    """The TTL in seconds (0 = never) for a new or edited key, under the KEY_TTL cap.
-
-    Nothing requested gives the cap (0 = never). With a cap above 0 the request
-    must be between 1 second and the cap; with no cap any value from 0 (never)
-    up to MAX_KEY_TTL is allowed. Raises ValueError for a disallowed request.
-    """
+def _key_ttl_limits(key_type: str) -> tuple[int, bool, int]:
+    """``(longest, never_allowed, default)`` TTL in seconds for a key type (0 = never)."""
     cap = current_app.config.get("KEY_TTL", 0)
+    if key_type == KEY_TYPE_MONITORING:
+        return MAX_KEY_TTL, True, 0
+    if key_type == KEY_TYPE_ADMIN:
+        longest = min(cap, ADMIN_KEY_MAX_TTL) if cap else ADMIN_KEY_MAX_TTL
+        return longest, False, longest
+    if cap:
+        return cap, False, cap
+    return MAX_KEY_TTL, True, 0
+
+
+def resolve_key_ttl(requested: Optional[int] = None, key_type: str = KEY_TYPE_NORMAL) -> int:
+    """The TTL in seconds (0 = never) for a new or edited key of ``key_type``.
+
+    Nothing requested gives the type's default. Otherwise the request must be
+    at most the type's longest TTL, and 0 (never) only where the type allows
+    it (see the module docstring). Raises ValueError for a disallowed request.
+    """
+    longest, never_allowed, default = _key_ttl_limits(key_type)
     if requested is None:
-        return cap
+        return default
     if isinstance(requested, bool) or not isinstance(requested, int) or requested < 0:
         raise ValueError("ttl must be a whole number of seconds, 0 or more")
-    if cap and requested == 0:
-        raise ValueError("keys must expire: ttl cannot be 0 (never)")
-    if requested > (cap or MAX_KEY_TTL):
-        raise ValueError(f"ttl cannot exceed {cap or MAX_KEY_TTL} seconds")
+    if requested == 0 and not never_allowed:
+        kind = "admin keys" if key_type == KEY_TYPE_ADMIN else "keys"
+        raise ValueError(f"{kind} must expire: ttl cannot be 0 (never)")
+    if requested > longest:
+        raise ValueError(f"ttl cannot exceed {longest} seconds")
     return requested
 
 
@@ -87,25 +109,26 @@ def _ttl_label(seconds: int) -> str:
     return f"{seconds} seconds"
 
 
-def key_ttl_choices(selected: Optional[int] = None) -> list[tuple[int, str, bool]]:
+def key_ttl_choices(selected: Optional[int] = None, key_type: str = KEY_TYPE_NORMAL) -> list[tuple[int, str, bool]]:
     """``(seconds, label, selected)`` options for the "Expires after" dropdown.
 
-    Presets at or below the KEY_TTL cap, plus the cap itself, which is always
-    offered and pre-selected. "Never" (0) is offered, and pre-selected, only
-    when there is no cap. A ``selected`` TTL allowed under the cap is
-    pre-selected instead, and offered even when it is not a preset.
+    Where the type allows "never" (0): every preset plus "Never". Otherwise the
+    presets up to the type's longest TTL, plus that longest TTL itself, which
+    is always offered. The type's default is pre-selected; a ``selected`` TTL
+    the type allows is pre-selected instead, and offered even when it is not
+    a preset.
     """
-    cap = current_app.config.get("KEY_TTL", 0)
-    if not cap:
+    longest, never_allowed, default = _key_ttl_limits(key_type)
+    if never_allowed:
         choices = [(s, label, False) for s, label in KEY_TTL_PRESETS] + [(0, "Never", False)]
     else:
-        choices = [(s, label, False) for s, label in KEY_TTL_PRESETS if s <= cap]
-        if not any(s == cap for s, _, _ in choices):
-            choices.append((cap, _ttl_label(cap), False))
+        choices = [(s, label, False) for s, label in KEY_TTL_PRESETS if s <= longest]
+        if not any(s == longest for s, _, _ in choices):
+            choices.append((longest, _ttl_label(longest), False))
     try:
-        selected = cap if selected is None else resolve_key_ttl(selected)
+        selected = default if selected is None else resolve_key_ttl(selected, key_type)
     except ValueError:
-        selected = cap
+        selected = default
     if not any(s == selected for s, _, _ in choices):
         choices.append((selected, _ttl_label(selected), False))
         # Ascending, with "Never" (0) last.

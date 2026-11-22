@@ -2,11 +2,20 @@
 // chosen TTL (seconds) to ttlUrl and pass the response ({id, name, expires_at})
 // to onSaved. When the dialog closes, focus goes to returnFocus(), which looks
 // up the row's "Edit expiry" button again since onSaved may re-render the table.
-let keyTtlEdit = null;
-function editKeyTtl(ttlUrl, keyName, onSaved, returnFocus) {
-  keyTtlEdit = { ttlUrl, onSaved, returnFocus };
-  const select = document.getElementById("edit-key-ttl-select");
+//
+// Pages with more than one key type render each type's options in a
+// <template class="key-ttl-options" data-key-type="..."> (_key_ttl_option_sets.html);
+// setKeyTtlOptions swaps a select to keyType's set. Without them the select keeps its options.
+function setKeyTtlOptions(select, keyType) {
+  const tpl = document.querySelector(`template.key-ttl-options[data-key-type="${keyType}"]`);
+  if (tpl) select.replaceChildren(tpl.content.cloneNode(true));
   select.value = [...select.options].find(o => o.defaultSelected).value;
+}
+
+let keyTtlEdit = null;
+function editKeyTtl(ttlUrl, keyName, onSaved, returnFocus, keyType = "normal") {
+  keyTtlEdit = { ttlUrl, onSaved, returnFocus };
+  setKeyTtlOptions(document.getElementById("edit-key-ttl-select"), keyType);
   document.getElementById("key-ttl-name").textContent = keyName;
   document.getElementById("key-ttl-error").textContent = "";
   bootstrap.Modal.getOrCreateInstance(document.getElementById("keyTtlModal")).show();
