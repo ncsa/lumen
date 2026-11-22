@@ -4,34 +4,31 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
-**Upgrade:** speech-to-text models must have `audio` in `input_modalities` (the **audio** input box in the config editor, or `config.yaml`), or `/v1/audio/transcriptions` and `/v1/audio/translations` return 400. (#721)
+**Upgrade:** speech-to-text models must have `audio` in `input_modalities` (the **audio** input box in the config editor, or `config.yaml`), or `/v1/audio/transcriptions` and `/v1/audio/translations` return 400. `/v1/chat/completions`, `/v1/completions`, `/v1/messages` and `/v1/audio/*` also return 400 for models marked as embedding (`output_modalities: ["embedding"]`) instead of forwarding the call to the backend. An unset `cache_write_cost_per_million` now bills cache writes at 0 instead of the input price; set it explicitly to keep the 2.4.0 charge. (#678, #721)
 
 ### Added
 
-- `POST /v1/embeddings` for embedding models, billed per input token at the model's input price; embedding models are hidden from chat and the OpenCode config. (#681)
-- `lumen.sh` writes `base_url` and `api_key` to `~/.config/lumen/config.ini`, adds `--shell`/`--no-shell`, and remembers `--shell`, `--opencode`, `--copilot` and `--embed-key` choices there as the next run's defaults; `scripts/claude.sh` and `scripts/rag.py` read the file, including `chat_model` and `embed_model`.
-- Help page for `scripts/rag.py`, a small RAG helper that embeds your files through `/v1/embeddings` and answers questions about them.
+- `POST /v1/embeddings` for embedding models, billed per input token at the model's input price; embedding models are hidden from chat and the OpenCode config. Embedding models synced by 2.4.0 have `output_modalities: []` and stay in chat until you run **Update** again. (#681)
+- `lumen.sh` saves `base_url`, `api_key` and the `--shell`/`--opencode`/`--copilot`/`--embed-key` choices to `~/.config/lumen/config.ini` as next-run defaults, and adds `--shell`/`--no-shell`; `scripts/claude.sh` and `scripts/rag.py` read the same file. (#699)
+- Help page for `scripts/rag.py`, a small RAG helper that embeds your files through `/v1/embeddings` and answers questions about them. (#699, #722)
 
 ### Changed
 
 - Redesign the Models page as a dashboard with summary cards that filter the list, sortable columns and expandable model rows. (#694)
 - Models page shows context window and max output in 1024-based K/M units, or 1000-based when the value is round in decimal. (#714)
-- Models page shows an **Acknowledge**, **early access** or (when both are pending) **Accept & Enable** button on rows with a pending requirement, and per-requirement buttons in the expanded row in place of the acceptance date; remove the unused `toggleConsentPopover` helper. (#720)
+- Models page shows an **Acknowledge**, **early access** or (when both are pending) **Accept & Enable** button on rows with a pending requirement, and per-requirement buttons in the expanded row in place of the acceptance date. (#720)
+- An unset `cache_write_cost_per_million` now bills cache writes at 0 instead of the input price; set it explicitly to keep the 2.4.0 charge. An unset `cached_input_cost_per_million` still means the input price. (#678)
+- POST /v1/chat/completions, /v1/completions, /v1/messages and /v1/audio/* now refuse embedding models with a 400 instead of forwarding the call to the backend, and /v1/audio/* also refuses models whose input modalities do not include audio; the docs now name the endpoints that check these markers. (#721)
+- Buttons, nav, outlines and usage charts now use the active theme's primary colour instead of Illinois navy in the UIC, UIS and default themes; browsers without `color-mix()` keep readable primary-button states and a visible keyboard focus ring. (#709)
 
 ### Fixed
 
-- Fix the `anthropic-version` route test, which had no model set up and failed with a 404 after 2.4.0 started accepting any version. (#676)
 - Fix models.dev prices not being applied to new models in the config editor, and retry an unreachable models.dev sooner. (#680)
-- An unset `cache_write_cost_per_million` now means 0 (cache writes free) instead of the input price; an unset `cached_input_cost_per_million` still means the input price. (#678)
 - Stop logging a Pydantic serializer warning when a backend returns values (e.g. chat `metadata` lists) that don't match the OpenAI SDK types; the response is passed through unchanged. (#693)
-- Embeddings billing now passes the model's output price and is tested to bill input tokens only (#702).
-- `scripts/rag.py` creates its config directory and new stores private to the user (700/600), silences only pypdf's warnings instead of every warning in the process, and says which setting to change when the server does not know the embed or chat model. (#722)
-- POST /v1/chat/completions, /v1/completions, /v1/messages and /v1/audio/* now refuse embedding models with a 400 instead of forwarding the call to the backend, and /v1/audio/* also refuses models whose input modalities do not include audio; the docs now name the endpoints that check these markers. (#721)
 
 ### Removed
 
 - Remove the `sync_models.py` script; use **Update All** (or **Update** per model) in the admin config editor to refresh model metadata from the backends and models.dev. (#706)
-- Buttons, nav, outlines and usage charts now use the active theme's primary colour instead of Illinois navy in the UIC, UIS and default themes; browsers without `color-mix()` keep readable primary-button states and a visible keyboard focus ring. (#709)
 
 ## [2.4.0] - 2026-11-19
 
@@ -60,7 +57,6 @@ All notable changes to Lumen will be documented in this file.
 - A model's notice always shows in the main column; the acknowledgement text shows beside it only for models that need one. (#492)
 - `flask erase-entity` prints the `backfill-aggregate` commands that finish its refresh before it starts, so an interrupted run can be completed. (#612)
 - Helm: a partial `securityContext` is merged over the chart default, and app pods default to `seccompProfile: RuntimeDefault`. (#614)
-- `/v1/messages` accepts any `anthropic-version` header instead of refusing unknown versions, so current Anthropic SDKs work.
 
 ### Fixed
 
