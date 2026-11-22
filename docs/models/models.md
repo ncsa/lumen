@@ -51,7 +51,7 @@ The buttons above the list sort it. Click a button (or tab to it and press Enter
 | **Max output** | Most tokens per response | Largest first |
 | **Price** | Input price, then output price | Cheapest first |
 
-**Price** sorts by the input price; models with the same input price are ordered by their output price. A model with no context window or max output for the sorted column (shown as a dash) always comes last, in both directions, and models with equal values are listed by name.
+**Price** sorts by the input price; models with the same input price are ordered by their output price. A model with no context window or max output for the sorted column (shown as a dash) always comes last, in both directions, and models with equal values are listed by name. An embedding model's output price shows a dash but is 0, so it sorts as 0: first among models with the same input price when sorting cheapest first.
 
 Sorting keeps the active card filter and an open row, which moves with its model. The page address remembers the order (for example `/models?sort=price&dir=asc`) next to the active card, so reloading or sharing the link shows the same order. The `sort` values are `name`, `context`, `max_output` and `price`, and `dir` is `asc` or `desc`; a `sort` without `dir` uses the direction listed above. Without `sort`, or with any other value, the list is sorted by name A to Z.
 
@@ -64,7 +64,7 @@ Each model is one row with three columns. Without opening it, a row shows:
   - **Modalities** — what the model accepts and produces, as input → output (e.g. `Text, Image → Text`). A dash means the instance hasn't published that information.
   - **Acknowledgment button** — a model with a pending requirement shows one button under its modalities: **Acknowledge** (yellow) when you still have to accept its terms, **early access** (blue) when you still have to accept early access, or **Accept & Enable** (yellow) when both are pending. The button opens the [acknowledgment dialog](#access-acknowledgments) without expanding the row.
 - **Context** and **Max output** — the model's context window (e.g. `128K context`) and, below it, the most tokens it can generate per response (e.g. `8K max output`). Round decimal values are shown in 1000-based units (`128K` for 128,000 tokens); everything else is 1024-based (`128K` for 131,072 tokens). A dash means the value is not set.
-- **Coins / 1M tokens** — the price per million input / output tokens (e.g. `1.00 / 2.00`), with the model's health (see below) under it.
+- **Coins / 1M tokens** — the price per million input / output tokens (e.g. `1.00 / 2.00`), with the model's health (see below) under it. An embedding model produces no output tokens, so its output price shows a dash (e.g. `0.10 / —`).
 
 On a phone the token limits move under the model name, next to the price.
 
@@ -84,7 +84,7 @@ The **Healthy** card counts **Degraded** models too, because they still answer r
 Click anywhere on a row (or tab to the arrow at its start and press Enter or Space) to open the model's details; clicking the model name still opens its detail page. Only one row is open at a time: opening another row closes the previous one. The details show:
 
 - **Health** — **Last checked**: how long ago the most recent health check ran (e.g. `5 min. ago`); hover over or tab to it for the full date and time. It updates every minute while the page is open. **Never** means no check has run yet. **Health checks**: how many of the model's backends passed their last check out of the total configured (e.g. `2/4 passed`).
-- **Detailed pricing** — coins per million tokens for **Input**, **Output**, **Cached read** and **Cached write**. A cache-read rate the model does not configure is billed at the input price and a cache-write rate at 0, so these always show what you are actually charged.
+- **Detailed pricing** — coins per million tokens for **Input**, **Output**, **Cached read** and **Cached write**. A cache-read rate the model does not configure is billed at the input price and a cache-write rate at 0, so these always show what you are actually charged. An embedding model shows a dash (`—`) for **Output**, because it produces no output tokens.
 - **Access & Acknowledgments** — see below.
 
 ## Access & Acknowledgments

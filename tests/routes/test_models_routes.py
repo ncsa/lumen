@@ -492,3 +492,70 @@ def test_model_detail_sanitises_notices(app, auth_client):
         assert block.find("strong").get_text() == "Bold"
         assert block.find("a", href="https://example.edu/docs") is not None
         assert [li.get_text() for li in block.find_all("li")] == ["one", "two"]
+
+
+def _visible_text(tag):
+    """Text a sighted user sees: the tag's text without its visually-hidden parts."""
+    tag = BeautifulSoup(str(tag), "html.parser")
+    for hidden in tag.find_all(class_="visually-hidden"):
+        hidden.decompose()
+    return " ".join(tag.get_text().split())
+
+
+def _pricing_output_cell(html_bytes):
+    """The Output price cell of the detail page's Pricing table."""
+    soup = BeautifulSoup(html_bytes, "html.parser")
+    table = soup.find("caption", string="Model pricing per million tokens").parent
+    return table.find("th", string="Output").parent.find("td")
+
+
+def _add_embedding_and_text_models(app):
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.model_config import ModelConfig
+        db.session.add_all([
+            ModelConfig(model_name="embed-model", input_cost_per_million=1.0, output_cost_per_million=0,
+                        output_modalities=["embedding"]),
+            ModelConfig(model_name="a-text-model", input_cost_per_million=1.0, output_cost_per_million=2.0,
+                        output_modalities=["text"]),
+        ])
+        db.session.commit()
+
+
+def test_models_embedding_model_shows_dash_for_output_price(app, auth_client):
+    _add_embedding_and_text_models(app)
+    resp = auth_client.get("/models")
+    assert resp.status_code == HTTPStatus.OK
+
+    embed = _row_for(resp.data, "embed-model")
+    price = embed.find(class_="model-price")
+    assert _visible_text(price) == "1.00 / —"
+    assert "no output price" in price.get_text()
+    embed_dds = embed.find("dl", class_="model-pricing").find_all("dd")
+    assert _visible_text(embed_dds[1]) == "—"
+    assert embed_dds[1].find(class_="visually-hidden").get_text() == "no output price"
+    # The sort attribute keeps the stored price, which is always 0 for an embedding model.
+    assert float(embed["data-sort-output"]) == 0
+
+    text = _row_for(resp.data, "a-text-model")
+    assert _visible_text(text.find(class_="model-price")) == "1.00 / 2.00"
+    assert text.find("dl", class_="model-pricing").find_all("dd")[1].get_text(strip=True) == "2.00"
+
+
+def test_model_detail_embedding_model_shows_dash_for_output_price(app, auth_client):
+    _add_embedding_and_text_models(app)
+
+    td = _pricing_output_cell(auth_client.get("/models/embed-model").data)
+    assert _visible_text(td) == "—"
+    assert "/ 1M" not in td.get_text()
+    assert td.find(class_="visually-hidden").get_text() == "no output price"
+
+    assert _pricing_output_cell(auth_client.get("/models/a-text-model").data).get_text(strip=True) == "2.00 / 1M"
+
+
+def test_models_price_sort_puts_embedding_model_first_at_equal_input_price(app, auth_client):
+    _add_embedding_and_text_models(app)
+    soup = BeautifulSoup(auth_client.get("/models?sort=price&dir=asc").data, "html.parser")
+    order = [r["data-model"] for r in soup.find_all("li", class_="model-row")]
+    # By name a-text-model comes first, so only the output price (0 < 2) puts the embedding model ahead.
+    assert order.index("embed-model") < order.index("a-text-model")

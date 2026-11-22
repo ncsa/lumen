@@ -78,4 +78,4 @@ Technical details that help you decide if this model fits your task:
 
 #### Pricing
 
-Shows the coin cost per million input tokens and per million output tokens, plus "Cached input" when the model sets it and "Cache write", which is always shown. Cached input is charged at its own rate when the model sets one, otherwise at the input rate; cache writes are charged at their own rate when the model sets one, otherwise they are free (0.00). See the [Introduction](../introduction.md#tokens-and-coins) for how coin costs are calculated.
+Shows the coin cost per million input tokens and per million output tokens, plus "Cached input" when the model sets it and "Cache write", which is always shown. Cached input is charged at its own rate when the model sets one, otherwise at the input rate; cache writes are charged at their own rate when the model sets one, otherwise they are free (0.00). An embedding model produces no output tokens, so its output price shows a dash (`—`). See the [Introduction](../introduction.md#tokens-and-coins) for how coin costs are calculated.
