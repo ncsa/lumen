@@ -4,6 +4,8 @@ All notable changes to Lumen will be documented in this file.
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-11-21
+
 **Upgrade:** speech-to-text models must have `audio` in `input_modalities` (the **audio** input box in the config editor, or `config.yaml`), or `/v1/audio/transcriptions` and `/v1/audio/translations` return 400. `/v1/chat/completions`, `/v1/completions`, `/v1/messages` and `/v1/audio/*` also return 400 for models marked as embedding (`output_modalities: ["embedding"]`) instead of forwarding the call to the backend. An unset `cache_write_cost_per_million` now bills cache writes at 0 instead of the input price; set it explicitly to keep the 2.4.0 charge. (#678, #721)
 
 ### Added
@@ -29,6 +31,10 @@ All notable changes to Lumen will be documented in this file.
 ### Removed
 
 - Remove the `sync_models.py` script; use **Update All** (or **Update** per model) in the admin config editor to refresh model metadata from the backends and models.dev. (#706)
+
+### Contributors
+
+- <img src="https://github.com/robkooper.png?size=20" width="20" height="20" alt=""> [Rob Kooper](https://github.com/robkooper)
 
 ## [2.4.0] - 2026-11-19
 
