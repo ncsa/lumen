@@ -137,7 +137,7 @@ With a monitoring or admin key, or the deprecated [monitoring token](../admin/co
 
 ```bash
 curl "https://lumen.example.com/v1/models?tokens=true" \
-  -H "Authorization: Bearer sk_monitor_your_monitoring_key"
+  -H "Authorization: Bearer $MONITORING_KEY"
 ```
 
 ---
