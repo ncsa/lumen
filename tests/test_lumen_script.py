@@ -1129,7 +1129,6 @@ def test_sync_no_aliases_flag(home, lumen_server):
     assert set(cfg["provider"]["lumen"]["models"]) == {"gpt-demo"}
 
 
-
 @pytest.mark.parametrize("args, expected", [
     (["--aliases"], {"gpt-demo", "gpt-alias"}),
     (["--no-aliases", "--aliases"], {"gpt-demo", "gpt-alias"}),
@@ -1160,6 +1159,71 @@ def test_help_lists_aliases_flags(home, lumen_server):
     assert b"[--aliases | --no-aliases]" in r.stdout
     assert b"--aliases        Include alias entries" in r.stdout
     assert b"--no-aliases     Skip alias entries" in r.stdout
+
+
+def _opencode_models(home):
+    cfg = json.loads((home / ".config" / "opencode" / "opencode.json").read_text())
+    return set(cfg["provider"]["lumen"]["models"])
+
+
+def test_no_aliases_is_remembered_until_aliases(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    r = run_script(home, port, args=["--no-aliases"])
+    assert r.returncode == 0, r.stderr
+    assert "aliases = false\n" in _ini(home).read_text()
+    # No flag: the saved choice still leaves the alias out.
+    r = run_script(home, port)
+    assert r.returncode == 0, r.stderr
+    assert _opencode_models(home) == {"gpt-demo"}
+    r = run_script(home, port, args=["--aliases"])
+    assert r.returncode == 0, r.stderr
+    assert _opencode_models(home) == {"gpt-demo", "gpt-alias"}
+    ini = _ini(home).read_text()
+    assert "aliases = true\n" in ini and "aliases = false" not in ini
+
+
+def test_saved_aliases_false_applies_to_both_configs(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    _ini(home).write_text("[lumen]\naliases = false\n")
+    r = run_script(home, port, args=["--copilot"])
+    assert r.returncode == 0, r.stderr
+    assert _opencode_models(home) == {"gpt-demo"}
+    _, models = copilot_lumen(json.loads(copilot_file(home).read_text()))
+    assert set(models) == {"gpt-demo"}
+
+
+def test_aliases_flag_wins_over_saved_value(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    _ini(home).write_text("[lumen]\naliases = false\n")
+    r = run_script(home, port, args=["--aliases"])
+    assert r.returncode == 0, r.stderr
+    assert _opencode_models(home) == {"gpt-demo", "gpt-alias"}
+    _ini(home).write_text("[lumen]\naliases = true\n")
+    r = run_script(home, port, args=["--no-aliases"])
+    assert r.returncode == 0, r.stderr
+    assert _opencode_models(home) == {"gpt-demo"}
+    assert "aliases = false\n" in _ini(home).read_text()
+
+
+def test_no_aliases_saved_on_login_only_run(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    r = run_script(home, port, args=["--no-aliases", "--no-opencode", "--no-copilot"])
+    assert r.returncode == 0, r.stderr
+    assert not _models_fetched(lumen_server)
+    assert "aliases = false\n" in _ini(home).read_text()
+
+
+def test_repeated_aliases_flags_write_one_line(home, lumen_server):
+    port = lumen_server.server_address[1]
+    store_test_key(home, port)
+    r = run_script(home, port, args=["--aliases", "--no-aliases"])
+    assert r.returncode == 0, r.stderr
+    ini = _ini(home).read_text()
+    assert ini.count("aliases = ") == 1 and "aliases = false\n" in ini
 
 
 def test_sync_writes_capability_flags(home, lumen_server):
@@ -1577,7 +1641,6 @@ def test_copilot_no_aliases(home, lumen_server):
     _, models = copilot_lumen(json.loads(copilot_file(home).read_text()))
     assert set(models) == {"gpt-demo"}
     assert not any("alias of" in m["name"] for m in models.values())
-
 
 
 def test_copilot_aliases_flag(home, lumen_server):

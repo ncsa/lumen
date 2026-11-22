@@ -61,9 +61,10 @@ The login also writes base_url and api_key into the [lumen] section of
 config.ini next to keys.json (mode 600); scripts/claude.sh and scripts/rag.py
 read it, along with chat_model and embed_model, which you can add by hand.
 The options you pass (--shell/--no-shell, --opencode/--no-opencode,
---copilot/--no-copilot, --embed-key) are saved there too (shell, opencode,
-copilot, embed_key = true/false) and are the defaults of the next run; an
-option on the command line always wins. Edit the file to change them back.
+--copilot/--no-copilot, --aliases/--no-aliases, --embed-key) are saved there
+too (shell, opencode, copilot, aliases, embed_key = true/false) and are the
+defaults of the next run; an option on the command line always wins. Edit the
+file to change them back.
 Environment: LUMEN_API_KEY, LUMEN_BASE_URL, OPENCODE_CONFIG, COPILOT_HOME,
 LUMEN_CONFIG_DIR.
 EOF
@@ -114,10 +115,10 @@ OPENCODE=$(ini_bool opencode 1)
 COPILOT=$(ini_bool copilot "")
 SHELL_RC=$(ini_bool shell 1)
 EMBED_KEY=$(ini_bool embed_key 0)
+ALIASES=$(ini_bool aliases 1)
 EMBED_KEY_EXPLICIT=0
 PERSIST=()
 RELOGIN=0
-ALIASES=1
 SERVER_EXPLICIT=0
 
 while [[ $# -gt 0 ]]; do
@@ -135,8 +136,8 @@ while [[ $# -gt 0 ]]; do
     --no-shell)    SHELL_RC=0; PERSIST+=("shell=false"); shift ;;
     --embed-key)   EMBED_KEY=1; EMBED_KEY_EXPLICIT=1; PERSIST+=("embed_key=true"); shift ;;
     --relogin)     RELOGIN=1; shift ;;
-    --aliases)     ALIASES=1; shift ;;
-    --no-aliases)  ALIASES=0; shift ;;
+    --aliases)     ALIASES=1; PERSIST+=("aliases=true"); shift ;;
+    --no-aliases)  ALIASES=0; PERSIST+=("aliases=false"); shift ;;
     -h|--help)     usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 1 ;;
   esac
@@ -336,7 +337,7 @@ write_config_ini() {
     }
     # Blank lines are held back so new keys land before them, not after.
     function flush(   i) {
-      for (i = 1; i <= n; i++) if (!done[order[i]]) print order[i] " = " val[order[i]]
+      for (i = 1; i <= n; i++) if (!done[order[i]]) { print order[i] " = " val[order[i]]; done[order[i]] = 1 }
       printf "%s", pend; pend = ""
     }
     /^[ \t]*\[/ {
