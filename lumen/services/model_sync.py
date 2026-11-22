@@ -10,14 +10,11 @@ import ipaddress
 import re
 import socket
 import time
-from types import SimpleNamespace
 from urllib.parse import urlparse
 
 import certifi
 import requests
 import urllib3
-
-from lumen.models.model_config import is_embedding_model
 
 MODELSDEV_URL = "https://models.dev/api.json"
 ENDPOINT_TIMEOUT = 10
@@ -573,9 +570,11 @@ def sync_model(model_def: dict) -> dict:
                 del updates["output_modalities"]
 
     # An embedding model's output price is always 0 (the config sync forces it),
-    # so never propose another one.
+    # so never propose another one. This mirrors lumen.models.model_config's
+    # is_embedding_model inline: scripts/monitor loads this file by path without
+    # the lumen package, so it must not import from lumen.
     out_modalities = updates.get("output_modalities", model_def.get("output_modalities"))
-    if is_embedding_model(SimpleNamespace(output_modalities=out_modalities)):
+    if isinstance(out_modalities, (list, tuple)) and "embedding" in out_modalities:
         updates.pop("output_cost_per_million", None)
         if modelsdev_price is not None:
             modelsdev_price["output"] = 0
