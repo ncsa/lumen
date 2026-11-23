@@ -1,7 +1,12 @@
-"""Admin API (/v1/organization): admin_key_required and the user detail endpoint (SQLite)."""
+"""Admin API (/v1/organization): admin_key_required, the user detail and the user list (SQLite).
+
+``list_pages_through_every_sort`` also runs on PostgreSQL, from
+``tests/integration/test_admin_api_list_postgres.py``.
+"""
 from calendar import timegm
 from datetime import datetime, timedelta
 from http import HTTPStatus
+from itertools import product
 from uuid import uuid4
 
 import pytest
@@ -16,6 +21,7 @@ from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_limit import EntityLimit
 from lumen.models.entity_stat import EntityStat
 from lumen.models.group import Group
+from lumen.models.group_member import GroupMember
 from lumen.models.lookups import parse_prefixed_id, prefixed_id, user_by_prefixed_id
 from lumen.models.request_log import RequestLog
 from lumen.services.crypto import hash_api_key
@@ -377,3 +383,286 @@ def test_prefixed_id_round_trip(app, target):
     with app.app_context():
         assert user_by_prefixed_id(f"user-{target['uuid']}").id == target["id"]
         assert user_by_prefixed_id("user-x") is None
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/organization/users
+# ---------------------------------------------------------------------------
+
+LIST_URL = "/v1/organization/users"
+LIST_LUMEN_FIELDS = {"status", "groups", "last_active_at"}
+PAGE_FIELDS = {"object", "data", "first_id", "last_id", "has_more", "total"}
+T0 = datetime(2025, 1, 1, 12, 0)
+# (email letter, created_at, last_used_at or None when never active, active):
+# ties on created_at and on last_used_at, and three never-active users.
+PAGERS = [
+    ("a", T0, T0 + timedelta(hours=5), True),
+    ("b", T0, T0 + timedelta(hours=5), True),
+    ("c", T0, None, True),
+    ("d", T0 + timedelta(days=1), T0 + timedelta(hours=1), True),
+    ("e", T0 + timedelta(days=1), None, False),
+    ("f", T0 + timedelta(days=2), T0 + timedelta(hours=3), True),
+    ("g", T0 + timedelta(days=2), None, True),
+]
+
+
+def _list(client, token=TOKENS["admin"], **params):
+    resp = client.get(LIST_URL, query_string=params, headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == HTTPStatus.OK, resp.get_data(as_text=True)
+    return resp.get_json()
+
+
+def _ids(body):
+    return [user["id"] for user in body["data"]]
+
+
+def make_pagers(tag):
+    """The PAGERS users, all matching ``search=tag``; returns {letter: (id, public id)}. Commits."""
+    made = {}
+    for letter, created_at, last_used_at, active in PAGERS:
+        user = Entity(entity_type="user", email=f"{tag}{letter}@example.edu", name=f"{tag} {letter.upper()}",
+                      active=active, created_at=created_at)
+        db.session.add(user)
+        db.session.flush()
+        if last_used_at:
+            db.session.add(EntityStat(entity_id=user.id, last_used_at=last_used_at))
+        made[letter] = (user.id, f"user-{user.uuid}")
+    db.session.commit()
+    return made
+
+
+def _expected_order(made, sort_by, sort_order):
+    """The order the API must return, worked out here without SQL: ties broken by entity id."""
+    desc = sort_order == "desc"
+    rows = [(made[letter][0], made[letter][1], letter, created_at, last_used_at)
+            for letter, created_at, last_used_at, _ in PAGERS]
+    if sort_by == "last_active":
+        seen = sorted((r for r in rows if r[4]), key=lambda r: (r[4], r[0]), reverse=desc)
+        never = sorted((r for r in rows if not r[4]), key=lambda r: r[0], reverse=desc)
+        return [r[1] for r in seen + never]
+    column = 3 if sort_by == "created_at" else 2
+    return [r[1] for r in sorted(rows, key=lambda r: (r[column], r[0]), reverse=desc)]
+
+
+def list_pages_through_every_sort(app, client, token):
+    """Paging with limit=3 over the 7 PAGERS skips and repeats nobody, in every sort_by x sort_order."""
+    tag = f"pager{uuid4().hex[:8]}"
+    with app.app_context():
+        made = make_pagers(tag)
+    for sort_by, sort_order in product(("created_at", "last_active", "email"), ("asc", "desc")):
+        with app.app_context():
+            limiter.reset()
+        params = {"search": tag, "limit": 3, "sort_by": sort_by, "sort_order": sort_order}
+        pages, after = [], None
+        while True:
+            body = _list(client, token, **params, **({"after": after} if after else {}))
+            assert body["total"] == len(PAGERS)
+            pages.append(_ids(body))
+            if not body["has_more"]:
+                break
+            after = body["last_id"]
+        seen = [user_id for page in pages for user_id in page]
+        assert seen == _expected_order(made, sort_by, sort_order), (sort_by, sort_order)
+        assert [len(page) for page in pages] == [3, 3, 1]
+
+
+def test_list_pages_through_every_sort(app, client, keys):
+    list_pages_through_every_sort(app, client, TOKENS["admin"])
+
+
+def test_list_defaults_to_created_at_desc(app, client, keys):
+    with app.app_context():
+        made = make_pagers("dflt")
+    body = _list(client, search="dflt")
+    assert _ids(body) == _expected_order(made, "created_at", "desc")
+
+
+def test_never_active_users_sort_last_in_both_orders(app, client, keys):
+    with app.app_context():
+        made = make_pagers("never")
+    never = {made[letter][1] for letter, _, last_used_at, _ in PAGERS if last_used_at is None}
+    for sort_order in ("asc", "desc"):
+        ids = _ids(_list(client, search="never", sort_by="last_active", sort_order=sort_order))
+        assert set(ids[-len(never):]) == never
+
+
+def test_list_shape_has_no_coins_or_key_count(app, client, target):
+    with app.app_context():
+        db.session.add(EntityStat(entity_id=target["id"], last_used_at=datetime(2024, 11, 22, 18, 30),
+                                  requests=7, cost=1.5))
+        db.session.add(EntityLimit(entity_id=target["id"], max_coins=100, refresh_coins=5, starting_coins=50))
+        db.session.commit()
+        group_uuid = db.session.scalar(select(Group.uuid).where(Group.id == make_group_with_member(target["id"], "readers")))
+    body = _list(client, search="ada@")
+    assert set(body) == PAGE_FIELDS
+    assert body["object"] == "list"
+    assert body["data"] == [{
+        "object": "organization.user",
+        "id": f"user-{target['uuid']}",
+        "name": "Ada Lovelace",
+        "email": "ada@example.edu",
+        "role": "reader",
+        "added_at": _unix(datetime(2024, 11, 22, 16, 0)),
+        "lumen": {
+            "status": "active",
+            "groups": [{"id": f"group-{group_uuid}", "name": "readers"}],
+            "last_active_at": _unix(datetime(2024, 11, 22, 18, 30)),
+        },
+    }]
+    assert set(body["data"][0]["lumen"]) == LIST_LUMEN_FIELDS
+    assert body["first_id"] == body["last_id"] == f"user-{target['uuid']}"
+    assert body["has_more"] is False
+    assert body["total"] == 1
+
+
+def test_list_shows_only_users(app, client, admin_user, target):
+    with app.app_context():
+        project = make_project("Listed Project")
+        owner_uuid = str(db.session.get(Entity, project.owner_entity_id).uuid)
+        project_uuid = str(project.uuid)
+        ghost_uuid = _ghost_uuid(app)
+        admin_uuid = str(db.session.get(Entity, admin_user["id"]).uuid)
+    body = _list(client)
+    assert set(_ids(body)) == {f"user-{u}" for u in (admin_uuid, target["uuid"], owner_uuid)}
+    assert body["total"] == 3
+    assert f"user-{project_uuid}" not in _ids(body) and f"user-{ghost_uuid}" not in _ids(body)
+    admin = next(user for user in body["data"] if user["id"] == f"user-{admin_uuid}")
+    assert admin["role"] == "owner"
+
+
+def test_list_limit_defaults_to_20_and_allows_100(app, client, keys):
+    with app.app_context():
+        for i in range(21):
+            db.session.add(Entity(entity_type="user", email=f"bulk{i:02d}@example.edu", name=f"Bulk {i}", active=True))
+        db.session.commit()
+    body = _list(client, search="bulk")
+    assert len(body["data"]) == 20 and body["has_more"] is True and body["total"] == 21
+    body = _list(client, search="bulk", limit=100)
+    assert len(body["data"]) == 21 and body["has_more"] is False
+
+
+def test_list_has_more_edges(app, client, keys):
+    with app.app_context():
+        made = make_pagers("edge")
+    order = _expected_order(made, "created_at", "desc")
+    full = _list(client, search="edge", limit=len(PAGERS))
+    assert _ids(full) == order and full["has_more"] is False
+    short = _list(client, search="edge", limit=len(PAGERS) - 1)
+    assert short["has_more"] is True
+    assert (short["first_id"], short["last_id"]) == (order[0], order[-2])
+    last = _list(client, search="edge", limit=1, after=order[-2])
+    assert _ids(last) == [order[-1]] and last["has_more"] is False
+    assert last["first_id"] == last["last_id"] == order[-1]
+    # After the very last user: an empty page, and total still counts everyone.
+    empty = _list(client, search="edge", after=order[-1])
+    assert empty["data"] == [] and empty["has_more"] is False
+    assert empty["first_id"] is None and empty["last_id"] is None
+    assert empty["total"] == len(PAGERS)
+
+
+def test_list_empty_result(app, client, keys):
+    body = _list(client, search="nobody-matches-this")
+    assert body == {"object": "list", "data": [], "first_id": None, "last_id": None, "has_more": False, "total": 0}
+
+
+def test_total_applies_filters_and_ignores_after(app, client, keys):
+    with app.app_context():
+        made = make_pagers("tot")
+    first = _list(client, search="tot", status="active", limit=2)
+    assert first["total"] == 6
+    rest = _list(client, search="tot", status="active", limit=2, after=first["last_id"])
+    assert rest["total"] == 6
+    # An after user outside the filters still marks the position.
+    outside = _list(client, search="tot", status="active", after=made["e"][1])
+    assert outside["total"] == 6
+
+
+@pytest.fixture
+def filtered(app, keys):
+    """Users for the filter tests; returns {short name: public id} and the two group ids."""
+    with app.app_context():
+        made = {}
+        for short, name, email, active in [
+            ("ann", "Ann Filter", "ann@uni.example", True),
+            ("bob", "Bob Filter", "bob@corp.example", True),
+            ("cat", "Cat Other", "cat-filter@uni.example", False),
+            ("dan", "Dan Other", "dan@uni.example", True),
+        ]:
+            user = Entity(entity_type="user", email=email, name=name, active=active)
+            db.session.add(user)
+            db.session.flush()
+            made[short] = (user.id, f"user-{user.uuid}")
+        db.session.commit()
+        staff = make_group_with_member(made["ann"][0], name="staff")
+        db.session.add_all([GroupMember(entity_id=made[short][0], group_id=staff) for short in ("cat", "dan")])
+        db.session.commit()
+        other = make_group_with_member(made["bob"][0], name="other")
+        groups = {name: f"group-{db.session.get(Group, gid).uuid}" for name, gid in (("staff", staff), ("other", other))}
+    return {short: public for short, (_, public) in made.items()}, groups
+
+
+@pytest.mark.parametrize("params, expected", [
+    ({"search": "filter"}, {"ann", "bob", "cat"}),           # name or email
+    ({"search": "FILTER"}, {"ann", "bob", "cat"}),           # case-insensitive
+    ({"search": "uni.example"}, {"ann", "cat", "dan"}),      # email only
+    ({"search": "  Other "}, {"cat", "dan"}),                # trimmed, name only
+    ({"group": "staff"}, {"ann", "cat", "dan"}),
+    ({"group": "other"}, {"bob"}),
+    ({"status": "inactive"}, {"cat"}),
+    ({"search": "filter", "status": "active"}, {"ann", "bob"}),
+    ({"search": "uni", "group": "staff", "status": "active"}, {"ann", "dan"}),
+    ({"group": "other", "status": "inactive"}, set()),
+])
+def test_list_filters(client, filtered, params, expected):
+    users, groups = filtered
+    if "group" in params:
+        params = {**params, "group": groups[params["group"]]}
+    body = _list(client, **params)
+    assert set(_ids(body)) == {users[short] for short in expected}
+    assert body["total"] == len(expected)
+
+
+def test_status_active_alone(app, client, filtered, admin_user):
+    users, _ = filtered
+    with app.app_context():
+        admin_id = f"user-{db.session.get(Entity, admin_user['id']).uuid}"
+    body = _list(client, status="active")
+    assert set(_ids(body)) == {users["ann"], users["bob"], users["dan"], admin_id}
+
+
+@pytest.mark.parametrize("param, value", [
+    ("limit", "0"), ("limit", "101"), ("limit", "-1"), ("limit", "ten"), ("limit", "2.5"), ("limit", ""),
+    ("sort_by", "name"), ("sort_by", ""),
+    ("sort_order", "up"), ("sort_order", "DESC"),
+    ("status", "blocked"), ("status", ""),
+    ("after", "nope"), ("after", f"user-{uuid4()}"), ("after", "group-00000000-0000-4000-8000-000000000000"),
+    ("group", "staff"), ("group", f"group-{uuid4()}"), ("group", ""),
+])
+def test_list_bad_parameter_is_400_with_param(client, filtered, param, value):
+    resp = client.get(LIST_URL, query_string={param: value}, headers={"Authorization": f"Bearer {TOKENS['admin']}"})
+    _assert_err(resp, HTTPStatus.BAD_REQUEST, "invalid_request_error")
+    assert resp.get_json()["error"]["param"] == param
+
+
+@pytest.mark.parametrize("make_id", [
+    lambda app: f"user-{_project_uuid(app)}",
+    lambda app: f"user-{_ghost_uuid(app)}",
+], ids=["project", "ghost"])
+def test_list_after_a_non_user_is_400(app, client, keys, make_id):
+    resp = client.get(LIST_URL, query_string={"after": make_id(app)}, headers={"Authorization": f"Bearer {TOKENS['admin']}"})
+    _assert_err(resp, HTTPStatus.BAD_REQUEST, "invalid_request_error")
+    assert resp.get_json()["error"]["param"] == "after"
+
+
+@pytest.mark.parametrize("credential", ["normal", "monitoring"])
+def test_list_needs_an_admin_key(client, keys, credential):
+    resp = client.get(LIST_URL, headers={"Authorization": f"Bearer {TOKENS[credential]}"})
+    _assert_err(resp, HTTPStatus.FORBIDDEN, "permission_error")
+
+
+def test_list_writes_no_request_logs(app, client, keys):
+    with app.app_context():
+        before = db.session.scalar(select(func.count()).select_from(RequestLog))
+    _list(client)
+    with app.app_context():
+        assert db.session.scalar(select(func.count()).select_from(RequestLog)) == before
