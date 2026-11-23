@@ -595,7 +595,7 @@ Each user is the same object as [Retrieve a user](#retrieve-a-user) returns, wit
 | `after` | | A user id, usually the previous page's `last_id`; the page starts after that user |
 | `sort_by` | `created_at` | `created_at`, `last_active` or `email` |
 | `sort_order` | `desc` | `asc` or `desc`. With `last_active`, users who were never active come last in both orders |
-| `search` | | Part of the name or email, case-insensitive |
+| `search` | | Part of the name or email, case-insensitive; `%` and `_` match themselves |
 | `group` | | Only members of this group, given by its id (`group-<uuid>`); a group name gets `400` |
 | `status` | | `active` or `inactive` |
 

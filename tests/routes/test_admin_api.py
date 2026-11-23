@@ -622,6 +622,45 @@ def test_list_filters(client, filtered, params, expected):
     assert body["total"] == len(expected)
 
 
+# (short name, name, email local part) for search_is_literal, each prefixed with a tag.
+LITERAL_USERS = [
+    ("underscore", "Wild One", "wild_one"),
+    ("lookalike", "Wild Xone", "wildxone"),
+    ("percent", "50% Off", "pct"),
+    ("fifty", "50 Plus", "fifty"),
+    ("backslash", "Back\\wall", "bs"),
+    ("slash", "a/b", "slash"),
+    ("noslash", "ab", "noslash"),
+]
+
+
+def search_is_literal(app, client, token):
+    """search matches a literal substring: %, _, a backslash and / are not LIKE syntax."""
+    tag = f"lit{uuid4().hex[:8]}"
+    made = {}
+    with app.app_context():
+        for short, name, local in LITERAL_USERS:
+            user = Entity(entity_type="user", name=f"{tag} {name}", email=f"{tag}{local}@lit.example")
+            db.session.add(user)
+            db.session.flush()
+            made[short] = f"user-{user.uuid}"
+        db.session.commit()
+    for search, expected in [
+        (f"{tag}wild_one", {"underscore"}),       # _ is not a one-character wildcard
+        (f"{tag} 50%", {"percent"}),              # % is not an any-string wildcard
+        (f"{tag} back\\w", {"backslash"}),        # a backslash is not an escape
+        (f"{tag} a/b", {"slash"}),                # nor is the autoescape character
+        (f"{tag.upper()}WILD_ONE", {"underscore"}),  # still case-insensitive
+    ]:
+        body = _list(client, token, search=search)
+        assert set(_ids(body)) == {made[short] for short in expected}, search
+        assert body["total"] == len(expected), search
+
+
+def test_list_search_is_literal(app, client, keys):
+    search_is_literal(app, client, TOKENS["admin"])
+
+
 def test_status_active_alone(app, client, filtered, admin_user):
     users, _ = filtered
     with app.app_context():

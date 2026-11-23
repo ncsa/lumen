@@ -197,8 +197,9 @@ def list_users():
     if "\x00" in search:
         return _param_err("search must not contain a NUL character", "search")
     if search:
-        like = f"%{search}%"
-        filters.append(or_(Entity.name.ilike(like), Entity.email.ilike(like)))
+        # A literal substring: %, _ and the escape character match themselves.
+        filters.append(or_(Entity.name.icontains(search, autoescape=True),
+                           Entity.email.icontains(search, autoescape=True)))
     if "group" in args:
         group_uuid = parse_prefixed_id(args["group"], GROUP_ID_PREFIX)
         group_pk = group_uuid and db.session.scalar(select(Group.id).where(Group.uuid == group_uuid))
