@@ -7,7 +7,7 @@ appear. Nothing here is billed or written to request_logs.
 
 import hmac
 from calendar import timegm
-from datetime import datetime, timedelta
+from datetime import datetime
 from functools import wraps
 from http import HTTPStatus
 
@@ -23,7 +23,7 @@ from lumen.models.entity import Entity
 from lumen.models.entity_stat import EntityStat
 from lumen.models.lookups import GROUP_ID_PREFIX, USER_ID_PREFIX, prefixed_id, user_by_prefixed_id
 from lumen.services.api_auth import KeyRejected, resolve_api_key
-from lumen.services.llm import _load_pool_state
+from lumen.services.llm import REFILL_INTERVAL, _load_pool_state
 from lumen.timeutils import utcnow
 
 admin_api_bp = Blueprint("admin_api", __name__, url_prefix="/v1/organization")
@@ -79,7 +79,7 @@ def _unix(dt: datetime | None) -> int | None:
 
 
 def _user_object(entity: Entity, groups: list[dict], last_active_at: datetime | None) -> dict:
-    """The ``organization.user`` fields shared by the list and the detail."""
+    """The ``organization.user`` fields of a user."""
     return {
         "object": "organization.user",
         "id": prefixed_id(USER_ID_PREFIX, entity.uuid),
@@ -102,7 +102,9 @@ def _coins(entity_id: int) -> dict | None:
         return None
     max_coins, refresh_coins, starting_coins = pool
     last_refill_at = balance.last_refill_at if balance else None
-    next_reset = last_refill_at + timedelta(hours=1) if refresh_coins > 0 and last_refill_at else None
+    # The refiller skips unlimited pools, which can keep a stale refresh rate.
+    refills = max_coins != -2 and refresh_coins > 0 and last_refill_at is not None
+    next_reset = last_refill_at + REFILL_INTERVAL if refills else None
     return {
         "balance": balance.coins_left if balance else starting_coins,
         "allocation": max_coins,

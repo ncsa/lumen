@@ -264,6 +264,18 @@ def test_unlimited_pool_is_minus_two(app, client, target):
     assert coins["next_reset_at"] is None
 
 
+def test_unlimited_pool_with_stale_refresh_rate_has_no_reset(app, client, target):
+    # Editing a finite pool to unlimited keeps its refresh rate and balance row,
+    # but the refiller never refills an unlimited pool.
+    with app.app_context():
+        db.session.add(EntityLimit(entity_id=target["id"], max_coins=-2, refresh_coins=5, starting_coins=50))
+        db.session.add(EntityBalance(entity_id=target["id"], coins_left=12.5, last_refill_at=datetime(2024, 11, 22, 17, 0)))
+        db.session.commit()
+    coins = _get(client, _user_url(target["uuid"])).get_json()["lumen"]["coins"]
+    assert coins["allocation"] == -2
+    assert coins["next_reset_at"] is None
+
+
 def test_blocked_pool_is_null(app, client, target):
     with app.app_context():
         db.session.add(EntityLimit(entity_id=target["id"], max_coins=0, refresh_coins=0, starting_coins=0))
