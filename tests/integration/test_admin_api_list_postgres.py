@@ -7,6 +7,7 @@ the coalesced sort keys, the ``(sort value, entity id)`` cursor and the ties on
 
 import os
 import uuid
+from http import HTTPStatus
 
 import pytest
 from sqlalchemy import select
@@ -72,3 +73,11 @@ def admin_token(pg_app):
 
 def test_list_pages_through_every_sort_on_postgres(pg_app, admin_token):
     list_pages_through_every_sort(pg_app, pg_app.test_client(), admin_token)
+
+
+def test_search_with_nul_is_400_on_postgres(pg_app, admin_token):
+    # psycopg rejects NUL in a text bind, so without the check this was a 500.
+    resp = pg_app.test_client().get("/v1/organization/users", query_string={"search": "ada\x00"},
+                                    headers={"Authorization": f"Bearer {admin_token}"})
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert resp.get_json()["error"]["param"] == "search"

@@ -553,7 +553,7 @@ Requests are never billed and are not written to the request log.
 
 ### Ids
 
-Users and groups are named with a prefixed uuid, the same uuid the admin pages show: `user-<uuid>` and `group-<uuid>` (lowercase, dashed). Anything else, a project or an unknown uuid, gets `404`.
+Users and groups are named with a prefixed uuid, the same uuid the admin pages show: `user-<uuid>` and `group-<uuid>` (lowercase, dashed). On [Retrieve a user](#retrieve-a-user), anything else, a project or an unknown uuid, gets `404`; on [List users](#list-users), a bad `after` or `group` gets `400`.
 
 ### List users
 

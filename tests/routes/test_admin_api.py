@@ -637,6 +637,7 @@ def test_status_active_alone(app, client, filtered, admin_user):
     ("status", "blocked"), ("status", ""),
     ("after", "nope"), ("after", f"user-{uuid4()}"), ("after", "group-00000000-0000-4000-8000-000000000000"),
     ("group", "staff"), ("group", f"group-{uuid4()}"), ("group", ""),
+    ("search", "ada\x00"), ("search", "\x00"),
 ])
 def test_list_bad_parameter_is_400_with_param(client, filtered, param, value):
     resp = client.get(LIST_URL, query_string={param: value}, headers={"Authorization": f"Bearer {TOKENS['admin']}"})

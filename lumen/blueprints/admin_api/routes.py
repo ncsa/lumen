@@ -193,6 +193,9 @@ def list_users():
 
     filters = [Entity.entity_type == "user"]
     search = args.get("search", "").strip()
+    # PostgreSQL text cannot hold NUL: the bind would raise and answer 500.
+    if "\x00" in search:
+        return _param_err("search must not contain a NUL character", "search")
     if search:
         like = f"%{search}%"
         filters.append(or_(Entity.name.ilike(like), Entity.email.ilike(like)))
