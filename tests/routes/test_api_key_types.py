@@ -3,8 +3,8 @@
 Columns are the credential (admin key, normal key, monitoring key, the
 deprecated ``api.monitoring.token``), rows the action. Every cell is its own
 parametrised case; the normal-key cells double as the regression check. The
-admin API row (``/v1/organization/*``) has no route yet: LUM-588 adds it on
-top of ``resolve_api_key`` (see ``tests/unit/test_resolve_api_key.py``).
+admin API row (``/v1/organization/*``) is here too; its own tests are in
+``tests/routes/test_admin_api.py``.
 """
 from datetime import timedelta
 from http import HTTPStatus
@@ -12,7 +12,7 @@ from http import HTTPStatus
 import pytest
 from sqlalchemy import func, select
 
-from lumen.extensions import db
+from lumen.extensions import db, limiter
 from lumen.models.api_key import KEY_TYPE_ADMIN, KEY_TYPE_MONITORING, KEY_TYPE_NORMAL, APIKey
 from lumen.models.entity import Entity
 from lumen.models.entity_limit import EntityLimit
@@ -274,3 +274,19 @@ def test_admin_and_monitoring_keys_are_never_billed(app, client, keys, models, c
     with app.app_context():
         key = db.session.get(APIKey, keys[credential])
         assert (key.requests, key.input_tokens, key.output_tokens, key.cost) == (0, 0, 0, 0)
+
+
+# ---------------------------------------------------------------------------
+# Admin API: /v1/organization/*
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("credential", CREDENTIALS)
+def test_admin_api(app, client, keys, admin_user, credential):
+    with app.app_context():
+        limiter.reset()
+    resp = client.get(f"/v1/organization/users/user-{admin_user['uuid']}", headers=_auth(credential))
+    if credential == "admin":
+        assert resp.status_code == HTTPStatus.OK
+    else:
+        assert resp.status_code == HTTPStatus.FORBIDDEN
+        assert resp.get_json()["error"]["type"] == "permission_error"

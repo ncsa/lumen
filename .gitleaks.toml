@@ -9,6 +9,8 @@ description = "Documentation and test placeholders"
 regexes = [
   # docs/guides/api-reference.md curl examples
   '''^sk_your_api_key_here$''',
+  # docs/guides/api-reference.md admin API curl example
+  '''^sk_admin_your_admin_key_here$''',
   # tests/test_lumen_script.py fixture key
   '''^sk_test1234567890abcd$''',
 ]
