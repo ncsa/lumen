@@ -227,6 +227,27 @@ def test_check_coin_budget_unlimited(app, test_user, test_model):
         assert code is None
 
 
+@pytest.mark.parametrize("coins_left", [0, -_COIN_LIMIT], ids=["zero", "negative"])
+def test_check_coin_budget_unlimited_ignores_exhausted_balance(app, test_user, test_model, coins_left):
+    """An unlimited pool (max_coins == -2) is allowed even when the balance row is at or below zero."""
+    entity_id, model_id = test_user["id"], test_model["id"]
+    with app.app_context():
+        from lumen.extensions import db
+        from lumen.models.entity_balance import EntityBalance
+        from lumen.models.entity_limit import EntityLimit
+        from lumen.services.llm import check_coin_budget
+        db.session.add(EntityLimit(entity_id=entity_id, max_coins=-2, refresh_coins=0, starting_coins=0))
+        db.session.add(EntityBalance(entity_id=entity_id, coins_left=coins_left))
+        db.session.commit()
+        ok, code, msg, eff, reason, retry_after = check_coin_budget(entity_id, model_id)
+        assert ok
+        assert code is None
+        assert msg is None
+        assert reason is None
+        assert retry_after is None
+        assert eff.max_coins == -2
+
+
 def test_check_coin_budget_exhausted(app, test_user, test_model):
     entity_id, model_id = test_user["id"], test_model["id"]
     with app.app_context():
