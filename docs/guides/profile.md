@@ -96,7 +96,7 @@ In admin mode, the dialog has a **Key type** select. Changing it generates a new
 | Type | Prefix | What it can do | Expires after |
 |------|--------|----------------|---------------|
 | **Normal** (default) | `sk_` | Chat and the rest of the API, billed to you | Up to the maximum key lifetime (see [Key Expiry](#key-expiry)) |
-| **Admin** | `sk_admin_` | The model list with token metrics, and the admin API once it ships (#736); never chat | At most 1 week, or the maximum key lifetime if that is shorter; never **Never**. Defaults to the longest allowed |
+| **Admin** | `sk_admin_` | The model list with token metrics, and the [admin API](api-reference.md#admin-api); never chat | At most 1 week, or the maximum key lifetime if that is shorter; never **Never**. Defaults to the longest allowed |
 | **Monitoring** | `sk_monitor_` | Only the model list with token metrics, for uptime monitors such as `scripts/monitor` | Anything, including **Never**, whatever the maximum key lifetime; defaults to **Never** |
 
 Admin and monitoring keys are never billed, and they stop working when their owner is removed from the `admins` list (they work again if the owner is added back). See the [access matrix](api-reference.md#key-types-and-access) for every endpoint. Keys of a project or requested through OAuth are always normal keys.

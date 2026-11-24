@@ -25,9 +25,9 @@ Admins can also create admin (`sk_admin_…`) and monitoring (`sk_monitor_…`) 
 | `GET /v1/usage` (own key usage) | 403 | ✅ | 403 | 403 |
 | `GET /v1/models`, `GET /v1/models/<id>` | ✅ every active model | ✅ only models you can use | ✅ every active model | ✅ every active model |
 | `?tokens=true` token metrics on the models endpoints | ✅ | ignored: request counts only, never token metrics | ✅ | ✅ |
-| Admin API `/v1/organization/*` (not available yet, planned in #736) | ✅ | 403 | 403 | 403 |
+| [Admin API](#admin-api) `/v1/organization/*` | ✅ | 403 | 403 | 403 |
 
-Admin keys **cannot chat**: they are for monitoring now, and for the admin API once it ships (#736). A normal key sees request counts on the models endpoints but never `?tokens=true` token metrics. Admin and monitoring requests are never billed. A missing or malformed `Authorization` header gets `400`. An unknown, revoked or expired key, or an admin or monitoring key whose owner is no longer an admin, gets `401`.
+Admin keys **cannot chat**: they are for monitoring and the [admin API](#admin-api). A normal key sees request counts on the models endpoints but never `?tokens=true` token metrics. Admin and monitoring requests are never billed. A missing or malformed `Authorization` header gets `400`. An unknown, revoked or expired key, or an admin or monitoring key whose owner is no longer an admin, gets `401`.
 
 ## Endpoints
 
@@ -44,6 +44,7 @@ Admin keys **cannot chat**: they are for monitoring now, and for the admin API o
 | `POST` | `/v1/embeddings` | Turn text or token ids into embedding vectors |
 | `POST` | `/v1/messages` | Anthropic Messages API, see [Anthropic API](anthropic.md) |
 | `POST` | `/v1/messages/count_tokens` | Estimate the prompt tokens of a Messages request |
+| `GET` | `/v1/organization/users/<user_id>` | Admin API: one user's details (admin key only) |
 
 ---
 
@@ -530,3 +531,62 @@ A `403` on a consume endpoint either means the model is blocked for your account
 ```
 
 A `code: "consent_required"` means the model merely awaits your acknowledgment (see [Acknowledge a Model](#acknowledge-a-model)); a `403` without a `code` means the model is blocked for your account. This is the same `code`-disambiguation pattern used for `429`, where `insufficient_quota` (stop until the budget refills) is distinguished from a plain rate limit.
+
+---
+
+## Admin API
+
+A read-only, OpenAI-compatible admin API under `/v1/organization`. Only an **admin key** (`sk_admin_…`) may call it; admins create one on their profile page in admin mode (see [Key Types](profile.md#key-types)). Admin keys expire within a week, so scripts that call the admin API must rotate their key. A key stops working when its owner is removed from the `admins` list or deactivated.
+
+Errors use the OpenAI shape `{"error": {"message", "type", "code"}}`:
+
+| Status | When |
+|--------|------|
+| `400` | Missing or malformed `Authorization` header |
+| `401` | Unknown, revoked or expired key, an admin key whose owner is no longer an admin or is inactive, or a non-ASCII token |
+| `403` | A normal key, a monitoring key or `api.monitoring.token` (`permission_error`, "This endpoint requires an admin key") |
+| `404` | No such user (`code: user_not_found`) |
+| `429` | The per-key rate limit (`rate_limiting.limit`) is exceeded |
+
+Requests are never billed and are not written to the request log.
+
+### Ids
+
+Users and groups are named with a prefixed uuid, the same uuid the admin pages show: `user-<uuid>` and `group-<uuid>` (lowercase, dashed). Anything else, a project or an unknown uuid, gets `404`.
+
+### Retrieve a user
+
+```bash
+curl https://lumen.example.com/v1/organization/users/user-3f6c1d2e-8a4b-4c1e-9f0a-1b2c3d4e5f60 \
+  -H "Authorization: Bearer sk_admin_your_admin_key_here"
+```
+
+```json
+{
+  "object": "organization.user",
+  "id": "user-3f6c1d2e-8a4b-4c1e-9f0a-1b2c3d4e5f60",
+  "name": "Ada Lovelace",
+  "email": "ada@example.edu",
+  "role": "reader",
+  "added_at": 1732291200,
+  "lumen": {
+    "status": "active",
+    "groups": [{"id": "group-0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d", "name": "students"}],
+    "last_active_at": 1732291200,
+    "coins": {"balance": 12.5, "allocation": 100, "per_hour": 5, "next_reset_at": 1732294800},
+    "api_key_count": 2
+  }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `role` | `owner` if the user is in the `admins` list, else `reader` |
+| `added_at` | When the user first signed in (Unix seconds) |
+| `lumen.status` | `active` or `inactive` |
+| `lumen.groups` | Every group the user belongs to |
+| `lumen.last_active_at` | Last request (Unix seconds), `null` if never |
+| `lumen.coins` | The user's coin pool: current `balance`, `allocation` (`-2` means unlimited), coins added `per_hour`, and `next_reset_at` (Unix seconds, `null` if the pool does not refill). `null` when the user is blocked |
+| `lumen.api_key_count` | The user's own usable normal API keys (admin, monitoring, revoked and project keys are not counted) |
+
+Keys, usage, tokens and cost are never returned.

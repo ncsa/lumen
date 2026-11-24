@@ -594,6 +594,7 @@ def create_app():
 
     # Import all models so Flask-Migrate can detect them
     from lumen.blueprints.admin.routes import admin_bp
+    from lumen.blueprints.admin_api.routes import admin_api_bp
     from lumen.blueprints.anthropic.routes import anthropic_bp
     from lumen.blueprints.api.routes import api_bp
 
@@ -621,6 +622,7 @@ def create_app():
     csrf.exempt(api_bp)
     app.register_blueprint(anthropic_bp)
     app.register_blueprint(admin_bp)
+    app.register_blueprint(admin_api_bp)
     app.register_blueprint(metrics_bp)
     app.register_blueprint(help_bp)
     app.register_blueprint(connect_bp)
