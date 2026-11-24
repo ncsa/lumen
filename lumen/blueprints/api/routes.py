@@ -473,7 +473,11 @@ def get_me():
         body = profile_json(g.entity, request.args.get("period"), session_admin_mode=admin_mode)
     except ValueError:
         return _err("Invalid period; expected 'YYYY-MM' (a UTC calendar month) or 'all'")
-    return jsonify(body)
+    resp = jsonify(body)
+    # Private account data: no cache may store it, since a cached session
+    # answer could otherwise be served to a different bearer credential.
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @api_bp.route("/usage", methods=["GET"])

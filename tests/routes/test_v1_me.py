@@ -117,6 +117,9 @@ def test_session_and_key_return_the_same_body(app, seeded, auth_client, client):
     assert by_key.status_code == HTTPStatus.OK
     assert by_session.get_json() == by_key.get_json()
     assert by_key.get_json()["user"]["id"] == _uuid(app, Entity, seeded["eid"])
+    # Private data: neither mode may be stored by a cache.
+    assert by_session.headers["Cache-Control"] == "no-store"
+    assert by_key.headers["Cache-Control"] == "no-store"
 
 
 def test_key_wins_over_session(app, key_id, test_user, admin_client):

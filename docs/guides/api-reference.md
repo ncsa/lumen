@@ -110,7 +110,7 @@ keys are listed, with `revoked_at` set. Every `id` is the row's opaque uuid. Eve
 - **The web session cookie**, the one your browser has after signing in. Send no `Authorization`
   header to use it.
 
-When both are sent, the key wins. An accepted call never adds to the key's request count or `last_used_at`. Admin and monitoring keys are refused; as on every other route, their `last_used_at` is still updated when they are refused.
+When both are sent, the key wins. Every successful answer carries `Cache-Control: no-store`. An accepted call never adds to the key's request count or `last_used_at`. Admin and monitoring keys are refused; as on every other route, their `last_used_at` is still updated when they are refused.
 
 | Status | `type` | When |
 |--------|--------|------|
@@ -176,7 +176,7 @@ conversation count and your web-chat totals. Lumen does not record key or projec
   "coin_pool": {"coin_limit": 100, "coins_left": 83.25, "coins_per_hour": 10,
                 "next_refill": "2026-11-14T16:00:00Z"},
   "projects": [
-    {"id": "c9f0f895-fb98-4b91-9e5f-6a1b2c3d4e5f", "name": "Physics Lab", "detail_url": "/projects/7", "created_at": "2026-09-01T12:00:00Z",
+    {"id": "c9f0f895-fb98-4b91-9e5f-6a1b2c3d4e5f", "name": "Physics Lab", "detail_url": "/projects/c9f0f895-fb98-4b91-9e5f-6a1b2c3d4e5f", "created_at": "2026-09-01T12:00:00Z",
      "lifetime": {"requests": 340, "tokens": 120000, "cost": 0.42}}
   ],
   "api_keys": [
