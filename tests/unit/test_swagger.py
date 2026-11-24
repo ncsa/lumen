@@ -21,6 +21,14 @@ ACCESS_CLASSES = {"public", "monitor", "normal", "admin"}
 HTTP_METHODS = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
 # Werkzeug's "<converter:name>" or "<name>" becomes OpenAPI's "{name}".
 _RULE_ARG_RE = re.compile(r"<(?:[^:<>]+:)?([^<>]+)>")
+# How each access class is named in the "Access: ..." first paragraph of an
+# operation's description; Swagger UI hides x- fields, so readers see only these.
+ACCESS_WORDS = {
+    "no key": "public",
+    "normal key": "normal",
+    "monitoring key": "monitor",
+    "admin key": "admin",
+}
 
 
 @pytest.fixture(scope="module")
@@ -77,8 +85,21 @@ def test_every_operation_has_valid_access_classes(spec):
         assert access, f"{key} has no x-access"
         assert set(access) <= ACCESS_CLASSES, f"{key} has unknown x-access {access}"
         assert len(access) == len(set(access)), f"{key} repeats an x-access class"
-        # Swagger UI hides x- fields, so the description says it in words.
-        assert op.get("description", "").startswith("Access: "), f"{key} description does not state its access"
+
+
+def _described_access(description):
+    """The access classes named in the description's first paragraph, or None without one."""
+    first = " ".join(description.split("\n\n", 1)[0].split())
+    if not first.startswith("Access: "):
+        return None
+    return {cls for words, cls in ACCESS_WORDS.items() if words in first}
+
+
+def test_descriptions_state_the_same_access_as_x_access(spec):
+    for key, op in _spec_operations(spec).items():
+        described = _described_access(op.get("description", ""))
+        assert described is not None, f"{key} description does not start with 'Access: '"
+        assert described == set(op["x-access"]), f"{key} description names {described}, x-access is {op['x-access']}"
 
 
 def test_access_classes_match_the_code(app, spec):

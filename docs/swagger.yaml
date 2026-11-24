@@ -9,7 +9,7 @@ info:
     Every operation lists the credentials that may call it in `x-access`, and
     repeats them in its description:
 
-    - `public`: no credential needed.
+    - `public`: no key needed.
     - `normal`: a normal API key (`sk_...`), billed for generation requests.
     - `monitor`: a monitoring key (`sk_monitor_...`) or the deprecated
       `api.monitoring.token` from the config file.
@@ -199,7 +199,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "429":
-          $ref: "#/components/responses/TooManyRequests"
+          $ref: "#/components/responses/QuotaOrRateLimit"
   /v1/completions:
     post:
       operationId: createCompletion
@@ -241,7 +241,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "429":
-          $ref: "#/components/responses/TooManyRequests"
+          $ref: "#/components/responses/QuotaOrRateLimit"
   /v1/embeddings:
     post:
       operationId: createEmbedding
@@ -281,7 +281,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "429":
-          $ref: "#/components/responses/TooManyRequests"
+          $ref: "#/components/responses/QuotaOrRateLimit"
   /v1/audio/transcriptions:
     post:
       operationId: createTranscription
@@ -302,14 +302,13 @@ paths:
               $ref: "#/components/schemas/AudioRequest"
       responses:
         "200":
-          description: The transcription.
+          description: |
+            The transcription. With `response_format` `text`, `srt` or `vtt`, the
+            upstream text is returned in the `text` field.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Object"
-            text/plain:
-              schema:
-                type: string
+                $ref: "#/components/schemas/AudioText"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -319,7 +318,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "429":
-          $ref: "#/components/responses/TooManyRequests"
+          $ref: "#/components/responses/QuotaOrRateLimit"
   /v1/audio/translations:
     post:
       operationId: createTranslation
@@ -340,14 +339,13 @@ paths:
               $ref: "#/components/schemas/AudioRequest"
       responses:
         "200":
-          description: The translation.
+          description: |
+            The translation. With `response_format` `text`, `srt` or `vtt`, the
+            upstream text is returned in the `text` field.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Object"
-            text/plain:
-              schema:
-                type: string
+                $ref: "#/components/schemas/AudioText"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -357,7 +355,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "429":
-          $ref: "#/components/responses/TooManyRequests"
+          $ref: "#/components/responses/QuotaOrRateLimit"
   /v1/messages:
     post:
       operationId: createMessage
@@ -411,7 +409,7 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "429":
-          $ref: "#/components/responses/TooManyRequests"
+          $ref: "#/components/responses/QuotaOrRateLimit"
   /v1/messages/count_tokens:
     post:
       operationId: countMessageTokens
@@ -593,6 +591,11 @@ components:
       in: header
       name: x-api-key
       description: A Lumen API key in `x-api-key`, accepted on the `/v1/messages` endpoints only.
+  headers:
+    RetryAfter:
+      description: Seconds to wait before retrying, when known.
+      schema:
+        type: integer
   parameters:
     ModelId:
       name: model_id
@@ -643,7 +646,33 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     TooManyRequests:
-      description: "Rate limit exceeded; see `Retry-After`."
+      description: |
+        The per-key rate limit is exceeded (`code: rate_limit_exceeded`).
+        Retry after the number of seconds in `Retry-After`.
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    QuotaOrRateLimit:
+      description: |
+        One of two conditions that need different reactions:
+
+        - The per-key rate limit is exceeded (`code: rate_limit_exceeded`).
+          Retry after `Retry-After` seconds.
+        - The account's coin budget is exhausted (`type` and `code`
+          `insufficient_quota`). Do not retry until the budget refills.
+          `Retry-After` gives the seconds until the next refill and is
+          absent when the budget never refills.
+
+        The `/v1/messages` endpoint returns both in the Anthropic envelope,
+        with `error.type` `rate_limit_error`. A 429 from the upstream
+        backend can also be passed through, without `Retry-After`.
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
       content:
         application/json:
           schema:
@@ -747,6 +776,13 @@ components:
           type: [string, "null"]
           format: date-time
         notice:
+          type: string
+      additionalProperties: true
+    AudioText:
+      type: object
+      required: [text]
+      properties:
+        text:
           type: string
       additionalProperties: true
     AudioRequest:
