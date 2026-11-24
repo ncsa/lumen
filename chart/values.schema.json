@@ -156,9 +156,38 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
+                "maxTtl": {
+                  "anyOf": [
+                    { "type": "string", "pattern": "^(0|[0-9]+[hdw])$" },
+                    { "const": "" },
+                    { "const": 0 }
+                  ]
+                },
+                "maxAdminTtl": {
+                  "anyOf": [
+                    { "type": "string", "pattern": "^(0|[0-9]+[hdw])$" },
+                    { "const": "" },
+                    { "const": 0 }
+                  ]
+                },
+                "maxMonitorTtl": {
+                  "anyOf": [
+                    { "type": "string", "pattern": "^(0|[0-9]+[hdw])$" },
+                    { "const": "" },
+                    { "const": 0 }
+                  ]
+                },
+                "defaultTtl": {
+                  "anyOf": [
+                    { "type": "string", "pattern": "^(0|[0-9]+[hdw])$" },
+                    { "const": "" },
+                    { "const": 0 }
+                  ]
+                },
                 "ttl": {
                   "anyOf": [
                     { "type": "string", "pattern": "^(0|[0-9]+[hdw])$" },
+                    { "const": "" },
                     { "const": 0 }
                   ]
                 }

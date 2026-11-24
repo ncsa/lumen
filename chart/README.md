@@ -209,7 +209,11 @@ models:
 | `config.llm.maxRetries` | `1` | Retries for non-streaming upstream calls (streaming calls are never retried) |
 | `config.stats.foldInterval` | `60` | Seconds between passes of the job that folds `request_logs` into the usage totals |
 | `config.stats.foldLag` | `300` | Seconds the fold window ends behind now; usage totals lag real time by about `foldLag + foldInterval` |
-| `config.api.keys.ttl` | `"0"` | Maximum and default API key lifetime: `0` (never expire) or e.g. `12h`, `30d`, `8w`; expired keys are revoked |
+| `config.api.keys.maxTtl` | `""` | Maximum lifetime of normal API keys: `0` (no limit) or e.g. `12h`, `30d`, `8w`; empty falls back to `ttl`, else `0`. Expired keys are revoked |
+| `config.api.keys.maxAdminTtl` | `""` | Maximum lifetime of admin keys (`0` = no limit); empty uses the server default of `7d` |
+| `config.api.keys.maxMonitorTtl` | `""` | Maximum lifetime of monitoring keys (`0` = no limit); empty uses the server default of no limit |
+| `config.api.keys.defaultTtl` | `""` | Default lifetime of every key type (`0` = never), lowered to that type's maximum; empty makes each type default to its maximum |
+| `config.api.keys.ttl` | `""` | Deprecated, removed in 2.7: use `maxTtl`. Used as `maxTtl` when that is empty |
 | `oauth2.serverMetadataUrl` | CILogon OIDC URL | OIDC provider metadata URL |
 | `existingSecret` | `""` | Name of pre-existing Secret with credentials |
 | `postgresql.enabled` | `true` | Deploy bundled PostgreSQL |
