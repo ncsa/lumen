@@ -300,9 +300,12 @@ def test_pool_without_balance_row_uses_starting_coins(app, client, target):
 def test_api_key_count_counts_only_usable_normal_keys(app, client, target):
     with app.app_context():
         project = make_project("Counted Not", owner_id=target["id"])
+        # Three counted keys against two live admin/monitoring keys: the counted total and the
+        # excluded total must stay different, so a flipped key-type filter changes the result.
         rows = [
             (target["id"], KEY_TYPE_NORMAL, None, None),                                 # counted
             (target["id"], KEY_TYPE_NORMAL, None, utcnow() + timedelta(days=1)),         # counted
+            (target["id"], KEY_TYPE_NORMAL, None, utcnow() + timedelta(days=30)),        # counted
             (target["id"], KEY_TYPE_NORMAL, utcnow(), None),                             # revoked
             (target["id"], KEY_TYPE_NORMAL, None, utcnow() - timedelta(seconds=1)),      # expired
             (target["id"], KEY_TYPE_ADMIN, None, None),
@@ -313,7 +316,7 @@ def test_api_key_count_counts_only_usable_normal_keys(app, client, target):
             db.session.add(APIKey(entity_id=eid, key_type=key_type, key_hash=hash_api_key(f"sk_count_{i}"),
                                   revoked_at=revoked_at, expires_at=expires_at))
         db.session.commit()
-    assert _get(client, _user_url(target["uuid"])).get_json()["lumen"]["api_key_count"] == 2
+    assert _get(client, _user_url(target["uuid"])).get_json()["lumen"]["api_key_count"] == 3
 
 
 def test_no_integer_ids_keys_or_usage_leak(app, client, target):
