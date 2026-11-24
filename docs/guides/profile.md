@@ -99,7 +99,7 @@ In admin mode, the dialog has a **Key type** select. Changing it generates a new
 | **Admin** | `sk_admin_` | The model list with token metrics, and the [admin API](api-reference.md#admin-api); never chat | At most 1 week, or the maximum key lifetime if that is shorter; never **Never**. Defaults to the longest allowed |
 | **Monitoring** | `sk_monitor_` | Only the model list with token metrics, for uptime monitors such as `scripts/monitor` | Anything, including **Never**, whatever the maximum key lifetime; defaults to **Never** |
 
-Admin and monitoring keys are never billed, and they stop working when their owner is removed from the `admins` list (they work again if the owner is added back). See the [access matrix](api-reference.md#key-types-and-access) for every endpoint. Keys of a project or requested through OAuth are always normal keys.
+Admin and monitoring keys are never billed, but each request they make counts as a use and updates the key's last used time, even when the key type may not use that endpoint. They stop working when their owner is removed from the `admins` list (they work again if the owner is added back). See the [access matrix](api-reference.md#key-types-and-access) for every endpoint. Keys of a project or requested through OAuth are always normal keys.
 
 #### Key Expiry
 

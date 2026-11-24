@@ -273,7 +273,8 @@ def test_admin_and_monitoring_keys_are_never_billed(app, client, keys, models, c
     assert _request_logs(app) == 0
     with app.app_context():
         key = db.session.get(APIKey, keys[credential])
-        assert (key.requests, key.input_tokens, key.output_tokens, key.cost) == (0, 0, 0, 0)
+        # Each authenticated request is a use (the refused chat call too), but nothing is billed.
+        assert (key.requests, key.input_tokens, key.output_tokens, key.cost) == (4, 0, 0, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -290,3 +291,37 @@ def test_admin_api(app, client, keys, admin_user, credential):
     else:
         assert resp.status_code == HTTPStatus.FORBIDDEN
         assert resp.get_json()["error"]["type"] == "permission_error"
+
+
+# ---------------------------------------------------------------------------
+# Use count of admin and monitoring keys
+# ---------------------------------------------------------------------------
+
+def _uses(app, key_id):
+    with app.app_context():
+        key = db.session.get(APIKey, key_id)
+        return key.requests, key.last_used_at
+
+
+@pytest.mark.parametrize("credential", ["admin", "monitoring"])
+def test_each_models_call_is_counted(app, client, keys, models, credential):
+    before = utcnow()
+    for _ in range(2):
+        assert client.get("/v1/models", headers=_auth(credential)).status_code == HTTPStatus.OK
+    requests, last_used_at = _uses(app, keys[credential])
+    assert requests == 2
+    assert before <= last_used_at <= utcnow()
+
+
+@pytest.mark.parametrize("credential", ["admin", "monitoring"])
+def test_call_refused_for_the_key_type_is_counted(app, client, keys, models, credential):
+    resp = client.get("/v1/usage", headers=_auth(credential))
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    requests, last_used_at = _uses(app, keys[credential])
+    assert requests == 1
+    assert last_used_at is not None
+
+
+def test_normal_key_models_call_is_not_counted(app, client, keys, models):
+    assert client.get("/v1/models", headers=_auth("normal")).status_code == HTTPStatus.OK
+    assert _uses(app, keys["normal"]) == (0, None)
