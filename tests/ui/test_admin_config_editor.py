@@ -178,6 +178,22 @@ def test_editor_untouched_save_keeps_null_max_ttl_uncapped(editor):
     assert _key_max_ttl(saved) == 0
 
 
+@pytest.mark.parametrize("scalar", ["30d", 5, True, ["30d"]])
+def test_editor_repairs_non_mapping_api_keys(editor, scalar):
+    """The server reads a non-mapping api.keys as empty; the editor must render and save over it."""
+    page, cfg, posted = editor
+    _write_keys(cfg, scalar)
+    _open_api_section(page)
+
+    for sel in KEY_TTL_FIELDS.values():
+        assert page.input_value(sel) == ""
+    page.fill("#keys-max-ttl", "12h")
+    _save(page)
+
+    assert posted[0]["api"]["keys"] == {"max_ttl": "12h"}
+    assert yaml.safe_load(cfg.read_text())["api"]["keys"] == {"max_ttl": "12h"}
+
+
 def test_editor_does_not_write_blank_key_ttls(editor):
     page, cfg, posted = editor
     _write_keys(cfg, {"max_ttl": "30d", "max_admin_ttl": "1d", "default_ttl": "7d", "future_key": "kept"})
