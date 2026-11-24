@@ -129,6 +129,22 @@ def test_every_accepted_call_counts_and_sets_last_used_at(ctx, admin_user, clock
 
 
 @pytest.mark.parametrize("key_type", PRIVILEGED)
+def test_an_older_use_written_late_keeps_the_newer_last_used_at(ctx, admin_user, clock, key_type):
+    """A request that sampled its time before a newer one but writes after it still counts."""
+    token, key_id = _key(admin_user["id"], key_type)
+    clock["t"] = NOW + timedelta(seconds=5)
+    resolve_api_key(token)  # the newer request commits first
+
+    clock["t"] = NOW  # the older request, sampled earlier, writes now
+    key, _ = resolve_api_key(token)
+    assert (key.requests, key.last_used_at) == (2, NOW + timedelta(seconds=5))
+
+    clock["t"] = NOW + timedelta(seconds=6)
+    key, _ = resolve_api_key(token)
+    assert (key.requests, key.last_used_at) == (3, NOW + timedelta(seconds=6))
+
+
+@pytest.mark.parametrize("key_type", PRIVILEGED)
 def test_no_use_is_counted_for_a_refused_owner(ctx, test_user, clock, key_type):
     token, key_id = _key(test_user["id"], key_type)
     assert resolve_api_key(token) is INVALID_KEY

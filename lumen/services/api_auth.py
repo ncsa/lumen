@@ -8,7 +8,7 @@ and the admin API decorator both wrap ``resolve_api_key`` and then decide, by
 from dataclasses import dataclass
 from http import HTTPStatus
 
-from sqlalchemy import select, update
+from sqlalchemy import case, select, update
 
 from lumen.decorators import is_admin_eligible
 from lumen.extensions import db
@@ -65,11 +65,22 @@ def resolve_api_key(token: str) -> tuple[APIKey, Entity] | KeyRejected:
 
 
 def _count_use(api_key: APIKey) -> None:
-    """Add one to ``requests`` and set ``last_used_at`` to now, atomically."""
+    """Add one to ``requests`` and move ``last_used_at`` forward to now, atomically.
+
+    ``last_used_at`` never goes back: a request that sampled its time earlier
+    but writes after a newer one keeps the newer time.
+    """
+    now = utcnow()
     db.session.execute(
         update(APIKey)
         .where(APIKey.id == api_key.id)
-        .values(requests=APIKey.requests + 1, last_used_at=utcnow())
+        .values(
+            requests=APIKey.requests + 1,
+            last_used_at=case(
+                (APIKey.last_used_at.is_(None) | (APIKey.last_used_at < now), now),
+                else_=APIKey.last_used_at,
+            ),
+        )
     )
     db.session.commit()
     db.session.refresh(api_key)
