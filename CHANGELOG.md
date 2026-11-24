@@ -9,6 +9,7 @@ All notable changes to Lumen will be documented in this file.
 - `lumen.sh` adds `--aliases` and remembers the `--aliases`/`--no-aliases` choice in `config.ini` as `aliases = true/false`. (#734)
 - Add admin (sk_admin_, max 1-week TTL) and monitoring (sk_monitor_) API key types for admins; api.monitoring.token is deprecated (#737)
 - Read-only admin API with admin keys: GET /v1/organization/users and /v1/organization/users/{user_id} (#736)
+- OpenAPI spec for the `/v1/` API, served at `GET /v1/openapi.yaml` and in the docs, listing which key types may call each endpoint. (#762)
 
 ### Changed
 

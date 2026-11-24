@@ -61,6 +61,8 @@ def _route_endpoints(app):
 
 def _expected_access(endpoint):
     """The access classes the code enforces for ``endpoint``."""
+    if endpoint == "api.openapi_spec":
+        return {"public"}
     if endpoint in MONITOR_ENDPOINTS:
         return {"normal", "monitor", "admin"}
     if endpoint.startswith("admin_api."):

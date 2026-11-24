@@ -46,6 +46,9 @@ Admin keys **cannot chat**: they are for monitoring and the [admin API](#admin-a
 | `POST` | `/v1/messages/count_tokens` | Estimate the prompt tokens of a Messages request |
 | `GET` | `/v1/organization/users` | Admin API: list users (admin key only) |
 | `GET` | `/v1/organization/users/<user_id>` | Admin API: one user's details (admin key only) |
+| `GET` | `/v1/openapi.yaml` | The OpenAPI spec of this API (public, no key) |
+
+The full OpenAPI spec, with the key types each endpoint accepts, is served without a key at `https://lumen.example.com/v1/openapi.yaml` and rendered on the [API Spec (OpenAPI)](https://ncsa.github.io/lumen/guides/api-spec/) page.
 
 ---
 

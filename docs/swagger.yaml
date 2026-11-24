@@ -15,21 +15,42 @@ info:
       `api.monitoring.token` from the config file.
     - `admin`: an admin key (`sk_admin_...`).
 
-    A credential outside an operation's list gets `403`. Replace
+    On an operation that needs a key, a valid key whose type is not in the
+    operation's list gets `403`; public operations ignore any key sent. Replace
     `https://lumen.example.com` with your Lumen URL. See the API Reference
     guide for examples and details.
   license:
     name: Apache-2.0
     identifier: Apache-2.0
 servers:
-  - url: https://lumen.example.com
+  - url: "https://lumen.example.com"
 tags:
   - name: Models
   - name: Usage
   - name: OpenAI
   - name: Anthropic
   - name: Admin
+  - name: Spec
 paths:
+  /v1/openapi.yaml:
+    get:
+      operationId: getOpenApiSpec
+      tags: [Spec]
+      summary: This OpenAPI spec
+      description: |
+        Access: no key needed (public).
+
+        Returns this OpenAPI document as YAML, with the server URL set to the
+        Lumen instance that serves it.
+      x-access: [public]
+      security: []
+      responses:
+        "200":
+          description: The OpenAPI spec of the `/v1/` API.
+          content:
+            application/yaml:
+              schema:
+                type: string
   /v1/usage:
     get:
       operationId: getUsage

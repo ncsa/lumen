@@ -36,6 +36,11 @@ markdown_extensions:
           format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.highlight
 
+plugins:
+  # search is on by default, but listing any plugin replaces the default list.
+  - search
+  - swagger-ui-tag
+
 validation:
   links:
     anchors: warn
@@ -50,6 +55,7 @@ nav:
       - OAuth for Client Developers: guides/oauth-clients.md
       - Usage: guides/usage.md
       - API Reference: guides/api-reference.md
+      - API Spec (OpenAPI): guides/api-spec.md
       - Anthropic API: guides/anthropic.md
       - Ask Your Files (RAG): guides/rag.md
   - Models:

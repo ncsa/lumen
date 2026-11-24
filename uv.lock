@@ -1103,6 +1103,7 @@ dev = [
     { name = "beautifulsoup4" },
     { name = "locust" },
     { name = "mkdocs-material" },
+    { name = "mkdocs-swagger-ui-tag" },
     { name = "openapi-spec-validator" },
     { name = "playwright" },
     { name = "pytest" },
@@ -1144,6 +1145,7 @@ dev = [
     { name = "beautifulsoup4", specifier = ">=4.12" },
     { name = "locust", specifier = ">=2.28" },
     { name = "mkdocs-material", specifier = ">=9.7.7" },
+    { name = "mkdocs-swagger-ui-tag", specifier = ">=0.8" },
     { name = "openapi-spec-validator", specifier = ">=0.7" },
     { name = "playwright", specifier = ">=1.59.0" },
     { name = "pytest", specifier = ">=9" },
@@ -1329,6 +1331,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/79/9b/9b4c96d6593b2a541e1cb8b34899a6d021d208bb357042823d4d2cabdbe7/mkdocs_material_extensions-1.3.1.tar.gz", hash = "sha256:10c9511cea88f568257f960358a467d12b970e1f7b2c0e5fb2bb48cab1928443", size = 11847, upload-time = "2023-11-22T19:09:45.208Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5b/54/662a4743aa81d9582ee9339d4ffa3c8fd40a4965e033d77b9da9774d3960/mkdocs_material_extensions-1.3.1-py3-none-any.whl", hash = "sha256:adff8b62700b25cb77b53358dad940f3ef973dd6db797907c49e3c2ef3ab4e31", size = 8728, upload-time = "2023-11-22T19:09:43.465Z" },
+]
+
+[[package]]
+name = "mkdocs-swagger-ui-tag"
+version = "0.8.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "beautifulsoup4" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e8/ba/c660d28947d1b57a980f7dd5156fb994134c20146a7948c1adb796a80d7f/mkdocs_swagger_ui_tag-0.8.1.tar.gz", hash = "sha256:15f199ca7734c50c088c53bfe9ec806768ad97816badb3a4e72af4e9434252db", size = 1285972, upload-time = "2026-07-10T09:26:21.634Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/28/28/4709ae7156a1326a9530d8a51632a3369d42392588929969b1d0aa221ff5/mkdocs_swagger_ui_tag-0.8.1-py3-none-any.whl", hash = "sha256:f5d6d0558ed6cfafce54a9f0d874d9e24be0a9b02b2429553afefced61c9e55f", size = 1300296, upload-time = "2026-07-10T09:26:19.494Z" },
 ]
 
 [[package]]

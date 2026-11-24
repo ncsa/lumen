@@ -126,3 +126,28 @@ def test_mkdocs_mermaid_diagrams_render(tmp_path):
         html = (site_dir / page / "index.html").read_text(encoding="utf-8")
         assert 'class="mermaid"' in html, f"{page}: expected a .mermaid element"
         assert 'language-mermaid' not in html, f"{page}: mermaid rendered as a code fence"
+
+
+def test_mkdocs_api_spec_page_embeds_swagger_ui(tmp_path):
+    """The API Spec page embeds a Swagger UI viewer of the copied spec, read-only.
+
+    Without the swagger-ui-tag plugin the build still succeeds but leaves the
+    raw ``<swagger-ui>`` tag in the page, so check the generated viewer itself.
+    """
+    import re
+
+    site_dir = _build_site(tmp_path)
+    page_dir = site_dir / "guides" / "api-spec"
+    html = (page_dir / "index.html").read_text(encoding="utf-8")
+
+    assert "<swagger-ui" not in html, "swagger-ui tag was not processed"
+    iframe = re.search(r'<iframe[^>]*class="swagger-ui-iframe"[^>]*>', html)
+    assert iframe, "no Swagger UI iframe on the API Spec page"
+    src = re.search(r'src="([^"]+)"', iframe.group(0)).group(1)
+    viewer = (page_dir / src).read_text(encoding="utf-8")
+
+    spec_url = re.search(r'url = "([^"]+)"', viewer).group(1)
+    copied = (page_dir / spec_url).resolve()
+    assert copied == (site_dir / "swagger.yaml").resolve()
+    assert copied.read_bytes() == (REPO_ROOT / "docs" / "swagger.yaml").read_bytes()
+    assert re.search(r'"supportedSubmitMethods":\s*\[\]', viewer), "Try it out must be disabled"
