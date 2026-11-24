@@ -232,3 +232,22 @@ def test_chat_key_drives_the_chat_ui_limit(app, monkeypatch):
         assert extensions._chat_limit() == "8 per minute"
         _set_limits(app, monkeypatch)
         assert extensions._chat_limit() == "30 per minute"
+
+
+@pytest.mark.parametrize("route", ["embeddings", "transcriptions"])
+@pytest.mark.parametrize("category_value", [None, "also bogus"])
+def test_malformed_chat_bounds_categories_by_the_default(app, client, caller, monkeypatch, caplog,
+                                                        route, category_value):
+    """A malformed chat limit must not leave embeddings or audio unlimited.
+
+    flask-limiter drops a limit string it cannot parse, so the category falls
+    back to the 30-per-minute default instead of passing the chat value through.
+    """
+    limits = {"chat": "lots per minute"}
+    if category_value is not None:
+        limits["embedding" if route == "embeddings" else "audio"] = category_value
+    _set_limits(app, monkeypatch, **limits)
+    with caplog.at_level(logging.WARNING):
+        _spend(client, caller, route, times=30)
+    assert any("rate_limiting.chat" in r.getMessage() and "30 per minute" in r.getMessage()
+               for r in caplog.records)

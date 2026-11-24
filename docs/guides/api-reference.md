@@ -547,7 +547,7 @@ Errors use the OpenAI shape `{"error": {"message", "type", "code"}}`:
 | `401` | Unknown, revoked or expired key, an admin key whose owner is no longer an admin or is inactive, or a non-ASCII token |
 | `403` | A normal key, a monitoring key or `api.monitoring.token` (`permission_error`, "This endpoint requires an admin key") |
 | `404` | No such user (`code: user_not_found`) |
-| `429` | The per-key rate limit (`rate_limiting.limit`) is exceeded |
+| `429` | The per-key rate limit (`rate_limiting.chat`) is exceeded |
 
 Requests are never billed and are not written to the request log.
 

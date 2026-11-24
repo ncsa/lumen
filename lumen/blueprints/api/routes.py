@@ -15,7 +15,14 @@ from sqlalchemy.exc import IntegrityError
 
 from lumen.blueprints.metrics.middleware import observe_stream_abort
 from lumen.commands import RESERVED_MODEL_ID_SUFFIX
-from lumen.extensions import _rate_limiting_cfg, _warn_rate_limit_once, db, limiter, resolve_chat_limit
+from lumen.extensions import (
+    DEFAULT_RATE_LIMIT,
+    _rate_limiting_cfg,
+    _warn_rate_limit_once,
+    db,
+    limiter,
+    resolve_chat_limit,
+)
 from lumen.models.api_key import KEY_TYPE_NORMAL
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_model_consent import EntityModelConsent
@@ -147,27 +154,49 @@ def _api_limit():
     return resolve_chat_limit()
 
 
+def _valid_limit(value) -> bool:
+    """Whether flask-limiter can enforce ``value`` (it silently drops one it cannot parse)."""
+    try:
+        return isinstance(value, str) and bool(parse_many(value))
+    except ValueError:
+        return False
+
+
+def _category_fallback_limit() -> str:
+    """The chat limit if it is enforceable, else the default.
+
+    flask-limiter discards a limit string it cannot parse, so passing a malformed
+    chat value through would leave the category unlimited.
+    """
+    chat = resolve_chat_limit()
+    if _valid_limit(chat):
+        return chat
+    _warn_rate_limit_once(
+        ("invalid", "chat", repr(chat)),
+        "rate_limiting.chat value %r is not a valid rate limit; embeddings and audio use %r.",
+        chat, DEFAULT_RATE_LIMIT,
+    )
+    return DEFAULT_RATE_LIMIT
+
+
 def _category_limit(category: str) -> str:
     """The rate limit for ``category``: its own key, else the chat limit.
 
     An unset key gives the category its own bucket of the chat size, not a share
     of the chat bucket. An unparseable value warns once per value and falls back
-    to the chat limit too, so a typo never makes the endpoint unlimited and never
-    turns every request into a 500 inside flask-limiter.
+    to the chat limit too. When the chat limit is itself unparseable the default
+    is used instead, so the category is always bounded by an enforceable limit.
     """
     value = _rate_limiting_cfg().get(category)
     if value is None:
-        return resolve_chat_limit()
-    try:
-        if not isinstance(value, str) or not parse_many(value):
-            raise ValueError(value)
-    except ValueError:
+        return _category_fallback_limit()
+    if not _valid_limit(value):
         _warn_rate_limit_once(
             ("invalid", category, repr(value)),
             "rate_limiting.%s value %r is not a valid rate limit; using the chat limit.",
             category, value,
         )
-        return resolve_chat_limit()
+        return _category_fallback_limit()
     return value
 
 
