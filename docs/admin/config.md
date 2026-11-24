@@ -92,7 +92,7 @@ When running, Lumen watches `config.yaml` for changes and automatically reloads 
 | `chat.upload` | Adjust upload file size limits and allowed file types |
 | `rate_limiting.limit` | Change request rate limits |
 | `stats.fold_interval` / `stats.fold_lag` | Change how often usage totals are folded and how far behind now they end (next fold pass) |
-| `api.keys.ttl` | Change the max/default API key lifetime (keys created afterwards; existing keys keep their expiry) |
+| `api.keys.max_ttl` / `max_admin_ttl` / `max_monitor_ttl` / `default_ttl` | Change the maximum API key lifetime per key type and the default lifetime (keys created afterwards; existing keys keep their expiry) |
 | `app.llmhub_url` | Show, change or hide the LLMHub link on the Models page |
 | `models[*].auto_cache_price` | Turn models.dev cache-price autofill on or off (applies on the next Update) |
 

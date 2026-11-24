@@ -83,7 +83,7 @@ Managers, the owner and admins see every key in the project. A **user** sees onl
 1. Click **+ New API Key**.
 2. The key is generated and shown **once** in a dialog — copy it immediately.
 3. Give the key a descriptive name (e.g., `production`, `staging`, `ci-runner`).
-4. Choose how long the key lasts in **Expires after**. The choices, and the default, follow the maximum key lifetime the same way as [on the Profile page](../guides/profile.md#key-expiry); the maximum applies to managers, the owner and admins too.
+4. Choose how long the key lasts in **Expires after**. The choices, and the default, follow the maximum and default key lifetimes the same way as [on the Profile page](../guides/profile.md#key-expiry); the maximum applies to managers, the owner and admins too.
 5. Click **Save Key**.
 
 If you are a **user** and already have an active key, **+ New API Key** is disabled and the page explains why. Revoke your key to create a new one.

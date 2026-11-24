@@ -74,10 +74,16 @@ api:
     token: ""   # Deprecated, removed in 2.7: use a monitoring key (sk_monitor_) created by an admin
                 # on the profile page instead. Set to a long random string; leave empty to disable.
 
+  # API key lifetimes: each 0 or a duration such as 12h, 30d or 8w. Users may pick a
+  # shorter TTL; an expired key is revoked. Applies to keys created afterwards; existing
+  # keys keep their expiry. (The old api.keys.ttl is a deprecated fallback for max_ttl,
+  # removed in 2.7.)
   keys:
-    ttl: "0"    # Maximum and default API key lifetime: 0 = keys never expire, or a duration
-                # such as 12h, 30d or 8w. Users may pick a shorter TTL; an expired key is revoked.
-                # Applies to keys created afterwards; existing keys keep their expiry.
+    max_ttl: "0"          # Maximum for normal keys; 0 = no limit (keys may never expire).
+    max_admin_ttl: "7d"   # Maximum for admin keys; 0 = no limit. Default 7d.
+    max_monitor_ttl: "0"  # Maximum for monitoring keys; 0 = no limit. Default no limit.
+    # default_ttl: "30d"  # Default for every key type (0 = never), lowered to that type's
+                          # maximum. Unset: each type defaults to its maximum (never when 0).
 
 # Bounds on the calls Lumen makes to the upstream model endpoints. Without these
 # the OpenAI SDK defaults apply (600s timeout, 2 retries), so one stalled backend

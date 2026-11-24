@@ -210,7 +210,10 @@ config live **under `api:`** (e.g. `api.monitoring.token`, `api.prometheus.enabl
 ```yaml
 api:
   keys:
-    ttl: "0"           # max and default API key lifetime: 0 = never, or e.g. 12h, 30d, 8w
+    max_ttl: "0"           # longest lifetime of normal keys: 0 = no limit, or e.g. 12h, 30d, 8w
+    max_admin_ttl: "7d"    # longest lifetime of admin keys (default 7d)
+    max_monitor_ttl: "0"   # longest lifetime of monitoring keys (default no limit)
+    default_ttl: "30d"     # default lifetime of every key type, lowered to its maximum
 
   monitoring:
     token: "my-secret-token"
@@ -226,11 +229,26 @@ API requests always require model acknowledgment, just like the web UI: an API k
 
 ### api.keys
 
-`ttl` is both the maximum and the default lifetime of an API key: `0` (the default) means keys never expire, otherwise a whole number of hours, days or weeks such as `12h`, `30d` or `8w`, up to 100 years. On the profile page and on a project, users choose a key's lifetime in **Expires after**, up to this TTL, which is also the default; with `0` they may also choose **Never**. A key created through an OAuth key request expires at creation time plus this TTL. An expired key is revoked: a background job checks every minute, and an API request with an overdue key is rejected and revokes it on the spot. Rotating a key keeps its expiry.
+Four settings control how long API keys live. Each is `0` or a whole number of hours, days or weeks such as `12h`, `30d` or `8w`, up to 100 years.
 
-Changes take effect without a restart, for keys created afterwards; existing keys keep the expiry they were given. An invalid value is logged as a warning and treated as `0`, and the config editor refuses to save it. In the Helm chart this is `config.api.keys.ttl`.
+| Key | Meaning | When unset | Helm value |
+|-----|---------|------------|------------|
+| `max_ttl` | Longest lifetime of a normal key | `0` (no limit) | `config.api.keys.maxTtl` |
+| `max_admin_ttl` | Longest lifetime of an admin key | `7d` | `config.api.keys.maxAdminTtl` |
+| `max_monitor_ttl` | Longest lifetime of a monitoring key | `0` (no limit) | `config.api.keys.maxMonitorTtl` |
+| `default_ttl` | Default lifetime of every key type (`0` = never) | each type's maximum | `config.api.keys.defaultTtl` |
 
-In the Config editor (`/admin/config`) this is the **Max / default key TTL** field on the **API Keys** card of the **API** section. The editor flags a malformed value as you type and will not save it; the server checks it again on save. Leaving the field blank removes the setting, which means `0`. When `app.config_editor` is `false` the field is read-only, like the rest of the editor.
+Each key type follows only its own maximum. A maximum of `0` means no limit, so users may also choose **Never**; with a maximum, **Never** is not offered. On the profile page and on a project, users choose a key's lifetime in **Expires after**, up to the type's maximum; the type's default is pre-selected. A key created through an OAuth key request is a normal key and, when the request asks for no `ttl`, gets the normal key's default.
+
+The default is `default_ttl` lowered to the type's maximum when it is larger; **Never** (`0`) counts as larger than any maximum. A larger `default_ttl` is valid and is lowered quietly, never rejected. Without `default_ttl`, a type's default is its maximum, or **Never** when it has no limit. For example, `default_ttl: 30d` with the other settings unset gives normal and monitoring keys a 30-day default (with **Never** still offered) and admin keys a 7-day default; `max_ttl: 90d` with `default_ttl: 1y` gives normal keys a 90-day default.
+
+An expired key is revoked: a background job checks every minute, and an API request with an overdue key is rejected and revokes it on the spot. Rotating a key keeps its expiry.
+
+Changes take effect without a restart, for keys created afterwards; existing keys keep the expiry they were given. An invalid value is logged as a warning and the setting is treated as unset, and the config editor refuses to save it.
+
+> **Deprecated:** `api.keys.ttl`, the single maximum and default from earlier releases, is replaced by `max_ttl` and is removed in 2.7. Until then it is used as `max_ttl` when `max_ttl` is not set, with a deprecation warning on every config load; when both are set, `max_ttl` wins and a warning says `ttl` is ignored. In the Helm chart, `config.api.keys.ttl` is likewise used as `maxTtl` when that is empty; the chart always writes `max_ttl`.
+
+In the Config editor (`/admin/config`) these are the **Max key TTL**, **Max admin key TTL**, **Max monitoring key TTL** and **Default key TTL** fields on the **API Keys** card of the **API** section. The editor flags a malformed value as you type and will not save it; the server checks it again on save. Leaving a field blank removes the setting, so its "when unset" value applies. A legacy `ttl` is shown in **Max key TTL** when `max_ttl` is absent; saving writes it as `max_ttl` and drops `ttl`. When `app.config_editor` is `false` the fields are read-only, like the rest of the editor.
 
 ### api.monitoring
 
