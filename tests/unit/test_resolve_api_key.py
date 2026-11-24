@@ -125,6 +125,10 @@ def test_last_used_at_is_written_at_most_once_a_minute(ctx, admin_user, clock, k
     resolve_api_key(token)
     assert db.session.get(APIKey, key_id).last_used_at == NOW + timedelta(minutes=1)
 
+    clock["t"] = NOW + timedelta(minutes=3)
+    resolve_api_key(token)
+    assert db.session.get(APIKey, key_id).last_used_at == NOW + timedelta(minutes=3)
+
 
 def test_last_used_at_is_not_written_for_a_refused_owner(ctx, test_user, clock):
     token, key_id = _key(test_user["id"], KEY_TYPE_ADMIN)
