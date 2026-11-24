@@ -46,6 +46,7 @@ dev = [
     "ruff>=0.14",
     "yamllint>=1.35",
     "mkdocs-material>=9.7.7",
+    "openapi-spec-validator>=0.7",
 ]
 
 [tool.pytest.ini_options]

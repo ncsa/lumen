@@ -75,7 +75,7 @@ Following rules are here to help the AI avoid the same mistakes again:
 - Every GitHub issue worked on must have a CHANGELOG entry that links it as `(#N)`, and every bullet for that issue carries the link. Before finishing, check that each bullet for the issue ends with `(#N)`.
 - Adding or adjusting a small test on its own does not warrant a CHANGELOG entry.
 - When bumping the version in pyproject.toml, also run `uv lock` to update uv.lock.
-- When bumping the version for a release, also update `version` and `appVersion` in chart/Chart.yaml to match.
+- When bumping the version for a release, also update `version` and `appVersion` in chart/Chart.yaml and `info.version` in `docs/swagger.yaml` to match.
 - The monitor in `scripts/monitor` is versioned in lockstep with Lumen: when bumping the version for a release, set the same version in `scripts/monitor/pyproject.toml` and run `uv lock` in `scripts/monitor` too.
 - When cutting a release, first pull the latest dependencies (`uv lock --upgrade`) and then run the full test suite before tagging — upgraded dependencies can introduce breaking changes, so the release must not go out unless the tests pass.
 - "The full test suite" always includes the PostgreSQL and Redis tests; a plain `uv run pytest` silently skips them. Start throwaway services and point the suite at them:
@@ -103,6 +103,7 @@ Following rules are here to help the AI avoid the same mistakes again:
 - Every id visible to a user — in URLs, JSON payloads, templates/JS, form fields, CLI arguments and the session cookie — must be the row's opaque `uuid` column (or another existing public unique key such as `model_name`), never an integer primary key: integer ids are sequential and easy to guess. Integer ids stay server-side, for primary keys, foreign keys and joins only. Routes take the id with the `<uuid:...>` converter and resolve it with the helpers in `lumen/models/lookups.py` (`entity_by_uuid_or_404`, `group_by_uuid_or_404`, `key_by_uuid_or_404`). A new table whose rows a user can address gets a `uuid` column like the existing ones (`db.Uuid`, unique, not null, `default=uuid4`, with the external-use-only comment).
 - A migration that changes what `flask upgrade` must do — a new post-migration step, or a continuous aggregate created, rebuilt or reordered — must also update `docs/admin/commands.md` (the `upgrade`, `backfill-aggregate` and `check-aggregate` sections) and add an **Upgrade:** note to `CHANGELOG.md` if operators must act. A new `flask` command needs its own section there; `tests/unit/test_commands_documented.py` fails without it.
 - Don't use bare integer HTTP codes, use `HTTPStatus` constants.
+- Any new, changed or removed official API endpoint (under `/v1/`) must be reflected in `docs/swagger.yaml`, including its `x-access` classes (`public`, `monitor`, `normal`, `admin`) and the same classes in words at the start of its `description`. Browser callback routes are not listed. `tests/unit/test_swagger.py` and the `openapi` lint job enforce this.
 - updates to config file should be reflected in the helm chart values.yaml and values.schema.json.
 
 ## 6. Accessibility (WCAG 2.1 AA)
