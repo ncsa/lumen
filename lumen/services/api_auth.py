@@ -6,10 +6,9 @@ and the admin API decorator both wrap ``resolve_api_key`` and then decide, by
 """
 
 from dataclasses import dataclass
-from datetime import timedelta
 from http import HTTPStatus
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import case, select, update
 
 from lumen.decorators import is_admin_eligible
 from lumen.extensions import db
@@ -20,8 +19,9 @@ from lumen.services.key_expiry import revoke_if_expired
 from lumen.timeutils import utcnow
 
 # Admin and monitoring keys are never billed, so bill_request never touches
-# their last_used_at; it is written here instead, at most this often.
-LAST_USED_INTERVAL = timedelta(minutes=1)
+# their usage: every request they authenticate is counted here instead
+# (``requests`` and ``last_used_at``), also when the route then refuses the
+# key type. Normal keys are counted by bill_request only.
 
 
 @dataclass(frozen=True)
@@ -58,23 +58,29 @@ def resolve_api_key(token: str) -> tuple[APIKey, Entity] | KeyRejected:
     if api_key.key_type != KEY_TYPE_NORMAL:
         if not entity.active or not is_admin_eligible(entity):
             return INVALID_KEY
-        _touch_last_used(api_key)
+        _count_use(api_key)
     elif not entity.active:
         return ACCOUNT_DISABLED
     return api_key, entity
 
 
-def _touch_last_used(api_key: APIKey) -> None:
-    """Set ``last_used_at`` to now unless it was set within the last minute."""
+def _count_use(api_key: APIKey) -> None:
+    """Add one to ``requests`` and move ``last_used_at`` forward to now, atomically.
+
+    ``last_used_at`` never goes back: a request that sampled its time earlier
+    but writes after a newer one keeps the newer time.
+    """
     now = utcnow()
-    cutoff = now - LAST_USED_INTERVAL
-    if api_key.last_used_at is not None and api_key.last_used_at > cutoff:
-        return
-    # Guarded on the row as it is now, so concurrent requests write it once.
     db.session.execute(
         update(APIKey)
-        .where(APIKey.id == api_key.id, or_(APIKey.last_used_at.is_(None), APIKey.last_used_at <= cutoff))
-        .values(last_used_at=now)
+        .where(APIKey.id == api_key.id)
+        .values(
+            requests=APIKey.requests + 1,
+            last_used_at=case(
+                (APIKey.last_used_at.is_(None) | (APIKey.last_used_at < now), now),
+                else_=APIKey.last_used_at,
+            ),
+        )
     )
     db.session.commit()
     db.session.refresh(api_key)

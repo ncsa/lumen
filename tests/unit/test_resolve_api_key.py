@@ -1,4 +1,4 @@
-"""Unit tests for ``resolve_api_key``: every outcome, and the last_used_at limit."""
+"""Unit tests for ``resolve_api_key``: every outcome, and the use count of privileged keys."""
 from datetime import datetime, timedelta
 from http import HTTPStatus
 
@@ -19,7 +19,7 @@ PRIVILEGED = (KEY_TYPE_ADMIN, KEY_TYPE_MONITORING)
 
 @pytest.fixture
 def clock(monkeypatch):
-    """A frozen, settable clock for api_auth (its last_used_at limit)."""
+    """A frozen, settable clock for api_auth (the last_used_at it writes)."""
     now = {"t": NOW}
     monkeypatch.setattr(api_auth, "utcnow", lambda: now["t"])
     return now
@@ -111,31 +111,61 @@ def test_privileged_key_works_again_when_owner_is_restored(app, ctx, admin_user,
 
 
 @pytest.mark.parametrize("key_type", PRIVILEGED)
-def test_last_used_at_is_written_at_most_once_a_minute(ctx, admin_user, clock, key_type):
+def test_every_accepted_call_counts_and_sets_last_used_at(ctx, admin_user, clock, key_type):
     token, key_id = _key(admin_user["id"], key_type)
 
     resolve_api_key(token)
-    assert db.session.get(APIKey, key_id).last_used_at == NOW
+    key = db.session.get(APIKey, key_id)
+    assert (key.requests, key.last_used_at) == (1, NOW)
 
-    clock["t"] = NOW + timedelta(seconds=59)
+    clock["t"] = NOW + timedelta(seconds=1)
     resolve_api_key(token)
-    assert db.session.get(APIKey, key_id).last_used_at == NOW
+    key = db.session.get(APIKey, key_id)
+    assert (key.requests, key.last_used_at) == (2, NOW + timedelta(seconds=1))
 
-    clock["t"] = NOW + timedelta(minutes=1)
-    resolve_api_key(token)
-    assert db.session.get(APIKey, key_id).last_used_at == NOW + timedelta(minutes=1)
-
-
-def test_last_used_at_is_not_written_for_a_refused_owner(ctx, test_user, clock):
-    token, key_id = _key(test_user["id"], KEY_TYPE_ADMIN)
-    resolve_api_key(token)
-    assert db.session.get(APIKey, key_id).last_used_at is None
+    clock["t"] = NOW + timedelta(seconds=2)
+    key, _ = resolve_api_key(token)
+    assert (key.requests, key.last_used_at) == (3, NOW + timedelta(seconds=2))
 
 
-def test_normal_key_last_used_at_is_left_to_billing(ctx, test_user, clock):
+@pytest.mark.parametrize("key_type", PRIVILEGED)
+def test_an_older_use_written_late_keeps_the_newer_last_used_at(ctx, admin_user, clock, key_type):
+    """A request that sampled its time before a newer one but writes after it still counts."""
+    token, key_id = _key(admin_user["id"], key_type)
+    clock["t"] = NOW + timedelta(seconds=5)
+    resolve_api_key(token)  # the newer request commits first
+
+    clock["t"] = NOW  # the older request, sampled earlier, writes now
+    key, _ = resolve_api_key(token)
+    assert (key.requests, key.last_used_at) == (2, NOW + timedelta(seconds=5))
+
+    clock["t"] = NOW + timedelta(seconds=6)
+    key, _ = resolve_api_key(token)
+    assert (key.requests, key.last_used_at) == (3, NOW + timedelta(seconds=6))
+
+
+@pytest.mark.parametrize("key_type", PRIVILEGED)
+def test_no_use_is_counted_for_a_refused_owner(ctx, test_user, clock, key_type):
+    token, key_id = _key(test_user["id"], key_type)
+    assert resolve_api_key(token) is INVALID_KEY
+    key = db.session.get(APIKey, key_id)
+    assert (key.requests, key.last_used_at) == (0, None)
+
+
+@pytest.mark.parametrize("key_type", ALL_TYPES)
+@pytest.mark.parametrize("field", ["revoked_at", "expires_at"])
+def test_no_use_is_counted_for_a_revoked_or_expired_key(ctx, admin_user, clock, key_type, field):
+    token, key_id = _key(admin_user["id"], key_type, **{field: datetime(2026, 1, 1)})
+    assert resolve_api_key(token) is INVALID_KEY
+    key = db.session.get(APIKey, key_id)
+    assert (key.requests, key.last_used_at) == (0, None)
+
+
+def test_normal_key_use_is_left_to_billing(ctx, test_user, clock):
     token, key_id = _key(test_user["id"], KEY_TYPE_NORMAL)
     resolve_api_key(token)
-    assert db.session.get(APIKey, key_id).last_used_at is None
+    key = db.session.get(APIKey, key_id)
+    assert (key.requests, key.last_used_at) == (0, None)
 
 
 def test_key_type_defaults_to_normal(ctx, test_user):
