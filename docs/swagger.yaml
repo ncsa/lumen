@@ -1,0 +1,782 @@
+openapi: 3.1.0
+info:
+  title: Lumen API
+  version: 2.5.0
+  description: |
+    The official Lumen API under `/v1/`: OpenAI-compatible endpoints, the
+    Anthropic Messages endpoints and the read-only admin API.
+
+    Every operation lists the credentials that may call it in `x-access`, and
+    repeats them in its description:
+
+    - `public`: no credential needed.
+    - `normal`: a normal API key (`sk_...`), billed for generation requests.
+    - `monitor`: a monitoring key (`sk_monitor_...`) or the deprecated
+      `api.monitoring.token` from the config file.
+    - `admin`: an admin key (`sk_admin_...`).
+
+    A credential outside an operation's list gets `403`. Replace
+    `https://lumen.example.com` with your Lumen URL. See the API Reference
+    guide for examples and details.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: https://lumen.example.com
+tags:
+  - name: Models
+  - name: Usage
+  - name: OpenAI
+  - name: Anthropic
+  - name: Admin
+paths:
+  /v1/usage:
+    get:
+      operationId: getUsage
+      tags: [Usage]
+      summary: Cumulative usage of the calling API key
+      description: |
+        Access: normal key only.
+
+        Returns cumulative usage for the key in the `Authorization` header,
+        and the coins still available to the account that owns it.
+      x-access: [normal]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Usage of the calling key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Usage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /v1/models:
+    get:
+      operationId: listModels
+      tags: [Models]
+      summary: List models
+      description: |
+        Access: normal key, monitoring key (or the deprecated
+        `api.monitoring.token`), admin key.
+
+        A normal key sees only the models its account may use. Monitoring and
+        admin keys see every active model; only they get token counts with
+        `?tokens=true`, a normal key's `tokens` parameter is ignored.
+      x-access: [normal, monitor, admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/IncludeUnacknowledged"
+        - $ref: "#/components/parameters/Tokens"
+      responses:
+        "200":
+          description: The models the caller may see.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /v1/models/{model_id}:
+    get:
+      operationId: getModel
+      tags: [Models]
+      summary: Retrieve a model
+      description: |
+        Access: normal key, monitoring key (or the deprecated
+        `api.monitoring.token`), admin key.
+
+        Returns the same metadata as the list, for one model or alias. Only
+        monitoring and admin keys get token counts with `?tokens=true`.
+      x-access: [normal, monitor, admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ModelId"
+        - $ref: "#/components/parameters/Tokens"
+      responses:
+        "200":
+          description: The model.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Model"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/models/{model_id}/acknowledge:
+    post:
+      operationId: acknowledgeModel
+      tags: [Models]
+      summary: Acknowledge a model that requires consent
+      description: |
+        Access: normal key only.
+
+        Records the account's consent for a model that needs acknowledgement
+        or is early access. Idempotent and not billed.
+      x-access: [normal]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ModelId"
+      responses:
+        "200":
+          description: The model's remaining requirements.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Acknowledgement"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/chat/completions:
+    post:
+      operationId: createChatCompletion
+      tags: [OpenAI]
+      summary: Create a chat completion
+      description: |
+        Access: normal key only. Billed.
+
+        OpenAI-compatible chat completions, streamed with `stream: true`.
+      x-access: [normal]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, messages]
+              properties:
+                model:
+                  type: string
+                messages:
+                  type: array
+                  items:
+                    type: object
+                stream:
+                  type: boolean
+              additionalProperties: true
+      responses:
+        "200":
+          description: A chat completion, or a server-sent event stream.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Object"
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/completions:
+    post:
+      operationId: createCompletion
+      tags: [OpenAI]
+      summary: Create a text completion (legacy)
+      description: |
+        Access: normal key only. Billed.
+
+        Legacy OpenAI text completions; streaming is not supported.
+      x-access: [normal]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, prompt]
+              properties:
+                model:
+                  type: string
+                prompt:
+                  type: string
+              additionalProperties: true
+      responses:
+        "200":
+          description: A text completion.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Object"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/embeddings:
+    post:
+      operationId: createEmbedding
+      tags: [OpenAI]
+      summary: Create embeddings
+      description: |
+        Access: normal key only. Billed per input token.
+      x-access: [normal]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, input]
+              properties:
+                model:
+                  type: string
+                input:
+                  description: Text, a list of texts, or token ids.
+              additionalProperties: true
+      responses:
+        "200":
+          description: The embedding vectors.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Object"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/audio/transcriptions:
+    post:
+      operationId: createTranscription
+      tags: [OpenAI]
+      summary: Transcribe audio
+      description: |
+        Access: normal key only. Billed.
+
+        Speech-to-text in the audio's own language.
+      x-access: [normal]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/AudioRequest"
+      responses:
+        "200":
+          description: The transcription.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Object"
+            text/plain:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/audio/translations:
+    post:
+      operationId: createTranslation
+      tags: [OpenAI]
+      summary: Translate audio into English
+      description: |
+        Access: normal key only. Billed.
+
+        Speech-to-text translated into English.
+      x-access: [normal]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/AudioRequest"
+      responses:
+        "200":
+          description: The translation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Object"
+            text/plain:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/messages:
+    post:
+      operationId: createMessage
+      tags: [Anthropic]
+      summary: Create a message (Anthropic Messages API)
+      description: |
+        Access: normal key only. Billed.
+
+        Anthropic-compatible Messages API, streamed with `stream: true`. The
+        key goes in `x-api-key` or `Authorization: Bearer`; if both are sent
+        they must match. Errors use the Anthropic envelope.
+      x-access: [normal]
+      security:
+        - apiKeyHeader: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, messages, max_tokens]
+              properties:
+                model:
+                  type: string
+                messages:
+                  type: array
+                  items:
+                    type: object
+                max_tokens:
+                  type: integer
+                stream:
+                  type: boolean
+              additionalProperties: true
+      responses:
+        "200":
+          description: A message, or a server-sent event stream.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Object"
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/messages/count_tokens:
+    post:
+      operationId: countMessageTokens
+      tags: [Anthropic]
+      summary: Estimate the prompt tokens of a Messages request
+      description: |
+        Access: normal key only. Not billed.
+
+        A character-based estimate; nothing is sent upstream. The key goes in
+        `x-api-key` or `Authorization: Bearer`.
+      x-access: [normal]
+      security:
+        - apiKeyHeader: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, messages]
+              properties:
+                model:
+                  type: string
+                messages:
+                  type: array
+                  items:
+                    type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: The estimated input tokens.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [input_tokens]
+                properties:
+                  input_tokens:
+                    type: integer
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/organization/users:
+    get:
+      operationId: listUsers
+      tags: [Admin]
+      summary: List users
+      description: |
+        Access: admin key only. Not billed.
+
+        Users, keyset-paged: pass the previous page's `last_id` as `after`.
+      x-access: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: after
+          in: query
+          description: A user id (`user-<uuid>`); the page starts after that user.
+          schema:
+            type: string
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [created_at, last_active, email]
+            default: created_at
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - name: search
+          in: query
+          description: Part of the name or email, case-insensitive.
+          schema:
+            type: string
+        - name: group
+          in: query
+          description: Only members of this group (`group-<uuid>`).
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, inactive]
+      responses:
+        "200":
+          description: A page of users.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [object, data, first_id, last_id, has_more, total]
+                properties:
+                  object:
+                    const: list
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/User"
+                  first_id:
+                    type: [string, "null"]
+                  last_id:
+                    type: [string, "null"]
+                  has_more:
+                    type: boolean
+                  total:
+                    type: integer
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /v1/organization/users/{user_id}:
+    get:
+      operationId: getUser
+      tags: [Admin]
+      summary: Retrieve a user
+      description: |
+        Access: admin key only. Not billed.
+
+        One user, with their coin pool and API key count.
+      x-access: [admin]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          description: The user's id, `user-<uuid>`.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "A Lumen API key in `Authorization: Bearer <key>`."
+    apiKeyHeader:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: A Lumen API key in `x-api-key`, accepted on the `/v1/messages` endpoints only.
+  parameters:
+    ModelId:
+      name: model_id
+      in: path
+      required: true
+      description: A model name or alias; it may contain slashes (`org/model`).
+      schema:
+        type: string
+    Tokens:
+      name: tokens
+      in: query
+      description: |
+        `true`, `1` or `yes` adds per-model token counts. Honored for
+        monitoring and admin keys only; ignored for a normal key.
+      schema:
+        type: string
+    IncludeUnacknowledged:
+      name: include_unacknowledged
+      in: query
+      description: |
+        `true`, `1` or `yes` also lists models that still need
+        acknowledgement. Applies to normal keys.
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: "Invalid request, or a missing or malformed `Authorization` header."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Unknown, revoked or expired key.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: "The credential's class may not call this endpoint, or the account may not use the model."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: No such model or user, or one the caller may not see.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: "Rate limit exceeded; see `Retry-After`."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Object:
+      type: object
+      additionalProperties: true
+    Error:
+      description: |
+        `{"error": {"message", "type", "code"?, "param"?}}`; the Anthropic
+        endpoints add a top-level `"type": "error"`.
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, type]
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+            code:
+              type: [string, "null"]
+            param:
+              type: [string, "null"]
+          additionalProperties: true
+      additionalProperties: true
+    Usage:
+      type: object
+      required:
+        - requests
+        - input_tokens
+        - cached_input_tokens
+        - cache_write_tokens
+        - output_tokens
+        - total_tokens
+        - audio_seconds
+        - cost
+        - coins_available
+        - last_used_at
+      properties:
+        requests:
+          type: integer
+        input_tokens:
+          type: integer
+        cached_input_tokens:
+          type: integer
+        cache_write_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+        total_tokens:
+          type: integer
+        audio_seconds:
+          type: number
+        cost:
+          type: number
+        coins_available:
+          description: "`-2` means unlimited; `null` means no or a blocked coin pool."
+          type: [number, "null"]
+        last_used_at:
+          type: [string, "null"]
+          format: date-time
+      additionalProperties: true
+    Model:
+      type: object
+      required: [id, object]
+      properties:
+        id:
+          type: string
+        object:
+          const: model
+        parent:
+          description: The canonical model when `id` is an alias.
+          type: [string, "null"]
+      additionalProperties: true
+    ModelList:
+      type: object
+      required: [object, data]
+      properties:
+        object:
+          const: list
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Model"
+      additionalProperties: true
+    Acknowledgement:
+      type: object
+      required: [id, tags, acknowledged_at]
+      properties:
+        id:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        acknowledged_at:
+          type: [string, "null"]
+          format: date-time
+        notice:
+          type: string
+      additionalProperties: true
+    AudioRequest:
+      type: object
+      required: [file, model]
+      properties:
+        file:
+          type: string
+          format: binary
+        model:
+          type: string
+      additionalProperties: true
+    User:
+      type: object
+      required: [object, id, name, email, role, added_at, lumen]
+      properties:
+        object:
+          const: organization.user
+        id:
+          type: string
+        name:
+          type: [string, "null"]
+        email:
+          type: [string, "null"]
+        role:
+          type: string
+          enum: [owner, reader]
+        added_at:
+          type: [integer, "null"]
+        lumen:
+          type: object
+          additionalProperties: true
+      additionalProperties: true
