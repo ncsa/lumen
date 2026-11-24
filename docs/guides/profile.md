@@ -4,6 +4,8 @@ The **Profile** page (`/profile`) shows your coin balance, spending history, mod
 
 ![Profile page](../img/profile.png)
 
+The same data is available as JSON from [`GET /v1/me`](api-reference.md#your-profile-v1me), with your session or a personal API key.
+
 ## Profile Card
 
 At the top of the page, a card shows your identity and a summary of your account activity.
