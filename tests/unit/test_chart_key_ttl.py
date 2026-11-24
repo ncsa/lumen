@@ -59,4 +59,6 @@ def test_integer_zero_max_ttl_wins_over_legacy_ttl(tmp_path):
 def test_bad_value_fails_schema_validation(field):
     with pytest.raises(subprocess.CalledProcessError) as exc:
         _render({f"config.api.keys.{field}": "30x"})
-    assert f"config.api.keys.{field}" in exc.value.stderr
+    # Helm 3 names the field with dots, Helm 4 with a JSON Pointer.
+    stderr = exc.value.stderr
+    assert f"config.api.keys.{field}:" in stderr or f"/config/api/keys/{field}" in stderr, stderr
