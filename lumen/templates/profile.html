@@ -671,7 +671,7 @@ function visibleKeyRows(allRows, state) {
 }
 
 function keyNameCell(k) {
-  return `<td><span data-bs-toggle="tooltip" data-bs-title="${escHtml(k.hint)}${k.source ? '&#10;' + escHtml(k.source) : ''}">${escHtml(k.name)}</span></td>`;
+  return `<td><span tabindex="0" data-bs-toggle="tooltip" data-bs-title="${escHtml(k.hint)}${k.source ? '&#10;' + escHtml(k.source) : ''}">${escHtml(k.name)}</span></td>`;
 }
 
 // Edit expiry / Rotate / Revoke for the owner; the revoked badge only when an admin views the profile.

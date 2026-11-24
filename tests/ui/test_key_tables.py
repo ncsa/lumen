@@ -456,6 +456,10 @@ def test_privileged_keys_have_their_own_table(app, restore_config, admin_open_pa
     assert mon[1] == "Model list (uptime monitoring)"
     assert mon[3] not in ("", "—") and mon[4] == "Never" and mon[5] == "1,234"
     assert page.locator("#priv-key-tbody .rotate-key-btn").count() == 2
+    # The name shows the key hint on keyboard focus too.
+    page.focus("#priv-key-tbody tr:has-text('mon-key') td:first-child span")
+    page.wait_for_selector(".tooltip.show")
+    assert "sk_monitor_abcd...0006" in page.inner_text(".tooltip.show")
     _run_all_checks(page.content().encode(), "/profile (admin and monitoring keys)")
 
     # Edit expiry offers the key's own type's options.
@@ -469,20 +473,34 @@ def test_privileged_keys_have_their_own_table(app, restore_config, admin_open_pa
     assert _ttl_labels(page, "#edit-key-ttl-select") == ["1 day", "7 days", "30 days"]
 
 
+def _sort_priv_by_name(page, direction):
+    """Sort the admin and monitoring keys by Name, ascending or descending."""
+    th = "#priv-key-table th[data-col='name']"
+    page.click(th)
+    if page.get_attribute(th, "aria-sort") != direction:
+        page.click(th)
+    assert page.get_attribute(th, "aria-sort") == direction
+
+
 def test_privileged_key_table_sort_filter_and_search(app, admin_open_page, admin_user):
     _seed_privileged_keys(app, admin_user["id"])
     page, _ = admin_open_page("/profile")
 
-    # Dates and Uses sort descending on the first click, text ascending.
-    page.click("#priv-key-table th[data-col='requests']")
-    assert _names(page, "priv-key-tbody") == ["mon-key", "adm-key"]
-    page.click("#priv-key-table th[data-col='created']")
-    assert _names(page, "priv-key-tbody") == ["mon-key", "adm-key"]
-    page.click("#priv-key-table th[data-col='expires_at']")
-    assert _names(page, "priv-key-tbody") == ["adm-key", "mon-key"]
-    page.click("#priv-key-table th[data-col='purpose']")
-    assert _names(page, "priv-key-tbody") == ["adm-key", "mon-key"]
-    assert page.get_attribute("#priv-key-table th[data-col='purpose']", "aria-sort") == "ascending"
+    # Dates and Uses sort descending on the first click, text ascending. Before
+    # each click the rows are put in the opposite order (by Name), so a column
+    # whose click does nothing, or sorts ascending first, fails.
+    for col, prior, expected, direction in (
+        ("requests", "ascending", ["mon-key", "adm-key"], "descending"),     # 1234 > 0
+        ("created", "ascending", ["mon-key", "adm-key"], "descending"),      # 1 day ago > 3 days ago
+        ("last_used", "ascending", ["mon-key", "adm-key"], "descending"),    # used > never used
+        ("expires_at", "descending", ["adm-key", "mon-key"], "descending"),  # in 2 days > never
+        ("purpose", "descending", ["adm-key", "mon-key"], "ascending"),      # "Admin…" < "Model…"
+    ):
+        _sort_priv_by_name(page, prior)
+        assert _names(page, "priv-key-tbody") != expected
+        page.click(f"#priv-key-table th[data-col='{col}']")
+        assert _names(page, "priv-key-tbody") == expected, col
+        assert page.get_attribute(f"#priv-key-table th[data-col='{col}']", "aria-sort") == direction, col
 
     # Show revoked keys applies to both tables.
     page.check("#show-revoked-cb")
