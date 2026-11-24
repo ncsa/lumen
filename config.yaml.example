@@ -132,7 +132,15 @@ chat:
 
 rate_limiting:
   # storage_url: redis://localhost:6379/0  # omit for in-memory (single-process); requires restart to change
-  limit: "30 per minute"  # per authenticated user identity; on /v1, chat, completions, messages and audio share one per-key budget, count_tokens and acknowledge each have their own, model listing and usage are not counted
+  # Per authenticated user identity. Chat, completions, messages and the chat UI
+  # share the chat budget; count_tokens and acknowledge each have their own of
+  # the same size; model listing and usage are not counted. `limit` is the
+  # deprecated name of `chat` (removed in 2.7.0); never set both.
+  chat: "120 per minute"
+  # /v1/embeddings and /v1/audio/* each have a per-key bucket of their own;
+  # omit to give them their own bucket of the chat size.
+  embedding: "500 per minute"
+  audio: "20 per minute"
 
 # Groups — memberships, coin pools, model grants, and auto-join rules — are
 # managed in the app (each group's page), not here. There is no group_rules

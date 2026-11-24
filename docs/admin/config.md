@@ -90,7 +90,7 @@ When running, Lumen watches `config.yaml` for changes and automatically reloads 
 | `admins` | Update the list of administrator email addresses |
 | `chat.remove` | Change conversation soft-delete vs hard-delete mode |
 | `chat.upload` | Adjust upload file size limits and allowed file types |
-| `rate_limiting.limit` | Change request rate limits |
+| `rate_limiting.chat` / `embedding` / `audio` (and the deprecated `limit`) | Change request rate limits |
 | `stats.fold_interval` / `stats.fold_lag` | Change how often usage totals are folded and how far behind now they end (next fold pass) |
 | `api.keys.ttl` | Change the max/default API key lifetime (keys created afterwards; existing keys keep their expiry) |
 | `app.llmhub_url` | Show, change or hide the LLMHub link on the Models page |

@@ -247,14 +247,15 @@ def create_app():
     from lumen.services.config_watcher import (
         CONFIG_VERSION_ERROR,
         config_version_ok,
+        rate_limiting_config_errors,
         removed_config_key_errors,
     )
     if not config_version_ok(yaml_data or {}):
         print(f"ERROR: {CONFIG_VERSION_ERROR} App cannot start.", file=sys.stderr)
         sys.exit(1)
-    if removed_keys := removed_config_key_errors(yaml_data):
+    if config_errors := removed_config_key_errors(yaml_data) + rate_limiting_config_errors(yaml_data):
         print(
-            "ERROR: Invalid config.yaml: " + "; ".join(removed_keys) + ". App cannot start.",
+            "ERROR: Invalid config.yaml: " + "; ".join(config_errors) + ". App cannot start.",
             file=sys.stderr,
         )
         sys.exit(1)

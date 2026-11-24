@@ -19,9 +19,45 @@ def _chat_entity_id():
     return str(entity.uuid) if entity is not None else (request.remote_addr or "unknown")
 
 
+DEFAULT_RATE_LIMIT = "30 per minute"
+
+# Deduplicate rate-limit config warnings: the limit callables run on every request.
+_rate_limit_warned: set = set()
+
+
+def _warn_rate_limit_once(key, msg, *args):
+    if key not in _rate_limit_warned:
+        _rate_limit_warned.add(key)
+        current_app.logger.warning(msg, *args)
+
+
+def _rate_limiting_cfg() -> dict:
+    rl_cfg = current_app.config.get("YAML_DATA", {}).get("rate_limiting") or {}
+    return rl_cfg if isinstance(rl_cfg, dict) else {}
+
+
+def resolve_chat_limit() -> str:
+    """The chat rate limit: ``rate_limiting.chat``, else the deprecated ``limit``.
+
+    ``limit`` is the pre-2.5.1 name of ``chat`` and is removed in 2.7.0. Setting
+    both is rejected by config validation and at startup, so ``chat`` winning
+    here only matters for a config that slipped past both.
+    """
+    rl_cfg = _rate_limiting_cfg()
+    if "chat" in rl_cfg:
+        return rl_cfg["chat"]
+    if "limit" in rl_cfg:
+        _warn_rate_limit_once(
+            ("deprecated", "limit"),
+            "rate_limiting.limit is deprecated: use rate_limiting.chat; "
+            "limit will be removed in 2.7.0.",
+        )
+        return rl_cfg["limit"]
+    return DEFAULT_RATE_LIMIT
+
+
 def _chat_limit():
-    cfg = current_app.config.get("YAML_DATA", {})
-    return cfg.get("rate_limiting", {}).get("limit", "30 per minute")
+    return resolve_chat_limit()
 
 # Root module of the PostgreSQL DBAPI (psycopg 3). Every other DBAPI (sqlite3)
 # falls through untouched.

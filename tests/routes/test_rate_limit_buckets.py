@@ -1,16 +1,20 @@
-"""Which /v1 routes share a per-key rate-limit bucket (#601).
+"""Which /v1 routes share a per-key rate-limit bucket (#601, #756).
 
-Chat, completions, Anthropic messages, audio and embeddings all send a request upstream, so
-one API key gets ``rate_limiting.limit`` once across them. count_tokens and
+Chat, completions and Anthropic messages share one per-key bucket of
+``rate_limiting.chat``. Embeddings and audio each have a per-key bucket of their
+own, sized by ``rate_limiting.embedding`` / ``rate_limiting.audio`` or, when unset,
+by the chat value; both audio routes share the one audio bucket. count_tokens and
 acknowledge never call a model and keep a bucket of their own.
 """
 import json
+import logging
 from http import HTTPStatus
 from io import BytesIO
 from unittest.mock import MagicMock
 
 import pytest
 
+from lumen import extensions
 from lumen.blueprints.api import routes
 from lumen.extensions import db
 from lumen.models.api_key import APIKey
@@ -51,10 +55,16 @@ def caller(app, client, test_user, audio_model, test_model_endpoint, api_key, mo
                    upstream.embeddings.create):
         create.return_value = _Response()
     monkeypatch.setattr(routes.openai, "OpenAI", MagicMock(return_value=upstream))
-    monkeypatch.setitem(app.config, "YAML_DATA",
-                        {**app.config.get("YAML_DATA", {}), "rate_limiting": {"limit": "2 per minute"}})
+    monkeypatch.setattr(extensions, "_rate_limit_warned", set())
+    _set_limits(app, monkeypatch, chat="2 per minute")
     token, _ = api_key
     return token
+
+
+def _set_limits(app, monkeypatch, **rate_limiting):
+    """Replace ``rate_limiting`` in YAML_DATA, as a hot reload would."""
+    monkeypatch.setitem(app.config, "YAML_DATA",
+                        {**app.config.get("YAML_DATA", {}), "rate_limiting": rate_limiting})
 
 
 def _call(client, token, route):
@@ -80,10 +90,10 @@ def _call(client, token, route):
 @pytest.mark.parametrize("first, second, third", [
     ("chat", "chat", "messages"),
     ("messages", "messages", "completions"),
-    ("transcriptions", "chat", "messages"),
-    ("chat", "translations", "transcriptions"),
-    ("embeddings", "chat", "embeddings"),
-    ("messages", "embeddings", "completions"),
+    ("messages", "chat", "completions"),
+    ("transcriptions", "translations", "transcriptions"),
+    ("translations", "transcriptions", "translations"),
+    ("embeddings", "embeddings", "embeddings"),
 ])
 def test_generating_routes_share_one_budget(client, caller, first, second, third):
     assert _call(client, caller, first).status_code == HTTPStatus.OK
@@ -131,3 +141,94 @@ def test_shared_bucket_429_carries_retry_after_and_code(client, caller):
     assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS
     assert int(resp.headers["Retry-After"]) > 0
     assert resp.get_json()["error"]["code"] == "rate_limit_exceeded"
+
+
+def _spend(client, token, route, times=2):
+    for _ in range(times):
+        assert _call(client, token, route).status_code == HTTPStatus.OK
+    assert _call(client, token, route).status_code == HTTPStatus.TOO_MANY_REQUESTS
+
+
+@pytest.mark.parametrize("spent", ["chat", "embeddings", "transcriptions"])
+def test_unset_categories_each_get_their_own_bucket_of_the_chat_size(client, caller, spent):
+    """With embedding/audio unset, chat, embeddings and audio are three buckets of 2."""
+    _spend(client, caller, spent)
+    for route in {"chat", "embeddings", "transcriptions"} - {spent}:
+        _spend(client, caller, route)
+
+
+@pytest.mark.parametrize("category, routes_", [
+    ("embedding", ("embeddings",)),
+    ("audio", ("transcriptions", "translations")),
+])
+def test_explicit_category_limit_is_independent_of_chat(app, client, caller, monkeypatch, category, routes_):
+    _set_limits(app, monkeypatch, chat="2 per minute", **{category: "3 per minute"})
+    for i in range(3):
+        assert _call(client, caller, routes_[i % len(routes_)]).status_code == HTTPStatus.OK
+    for route in routes_:
+        assert _call(client, caller, route).status_code == HTTPStatus.TOO_MANY_REQUESTS
+    # The chat bucket is untouched, and spending it leaves the category spent, not reset.
+    _spend(client, caller, "chat")
+
+
+def test_spent_chat_leaves_explicit_category_budgets(app, client, caller, monkeypatch):
+    _set_limits(app, monkeypatch, chat="2 per minute", embedding="3 per minute", audio="3 per minute")
+    _spend(client, caller, "messages")
+    _spend(client, caller, "embeddings", times=3)
+    _spend(client, caller, "translations", times=3)
+
+
+@pytest.mark.parametrize("route", ["embeddings", "transcriptions"])
+def test_category_429_carries_retry_after_and_code(client, caller, route):
+    for _ in range(2):
+        _call(client, caller, route)
+    resp = _call(client, caller, route)
+    assert resp.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert int(resp.headers["Retry-After"]) > 0
+    assert resp.get_json()["error"]["code"] == "rate_limit_exceeded"
+
+
+def test_hot_reload_changes_the_effective_limits(app, client, caller, monkeypatch):
+    _spend(client, caller, "embeddings")
+    # The limit is read per request. flask-limiter keys its counter on the limit
+    # itself, so a changed value starts a fresh count at the new size.
+    _set_limits(app, monkeypatch, chat="2 per minute", embedding="4 per minute")
+    _spend(client, caller, "embeddings", times=4)
+    _set_limits(app, monkeypatch, chat="1 per minute", embedding="4 per minute")
+    _spend(client, caller, "chat", times=1)
+    assert _call(client, caller, "embeddings").status_code == HTTPStatus.TOO_MANY_REQUESTS
+
+
+@pytest.mark.parametrize("bad", ["lots per minute", "", 500])
+def test_invalid_category_limit_warns_and_uses_the_chat_value(app, client, caller, monkeypatch, caplog, bad):
+    _set_limits(app, monkeypatch, chat="2 per minute", embedding=bad)
+    with caplog.at_level(logging.WARNING):
+        _spend(client, caller, "embeddings")
+    warnings = [r for r in caplog.records if "rate_limiting.embedding" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "using the chat limit" in warnings[0].getMessage()
+    # Its own bucket of the chat size, not the chat bucket.
+    _spend(client, caller, "chat")
+
+
+def test_legacy_limit_works_like_chat_and_warns_once(app, client, caller, monkeypatch, caplog):
+    _set_limits(app, monkeypatch, limit="2 per minute")
+    with caplog.at_level(logging.WARNING):
+        _spend(client, caller, "chat")
+        _spend(client, caller, "embeddings")
+        _spend(client, caller, "transcriptions")
+    warnings = [r for r in caplog.records if "rate_limiting.limit is deprecated" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "rate_limiting.chat" in warnings[0].getMessage()
+    assert "2.7.0" in warnings[0].getMessage()
+
+
+def test_chat_key_drives_the_chat_ui_limit(app, monkeypatch):
+    monkeypatch.setattr(extensions, "_rate_limit_warned", set())
+    with app.app_context():
+        _set_limits(app, monkeypatch, chat="7 per minute")
+        assert extensions._chat_limit() == "7 per minute"
+        _set_limits(app, monkeypatch, limit="8 per minute")
+        assert extensions._chat_limit() == "8 per minute"
+        _set_limits(app, monkeypatch)
+        assert extensions._chat_limit() == "30 per minute"

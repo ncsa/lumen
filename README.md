@@ -296,15 +296,19 @@ chat:
 
 ### Rate limiting
 
-Requests are rate-limited per authenticated user (API key ID for `/v1/*` routes, session user ID for `/chat/*` routes). On `/v1`, chat, completions, messages and audio share one per-key budget; `count_tokens` and `acknowledge` each have their own; model listing (`GET /v1/models`, `GET /v1/models/{id}`) and `GET /v1/usage` are not counted. The limit is a single string in flask-limiter notation (`N per second/minute/hour`):
+Requests are rate-limited per authenticated user (API key ID for `/v1/*` routes, session user ID for `/chat/*` routes). On `/v1`, chat, completions and messages share one per-key budget (`chat`); `/v1/embeddings` has its own per-key budget (`embedding`), and `/v1/audio/transcriptions` and `/v1/audio/translations` share another (`audio`). `count_tokens` and `acknowledge` each have their own budget of the `chat` size; model listing (`GET /v1/models`, `GET /v1/models/{id}`) and `GET /v1/usage` are not counted. Each limit is a string in flask-limiter notation (`N per second/minute/hour`):
 
 ```yaml
 rate_limiting:
-  limit: "30 per minute"
+  chat: "120 per minute"       # chat, completions, messages, and the /chat UI
+  embedding: "500 per minute"  # /v1/embeddings; omit to use the chat value
+  audio: "20 per minute"       # /v1/audio/*; omit to use the chat value
   # storage_url: redis://localhost:6379/0  # optional; use Redis in multi-worker deployments
 ```
 
-By default, limits are tracked in-memory (per-process). For multi-worker deployments (e.g. uvicorn with `--workers` > 1), set `storage_url` to a shared Redis instance so limits are enforced across all workers. Changing `storage_url` requires a restart; changing `limit` takes effect within ~5 seconds (hot-reloaded).
+`chat` defaults to `"30 per minute"`. An unset `embedding` or `audio` still gets a bucket of its own, sized at the `chat` value, so indexing a large document cannot use up the chat budget. An invalid `embedding` or `audio` value logs a warning and uses the `chat` value. `limit` is the deprecated name of `chat`: it still works but logs a warning, and it will be removed in 2.7.0. Setting both `chat` and `limit` is an error.
+
+By default, limits are tracked in-memory (per-process). For multi-worker deployments (e.g. uvicorn with `--workers` > 1), set `storage_url` to a shared Redis instance so limits are enforced across all workers. Changing `storage_url` requires a restart; changing `chat`, `embedding` or `audio` takes effect within ~5 seconds (hot-reloaded).
 
 ### Request concurrency
 

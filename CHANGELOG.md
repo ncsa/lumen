@@ -9,6 +9,7 @@ All notable changes to Lumen will be documented in this file.
 - `lumen.sh` adds `--aliases` and remembers the `--aliases`/`--no-aliases` choice in `config.ini` as `aliases = true/false`. (#734)
 - Add admin (sk_admin_, max 1-week TTL) and monitoring (sk_monitor_) API key types for admins; api.monitoring.token is deprecated (#737)
 - Read-only admin API with admin keys: GET /v1/organization/users and /v1/organization/users/{user_id} (#736)
+- `rate_limiting.chat`, `rate_limiting.embedding` and `rate_limiting.audio` give chat, `/v1/embeddings` and `/v1/audio/*` separate per-key buckets; unset `embedding`/`audio` use the `chat` value. `rate_limiting.limit` is deprecated (removed in 2.7.0). The Helm chart rejects unknown keys under `config.rateLimiting`. (#756)
 
 ### Changed
 

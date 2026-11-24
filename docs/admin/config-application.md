@@ -168,18 +168,23 @@ chat:
 
 ## rate_limiting
 
-Controls how many API requests each user can make. On `/v1`, chat, completions, messages and audio share one per-key budget; `count_tokens` and `acknowledge` each have their own; model listing (`/v1/models`) and `/v1/usage` are not counted:
+Controls how many API requests each user can make. On `/v1`, chat, completions and messages share one per-key budget; `/v1/embeddings` has its own, and the two `/v1/audio/*` routes share another; `count_tokens` and `acknowledge` each have their own of the `chat` size; model listing (`/v1/models`) and `/v1/usage` are not counted:
 
 ```yaml
 rate_limiting:
   # storage_url: redis://localhost:6379/0    # omit = in-memory (single-process)
-  limit: "30 per minute"     # per authenticated user identity
+  chat: "120 per minute"       # per authenticated user identity
+  embedding: "500 per minute"  # optional
+  audio: "20 per minute"       # optional
 ```
 
 | Field | Description |
 |-------|-------------|
 | `storage_url` | Omit for in-memory (dev only); set to a Redis URL for multi-instance deployments |
-| `limit` | Rate limit in the format `"N per timeframe"` (e.g. `"30 per minute"`, `"1000 per hour"`) |
+| `chat` | Limit for chat, completions, Anthropic messages and the chat UI, in the format `"N per timeframe"` (e.g. `"30 per minute"`, `"1000 per hour"`). Default `"30 per minute"` |
+| `embedding` | Limit for `/v1/embeddings`, in its own per-key bucket. Unset: a bucket of its own sized at the `chat` value. An invalid value logs a warning and uses the `chat` value |
+| `audio` | Limit for `/v1/audio/transcriptions` and `/v1/audio/translations`, which share one per-key bucket. Unset or invalid: as for `embedding` |
+| `limit` | **Deprecated** name of `chat`, removed in 2.7.0. Still read when `chat` is absent, with a warning. Setting both `chat` and `limit` is an error: the config is rejected on save and reload, and the app does not start |
 
 > **Restart required:** Changing `storage_url` requires a restart because the Redis client is initialized at startup.
 

@@ -9,12 +9,13 @@ from urllib.parse import quote
 
 import openai
 from flask import Blueprint, Response, current_app, g, jsonify, request
+from limits import parse_many
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from lumen.blueprints.metrics.middleware import observe_stream_abort
 from lumen.commands import RESERVED_MODEL_ID_SUFFIX
-from lumen.extensions import db, limiter
+from lumen.extensions import _rate_limiting_cfg, _warn_rate_limit_once, db, limiter, resolve_chat_limit
 from lumen.models.api_key import KEY_TYPE_NORMAL
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_model_consent import EntityModelConsent
@@ -143,14 +144,62 @@ def _api_key_id():
 
 
 def _api_limit():
-    cfg = current_app.config.get("YAML_DATA", {})
-    return cfg.get("rate_limiting", {}).get("limit", "30 per minute")
+    return resolve_chat_limit()
 
 
-# One per-key budget shared by every /v1 route that sends a request upstream
-# (chat, completions, audio, embeddings and Anthropic messages), so a key gets the
-# configured limit once in total rather than once per route.
+# Endpoint categories with a per-key bucket of their own, beside the generation
+# bucket (scope "api"). Each reads ``rate_limiting.<category>``.
+_LIMIT_CATEGORIES = ("embedding", "audio")
+
+
+def _category_limit(category: str) -> str:
+    """The rate limit for ``category``: its own key, else the chat limit.
+
+    An unset key gives the category its own bucket of the chat size, not a share
+    of the chat bucket. An unparseable value warns once per value and falls back
+    to the chat limit too, so a typo never makes the endpoint unlimited and never
+    turns every request into a 500 inside flask-limiter.
+    """
+    value = _rate_limiting_cfg().get(category)
+    if value is None:
+        return resolve_chat_limit()
+    try:
+        if not isinstance(value, str) or not parse_many(value):
+            raise ValueError(value)
+    except ValueError:
+        _warn_rate_limit_once(
+            ("invalid", category, repr(value)),
+            "rate_limiting.%s value %r is not a valid rate limit; using the chat limit.",
+            category, value,
+        )
+        return resolve_chat_limit()
+    return value
+
+
+def _category_scope(endpoint: str, category: str) -> str:
+    """Bucket scope for ``category``: one per category, never per endpoint.
+
+    flask-limiter passes the endpoint name to a callable scope; ignoring it keeps
+    every route of the category (both audio routes) in one shared bucket.
+    """
+    return f"api-{category}"
+
+
+# One per-key budget shared by every /v1 route that generates (chat, completions
+# and Anthropic messages), so a key gets the chat limit once in total rather than
+# once per route. Embeddings and audio each get a separate per-key bucket, so
+# indexing a large document cannot starve chat and vice versa (#756).
 api_generation_limit = limiter.shared_limit(_api_limit, scope="api", key_func=_api_key_id)
+api_embedding_limit = limiter.shared_limit(
+    lambda: _category_limit("embedding"),
+    scope=lambda endpoint: _category_scope(endpoint, "embedding"),
+    key_func=_api_key_id,
+)
+api_audio_limit = limiter.shared_limit(
+    lambda: _category_limit("audio"),
+    scope=lambda endpoint: _category_scope(endpoint, "audio"),
+    key_func=_api_key_id,
+)
 
 
 def _monitor_metrics() -> dict | None:
@@ -1115,14 +1164,14 @@ def _do_audio(kind: str):
 
 @api_bp.route("/audio/transcriptions", methods=["POST"])
 @api_key_required
-@api_generation_limit
+@api_audio_limit
 def audio_transcriptions():
     return _do_audio("transcriptions")
 
 
 @api_bp.route("/audio/translations", methods=["POST"])
 @api_key_required
-@api_generation_limit
+@api_audio_limit
 def audio_translations():
     return _do_audio("translations")
 
@@ -1144,7 +1193,7 @@ def _valid_embedding_input(value) -> bool:
 
 @api_bp.route("/embeddings", methods=["POST"])
 @api_key_required
-@api_generation_limit
+@api_embedding_limit
 def embeddings():
     """OpenAI-compatible embeddings, billed per input token at the input price.
 
