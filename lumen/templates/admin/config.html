@@ -206,9 +206,11 @@ function findRemovedPaths(orig, curr) {
 async function saveConfig() {
   if (CONFIG_READONLY) { showToast('Config is read-only and cannot be saved.', 'warning'); return; }
   collectCurrentSection();
-  if (!keyTtlValid(state.data.api?.keys?.ttl)) {
-    showToast('API Keys: the key TTL must be 0 or a duration such as 12h, 30d or 8w.', 'danger');
-    if (state.currentSection === 'api') $('keys-ttl').focus();
+  const keysCfg = state.data.api?.keys || {};
+  const badTtl = KEY_TTL_FIELDS.find(f => !keyTtlValid(keysCfg[f.key]));
+  if (badTtl) {
+    showToast(`API Keys: ${badTtl.label} must be 0 or a duration such as 12h, 30d or 8w.`, 'danger');
+    if (state.currentSection === 'api') $(badTtl.id).focus();
     return;
   }
   const toSave = JSON.parse(JSON.stringify(state.data));
@@ -481,34 +483,48 @@ function renderApi() {
     card('Monitoring', `
       ${field('mon-tok', 'Bearer Token', ti('mon-tok', m.token), 'for GET /v1/models health checks')}
     `) +
-    card('API Keys', `
-      ${field('keys-ttl', 'Max / default key TTL',
-        `<input type="text" class="form-control form-control-sm" id="keys-ttl" value="${esc(String(k.ttl ?? ''))}" placeholder="0" aria-describedby="keys-ttl-help keys-ttl-err" oninput="checkKeyTtl()"${CONFIG_READONLY ? ' readonly' : ''}>
-        <div id="keys-ttl-help" class="form-text">0 = never; e.g. 12h, 30d, 8w</div>
-        <div id="keys-ttl-err" class="invalid-feedback" role="alert"></div>`)}
-    `);
-  checkKeyTtl();
+    card('API Keys', KEY_TTL_FIELDS.map(f => keyTtlField(f, f.key === 'max_ttl' ? (k.max_ttl ?? k.ttl) : k[f.key])).join(''));
+  KEY_TTL_FIELDS.forEach(f => checkKeyTtl(f.id));
+}
+// api.keys lifetime settings, one text field each.
+// A legacy api.keys.ttl fills Max key TTL when max_ttl is absent; saving writes it back as max_ttl.
+const KEY_TTL_FIELDS = [
+  { key: 'max_ttl',         id: 'keys-max-ttl',         label: 'Max key TTL',            placeholder: '0',
+    help: 'Longest lifetime for normal keys. 0 = no limit; e.g. 12h, 30d, 8w' },
+  { key: 'max_admin_ttl',   id: 'keys-max-admin-ttl',   label: 'Max admin key TTL',      placeholder: '7d',
+    help: 'Longest lifetime for admin keys. 0 = no limit; blank = 7d' },
+  { key: 'max_monitor_ttl', id: 'keys-max-monitor-ttl', label: 'Max monitoring key TTL', placeholder: '0',
+    help: 'Longest lifetime for monitoring keys. 0 = no limit; blank = no limit' },
+  { key: 'default_ttl',     id: 'keys-default-ttl',     label: 'Default key TTL',        placeholder: '',
+    help: "Pre-selected lifetime for new keys of every type. 0 = never; lowered to each type's max; blank = each type's max" },
+];
+function keyTtlField(f, v) {
+  return field(f.id, f.label,
+    `<input type="text" class="form-control form-control-sm" id="${f.id}" value="${esc(String(v ?? ''))}" placeholder="${esc(f.placeholder)}" aria-describedby="${f.id}-help ${f.id}-err" oninput="checkKeyTtl('${f.id}')"${CONFIG_READONLY ? ' readonly' : ''}>
+    <div id="${f.id}-help" class="form-text">${esc(f.help)}</div>
+    <div id="${f.id}-err" class="invalid-feedback" role="alert"></div>`);
 }
 // Same format the server accepts (parse_key_ttl); the server stays authoritative.
 const KEY_TTL_RE = /^(0|[0-9]+[hdw])$/;
 function keyTtlValid(v) { return v === undefined || KEY_TTL_RE.test(String(v).trim()); }
-function checkKeyTtl() {
-  const input = $('keys-ttl');
+function checkKeyTtl(id) {
+  const input = $(id);
   if (!input) return;
   const ok = input.value.trim() === '' || keyTtlValid(input.value);
   input.classList.toggle('is-invalid', !ok);
   input.setAttribute('aria-invalid', ok ? 'false' : 'true');
-  $('keys-ttl-err').textContent = ok ? '' : 'Enter 0 or a whole number of hours, days or weeks, such as 12h, 30d or 8w.';
+  $(`${id}-err`).textContent = ok ? '' : 'Enter 0 or a whole number of hours, days or weeks, such as 12h, 30d or 8w.';
 }
 function collectApi() {
   const prom = { enabled: boolVal('prom-on') || undefined, token: val('prom-tok') || undefined, multiproc_dir: val('prom-dir') || undefined };
   const mon  = val('mon-tok') ? { token: val('mon-tok') } : undefined;
-  const ttl  = val('keys-ttl').trim();
   // Keep api.* keys this section has no card for.
   const prev = state.data.api && typeof state.data.api === 'object' ? state.data.api : {};
-  // Keep api.keys settings this card has no field for (max_ttl, default_ttl, ...).
-  const prevKeys = prev.keys && typeof prev.keys === 'object' ? prev.keys : {};
-  const keysObj = { ...prevKeys, ttl: ttl || undefined };
+  // Keep api.keys settings this card has no field for; drop the deprecated ttl,
+  // which the Max key TTL field took over (saving migrates it to max_ttl).
+  const { ttl: _legacyTtl, ...prevKeys } = prev.keys && typeof prev.keys === 'object' ? prev.keys : {};
+  const keysObj = { ...prevKeys };
+  KEY_TTL_FIELDS.forEach(f => { keysObj[f.key] = val(f.id).trim() || undefined; });
   const keys = Object.values(keysObj).some(v => v !== undefined) ? keysObj : undefined;
   state.data.api = {
     ...prev,

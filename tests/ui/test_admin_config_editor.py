@@ -64,67 +64,144 @@ def editor(app, admin_client, browser, tmp_path):
         app.config["CONFIG_YAML"] = original
 
 
+KEY_TTL_FIELDS = {
+    "max_ttl": "#keys-max-ttl",
+    "max_admin_ttl": "#keys-max-admin-ttl",
+    "max_monitor_ttl": "#keys-max-monitor-ttl",
+    "default_ttl": "#keys-default-ttl",
+}
+
+
 def _open_api_section(page):
     page.goto(f"{ORIGIN}/admin/config")
     page.click("#nav-api")
-    page.wait_for_selector("#keys-ttl")
+    page.wait_for_selector("#keys-max-ttl")
 
 
-def test_editor_saves_key_ttl_with_other_api_settings(editor):
+def _write_keys(cfg, keys):
+    data = yaml.safe_load(cfg.read_text())
+    data["api"]["keys"] = keys
+    cfg.write_text(yaml.safe_dump(data))
+
+
+def _save(page):
+    page.click("#btn-save")
+    page.wait_for_selector("#cfg-toast >> text=Saved successfully")
+
+
+def test_editor_saves_key_ttls_with_other_api_settings(editor):
     page, cfg, posted = editor
     _open_api_section(page)
     _run_all_checks(page.content().encode(), "/admin/config (API section)")
 
-    page.fill("#keys-ttl", "30d")
-    page.click("#btn-save")
-    page.wait_for_selector("#cfg-toast >> text=Saved successfully")
+    values = {"max_ttl": "90d", "max_admin_ttl": "1d", "max_monitor_ttl": "0", "default_ttl": "30d"}
+    for key, sel in KEY_TTL_FIELDS.items():
+        page.fill(sel, values[key])
+    _save(page)
 
     assert len(posted) == 1
-    assert posted[0]["api"]["keys"] == {"ttl": "30d"}
+    assert posted[0]["api"]["keys"] == values
     saved = yaml.safe_load(cfg.read_text())["api"]
     assert saved == {
-        "keys": {"ttl": "30d"},
+        "keys": values,
         "prometheus": {"enabled": True, "token": "real-prom-token"},
         "monitoring": {"token": "real-mon-token"},
     }
 
 
-@pytest.mark.parametrize("ttl_input, expected_ttl", [(None, None), ("", None), ("12h", "12h")])
-def test_editor_save_keeps_api_keys_it_has_no_field_for(editor, ttl_input, expected_ttl):
-    """Saving the API tab must not drop max_ttl and friends, which would lift a finite cap."""
+def test_editor_key_ttls_round_trip(editor):
+    """Loaded values fill their fields and are saved back unchanged."""
     page, cfg, posted = editor
-    new_keys = {"max_ttl": "30d", "max_admin_ttl": "1d", "max_monitor_ttl": "30d", "default_ttl": "7d"}
-    data = yaml.safe_load(cfg.read_text())
-    data["api"]["keys"] = {**new_keys, "ttl": "8w"}
-    cfg.write_text(yaml.safe_dump(data))
+    keys = {"max_ttl": "8w", "max_admin_ttl": "12h", "max_monitor_ttl": "30d", "default_ttl": "0"}
+    _write_keys(cfg, keys)
     _open_api_section(page)
 
-    if ttl_input is not None:
-        page.fill("#keys-ttl", ttl_input)
-    else:
-        expected_ttl = "8w"  # untouched legacy field is saved as loaded
-    page.click("#btn-save")
-    page.wait_for_selector("#cfg-toast >> text=Saved successfully")
+    for key, sel in KEY_TTL_FIELDS.items():
+        assert page.input_value(sel) == keys[key]
+    _save(page)
 
-    expected = dict(new_keys)
-    if expected_ttl is not None:
-        expected["ttl"] = expected_ttl
+    assert posted[0]["api"]["keys"] == keys
+    assert yaml.safe_load(cfg.read_text())["api"]["keys"] == keys
+
+
+def test_editor_key_ttl_placeholders(editor):
+    page, cfg, posted = editor
+    _open_api_section(page)
+    assert page.get_attribute("#keys-max-admin-ttl", "placeholder") == "7d"
+    assert page.get_attribute("#keys-max-monitor-ttl", "placeholder") == "0"
+
+
+@pytest.mark.parametrize("edit", [None, "12h"])
+def test_editor_migrates_legacy_ttl_to_max_ttl(editor, edit):
+    page, cfg, posted = editor
+    _write_keys(cfg, {"ttl": "30d", "default_ttl": "7d"})
+    _open_api_section(page)
+
+    assert page.input_value("#keys-max-ttl") == "30d"
+    if edit is not None:
+        page.fill("#keys-max-ttl", edit)
+    _save(page)
+
+    expected = {"max_ttl": edit or "30d", "default_ttl": "7d"}
     assert posted[0]["api"]["keys"] == expected
     assert yaml.safe_load(cfg.read_text())["api"]["keys"] == expected
 
 
-def test_editor_refuses_to_save_malformed_key_ttl(editor):
+def test_editor_max_ttl_wins_over_legacy_ttl(editor):
     page, cfg, posted = editor
+    _write_keys(cfg, {"ttl": "8w", "max_ttl": "30d"})
     _open_api_section(page)
 
-    page.fill("#keys-ttl", "abc")
-    assert page.get_attribute("#keys-ttl", "aria-invalid") == "true"
-    assert "12h, 30d or 8w" in page.text_content("#keys-ttl-err")
+    assert page.input_value("#keys-max-ttl") == "30d"
+    _save(page)
+
+    assert posted[0]["api"]["keys"] == {"max_ttl": "30d"}
+
+
+def test_editor_does_not_write_blank_key_ttls(editor):
+    page, cfg, posted = editor
+    _write_keys(cfg, {"max_ttl": "30d", "max_admin_ttl": "1d", "default_ttl": "7d", "future_key": "kept"})
+    _open_api_section(page)
+
+    page.fill("#keys-max-admin-ttl", "")
+    page.fill("#keys-default-ttl", "  ")
+    _save(page)
+
+    expected = {"max_ttl": "30d", "future_key": "kept"}
+    assert posted[0]["api"]["keys"] == expected
+    assert yaml.safe_load(cfg.read_text())["api"]["keys"] == expected
+
+
+def test_editor_drops_api_keys_when_every_field_is_blank(editor):
+    page, cfg, posted = editor
+    _write_keys(cfg, {"ttl": "30d"})
+    _open_api_section(page)
+
+    page.fill("#keys-max-ttl", "")
+    _save(page)
+
+    assert "keys" not in posted[0]["api"]
+    assert "keys" not in yaml.safe_load(cfg.read_text())["api"]
+
+
+@pytest.mark.parametrize("key", list(KEY_TTL_FIELDS))
+def test_editor_refuses_to_save_malformed_key_ttl(editor, key):
+    page, cfg, posted = editor
+    _open_api_section(page)
+    sel = KEY_TTL_FIELDS[key]
+
+    page.fill(sel, "abc")
+    assert page.get_attribute(sel, "aria-invalid") == "true"
+    assert "12h, 30d or 8w" in page.text_content(f"{sel}-err")
     page.click("#btn-save")
     page.wait_for_selector("#cfg-toast >> text=API Keys")
 
     assert posted == []
     assert cfg.read_text() == _CONFIG
+
+    page.fill(sel, "30d")
+    assert page.get_attribute(sel, "aria-invalid") == "false"
+    assert page.text_content(f"{sel}-err") == ""
 
 
 MODELS_CONFIG = """\
@@ -321,14 +398,15 @@ def test_editor_output_cost_stays_read_only_with_automatic_price(editor):
     assert page.is_editable("#mdl-out-cost")
 
 
-def test_editor_key_ttl_read_only_when_editor_disabled(app, editor):
+def test_editor_key_ttls_read_only_when_editor_disabled(app, editor):
     page, cfg, posted = editor
     original = app.config.get("CONFIG_EDITOR", True)
     app.config["CONFIG_EDITOR"] = False
     try:
         _open_api_section(page)
-        assert page.get_attribute("#keys-ttl", "readonly") is not None
-        assert not page.is_editable("#keys-ttl")
+        for sel in KEY_TTL_FIELDS.values():
+            assert page.get_attribute(sel, "readonly") is not None
+            assert not page.is_editable(sel)
         assert page.is_disabled("#btn-save")
     finally:
         app.config["CONFIG_EDITOR"] = original
