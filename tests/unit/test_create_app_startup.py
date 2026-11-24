@@ -85,6 +85,17 @@ def test_config_without_active_models_exits(tmp_path, monkeypatch, capsys):
     assert "no active models" in capsys.readouterr().err
 
 
+def test_config_with_both_chat_and_limit_exits(tmp_path, monkeypatch, capsys):
+    data = _base_config()
+    data["rate_limiting"] = {**data.get("rate_limiting", {}), "chat": "5 per minute", "limit": "5 per minute"}
+    with pytest.raises(SystemExit) as exc:
+        _build(tmp_path, monkeypatch, data)
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "set either 'chat' or the deprecated 'limit', not both" in err
+    assert "App cannot start" in err
+
+
 def test_prometheus_without_token_is_disabled(tmp_path, monkeypatch, caplog):
     data = _base_config()
     data["api"] = {"prometheus": {"enabled": True}}

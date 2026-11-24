@@ -9,12 +9,20 @@ from urllib.parse import quote
 
 import openai
 from flask import Blueprint, Response, current_app, g, jsonify, request
+from limits import parse_many
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from lumen.blueprints.metrics.middleware import observe_stream_abort
 from lumen.commands import RESERVED_MODEL_ID_SUFFIX
-from lumen.extensions import db, limiter
+from lumen.extensions import (
+    DEFAULT_RATE_LIMIT,
+    _rate_limiting_cfg,
+    _warn_rate_limit_once,
+    db,
+    limiter,
+    resolve_chat_limit,
+)
 from lumen.models.api_key import KEY_TYPE_NORMAL
 from lumen.models.entity_balance import EntityBalance
 from lumen.models.entity_model_consent import EntityModelConsent
@@ -143,14 +151,79 @@ def _api_key_id():
 
 
 def _api_limit():
-    cfg = current_app.config.get("YAML_DATA", {})
-    return cfg.get("rate_limiting", {}).get("limit", "30 per minute")
+    return resolve_chat_limit()
 
 
-# One per-key budget shared by every /v1 route that sends a request upstream
-# (chat, completions, audio, embeddings and Anthropic messages), so a key gets the
-# configured limit once in total rather than once per route.
+def _valid_limit(value) -> bool:
+    """Whether flask-limiter can enforce ``value`` (it silently drops one it cannot parse)."""
+    try:
+        return isinstance(value, str) and bool(parse_many(value))
+    except ValueError:
+        return False
+
+
+def _category_fallback_limit() -> str:
+    """The chat limit if it is enforceable, else the default.
+
+    flask-limiter discards a limit string it cannot parse, so passing a malformed
+    chat value through would leave the category unlimited.
+    """
+    chat = resolve_chat_limit()
+    if _valid_limit(chat):
+        return chat
+    _warn_rate_limit_once(
+        ("invalid", "chat", repr(chat)),
+        "rate_limiting.chat value %r is not a valid rate limit; embeddings and audio use %r.",
+        chat, DEFAULT_RATE_LIMIT,
+    )
+    return DEFAULT_RATE_LIMIT
+
+
+def _category_limit(category: str) -> str:
+    """The rate limit for ``category``: its own key, else the chat limit.
+
+    An unset key gives the category its own bucket of the chat size, not a share
+    of the chat bucket. An unparseable value warns once per value and falls back
+    to the chat limit too. When the chat limit is itself unparseable the default
+    is used instead, so the category is always bounded by an enforceable limit.
+    """
+    value = _rate_limiting_cfg().get(category)
+    if value is None:
+        return _category_fallback_limit()
+    if not _valid_limit(value):
+        _warn_rate_limit_once(
+            ("invalid", category, repr(value)),
+            "rate_limiting.%s value %r is not a valid rate limit; using the chat limit.",
+            category, value,
+        )
+        return _category_fallback_limit()
+    return value
+
+
+def _category_scope(endpoint: str, category: str) -> str:
+    """Bucket scope for ``category``: one per category, never per endpoint.
+
+    flask-limiter passes the endpoint name to a callable scope; ignoring it keeps
+    every route of the category (both audio routes) in one shared bucket.
+    """
+    return f"api-{category}"
+
+
+# One per-key budget shared by every /v1 route that generates (chat, completions
+# and Anthropic messages), so a key gets the chat limit once in total rather than
+# once per route. Embeddings and audio each get a separate per-key bucket, so
+# indexing a large document cannot starve chat and vice versa (#756).
 api_generation_limit = limiter.shared_limit(_api_limit, scope="api", key_func=_api_key_id)
+api_embedding_limit = limiter.shared_limit(
+    lambda: _category_limit("embedding"),
+    scope=lambda endpoint: _category_scope(endpoint, "embedding"),
+    key_func=_api_key_id,
+)
+api_audio_limit = limiter.shared_limit(
+    lambda: _category_limit("audio"),
+    scope=lambda endpoint: _category_scope(endpoint, "audio"),
+    key_func=_api_key_id,
+)
 
 
 def _monitor_metrics() -> dict | None:
@@ -1115,14 +1188,14 @@ def _do_audio(kind: str):
 
 @api_bp.route("/audio/transcriptions", methods=["POST"])
 @api_key_required
-@api_generation_limit
+@api_audio_limit
 def audio_transcriptions():
     return _do_audio("transcriptions")
 
 
 @api_bp.route("/audio/translations", methods=["POST"])
 @api_key_required
-@api_generation_limit
+@api_audio_limit
 def audio_translations():
     return _do_audio("translations")
 
@@ -1144,7 +1217,7 @@ def _valid_embedding_input(value) -> bool:
 
 @api_bp.route("/embeddings", methods=["POST"])
 @api_key_required
-@api_generation_limit
+@api_embedding_limit
 def embeddings():
     """OpenAI-compatible embeddings, billed per input token at the input price.
 

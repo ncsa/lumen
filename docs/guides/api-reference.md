@@ -425,7 +425,7 @@ print(len(result.data), len(result.data[0].embedding))
 
 ### Billing
 
-Embeddings are billed **per input token** at the model's input price: cost = `prompt_tokens × input_cost_per_million / 1,000,000`. There are no output tokens, so the output price never applies. Requests show up in usage and `/v1/usage` as input tokens, and share the per-key rate limit with the other `/v1` model calls. If the backend reports no usage, the request succeeds at zero cost and a warning is logged.
+Embeddings are billed **per input token** at the model's input price: cost = `prompt_tokens × input_cost_per_million / 1,000,000`. There are no output tokens, so the output price never applies. Requests show up in usage and `/v1/usage` as input tokens, and have a per-key rate limit of their own, separate from chat and audio (see Rate Limits). If the backend reports no usage, the request succeeds at zero cost and a warning is logged.
 
 ---
 
@@ -468,7 +468,7 @@ If you send too many requests too quickly, the API returns:
 HTTP 429 Too Many Requests
 ```
 
-Wait a moment and retry. The Usage page shows your recent request volume so you can gauge how close you are to the limit. The limit is per API key, and chat, completions, messages and audio share one budget: two chat requests and two Anthropic `/v1/messages` requests count as four against it. `POST /v1/messages/count_tokens` and `POST /v1/models/{id}/acknowledge` each have their own budget of the same size. Listing models (`GET /v1/models` and `GET /v1/models/{id}`) and `GET /v1/usage` are not counted, so a client that lists models before every completion is not penalised for it.
+Wait a moment and retry. The Usage page shows your recent request volume so you can gauge how close you are to the limit. The limit is per API key, and chat, completions and messages share one budget: two chat requests and two Anthropic `/v1/messages` requests count as four against it. `POST /v1/embeddings` has a budget of its own, and `/v1/audio/transcriptions` and `/v1/audio/translations` share another, so indexing a document does not use up your chat budget; their sizes are set by the administrator and default to the chat limit. `POST /v1/messages/count_tokens` and `POST /v1/models/{id}/acknowledge` each have their own budget of the same size. Listing models (`GET /v1/models` and `GET /v1/models/{id}`) and `GET /v1/usage` are not counted, so a client that lists models before every completion is not penalised for it.
 
 A `429` is also returned when your coin budget is exhausted, which needs the opposite
 reaction — retrying shortly will not help until the budget refills. The two are told
@@ -547,7 +547,7 @@ Errors use the OpenAI shape `{"error": {"message", "type", "code"}}`:
 | `401` | Unknown, revoked or expired key, an admin key whose owner is no longer an admin or is inactive, or a non-ASCII token |
 | `403` | A normal key, a monitoring key or `api.monitoring.token` (`permission_error`, "This endpoint requires an admin key") |
 | `404` | No such user (`code: user_not_found`) |
-| `429` | The per-key rate limit (`rate_limiting.limit`) is exceeded |
+| `429` | The per-key rate limit (`rate_limiting.chat`) is exceeded |
 
 Requests are never billed and are not written to the request log.
 

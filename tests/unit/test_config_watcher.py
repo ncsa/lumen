@@ -144,6 +144,8 @@ def test_watcher_reloads_config_on_mtime_change(app, tmp_path, restore_config):
     ({"version": 2, "app": {"name": "OldVersion"}}, "version: 3"),
     ({"version": 3, "groups": {}, "app": {"name": "RemovedPolicy"}}, "groups:"),
     ({"version": 3, "api": {"consent": False}, "app": {"name": "RemovedConsent"}}, "api.consent"),
+    ({"version": 3, "rate_limiting": {"chat": "5 per minute", "limit": "5 per minute"},
+      "app": {"name": "ChatAndLimit"}}, "not both"),
 ])
 def test_watcher_skips_invalid_config(
     app, tmp_path, restore_config, caplog, bad_data, expected_error,
@@ -962,6 +964,27 @@ def test_validate_config_accepts_model_without_endpoints():
     from lumen.services.config_watcher import validate_config_structure
     cfg = _valid_config()
     del cfg["models"][0]["endpoints"]
+    assert validate_config_structure(cfg) == []
+
+
+def test_validate_config_rejects_both_chat_and_limit():
+    from lumen.services.config_watcher import RATE_LIMIT_CHAT_AND_LIMIT_ERROR, validate_config_structure
+    cfg = _valid_config()
+    cfg["rate_limiting"] = {"chat": "5 per minute", "limit": "5 per minute"}
+    assert RATE_LIMIT_CHAT_AND_LIMIT_ERROR in validate_config_structure(cfg)
+    assert "2.7.0" in RATE_LIMIT_CHAT_AND_LIMIT_ERROR
+
+
+@pytest.mark.parametrize("rate_limiting", [
+    {"chat": "5 per minute"},
+    {"limit": "5 per minute"},
+    {"chat": "5 per minute", "embedding": "50 per minute", "audio": "2 per minute"},
+    None,
+])
+def test_validate_config_accepts_chat_or_limit_alone(rate_limiting):
+    from lumen.services.config_watcher import validate_config_structure
+    cfg = _valid_config()
+    cfg["rate_limiting"] = rate_limiting
     assert validate_config_structure(cfg) == []
 
 

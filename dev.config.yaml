@@ -32,7 +32,7 @@ admins:
 - dev@example.com
 
 rate_limiting:
-  limit: 200 per minute
+  chat: 200 per minute
 
 # Global fallbacks. Token pool falls back here when no group/user sets one.
 # Model visibility is ownership-based: a model with no owner is available to everyone;

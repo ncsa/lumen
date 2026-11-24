@@ -91,6 +91,20 @@ def removed_config_key_errors(data: dict) -> list[str]:
     return errors
 
 
+RATE_LIMIT_CHAT_AND_LIMIT_ERROR = (
+    "rate_limiting: set either 'chat' or the deprecated 'limit', not both "
+    "('limit' is the old name of 'chat' and is removed in 2.7.0)"
+)
+
+
+def rate_limiting_config_errors(data) -> list[str]:
+    """Errors in the ``rate_limiting`` section; both ``chat`` and ``limit`` is one."""
+    rl_cfg = data.get("rate_limiting") if isinstance(data, dict) else None
+    if isinstance(rl_cfg, dict) and "chat" in rl_cfg and "limit" in rl_cfg:
+        return [RATE_LIMIT_CHAT_AND_LIMIT_ERROR]
+    return []
+
+
 def validate_config_structure(data) -> list:
     """Structural check on a config about to be written to disk.
 
@@ -105,6 +119,7 @@ def validate_config_structure(data) -> list:
     if not config_version_ok(data):
         errors.append("version: 3 is required")
     errors.extend(removed_config_key_errors(data))
+    errors.extend(rate_limiting_config_errors(data))
     keys_cfg = _resolve_path(data, ("api", "keys"))
     if isinstance(keys_cfg, dict) and "ttl" in keys_cfg:
         try:
@@ -655,6 +670,7 @@ def _watcher(app, config_path):
                 if not config_version_ok(new_data or {}):
                     config_errors.append(CONFIG_VERSION_ERROR)
                 config_errors.extend(removed_config_key_errors(new_data or {}))
+                config_errors.extend(rate_limiting_config_errors(new_data or {}))
                 if config_errors:
                     logger.error("config_watcher: reload skipped — %s", "; ".join(config_errors))
                     continue
