@@ -211,6 +211,25 @@ def test_create_key_with_ttl(app, auth_client, restore_config, cap, ttl, expecte
         assert resp.get_json()["expires_at"] is None
 
 
+@pytest.mark.parametrize("cap, default, expected", [
+    (0, 30 * 86400, 30 * 86400),             # default_ttl without a maximum
+    (90 * 86400, 365 * 86400, 90 * 86400),   # lowered to max_ttl
+    (30 * 86400, 0, 30 * 86400),             # never is lowered to a finite max_ttl
+    (0, 0, 0),
+])
+def test_create_key_without_ttl_gets_default_ttl(app, auth_client, restore_config, cap, default, expected):
+    app.config["KEY_TTL"] = cap
+    app.config["KEY_DEFAULT_TTL"] = default
+    resp = auth_client.post("/profile/keys", json={"name": "ttl", "key": "sk_" + "w" * 32})
+    assert resp.status_code == HTTPStatus.CREATED
+    with app.app_context():
+        expires_at = key_by_public_id(resp.get_json()["id"]).expires_at
+    if expected:
+        assert abs(expires_at - (utcnow() + timedelta(seconds=expected))) < timedelta(minutes=1)
+    else:
+        assert expires_at is None
+
+
 @pytest.mark.parametrize("cap, ttl", [
     (30 * 86400, 30 * 86400 + 1),  # above the cap
     (30 * 86400, 0),               # never while the cap is above 0

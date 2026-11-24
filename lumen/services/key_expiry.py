@@ -1,10 +1,16 @@
 """API key expiry: the TTL limits per key type, and revoking keys once they expire.
 
-The longest TTL a key may get depends on its type:
+Each key type has its own maximum TTL (0 = no limit, which allows "never"):
 
-- normal: the ``api.keys.ttl`` cap; "never" only when there is no cap;
-- admin: one week, or the cap if that is shorter; never "never";
-- monitoring: no limit (the cap does not apply); defaults to "never".
+- normal: ``api.keys.max_ttl`` (the deprecated ``api.keys.ttl`` is its
+  fallback); no limit when unset;
+- admin: ``api.keys.max_admin_ttl``; one week when unset;
+- monitoring: ``api.keys.max_monitor_ttl``; no limit when unset.
+
+A key's default TTL is ``api.keys.default_ttl`` (0 = never), lowered to the
+type's maximum when it is larger ("never" counts as larger than any finite
+maximum). Without ``default_ttl``, the default is the type's maximum, or
+"never" when the type has no limit.
 
 An expired key is simply revoked: ``revoked_at`` is set to its ``expires_at``
 and ``revoked_by_entity_id`` stays NULL (a system revocation), so every
@@ -32,7 +38,7 @@ logger = logging.getLogger(__name__)
 EXPIRE_INTERVAL = 60
 # Upper bound on any TTL, so a typo like 999999999w cannot overflow the expiry datetime.
 MAX_KEY_TTL = 100 * 365 * 86400
-# Longest TTL of an admin key, whatever api.keys.ttl says (a shorter cap still wins).
+# Default of api.keys.max_admin_ttl: the longest TTL of an admin key when unset.
 ADMIN_KEY_MAX_TTL = 7 * 86400
 
 _TTL_RE = re.compile(r"(0|([0-9]+)([hdw]))")
@@ -49,7 +55,7 @@ KEY_TTL_PRESETS = [
 
 
 def parse_key_ttl(value) -> int:
-    """Seconds for an ``api.keys.ttl`` value: ``0`` or ``<n>h``/``<n>d``/``<n>w``.
+    """Seconds for an ``api.keys`` TTL value: ``0`` or ``<n>h``/``<n>d``/``<n>w``.
 
     Raises ValueError for anything else (garbage, negative, blank, a bare number,
     or more than MAX_KEY_TTL).
@@ -69,15 +75,20 @@ def parse_key_ttl(value) -> int:
 
 def _key_ttl_limits(key_type: str) -> tuple[int, bool, int]:
     """``(longest, never_allowed, default)`` TTL in seconds for a key type (0 = never)."""
-    cap = current_app.config.get("KEY_TTL", 0)
     if key_type == KEY_TYPE_MONITORING:
-        return MAX_KEY_TTL, True, 0
-    if key_type == KEY_TYPE_ADMIN:
-        longest = min(cap, ADMIN_KEY_MAX_TTL) if cap else ADMIN_KEY_MAX_TTL
-        return longest, False, longest
+        cap = current_app.config.get("KEY_MAX_MONITOR_TTL", 0)
+    elif key_type == KEY_TYPE_ADMIN:
+        cap = current_app.config.get("KEY_MAX_ADMIN_TTL", ADMIN_KEY_MAX_TTL)
+    else:
+        cap = current_app.config.get("KEY_TTL", 0)
+    default = current_app.config.get("KEY_DEFAULT_TTL")
+    if default is None:
+        default = cap
+    elif cap and (default == 0 or default > cap):
+        default = cap
     if cap:
-        return cap, False, cap
-    return MAX_KEY_TTL, True, 0
+        return cap, False, default
+    return MAX_KEY_TTL, True, default
 
 
 def resolve_key_ttl(requested: Optional[int] = None, key_type: str = KEY_TYPE_NORMAL) -> int:

@@ -399,6 +399,22 @@ def test_device_ttl_defaults_to_cap(client, auth_client, app, restore_config, ca
         assert "expires_at" in token and token["expires_at"] is None
 
 
+@pytest.mark.parametrize("cap, default, expected", [(0, 30 * 86400, 30 * 86400), (86400, 30 * 86400, 86400)])
+def test_device_ttl_defaults_to_default_ttl(client, auth_client, app, restore_config, cap, default, expected):
+    app.config["KEY_TTL"] = cap
+    app.config["KEY_DEFAULT_TTL"] = default
+    body = _issue(client).get_json()
+    assert _request_row(app, body["user_code"]).ttl is None
+
+    page, approve = _approve_with_ttl(app, auth_client, body["user_code"])
+    assert f'<option value="{expected}" selected>'.encode() in page.data
+    assert approve.status_code == HTTPStatus.OK
+    assert _request_row(app, body["user_code"]).ttl == expected
+
+    _poll(client, body)
+    assert abs(_minted_expires_at(app) - (utcnow() + timedelta(seconds=expected))) < timedelta(minutes=1)
+
+
 @pytest.mark.parametrize("ttl", ["86401", "0", "-1", "1.5", "abc", "1d", "99999999999"])
 def test_device_ttl_rejected_above_cap_or_malformed(client, app, restore_config, ttl):
     app.config["KEY_TTL"] = 86400

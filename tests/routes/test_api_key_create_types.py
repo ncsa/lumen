@@ -145,41 +145,73 @@ def test_create_prefix_type_mismatch_returns_400(app, admin_client, key_type, ra
 
 # --- TTL on create ---------------------------------------------------------
 
-@pytest.mark.parametrize("cap, expected", [(0, WEEK), (30 * DAY, WEEK), (DAY, DAY)])
-def test_admin_key_default_ttl_is_longest_allowed(app, admin_client, restore_config, cap, expected):
-    app.config["KEY_TTL"] = cap
+def _limits(app, max_ttl=0, max_admin=ADMIN_KEY_MAX_TTL, max_monitor=0, default=None):
+    app.config.update(KEY_TTL=max_ttl, KEY_MAX_ADMIN_TTL=max_admin, KEY_MAX_MONITOR_TTL=max_monitor,
+                      KEY_DEFAULT_TTL=default)
+
+
+@pytest.mark.parametrize("limits, expected", [
+    ({}, WEEK),
+    ({"max_ttl": 30 * DAY}, WEEK),
+    ({"max_ttl": DAY}, WEEK),               # the normal cap does not apply
+    ({"max_admin": DAY}, DAY),
+    ({"default": DAY}, DAY),
+    ({"default": 30 * DAY}, WEEK),          # lowered to the admin maximum
+    ({"default": 0}, WEEK),                 # never is lowered too
+])
+def test_admin_key_default_ttl(app, admin_client, restore_config, limits, expected):
+    _limits(app, **limits)
     resp = admin_client.post("/profile/keys", json={"key": _raw(KEY_TYPE_ADMIN), "type": KEY_TYPE_ADMIN})
     assert resp.status_code == HTTPStatus.CREATED
     assert _close_to(_key(app, resp.get_json()["id"]).expires_at, expected)
 
 
-@pytest.mark.parametrize("cap, ttl", [(0, WEEK + 1), (0, 0), (30 * DAY, 30 * DAY), (DAY, DAY + 1), (DAY, 0)])
-def test_admin_key_ttl_over_limit_or_never_returns_400(app, admin_client, restore_config, cap, ttl):
-    app.config["KEY_TTL"] = cap
+@pytest.mark.parametrize("limits, ttl", [
+    ({}, WEEK + 1), ({}, 0), ({"max_ttl": 30 * DAY}, 30 * DAY), ({"max_admin": DAY}, DAY + 1), ({"max_admin": DAY}, 0),
+])
+def test_admin_key_ttl_over_limit_or_never_returns_400(app, admin_client, restore_config, limits, ttl):
+    _limits(app, **limits)
     resp = admin_client.post("/profile/keys", json={"key": _raw(KEY_TYPE_ADMIN), "type": KEY_TYPE_ADMIN, "ttl": ttl})
     assert resp.status_code == HTTPStatus.BAD_REQUEST
     assert "ttl" in resp.get_json()["error"]
 
 
-def test_admin_key_accepts_ttl_within_a_week(app, admin_client, restore_config):
-    app.config["KEY_TTL"] = 0
-    resp = admin_client.post("/profile/keys", json={"key": _raw(KEY_TYPE_ADMIN), "type": KEY_TYPE_ADMIN, "ttl": DAY})
+def test_admin_key_never_allowed_without_admin_max(app, admin_client, restore_config):
+    _limits(app, max_admin=0)
+    resp = admin_client.post("/profile/keys", json={"key": _raw(KEY_TYPE_ADMIN), "type": KEY_TYPE_ADMIN, "ttl": 0})
     assert resp.status_code == HTTPStatus.CREATED
-    assert _close_to(_key(app, resp.get_json()["id"]).expires_at, DAY)
-
-
-@pytest.mark.parametrize("cap", [0, DAY])
-def test_monitoring_key_defaults_to_never(app, admin_client, restore_config, cap):
-    app.config["KEY_TTL"] = cap
-    resp = admin_client.post("/profile/keys", json={"key": _raw(KEY_TYPE_MONITORING), "type": KEY_TYPE_MONITORING})
-    assert resp.status_code == HTTPStatus.CREATED
-    assert resp.get_json()["expires_at"] is None
     assert _key(app, resp.get_json()["id"]).expires_at is None
 
 
+@pytest.mark.parametrize("max_ttl, ttl", [(0, DAY), (DAY, WEEK)])
+def test_admin_key_accepts_ttl_within_a_week(app, admin_client, restore_config, max_ttl, ttl):
+    _limits(app, max_ttl=max_ttl)
+    resp = admin_client.post("/profile/keys", json={"key": _raw(KEY_TYPE_ADMIN), "type": KEY_TYPE_ADMIN, "ttl": ttl})
+    assert resp.status_code == HTTPStatus.CREATED
+    assert _close_to(_key(app, resp.get_json()["id"]).expires_at, ttl)
+
+
+@pytest.mark.parametrize("limits, expected", [
+    ({}, None),
+    ({"max_ttl": DAY}, None),
+    ({"default": 30 * DAY}, 30 * DAY),
+    ({"max_monitor": 30 * DAY}, 30 * DAY),
+])
+def test_monitoring_key_default_ttl(app, admin_client, restore_config, limits, expected):
+    _limits(app, **limits)
+    resp = admin_client.post("/profile/keys", json={"key": _raw(KEY_TYPE_MONITORING), "type": KEY_TYPE_MONITORING})
+    assert resp.status_code == HTTPStatus.CREATED
+    expires_at = _key(app, resp.get_json()["id"]).expires_at
+    if expected is None:
+        assert resp.get_json()["expires_at"] is None
+        assert expires_at is None
+    else:
+        assert _close_to(expires_at, expected)
+
+
 @pytest.mark.parametrize("ttl", [0, 365 * DAY])
-def test_monitoring_key_ignores_the_cap(app, admin_client, restore_config, ttl):
-    app.config["KEY_TTL"] = DAY
+def test_monitoring_key_ignores_the_normal_cap(app, admin_client, restore_config, ttl):
+    _limits(app, max_ttl=DAY)
     resp = admin_client.post("/profile/keys",
                              json={"key": _raw(KEY_TYPE_MONITORING), "type": KEY_TYPE_MONITORING, "ttl": ttl})
     assert resp.status_code == HTTPStatus.CREATED
@@ -187,11 +219,20 @@ def test_monitoring_key_ignores_the_cap(app, admin_client, restore_config, ttl):
     assert expires_at is None if ttl == 0 else _close_to(expires_at, ttl)
 
 
+@pytest.mark.parametrize("ttl", [0, 365 * DAY])
+def test_monitoring_key_over_its_max_returns_400(app, admin_client, restore_config, ttl):
+    _limits(app, max_monitor=30 * DAY)
+    resp = admin_client.post("/profile/keys",
+                             json={"key": _raw(KEY_TYPE_MONITORING), "type": KEY_TYPE_MONITORING, "ttl": ttl})
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert "ttl" in resp.get_json()["error"]
+
+
 # --- TTL on edit -----------------------------------------------------------
 
-@pytest.mark.parametrize("cap, ttl", [(0, WEEK + 1), (0, 0), (DAY, WEEK)])
-def test_edit_admin_key_ttl_over_limit_returns_400(app, admin_client, admin_user, restore_config, cap, ttl):
-    app.config["KEY_TTL"] = cap
+@pytest.mark.parametrize("limits, ttl", [({}, WEEK + 1), ({}, 0), ({"max_admin": DAY}, WEEK)])
+def test_edit_admin_key_ttl_over_limit_returns_400(app, admin_client, admin_user, restore_config, limits, ttl):
+    _limits(app, **limits)
     kid = _seed(app, admin_user["id"], KEY_TYPE_ADMIN, _raw(KEY_TYPE_ADMIN), expires_at=utcnow() + timedelta(days=1))
     resp = admin_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": ttl})
     assert resp.status_code == HTTPStatus.BAD_REQUEST
@@ -199,7 +240,7 @@ def test_edit_admin_key_ttl_over_limit_returns_400(app, admin_client, admin_user
 
 
 def test_edit_admin_key_ttl_within_a_week(app, admin_client, admin_user, restore_config):
-    app.config["KEY_TTL"] = 0
+    _limits(app)
     kid = _seed(app, admin_user["id"], KEY_TYPE_ADMIN, _raw(KEY_TYPE_ADMIN), expires_at=utcnow() + timedelta(days=1))
     resp = admin_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": ADMIN_KEY_MAX_TTL})
     assert resp.status_code == HTTPStatus.OK
@@ -207,13 +248,22 @@ def test_edit_admin_key_ttl_within_a_week(app, admin_client, admin_user, restore
 
 
 @pytest.mark.parametrize("ttl", [0, 365 * DAY])
-def test_edit_monitoring_key_ttl_ignores_the_cap(app, admin_client, admin_user, restore_config, ttl):
-    app.config["KEY_TTL"] = DAY
+def test_edit_monitoring_key_ttl_ignores_the_normal_cap(app, admin_client, admin_user, restore_config, ttl):
+    _limits(app, max_ttl=DAY)
     kid = _seed(app, admin_user["id"], KEY_TYPE_MONITORING, _raw(KEY_TYPE_MONITORING))
     resp = admin_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": ttl})
     assert resp.status_code == HTTPStatus.OK
     expires_at = _key(app, kid).expires_at
     assert expires_at is None if ttl == 0 else _close_to(expires_at, ttl)
+
+
+@pytest.mark.parametrize("ttl", [0, 365 * DAY])
+def test_edit_monitoring_key_ttl_over_its_max_returns_400(app, admin_client, admin_user, restore_config, ttl):
+    _limits(app, max_monitor=30 * DAY)
+    kid = _seed(app, admin_user["id"], KEY_TYPE_MONITORING, _raw(KEY_TYPE_MONITORING))
+    resp = admin_client.post(f"/profile/keys/{kid}/ttl", json={"ttl": ttl})
+    assert resp.status_code == HTTPStatus.BAD_REQUEST
+    assert "ttl" in resp.get_json()["error"]
 
 
 # --- rotate ----------------------------------------------------------------

@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy import select
 
 from lumen.extensions import db
-from lumen.models.api_key import KEY_TYPE_ADMIN, KEY_TYPE_MONITORING, APIKey
+from lumen.models.api_key import KEY_PREFIXES, KEY_TYPE_ADMIN, KEY_TYPE_MONITORING, APIKey
 from lumen.timeutils import utcnow
 from tests.conftest import make_project
 from tests.ui.test_accessibility import _run_all_checks
@@ -165,13 +165,18 @@ def test_key_table_expires_column_and_badges(open_page, key_page):
     assert page.locator("#key-tbody tr").count() == 2
 
 
-@pytest.mark.parametrize("cap, options, selected", [
-    (30 * DAY, ["1 day", "7 days", "30 days"], "30 days"),
-    (0, ["1 day", "7 days", "30 days", "90 days", "1 year", "Never"], "Never"),
-    (12 * 3600, ["12 hours"], "12 hours"),
+@pytest.mark.parametrize("cap, default, options, selected", [
+    (30 * DAY, None, ["1 day", "7 days", "30 days"], "30 days"),
+    (0, None, ["1 day", "7 days", "30 days", "90 days", "1 year", "Never"], "Never"),
+    (12 * 3600, None, ["12 hours"], "12 hours"),
+    # default_ttl is pre-selected, and Never stays on offer without a maximum.
+    (0, 30 * DAY, ["1 day", "7 days", "30 days", "90 days", "1 year", "Never"], "30 days"),
+    # A default above the maximum is lowered to it.
+    (90 * DAY, 365 * DAY, ["1 day", "7 days", "30 days", "90 days"], "90 days"),
 ])
-def test_new_key_modal_ttl_dropdown(app, restore_config, open_page, key_page, cap, options, selected):
+def test_new_key_modal_ttl_dropdown(app, restore_config, open_page, key_page, cap, default, options, selected):
     app.config["KEY_TTL"] = cap
+    app.config["KEY_DEFAULT_TTL"] = default
     path, post_path, _ = key_page
     page, posted = open_page(path)
 
@@ -402,6 +407,34 @@ def test_new_key_modal_key_type_swaps_prefix_and_expiry(app, restore_config, adm
     page.wait_for_function("document.getElementById('generated-key').value !== ''")
     assert page.input_value("#key-type-select") == "normal"
     assert not page.input_value("#generated-key").startswith(("sk_admin_", "sk_monitor_"))
+
+
+ALL_TTLS = ["1 day", "7 days", "30 days", "90 days", "1 year", "Never"]
+
+
+@pytest.mark.parametrize("limits, expected", [
+    # default_ttl 30d alone: normal and monitoring keys pre-select it and offer Never; admin keys get a week.
+    ({"KEY_DEFAULT_TTL": 30 * DAY},
+     {"normal": (ALL_TTLS, "30 days"), "monitoring": (ALL_TTLS, "30 days"), "admin": (["1 day", "7 days"], "7 days")}),
+    # Per-type maximums: Never for admin keys, none for monitoring keys.
+    ({"KEY_MAX_ADMIN_TTL": 0, "KEY_MAX_MONITOR_TTL": 30 * DAY},
+     {"normal": (ALL_TTLS, "Never"), "monitoring": (["1 day", "7 days", "30 days"], "30 days"),
+      "admin": (ALL_TTLS, "Never")}),
+])
+def test_new_key_modal_ttl_dropdown_per_type(app, restore_config, admin_open_page, admin_user, limits, expected):
+    app.config.update(KEY_TTL=0, **limits)
+    _seed_keys(app, admin_user["id"], admin_user["id"])
+    page, _ = admin_open_page("/profile")
+    page.click("button[data-bs-target='#apiKeyModal']")
+    page.wait_for_selector("#apiKeyModal.show")
+    page.wait_for_function("document.getElementById('generated-key').value !== ''")
+    for key_type, (options, selected) in expected.items():
+        page.select_option("#key-type-select", key_type)
+        if key_type != "normal":
+            page.wait_for_function(
+                f"document.getElementById('generated-key').value.startsWith('{KEY_PREFIXES[key_type]}')")
+        assert _ttl_labels(page, "#key-ttl-select") == options, key_type
+        assert page.locator("#key-ttl-select option:checked").inner_text().strip() == selected, key_type
 
 
 def test_key_table_type_badge_and_edit_expiry_options(app, restore_config, admin_open_page, admin_user):

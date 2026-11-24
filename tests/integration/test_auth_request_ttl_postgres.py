@@ -114,11 +114,12 @@ def pg_app(pg_migrated_isolated):
 
 @pytest.fixture
 def approver(pg_app):
-    """A user and a test client signed in as them; restores KEY_TTL afterwards."""
+    """A user and a test client signed in as them; restores KEY_TTL and KEY_DEFAULT_TTL afterwards."""
     from lumen.extensions import db, limiter
     from lumen.models.entity import Entity
 
     saved_cap = pg_app.config.get("KEY_TTL", 0)
+    saved_default = pg_app.config.get("KEY_DEFAULT_TTL")
     limiter.reset()
     with pg_app.app_context():
         user = Entity(entity_type="user", email=f"{uuid.uuid4().hex[:10]}@example.invalid",
@@ -134,6 +135,7 @@ def approver(pg_app):
         sess["gravatar_hash"] = ""
     yield client
     pg_app.config["KEY_TTL"] = saved_cap
+    pg_app.config["KEY_DEFAULT_TTL"] = saved_default
 
 
 def _minted_expires_at(pg_app, name):
@@ -151,16 +153,19 @@ def _assert_expires_in(pg_app, name, ttl):
     assert abs(_minted_expires_at(pg_app, name) - expected) < timedelta(minutes=1)
 
 
-@pytest.mark.parametrize("cap, requested", [
-    (0, 2**31),                   # uncapped: a requested TTL just past 32 bits
-    (MAX_KEY_TTL, None),          # the largest cap (36500d), stored as the default
-    (MAX_KEY_TTL, MAX_KEY_TTL),   # and requested explicitly
+@pytest.mark.parametrize("cap, default, requested, expected", [
+    (0, None, 2**31, 2**31),                        # uncapped: a requested TTL just past 32 bits
+    (MAX_KEY_TTL, None, None, MAX_KEY_TTL),         # the largest cap (36500d), stored as the default
+    (MAX_KEY_TTL, None, MAX_KEY_TTL, MAX_KEY_TTL),  # and requested explicitly
+    (0, MAX_KEY_TTL, None, MAX_KEY_TTL),            # the largest default_ttl, nothing requested
+    (30 * 86400, MAX_KEY_TTL, None, 30 * 86400),    # default_ttl lowered to max_ttl
 ])
-def test_device_flow_stores_and_mints_large_ttl(pg_app, approver, cap, requested):
+def test_device_flow_stores_and_mints_large_ttl(pg_app, approver, cap, default, requested, expected):
     from lumen.extensions import db
     from lumen.models.auth_request import AuthRequest
 
     pg_app.config["KEY_TTL"] = cap
+    pg_app.config["KEY_DEFAULT_TTL"] = default
     name = f"big-{uuid.uuid4().hex[:8]}"
     form = {"client_id": "lumen-cli", "name": name}
     if requested is not None:
@@ -176,7 +181,7 @@ def test_device_flow_stores_and_mints_large_ttl(pg_app, approver, cap, requested
         ).scalar_one())
     approve = approver.post("/oauth/consent", data={"request_id": req_id, "action": "approve"})
     assert b"Key approved" in approve.data
-    ttl = requested if requested is not None else cap
+    ttl = expected
     with pg_app.app_context():
         assert db.session.execute(select(AuthRequest).where(AuthRequest.uuid == uuid.UUID(req_id))).scalar_one().ttl == ttl
 

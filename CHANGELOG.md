@@ -9,10 +9,12 @@ All notable changes to Lumen will be documented in this file.
 - `lumen.sh` adds `--aliases` and remembers the `--aliases`/`--no-aliases` choice in `config.ini` as `aliases = true/false`. (#734)
 - Add admin (sk_admin_, max 1-week TTL) and monitoring (sk_monitor_) API key types for admins; api.monitoring.token is deprecated (#737)
 - Read-only admin API with admin keys: GET /v1/organization/users and /v1/organization/users/{user_id} (#736)
+- API key lifetimes per type: api.keys.default_ttl (default for all keys, lowered to each type's maximum), api.keys.max_ttl, api.keys.max_admin_ttl (default 7d) and api.keys.max_monitor_ttl (default no limit). (#758)
 
 ### Changed
 
 - Embedding models always have an output price of 0: the config editor locks the field, and the models page and the model detail page show `—`. (#741)
+- Deprecated api.keys.ttl: use api.keys.max_ttl; ttl still works as its fallback and is removed in 2.7. (#758)
 
 ## [2.5.0] - 2026-11-21
 
