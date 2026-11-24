@@ -418,6 +418,7 @@ _ME_UNAUTHENTICATED = "Authentication required: sign in or send 'Authorization: 
 _ME_PROJECT_KEY = "Project keys cannot access /v1/me; use the web session or a personal API key"
 _ME_OAUTH_KEY = ("Keys issued through OAuth cannot access /v1/me; "
                  "create a personal API key on your profile page")
+_ME_MONITOR_TOKEN = "Monitor token cannot access /v1/me"
 
 
 def me_auth_required(f):
@@ -425,11 +426,13 @@ def me_auth_required(f):
 
     With an ``Authorization`` header the key decides, even when a session
     cookie is also sent: a malformed header or an unknown, revoked or expired
-    key is 401, and the monitor token, an inactive entity, a project's key and
-    a key minted through OAuth (``client_id`` set, even after a UI rotation)
-    are 403. Without the header the session must name an active entity, or the
-    answer is 401; never a redirect. Sets ``g.entity`` and ``g.me_via_session``
-    and bumps no usage counters.
+    key is 401, and the monitor token, an inactive entity, an admin or
+    monitoring key, a project's key and a key minted through OAuth
+    (``client_id`` set, even after a UI rotation) are 403. Without the header
+    the session must name an active entity, or the answer is 401; never a
+    redirect. Sets ``g.entity`` and ``g.me_via_session``. An accepted call
+    bumps no usage counters; ``resolve_api_key`` still sets ``last_used_at``
+    on an admin or monitoring key before it is refused, as on every route.
     """
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -439,9 +442,12 @@ def me_auth_required(f):
                 if result.kind == "malformed":
                     return _err(_ME_MALFORMED, "authentication_error", HTTPStatus.UNAUTHORIZED)
                 if result.kind == "monitor":
-                    return _err(result.message, "permission_error", HTTPStatus.FORBIDDEN)
+                    return _err(_ME_MONITOR_TOKEN, "permission_error", HTTPStatus.FORBIDDEN)
                 return _err(result.message, result.err_type, result.status)
             api_key, entity = result
+            if api_key.key_type != KEY_TYPE_NORMAL:
+                return _err(f"{api_key.key_type.capitalize()} keys can only access /v1/models",
+                            "permission_error", HTTPStatus.FORBIDDEN)
             if entity.entity_type != "user":
                 return _err(_ME_PROJECT_KEY, "permission_error", HTTPStatus.FORBIDDEN)
             if api_key.client_id is not None:

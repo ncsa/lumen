@@ -23,6 +23,7 @@ Admins can also create admin (`sk_admin_…`) and monitoring (`sk_monitor_…`) 
 | Chat, completions, embeddings, audio, Anthropic `/v1/messages` | 403 | ✅ (billed) | 403 | 403 |
 | `POST /v1/models/<id>/acknowledge` (acknowledging a model) | 403 | ✅ (not billed) | 403 | 403 |
 | `GET /v1/usage` (own key usage) | 403 | ✅ | 403 | 403 |
+| `GET /v1/me` (own profile, see [Your Profile](#your-profile-v1me)) | 403 | ✅ | 403 | 403 |
 | `GET /v1/models`, `GET /v1/models/<id>` | ✅ every active model | ✅ only models you can use | ✅ every active model | ✅ every active model |
 | `?tokens=true` token metrics on the models endpoints | ✅ | ignored: request counts only, never token metrics | ✅ | ✅ |
 | [Admin API](#admin-api) `/v1/organization/*` | ✅ | 403 | 403 | 403 |
@@ -109,7 +110,7 @@ keys are listed, with `revoked_at` set. Every `id` is the row's opaque uuid. Eve
 - **The web session cookie**, the one your browser has after signing in. Send no `Authorization`
   header to use it.
 
-When both are sent, the key wins. Calls never add to the key's request count or `last_used_at`.
+When both are sent, the key wins. An accepted call never adds to the key's request count or `last_used_at`. Admin and monitoring keys are refused; as on every other route, their `last_used_at` is still updated when they are refused.
 
 | Status | `type` | When |
 |--------|--------|------|
@@ -117,6 +118,7 @@ When both are sent, the key wins. Calls never add to the key's request count or 
 | 401 | `authentication_error` | The key is unknown, revoked or expired: "Invalid or revoked API key". |
 | 401 | `authentication_error` | No header and no signed-in session: "Authentication required: …". Never a redirect to the sign-in page. |
 | 403 | `permission_error` | The monitoring token. |
+| 403 | `permission_error` | An admin (`sk_admin_…`) or monitoring (`sk_monitor_…`) key: "Admin keys can only access /v1/models" or "Monitoring keys can only access /v1/models". Use the web session or a personal key. |
 | 403 | `authentication_error` | The account is disabled: "Account disabled". |
 | 403 | `permission_error` | A [project](../projects/projects.md)'s key: it belongs to the project, not to you. Use the web session or a personal key. |
 | 403 | `permission_error` | A key minted through OAuth (the `lumen.sh` device flow, or an app's sign-in), including a personal key that an OAuth request overwrote, and an OAuth key later rotated on your profile page. Create a personal API key on your [profile page](profile.md#creating-a-key) instead. |

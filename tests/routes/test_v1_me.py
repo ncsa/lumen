@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from lumen.blueprints.profile.routes import _get_profile_data
 from lumen.extensions import db, limiter
-from lumen.models.api_key import APIKey
+from lumen.models.api_key import KEY_TYPE_ADMIN, KEY_TYPE_MONITORING, APIKey
 from lumen.models.auth_request import AuthRequest
 from lumen.models.entity import Entity
 from lumen.models.entity_limit import EntityLimit
@@ -178,7 +178,20 @@ def test_monitor_token_is_403(app, client, restore_config):
     app.config["YAML_DATA"] = {**app.config.get("YAML_DATA", {}),
                                "api": {"monitoring": {"token": "monitor-secret"}}}
     _assert_error(client.get("/v1/me", headers=_bearer("monitor-secret")),
-                  HTTPStatus.FORBIDDEN, "permission_error", "Monitor token can only access /v1/models")
+                  HTTPStatus.FORBIDDEN, "permission_error", "Monitor token cannot access /v1/me")
+
+
+@pytest.mark.parametrize("key_type", [KEY_TYPE_ADMIN, KEY_TYPE_MONITORING])
+def test_admin_and_monitoring_keys_are_403(app, client, auth_client, admin_user, restore_config, key_type):
+    app.config["YAML_DATA"] = {**app.config.get("YAML_DATA", {}), "admins": ["admin@example.com"]}
+    raw = f"sk_{key_type}_" + "c" * 40
+    with app.app_context():
+        _add_key(admin_user["id"], raw=raw, key_type=key_type, created_by_entity_id=admin_user["id"])
+    expected = f"{key_type.capitalize()} keys can only access /v1/models"
+    # The key decides even with a signed-in session.
+    for c in (client, auth_client):
+        _assert_error(c.get("/v1/me", headers=_bearer(raw)),
+                      HTTPStatus.FORBIDDEN, "permission_error", expected)
 
 
 def test_inactive_entity_key_is_403(app, client, key_id, test_user):
