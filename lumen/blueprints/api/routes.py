@@ -2,6 +2,7 @@ import hmac
 import json
 import logging
 import math
+import re
 import time as _time
 from functools import cache, wraps
 from http import HTTPStatus
@@ -383,14 +384,45 @@ def _openapi_spec_text() -> str:
     return (DOCS_DIR / "swagger.yaml").read_text(encoding="utf-8")
 
 
+# A bare origin: http(s), a DNS name, IPv4 or bracketed IPv6 host, an optional
+# port, and nothing else. Anything that matches is a valid plain or quoted YAML
+# scalar, so it cannot change the document's structure.
+_ORIGIN_RE = re.compile(
+    r"https?://(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*"
+    r"|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?"
+)
+
+
+def _request_origin() -> str | None:
+    """This request's origin, as seen through ProxyFix, or None if it is not a bare origin.
+
+    ``request.host_url`` comes from the ``Host`` or ``X-Forwarded-Host`` header,
+    which the caller controls; a value with a path, userinfo, spaces or YAML
+    syntax in it is rejected rather than written into the spec.
+    """
+    origin = request.host_url.rstrip("/")
+    if len(origin) > 270 or not _ORIGIN_RE.fullmatch(origin):
+        return None
+    return origin
+
+
 @api_bp.route("/openapi.yaml", methods=["GET"])
 def openapi_spec():
     """The OpenAPI spec of the /v1 API, public: no key, no DB.
 
     The spec's placeholder server URL becomes this instance's own URL, so a
-    client generated from it points here.
+    client generated from it points here. A request whose host is not a bare
+    origin gets the spec with the placeholder left in. The host comes from the
+    request, so the response must never be cached and replayed to another
+    client: ``no-store``.
     """
-    return Response(_substitute_actual_host(_openapi_spec_text()), mimetype="application/yaml")
+    text = _openapi_spec_text()
+    if _request_origin() is not None:
+        text = _substitute_actual_host(text)
+    resp = Response(text, mimetype="application/yaml")
+    resp.headers["Cache-Control"] = "no-store"
+    resp.vary.add("Host")
+    return resp
 
 
 @api_bp.route("/usage", methods=["GET"])

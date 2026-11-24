@@ -21,7 +21,7 @@ Each operation lists the credentials that may call it, in its description and in
 | `monitor` | A monitoring key (`sk_monitor_...`), or the deprecated `api.monitoring.token` from the config file. |
 | `admin` | An admin key (`sk_admin_...`). |
 
-A credential outside an operation's list gets `403`. See [Key types and access](api-reference.md#key-types-and-access).
+On an operation that needs a key, a valid key whose type is not in the operation's list gets `403`. Public operations ignore any key sent. See [Key types and access](api-reference.md#key-types-and-access).
 
 ## Endpoints
 

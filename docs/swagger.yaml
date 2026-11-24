@@ -15,14 +15,15 @@ info:
       `api.monitoring.token` from the config file.
     - `admin`: an admin key (`sk_admin_...`).
 
-    A credential outside an operation's list gets `403`. Replace
+    On an operation that needs a key, a valid key whose type is not in the
+    operation's list gets `403`; public operations ignore any key sent. Replace
     `https://lumen.example.com` with your Lumen URL. See the API Reference
     guide for examples and details.
   license:
     name: Apache-2.0
     identifier: Apache-2.0
 servers:
-  - url: https://lumen.example.com
+  - url: "https://lumen.example.com"
 tags:
   - name: Models
   - name: Usage
