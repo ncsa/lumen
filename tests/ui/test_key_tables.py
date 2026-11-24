@@ -404,27 +404,63 @@ def test_new_key_modal_key_type_swaps_prefix_and_expiry(app, restore_config, adm
     assert not page.input_value("#generated-key").startswith(("sk_admin_", "sk_monitor_"))
 
 
-def test_key_table_type_badge_and_edit_expiry_options(app, restore_config, admin_open_page, admin_user):
-    app.config["KEY_TTL"] = 30 * DAY
-    now = utcnow()
+def _seed_privileged_keys(app, entity_id):
+    """An admin key, a monitoring key with uses, a revoked monitoring key and a normal key."""
+    now = utcnow().replace(microsecond=0)
     with app.app_context():
         db.session.add_all([
-            APIKey(entity_id=admin_user["id"], created_by_entity_id=admin_user["id"], name="adm-key",
+            APIKey(entity_id=entity_id, created_by_entity_id=entity_id, name="adm-key",
                    key_hash="5" * 64, key_hint="sk_admin_abcd...0005", key_type=KEY_TYPE_ADMIN,
-                   expires_at=now + timedelta(days=2)),
-            APIKey(entity_id=admin_user["id"], created_by_entity_id=admin_user["id"], name="mon-key",
-                   key_hash="6" * 64, key_hint="sk_monitor_abcd...0006", key_type=KEY_TYPE_MONITORING),
-            APIKey(entity_id=admin_user["id"], created_by_entity_id=admin_user["id"], name="plain-key",
+                   created_at=now - timedelta(days=3), expires_at=now + timedelta(days=2)),
+            APIKey(entity_id=entity_id, created_by_entity_id=entity_id, name="mon-key",
+                   key_hash="6" * 64, key_hint="sk_monitor_abcd...0006", key_type=KEY_TYPE_MONITORING,
+                   created_at=now - timedelta(days=1), last_used_at=now, requests=1234),
+            APIKey(entity_id=entity_id, created_by_entity_id=entity_id, name="old-mon-key",
+                   key_hash="8" * 64, key_hint="sk_monitor_abcd...0008", key_type=KEY_TYPE_MONITORING,
+                   created_at=now - timedelta(days=9), revoked_at=now - timedelta(days=2),
+                   revoked_by_entity_id=entity_id),
+            APIKey(entity_id=entity_id, created_by_entity_id=entity_id, name="plain-key",
                    key_hash="7" * 64, key_hint="sk_abcd...0007"),
         ])
         db.session.commit()
-        adm_uuid = str(db.session.execute(select(APIKey.uuid).filter_by(name="adm-key")).scalar_one())
+        return str(db.session.execute(select(APIKey.uuid).filter_by(name="adm-key")).scalar_one())
+
+
+def _names(page, tbody):
+    return [n.strip() for n in page.locator(f"#{tbody} tr td:first-child").all_inner_texts()]
+
+
+def _priv_row_cells(page, name):
+    row = page.locator("#priv-key-tbody tr", has=page.locator(f"text={name}"))
+    return [t.strip() for t in row.locator("td").all_inner_texts()]
+
+
+def test_privileged_keys_have_their_own_table(app, restore_config, admin_open_page, admin_user):
+    app.config["KEY_TTL"] = 30 * DAY
+    adm_uuid = _seed_privileged_keys(app, admin_user["id"])
     page, _ = admin_open_page("/profile")
 
-    assert _row_cells(page, "adm-key")[0] == "adm-key Admin"
-    assert _row_cells(page, "mon-key")[0] == "mon-key Monitoring"
-    assert _row_cells(page, "plain-key")[0] == "plain-key"
-    _run_all_checks(page.content().encode(), "/profile (key type badges)")
+    # Each key is in exactly one table, and the type badge is gone.
+    assert _names(page, "key-tbody") == ["plain-key"]
+    assert sorted(_names(page, "priv-key-tbody")) == ["adm-key", "mon-key"]
+    assert page.locator("#key-table .badge").count() == 0
+    assert page.locator("h2", has_text="Admin & Monitoring Keys").count() == 1
+    headers = [t.strip() for t in page.locator("#priv-key-table thead th").all_inner_texts()]
+    assert [h.replace("▲", "").replace("▼", "").strip() for h in headers] == [
+        "Name", "Purpose", "Created", "Last Used", "Expires", "Uses", "Actions"]
+
+    adm = _priv_row_cells(page, "adm-key")
+    assert adm[1] == "Admin API and model list"
+    assert adm[2] not in ("", "—") and adm[3] == "—" and adm[4] not in ("", "Never", "—") and adm[5] == "0"
+    mon = _priv_row_cells(page, "mon-key")
+    assert mon[1] == "Model list (uptime monitoring)"
+    assert mon[3] not in ("", "—") and mon[4] == "Never" and mon[5] == "1,234"
+    assert page.locator("#priv-key-tbody .rotate-key-btn").count() == 2
+    # The name shows the key hint on keyboard focus too.
+    page.focus("#priv-key-tbody tr:has-text('mon-key') td:first-child span")
+    page.wait_for_selector(".tooltip.show")
+    assert "sk_monitor_abcd...0006" in page.inner_text(".tooltip.show")
+    _run_all_checks(page.content().encode(), "/profile (admin and monitoring keys)")
 
     # Edit expiry offers the key's own type's options.
     page.locator(f".ttl-key-btn[data-id='{adm_uuid}']").click()
@@ -435,6 +471,74 @@ def test_key_table_type_badge_and_edit_expiry_options(app, restore_config, admin
     page.locator(".ttl-key-btn[data-name='plain-key']").click()
     page.wait_for_selector("#keyTtlModal.show")
     assert _ttl_labels(page, "#edit-key-ttl-select") == ["1 day", "7 days", "30 days"]
+
+
+def _sort_priv_by_name(page, direction):
+    """Sort the admin and monitoring keys by Name, ascending or descending."""
+    th = "#priv-key-table th[data-col='name']"
+    page.click(th)
+    if page.get_attribute(th, "aria-sort") != direction:
+        page.click(th)
+    assert page.get_attribute(th, "aria-sort") == direction
+
+
+def test_privileged_key_table_sort_filter_and_search(app, admin_open_page, admin_user):
+    _seed_privileged_keys(app, admin_user["id"])
+    page, _ = admin_open_page("/profile")
+
+    # Dates and Uses sort descending on the first click, text ascending. Before
+    # each click the rows are put in the opposite order (by Name), so a column
+    # whose click does nothing, or sorts ascending first, fails.
+    for col, prior, expected, direction in (
+        ("requests", "ascending", ["mon-key", "adm-key"], "descending"),     # 1234 > 0
+        ("created", "ascending", ["mon-key", "adm-key"], "descending"),      # 1 day ago > 3 days ago
+        ("last_used", "ascending", ["mon-key", "adm-key"], "descending"),    # used > never used
+        ("expires_at", "descending", ["adm-key", "mon-key"], "descending"),  # in 2 days > never
+        ("purpose", "descending", ["adm-key", "mon-key"], "ascending"),      # "Admin…" < "Model…"
+    ):
+        _sort_priv_by_name(page, prior)
+        assert _names(page, "priv-key-tbody") != expected
+        page.click(f"#priv-key-table th[data-col='{col}']")
+        assert _names(page, "priv-key-tbody") == expected, col
+        assert page.get_attribute(f"#priv-key-table th[data-col='{col}']", "aria-sort") == direction, col
+
+    # Show revoked keys applies to both tables.
+    page.check("#show-revoked-cb")
+    assert "old-mon-key" in _names(page, "priv-key-tbody")
+    assert _priv_row_cells(page, "old-mon-key")[-1] == "revoked"
+    _run_all_checks(page.content().encode(), "/profile (revoked admin and monitoring keys)")
+    page.uncheck("#show-revoked-cb")
+    assert "old-mon-key" not in _names(page, "priv-key-tbody")
+
+    # The name search applies to both tables, each with its own empty message.
+    page.fill("#key-search", "adm")
+    page.wait_for_function("document.querySelectorAll('#priv-key-tbody tr').length === 1")
+    assert _names(page, "priv-key-tbody") == ["adm-key"]
+    assert page.is_visible("#key-empty")
+    page.fill("#key-search", "plain")
+    page.wait_for_function("!document.getElementById('priv-key-empty').hidden")
+    assert page.inner_text("#priv-key-empty") == "No admin or monitoring keys match your filter."
+    assert _names(page, "key-tbody") == ["plain-key"]
+
+
+def test_privileged_key_table_is_read_only_for_an_admin_viewer(app, admin_open_page, test_user):
+    _seed_privileged_keys(app, test_user["id"])
+    page, _ = admin_open_page(f"/admin/users/{test_user['uuid']}/profile")
+
+    assert sorted(_names(page, "priv-key-tbody")) == ["adm-key", "mon-key"]
+    assert page.locator("#priv-key-tbody button").count() == 0
+    assert _priv_row_cells(page, "mon-key")[-1] == ""
+    page.check("#show-revoked-cb")
+    assert _priv_row_cells(page, "old-mon-key")[-1] == "revoked"
+    _run_all_checks(page.content().encode(), "admin view of a profile (admin and monitoring keys)")
+
+
+def test_privileged_key_table_absent_without_such_keys(app, open_page, test_user):
+    _seed_keys(app, test_user["id"], test_user["id"])
+    page, _ = open_page("/profile")
+    assert page.locator("#priv-key-table").count() == 0
+    assert page.locator("h2", has_text="Admin & Monitoring Keys").count() == 0
+    assert page.locator("#key-tbody tr").count() == 2
 
 
 def test_new_key_modal_copies_the_key_that_is_saved(app, admin_open_page, admin_user):

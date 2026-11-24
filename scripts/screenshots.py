@@ -106,17 +106,17 @@ def ensure_demo_data(app):
             db.session.flush()
 
         # An active, a monitoring, a revoked and an expired personal key, so the
-        # profile shot shows Revoke, the Expires column, the key type badge and
-        # both revoked/expired badges.
+        # profile shot shows Revoke, the Expires column, the Admin & Monitoring
+        # Keys table and both revoked/expired badges.
         if dev:
             now = utcnow()
             expired_at = now - timedelta(days=1)
             for name, raw, key_type, revoked_at, revoked_by, expires_at, requests, tokens_in, tokens_out, cost, last_used in (
                 ("my-script", "sk_myscript_0123456789abcd", KEY_TYPE_NORMAL, None, None, now + timedelta(days=30),
                  42, 9800, 3100, "0.84", now - timedelta(hours=2)),
-                # Monitoring keys are never billed; they only list models.
+                # Monitoring keys are never billed; they only list models, and each use is counted.
                 ("uptime-monitor", "sk_monitor_uptime_0123456789", KEY_TYPE_MONITORING, None, None, None,
-                 0, 0, 0, "0", now - timedelta(minutes=5)),
+                 1440, 0, 0, "0", now - timedelta(minutes=5)),
                 ("old-notebook", "sk_oldnotebook_0123456789ab", KEY_TYPE_NORMAL, now - timedelta(days=3), None, None,
                  17, 4200, 1300, "0.31", now - timedelta(days=4)),
                 # Revoked by the expirer: no revoker, revoked_at == expires_at.
@@ -125,6 +125,7 @@ def ensure_demo_data(app):
             ):
                 if not db.session.execute(select(APIKey).filter_by(entity_id=dev.id, name=name)).scalar_one_or_none():
                     db.session.add(APIKey(entity_id=dev.id, created_by_entity_id=dev.id, name=name,
+                                          created_at=now - timedelta(days=30),
                                           key_type=key_type, **key_secret_fields(raw, key_type),
                                           revoked_at=revoked_at, revoked_by_entity_id=revoked_by,
                                           expires_at=expires_at, requests=requests, input_tokens=tokens_in,

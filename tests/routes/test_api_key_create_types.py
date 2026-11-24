@@ -339,7 +339,14 @@ def test_profile_key_rows_carry_type(app, admin_client, admin_user):
     _seed(app, admin_user["id"], KEY_TYPE_MONITORING, _raw(KEY_TYPE_MONITORING))
     html = admin_client.get("/profile").get_data(as_text=True)
     assert 'type: "monitoring"' in html
-    assert "KEY_TYPE_LABELS" in html
+    assert 'id="priv-key-table"' in html
+
+
+def test_profile_without_privileged_keys_has_no_privileged_key_table(app, auth_client, test_user):
+    _seed(app, test_user["id"], KEY_TYPE_NORMAL, _raw(KEY_TYPE_NORMAL))
+    html = auth_client.get("/profile").get_data(as_text=True)
+    assert 'type: "normal"' in html
+    assert 'id="priv-key-table"' not in html
 
 
 def test_admin_view_of_user_profile_carries_key_type(app, admin_client, test_user):

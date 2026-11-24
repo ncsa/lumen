@@ -112,7 +112,20 @@ The expiry is fixed when the key is created or its expiry is edited (see [Changi
 
 ### Viewing Your Keys
 
-The API Keys table shows all your active keys and lets you sort by name, requests, tokens, cost, last used, or expiry. Admin and monitoring keys have an **Admin** or **Monitoring** badge next to their name, also when an admin views your profile. Enable **Show revoked keys** to see revoked and expired keys (deactivated, usage kept). They are displayed with strikethrough and a **revoked** or **expired** badge. Hover over or focus an **expired** badge to see when the key expired. Hover over or focus a **revoked** badge to see when the key was revoked, in your local time, and who revoked it (e.g. *Revoked 10/10/2026, 2:15 PM by Jane Doe*). The name is left out when no revoker is recorded, such as for keys revoked before this was recorded or revoked automatically by an OAuth code replay. Times for keys revoked before this was recorded are approximate.
+The API Keys table shows your active normal keys and lets you sort by name, requests, tokens, cost, last used, or expiry. Enable **Show revoked keys** to see revoked and expired keys (deactivated, usage kept). They are displayed with strikethrough and a **revoked** or **expired** badge. Hover over or focus an **expired** badge to see when the key expired. Hover over or focus a **revoked** badge to see when the key was revoked, in your local time, and who revoked it (e.g. *Revoked 10/10/2026, 2:15 PM by Jane Doe*). The name is left out when no revoker is recorded, such as for keys revoked before this was recorded or revoked automatically by an OAuth code replay. Times for keys revoked before this was recorded are approximate.
+
+Admin and monitoring keys are listed separately, in the **Admin & Monitoring Keys** table below API Keys. It only appears when you have at least one such key, also when an admin views your profile. Its columns are:
+
+| Column | Shows |
+|--------|-------|
+| **Name** | The key's name; hover over or focus it to see the key hint |
+| **Purpose** | What the key type is for: *Admin API and model list* for an admin key, *Model list (uptime monitoring)* for a monitoring key |
+| **Created** | When the key was created |
+| **Last Used** | The last request made with the key |
+| **Expires** | When the key expires, or **Never** |
+| **Uses** | How many requests were made with the key |
+
+These keys have no Tokens or Coins columns because they are never billed. The table has the same **Edit expiry**, **Rotate** and **Revoke** actions, and **Show revoked keys** and the name search apply to both tables. Dates and **Uses** sort newest or highest first on the first click.
 
 Keys requested through a CLI or web app via [OAuth](./oauth-clients.md) show that provenance in the name tooltip (e.g. *Requested via lumen-cli by alice*); keys created with **+ New API Key** have no such note.
 
